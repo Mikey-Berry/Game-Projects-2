@@ -215,7 +215,7 @@
 <script>
 "use strict";
 /* ============================================================ CORE */
-const W = 720, H = 720, TS = 26;   /* v21 scale — more waste between the lights */
+const W = 1440, H = 1440, TS = 26;   /* v22 scale — four times the waste between the lights */
 const cv = document.getElementById('game');
 const mmcv = document.getElementById('minimap'), mmcx = mmcv.getContext('2d');
 
@@ -8181,14 +8181,23 @@ const HV = new Float32Array((W+1)*(H+1));
 let _terrMaxY = 0;
 {
   const baseOf = t => t===3 ? -0.55 : t===2 ? 0.8 : 0;
+  /* The sea is meant to hold the rim of the world and nothing else, and the terrain
+     generator already obeys that — there is not one water TILE inland. The splotches of
+     water out in the waste were the global water plane showing through: ground height is
+     base plus +/-0.35 of noise, the plane sits at about -0.24, and 9,168 land vertices
+     dipped under it. Land that touches no water keeps its head above the waterline. */
+  const WATERLINE = -0.14;          /* clear of the plane even at the top of its bob */
   for(let vy=0; vy<=H; vy++) for(let vx=0; vx<=W; vx++){
-    let sum = 0, n = 0;
+    let sum = 0, n = 0, wet = false;
     for(let dy=-1; dy<=0; dy++) for(let dx=-1; dx<=0; dx++){
       const tx = clamp(vx+dx, 0, W-1), ty = clamp(vy+dy, 0, H-1);
-      sum += baseOf(terr[ty*W+tx]); n++;
+      const t = terr[ty*W+tx];
+      if(t === 3) wet = true;
+      sum += baseOf(t); n++;
     }
     let h = sum/n;
     if(h > -0.2) h += (fbm(vx*0.11, vy*0.11, 3) - 0.5) * 0.7;
+    if(!wet && h < WATERLINE) h = WATERLINE;    /* a dry basin is a depression, not a lake */
     HV[vy*(W+1)+vx] = h;
   }
 }
@@ -8725,30 +8734,70 @@ function groundY(x, y){ return Math.max(heightAt(x, y), -0.1); }
   window.decorByTile = new Map();    /* every instance, keyed by tile — the fog's ledger */
   const hiddenMx = (() => { const d2 = new THREE.Object3D(); d2.scale.setScalar(0.0001); d2.updateMatrix(); return d2.matrix.clone(); })();
   window._decorHiddenMx = hiddenMx;
+  /* ---------- decor, cut into chunks so it can be culled ----------
+     three.js sets frustumCulled = false on every InstancedMesh, because one shared base
+     geometry cannot describe where its instances actually are. The result here was that
+     every tree, rock and ore vein on the map was submitted every frame no matter where
+     you were looking — a flat 890,000 triangles at any zoom, on a screen showing perhaps
+     two percent of the world.
+     One mesh per type per map chunk fixes it: each chunk sits at its own centre with its
+     instances local to it, and shares a per-type geometry clone whose bounding sphere is
+     sized to hold a whole chunk. Then culling can be turned back on and it tells the
+     truth. */
+  /* Chunk size is a trade: finer culls better but submits more objects. Swept at 1440 —
+     224 saves 2.6M triangles a frame for 38 extra draw calls, about 69k triangles per call
+     added, which was the best ratio of anything tested. */
+  const DECOR_CH = 224;                             /* tiles across a decor chunk */
+  const CH_R = DECOR_CH * 0.71 + 14;                /* half-diagonal + headroom for hills */
+  const _chunkGeo = new Map();
+  const chunkGeoFor = (geo) => {
+    let cg = _chunkGeo.get(geo);
+    if(!cg){
+      cg = geo.clone();
+      cg.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 6, 0), CH_R);
+      _chunkGeo.set(geo, cg);
+      if(typeof _sharedRes !== 'undefined') _sharedRes.add(cg);
+    }
+    return cg;
+  };
   const addInst = (list, geo, col, yOff, scaleFn, trackable) => {
-    const im = new THREE.InstancedMesh(geo, mat(col), list.length);
-    im.castShadow = true;
-    list.forEach((p, i) => {
-      const s = scaleFn ? scaleFn(p) : 1;
-      dummy.position.set(p[0], groundY(p[0],p[1]) + yOff*s, p[1]);
-      dummy.rotation.y = hash2(p[0]*31, p[1]*17) * Math.PI*2;
-      dummy.scale.setScalar(s);
-      dummy.updateMatrix();
-      const tx = Math.floor(p[0]), ty = Math.floor(p[1]);
-      const unexplored = vis[ty*W + tx] === 0;
-      im.setMatrixAt(i, unexplored ? hiddenMx : dummy.matrix);
-      {
-        const k = tx + ',' + ty;
-        if(!decorByTile.has(k)) decorByTile.set(k, []);
-        decorByTile.get(k).push({im, i, base: dummy.matrix.clone(), up: !unexplored});
-      }
-      if(trackable){
-        const k = Math.floor(p[0])+','+Math.floor(p[1]);
-        if(!nodeInstances.has(k)) nodeInstances.set(k, []);
-        nodeInstances.get(k).push({im, i, base: dummy.matrix.clone()});
-      }
-    });
-    scene.add(im);
+    const buckets = new Map();
+    for(const p of list){
+      const k = (((p[1]/DECOR_CH)|0) << 8) | ((p[0]/DECOR_CH)|0);
+      let a = buckets.get(k); if(!a) buckets.set(k, a = []);
+      a.push(p);
+    }
+    const material = mat(col), cgeo = chunkGeoFor(geo);
+    for(const [k, sub] of buckets){
+      const cx = ((k & 255) + 0.5) * DECOR_CH, cz = ((k >> 8) + 0.5) * DECOR_CH;
+      const im = new THREE.InstancedMesh(cgeo, material, sub.length);
+      im.castShadow = true;
+      im.position.set(cx, 0, cz);
+      im.frustumCulled = true;                      /* now that the sphere means something */
+      im.updateMatrix(); im.updateMatrixWorld(true);
+      sub.forEach((p, i) => {
+        const s = scaleFn ? scaleFn(p) : 1;
+        dummy.position.set(p[0] - cx, groundY(p[0],p[1]) + yOff*s, p[1] - cz);
+        dummy.rotation.y = hash2(p[0]*31, p[1]*17) * Math.PI*2;
+        dummy.scale.setScalar(s);
+        dummy.updateMatrix();
+        const tx = Math.floor(p[0]), ty = Math.floor(p[1]);
+        const unexplored = vis[ty*W + tx] === 0;
+        im.setMatrixAt(i, unexplored ? hiddenMx : dummy.matrix);
+        {
+          const kk = tx + ',' + ty;
+          if(!decorByTile.has(kk)) decorByTile.set(kk, []);
+          decorByTile.get(kk).push({im, i, base: dummy.matrix.clone(), up: !unexplored});
+        }
+        if(trackable){
+          const kk = tx + ',' + ty;
+          if(!nodeInstances.has(kk)) nodeInstances.set(kk, []);
+          nodeInstances.get(kk).push({im, i, base: dummy.matrix.clone()});
+        }
+      });
+      im.instanceMatrix.needsUpdate = true;
+      scene.add(im);
+    }
   };
   hideNodeInstance = (k) => {
     const refs = nodeInstances.get(k);
