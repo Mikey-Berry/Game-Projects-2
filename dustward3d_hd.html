@@ -831,6 +831,11 @@ function say(c, text){ c.bubble = {text, t:2.6}; }
 function pick(arr){ return arr[ri(0, arr.length-1)]; }
 const chars = [], corpses = [];
 function player(){ return chars.filter(c => c.faction==='player' && c.state!=='dead' && !c.phantom); }
+/* THE DEAD WHO KEPT A MIND. Most risen are hands and nothing else: they haul, they swing, and
+   they cannot be told to read. A lich kept its own mind, a lieutenant kept the one it died
+   with, and a servitor was bound around a mind on purpose. Everything that asks "can this one
+   think?" — study, craft, tuition, attunement — asks here, so there is one answer to change. */
+function mindedDead(c){ return !c.undead || c.lich || c.lieutenant || c.minded; }
 
 /* speed accounting for legs + athletics + blood */
 function armorPen(c){
@@ -851,6 +856,7 @@ function moveSpeed(c){
   if(ld > 1) s *= 0.55;
   else if(ld > 0.5) s *= 1 - (ld-0.5)*0.5;
   if(c.big > 1) s *= 1 - (c.big - 1) * 0.28;
+  if(c.speedMult) s *= c.speedMult;   /* some things were not built to arrive quickly */
   const ll = c.parts['l.leg'], rl = c.parts['r.leg'];
 /* ---------- what a graft is worth ----------
    tier 1 bone graft: it holds you up. Barely.
@@ -3460,9 +3466,15 @@ const UNDEAD_TYPES = {
   archer:     {name:'Marrow Archer', tech:'rites_deep',    mana:14, weight:2, tag:'MA',
     cost:{remains:1, w_bow:1, wood:2},  desc:'Dead hands, steady bow'},
   colossus:   {name:'Ashen Colossus',tech:'rites_deep',    mana:25, weight:3, tag:'CO',
-    cost:{remains:3, stone:6, copper:4},desc:'Grave-ash siege engine — shatters walls'},
+    cost:{remains:3, stone:6, copper:4},desc:'A wall that walks — barely. Enormously hard to put down, and slow enough that it should be waiting where the fight comes to it'},
   bonemule:   {name:'Bone Mule',     tech:'rites_binding', mana:12, weight:1, tag:'BM',
     cost:{remains:2, stone:2, hide:2},  desc:'A beast of burden that never tires, eats, or complains'},
+  servitor:   {name:'Bound Servitor',tech:'rites_binding', mana:8,  weight:1, tag:'SV',
+    cost:{remains:1, copper:3, fabric:2},
+    desc:'A skull bound around a mind instead of a pair of hands. It reads, it files, it keeps a hall\'s ledgers — and a stiff breeze would end it'},
+  mage:       {name:'Skeleton Mage', tech:'rites_deep',    mana:18, weight:2, tag:'SM',
+    cost:{remains:2, copper:4, fabric:3},
+    desc:'Latent alchemy, set in bone. It knows fire and will never know anything else'},
 };
 /* a base is a decision, not a marriage: take it apart and carry half of it away */
 /* blueprints: intent staked in the dirt. Materials walk over from the stores;
@@ -3598,8 +3610,8 @@ const TECHS = {
   pyromancy:    {name:'Pyromancy',         cost:600, hours:64, req:'construction',desc:'Firebolt splashes to nearby enemies'},
   benediction:  {name:'Benediction',       cost:600, hours:64, req:'construction',desc:'Heal spreads to allies near the target'},
   necromancy:   {name:'Deeper Necromancy', cost:600, hours:64, req:'construction',desc:'+2 servant cap, stronger risen'},
-  rites_binding:{name:'Rites of Binding',  cost:700, hours:72, req:'necromancy',  desc:'Binding Circle: craft Gravehounds, Hollow Brutes'},
-  rites_deep:   {name:'Deeper Rites',      cost:1200,hours:96, req:'rites_binding',desc:'Marrow Archers, Ashen Colossus'},
+  rites_binding:{name:'Rites of Binding',  cost:700, hours:72, req:'necromancy',  desc:'Binding Circle: craft Gravehounds, Hollow Brutes, Bound Servitors'},
+  rites_deep:   {name:'Deeper Rites',      cost:1200,hours:96, req:'rites_binding',desc:'Marrow Archers, Skeleton Mages, Ashen Colossus'},
   quickening:   {name:'The Quickening',    cost:700, hours:72, req:'rites_binding', needs:'circle', mats:{fabric:10, copper:8},
     desc:'Flesh Vat: the homunculus-makers\' art — grow meat that was never alive'},
   carrion_rites:{name:'Carrion Rites',     cost:900, hours:80, req:'quickening', needs:'vat', mats:{vflesh:8, fabric:8},
@@ -3667,7 +3679,7 @@ function researchRate(){
   for(const b of pBuilds){
     if(b.type !== 'r_bench') continue;
     const crew = chars.filter(c => c.faction==='player' && c.job==='research' &&
-      (!c.undead || c.lich || c.lieutenant) && c.state==='ok' &&
+      mindedDead(c) && c.state==='ok' &&
       dist(c.x, c.y, b.x+1, b.y+1) < 3.2);
     const n = Math.min(BENCH_SEATS, crew.length);
     /* 1 mind = 1.0, 2 = 1.7, 3 = 2.2 — sharing a problem helps, but they get in each other's way */
@@ -3680,7 +3692,7 @@ function researchRate(){
 }
 function benchCrew(b){
   return chars.filter(c => c.faction==='player' && c.job==='research' &&
-    (!c.undead || c.lich || c.lieutenant) && c.state==='ok' &&
+    mindedDead(c) && c.state==='ok' &&
     dist(c.x, c.y, b.x+1, b.y+1) < 3.2);
 }
 function researchTick(dh){
@@ -4269,7 +4281,7 @@ function jobHasWork(c, j){
     case 'flesh':  return pBuilds.some(b => (FLESH[b.type] || b.type === 'vat'));
     case 'farm':   return pBuilds.some(b => b.type === 'farm');
     case 'craft':  return pBuilds.some(b => b.type === 'workbench' || b.type === 'forge');
-    case 'research': return (!c.undead || c.lich || c.lieutenant) && pBuilds.some(b => b.type === 'r_bench');
+    case 'research': return mindedDead(c) && pBuilds.some(b => b.type === 'r_bench');
     case 'wood': case 'stone': case 'fish': return true;   /* the waste always has more of these */
     default: return true;                                   /* guard, patrol and the rest always apply */
   }
@@ -4568,7 +4580,7 @@ function physics(c, dt){
     if(!phylacteries.includes(p) || c.phyl){ c.phylTarget = null; }
     else if(travel(c, p.x, p.y, dt, 1.0)){
       if(p.carried){ log('Someone already carries it.', ''); }
-      else if(c.undead && !c.lich && !c.lieutenant){ log('The mindless dead cannot be trusted to carry a soul.', 'bad'); }
+      else if(!mindedDead(c)){ log('The mindless dead cannot be trusted to carry a soul.', 'bad'); }
       else { p.carried = true; c.phyl = p; log(`${c.name} takes up the phylactery. It is warm.`, ''); refreshCharPanel(); }
       c.phylTarget = null;
     } else return;
@@ -4669,8 +4681,9 @@ function physics(c, dt){
     if(nearestEnemy(c, 2.5)) c.blocking = true;
     if(c.target && dist(c.x,c.y,c.target.x,c.target.y) > 1.5){ return; }
   }
-  /* auto-acquire: attack-move, tanks, and the mindless dead — never medics */
-  if(!c.target && !c.mule && c.stance!=='medic' && (c.attackMove || c.stance==='tank' || (c.undead && !c.lich && !c.lieutenant && !c.mule))){
+  /* auto-acquire: attack-move, tanks, the mindless dead, and the few risen built to pick
+     their own fights (the skeleton mage) — never medics, and never a servitor */
+  if(!c.target && !c.mule && c.stance!=='medic' && (c.attackMove || c.stance==='tank' || c.autoFight || (!mindedDead(c) && !c.mule))){
     const e = nearestEnemy(c, 7);
     if(e){ c.target = e; c.targetManual = false; }
   }
@@ -4878,7 +4891,7 @@ function physics(c, dt){
              : (c.job2 && jobHasWork(c, c.job2)) ? c.job2 : c.job;
     c._ej = ej;
     if(ej==='research'){
-      if(c.undead && !c.lich && !c.lieutenant) return;
+      if(!mindedDead(c)) return;
       if(dist(c.x,c.y,c._jx||c.x,c._jy||c.y) < 2) c._working = 0.5;
       const bench = pBuilds.find(b => b.type==='r_bench');
       if(bench && research.active && dist(c.x,c.y,bench.x+1,bench.y+1) > 2.4)
@@ -4963,7 +4976,7 @@ function physics(c, dt){
         else return;
       }
     } else if(ej==='craft'){
-      if(c.undead && !c.lich && !c.lieutenant) return;
+      if(!mindedDead(c)) return;
       const bench = pBuilds.filter(b => b.type==='workbench')
         .sort((a,b2) => dist(a.x,a.y,c.x,c.y) - dist(b2.x,b2.y,c.x,c.y))[0];
       if(!bench){ if(rnd() < dt*0.05) log(`${c.name} has no Workbench to work at.`, 'bad'); return; }
@@ -5921,12 +5934,17 @@ const SQUAD_CAP = 12;   /* the living (and liches) a banner can hold */
 const BRANCHES = ['divine', 'destruction', 'dark', 'dust'];
 const ATT_THRESH = [100, 300, 700];   /* to initiate, to adept, to master */
 function attOf(c, b){ return (c.att && c.att[b]) || 0; }
-function attCap(c, b){ return c.race === 'chimera' ? 0 : (c.gift === b ? 3 : 2); }
+function attCap(c, b){
+  if(c.race === 'chimera') return 0;
+  /* some things were bound around a single formula. There is no room in them for a second. */
+  if(c.onlyArt) return b === c.onlyArt ? 3 : 0;
+  return c.gift === b ? 3 : 2;
+}
 /* progress toward the next tier; a better-attuned squadmate teaches by example */
 function attGain(c, branch, pts){
   if(c.race === 'chimera' || c.nascent) return;
-  /* a risen labourer has hands and no mind; only liches and lieutenants kept enough of one */
-  if(c.undead && !c.lich && !c.lieutenant) return;
+  /* a risen labourer has hands and no mind, and cannot be taught anything */
+  if(!mindedDead(c)) return;
   c.att = c.att || {divine:0, destruction:0, dark:0, dust:0};
   c.attXp = c.attXp || {divine:0, destruction:0, dark:0, dust:0};
   const cap = attCap(c, branch);
@@ -5967,7 +5985,9 @@ const bonds = new Map();
 function bondKey(a, b){ return Math.min(a.id,b.id) + '|' + Math.max(a.id,b.id); }
 function bondOf(a, b){ return bonds.get(bondKey(a,b)) || 0; }
 function bondAdd(a, b, n){ bonds.set(bondKey(a,b), Math.min(400, bondOf(a,b) + n)); }
-function hasMind(c){ return c.state !== 'dead' && !c.beast && (!c.undead || c.lich || c.lieutenant); }
+/* a PERSON — someone who can be courted, married, grieved. A mind alone is not enough: the
+   things bound at a circle were assembled around a purpose and were never anybody. */
+function hasMind(c){ return c.state !== 'dead' && !c.beast && !c.crafted && mindedDead(c); }
 function marriageable(a, b){
   return hasMind(a) && hasMind(b) && a.age >= 18 && b.age >= 18 &&
     !a.spouse && !b.spouse && a.partner === b.id && b.partner === a.id &&
@@ -6545,11 +6565,46 @@ function craftUndead(kind, caster, circle){
     u = makeChar('Bone Mule '+risenN, caster.faction, p.x, p.y, {atk:2, def:5, tough:8+m*0.4, ath:5, labor:22});
     u.beast = true; u.mule = true; u.fleeOnHit = true;
     u.blood = 100; u.maxBlood = 100;
+  } else if(kind==='servitor'){
+    /* A SERVITOR is a mind with no body to speak of: it cannot lift, cannot fight, and cannot
+       be repaired. What it can do is read, and keep a hall's paperwork moving. */
+    u = makeChar('Servitor '+risenN, caster.faction, p.x, p.y,
+      {atk:1, def:3, tough:1, ath:6, medic:0, labor:0, magic: 12 + m*0.4});
+    u.beast = true;                 /* not a humanoid rig — a skull that floats */
+    u.servitor = true; u.minded = true;
+    u.fleeOnHit = true;             /* it has exactly one survival instinct and it is a good one */
+    /* Frailty is spent on the frame, not the pool: the collapse threshold is a flat 40 for
+       everything that walks, so a pool under that would crumble the instant it was bound.
+       55 leaves it fifteen points of grace — a quarter of a person's — and the thin bone
+       below does the rest. Two solid blows anywhere that matters and it is gone. */
+    u.blood = 55; u.maxBlood = 55;
+    /* only the vitals are thin — which for a skull is the whole of it. The limb entries stay
+       at full: nothing hangs off this thing, and a "wounded leg" would only tax a gait it
+       does not have. */
+    for(const k of VITAL) { u.parts[k].hp = 40; u.parts[k].max = 40; }
+    u.big = 0.55;
+    u.mana = rawMaxMana(u);
+  } else if(kind==='mage'){
+    /* A SKELETON MAGE keeps the one art it was steeped in and is deaf to the other three. */
+    u = makeChar('Skeleton Mage '+risenN, caster.faction, p.x, p.y,
+      {atk:4+m*0.2, def:4+m*0.3, tough:5+m*0.3, ath:5, labor:2, magic: 6 + m*0.4});
+    u.minded = true; u.autoFight = true;
+    u.gift = 'destruction'; u.onlyArt = 'destruction';
+    u.att = {divine:0, destruction:2, dark:0, dust:0};
+    u.attXp = {divine:0, destruction:0, dark:0, dust:0};
+    u.arts = {emberrot: true};
+    u.stance = 'ranged';            /* it holds the band and throws fire; it does not brawl */
+    u.blood = 70; u.maxBlood = 70;
+    u.mana = rawMaxMana(u);
   } else {
-    u = makeChar('Colossus '+risenN, caster.faction, p.x, p.y, {atk:8+m*0.8, def:5+m*0.3, tough:14+m, ath:1, labor:12});
-    u.clawDmg = 18 + m; u.blood = 220; u.maxBlood = 220; u.big = 1.8; u.structMult = 6;
+    /* THE COLOSSUS, RECONSIDERED: it was a siege engine and is now an anchor. It hits like a
+       falling wall and is very hard to bring down — and it walks at about a third of a living
+       pace, so it holds whatever ground you leave it on and little else. */
+    u = makeChar('Colossus '+risenN, caster.faction, p.x, p.y, {atk:10+m*0.8, def:8+m*0.4, tough:34+m*1.3, ath:1, labor:12});
+    u.clawDmg = 20 + m; u.blood = 420; u.maxBlood = 420; u.big = 2.0;
+    u.speedMult = 0.5; u.taunt = true;
   }
-  u.undead = true; u.master = caster; u.hunger = 100;
+  u.undead = true; u.crafted = true; u.master = caster; u.hunger = 100;
   u.guardTarget = caster;
   u.bindWeight = ut.weight; u.shortTag = ut.tag + risenN;
   chars.push(u);
@@ -7081,10 +7136,22 @@ function update(dt){
       for(const k in (t.pacts||{})) drift += 0.2;
       const deadHere = chars.filter(c => c.faction==='player' && c.undead && c.state!=='dead' && dist(c.x,c.y,t.x,t.y) < (t.def.wall ? t.def.wall.r : 12)).length;
       if(deadHere > 3 && !t.def.undeadFriendly) drift -= 0.5;
+      /* A SERVITOR IN RESIDENCE keeps the hall's books. It cannot rule for you — a petition
+         still wants your judgment — but nothing goes unrecorded while it is here, and the
+         clerks downstairs stop losing things. (It still counts among the dead unnerving the
+         streets above: help at the desk, a problem in the square.) */
+      const clerk = townClerk(t);
+      if(clerk) drift += 0.4;
       t.order = clamp((t.order ?? 55) + drift, 0, 100);
       /* petitions arrive and expire */
       t.petitions = t.petitions || [];
       for(const p of [...t.petitions]) if(day >= p.expires){
+        if(clerk && !p.filed){
+          /* the servitor files a holding answer: the matter waits for you instead of rotting */
+          p.filed = true; p.expires = day + 3;
+          if(visAt(t.x,t.y)===2) log(`${clerk.name} files a holding answer in ${t.name}. The petition waits.`, '');
+          continue;
+        }
         t.petitions.splice(t.petitions.indexOf(p), 1);
         t.order = clamp(t.order - 6, 0, 100);
         if(visAt(t.x,t.y)===2) log(`A petition in ${t.name} gathers dust past answering. (−order)`, 'bad');
@@ -9427,7 +9494,7 @@ function factionColor(c){
 }
 function colorKeyOf(c){
   /* sex is part of the silhouette, so it belongs in the rebuild key */
-  return factionColor(c) + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sex||'m') + (c.captain?'|C':'');
+  return factionColor(c) + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'');
 }
 const SKINS = ['#8a5c34', '#6e4426', '#a06c40', '#5a3820', '#96683a'];
 const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0'];
@@ -9532,7 +9599,37 @@ function buildCharMesh(c){
   const CH = fem ? 0.90 : 1;        /* chest breadth */
   const LIMB = fem ? 0.88 : 1;      /* limb thickness */
   if(c.beast){
-    if(c.bossKey === 'sixfold'){
+    if(c.servitor){
+      /* A BOUND SERVITOR: a skull and nothing under it. The jaw hangs a finger's width free of
+         the cranium — there is no hinge, only the binding — and three splinters of vertebra
+         trail beneath where a neck used to be. Everything sits on a floatG the pose machine
+         bobs; the group itself never touches the ground. */
+      const bone = '#ded6c0', dark = '#3a352c', lamp = '#7fd8e8';
+      e.float = new THREE.Group(); e.float.position.set(0, 1.15, 0); g.add(e.float);
+      e.head = e.float;                                    /* the skull IS the character */
+      mk(SPHG, ownBone(bone), 0.46, 0.44, 0.50, 0, 0, 0, e.float);           /* cranium */
+      mk(BOXG, ownBone(bone), 0.30, 0.16, 0.22, 0, -0.13, 0.20, e.float);    /* the face plate */
+      for(const ex of [-0.11, 0.11]){
+        mk(BOXG, ownBone(dark), 0.14, 0.14, 0.06, ex, -0.02, 0.24, e.float); /* sockets, cut deep */
+        /* the light sits proud of the socket — flush with it, the bone swallows the glow */
+        mk(SPHG, ownGlow(lamp), 0.10, 0.10, 0.08, ex, -0.02, 0.28, e.float);
+      }
+      /* the jaw floats free — it is what tells you this thing is bound and not merely dead */
+      e.jaw = new THREE.Group(); e.jaw.position.set(0, -0.26, 0.06); e.float.add(e.jaw);
+      mk(BOXG, ownBone(bone), 0.28, 0.09, 0.24, 0, 0, 0.06, e.jaw);
+      mk(BOXG, ownBone(bone), 0.09, 0.10, 0.09, -0.13, 0.05, -0.04, e.jaw);
+      mk(BOXG, ownBone(bone), 0.09, 0.10, 0.09,  0.13, 0.05, -0.04, e.jaw);
+      /* the dangling remnant of a spine, each piece hanging a little looser than the last */
+      e.spineBits = [];
+      for(let i = 0; i < 3; i++){
+        const b2 = new THREE.Group(); b2.position.set(0, -0.34 - i*0.15, -0.02); e.float.add(b2);
+        mk(CYLG, ownBone(bone), 0.11 - i*0.02, 0.10, 0.11 - i*0.02, 0, 0, 0, b2);
+        e.spineBits.push(b2);
+      }
+      /* the sigil it was bound with, still turning under it */
+      e.sigil = mk(CYLG, ownGlow(lamp), 0.30, 0.012, 0.30, 0, -0.86, 0, e.float);
+      e.servitor = true;
+    } else if(c.bossKey === 'sixfold'){
       /* the body hangs; the limbs arch over it and come down like the frame of a tent */
       const hide = '#3a3230', bone = '#c9bfa8';
       obox(0.9, 1.1, 1.2, hide, 0, 2.1, 0);                       /* the hung mass */
@@ -9893,6 +9990,14 @@ function syncChars(dt){
       if(c.beast && !c.construct && c.gauntKind !== 'larder') e.g.rotation.set(0, e.rotY, Math.PI/2);
       else e.g.rotation.set(-Math.PI/2, e.rotY, 0);
       e.g.position.y = gy + 0.3;
+      if(e.servitor){
+        /* whatever held it up has stopped. It is a skull on the ground now, jaw fallen open. */
+        e.float.position.y = 0.2;
+        e.float.rotation.set(0, 0, 0);
+        P(e.jaw, 'x', 0.5, 6);
+        for(const b2 of e.spineBits) b2.rotation.x = 0;
+        e.sigil.visible = false;
+      }
       if(!c.beast){
         e.armL.rotation.x = 0.2; e.armR.rotation.x = -0.15;
         e.elbL.rotation.x = 0.3; e.elbR.rotation.x = 0.2;
@@ -9900,6 +10005,22 @@ function syncChars(dt){
         e.kneeL.rotation.x = 0.3; e.kneeR.rotation.x = 0.15;
         e.spine.rotation.x = 0;
       }
+    } else if(e.servitor){
+      /* it does not walk. It hangs at reading height and drifts, and the loose parts of it
+         lag behind the turn — which is most of what sells the thing as floating. */
+      e.g.rotation.set(0, e.rotY, 0);
+      e.sigil.visible = true;
+      const now = Date.now();
+      e.phase += dt * (moving ? 2.4 : 1.1);
+      e.float.position.y = 1.15 + Math.sin(e.phase) * 0.07;
+      e.float.rotation.z = Math.sin(now * 0.0007) * 0.06;
+      e.float.rotation.x = (moving ? 0.10 : 0) + Math.sin(now * 0.0009) * 0.03;
+      /* the jaw works when it has something to say, and hangs slack when it does not */
+      const talking = !!c.bubble;
+      P(e.jaw, 'x', talking ? 0.22 + Math.sin(now * 0.018) * 0.16 : 0.05, 10);
+      for(let i = 0; i < e.spineBits.length; i++)
+        e.spineBits[i].rotation.x = Math.sin(e.phase - i * 0.7) * (0.10 + i * 0.05);
+      e.sigil.rotation.y += dt * 0.9;
     } else if(c.beast && !c.construct && c.gauntKind !== 'larder'){
       e.g.rotation.set(0, e.rotY, 0);
       if(e.limbs){
@@ -10916,13 +11037,13 @@ function refreshCharPanel(){
       const r2 = b2.getBoundingClientRect();
       const items2 = JOBS.filter(([jk]) => {
         if(jk === 'research' || jk === 'craft')
-          return targets.some(u => !u.undead || u.lich || u.lieutenant);
+          return targets.some(u => mindedDead(u));
         return true;
       }).map(([jk, jl]) => ({
         label: (targets.every(u => ((which === 2 ? u.job2 : u.job) || null) === jk) ? '● ' : '   ') + jl,
         fn: () => {
           for(const u of targets){
-            if((jk === 'research' || jk === 'craft') && u.undead && !u.lich && !u.lieutenant) continue;
+            if((jk === 'research' || jk === 'craft') && !mindedDead(u)) continue;
             if(which === 2){ u.job2 = jk; }
             else { u.job = jk; if(!jk){ u.gather = null; u.gatherT = 0; } u.jobNodeT = 0; u.patrolPost = null;
                    if(jk === 'guard') u.guardTarget = targets.find(o => o !== u) || null; }
@@ -10946,13 +11067,13 @@ function refreshCharPanel(){
     const items = JOBS.filter(([jk]) => {
       /* the mindless dead can haul and fight, but they cannot study, craft or keep a watch */
       if(jk === 'research' || jk === 'craft')
-        return targets.some(u => !u.undead || u.lich || u.lieutenant);
+        return targets.some(u => mindedDead(u));
       return true;
     }).map(([jk, jl]) => ({
       label: (targets.every(u => (u.job || null) === jk) ? '● ' : '   ') + jl,
       fn: () => {
         for(const u of targets){
-          if((jk === 'research' || jk === 'craft') && u.undead && !u.lich && !u.lieutenant) continue;
+          if((jk === 'research' || jk === 'craft') && !mindedDead(u)) continue;
           u.job = jk;
           if(!jk){ u.gather = null; u.gatherT = 0; }
           u.jobNodeT = 0; u.patrolPost = null;
@@ -11096,7 +11217,7 @@ function openScriptorium(){
 /* THE FOUR ARTS: tuition in insight. The specialty is cheap; everything else costs double. */
 {
   const pupils = player().filter(u => u.state === 'ok' && u.race !== 'chimera' && !u.nascent && !u.settler
-    && (!u.undead || u.lich || u.lieutenant));
+    && mindedDead(u));
   if(pupils.length){
     const h4 = document.createElement('div');
     h4.style.cssText = 'margin:12px 0 4px;color:#a98ad4;letter-spacing:2px';
@@ -11152,7 +11273,7 @@ function openScriptorium(){
     });
   }
 }
-    if(!player().some(u => u.state === 'ok' && (!u.undead || u.lich || u.lieutenant) && u.race !== 'chimera' && !u.nascent && !u.settler)){
+    if(!player().some(u => u.state === 'ok' && mindedDead(u) && u.race !== 'chimera' && !u.nascent && !u.settler)){
       const none = document.createElement('div');
       none.style.cssText = 'color:var(--dust);font-size:12px';
       none.textContent = 'Nobody here can hold a formula in their head. The mindless dead cannot study, and a chimera never will.';
@@ -12102,7 +12223,7 @@ cv.addEventListener('mousedown', e => {
       }
       const ph = phylacteries.find(p => !p.carried && p._rect && e.clientX >= p._rect.x && e.clientX <= p._rect.x + p._rect.w && e.clientY >= p._rect.y && e.clientY <= p._rect.y + p._rect.h);
       if(ph){
-        const c = movers.filter(m => !m.phyl && (!m.undead || m.lich || m.lieutenant))
+        const c = movers.filter(m => !m.phyl && mindedDead(m))
           .sort((a,b2)=>dist(a.x,a.y,ph.x,ph.y)-dist(b2.x,b2.y,ph.x,ph.y))[0];
         if(!c){ log('Only a mind can carry a soul. Send someone who has one.', 'bad'); return; }
         if(c){ clearOrders(c); c.phylTarget = ph; log(`${c.name} goes to retrieve ${ph.soul.name}.`); return; }
@@ -12345,7 +12466,7 @@ cv.addEventListener('mousedown', e => {
     const bpHit = blueprints.find(b => wx >= b.x - 0.4 && wx <= b.x + b.w + 0.4 &&
                                        wy >= b.y - 0.4 && wy <= b.y + b.h + 0.4);
     if(bpHit){
-      const hands = movers.filter(m => !m.undead || m.lich || m.lieutenant);
+      const hands = movers.filter(m => mindedDead(m));
       const crew = hands.length ? hands : movers;
       for(const m of crew){
         clearOrders(m);
@@ -12696,6 +12817,11 @@ function audienceOdds(kind, L, t){
 }
 /* ---------- the ruler's desk ---------- */
 function orderWord(o){ return o >= 75 ? 'devoted' : o >= 55 ? 'steady' : o >= 40 ? 'restless' : o >= 25 ? 'resentful' : 'mutinous'; }
+/* the servitor keeping this hall's books, if one is in residence */
+function townClerk(t){
+  const r = t.def && t.def.wall ? t.def.wall.r : 12;
+  return chars.find(c => c.servitor && c.faction === 'player' && c.state === 'ok' && dist(c.x, c.y, t.x, t.y) < r) || null;
+}
 function resolvePetition(t, p, eff){
   t.petitions.splice(t.petitions.indexOf(p), 1);
   switch(eff){
@@ -12741,8 +12867,16 @@ function openRule(px, py, t){
   items.push({label:`ORDER: ${Math.round(t.order)} — ${orderWord(t.order).toUpperCase()}`, fn:()=>{
     log(`${t.name}: order ${Math.round(t.order)} (${orderWord(t.order)}). Wars, unanswered petitions, and restless dead erode it; pacts, feasts, and judgments shore it up. Below 25, expect knives.`);
   }});
+  {
+    const clerk = townClerk(t);
+    items.push({label: clerk ? `CLERK: ${clerk.name} — the books are kept` : 'CLERK: none — the books keep themselves badly', fn:()=>{
+      log(clerk
+        ? `${clerk.name} attends this hall. Petitions no longer rot on the desk — the first time one runs out of days it files a holding answer instead, and the matter waits for your judgment. Order drifts a little kinder for it.`
+        : `No servitor attends this hall. Station one inside the walls and the paperwork stops going missing: petitions get a stay of execution instead of costing you order.`);
+    }});
+  }
   for(const p of (t.petitions||[])){
-    items.push({label:`◆ ${p.txt}`, fn:()=>{
+    items.push({label:`◆ ${p.txt}${p.filed ? ' (held over by your clerk)' : ''}`, fn:()=>{
       showCtxMenu(px, py, p.opts.map(([lbl, eff]) => ({label: lbl, fn:()=>resolvePetition(t, p, eff)}))
         .concat([{label:'(LEAVE IT ON THE DESK)', fn:()=>{}}]));
     }});
@@ -13037,6 +13171,7 @@ function snapshot(){
     followId: c.follow ? c.follow.id : null,
     job:c.job, job2:c.job2||null, grp:c.grp||null, heldAt:c.heldAt||null, heldT:c.heldT||0, midden:c.midden||null, caveId:c.caveId||null, roomId:(c.roomId??null), caveDweller:!!c.caveDweller, floor: c.floor||0, captured:!!c.captured, dragId: c.drag ? c.drag.id : null,
     clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
+    servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0,
     bindWeight:c.bindWeight, shortTag:c.shortTag,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
@@ -13064,7 +13199,7 @@ function snapshot(){
     townState: towns.map(t => ({warWithI: t.warWith ? towns.indexOf(t.warWith) : -1,
       warDay: t.warDay||0, plague: t.plague||0, plagueCd: t.plagueCd||0, sacked: t.sacked||0, uprising: !!t.uprising,
       stock: {...(t.stock||{})}, leaderSeats: t.leaderSeats||0, playerRuled: !!t.playerRuled, settlerT: t.settlerT||0,
-      order: t.order ?? 55, pacts: {...(t.pacts||{})}, petitions: (t.petitions||[]).map(p=>({k:p.k, txt:p.txt, opts:p.opts, expires:p.expires})),
+      order: t.order ?? 55, pacts: {...(t.pacts||{})}, petitions: (t.petitions||[]).map(p=>({k:p.k, txt:p.txt, opts:p.opts, expires:p.expires, filed:!!p.filed})),
       feastCd: t.feastCd||0, rebelDay: t.rebelDay||0, promise: t.promise ? {...t.promise} : null,
       project: t.project ? {...t.project} : null, projectsDone: {...(t.projectsDone||{})}, lastTribute: t.lastTribute||0,
       caravanOut: t.caravanOut ? {...t.caravanOut, dest: {...t.caravanOut.dest}} : null})),
@@ -13195,6 +13330,8 @@ function restore(d){
     } c.floor = s.floor || 0; c.captured = !!s.captured;
     c.clawDmg = s.clawDmg || 0; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.eatsDead = !!s.eatsDead;
     c.structMult = s.structMult || 1; c.bindWeight = s.bindWeight || 1; c.shortTag = s.shortTag || '';
+    c.servitor = !!s.servitor; c.minded = !!s.minded; c.crafted = !!s.crafted; c.autoFight = !!s.autoFight;
+    c.onlyArt = s.onlyArt || null; c.speedMult = s.speedMult || 0;
     c.neutral = !!s.neutral; c.provoked = !!s.provoked; c.bossKey = s.bossKey || null; c.dropItems = s.dropItems || null;
     c.scholar = !!s.scholar; c.quest = s.quest || null; c.questsDone = s.questsDone || 0; c.offered = !!s.offered;
     c.immortal = s.immortal || null; c.questGive = s.questGive || null; c.questDone = !!s.questDone; c.friendly = !!s.friendly; c.construct = !!s.construct; c.redoubtId = s.redoubtId || null;
