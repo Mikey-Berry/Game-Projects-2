@@ -9247,8 +9247,186 @@ const syncBlueprints = makeDynGroup(
       g.add(m);
     }
   });
+/* ---------- WHAT YOU BUILT, AND WHAT IT IS FOR ----------
+   Thirteen of these used to be the same 1.8m brown box: every kiln, smelter, vat, charnel
+   house, ossuary, war table and all seven storage bins. They also ignored their own
+   footprint, so a 3x3 Ossuary drew as a small crate sitting in nine blocked tiles.
+   Everything here goes through box(), so it all batches; and because it is generated
+   rather than authored, it can show what the building is DOING — a lit kiln, a full ore
+   bin, a vat with something in it. That is the argument for keeping it procedural. */
+const PB = {
+  wall:'#6a5a44', timber:'#5f4c33', timberDk:'#42341f', post:'#4a3b2a',
+  stone:'#6e675c', stoneDk:'#4c4740', iron:'#3c3a38', ironLt:'#6b6560',
+  cloth:'#8a7a5a', pale:'#d8ccb0', paper:'#efe6d2',
+  ember:'#e06a2a', emberDim:'#5a3220', flesh:'#8a5a52', bile:'#6f7a3a',
+  bone:'#c9bfa8', occult:'#8a6ab5', gold:'#c8a24a', ore:'#4a4a52', coal:'#26241f',
+};
+/* how full is it, 0..1 — the one number every bin's look hangs off */
+function binFill(b){
+  const cap = BIN_CAP[b.type] || 1;
+  return clamp(binLoad(b) / cap, 0, 1);
+}
+/* ---- storage: seven of these, and they should not be seven of the same crate ---- */
+function drawBin(g, b, cx0, cz0, y){
+  const f = binFill(b);
+  switch(b.type){
+    case 'rick': {
+      /* a lumber rick is a stack of logs and nothing else */
+      const rows = 1 + Math.round(f * 3);
+      for(let r = 0; r < rows; r++)
+        for(let i = 0; i < 3; i++)
+          box(g, 0.86, 0.17, 0.17, r % 2 ? PB.timber : PB.timberDk,
+              cx0 + (r % 2 ? 0 : (i-1)*0.005), y + 0.11 + r*0.18, cz0 + (i-1)*0.19);
+      for(const sx of [-1, 1]) box(g, 0.09, 0.95, 0.09, PB.post, cx0 + sx*0.46, y + 0.47, cz0);
+      break;
+    }
+    case 'spile': {
+      /* stone does not stack tidily; it heaps */
+      const lv = 1 + Math.round(f * 2);
+      for(let l = 0; l < lv; l++){
+        const w = 0.9 - l*0.24;
+        box(g, w, 0.2, w, l % 2 ? PB.stone : PB.stoneDk, cx0, y + 0.1 + l*0.2, cz0);
+      }
+      break;
+    }
+    case 'orebin': {
+      /* an iron-banded hopper, and you can see the dark of it from above */
+      box(g, 0.86, 0.66, 0.86, PB.stoneDk, cx0, y + 0.33, cz0);
+      for(const yy of [0.16, 0.5]) box(g, 0.92, 0.09, 0.92, PB.iron, cx0, y + yy, cz0, false);
+      if(f > 0.03) box(g, 0.7, 0.06 + f*0.28, 0.7, PB.ore, cx0, y + 0.36 + f*0.14, cz0, false);
+      box(g, 0.3, 0.22, 0.3, PB.coal, cx0 + 0.2, y + 0.72, cz0 - 0.15, false);
+      break;
+    }
+    case 'larder': {
+      /* a food store is a box under a cloth, up off the ground */
+      for(const [sx, sz] of [[-1,-1],[1,-1],[-1,1],[1,1]])
+        box(g, 0.09, 0.24, 0.09, PB.post, cx0 + sx*0.34, y + 0.12, cz0 + sz*0.34);
+      box(g, 0.82, 0.5, 0.82, PB.timber, cx0, y + 0.49, cz0);
+      box(g, 0.9, 0.1, 0.9, PB.cloth, cx0, y + 0.78, cz0);
+      if(f > 0.4) box(g, 0.24, 0.24, 0.24, PB.bile, cx0 - 0.2, y + 0.9, cz0 + 0.15, false);
+      break;
+    }
+    case 'shed': {
+      /* the biggest store, so give it a roof and a lean */
+      box(g, 0.9, 0.72, 0.9, PB.timberDk, cx0, y + 0.36, cz0);
+      box(g, 1.02, 0.09, 1.02, PB.timber, cx0, y + 0.77, cz0);
+      box(g, 0.98, 0.07, 0.5, PB.cloth, cx0, y + 0.86, cz0 - 0.24, false);
+      if(f > 0.5) box(g, 0.5, 0.3, 0.28, PB.cloth, cx0, y + 0.15, cz0 + 0.5, false);
+      break;
+    }
+    case 'relic': {
+      /* the necromancer's pantry: a sealed cabinet, and it is lit from inside */
+      box(g, 0.72, 0.98, 0.62, PB.iron, cx0, y + 0.49, cz0);
+      box(g, 0.78, 0.1, 0.68, PB.stoneDk, cx0, y + 1.0, cz0);
+      box(g, 0.2, 0.2, 0.05, PB.occult, cx0, y + 0.62, cz0 + 0.33, false);
+      if(f > 0.25) box(g, 0.5, 0.06, 0.05, PB.bone, cx0, y + 0.35, cz0 + 0.32, false);
+      break;
+    }
+    default: {
+      /* the general bin: an open crate you can see the level in */
+      box(g, 0.86, 0.62, 0.86, PB.timber, cx0, y + 0.31, cz0);
+      for(const sz of [-1, 1]) box(g, 0.92, 0.1, 0.08, PB.timberDk, cx0, y + 0.5, cz0 + sz*0.43, false);
+      if(f > 0.03) box(g, 0.7, 0.05 + f*0.42, 0.7, PB.cloth, cx0, y + 0.28 + f*0.2, cz0, false);
+      break;
+    }
+  }
+}
+/* ---- workstations: sized to their own footprint, and showing whether they are running ---- */
+function drawStation(g, b, cx0, cz0, y){
+  const W2 = Math.max(1.2, b.w - 0.25), D2 = Math.max(1.2, b.h - 0.25);   /* the bug: this was 1.8, always */
+  const live = !b.off;
+  switch(b.type){
+    case 'kiln':
+      /* a beehive kiln: a stepped dome with a stoke hole at the foot */
+      box(g, W2*0.86, 0.5, D2*0.86, PB.stone, cx0, y + 0.25, cz0);
+      box(g, W2*0.66, 0.42, D2*0.66, PB.stone, cx0, y + 0.68, cz0);
+      box(g, W2*0.4, 0.3, D2*0.4, PB.stoneDk, cx0, y + 1.02, cz0);
+      box(g, 0.34, 0.3, 0.18, live ? PB.ember : PB.emberDim, cx0, y + 0.2, cz0 + D2*0.44, false);
+      if(live) box(g, 0.3, 0.12, 0.3, PB.ember, cx0, y + 1.2, cz0, false);
+      break;
+    case 'smelter':
+      /* squat furnace, tall stack, a tap at the front */
+      box(g, W2*0.8, 0.8, D2*0.8, PB.stoneDk, cx0, y + 0.4, cz0);
+      box(g, W2*0.3, 1.5, D2*0.3, PB.stone, cx0 - W2*0.2, y + 0.95, cz0 - D2*0.2);
+      box(g, W2*0.38, 0.12, D2*0.38, PB.iron, cx0 - W2*0.2, y + 1.72, cz0 - D2*0.2, false);
+      box(g, 0.3, 0.26, 0.2, live ? PB.ember : PB.emberDim, cx0, y + 0.3, cz0 + D2*0.4, false);
+      box(g, 0.5, 0.1, 0.3, PB.iron, cx0 + W2*0.22, y + 0.86, cz0 + D2*0.2, false);
+      break;
+    case 'vat':
+      /* an open tank with something in it that should not be */
+      for(const [sx, sz] of [[-1,-1],[1,-1],[-1,1],[1,1]])
+        box(g, 0.12, 0.9, 0.12, PB.iron, cx0 + sx*W2*0.38, y + 0.45, cz0 + sz*D2*0.38);
+      box(g, W2*0.86, 0.62, D2*0.86, PB.ironLt, cx0, y + 0.6, cz0);
+      box(g, W2*0.72, 0.1, D2*0.72, live ? PB.bile : PB.stoneDk, cx0, y + 0.9, cz0, false);
+      box(g, W2*0.94, 0.1, D2*0.94, PB.iron, cx0, y + 0.94, cz0, false);
+      break;
+    case 'charnel':
+      /* a long open shed, and a rail of hooks under it */
+      for(const sx of [-1, 1])
+        box(g, 0.16, 1.7, 0.16, PB.post, cx0 + sx*W2*0.42, y + 0.85, cz0 - D2*0.36);
+      for(const sx of [-1, 1])
+        box(g, 0.16, 1.7, 0.16, PB.post, cx0 + sx*W2*0.42, y + 0.85, cz0 + D2*0.36);
+      box(g, W2, 0.12, D2*0.9, PB.timberDk, cx0, y + 1.76, cz0);
+      box(g, W2*0.8, 0.08, 0.08, PB.iron, cx0, y + 1.55, cz0, false);
+      for(let i = 0; i < 3; i++)
+        box(g, 0.1, 0.5, 0.1, PB.flesh, cx0 - W2*0.28 + i*W2*0.28, y + 1.25, cz0, false);
+      box(g, W2*0.5, 0.3, D2*0.4, PB.timber, cx0, y + 0.15, cz0 - D2*0.25, false);
+      break;
+    case 'ossuary':
+      /* stacked bone, walled up and squared off */
+      box(g, W2*0.9, 1.3, D2*0.9, PB.stoneDk, cx0, y + 0.65, cz0);
+      box(g, W2, 0.16, D2, PB.stone, cx0, y + 1.36, cz0);
+      for(let i = 0; i < 5; i++)
+        box(g, W2*0.72, 0.1, 0.1, PB.bone, cx0, y + 0.35 + i*0.22, cz0 + D2*0.46, false);
+      box(g, 0.5, 0.5, 0.12, PB.occult, cx0, y + 1.0, cz0 + D2*0.47, false);
+      break;
+    case 'wartable':
+      /* a map weighted with lead soldiers */
+      for(const [sx, sz] of [[-1,-1],[1,-1],[-1,1],[1,1]])
+        box(g, 0.13, 0.62, 0.13, PB.post, cx0 + sx*W2*0.36, y + 0.31, cz0 + sz*D2*0.36);
+      box(g, W2*0.9, 0.11, D2*0.9, PB.timber, cx0, y + 0.67, cz0);
+      box(g, W2*0.74, 0.03, D2*0.74, PB.paper, cx0, y + 0.74, cz0, false);
+      for(let i = 0; i < 5; i++)
+        box(g, 0.1, 0.16, 0.1, i % 2 ? PB.gold : PB.iron,
+            cx0 - W2*0.24 + (i%3)*W2*0.24, y + 0.83, cz0 - D2*0.18 + Math.floor(i/3)*D2*0.3, false);
+      break;
+    case 'forge':
+      box(g, W2*0.8, 0.8, D2*0.8, '#4a3028', cx0, y + 0.4, cz0);
+      box(g, W2*0.26, 1.3, D2*0.26, PB.stoneDk, cx0 - W2*0.24, y + 0.9, cz0 - D2*0.24);
+      box(g, 0.44, 0.4, 0.44, live ? PB.ember : PB.emberDim, cx0, y + 0.92, cz0, false);
+      box(g, 0.5, 0.28, 0.26, PB.iron, cx0 + W2*0.2, y + 0.94, cz0 + D2*0.2, false);
+      break;
+    case 'r_bench':
+      box(g, W2*0.85, 0.72, D2*0.6, PB.timber, cx0, y + 0.36, cz0);
+      box(g, W2*0.95, 0.08, D2*0.7, PB.pale, cx0, y + 0.76, cz0, false);
+      box(g, 0.22, 0.3, 0.22, PB.occult, cx0 - W2*0.24, y + 0.95, cz0, false);
+      box(g, 0.16, 0.22, 0.16, PB.bile, cx0 + W2*0.1, y + 0.91, cz0 - 0.15, false);
+      box(g, 0.5, 0.04, 0.36, PB.paper, cx0 + W2*0.2, y + 0.82, cz0 + 0.12, false);
+      break;
+    case 'script':
+      box(g, W2*0.5, 0.75, D2*0.42, PB.timberDk, cx0, y + 0.38, cz0);
+      box(g, W2*0.68, 0.08, D2*0.55, PB.timber, cx0, y + 0.8, cz0, false);
+      box(g, W2*0.58, 0.04, D2*0.45, PB.paper, cx0 - 0.05, y + 0.86, cz0 + 0.04, false);
+      for(let i = 0; i < 3; i++)
+        box(g, 0.12, 0.34, 0.26, i ? PB.timberDk : PB.occult,
+            cx0 + W2*0.32, y + 0.17 + 0.34*0, cz0 - D2*0.2 + i*0.2, false);
+      break;
+    case 'workbench':
+      box(g, W2*0.85, 0.62, D2*0.55, PB.timber, cx0, y + 0.31, cz0);
+      box(g, W2*0.95, 0.1, D2*0.65, PB.cloth, cx0, y + 0.67, cz0, false);
+      box(g, W2*0.3, 0.06, 0.1, PB.iron, cx0 - W2*0.2, y + 0.75, cz0 - 0.1, false);
+      box(g, 0.12, 0.3, 0.12, PB.timberDk, cx0 + W2*0.26, y + 0.87, cz0, false);
+      break;
+    default:
+      box(g, W2*0.85, 0.9, D2*0.85, '#5a4a34', cx0, y + 0.45, cz0);
+      break;
+  }
+}
 const syncPBuilds = makeDynGroup(
-  () => pBuilds.map(b => b.type + b.x + ',' + b.y + ',' + (b.hp|0)).join('|') + '#' + activeFloor,
+  /* the visuals read fill level and whether a thing is running, so the signature has to
+     notice both — bucketed, or a gatherer dropping one log would rebuild the whole group */
+  () => pBuilds.map(b => b.type + b.x + ',' + b.y + ',' + (b.hp|0) + ',' + (b.off?1:0) +
+        (isBin(b) ? ',' + Math.round(binLoad(b) / (BIN_CAP[b.type]||1) * 5) : '')).join('|') + '#' + activeFloor,
   (g) => {
     for(const b of pBuilds){
       const cxp = b.x + b.w/2, czp = b.y + b.h/2, y = groundY(cxp, czp);
@@ -9272,7 +9450,7 @@ const syncPBuilds = makeDynGroup(
           box(g, 0.95, 0.7, 0.95, '#6a5c46', i+0.5, y + FLOOR_H + 0.48, j+0.5);
         }
       }
-      else if(b.type==='wall') box(g, 0.95, 1.6, 0.95, '#6a5a44', b.x+0.5, y+0.8, b.y+0.5);
+      else if(b.type==='wall') box(g, 0.95, 1.6, 0.95, PB.wall, b.x+0.5, y+0.8, b.y+0.5);
       else if(b.type==='shack'){
         box(g, 3, 1.6, 3, '#5f4a33', cxp, y+0.8, czp);
         const roof = new THREE.Mesh(new THREE.ConeGeometry(2.4, 1.2, 4), mat('#4a3b2c'));
@@ -9293,18 +9471,8 @@ const syncPBuilds = makeDynGroup(
         box(g, 0.6, 1.0, 0.15, '#241d17', cxp, y+0.6, czp+0.9);
         box(g, 0.15, 0.15, 0.05, '#8a6ab5', cxp, y+0.9, czp+0.99, false);
       }
-      else { /* workstations */
-        const col = b.type==='forge' ? '#4a3028' : '#5a4a34';
-        box(g, 1.8, 0.9, 1.8, col, cxp, y+0.45, czp);
-        if(b.type==='forge') box(g, 0.4, 0.4, 0.4, '#e06a2a', cxp, y+1.0, czp, false);
-        if(b.type==='r_bench') box(g, 1.2, 0.1, 0.7, '#d8ccb0', cxp, y+0.95, czp, false);
-        if(b.type==='script'){                                   /* a lectern and the copied sheets on it */
-          box(g, 0.5, 0.7, 0.4, '#4a3a2a', cxp, y+0.35, czp, false);
-          box(g, 0.8, 0.08, 0.6, '#d8ccb0', cxp, y+0.78, czp, false);
-          box(g, 0.7, 0.05, 0.5, '#efe6d2', cxp - 0.1, y+0.84, czp + 0.05, false);
-        }
-        if(b.type==='workbench') box(g, 1.4, 0.1, 0.4, '#8a7a5a', cxp, y+0.95, czp, false);
-      }
+      else if(isBin(b)) drawBin(g, b, cxp, czp, y);
+      else drawStation(g, b, cxp, czp, y);
     }
   }
 );
