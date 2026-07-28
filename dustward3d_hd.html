@@ -8411,7 +8411,15 @@ for(let i=0; i<HV.length; i++) if(HV[i] > _terrMaxY) _terrMaxY = HV[i];
     spX.stroke();
   }
   const splatTex = new THREE.CanvasTexture(spC);
-  splatTex.magFilter = THREE.LinearFilter; splatTex.minFilter = THREE.LinearFilter;
+  /* The splat is 2048px stretched over 720 tiles of world and almost always seen at a
+     grazing angle, so minification is the normal case, not the edge case. LinearFilter
+     point-samples one mip level — the base one — which is why distant rock and scree
+     alternated into a checkerboard instead of blending into stone. Trilinear plus
+     anisotropy costs nothing here and is the difference between ground and static. */
+  splatTex.magFilter = THREE.LinearFilter;
+  splatTex.minFilter = THREE.LinearMipmapLinearFilter;
+  splatTex.generateMipmaps = true;
+  splatTex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   const groundMat = new THREE.MeshLambertMaterial({vertexColors:true, map: splatTex});
   for(let gz=0; gz<GC; gz++) for(let gx=0; gx<GC; gx++){
     const chunk = new THREE.Mesh(chunkGeo(gx, gz), groundMat);
@@ -9431,6 +9439,9 @@ function colorKeyOf(c){
 }
 const SKINS = ['#8a5c34', '#6e4426', '#a06c40', '#5a3820', '#96683a'];
 const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0'];
+/* Eyes. Everything on two legs had a blank slab for a face; at this camera the eye line is
+   the single strongest read a body has, and without it a crowd is a row of mannequins. */
+const EYES = ['#3a2a18', '#4a3520', '#2f4a52', '#3d5a46', '#5a4a2a', '#2a2a30'];
 const PALE = ['#e6e0d4', '#ded7c9', '#e9e3d8', '#d6cfc0'];               /* homunculus: bloodless, ashen */
 const SCALES = ['#a83a2a', '#b3702a', '#c9a23a', '#2f5aa8'];            /* scaleborn: red, copper, gold, cobalt */
 /* visible armor: overlay geometry per worn piece. THE swap-point for future real meshes —
@@ -9727,11 +9738,50 @@ function buildCharMesh(c){
     e.headG = new THREE.Group(); e.headG.position.set(0, 0.62, 0); e.spine.add(e.headG);
     e.boxBody.push(obox(0.1, 0.1, 0.1, skinCol, 0, 0.02, 0, e.headG));                /* neck */
     e.head = obox(0.3, 0.32, 0.3, skinCol, 0, 0.24, 0.01, e.headG);
+    /* ---------- the face ----------
+       Four boxes, in this order of importance: a shadowed band across the eye line, the
+       eyes sitting in it, a brow over it, a mouth under it. The band does most of the work
+       — it gives the head a front, which is what tells you which way somebody is looking
+       from thirty tiles up. Everything goes into boxBody so an authored body (the lich)
+       hides the whole face along with the rest of the plain geometry. */
+    if(!c.construct){
+      const dk = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
+      /* the socket goes dark and the iris comes up to meet it — a dark-on-dark eye
+         disappears entirely once the head is twelve pixels tall */
+      const lighten = (hex, k) => '#' + new THREE.Color(hex).lerp(new THREE.Color('#cfc4ad'), k).getHexString();
+      const hollowEyed = c.undead && !c.lich;
+      const band = hollowEyed ? '#120e0c' : dk(skinCol, 0.42);
+      e.boxBody.push(obox(0.235, 0.055, 0.02, band, 0, 0.265, 0.152, e.headG));
+      if(!hollowEyed){
+        /* the risen keep their sockets and lose what was in them */
+        const eyeCol = c.race==='hollow' ? '#f2d016'
+                     : c.race==='homunculus' ? '#f0ece4'
+                     : c.immortal === 'divine' ? '#f6efd6'
+                     : c.race==='scaleborn' ? '#d8a832'
+                     : lighten(EYES[Math.floor(h2*EYES.length)], 0.5);
+        const glow = c.race==='hollow' || c.race==='homunculus' || c.immortal === 'divine';
+        for(const ex of [-0.066, 0.066]){
+          const m = glow
+            ? mk(BOXG, ownGlow(eyeCol), 0.052, 0.042, 0.02, ex, 0.266, 0.158, e.headG)
+            : obox(0.052, 0.042, 0.02, eyeCol, ex, 0.266, 0.158, e.headG);
+          e.boxBody.push(m);
+        }
+      }
+      /* a brow gives the head an expression it does not otherwise have */
+      e.boxBody.push(obox(0.25, 0.028, 0.02, dk(skinCol, 0.72), 0, 0.303, 0.150, e.headG));
+      e.boxBody.push(obox(0.095, 0.022, 0.02, dk(skinCol, 0.5), 0, 0.176, 0.152, e.headG));
+    }
     if(c.race==='homunculus' && !c.undead)
       obox(0.32, 0.1, 0.32, '#efeae0', 0, 0.42, -0.02, e.headG);
     else if(!c.undead && c.race!=='scaleborn' && (fem ? h2 > 0.04 : h2 > 0.18)){
       const hc = HAIRS[Math.floor(h3*HAIRS.length)];
       obox(0.33, 0.11, 0.33, hc, 0, 0.42, -0.02, e.headG);
+      /* a beard on some of the men — at this range it is the difference between two
+         townsfolk and the same townsfolk twice */
+      if(!fem && h1 > 0.45 && !c.undead){
+        e.boxBody.push(obox(0.26, 0.10, 0.10, hc, 0, 0.155, 0.125, e.headG));
+        if(h2 > 0.55) e.boxBody.push(obox(0.12, 0.10, 0.09, hc, 0, 0.085, 0.115, e.headG));
+      }
       /* worn long, most of the time — it's the fastest read at this camera distance */
       if(fem && h1 > 0.22){
         obox(0.30, 0.26, 0.10, hc, 0, 0.28, -0.16, e.headG);          /* fall down the back */
@@ -9745,20 +9795,15 @@ function buildCharMesh(c){
       const wr = obox(0.07, 0.52, 0.3, '#4a5c38', 0.28, 0.32, -0.26, e.spine);
       wl.rotation.x = 0.25; wr.rotation.x = 0.25;
     }
-    if((c.race==='hollow' || c.race==='homunculus') && !c.undead){
-      const ec = c.race==='hollow' ? 0xf2d016 : 0xf0ece4;
-      for(const ex of [-0.07, 0.07]){
-        const eye = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color:ec}));
-        eye.scale.set(0.06, 0.055, 0.03); eye.position.set(ex, 0.26, 0.16); e.headG.add(eye);
-      }
-    }
     /* arms: shoulder pivot -> upper arm -> elbow pivot -> forearm (+ fist) */
     const mkArm = (side) => {
       const sh = new THREE.Group(); sh.position.set(side*0.31*SH, 0.52, 0); e.spine.add(sh);
       const up = obox(0.13*LIMB, 0.3, 0.13*LIMB, bodyCol, 0, -0.14, 0, sh);
       const el = new THREE.Group(); el.position.set(0, -0.3, 0); sh.add(el);
       const fore = obox(0.11*LIMB, 0.28, 0.11*LIMB, skinCol, 0, -0.14, 0, el);
-      const fist = obox(0.12*LIMB, 0.1, 0.12*LIMB, skinCol, 0, -0.3, 0, el);
+      /* a hand the same colour as the arm it hangs off is not a hand, it is a longer arm */
+      const handCol = '#' + new THREE.Color(skinCol).multiplyScalar(0.84).getHexString();
+      const fist = obox(0.125*LIMB, 0.105, 0.125*LIMB, handCol, 0, -0.3, 0, el);
       return {sh, el, fore, up, fist};
     };
     const aL = mkArm(-1), aR = mkArm(1);
