@@ -8783,6 +8783,104 @@ function groundY(x, y){ return Math.max(heightAt(x, y), -0.1); }
   for(const [k] of nodeUses){ const [nx,ny] = k.split(',').map(Number); if(nodeDepleted(nx,ny)) hideNodeInstance(k); }
 }
 
+/* ---------- ROOFS WITH A PITCH ----------
+   The roof has to stay ONE object per building, because syncRoofs lifts it away by
+   visibility when your people step inside — so it cannot be batched into shared instances
+   with everyone else's. Building it as a single merged geometry keeps that promise and
+   still costs exactly the one draw call the old flat slab cost. */
+/* a shade of a colour, for when a material is the same stuff in a different condition */
+function shade(hex, k){ return '#' + new THREE.Color(hex).multiplyScalar(k).getHexString(); }
+/* is this perimeter tile a corner? shutters do not go on corners */
+function edge0(i, j, b){
+  return (i===b.x || i===b.x+b.w-1) && (j===b.y || j===b.y+b.h-1);
+}
+function gableRoofGeo(w, d, h, over){
+  const X = w/2 + over, Z = d/2 + over;
+  const P = [];
+  const tri = (a,b,c) => P.push(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2]);
+  if(w >= d){
+    /* ridge runs along X */
+    const rA = [-X, h, 0], rB = [X, h, 0];
+    const n0 = [-X,0,-Z], n1 = [X,0,-Z], s0 = [-X,0,Z], s1 = [X,0,Z];
+    tri(n0, rB, n1); tri(n0, rA, rB);          /* north slope */
+    tri(s1, rA, s0); tri(s1, rB, rA);          /* south slope */
+    tri(n0, s0, rA); tri(s1, n1, rB);          /* the gable ends */
+  } else {
+    /* ridge runs along Z */
+    const rA = [0, h, -Z], rB = [0, h, Z];
+    const w0 = [-X,0,-Z], w1 = [-X,0,Z], e0 = [X,0,-Z], e1 = [X,0,Z];
+    tri(w1, rB, rA); tri(w1, rA, w0);
+    tri(e0, rA, rB); tri(e0, rB, e1);
+    tri(w0, rA, e0); tri(e1, rB, w1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  g.computeVertexNormals();
+  g.computeBoundingSphere();
+  return g;
+}
+/* a flat roof is still one merged object, so both kinds hang off b._roof the same way */
+function flatRoofGeo(w, d, t, over){
+  const g = new THREE.BoxGeometry(w + over*2, t, d + over*2);
+  g.translate(0, t/2, 0);
+  return g;
+}
+
+/* ---------- WHO BUILT IT, AND WHERE ----------
+   Two small tables compose into every building in the world. BUILD_STYLE says what a
+   building of this station looks like anywhere; TOWN_STYLE says what anything looks like
+   in this town. Eleven types and seven towns, not seventy-seven models. */
+const BUILD_STYLE = {
+  'HALL':         {pitch: 0.95, wallH: 2.6, kind: 'civic',  prop: 'banners'},
+  'BAR':          {pitch: 0.62, wallH: 2.3, kind: 'trade',  prop: 'awning'},
+  'INN':          {pitch: 0.72, wallH: 2.3, kind: 'trade',  prop: 'sign'},
+  'ARMOURY':      {pitch: 0.80, wallH: 2.2, kind: 'craft',  prop: 'forge'},
+  'OCCULTIST':    {pitch: 0.88, wallH: 2.2, kind: 'occult', prop: 'stones'},
+  'TRADE GOODS':  {pitch: 0.58, wallH: 2.2, kind: 'trade',  prop: 'crates'},
+  'ROBOTICS':     {pitch: 0.55, wallH: 2.3, kind: 'craft',  prop: 'pipes'},
+  'THE LOW ROOM': {pitch: 0,    wallH: 1.7, kind: 'occult', prop: 'steps'},
+  'BARRACKS':     {pitch: 0,    wallH: 2.2, kind: 'martial',prop: 'spears'},
+  'HOUSE':        {pitch: 0,    wallH: 2.0, kind: 'home',   prop: 'chimney'},
+  'KEEP':         {pitch: 0,    wallH: 2.8, kind: 'martial',prop: 'crenels'},
+};
+const BUILD_DEFAULT = {pitch: 0, wallH: 2.2, kind: 'home', prop: 'chimney'};
+/* Each town's own hand. wall/roof/trim are the palette; the flags are the local habit. */
+const TOWN_STYLE = {
+  dustport:   {wall:'#6d6a60', roof:'#33322c', trim:'#8a8072', accent:'#7a8a90', patched:true},
+  copperhold: {wall:'#7c7468', roof:'#2c4438', trim:'#8a7a4a', accent:'#c98a3a', stone:true},
+  greenrest:  {wall:'#6b5a3c', roof:'#463a1c', trim:'#5d6b3a', accent:'#8aa04a', thatch:true},
+  hollowmere: {wall:'#4a423c', roof:'#22201c', trim:'#5a5248', accent:'#7a5cb5', stilts:true},
+  saltmere:   {wall:'#ada593', roof:'#585349', trim:'#c6bfa9', accent:'#9aa8a4', shutters:true},
+  ironscar:   {wall:'#4c4440', roof:'#2b2926', trim:'#6a4a30', accent:'#c4543a', soot:true},
+  fallowend:  {wall:'#6b5a42', roof:'#503f1e', trim:'#7a6a50', accent:'#c8b070', charms:true, thatch:true},
+};
+const TOWN_DEFAULT = {wall:'#8c8272', roof:'#3a3630', trim:'#a89e8c', accent:'#d4a040'};
+function townStyle(t){ return (t && TOWN_STYLE[t.def.key]) || TOWN_DEFAULT; }
+/* box() batches by colour, so every distinct shade is another InstancedMesh. Ad-hoc
+   shade(x, 0.73)-style calls scattered through the builder took the static group from 21
+   batches to 180. A town gets a FIXED set of tones, computed once, and the builder may
+   only use these. */
+const _pal = {};
+function palette(t){
+  const key = (t && t.def.key) || '_default';
+  if(_pal[key]) return _pal[key];
+  const T = townStyle(t);
+  return _pal[key] = {
+    wall:    T.wall,
+    wallHi:  shade(T.wall, 1.14),      /* better stone, for a civic seat */
+    wallLo:  shade(T.wall, 0.86),      /* martial */
+    wallDk:  shade(T.wall, 0.68),      /* posts, chimneys, standing stones, occult walls */
+    floor:   shade(T.wall, 0.60),
+    trim:    T.trim,
+    trimDk:  shade(T.trim, 0.62),
+    roof:    T.roof,
+    roofDk:  shade(T.roof, 0.80),      /* slate over a hall, iron over a forge */
+    roofLt:  shade(T.roof, 1.16),      /* thatch */
+    accent:  T.accent,
+    style:   T,
+  };
+}
+
 /* ---------- static world structures ---------- */
 {
   const g = new THREE.Group();
@@ -8791,31 +8889,148 @@ function groundY(x, y){ return Math.max(heightAt(x, y), -0.1); }
     if(b.citadel) continue;   /* drawn dynamically — it changes with the storey you're on */
     const cxp = b.x + b.w/2, czp = b.y + b.h/2;
     const y = groundY(cxp, czp);
-    const wallCol = b.label==='KEEP' ? '#8c8272' : '#6b543c';
+    const B = BUILD_STYLE[b.label] || BUILD_DEFAULT;
+    const P = palette(b.town), T = P.style;
+    const hv = hash2(b.x*7 + 3, b.y*11 + 5);         /* this building's own small variations */
+    /* a hall is built out of better stuff than a house is, wherever it stands */
+    const wallCol = B.kind === 'civic'   ? (T.stone ? P.wall : P.wallHi)
+                  : B.kind === 'martial' ? P.wallLo
+                  : B.kind === 'occult'  ? P.wallDk
+                  : P.wall;
+    const roofCol = (B.kind === 'civic' || B.kind === 'craft' || B.kind === 'occult') ? P.roofDk
+                  : (T.thatch && B.kind === 'home') ? P.roofLt
+                  : P.roof;
+    const wallH = B.wallH;
+    const stilts = T.stilts && B.kind === 'home';
+    const lift = stilts ? 0.55 : 0;                  /* Hollowmere builds up out of the bog */
     /* perimeter walls, skipping the doorway */
     for(let j=b.y; j<b.y+b.h; j++) for(let i=b.x; i<b.x+b.w; i++){
       const edge = (i===b.x || i===b.x+b.w-1 || j===b.y || j===b.y+b.h-1);
       if(!edge) continue;
       if(j===b.y+b.h-1 && (i===b.door.x || i===b.door.x+1)) continue;
-      box(g, 0.98, 2.2, 0.98, wallCol, i+0.5, y+1.1, j+0.5);
+      const jitter = T.patched ? (hash2(i*13, j*17) - 0.5) * 0.16 : 0;   /* driftwood never matches */
+      box(g, 0.98, wallH + jitter, 0.98, wallCol, i+0.5, y + lift + (wallH+jitter)/2, j+0.5);
+      /* a shuttered town keeps its windows closed and a sooted one has none at all */
+      if(T.shutters && !edge0(i, j, b) && hash2(i*5, j*9) > 0.62)
+        box(g, 0.99, 0.42, 0.14, P.trim, i+0.5, y + lift + wallH*0.62,
+            j === b.y ? b.y + 0.03 : j === b.y+b.h-1 ? b.y+b.h-0.03 : j+0.5, false);
+    }
+    if(stilts){
+      /* posts under the corners, and the bog underneath */
+      for(const [px, pz] of [[b.x+0.6, b.y+0.6], [b.x+b.w-0.6, b.y+0.6],
+                             [b.x+0.6, b.y+b.h-0.6], [b.x+b.w-0.6, b.y+b.h-0.6]])
+        box(g, 0.16, lift + 0.1, 0.16, P.wallDk, px, y + lift/2, pz);
     }
     /* floor */
-    box(g, b.w-0.2, 0.06, b.h-0.2, '#4a3b2c', cxp, y+0.03, czp, false);
-    /* furniture: a counter for shops, tables for the bar, crates for the rest */
-    if(b.label==='BAR'){
-      box(g, 1.2, 0.55, 0.6, '#5a4630', b.x+2, y+0.28, b.y+2, false);
-      box(g, 1.2, 0.55, 0.6, '#5a4630', b.x+b.w-2.4, y+0.28, b.y+2.4, false);
-    } else if(b.label==='KEEP'){
-      box(g, 2.2, 0.5, 0.9, '#5a4630', cxp, y+0.25, b.y+1.4, false);       /* war table */
-      box(g, 0.5, 1.4, 0.1, '#f0ead8', cxp, y+1.4, b.y+0.55, false);       /* standard */
-    } else {
-      box(g, b.w-2.6, 0.6, 0.7, '#5a4630', cxp, y+0.3, b.y+1.1, false);    /* counter */
-      box(g, 0.7, 0.7, 0.7, '#6b5a40', b.x+1.2, y+0.35, b.y+b.h-1.8, false);
+    box(g, b.w-0.2, 0.06, b.h-0.2, P.floor, cxp, y + lift + 0.03, czp, false);
+    /* ---- the one prop that says what this place is ----
+       A prop that stands inside the footprint and stops below the ridge is a prop nobody
+       will ever see. Anything meant to read has to clear the eaves or stand off the wall. */
+    const rise = B.pitch > 0 ? Math.min(b.w, b.h) * 0.5 * B.pitch : 0.35;
+    const ridgeY = y + lift + wallH + rise;      /* world height of the roof's peak */
+    const eaveY  = y + lift + wallH;
+    const doorZ = b.y + b.h - 0.5, doorX = b.door.x + 1;
+    switch(B.prop){
+      case 'banners': {
+        const poleH = (ridgeY - y) + 0.7, pz = doorZ + 0.95;   /* clear of the overhang */
+        for(const sx of [-1, 1]){
+          const px = cxp + sx * (b.w/2 - 0.2);
+          box(g, 0.14, poleH, 0.14, P.trim, px, y + poleH/2, pz);
+          box(g, 0.5, 1.05, 0.07, P.accent, px, y + poleH - 0.75, pz + 0.1, false);
+        }
+        break;
+      }
+      case 'forge': {
+        /* a stack that is still warm, driven up through the roof, and the anvil it serves */
+        const sx2 = b.x + 1.1, sz = b.y + 1.1;
+        const stackH = (ridgeY - y) + 1.0;
+        box(g, 0.6, stackH, 0.6, P.wallDk, sx2, y + stackH/2, sz);
+        box(g, 0.72, 0.16, 0.72, P.floor, sx2, y + stackH + 0.06, sz);   /* the cap */
+        box(g, 0.34, 0.12, 0.34, '#c4543a', sx2, y + stackH + 0.18, sz, false);     /* still lit */
+        box(g, 0.55, 0.3, 0.32, P.trimDk, b.x + 1.2, y + 0.15, doorZ + 1.0, false);
+        break;
+      }
+      case 'sign': {
+        const sy = eaveY - 0.35, sz2 = doorZ + 0.75;
+        box(g, 0.12, 0.5, 0.12, P.trim, doorX + 1.5, sy + 0.25, sz2);            /* the post */
+        box(g, 1.0, 0.09, 0.12, P.trim, doorX + 1.05, sy + 0.45, sz2, false);    /* the bracket */
+        box(g, 0.8, 0.55, 0.08, P.accent, doorX + 1.05, sy + 0.1, sz2, false);   /* the board */
+        for(let i2 = 0; i2 < 3; i2++)
+          box(g, 0.42, 0.5, 0.42, P.trimDk, b.x + 0.7 + i2*0.5, y + 0.25, doorZ + 1.2);
+        break;
+      }
+      case 'awning':
+        box(g, b.w * 0.55, 0.08, 1.2, P.accent, doorX - 0.5, eaveY - 0.3, doorZ + 0.85, false);
+        for(const sx of [-1, 1])
+          box(g, 0.1, wallH - 0.3, 0.1, P.trim,
+              doorX - 0.5 + sx * b.w * 0.26, y + (wallH-0.3)/2, doorZ + 1.4);
+        for(let i2 = 0; i2 < 3; i2++)
+          box(g, 0.42, 0.5, 0.42, P.trimDk, b.x + 0.7 + i2*0.5, y + 0.25, b.y + 0.7);
+        break;
+      case 'crates':
+        box(g, b.w * 0.5, 0.07, 1.1, P.accent, doorX - 0.5, eaveY - 0.32, doorZ + 0.8, false);
+        for(let i2 = 0; i2 < 4; i2++){
+          const s2 = 0.38 + hash2(b.x+i2, b.y)*0.16;
+          box(g, s2, s2, s2, i2 % 2 ? P.trim : P.trimDk,
+              b.x + 0.75 + (i2%2)*0.62, y + s2/2 + (i2>1 ? 0.42 : 0), doorZ + 1.1 + Math.floor(i2/2)*0.6);
+        }
+        break;
+      case 'spears':
+        box(g, 1.8, 0.1, 0.14, P.trimDk, cxp, y + 1.05, doorZ + 0.75, false);
+        for(let i2 = 0; i2 < 5; i2++)
+          box(g, 0.05, 1.7, 0.05, P.trimDk, cxp - 0.7 + i2*0.35, y + 0.85, doorZ + 0.75);
+        break;
+      case 'stones':
+        for(let i2 = 0; i2 < 3; i2++){
+          const a2 = (i2/3) * Math.PI*2 + hv*3;
+          box(g, 0.3, 1.2 + hash2(b.x+i2, b.y+i2)*0.6, 0.24, P.wallDk,
+              cxp + Math.cos(a2) * (b.w/2 + 1.0), y + 0.7, czp + Math.sin(a2) * (b.h/2 + 1.0));
+        }
+        break;
+      case 'pipes':
+        for(let i2 = 0; i2 < 3; i2++)
+          box(g, 0.2, 1.1 + i2*0.35, 0.2, P.accent,
+              b.x + 0.7 + i2*0.45, y + wallH*0.5 + (1.1+i2*0.35)/2, b.y + 0.6);
+        box(g, 1.1, 0.5, 0.3, P.trimDk, cxp, y + wallH + 0.2, b.y + 0.5, false);
+        break;
+      case 'steps':
+        for(let i2 = 0; i2 < 3; i2++)
+          box(g, 1.6, 0.18, 0.5, P.wallDk, doorX - 0.5, y - 0.09 - i2*0.18, doorZ + 0.5 + i2*0.5, false);
+        break;
+      case 'crenels':
+        for(let i2 = 0; i2 < b.w; i2 += 2)
+          box(g, 0.7, 0.5, 0.7, wallCol, b.x + 0.5 + i2, y + wallH + 0.25, b.y + 0.5);
+        break;
+      default: {   /* chimney — and a charm over the door where they still salt the frames */
+        const cx2 = b.x + (hv > 0.5 ? 0.9 : b.w - 0.9);
+        const chH = (ridgeY - y) + 0.55;
+        box(g, 0.42, chH, 0.42, P.wallDk, cx2, y + chH/2, b.y + 0.9);
+        box(g, 0.54, 0.12, 0.54, P.floor, cx2, y + chH + 0.05, b.y + 0.9);
+        if(T.charms){
+          box(g, 0.9, 0.1, 0.1, P.accent, doorX - 0.5, y + lift + wallH - 0.25, doorZ + 0.08, false);
+          box(g, 0.12, 0.3, 0.06, P.accent, doorX - 0.5, y + lift + wallH - 0.5, doorZ + 0.08, false);
+        }
+        break;
+      }
     }
-    /* roof: lifts away when your people step inside */
-    const roof = new THREE.Mesh(BOXG, mat(b.label==='KEEP' ? '#3a3630' : '#38290f'));
-    roof.scale.set(b.w+0.3, 0.35, b.h+0.3);
-    roof.position.set(cxp, y+2.45, czp);
+    /* interior: a counter for a shop, tables for a bar, a war table for a keep */
+    if(b.label==='BAR'){
+      box(g, 1.2, 0.55, 0.6, P.trimDk, b.x+2, y+lift+0.28, b.y+2, false);
+      box(g, 1.2, 0.55, 0.6, P.trimDk, b.x+b.w-2.4, y+lift+0.28, b.y+2.4, false);
+    } else if(b.label==='KEEP'){
+      box(g, 2.2, 0.5, 0.9, '#5a4630', cxp, y+0.25, b.y+1.4, false);
+      box(g, 0.5, 1.4, 0.1, '#f0ead8', cxp, y+1.4, b.y+0.55, false);
+    } else if(B.kind === 'trade' || B.kind === 'craft' || B.kind === 'occult'){
+      box(g, b.w-2.6, 0.6, 0.7, P.trimDk, cxp, y+lift+0.3, b.y+1.1, false);
+      box(g, 0.7, 0.7, 0.7, P.trim, b.x+1.2, y+lift+0.35, b.y+b.h-1.8, false);
+    }
+    /* ---- the roof: still one object, so syncRoofs can still take it away ---- */
+    const over = B.pitch > 0 ? 0.24 : 0.15;
+    const rGeo = B.pitch > 0
+      ? gableRoofGeo(b.w, b.h, Math.min(b.w, b.h) * 0.5 * B.pitch, over)
+      : flatRoofGeo(b.w, b.h, 0.35, over);
+    const roof = new THREE.Mesh(rGeo, mat(roofCol));
+    roof.position.set(cxp, y + lift + wallH + 0.02, czp);
     roof.castShadow = true;
     g.add(roof);
     b._roof = roof;
