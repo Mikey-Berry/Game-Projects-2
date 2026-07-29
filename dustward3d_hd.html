@@ -10000,6 +10000,184 @@ const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0']
 const EYES = ['#3a2a18', '#4a3520', '#2f4a52', '#3d5a46', '#5a4a2a', '#2a2a30'];
 const PALE = ['#e6e0d4', '#ded7c9', '#e9e3d8', '#d6cfc0'];               /* homunculus: bloodless, ashen */
 const SCALES = ['#a83a2a', '#b3702a', '#c9a23a', '#2f5aa8'];            /* scaleborn: red, copper, gold, cobalt */
+/* ---------- WEAPONS ----------
+   Every weapon in the game used to be the same object: one 0.06 x 0.95 x 0.06 box in
+   bone white, hung off the right elbow. A plank, a masterwork katana, a hunting bow and
+   a golden-age plasma lance were pixel-identical. Fourteen keys, one appearance.
+
+   Each weapon is now a short list of boxes, baked once into a single vertex-coloured
+   BufferGeometry and cached by key. That matters: the character rig is not instanced, so
+   a weapon built from five separate meshes would have cost five meshes on every armed
+   body in the world. Merged, a weapon is one mesh — exactly what the box cost — and the
+   shape is free.
+
+   The frame: origin is where the fist closes. Blades hang down -Y, ranged weapons point
+   forward +Z. `rest` is how the thing sits in an idle hand. */
+const _boxSrc = (() => { const g = BOXG.index ? BOXG.toNonIndexed() : BOXG; return g; })();
+function mergeBoxes(parts){
+  const pos = [], nrm = [], col = [];
+  const sp = _boxSrc.attributes.position.array, sn = _boxSrc.attributes.normal.array;
+  const n = sp.length / 3;
+  const m = new THREE.Matrix4(), nMat = new THREE.Matrix3();
+  const v = new THREE.Vector3(), q = new THREE.Quaternion(), eu = new THREE.Euler();
+  const t = new THREE.Vector3(), sc = new THREE.Vector3(), c = new THREE.Color();
+  for(const b of parts){
+    eu.set(b.rx || 0, b.ry || 0, b.rz || 0);
+    q.setFromEuler(eu);
+    t.set(b.x || 0, b.y || 0, b.z || 0);
+    sc.set(b.w, b.h, b.d);
+    m.compose(t, q, sc);
+    nMat.getNormalMatrix(m);
+    c.set(b.col);
+    for(let i = 0; i < n; i++){
+      v.set(sp[i*3], sp[i*3+1], sp[i*3+2]).applyMatrix4(m);      pos.push(v.x, v.y, v.z);
+      v.set(sn[i*3], sn[i*3+1], sn[i*3+2]).applyMatrix3(nMat).normalize(); nrm.push(v.x, v.y, v.z);
+      col.push(c.r, c.g, c.b);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal',   new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('color',    new THREE.Float32BufferAttribute(col, 3));
+  g.computeBoundingSphere();
+  return g;
+}
+/* a small shared palette, so a steel edge is the same steel everywhere */
+const WC = {
+  steel:'#c3cad2', edge:'#e6ecf2', dull:'#8a929c', iron:'#4e4842', ironLt:'#6d6660',
+  rust:'#8a6a4c', rustLt:'#9c8064', wood:'#a98a5e', woodDk:'#7a6242', bow:'#7a5c34',
+  bowDk:'#4e3a22', wrap:'#2e2620', wrapDk:'#241c28', brass:'#9a7f38', gold:'#d8a83c',
+  ember:'#e0642a', emberHot:'#f0a03c', emberDk:'#8a3a1e', void:'#6a4c9c', voidLt:'#8a5cd8',
+  pale:'#b9b2c8', aether:'#5cc8d8', gun:'#7a828c', gunDk:'#3a3630', cord:'#d8d2c2',
+};
+const WEAPONS = {
+  /* scavenged: a board with a nail in it */
+  w_plank: {rest:{x:0.34}, parts:[
+    {w:0.15, h:0.88, d:0.035, y:-0.46, col:WC.wood},
+    {w:0.155,h:0.055,d:0.042, y:-0.74, col:WC.woodDk},
+    {w:0.075,h:0.16, d:0.05,  y:-0.06, col:WC.woodDk}]},
+  /* a bar with the weight all at the far end */
+  w_club: {rest:{x:0.34}, parts:[
+    {w:0.05, h:0.60, d:0.05,  y:-0.32, col:WC.iron},
+    {w:0.145,h:0.05, d:0.145, y:-0.58, col:WC.iron},
+    {w:0.125,h:0.20, d:0.125, y:-0.70, col:WC.ironLt},
+    {w:0.062,h:0.15, d:0.062, y:-0.03, col:WC.wrap}]},
+  /* pitted, and the edge has gone the colour of the rest of it */
+  w_rkat: {rest:{x:0.30, z:0.06}, parts:[
+    {w:0.045,h:0.20, d:0.045, y:-0.08, col:'#3a322a'},
+    {w:0.13, h:0.028,d:0.085, y:-0.19, col:'#6a5236'},
+    {w:0.040,h:0.66, d:0.018, y:-0.53, col:WC.rust},
+    {w:0.018,h:0.66, d:0.023, x:0.012, y:-0.53, col:WC.rustLt}]},
+  /* wrapped grip, brass tsuba, an edge you can see from across a street */
+  w_kat: {rest:{x:0.30, z:0.06}, parts:[
+    {w:0.045,h:0.22, d:0.045, y:-0.09, col:WC.wrap},
+    {w:0.14, h:0.030,d:0.09,  y:-0.21, col:WC.brass},
+    {w:0.042,h:0.72, d:0.020, y:-0.58, col:WC.steel},
+    {w:0.016,h:0.72, d:0.025, x:0.013, y:-0.58, col:WC.edge}]},
+  /* too long to hang straight down, so it rides further back */
+  w_nod: {rest:{x:0.52, z:0.10}, parts:[
+    {w:0.050,h:0.32, d:0.050, y:-0.14, col:'#26201c'},
+    {w:0.165,h:0.034,d:0.10,  y:-0.31, col:WC.brass},
+    {w:0.052,h:0.98, d:0.024, y:-0.81, col:'#b9c2cc'},
+    {w:0.018,h:0.98, d:0.030, x:0.016, y:-0.81, col:WC.edge}]},
+  /* limbs above and below the hand, string down the inside face */
+  w_bow: {rest:{x:0.10, y:1.45, z:0.14, pos:{x:0.13, y:-0.28, z:0.02}}, parts:[
+    {w:0.048,h:0.18, d:0.062, y: 0,    z: 0.035, col:WC.bowDk},
+    {w:0.036,h:0.34, d:0.05,  y: 0.22, z: 0.025, rx:-0.30, col:WC.bow},
+    {w:0.036,h:0.34, d:0.05,  y:-0.22, z: 0.025, rx: 0.30, col:WC.bow},
+    {w:0.028,h:0.10, d:0.04,  y: 0.40, z:-0.02,  col:WC.bowDk},
+    {w:0.028,h:0.10, d:0.04,  y:-0.40, z:-0.02,  col:WC.bowDk},
+    {w:0.012,h:0.84, d:0.012, y: 0,    z:-0.055, col:WC.cord}]},
+  /* a stock that points where you are pointing, and a lath across it */
+  w_xbow: {rest:{x:0.30, y:-0.16, pos:{x:0.09, y:-0.30, z:0.07}}, parts:[
+    {w:0.055,h:0.055,d:0.54, y: 0.02, z:0.22, col:'#5d4a30'},
+    {w:0.44, h:0.036,d:0.042,y: 0.02, z:0.42, col:WC.iron},
+    {w:0.05, h:0.13, d:0.07,  y:-0.07, z:0.03, col:'#3a322a'},
+    {w:0.40, h:0.012,d:0.012, y: 0.02, z:0.34, col:WC.cord},
+    {w:0.018,h:0.018,d:0.22,  y: 0.05, z:0.30, col:WC.dull}]},
+  /* a king's blade: broad, gold-collared, and it tapers to a fang */
+  w_kingsfang: {rest:{x:0.34, z:0.06}, parts:[
+    {w:0.050,h:0.26, d:0.050, y:-0.11, col:'#2a1e18'},
+    {w:0.090,h:0.07, d:0.070, y: 0.06, col:WC.gold},
+    {w:0.22, h:0.042,d:0.10,  y:-0.27, col:WC.gold},
+    {w:0.075,h:0.72, d:0.026, y:-0.65, col:'#cdd6de'},
+    {w:0.034,h:0.26, d:0.030, y:-1.13, col:WC.edge}]},
+  /* iron that never went out */
+  w_pyre: {rest:{x:0.30, z:0.06}, parts:[
+    {w:0.045,h:0.22, d:0.045, y:-0.09, col:'#2a1a14'},
+    {w:0.15, h:0.032,d:0.09,  y:-0.21, col:WC.emberDk},
+    {w:0.050,h:0.74, d:0.024, y:-0.60, col:WC.emberDk},
+    {w:0.022,h:0.74, d:0.030, x:0.014, y:-0.60, col:WC.ember},
+    {w:0.034,h:0.07, d:0.036, y:-1.00, col:WC.emberHot}]},
+  /* two prongs and the gap between them, which is the part that does the sundering */
+  w_sever: {rest:{x:0.30, z:0.06}, parts:[
+    {w:0.045,h:0.20, d:0.045, y:-0.08, col:WC.wrapDk},
+    {w:0.14, h:0.030,d:0.09,  y:-0.19, col:WC.void},
+    {w:0.026,h:0.70, d:0.022, x:-0.024,y:-0.56, col:WC.pale},
+    {w:0.026,h:0.70, d:0.022, x: 0.024,y:-0.56, col:WC.pale},
+    {w:0.022,h:0.62, d:0.014, y:-0.52, col:WC.voidLt}]},
+  /* not a blade at all: a golden-age firearm, held across the body */
+  w_lance: {rest:{x:0.34, y:-0.14, pos:{x:0.09, y:-0.30, z:0.05}}, parts:[
+    {w:0.065,h:0.10, d:0.26,  y:-0.01, z:0.08, col:WC.gunDk},
+    {w:0.050,h:0.13, d:0.15,  y:-0.10, z:-0.06,col:'#2a2620'},
+    {w:0.045,h:0.045,d:0.48,  y: 0.03, z:0.42, col:WC.gun},
+    {w:0.030,h:0.026,d:0.30,  y: 0.075,z:0.30, col:WC.aether},
+    {w:0.075,h:0.075,d:0.075, y: 0.03, z:0.66, col:WC.aether}]},
+};
+/* Crude iron is duller than good iron and masterwork is brighter; the tier you paid for
+   should be visible without opening the sheet. Multiplies the baked vertex colours. */
+const WEAPON_TIER_TINT = {c: 0.78, n: 1.0, f: 1.12, m: 1.26};
+const ARMOR_TIER_TINT  = {c: 0.82, n: 1.0, f: 1.10, m: 1.20};
+const _wepGeo = {};
+function weaponGeo(key){
+  const base = (ITEMS[key] && ITEMS[key].tierOf) || key;
+  const def = WEAPONS[base];
+  if(!def) return null;
+  if(!_wepGeo[base]){
+    _wepGeo[base] = mergeBoxes(def.parts);
+    /* every body holding this weapon shares this one geometry, so disposeTree must
+       leave it alone when a single character swaps or dies */
+    _sharedRes.add(_wepGeo[base]);
+  }
+  return _wepGeo[base];
+}
+let _shieldGeo = null;
+function shieldGeo(){
+  if(_shieldGeo) return _shieldGeo;
+  _shieldGeo = mergeBoxes([
+    {w:0.42, h:0.50, d:0.045, col:'#6d5636'},          /* the boards */
+    {w:0.44, h:0.055,d:0.055, y: 0.225, col:'#4a3a24'},/* banded top */
+    {w:0.44, h:0.055,d:0.055, y:-0.225, col:'#4a3a24'},/* and bottom */
+    {w:0.13, h:0.13, d:0.05,  z: 0.045, col:'#8a929c'},/* iron boss */
+  ]);
+  _sharedRes.add(_shieldGeo);       /* one shield geometry, every arm in the world */
+  return _shieldGeo;
+}
+/* Builds (or rebuilds) the thing in the right hand. Parented to the elbow and set at the
+   fist, not floating below it the way the old box was. */
+function rebuildWeapon(e, c){
+  if(e.weapon){ e.weapon.parent.remove(e.weapon); disposeTree(e.weapon); e.weapon = null; }
+  e.builtWeapon = c.weapon || null;
+  if(!c.weapon || c.beast || !e.elbR) return;
+  const geo = weaponGeo(c.weapon);
+  if(!geo) return;
+  const base = (ITEMS[c.weapon] && ITEMS[c.weapon].tierOf) || c.weapon;
+  const tier = (ITEMS[c.weapon] && ITEMS[c.weapon].tier) || 'n';
+  const k = WEAPON_TIER_TINT[tier] || 1;
+  const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({vertexColors: true}));
+  m.material.color.setScalar(k);
+  m.castShadow = true;
+  /* The elbow carries about -0.24 of idle rotation of its own, so a weapon that wants to
+     sit level has to cancel it — measured off the rig, not guessed. `pos` moves the grip
+     off the fist for the bulky things that would otherwise sit inside the hip. */
+  const r = WEAPONS[base].rest || {}, pz = r.pos || {};
+  m.position.set(pz.x || 0, pz.y === undefined ? -0.30 : pz.y, pz.z === undefined ? 0.05 : pz.z);
+  m.rotation.set(r.x || 0, r.y || 0, r.z || 0);
+  e.elbR.add(m);
+  e.weapon = m;
+  e.weaponMat = m.material;
+}
+
 /* visible armor: overlay geometry per worn piece. THE swap-point for future real meshes —
    replace the per-key blocks here and nothing else needs to know. */
 function rebuildArmorLayer(e, c){
@@ -10008,8 +10186,14 @@ function rebuildArmorLayer(e, c){
   e.armorParts = []; e.armorMats = [];
   e.builtArmor = c.armor || null;
   if(!c.armor || c.beast || !e.spine) return;
+  /* A Fine Iron Plate is keyed 'a_pla_f', and every case below is a base key — so every
+     crude, fine and masterwork suit in the game fell through to default and drew nothing.
+     Towns stock tiered leather from day one, so buying a jacket undressed you. */
+  const worn = (ITEMS[c.armor] && ITEMS[c.armor].tierOf) || c.armor;
+  const grade = ARMOR_TIER_TINT[(ITEMS[c.armor] && ITEMS[c.armor].tier) || 'n'] || 1;
   const put = (w, h, d, col, x, y, z, parent) => {
     const m2 = new THREE.Mesh(BOXG, new THREE.MeshLambertMaterial({color: col}));
+    m2.material.color.multiplyScalar(grade);
     m2.scale.set(w, h, d); m2.position.set(x, y, z); m2.castShadow = true;
     parent.add(m2);
     e.armorParts.push({mesh: m2, parent});
@@ -10017,7 +10201,7 @@ function rebuildArmorLayer(e, c){
     return m2;
   };
   const S = e.spine, HD = e.headG;
-  switch(c.armor){
+  switch(worn){
     case 'a_lea':      /* leather: a brown wrap and a belt */
       put(0.50, 0.40, 0.30, '#5a4630', 0, 0.36, 0, S);
       put(0.46, 0.08, 0.28, '#3e2f1e', 0, 0.12, 0, S);
@@ -10536,9 +10720,17 @@ function buildCharMesh(c){
     e.boxLeg = [lL.thigh, lR.thigh, lL.shin, lR.shin, lL.boot, lR.boot];
     /* the weapon lives in the right hand; the shield on the left forearm */
     rebuildArmorLayer(e, c);
-    e.weapon = obox(0.06, 0.95, 0.06, '#d8d2c2', 0, -0.62, 0.1, e.elbR);
-    e.weapon.rotation.x = 0.4;
-    e.shield = obox(0.06, 0.5, 0.4, '#8fb5d4', -0.08, -0.2, 0.05, e.elbL);
+    rebuildWeapon(e, c);
+    /* A shield is not an item — it appears only while someone is actually blocking — but a
+       flat pale-blue slab read as a scrap of card. Boards, banded rim, iron boss; merged to
+       one mesh for the same reason the weapons are, since every body in the world carries
+       one whether it is showing or not. */
+    e.shield = new THREE.Mesh(shieldGeo(), new THREE.MeshLambertMaterial({vertexColors: true}));
+    e.shieldMat = e.shield.material;
+    e.shield.position.set(-0.10, -0.24, 0.07);
+    e.shield.rotation.x = 0.10;
+    e.shield.castShadow = true;
+    e.elbL.add(e.shield);
     if(c.lich){
       /* authored parts, hung on the same bones the boxes used: the rig never learns the difference */
       for(const m of (e.boxArm||[])) m.visible = false;
@@ -10613,6 +10805,7 @@ function syncChars(dt){
     }
     if(!e.inScene){ scene.add(e.g); e.inScene = true; }
     if(!c.beast && e.builtArmor !== (c.armor || null)) rebuildArmorLayer(e, c);
+    if(!c.beast && e.builtWeapon !== (c.weapon || null)) rebuildWeapon(e, c);
     e.g.visible = true;
     const gy = groundY(c.x, c.y) + floorY(c.floor);
     let px = c.x, pz = c.y;
@@ -10794,7 +10987,7 @@ function syncChars(dt){
       };
       lim('l.arm', e.armL, e.armLm); lim('r.arm', e.armR, e.armRm);
       lim('l.leg', e.legL, e.legLm); lim('r.leg', e.legR, e.legRm);
-      e.weapon.visible = !!c.weapon && c.state!=='dead';
+      if(e.weapon) e.weapon.visible = !!c.weapon && c.state!=='dead';
       e.shield.visible = !!c.blocking;
     }
     /* dead grey-out + hit flash */
@@ -10807,6 +11000,15 @@ function syncChars(dt){
       else if(c.phantom){ m.opacity = 0.82; m.transparent = true; }
       else { m.opacity = 1; m.transparent = false; }
       if(c.state==='dead' && !m._greyed){ m.color.multiplyScalar(0.45); m._greyed = true; }
+    }
+    for(const m of [e.weaponMat, e.shieldMat]){
+      if(!m) continue;
+      const k = c.hitT > 0 ? clamp(c.hitT/0.14, 0, 1) : 0;
+      m.emissive.setRGB(k, k, k*0.85);
+      if(veiled){ m.opacity = 0.28; m.transparent = true; }
+      else if(c.phantom){ m.opacity = 0.82; m.transparent = true; }
+      else { m.opacity = 1; m.transparent = false; }
+      if(dead && !m._greyed){ m.color.multiplyScalar(0.45); m._greyed = true; }
     }
     for(const m of e.mats){
       const k = c.hitT > 0 ? clamp(c.hitT/0.14, 0, 1) : 0;
