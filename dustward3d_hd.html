@@ -424,6 +424,8 @@ const ITEMS = {
   w_sever: {name:'Sundering Edge',base:9500,type:'weapon', dmg:40, wt:'cut',    pre:true},
   a_carap: {name:'Alchemic Carapace', base:11000, type:'armor', pre:true, def:.52, pen:.30},
   codex:   {name:'Transmutation Codex', base:6000, type:'tome', codex:true},
+  sch_lance:{name:'Ordnance Schematic', base:7000, type:'tome', schematic:'aether_ordnance',
+    desc:'Linen-backed, folded eight times, and stamped along the edge with a requisition number nobody will ever honour. It is the emplaced pattern of the Aether Lance — every tolerance, every bracket, and a note in the margin reading FIT BEFORE THE 14th. They did not.'},
   lead:    {name:'Lead',          base:8,   type:'mat'},
   gold_bar:{name:'Gold Bar',      base:1400,type:'trade'},
   /* `ap` is armour piercing: the fraction of a suit's resistance the shot simply ignores.
@@ -829,7 +831,8 @@ function makeChar(name, faction, x, y, o={}){
     id: uid++, name, faction, x, y,
     stats: {atk:o.atk??2, def:o.def??2, tough:o.tough??2, ath:o.ath??2, medic:o.medic??2, magic:o.magic??1, labor:o.labor??2, armr:o.armr??1,
       blades:o.blades??1, blunt:o.blunt??1, ranged:o.ranged??1, martial:o.martial??1,
-      smithing:o.smithing??1, crafting:o.crafting??1, farming:o.farming??1, brewing:o.brewing??1},
+      smithing:o.smithing??1, crafting:o.crafting??1, farming:o.farming??1, brewing:o.brewing??1,
+      gunnery:o.gunnery??1},
     gift: (o.race==='chimera' ? null : (o.gift||null)), hollowTier: o.hollowTier??0, nascent: false, xpDebt: null, mana: 15 + Math.floor(o.magic??1), castCd: 0,
     concentrating: null,   /* {key, lock, exclusive} while sustaining a concentration spell */
     att: {divine:0, destruction:0, dark:0, dust:0, ...((o.gift && o.race!=='chimera') ? {[o.gift]: 2} : {})},
@@ -858,6 +861,9 @@ function makeChar(name, faction, x, y, o={}){
        strideD for every mover on every tick, and a hidden-class transition in that path is
        not worth a footstep. Neither needs saving — both re-derive within a second of play. */
     strideD: 0, swingT: 0,
+    /* gunnery: which mounted weapon this one has hold of, and the scan throttle for finding
+       one. Transient — emplacementTick re-derives `manning` every tick, so neither is saved. */
+    manning: null, gunT: 0,
     path: null, pathGoal: null, repathT: 0,
     hitT: 0, lungeT: 0, lungeDX: 0, lungeDY: 0,
     undead: false, master: null,
@@ -2026,7 +2032,11 @@ function placeDeepRedoubt(){
     loot:{cats:ri(150,300), items:{c_ingot:ri(6,12), tome:ri(1,2), formula_w:ri(1,2), ...(rnd()<0.5?{w_sever:1}:{})}}});
   chests.push({x:p.x, y:p.y-3, opened:false, vault:true, floor:2,
     loot:{cats:ri(400,800), items:{codex:1, tome:ri(2,4), formula_p:ri(1,2), c_ingot:ri(10,18),
-      a_carap:1, ...(rnd()<0.6?{w_lance:1}:{}), aether_cell:ri(3,8), ...(redoubts.length===0?{doctrine:1}:{})}}});
+      a_carap:1, ...(rnd()<0.6?{w_lance:1}:{}), ...(redoubts.length===0?{doctrine:1}:{}),
+      /* THE ORDNANCE SCHEMATIC. Three storeys down, behind the Keeper, in the only vault in
+         the world that still has anything worth sealing. The first redoubt raised carries it;
+         a second one would be a duplicate, and this is not a thing you should find twice. */
+      ...(redoubts.length===0?{sch_lance:1}:{})}}});
 
   buildings.push({x:x0, y:y0, w:HW*2+1, h:HH*2+1, label:'DEEP REDOUBT', door:{x:p.x, y:y1}, redoubt:true, deep:true, redoubtRef:r});
   redoubts.push(r);
@@ -2837,6 +2847,26 @@ function log(msg, cls=''){
 }
 /* a refusal the player asked for by clicking something. It says so, and it sounds like it. */
 function refuse(msg){ log(msg, 'bad'); AU.deny(); }
+/* WHAT READING A BOOK DOES. Most of them are practice and nothing more. A few are patterns —
+   read one of those and the knowledge is yours for the rest of the run, whatever happens to
+   the paper afterwards. The caller has already taken the item. */
+function readBook(c, k){
+  const it = ITEMS[k] || {};
+  if(it.schematic){
+    if(research.done[it.schematic]){
+      log(`${c.name} reads it through again. There is nothing in here you have not already built.`, '');
+      return;
+    }
+    research.done[it.schematic] = true;
+    log(`${c.name} reads the ${it.name} twice through, and then a third time. It can be built. `
+      + `Nine generations late, and it can be built.`, 'good');
+    AU.news(false);
+    refreshBuildBar && refreshBuildBar();
+    return;
+  }
+  xpGain(c, 'magic', 1.5);
+  log(`${c.name} studied the ${it.name || 'tome'}. MAG +1.5.`, 'good');
+}
 function chronTime(e){
   const hh = Math.floor(e.h), mm = Math.floor((e.h - hh) * 60);
   return `Day ${e.d}, ${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
@@ -3276,6 +3306,23 @@ const AU = (() => {
     shot(x, y){ if(ok('shot', 60)){ swept(1600, 700, 2.0, 0.09, 0.09, x, y, true); burst(900, 2.2, 0.11, 0.08, x, y); } },
     /* an arrow arriving. Different sound entirely from the string letting go. */
     thud(x, y){ if(ok('thud', 55)){ burst(200, 1.2, 0.28, 0.08, x, y); burst(1300, 3.0, 0.09, 0.03, x, y, true); } },
+    /* A TURRET is a winch and a sear and a great deal of stored energy: the mechanism lets go
+       first, and the limbs come round after it. Nothing about it sounds like a hand-bow. */
+    turret(x, y){
+      if(!ok('turret', 90)) return;
+      burst(2400, 6.0, 0.13, 0.02, x, y, true);        /* the sear */
+      ring(300, 0.10, 0.22, x, y);                     /* the frame taking the shock */
+      swept(1300, 380, 1.6, 0.11, 0.14, x, y, true);   /* the limbs */
+    },
+    /* A LANCE gathers first. That half-second of rising tone is the only warning anything
+       downrange is going to get, and then the air stops being air for a moment. */
+    lance(x, y){
+      if(!ok('lance', 260)) return;
+      tone('triangle', 180, 900, 0.10, 0.34, x, y);    /* the charge */
+      swept(400, 5200, 0.9, 0.20, 0.20, x, y, true);   /* the discharge */
+      tone('sine', 120, 40, 0.22, 0.60, x, y);         /* what it leaves behind */
+      ring(1500, 0.06, 0.9, x, y);
+    },
     sever(x, y){
       if(!ok('sever', 140)) return;
       burst(2200, 6.0, 0.20, 0.025, x, y, true);   /* the bone giving, which is the worst of it */
@@ -3803,7 +3850,9 @@ function nearShack(c){
 /* ============================================================ PLAYER BUILDINGS */
 const pBuilds = [];
 const BUILD_TYPES = {
-  wall:    {name:'Wall',      mats:3,  w:1, h:1, desc:'Blocks movement'},
+  wall:    {name:'Wall',      mats:3,  w:1, h:1, desc:'Blocks movement — and its top is a rampart your own people can stand on'},
+  rampart: {name:'Rampart Stair', cost:{wood:8, mats:4}, w:1, h:1,
+    desc:'A stair to the wall-tops. Without one, the rampart is a shelf nobody can reach'},
   shack:   {name:'Shack',     mats:25, w:3, h:3, desc:'Free bed inside — 8x healing'},
   farm:    {name:'Farm',      mats:20, w:2, h:2, desc:'Grows 3 greenfruit / day'},
   r_bench: {name:'Research Bench', mats:15, w:2, h:2, desc:'Unlock technology. Needs a living mind nearby.'},
@@ -3830,6 +3879,10 @@ const BUILD_TYPES = {
   relic:   {name:'Reliquary',    mats:12, w:1, h:1, desc:'Remains, Quickened Flesh and tomes — the necromancer\'s pantry'},
   wartable:{name:'War Table',    cost:{wood:12, mats:15, fabric:4}, w:2, h:2,
     desc:'A map of the world, weighted with lead soldiers. Read the seats, the grudges, and the wars from your own hall'},
+  turret:  {name:'Crossbow Turret', cost:{wood:14, mats:10, iron:2}, w:1, h:1, empl:'turret',
+    desc:'A geared bow on a swivel. Needs a hand on the GUNNERY job. Put it on a wall and it shoots down over it'},
+  lance:   {name:'Heavy Aetheric Lance', cost:{iron:16, c_ingot:10, lead:12, mats:14}, w:1, h:1, empl:'lance',
+    desc:'Golden-age ordnance, emplaced. It punches a hole clean through a column — and a gifted hand cannot touch it'},
   tower:   {name:'Watchtower',   cost:{stone:30, mats:18, wood:10}, w:3, h:3,
     desc:'Two storeys and a stair. Archers on the deck shoot over walls; nothing on the ground can reach them'},
 };
@@ -3852,6 +3905,23 @@ const UNDEAD_TYPES = {
     cost:{remains:2, copper:4, fabric:3},
     desc:'Latent alchemy, set in bone. It knows fire and will never know anything else'},
 };
+/* ---------- EMPLACEMENTS: weapons that are buildings ----------
+   A mounted weapon is not a unit and not furniture. It sits on a tile, it belongs to a
+   storey, and it does nothing at all until somebody on the GUNNERY job climbs up and puts
+   their hands on it. Everything the sim needs to know about one lives here.
+
+   `plunge` is the whole reason these exist: the simulation is otherwise strictly per-floor —
+   sight, pathing and violence all stop at a ceiling — but a parapet is not a ceiling. An
+   emplacement one storey up may fire down onto the dirt, provided the line taken across the
+   GROUND is clear. Which is to say: not through your own wall. */
+const EMPL = {
+  turret: {name:'Crossbow Turret', range:15, dmg:24, reload:2.4, wt:'pierce', hp:170,
+           pierce:1, aim:0.55, tag:'TUR'},
+  lance:  {name:'Heavy Aetheric Lance', range:22, dmg:72, reload:7.5, wt:'burn', hp:240,
+           pierce:4, aim:0.80, tag:'LNC', nullOnly:true, unlock:'aether_ordnance'},
+};
+function emplSpec(b){ return EMPL[(BUILD_TYPES[b.type] || {}).empl] || null; }
+function isEmpl(type){ return !!(BUILD_TYPES[type] && BUILD_TYPES[type].empl); }
 /* a base is a decision, not a marriage: take it apart and carry half of it away */
 /* blueprints: intent staked in the dirt. Materials walk over from the stores;
    hands turn them into walls. Labor makes the hands faster. */
@@ -3871,6 +3941,15 @@ function bpNeeded(bp){
 function deconstruct(b){
   const idx = pBuilds.indexOf(b);
   if(idx < 0) return;
+  /* pull the wall out from under a mounted weapon and the weapon comes down with it — before
+     the wall goes, so its own refund lands in the stores rather than being lost with it */
+  if(b.type === 'wall' || b.type === 'rampart' || b.type === 'tower'){
+    for(const e of pBuilds.slice()){
+      if(!isEmpl(e.type) || (e.floor || 0) !== 1) continue;
+      if(e.x < b.x || e.y < b.y || e.x >= b.x + b.w || e.y >= b.y + b.h) continue;
+      deconstruct(e);
+    }
+  }
   /* spill anything stored — the bin's contents were always yours */
   if(b.store) for(const [k, n] of Object.entries(b.store)) if(n > 0) stash[k] = (stash[k] || 0) + n;
   /* refund half of what it cost, rounded down */
@@ -3879,6 +3958,16 @@ function deconstruct(b){
   for(const [k, n] of Object.entries(cost)){
     const r2 = Math.floor(n * 0.5);
     if(r2 > 0){ stash[k] = (stash[k] || 0) + r2; back.push(`${r2} ${ITEMS[k] ? ITEMS[k].name : k}`); }
+  }
+  /* AN EMPLACEMENT OWNS NO GROUND. It never blocked a tile and it never built a deck — it was
+     bolted to whatever was already there. Tearing the footprint up would take the rampart out
+     from under the wall it is standing on, so it gets none of the cleanup below. */
+  if(isEmpl(b.type)){
+    if(b.gunnerId){ const g = charById.get(b.gunnerId); if(g) g.manning = null; }
+    pBuilds.splice(idx, 1);
+    log(`The ${BUILD_TYPES[b.type].name} is unbolted and carried down. Recovered: ${back.length ? back.join(', ') : 'nothing worth carrying'}.`, 'good');
+    refreshInv();
+    return;
   }
   /* unblock the footprint on every storey it could have touched */
   for(let j = b.y - 1; j <= b.y + b.h + 1; j++) for(let i = b.x - 1; i <= b.x + b.w + 1; i++){
@@ -3907,6 +3996,22 @@ function placeStructure(type, tx, ty){
   const b = {type, x:tx, y:ty, w:bt.w, h:bt.h, growth:0};
   if(type==='wall'){ b.hp = 250; b.maxHp = 250; }
   pBuilds.push(b);
+  /* a wall's top is a rampart. It always was, structurally — the game just never let anyone
+     stand on it. Reaching it is a separate problem, and the Rampart Stair is the answer. */
+  if(type==='wall') decks.add(bkey(tx, ty, 1));
+  if(type==='rampart'){
+    decks.add(bkey(tx, ty, 1));
+    stairs.push({x: tx, y: ty, from: 0, to: 1});
+  }
+  /* an emplacement belongs to the storey it was raised on: on a wall or a deck it stands
+     upstairs, on open dirt it stands in the dirt. Nothing about it blocks a tile — you can
+     walk past your own turret. */
+  if(isEmpl(type)){
+    const spec = EMPL[BUILD_TYPES[type].empl];
+    b.floor = (pBuilds.some(o => o.type==='wall' && o.x===tx && o.y===ty) || decks.has(bkey(tx, ty, 1))) ? 1 : 0;
+    b.hp = spec.hp; b.maxHp = spec.hp;
+    b.cool = 0; b.gunnerId = 0; b.facing = 0; b.shots = 0;
+  }
   if(type==='wall' || BIN_CAP[type] != null) blocked.add(bkey(tx, ty));
   if(BIN_CAP[type] != null) b.store = {};
   if(type==='r_bench' || type==='script' || type==='workbench' || type==='forge' || type==='crypt' || type==='kiln' || type==='smelter' || type==='vat'){
@@ -3958,9 +4063,27 @@ function canAfford(cost){
 }
 function tryBuild(type, tx, ty){
   const bt = BUILD_TYPES[type];
-  for(let j=ty;j<ty+bt.h;j++) for(let i=tx;i<tx+bt.w;i++){
-    if(isBlocked(i+.5, j+.5)) { log('Blocked ground.', 'bad'); return false; }
+  /* AN EMPLACEMENT MAY STAND ON A WALL, which is the entire point of one, so it is the one
+     thing allowed to be staked out on ground the collision map calls solid. Anywhere else it
+     wants clear dirt or an existing deck like everything else does. */
+  const onWall = isEmpl(type) && pBuilds.some(o => o.type==='wall' && o.x===tx && o.y===ty);
+  const onDeck = isEmpl(type) && decks.has(bkey(tx, ty, 1));
+  if(isEmpl(type)){
+    const spec = EMPL[bt.empl];
+    if(spec.unlock && !research.done[spec.unlock]){
+      refuse(`Nobody here knows how to build a ${bt.name}. Somebody wrote the pattern down, once.`); return false;
+    }
+    if(pBuilds.some(o => isEmpl(o.type) && o.x===tx && o.y===ty)){
+      refuse('There is already a weapon mounted there.'); return false;
+    }
+    if(blueprints.some(o => isEmpl(o.type) && o.x===tx && o.y===ty)){
+      refuse('That mount is already staked out.'); return false;
+    }
   }
+  if(!onWall) for(let j=ty;j<ty+bt.h;j++) for(let i=tx;i<tx+bt.w;i++){
+    if(isBlocked(i+.5, j+.5)) { refuse('Blocked ground.'); return false; }
+  }
+  if(type==='rampart' && decks.has(bkey(tx, ty, 1))){ refuse('There is already a way up there.'); return false; }
   /* not inside towns you don't own; your own city is yours to build in */
   if(towns.some(t => !t.playerRuled && dist(t.x,t.y,tx,ty) < 16)){ log('The town does not allow squatters.', 'bad'); return false; }
   if((type==='circle' || type==='crypt') && !research.done.rites_binding){ log('Requires research: Rites of Binding.', 'bad'); return false; }
@@ -4666,6 +4789,7 @@ function jobHasWork(c, j){
     case 'farm':   return pBuilds.some(b => b.type === 'farm');
     case 'craft':  return pBuilds.some(b => b.type === 'workbench' || b.type === 'forge');
     case 'research': return mindedDead(c) && pBuilds.some(b => b.type === 'r_bench');
+    case 'gunner': return pBuilds.some(b => isEmpl(b.type) && emplUsableBy(b, c));
     case 'wood': case 'stone': case 'fish': return true;   /* the waste always has more of these */
     default: return true;                                   /* guard, patrol and the rest always apply */
   }
@@ -5075,9 +5199,12 @@ function physics(c, dt){
     if(nearestEnemy(c, 2.5)) c.blocking = true;
     if(c.target && dist(c.x,c.y,c.target.x,c.target.y) > 1.5){ return; }
   }
+  /* HANDS ON A MOUNTED WEAPON stay on it. The emplacement is doing the fighting; a gunner who
+     wandered off to stab someone would be abandoning something far deadlier than their knife. */
+  if(c.manning){ c.target = null; c.targetManual = false; c.attackMove = null; c.moveTarget = null; }
   /* auto-acquire: attack-move, tanks, the mindless dead, and the few risen built to pick
      their own fights (the skeleton mage) — never medics, and never a servitor */
-  if(!c.target && !c.mule && c.stance!=='medic' && (c.attackMove || c.stance==='tank' || c.autoFight || (!mindedDead(c) && !c.mule))){
+  if(!c.target && !c.manning && !c.mule && c.stance!=='medic' && (c.attackMove || c.stance==='tank' || c.autoFight || (!mindedDead(c) && !c.mule))){
     const e = nearestEnemy(c, 7);
     if(e){ c.target = e; c.targetManual = false; }
   }
@@ -5284,6 +5411,30 @@ function physics(c, dt){
     const ej = (c.job && jobHasWork(c, c.job)) ? c.job
              : (c.job2 && jobHasWork(c, c.job2)) ? c.job2 : c.job;
     c._ej = ej;
+    if(ej==='gunner'){
+      /* already at a weapon: stand there. emplacementTick does the shooting and the learning. */
+      if(c.manning){ c._working = 0.5; return; }
+      /* otherwise find the nearest mount that will have them and go and stand at it. routeTo
+         is what makes a rampart reachable — it walks them to a stair first if the weapon is
+         upstairs, which is where a turret worth having usually is. */
+      c.gunT = (c.gunT || 0) - dt;
+      if(c.gunT > 0) return;
+      c.gunT = 1.2;
+      let want = null, wd = 1e9;
+      for(const b of pBuilds){
+        if(!isEmpl(b.type) || !emplUsableBy(b, c)) continue;
+        const held = emplGunner(b);
+        if(held && held !== c) continue;                 /* somebody else has it */
+        const d = dist(c.x, c.y, b.x + 0.5, b.y + 0.5) + Math.abs((b.floor||0) - (c.floor||0)) * 6;
+        if(d < wd){ wd = d; want = b; }
+      }
+      if(!want){
+        if(rnd() < dt * 0.04) log(`${c.name} has no weapon to work — build a turret, or find someone who can touch a lance.`, '');
+        return;
+      }
+      routeTo(c, want.x + 0.5, want.y + 0.5, want.floor || 0);
+      return;
+    }
     if(ej==='research'){
       if(!mindedDead(c)) return;
       if(dist(c.x,c.y,c._jx||c.x,c._jy||c.y) < 2) c._working = 0.5;
@@ -6224,6 +6375,128 @@ function fireRanged(c, t, w){
     dmg:w.dmg*(0.8+rnd()*0.4)*(1+c.stats.atk*0.02), caster:c, wt:w.wt || 'pierce',
     ap:w.ap || 0, ff, arrow:true});
   retaliate(t, c);
+}
+/* ============================================================ EMPLACEMENTS
+   A mounted weapon does nothing on its own. Somebody has to be standing at it, on the
+   GUNNERY job, on the same storey — and for a lance, somebody the ether does not answer to.
+
+   The interesting rule is the shot downward. Everything else in this simulation stops at a
+   ceiling: sight, pathing, knives, arrows. A parapet is not a ceiling. So an emplacement one
+   storey up may fire at the dirt below, and the test for whether it can is the honest one —
+   walk the line at GROUND level and see if anything solid is in the way. Your own wall is
+   exempt only for the tile the weapon is bolted to; the next tile along stops the bolt, which
+   is why a turret covers the ground in front of its wall and not the length of it. */
+function emplGunner(b){
+  const spec = emplSpec(b); if(!spec) return null;
+  const bx = b.x + 0.5, by = b.y + 0.5;
+  for(const c of charsNear(bx, by, 2)){
+    if(c.faction !== 'player' || c.state !== 'ok') continue;
+    if((c._ej || c.job) !== 'gunner') continue;
+    if((c.floor || 0) !== (b.floor || 0)) continue;
+    if(!mindedDead(c)) continue;                      /* a mechanism wants a mind behind it */
+    if(spec.nullOnly && c.gift) continue;             /* the cascade; see the handheld lance */
+    if(dist(c.x, c.y, bx, by) > 1.35) continue;
+    return c;
+  }
+  return null;
+}
+/* may this character ever work this weapon? Used by the job AI to avoid walking a gifted
+   alchemist across the camp to a lance that will not have them. */
+function emplUsableBy(b, c){
+  const spec = emplSpec(b); if(!spec) return false;
+  if(spec.nullOnly && c.gift) return false;
+  return mindedDead(c);
+}
+function emplTarget(b, spec){
+  const bx = b.x + 0.5, by = b.y + 0.5, bf = b.floor || 0;
+  let best = null, bs = 1e9;
+  for(const o of charsNear(bx, by, spec.range)){
+    if(o.state !== 'ok' || o.phantom) continue;
+    if(o.faction === 'player' || o.charmed) continue;
+    if(o.veilT > 0) continue;                          /* the fold: eyes slide off */
+    if(!hostileToPlayer(o)) continue;
+    const d = dist(bx, by, o.x, o.y);
+    if(d > spec.range) continue;
+    const of = o.floor || 0;
+    if(of === bf){ if(losBlocked(bx, by, o.x, o.y, bf)) continue; }
+    else if(bf > of){ if(losBlocked(bx, by, o.x, o.y, of)) continue; }   /* the plunging shot */
+    else continue;                                     /* an emplacement never fires upward */
+    /* the biggest thing that is closest: a turret should be shooting the brute, not the rat
+       beside it, but it should not be reaching past a brute to do it */
+    const score = d / Math.max(0.5, aggroWeight(o) * (o.big || 1));
+    if(score < bs){ bs = score; best = o; }
+  }
+  return best;
+}
+/* the player's standing enemies, judged without needing a specific character to ask on
+   behalf of — an emplacement has no faction of its own beyond whose wall it is bolted to */
+function hostileToPlayer(o){
+  return hostile({faction: 'player'}, o);
+}
+function emplFire(b, spec, g, t){
+  const bx = b.x + 0.5, by = b.y + 0.5, bf = b.floor || 0;
+  const tf = t.floor || 0;
+  const skill = g.stats.gunnery;
+  b.cool = spec.reload / (1 + skill * 0.010);
+  b.shots = (b.shots || 0) + 1;
+  b.facing = Math.atan2(t.x - bx, t.y - by);
+  /* the crew learns the machine, and the machine is all they learn at it */
+  xpGain(g, 'gunnery', 0.45);
+  xpGain(g, 'ranged', 0.05);
+  const dmg = spec.dmg * (0.85 + rnd() * 0.3) * (1 + skill * 0.014);
+  /* the bolt belongs to the floor it is ARRIVING at — that is what lets the existing
+     projectile mill carry it down a storey without knowing anything about parapets */
+  const p = {x: bx, y: by - 0.4, target: t, speed: spec.pierce > 1 ? 22 : 16, floor: tf,
+             dmg, caster: g, wt: spec.wt, arrow: spec.wt === 'pierce', empl: b.type,
+             hFrom: 1.0 + (bf - tf) * FLOOR_H};
+  projectiles.push(p);
+  /* THE LANCE punches through. Everything standing behind the mark, along the same line and
+     within a stride of it, catches the same bolt — which is what makes it worth the metal. */
+  if(spec.pierce > 1){
+    const ux = (t.x - bx) / Math.max(0.01, dist(bx, by, t.x, t.y));
+    const uy = (t.y - by) / Math.max(0.01, dist(bx, by, t.x, t.y));
+    let struck = 0;
+    for(const o of charsNear(t.x, t.y, spec.pierce * 2.2)){
+      if(o === t || o.state !== 'ok' || (o.floor || 0) !== tf) continue;
+      if(!hostileToPlayer(o)) continue;
+      /* behind the mark, measured along the shot, and close to the line */
+      const rx = o.x - t.x, ry = o.y - t.y;
+      const along = rx * ux + ry * uy;
+      if(along <= 0 || along > spec.pierce * 2.2) continue;
+      if(Math.abs(rx * uy - ry * ux) > 0.9) continue;
+      applyDamage(g, o, pickPart(), dmg * 0.7, spec.wt, true, true);
+      addSpecks(o.x, o.y - 0.4, '#8fd0ff', 8);
+      if(++struck >= spec.pierce) break;
+    }
+  }
+  if(spec.wt === 'burn'){
+    AU.lance(bx, by);
+    addSpecks(bx, by - 0.5, '#8fd0ff', 14);
+  } else AU.turret(bx, by);
+  retaliate(t, g);
+}
+let _manned = new Set();       /* who had their hands on something last tick */
+function emplacementTick(dt){
+  const nowManned = new Set();
+  for(const b of pBuilds){
+    const spec = emplSpec(b);
+    if(!spec) continue;
+    b.cool = Math.max(0, (b.cool || 0) - dt);
+    const g = emplGunner(b);
+    b.gunnerId = g ? g.id : 0;
+    if(!g) continue;
+    nowManned.add(g.id);
+    g.manning = b.type;
+    if(b.cool > 0) continue;
+    const t = emplTarget(b, spec);
+    if(t) emplFire(b, spec, g, t);
+  }
+  /* whoever let go of a weapon this tick is a free agent again */
+  for(const id of _manned) if(!nowManned.has(id)){
+    const c = charById.get(id);
+    if(c) c.manning = null;
+  }
+  _manned = nowManned;
 }
 function retaliate(t, attacker){
   if(t.state !== 'ok' || t.fleeT > 0) return;
@@ -7427,7 +7700,10 @@ function updateProjectiles(dt){
       addSpecks(p.x, p.y-0.3, '#8a8276'); projectiles.splice(i,1); continue;   /* struck the wall */
     }
     const d = dist(p.x,p.y,p.target.x,p.target.y);
-    if(d < 0.4){
+    /* the hit radius has to be at least as large as one step, or a fast enough shot steps
+       clean over its own target and then oscillates past it forever. A hunting bow never got
+       close to that; a lance bolt at 22 tiles a second is inside a hair of it. */
+    if(d < Math.max(0.4, p.speed * dt * 0.75)){
       const loud = p.caster.faction==='player' || p.target.faction==='player';
       if(p.arrow && rnd() < clamp(0.15 + p.target.stats.def*0.008, 0, 0.4)){
         addFloat(p.target.x, p.target.y-0.9, 'miss', '#9c8a6e');
@@ -8430,6 +8706,7 @@ function update(dt){
     }
   }
   separate();
+  emplacementTick(dt);          /* the wall shoots back */
   updateProjectiles(dt);
   updateParticles(dt);
   /* camera: follow selection, or roam free */
@@ -10075,10 +10352,13 @@ function drawStation(g, b, cx0, cz0, y){
   }
 }
 const syncPBuilds = makeDynGroup(
-  /* the visuals read fill level and whether a thing is running, so the signature has to
-     notice both — bucketed, or a gatherer dropping one log would rebuild the whole group */
-  () => pBuilds.map(b => b.type + b.x + ',' + b.y + ',' + (b.hp|0) + ',' + (b.off?1:0) +
-        (isBin(b) ? ',' + Math.round(binLoad(b) / (BIN_CAP[b.type]||1) * 5) : '')).join('|') + '#' + activeFloor,
+  /* An emplacement's mesh depends on where it is pointing and whether anyone is holding it,
+     so both belong in the rebuild key — but aim is a continuous angle and this group is the
+     whole camp. Quantise to eight octants: the weapon visibly swings, and the group rebuilds
+     when it crosses a boundary rather than on every degree of every frame. */
+  () => pBuilds.map(b => b.type + b.x + ',' + b.y + ',' + (b.hp|0)
+        + (b.facing !== undefined ? ',' + Math.round(b.facing / (Math.PI/4)) + (b.gunnerId ? 'M' : '') : ''))
+        .join('|') + '#' + activeFloor,
   (g) => {
     for(const b of pBuilds){
       const cxp = b.x + b.w/2, czp = b.y + b.h/2, y = groundY(cxp, czp);
@@ -10102,7 +10382,13 @@ const syncPBuilds = makeDynGroup(
           box(g, 0.95, 0.7, 0.95, '#6a5c46', i+0.5, y + FLOOR_H + 0.48, j+0.5);
         }
       }
-      else if(b.type==='wall') box(g, 0.95, 1.6, 0.95, PB.wall, b.x+0.5, y+0.8, b.y+0.5);
+      else if(b.type==='wall'){
+        /* A WALL IS NOW A STOREY TALL, because you can stand on top of one. It used to be
+           1.6 units of decoration; the rampart it carries is at FLOOR_H, so anyone up there —
+           and anything bolted up there — floated a clear unit above the stonework. */
+        box(g, 0.95, FLOOR_H, 0.95, '#6a5a44', b.x+0.5, y + FLOOR_H/2, b.y+0.5);
+        box(g, 1.04, 0.22, 1.04, '#54462f', b.x+0.5, y + FLOOR_H + 0.11, b.y+0.5, false);  /* the parapet cap */
+      }
       else if(b.type==='shack'){
         box(g, 3, 1.6, 3, '#5f4a33', cxp, y+0.8, czp);
         const roof = new THREE.Mesh(new THREE.ConeGeometry(2.4, 1.2, 4), mat('#4a3b2c'));
@@ -10111,6 +10397,51 @@ const syncPBuilds = makeDynGroup(
       else if(b.type==='farm'){
         box(g, 2, 0.15, 2, '#3e3323', cxp, y+0.07, czp, false);
         for(let i=0;i<4;i++) box(g, 0.2, 0.35, 0.2, '#5a7a3a', b.x+0.5+(i%2), y+0.3, b.y+0.5+Math.floor(i/2), false);
+      }
+      else if(b.type==='rampart'){
+        /* a timber flight up to the wall-tops, with a small landing at the head of it */
+        for(let i = 0; i < 6; i++)
+          box(g, 0.9, 0.16, 0.9/6 + 0.06, '#6b5a40', cxp, y + 0.1 + i * (FLOOR_H - 0.4)/6, czp - 0.42 + i * 0.9/6, false);
+        box(g, 0.95, 0.14, 0.95, '#7a6a52', cxp, y + FLOOR_H - 0.07, czp);
+        box(g, 0.1, 0.7, 0.1, '#4a3b2c', cxp - 0.42, y + FLOOR_H + 0.35, czp, false);
+        box(g, 0.1, 0.7, 0.1, '#4a3b2c', cxp + 0.42, y + FLOOR_H + 0.35, czp, false);
+      }
+      /* ---------- EMPLACEMENTS. They sit at the storey they were raised on, so a turret on a
+           wall draws a whole floor-height up from the dirt underneath it. ---------- */
+      else if(isEmpl(b.type)){
+        const fy = y + floorY(b.floor || 0);
+        const manned = !!b.gunnerId;
+        const lance = b.type === 'lance';
+        /* the mount: a squat pintle either way */
+        box(g, 0.5, 0.34, 0.5, '#4a4640', cxp, fy + 0.17, czp);
+        box(g, 0.22, 0.5, 0.22, '#3a352c', cxp, fy + 0.55, czp, false);
+        /* the weapon itself, swung to whatever it last shot at */
+        const fa = b.facing || 0;
+        const dx = Math.sin(fa), dz = Math.cos(fa);
+        if(lance){
+          /* a long ribbed barrel with a focusing throat and a lamp that only burns when
+             somebody is holding it — an unmanned lance is a very expensive fencepost */
+          for(let i = 0; i < 4; i++)
+            box(g, 0.30, 0.30, 0.34, i % 2 ? '#5a5450' : '#6a625a',
+                cxp + dx * (0.25 + i * 0.42), fy + 0.86, czp + dz * (0.25 + i * 0.42), false);
+          box(g, 0.40, 0.40, 0.16, '#7a6a3a', cxp + dx * 1.98, fy + 0.86, czp + dz * 1.98, false);
+          if(manned){
+            const glow = new THREE.Mesh(SPHG, new THREE.MeshStandardMaterial({
+              color: 0x8fd0ff, emissive: 0x8fd0ff, emissiveIntensity: 2.2, roughness: 1 }));
+            glow.scale.set(0.22, 0.22, 0.22);
+            glow.position.set(cxp + dx * 2.16, fy + 0.86, czp + dz * 2.16);
+            g.add(glow);
+          }
+          box(g, 0.7, 0.16, 0.5, '#4a4640', cxp - dx * 0.3, fy + 0.86, czp - dz * 0.3, false);   /* breech */
+        } else {
+          /* a crossbow the size of a door: stock along the shot, limbs across it */
+          box(g, 0.20, 0.16, 1.5, '#6b5a40', cxp + dx * 0.35, fy + 0.80, czp + dz * 0.35, false);
+          const lx = Math.sin(fa + Math.PI/2), lz = Math.cos(fa + Math.PI/2);
+          for(const sgn of [-1, 1])
+            box(g, 0.14, 0.10, 0.9, '#54453a',
+                cxp + dx * 0.55 + lx * sgn * 0.5, fy + 0.86, czp + dz * 0.55 + lz * sgn * 0.5, false);
+          box(g, 0.34, 0.24, 0.30, '#4a4640', cxp - dx * 0.2, fy + 0.82, czp - dz * 0.2, false);  /* the winch */
+        }
       }
       else if(b.type==='circle'){
         const ring = new THREE.Mesh(new THREE.RingGeometry(0.6, 0.95, 24), new THREE.MeshBasicMaterial({color:0x8a6ab5, side:THREE.DoubleSide}));
@@ -11874,7 +12205,15 @@ function renderOverlay(){
   /* projectiles */
   for(const p of projectiles){
     if(visAt(p.x, p.y) !== 2) continue;
-    const s = w2s(p.x, p.y, groundY(p.x,p.y)+1.0);
+    /* a shot loosed from a rampart starts a storey up and comes down as it travels, so the
+       tracer actually reads as a plunging shot instead of skimming the dirt from the off */
+    let ph = 1.0;
+    if(p.hFrom && p.target){
+      const d0 = Math.max(0.01, dist(p.x, p.y, p.target.x, p.target.y));
+      const k = clamp(d0 / Math.max(1, p.hFrom * 3), 0, 1);
+      ph = 1.0 + (p.hFrom - 1.0) * k;
+    }
+    const s = w2s(p.x, p.y, groundY(p.x,p.y) + ph);
     if(!s) continue;
     if(p.arrow){
       const t2 = w2s(p.target.x, p.target.y, groundY(p.target.x,p.target.y)+1.0);
@@ -12094,6 +12433,7 @@ const TIPS = {
   magic:'<b>MAGIC</b>Formula strength and mana pool. Nothing works without a gift to spend it through.',
   labor:'<b>LABOR</b>Building, hauling and harvesting speed.',
   armr: '<b>ARMR</b>Skill at wearing what you are wearing. Poor armour skill turns plate into a burden.',
+  gunnery:'<b>GUNNERY</b>Skill at a mounted weapon — a turret or a lance. Sets how often it lands, how hard, and how fast it comes back round.<i>Learned only at the emplacement, by firing it.</i>',
   blood:'<b>BLOOD</b>Bleed out and you go down; keep bleeding and you die. Bandages stop it.',
   hunger:'<b>HUNGER</b>At zero everything is harder and blows land softer. Feed them.',
   mana: '<b>MANA</b>Spent on formulae, refilled slowly. Concentration holds a formula open and keeps draining it.',
@@ -12324,7 +12664,7 @@ function refreshCharPanel(){
     $('cp-manarow').style.display = 'none';
   }
   $('btn-drop').style.display = c.carry ? 'inline-block' : 'none';
-  $('stats').innerHTML = ['atk','def','tough','ath','medic','magic','labor','armr']
+  $('stats').innerHTML = ['atk','def','tough','ath','medic','magic','labor','armr','gunnery']
     .map(s=>`<span data-tip="${s}">${s.toUpperCase()}</span><b data-tip="${s}">${(Math.floor(c.stats[s]*10)/10).toFixed(1)}</b>`).join('');
   const giftTxt = c.gift ? ` · <span style="color:#a98ad4">✦ ${c.gift.toUpperCase()}</span>` : '';
   const invTxt = Object.keys(c.inv||{}).length
@@ -12372,7 +12712,7 @@ function refreshCharPanel(){
   jr.innerHTML = '<span style="color:var(--dust);font-size:10px">JOB</span>';
   const JOBS = [
     [null,'NONE'], ['wood','WOOD'], ['stone','STONE'], ['fish','FISH'], ['farm','TEND'],
-    ['build','BUILD'], ['flesh','FLESH'], ['raise','RAISE'], ['craft','CRAFT'], ['research','STUDY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
+    ['build','BUILD'], ['flesh','FLESH'], ['raise','RAISE'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
   ];
   /* the fallback trade: shown beside the primary, set the same way */
   const mkJobButton = (which) => {
@@ -12849,7 +13189,7 @@ $('btn-court').onclick = () => {
   court(a, b);
   refreshCharPanel();
 };
-const GOALS = [null,'blades','blunt','ranged','martial','smithing','crafting','farming','brewing','medic','magic','labor'];
+const GOALS = [null,'blades','blunt','ranged','martial','smithing','crafting','farming','brewing','medic','magic','labor','gunnery'];
 $('btn-goal').onclick = () => {
   const c = selected[0]; if(!c || c.faction!=='player') return;
   const r = $('btn-goal').getBoundingClientRect();
@@ -12977,9 +13317,11 @@ function refreshInv(){
   b.querySelectorAll('[data-read]').forEach(btn => btn.onclick = () => {
     const c = selected[0]; if(!c){ log('Select someone first.'); return; }
     if(c.undead){ log('The risen cannot read.', 'bad'); return; }
-    if(!takeItem('tome')) return;
-    xpGain(c, 'magic', 1.5);
-    log(`${c.name} studied the tome. MAG +1.5.`, 'good');
+    /* the key, not the literal 'tome' — this used to spend a Weathered Tome no matter which
+       book you actually clicked, which was survivable while every readable WAS a tome */
+    const k = btn.dataset.read;
+    if(!takeItem(k)) return;
+    readBook(c, k);
     refreshInv(); refreshCharPanel();
   });
   b.querySelectorAll('[data-pros]').forEach(btn => btn.onclick = () => {
@@ -13064,7 +13406,7 @@ function openInventory(c){
         });
       }
       if(it.type==='food') mk('EAT', () => { if(c.undead){ log('The dead do not eat.','bad'); return; } invTake(c,k); c.hunger=Math.min(100,c.hunger+it.feed); render(); refreshCharPanel(); });
-      if(it.type==='tome') mk('READ', () => { if(c.undead){ log('The risen cannot read.','bad'); return; } invTake(c,'tome'); xpGain(c,'magic',1.5); log(`${c.name} studied the tome. MAG +1.5.`,'good'); render(); refreshCharPanel(); });
+      if(it.type==='tome') mk('READ', () => { if(c.undead){ log('The risen cannot read.','bad'); return; } invTake(c,k); readBook(c,k); render(); refreshCharPanel(); });
       mk('GIVE', () => { const to=nearestSquadmate(c); if(!to){ log('No squadmate within reach.','bad'); return; } giveItem(c,to,k,1); log(`${c.name} handed ${it.name} to ${to.name}.`); render(); });
       mk('STASH', () => { invTake(c,k); addItem(k,1); log(`${it.name} → wagon stash.`); render(); refreshInv(); });
       mk('DROP', () => { dropFromInv(c,k,1); log(`${c.name} dropped ${it.name}.`); render(); });
@@ -13301,7 +13643,8 @@ function openBar(v){
 /* ============================================================ BUILD BAR */
 const bb = $('buildbar');
 const BUILD_CATS = [
-  ['STRUCTURE',  ['wall', 'shack', 'tower', 'wartable']],
+  ['STRUCTURE',  ['wall', 'rampart', 'shack', 'tower', 'wartable']],
+  ['DEFENCE',    ['turret', 'lance']],
   ['LABOUR',     ['farm', 'workbench', 'forge', 'kiln', 'smelter']],
   ['STUDY',      ['r_bench', 'script']],
   ['THE CRAFT',  ['circle', 'crypt', 'vat', 'charnel', 'ossuary']],
@@ -13314,6 +13657,12 @@ function buildLock(key){
   if(key==='vat' && !research.done.quickening) return 'The Quickening';
   if(key==='charnel' && !research.done.carrion_rites) return 'Carrion Rites';
   if(key==='ossuary' && !research.done.ossuary_rites) return 'Ossuary Rites';
+  /* the lance is not gated behind research you can buy — it is gated behind a piece of paper
+     somebody sealed in a vault before the sky opened. Until it is read, it is not offered. */
+  if(isEmpl(key)){
+    const spec = EMPL[BUILD_TYPES[key].empl];
+    if(spec.unlock && !research.done[spec.unlock]) return 'a pattern nobody has found';
+  }
   return null;
 }
 function refreshBuildBar(){
@@ -14579,7 +14928,7 @@ function snapshot(){
     bastionWalls: bastion ? bastion.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [],
     chars: chars.filter(c => !c.phantom).map(sChar),
     corpseIds: corpses.map(c=>c.id),
-    pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp,
+    pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       store: b.store ? {...b.store} : undefined,
       stored: b.stored ? b.stored.map(sChar) : undefined})),
     recruits: towns.map(t=>t.recruits),
@@ -14596,6 +14945,10 @@ function restore(d){
   for(const b of d.pBuilds){
     const pb = placeStructure(b.type, b.x, b.y);
     if(b.hp !== undefined && pb.maxHp) pb.hp = b.hp;
+    /* an emplacement works out its own storey from the wall underneath it — which is no use
+       here, because the save may list the turret before the wall it is bolted to. Take the
+       saved answer instead of re-deriving one from a half-built camp. */
+    if(isEmpl(b.type) && b.floor !== undefined) pb.floor = b.floor;
   }
   /* Walls are restored by matching the freshly-generated ring against the saved one and
      applying the saved damage (removed segments, current hp). But if the save was made in
