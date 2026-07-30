@@ -145,6 +145,7 @@
   <div class="chip" data-tip="day">DAY <b id="ui-day">1</b> <span id="ui-time">06:00</span></div>
   <div class="chip" id="ui-rep" data-tip="rep"></div>
   <div class="chip" id="ui-notice" data-tip="notice"></div>
+  <div class="chip" id="ui-fracture" data-tip="fracture"></div>
   <button id="btn-pause">PAUSE</button>
   <button id="btn-sp1" class="on">1x</button>
   <button id="btn-sp3">3x</button>
@@ -1525,6 +1526,7 @@ function worldEvent(kind, x, y, text){
 const NEWS_TONE = {
   war:'bad', sack:'bad', plague:'bad', rebellion:'bad', conquest:'bad', ambush:'bad',
   camp:'bad', attention:'bad', bloodmoon:'bad', rift:'bad', sixfold:'bad', purge:'bad',
+  fracture:'bad', dread:'',
   peace:'good', pact:'good', sealed:'good', razed:'good',
 };
 function newsAge(e){
@@ -5201,7 +5203,223 @@ function reapPhylacteries(){
     }
   }
 }
-function riftCap(){ return Math.max(1, noticeTier); }   /* the sky never fully closed */
+/* ============================================================ THE SECOND FRACTURE
+   `noticed` is heat: it rises when you work the formulae and it drains when you keep your
+   head down. That makes it a fine measure of your exposure and a useless doom clock, because
+   anything a player can drain to zero is a difficulty setting rather than a deadline.
+
+   So there are two hands on this. `fracture` is ratcheted — it only ever goes up, and there
+   is nothing you can do to walk it back. The calendar advances it on its own, which sets the
+   floor: the sky opens by roughly FRACTURE_DAYS whatever you do. Living at high notice
+   advances it faster, which makes the player complicit in their own apocalypse. Rush the
+   power and it arrives early and finds you alone.
+
+   The accelerant deliberately does not engage below ATTENDED. Ordinary casting has to stay
+   free, or the whole magic system reads as a penalty and the correct play becomes never
+   touching it. */
+const FRACTURE_DAYS = 120;        /* calendar-only days to land it; the one number to tune */
+const FRACTURE_STAGES = [
+  {at:0,   name:'THE DUST FALLS',      tell:null},
+  {at:20,  name:'A STILLNESS',
+   tell:'The dust stopped falling. For eleven seconds, across the whole of the waste, it simply stopped — and then it went on as if nothing had happened.'},
+  {at:40,  name:'THE THINNING',
+   tell:'The tears are not closing on their own any more. Caravans go out on the north road and the road gives some of them back.'},
+  {at:60,  name:'THE WATCHERS WAKE',
+   tell:'Something very old has finished turning over. The gaunts have stopped watching the fences and started walking through them.'},
+  {at:80,  name:'THE SKY LEANS',
+   tell:'The sky is LEANING. There is no other word that fits it. Whatever is behind the dust is close enough now to press against it.'},
+  {at:100, name:'THE SECOND FRACTURE',
+   tell:'THE SKY HAS OPENED. Not a tear this time — a door, and it is standing wide. Nine generations of dust falling, and this is what it was falling towards.'},
+];
+let fracture = 0, fractureStage = 0;
+function fractureStageOf(v){
+  let i = 0;
+  for(let k = 0; k < FRACTURE_STAGES.length; k++) if(v >= FRACTURE_STAGES[k].at) i = k;
+  return i;
+}
+/* the accelerant: what your own work adds on top of the calendar, per day */
+function fractureAccel(){
+  return noticeTier >= 3 ? 0.85 : noticeTier >= 2 ? 0.35 : 0;
+}
+function advanceFracture(days){
+  if(fracture >= 100) return;
+  const before = fractureStage;
+  fracture = Math.min(100, fracture + (100 / FRACTURE_DAYS + fractureAccel()) * days);
+  fractureStage = fractureStageOf(fracture);
+  if(fractureStage > before){
+    for(let k = before + 1; k <= fractureStage; k++){
+      const st = FRACTURE_STAGES[k];
+      if(!st.tell) continue;
+      log(st.tell, 'bad');
+      /* Announced as a world event, not a log line — so it travels at news speed and the
+         towns LEARN it. The ladder is itself the evidence the Compact will be argued from. */
+      const anchor = player().find(c => c.state !== 'dead') || {x: W/2, y: H/2};
+      worldEvent('fracture', anchor.x, anchor.y, st.tell);
+      AU.news();
+    }
+  }
+}
+/* How close the sky is, as the rest of the code wants to ask it */
+function fractureName(){ return FRACTURE_STAGES[fractureStage].name; }
+
+/* ---------- WHAT THE TOWNS BELIEVE ----------
+   A town will not sign anything because you told it the world is ending. It signs because
+   it has worked that out for itself, and it works that out from what it has actually heard.
+   `t.known` already records which events reached a town and when — so dread is read off the
+   news the town has, weighted by how near it happened and how long ago, minus a steady drip
+   of denial. Doomsaying with no evidence behind it gets nothing, which is correct.
+
+   What counts as evidence depends on who is sitting in the hall. A pious leader is moved by
+   portent and a mercantile one by a ledger, and neither is much interested in the other's
+   proof. */
+const DREAD_WEIGHT = {          /* base persuasive force of an event kind */
+  fracture: 26, rift: 14, sixfold: 12, bloodmoon: 6, attention: 8, omen: 7,
+  sack: 9, razed: 5, plague: 7, ambush: 4, camp: 3, war: 3, sundered: 10, coil: 8,
+  purge: 4, rebellion: 3, conquest: 4,
+};
+/* trait multiplier per kind. 1.0 = it lands as written; 0 = that leader does not care. */
+const DREAD_TRAIT = {
+  pious:      {fracture:1.5, omen:1.8, bloodmoon:1.6, sundered:1.5, coil:1.5, sixfold:1.4,
+               rift:1.0, sack:0.7, war:0.4, camp:0.3, ambush:0.4, conquest:0.5},
+  mercantile: {ambush:1.8, camp:1.6, war:1.5, sack:1.4, plague:1.3, rift:0.9,
+               omen:0.3, bloodmoon:0.3, fracture:0.8, sixfold:0.5, coil:0.4},
+  warlike:    {sack:1.7, razed:1.6, war:1.5, rift:1.2, sixfold:1.3, purge:1.4,
+               omen:0.2, bloodmoon:0.3, fracture:0.7, coil:0.4, plague:0.6},
+  craven:     {},   /* everything frightens them; the floor multiplier does the work */
+  ironfisted: {rebellion:1.6, conquest:1.5, war:1.2, sack:1.1,
+               omen:0.2, bloodmoon:0.2, fracture:0.6, rift:0.7, sixfold:0.5, coil:0.3},
+  /* A JUST seat is moved by what is being done to people, and not much by portents. */
+  just:       {sack:1.5, razed:1.5, plague:1.4, ambush:1.3, camp:1.2, rebellion:1.2,
+               rift:1.0, omen:0.4, bloodmoon:0.4, fracture:1.0, sixfold:0.8},
+  /* A CUNNING one is not frightened of anything. It is interested in which way the wind is
+     going to blow, and it reads the sky itself before it reads a report of a raid. */
+  cunning:    {fracture:1.4, rift:1.2, sixfold:1.2, coil:1.1, sundered:1.2, attention:1.3,
+               ambush:0.6, camp:0.5, war:0.9, omen:0.7, bloodmoon:0.6},
+};
+/* craven hears everything and hears it loudly; ironfisted discounts all of it and wants to
+   be shown a kept house instead (see the order term below) */
+const DREAD_FLOOR = {pious:0.9, mercantile:0.85, warlike:0.85, craven:1.3,
+                     ironfisted:0.65, just:0.9, cunning:0.8};
+function dreadOf(t){ return t.dread || 0; }
+/* ---------- BEARING WITNESS ----------
+   Ambient news gets a hall uneasy and no further; denial is a strong drink. The gap is
+   closed by somebody standing in the room and saying what they have seen — which is the
+   one thing the player has and the town does not. `playerKnown` is the testimony, and
+   what is in the pack is the proof.
+
+   Every seat wants a different kind of proof, and none of them are much moved by the wrong
+   one. Carrying the First Doctrine into a pious hall is worth more than a year of rumour;
+   carrying it to a cunning one gets you a polite nod. */
+const WITNESS_COOL = 4;      /* days between hearings — a hall will not be badgered */
+function witnessProof(t, c){
+  /* What the bearer is carrying, and what this seat makes of it. A hall can only be shown
+     a thing once — after that they have seen it, and holding it up again is theatre. */
+  const trait = (t.leader && t.leader.trait) || 'craven';
+  const out = [];
+  t.shown = t.shown || {};
+  const has = k => (stash[k] || 0) > 0 && !t.shown[k];
+  if(has('doctrine')) out.push({k:'doctrine', label:'The First Doctrine',
+    w: trait==='pious' ? 15 : trait==='cunning' ? 8 : trait==='just' ? 6 : 3});
+  if(has('sunder')) out.push({k:'sunder', label:'a piece of Sundered Marrow, still warm',
+    w: trait==='pious' ? 9 : trait==='cunning' ? 8 : trait==='mercantile' ? 7 : 5});
+  if(has('remains')) out.push({k:'remains', label:'what was left of a gaunt',
+    w: trait==='warlike' ? 9 : trait==='just' ? 7 : trait==='craven' ? 8 : 4});
+  if(has('tome')) out.push({k:'tome', label:'a weathered tome',
+    w: trait==='pious' ? 6 : trait==='cunning' ? 4 : 2});
+  return out;
+}
+function witnessValue(t, c){
+  /* the testimony itself: fracture-relevant things YOU have seen, that they have not */
+  const trait = (t.leader && t.leader.trait) || 'craven';
+  const tab = DREAD_TRAIT[trait] || {}, floor = DREAD_FLOOR[trait] ?? 1;
+  let told = 0;
+  for(const e of events){
+    if(playerKnown[e.id] == null) continue;               /* you have to know it */
+    if(t.known && t.known[e.id] != null) continue;        /* and they must not */
+    const w = DREAD_WEIGHT[e.kind]; if(!w) continue;
+    const mult = tab[e.kind] !== undefined ? tab[e.kind] : 1;
+    told += w * mult * 0.14;
+  }
+  /* they have to be willing to listen to YOU: standing counts */
+  const standing = 1 + clamp(t.rep, -40, 60) / 90;
+  return clamp(told * floor * standing, 0, 14);
+}
+function counselSeat(t, c){
+  if(!t.leader){ log(`${t.name} has nobody in the hall to hear it.`, 'bad'); return false; }
+  if(t.witnessCd && day < t.witnessCd){
+    log(`${t.name}'s hall has heard you out already. Give it a few days.`, 'bad'); return false;
+  }
+  if(t.rep < -25){
+    log(`${t.name} will not seat you. Mend that first.`, 'bad'); return false;
+  }
+  const told = witnessValue(t, c);
+  const proof = witnessProof(t, c);
+  const pw = proof.reduce((n,x) => n + x.w, 0);
+  const gain = told + pw;
+  t.witnessCd = day + WITNESS_COOL;
+  if(gain < 2){
+    log(`${c.name} says their piece in ${t.name}. Nothing in it is news, and nothing in it is proof.`, '');
+    return false;
+  }
+  t.dread = clamp((t.dread || 0) + gain, 0, 100);
+  /* They have now seen these, and they now know what you told them — which is exactly why
+     you cannot walk the same circuit twice for the same payment. */
+  t.shown = t.shown || {};
+  for(const x of proof) t.shown[x.k] = day;
+  for(const e of events) if(playerKnown[e.id] != null) townLearns(t, e);
+  const L = t.leader;
+  const shown = proof.length ? ` They are shown ${proof.map(x=>x.label).join(', ')}.` : '';
+  log(`${c.name} is heard in ${t.name}.${shown} ${L.title} ${L.name} listens — ${L.knownFor}. (+${Math.round(gain)} dread)`, 'good');
+  AU.news();
+  return true;
+}
+function dreadTick(t){
+  const trait = (t.leader && t.leader.trait) || 'craven';
+  const floor = DREAD_FLOOR[trait] ?? 1;
+  const tab = DREAD_TRAIT[trait] || {};
+  /* Dread is a belief that builds, not a level that settles. It takes a small increment
+     each day from what the hall has lately heard and from the state of the sky, against a
+     steady drip of denial — so a quiet world talks itself back down and a loud one does not.
+     Only recent news presses: a hall remembers a tear from last spring, but it is not
+     frightened by it today. */
+  let press = 0;
+  for(const e of events){
+    if(day - e.day > 20) continue;                        /* lately */
+    if(t.known && t.known[e.id] == null) continue;        /* and it has to have heard */
+    const w = DREAD_WEIGHT[e.kind]; if(!w) continue;
+    const mult = tab[e.kind] !== undefined ? tab[e.kind] : 1;
+    if(mult <= 0) continue;
+    /* near still matters, but gently — they only hear about local things as it is, and
+       discounting hard on top of that made ambient news worth nothing at all */
+    const near = 1 / (1 + dist(t.x, t.y, e.x, e.y) / 260);
+    press += w * mult * near * 0.020;
+  }
+  /* the sky argues on its own behalf, and it gets louder */
+  press += fractureStage * 0.22;
+  /* AN IRONFISTED SEAT is not frightened into anything. Show it a town held together. */
+  if(trait === 'ironfisted'){
+    const held = towns.filter(o => o.playerRuled);
+    if(held.length){
+      const avgOrder = held.reduce((n,o) => n + (o.order ?? 55), 0) / held.length;
+      press += Math.max(0, (avgOrder - 45)) * 0.006 * held.length;
+    }
+  }
+  const DENIAL = 0.22;
+  t.dread = clamp((t.dread || 0) + press * floor - DENIAL, 0, 100);
+  /* Hysteresis, so a hall that is ready to treat does not flicker in and out of it on a
+     single day's news — and so a spike that decays away does not leave a permanent lie
+     sitting in the panel. */
+  if(!t.dreadWoke && t.dread >= 60){
+    t.dreadWoke = true;
+    const L = t.leader;
+    log(`${t.name} has stopped arguing about it. ${L ? L.title + ' ' + L.name : 'The seat'} will hear terms now.`, 'good');
+    worldEvent('dread', t.x, t.y, `${t.name} is preparing for something. They will not say what.`);
+  } else if(t.dreadWoke && t.dread < 45){
+    t.dreadWoke = false;
+    log(`${t.name} has talked itself back down. Whatever you had agreed is off the table.`, 'bad');
+  }
+}
+function riftCap(){ return Math.max(1, noticeTier) + fractureStage; }   /* the sky never fully closed */
 function riftTick(dh){
   /* the world is thin now. It was never whole to begin with — and it gets thinner when you work the formulae. */
   if(rifts.length < riftCap() && rnd() < (0.004 + noticeTier * 0.0016) * dh){
@@ -5209,7 +5427,11 @@ function riftTick(dh){
     const a = rnd() * Math.PI * 2, d = 22 + rnd() * 30;
     const x = clamp(Math.round(anchor.x + Math.cos(a) * d), 6, W-7);
     const y = clamp(Math.round(anchor.y + Math.sin(a) * d), 6, H-7);
-    if(tileAt(x, y) !== 3 && nearestTownDist(x, y) > 16 && !riftAt(x, y)) openRift(x, y);
+    /* The waste kept them at arm's length. It stops doing that: by THE WATCHERS WAKE a tear
+       can open on a town's doorstep, which is the whole reason to have got the walls in
+       order before then. */
+    const keepOut = [16, 12, 8, 3, 0, 0][fractureStage] ?? 0;
+    if(tileAt(x, y) !== 3 && nearestTownDist(x, y) > keepOut && !riftAt(x, y)) openRift(x, y);
   }
   for(const r of rifts){
     r.age += dh;
@@ -7212,6 +7434,8 @@ function update(dt){
   hour += dh;
   if(hour >= 24){
     hour -= 24; day++;
+    advanceFracture(1);              /* the sky gets one day closer, and never further */
+    for(const t of towns) dreadTick(t);
     regrowNodes();   /* the waste reclaims what was taken */
     gauntDawn();     /* and the dark takes back its own */
     bloodMoonRoll();
@@ -11791,6 +12015,7 @@ const TIPS = {
   gold: '<b>GOLD</b>Trade, recruits, buildings and tribute all run through this.<i>Seats you hold pay daily.</i>',
   day:  '<b>THE CALENDAR</b>Eight real seconds to the game hour. Bodies age, fields yield and the world turns on the day.',
   rep:  '<b>STANDING</b>What the nearest town thinks of you. Spill blood inside the walls and watch it fall.',
+  fracture:'<b>THE SKY</b>How far the Second Fracture has come. It does not go back down. The calendar moves it on its own; working the formulae where you can be heard moves it faster.<i>You cannot stop this. You can be ready for it, or you can be somewhere else when it lands.</i>',
   notice:'<b>NOTICE</b>How much attention your work with the dead has drawn. It forgets a quiet camp quickly — but once it has actually turned its head it does not look away fast.<i>Every formula you work is heard.</i>',
   chron:'<b>CHRONICLES [L]</b>Everything you have been told, and everything you have seen — including news of the wider world and who carried it to you.',
   build:'<b>BUILD [B]</b>Place structures. Blueprints need materials hauled to them before anyone can raise them.',
@@ -11854,6 +12079,20 @@ function refreshTop(){
     el.textContent = d.name;
     el.style.color = col;
     el.style.borderColor = noticeTier >= 2 ? col : 'var(--edge)';
+  }
+  {
+    /* The sky, as a number you cannot argue with. Shown from A STILLNESS on — before that
+       there is nothing to report and a countdown on day one would only be noise. */
+    const el = $('ui-fracture');
+    if(fractureStage < 1){ el.style.display = 'none'; }
+    else {
+      el.style.display = '';
+      const col = fractureStage >= 5 ? '#e8443a' : fractureStage >= 4 ? '#c4543a'
+                : fractureStage >= 3 ? '#c07a3a' : '#a08a5a';
+      el.textContent = FRACTURE_STAGES[fractureStage].name;
+      el.style.color = col;
+      el.style.borderColor = fractureStage >= 3 ? col : 'var(--edge)';
+    }
   }
 }
 const STANCE_ICONS = {melee:'⚔', ranged:'➶', medic:'✚', tank:'⛨', hold:'⊞'};
@@ -12192,7 +12431,30 @@ function openWarTable(){
       const ruled = t.playerRuled ? ' <span style="color:#d4a040">YOURS</span>' : '';
       const rep2 = t.rep > 15 ? 'friendly' : t.rep < -15 ? 'hostile' : 'neutral';
       const row = document.createElement('div'); row.className = 'trow';
-      row.innerHTML = `<span class="tn">${t.name}${ruled}${war}${sack} <span style="color:var(--dust)">${L ? `${L.title} ${L.name} · ${L.trait} · ${Math.max(0, day - (L.since||0))}d in the seat` : 'no ruler'} · ${rep2} to you</span></span>`;
+      /* what this hall believes about the sky, once there is anything to believe */
+      const dv = Math.round(t.dread || 0);
+      const dread = fractureStage < 1 ? '' :
+        ` · <span style="color:${dv >= 60 ? '#d4a040' : dv >= 30 ? '#c07a3a' : 'var(--dust)'}">${
+          dv >= 60 ? 'READY TO TREAT' : dv >= 30 ? 'uneasy' : 'in denial'} ${dv}</span>`;
+      row.innerHTML = `<span class="tn">${t.name}${ruled}${war}${sack} <span style="color:var(--dust)">${L ? `${L.title} ${L.name} · ${L.trait} · ${Math.max(0, day - (L.since||0))}d in the seat` : 'no ruler'} · ${rep2} to you</span>${dread}</span>`;
+      /* BEAR WITNESS: somebody of yours has to be standing in the town to say it. Enabled
+         only when there is actually something to tell them or show them, so the button is
+         never a lie about whether the trip was worth making. */
+      if(fractureStage >= 1 && L && !t.playerRuled){
+        const here = player().find(c => c.state === 'ok' && !c.undead &&
+          dist(c.x, c.y, t.x, t.y) < (t.def.wall ? t.def.wall.r + 4 : 16));
+        const worth = here ? witnessValue(t, here) + witnessProof(t, here).reduce((n,x)=>n+x.w, 0) : 0;
+        const b = document.createElement('button');
+        b.style.cssText = 'padding:1px 5px;font-size:10px;margin-left:6px';
+        const cooling = t.witnessCd && day < t.witnessCd;
+        b.textContent = cooling ? 'HEARD YOU (' + Math.ceil(t.witnessCd - day) + 'd)'
+                      : !here ? 'NOBODY THERE'
+                      : worth < 2 ? 'NOTHING NEW TO TELL'
+                      : 'BEAR WITNESS (+' + Math.round(worth) + ')';
+        b.disabled = cooling || !here || worth < 2;
+        b.onclick = () => { if(counselSeat(t, here)) dreadTick(t); openWarTable(); };
+        row.appendChild(b);
+      }
       body.appendChild(row);
     }
   }
@@ -14226,7 +14488,7 @@ function snapshot(){
     pilgrimDestI: c.pilgrimage ? towns.indexOf(c.pilgrimage.dest) : -1,
   });
   return {
-    v:20, cats, bloodMoon, redoubts:[...redoubts], stash:{...stash}, oreFields, nodeUses:[...nodeUses], phylacteries, phylN, noticed, noticeTier,
+    v:20, cats, bloodMoon, redoubts:[...redoubts], stash:{...stash}, oreFields, nodeUses:[...nodeUses], phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
     rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, coilShrine, coilExposed, coilStruck,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
     camps: camps.map(c => ({id:c.id, x:c.x, y:c.y, fac:c.fac, cap:c.cap, tents:c.tents})),
@@ -14238,6 +14500,7 @@ function snapshot(){
       order: t.order ?? 55, pacts: {...(t.pacts||{})}, petitions: (t.petitions||[]).map(p=>({k:p.k, txt:p.txt, opts:p.opts, expires:p.expires, filed:!!p.filed})),
       feastCd: t.feastCd||0, rebelDay: t.rebelDay||0, promise: t.promise ? {...t.promise} : null,
       project: t.project ? {...t.project} : null, projectsDone: {...(t.projectsDone||{})}, lastTribute: t.lastTribute||0,
+      dread: t.dread||0, dreadWoke: !!t.dreadWoke, shown: {...(t.shown||{})}, witnessCd: t.witnessCd||0,
       caravanOut: t.caravanOut ? {...t.caravanOut, dest: {...t.caravanOut.dest}} : null})),
     explored: packExplored(),
     nodeUses: [...nodeUses.entries()],
@@ -14313,6 +14576,8 @@ function restore(d){
   if(Array.isArray(d.phylacteries)) for(const p of d.phylacteries) phylacteries.push({...p, _rect:null});
   phylN = d.phylN || 0;
   noticed = d.noticed || 0;
+  fracture = d.fracture || 0;
+  fractureStage = fractureStageOf(fracture);
   bloodMoon = d.bloodMoon || 0;
   redoubts.length = 0;
   if(Array.isArray(d.redoubts)) for(const r of d.redoubts) redoubts.push(r);
@@ -14434,6 +14699,8 @@ function restore(d){
     t.leaderSeats = ts.leaderSeats || 0;
     t.playerRuled = !!ts.playerRuled; t.settlerT = ts.settlerT || 0;
     t.order = ts.order ?? 55; t.pacts = {...(ts.pacts||{})}; t.petitions = (ts.petitions||[]).map(p=>({...p}));
+    t.dread = ts.dread || 0; t.dreadWoke = !!ts.dreadWoke;
+    t.shown = {...(ts.shown||{})}; t.witnessCd = ts.witnessCd || 0;
     t.feastCd = ts.feastCd || 0; t.rebelDay = ts.rebelDay || 0; t.promise = ts.promise ? {...ts.promise} : null;
     t.project = ts.project ? {...ts.project} : null; t.projectsDone = {...(ts.projectsDone||{})}; t.lastTribute = ts.lastTribute || 0;
     t.caravanOut = ts.caravanOut ? {...ts.caravanOut, dest: {...ts.caravanOut.dest}} : null;
