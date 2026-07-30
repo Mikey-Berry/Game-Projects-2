@@ -817,6 +817,8 @@ function placeTownAt(def, cx0, cy0){
 let uid = 1;
 const PARTS = ['head','chest','stomach','l.arm','r.arm','l.leg','r.leg'];
 const VITAL = new Set(['head','chest','stomach']);
+/* what rings when a blade catches on it. Hide and cloth do not. */
+const METAL_ARMOR = new Set(['a_pla', 'a_baroness', 'a_marshal', 'a_carap']);
 function makeParts(){
   const p = {};
   for(const k of PARTS) p[k] = {hp:100, max:100, bleed:0, bandaged:false, severed:false, pros:false};
@@ -853,6 +855,10 @@ function makeChar(name, faction, x, y, o={}){
     inv: {}, pack: null, haulTarget: null,
     structTarget: null, repairTarget: null, stuckT: 0,
     healProg: 0, gatherT: 0, bubble: null,
+    /* audio timing. Declared here rather than sprung on the object later: stepToward touches
+       strideD for every mover on every tick, and a hidden-class transition in that path is
+       not worth a footstep. Neither needs saving — both re-derive within a second of play. */
+    strideD: 0, swingT: 0,
     path: null, pathGoal: null, repathT: 0,
     hitT: 0, lungeT: 0, lungeDX: 0, lungeDY: 0,
     undead: false, master: null,
@@ -2831,6 +2837,8 @@ function log(msg, cls=''){
     if(chronicle.length > 500) chronicle.splice(0, chronicle.length - 500);
   }
 }
+/* a refusal the player asked for by clicking something. It says so, and it sounds like it. */
+function refuse(msg){ log(msg, 'bad'); AU.deny(); }
 function chronTime(e){
   const hh = Math.floor(e.h), mm = Math.floor((e.h - hh) * 60);
   return `Day ${e.d}, ${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
@@ -2926,32 +2934,64 @@ const HOUR_SEC = 8;   /* real seconds per game hour at 1x */
 /* ============================================================ SOUND
    Nine generations of dust and the game made no noise at all. Everything here is
    synthesised at runtime — noise buffers, oscillators, a couple of filters — because the
-   whole game is one HTML file and it is going to stay one HTML file.
-   Three standing layers (wind, night, the blood moon) and a handful of one-shots. Browsers
-   will not let audio start before the player touches something, so nothing is built until
-   the first click; before that every call here is a no-op. */
+   whole game is one HTML file and it is going to stay one HTML file. There is not a byte of
+   sample data here and there is not going to be. Browsers will not let audio start before
+   the player touches something, so nothing is built until the first click; before that
+   every call in here is a no-op.
+
+   The brief is the waste itself. Mostly wind. Mostly nothing. What sells an empty world is
+   not a constant hiss — that reads as tape noise and the ear stops hearing it inside a
+   minute. What sells it is SHAPE: a gust that swells for ten seconds and opens the filter
+   as it rises, a fall, then a long stretch of very little, and every so often something
+   distant and unexplained that you did not ask for and cannot go and look at.
+
+   Two buses. SFX carries every one-shot the world throws. AMBIENCE carries the standing
+   bed. They attenuate separately, because a bed you cannot turn down is a bed players end
+   up muting outright — and then the world is silent, which is the one thing it must not be. */
 const AU = (() => {
-  let ctx = null, master = null, noiseBuf = null;
+  let ctx = null, master = null, sfx = null, amb = null;
+  let noiseBuf = null, whiteBuf = null;
   let windSrc = null, windFilt = null, windGain = null;
+  let gritSrc = null, gritFilt = null, gritGain = null;
+  let lapSrc = null, lapFilt = null, lapGain = null;
   let nightOsc = null, nightGain = null;
   let moonOscA = null, moonOscB = null, moonGain = null;
+  let riftOscA = null, riftOscB = null, riftGain = null, riftFilt = null;
   let started = false;
   const last = {};                 /* per-kind throttle: a melee scrum is not a drum solo */
   let voices = 0;                  /* hard ceiling on simultaneous one-shots */
+  let lastT = 0;                   /* for a dt the caller does not have to supply */
 
-  const vol = () => (opts.sound === false ? 0 : (opts.vol == null ? 0.6 : opts.vol));
+  /* the gust cycle: a swell, a fall, and then a stretch of nothing before the next one */
+  let gustT = 0, gustDur = 7, gustRest = 5, gustPeak = 0.03, gustK = 0;
+  let farT = 20;                   /* seconds until the next distant, unexplained thing */
 
-  function makeNoise(){
+  const vol    = () => (opts.sound === false ? 0 : (opts.vol == null ? 0.6 : opts.vol));
+  const ambVol = () => (opts.amb == null ? 1 : opts.amb);
+
+  /* brown noise reads as wind and weight; white reads as grit, steel and breaking stone.
+     Both are two seconds long and looped — nobody has ever heard the seam. */
+  function makeNoise(brown){
     const n = ctx.sampleRate * 2;
     const b = ctx.createBuffer(1, n, ctx.sampleRate);
     const d = b.getChannelData(0);
-    /* brown-ish noise: integrated white, gently leaky. Reads as wind rather than static. */
+    if(!brown){ for(let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1; return b; }
     let v = 0;
     for(let i = 0; i < n; i++){
       v = (v + (Math.random() * 2 - 1) * 0.02) * 0.996;
       d[i] = v * 3.2;
     }
     return b;
+  }
+  /* a standing noise layer on the ambience bus: source -> filter -> gain, running forever */
+  function layer(buf, type, freq, q){
+    const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true;
+    const f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+    if(q != null) f.Q.value = q;
+    const g = ctx.createGain(); g.gain.value = 0;
+    s.connect(f); f.connect(g); g.connect(amb);
+    s.start();
+    return {s, f, g};
   }
   function init(){
     if(started) return;
@@ -2960,23 +3000,41 @@ const AU = (() => {
     try {
       ctx = new AC();
       master = ctx.createGain(); master.gain.value = vol(); master.connect(ctx.destination);
-      noiseBuf = makeNoise();
+      sfx = ctx.createGain(); sfx.gain.value = 1;           sfx.connect(master);
+      amb = ctx.createGain(); amb.gain.value = ambVol();   amb.connect(master);
+      noiseBuf = makeNoise(true);
+      whiteBuf = makeNoise(false);
       /* the wind never stops; only its throat opens and closes */
-      windSrc = ctx.createBufferSource(); windSrc.buffer = noiseBuf; windSrc.loop = true;
-      windFilt = ctx.createBiquadFilter(); windFilt.type = 'lowpass'; windFilt.frequency.value = 320;
-      windGain = ctx.createGain(); windGain.gain.value = 0.0;
-      windSrc.connect(windFilt); windFilt.connect(windGain); windGain.connect(master);
-      windSrc.start();
+      const w = layer(noiseBuf, 'lowpass', 320);
+      windSrc = w.s; windFilt = w.f; windGain = w.g;
+      /* grit rides on top of the gust — sand and dust actually striking things. This is
+         most of what separates a desert from a quiet room. */
+      const g2 = layer(whiteBuf, 'highpass', 1600);
+      gritSrc = g2.s; gritFilt = g2.f; gritGain = g2.g;
+      /* and if there is water in shot, it is doing something */
+      const l = layer(noiseBuf, 'bandpass', 480, 0.7);
+      lapSrc = l.s; lapFilt = l.f; lapGain = l.g;
       /* the night has a floor to it */
       nightOsc = ctx.createOscillator(); nightOsc.type = 'sine'; nightOsc.frequency.value = 47;
       nightGain = ctx.createGain(); nightGain.gain.value = 0;
-      nightOsc.connect(nightGain); nightGain.connect(master); nightOsc.start();
+      nightOsc.connect(nightGain); nightGain.connect(amb); nightOsc.start();
       /* and a blood moon has two, a tritone apart, which is the whole point */
       moonOscA = ctx.createOscillator(); moonOscA.type = 'triangle'; moonOscA.frequency.value = 58;
       moonOscB = ctx.createOscillator(); moonOscB.type = 'triangle'; moonOscB.frequency.value = 82;
       moonGain = ctx.createGain(); moonGain.gain.value = 0;
-      moonOscA.connect(moonGain); moonOscB.connect(moonGain); moonGain.connect(master);
+      moonOscA.connect(moonGain); moonOscB.connect(moonGain); moonGain.connect(amb);
       moonOscA.start(); moonOscB.start();
+      /* A TEAR IN THE WORLD, heard before it is seen. Two oscillators a few hertz apart so
+         they beat against each other — the slow throb is the point, and it is the one sound
+         in the game that gets LOUDER as you walk toward the thing making it. */
+      riftOscA = ctx.createOscillator(); riftOscA.type = 'sawtooth'; riftOscA.frequency.value = 41;
+      riftOscB = ctx.createOscillator(); riftOscB.type = 'sawtooth'; riftOscB.frequency.value = 44.7;
+      riftFilt = ctx.createBiquadFilter(); riftFilt.type = 'lowpass'; riftFilt.frequency.value = 180;
+      riftGain = ctx.createGain(); riftGain.gain.value = 0;
+      riftOscA.connect(riftFilt); riftOscB.connect(riftFilt);
+      riftFilt.connect(riftGain); riftGain.connect(amb);
+      riftOscA.start(); riftOscB.start();
+      lastT = ctx.currentTime;
       started = true;
     } catch(e){ ctx = null; }
   }
@@ -2984,7 +3042,10 @@ const AU = (() => {
     if(!started || !ctx || vol() <= 0) return false;
     const t = performance.now();
     if(last[kind] && t - last[kind] < gapMs) return false;
-    if(voices > 14) return false;
+    /* the ceiling counts ENVELOPES, not sounds — a struck-metal ring is four on its own,
+       and a blade caught on plate is five. Fourteen was a limit set when every sound was
+       one node; at that number a busy melee starts dropping blows that should be audible. */
+    if(voices > 26) return false;
     last[kind] = t;
     return true;
   }
@@ -2999,22 +3060,34 @@ const AU = (() => {
     const reach = 26 + camDist * 0.9;
     return d > reach ? 0 : (1 - d / reach) ** 1.6;
   }
-  function env(node, peak, attack, decay){
+  function env(node, peak, attack, decay, bus){
     const g = ctx.createGain(), t = ctx.currentTime;
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(Number.isFinite(peak) ? Math.max(0.0002, peak) : 0.0002, t + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
-    node.connect(g); g.connect(master);
+    node.connect(g); g.connect(bus || sfx);
     voices++;
     setTimeout(() => { voices--; try { g.disconnect(); } catch(e){} }, (attack + decay) * 1000 + 60);
     return t + attack + decay;
   }
-  function burst(freq, q, peak, dur, x, y){
+  function burst(freq, q, peak, dur, x, y, white){
     const k = near(x, y); if(k <= 0.02) return;
-    const src = ctx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+    const src = ctx.createBufferSource(); src.buffer = white ? whiteBuf : noiseBuf; src.loop = true;
     const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = q;
     src.connect(f);
     const end = env(f, peak * k, 0.004, dur);
+    src.start(); src.stop(end + 0.02);
+  }
+  /* noise through a filter that MOVES — a blade going past your ear, a body going down */
+  function swept(f0, f1, q, peak, dur, x, y, white){
+    const k = near(x, y); if(k <= 0.02) return;
+    const src = ctx.createBufferSource(); src.buffer = white ? whiteBuf : noiseBuf; src.loop = true;
+    const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = q;
+    const t = ctx.currentTime;
+    f.frequency.setValueAtTime(f0, t);
+    f.frequency.exponentialRampToValueAtTime(Math.max(30, f1), t + dur);
+    src.connect(f);
+    const end = env(f, peak * k, 0.008, dur);
     src.start(); src.stop(end + 0.02);
   }
   function tone(type, f0, f1, peak, dur, x, y){
@@ -3026,30 +3099,235 @@ const AU = (() => {
     const end = env(o, peak * k, 0.006, dur);
     o.start(); o.stop(end + 0.02);
   }
+  /* struck metal. The partials are deliberately NOT harmonic — a harmonic stack is a bell,
+     and nothing in this world is a bell. */
+  function ring(f, peak, dur, x, y){
+    const k = near(x, y); if(k <= 0.02) return;
+    for(const m of [1, 2.41, 3.83, 5.17]){
+      const o = ctx.createOscillator(); o.type = 'sine';
+      o.frequency.value = f * m * (1 + (Math.random() - 0.5) * 0.03);
+      const end = env(o, (peak * k) / (m * 1.5), 0.002, dur / (m * 0.7));
+      o.start(); o.stop(end + 0.02);
+    }
+  }
+  /* something a long way off, on the ambience bus, dark and quiet. It is never explained
+     and there is never anything there when you go and look. */
+  function farSound(kind){
+    if(!started || !ctx || vol() <= 0 || ambVol() <= 0) return;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 700;
+    lp.connect(amb);
+    const t = ctx.currentTime;
+    const mk = (node, peak, atk, dec) => {
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + atk);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + atk + dec);
+      node.connect(g); g.connect(lp);
+      setTimeout(() => { try { g.disconnect(); } catch(e){} }, (atk + dec) * 1000 + 120);
+      return t + atk + dec;
+    };
+    if(kind === 'moan'){
+      /* something large, some way out, that is not finished */
+      const o = ctx.createOscillator(); o.type = 'sawtooth';
+      o.frequency.setValueAtTime(88 + Math.random() * 30, t);
+      o.frequency.exponentialRampToValueAtTime(52, t + 2.6);
+      const end = mk(o, 0.030, 0.7, 1.9); o.start(); o.stop(end + 0.1);
+    } else if(kind === 'rockfall'){
+      const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+      const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 210; f.Q.value = 0.8;
+      s.connect(f);
+      const end = mk(f, 0.045, 0.10, 1.7); s.start(); s.stop(end + 0.1);
+    } else if(kind === 'groan'){
+      /* metal somewhere is taking a load it was not built for */
+      for(const d of [0, 3.5]){
+        const o = ctx.createOscillator(); o.type = 'triangle';
+        o.frequency.setValueAtTime(146 + d, t);
+        o.frequency.linearRampToValueAtTime(139 + d, t + 2.2);
+        const end = mk(o, 0.018, 1.0, 1.4); o.start(); o.stop(end + 0.1);
+      }
+    } else if(kind === 'caw'){
+      /* birds. Two notes, dry, and then nothing for a very long time. */
+      for(let i = 0; i < 2; i++) setTimeout(() => {
+        if(!started) return;
+        const t2 = ctx.currentTime;
+        const o = ctx.createOscillator(); o.type = 'sawtooth';
+        o.frequency.setValueAtTime(720, t2);
+        o.frequency.exponentialRampToValueAtTime(430, t2 + 0.17);
+        const g = ctx.createGain();
+        g.gain.setValueAtTime(0.0001, t2);
+        g.gain.exponentialRampToValueAtTime(0.020, t2 + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t2 + 0.19);
+        o.connect(g); g.connect(lp); o.start(); o.stop(t2 + 0.24);
+        setTimeout(() => { try { g.disconnect(); } catch(e){} }, 400);
+      }, i * 260);
+    } else if(kind === 'bell'){
+      /* a long way off, somebody still keeps a hall. Rare enough to be worth noticing. */
+      for(const m of [1, 2.76, 5.4]){
+        const o = ctx.createOscillator(); o.type = 'sine';
+        o.frequency.value = 196 * m;
+        const end = mk(o, 0.022 / m, 0.01, 3.4 / m); o.start(); o.stop(end + 0.1);
+      }
+    }
+    setTimeout(() => { try { lp.disconnect(); } catch(e){} }, 5000);
+  }
 
   return {
     init,
-    setVolume(){ if(master) master.gain.value = vol(); },
-    /* standing layers, nudged every frame toward where the world is now */
+    setVolume(){
+      if(master) master.gain.value = vol();
+      if(amb) amb.gain.value = ambVol();
+    },
+    /* ---------- the standing bed, nudged every frame toward where the world is now ---------- */
     tick(){
       if(!started) return;
       const t = ctx.currentTime;
+      const dt = Math.min(0.2, Math.max(0, t - lastT));   /* a tab in the background must not bank hours */
+      lastT = t;
       const stormy = weather.storm > 0 ? 1 : 0;
       const nightness = clamp(1 - Math.sin((hour - 6) / 13 * Math.PI), 0, 1);
-      const w = (0.020 + stormy * 0.085 + nightness * 0.012) * (vol() > 0 ? 1 : 0);
-      windGain.gain.setTargetAtTime(w, t, 1.6);
-      windFilt.frequency.setTargetAtTime(220 + stormy * 520, t, 2.0);
-      nightGain.gain.setTargetAtTime(nightness * 0.022 * (bloodMoon ? 0 : 1), t, 3.0);
-      moonGain.gain.setTargetAtTime(bloodMoon && nightness > 0.4 ? 0.030 : 0, t, 4.0);
+      const on = vol() > 0 ? 1 : 0;
+      /* the bed follows the AMBIENCE setting from here rather than only from setVolume, so
+         it cannot be left stranded loud by anything that changes the option without saying so */
+      amb.gain.setTargetAtTime(ambVol(), t, 0.12);
+
+      /* what the camera is standing on decides what the air sounds like */
+      const b = tileAt(camX, camY);
+      const sandy = b === 1 ? 1 : b === 2 ? 0.25 : b === 4 ? 0.55 : 0.3;
+      const wet   = b === 3 ? 1 : 0;
+
+      /* THE GUST. A swell, a fall, and then a rest — and the filter opens as it rises,
+         because wind that gets louder without getting brighter reads as a fader move. */
+      gustT += dt;
+      if(gustT >= gustDur + gustRest){
+        gustT = 0;
+        gustDur  = 5 + Math.random() * 9 - stormy * 1.5;
+        gustRest = stormy ? Math.random() * 2 : 3 + Math.random() * 11;
+        gustPeak = 0.012 + Math.random() * 0.026 + stormy * 0.075;
+      }
+      gustK = gustT < gustDur ? Math.sin(Math.PI * (gustT / gustDur)) ** 1.6 : 0;
+
+      const wg = (0.006 + gustK * gustPeak + nightness * 0.004) * on;
+      windGain.gain.setTargetAtTime(wg, t, 0.6);
+      windFilt.frequency.setTargetAtTime(190 + gustK * 460 + stormy * 380, t, 0.8);
+      /* grit only when the air is actually moving, and only over ground that has any */
+      gritGain.gain.setTargetAtTime(gustK * gustK * 0.034 * sandy * (0.4 + stormy) * on, t, 0.5);
+      gritFilt.frequency.setTargetAtTime(2600 - gustK * 900, t, 1.0);
+      lapGain.gain.setTargetAtTime(wet * (0.010 + gustK * 0.012) * on, t, 2.0);
+
+      nightGain.gain.setTargetAtTime(nightness * 0.022 * (bloodMoon ? 0 : 1) * on, t, 3.0);
+      moonGain.gain.setTargetAtTime(bloodMoon && nightness > 0.4 ? 0.030 * on : 0, t, 4.0);
+
+      /* how close is the nearest tear? It is audible well before the fog gives it up. */
+      let rk = 0;
+      for(const r of rifts){
+        const d = Math.hypot(r.x - camX, r.y - camY);
+        if(d < 34) rk = Math.max(rk, (1 - d / 34) ** 1.5);
+      }
+      riftGain.gain.setTargetAtTime(rk * 0.055 * on, t, 1.2);
+      riftFilt.frequency.setTargetAtTime(120 + rk * 260, t, 1.5);
+
+      /* ---- and every so often, something a long way off ---- */
+      farT -= dt;
+      if(farT <= 0){
+        /* blood moons are busier and the nights are worse; daylight over green ground is
+           the only time this world offers you a bird. */
+        farT = (bloodMoon ? 22 : nightness > 0.5 ? 34 : 46) + Math.random() * 70;
+        const pool = [];
+        if(b === 2) pool.push('rockfall', 'rockfall', 'groan');
+        if(b === 1) pool.push('moan', 'rockfall');
+        if(b === 0 || b === 4) pool.push(nightness > 0.5 ? 'moan' : 'caw', 'caw');
+        if(wet) pool.push('caw', 'groan');
+        if(nightness > 0.5) pool.push('moan', 'groan');
+        if(bloodMoon) pool.push('moan', 'moan', 'groan');
+        if(!bloodMoon && nightness < 0.3 && Math.random() < 0.12) pool.push('bell');
+        if(pool.length) farSound(pool[(Math.random() * pool.length) | 0]);
+      }
     },
-    hit(x, y, heavy){ if(ok('hit', 45)) burst(heavy ? 190 : 420, 1.1, heavy ? 0.30 : 0.19, heavy ? 0.16 : 0.09, x, y); },
-    block(x, y){ if(ok('block', 70)) burst(1500, 3.5, 0.13, 0.07, x, y); },
-    shot(x, y){ if(ok('shot', 60)) burst(900, 2.2, 0.13, 0.10, x, y); },
-    sever(x, y){ if(ok('sever', 140)){ burst(150, 0.8, 0.42, 0.34, x, y); tone('sawtooth', 260, 60, 0.13, 0.30, x, y); } },
+
+    /* ---------- blows landed ---------- */
+    /* the weapon type is most of the sound. A katana and a club do not agree about anything. */
+    hit(x, y, heavy, wt){
+      if(!ok('hit', 45)) return;
+      if(wt === 'cut'){
+        burst(1100, 2.2, heavy ? 0.20 : 0.13, heavy ? 0.09 : 0.05, x, y, true);   /* the edge */
+        burst(210,  1.0, heavy ? 0.26 : 0.15, heavy ? 0.15 : 0.08, x, y);         /* the meat under it */
+      } else if(wt === 'blunt'){
+        burst(120, 0.7, heavy ? 0.34 : 0.20, heavy ? 0.20 : 0.11, x, y);
+        tone('sine', heavy ? 84 : 110, 44, heavy ? 0.20 : 0.11, heavy ? 0.19 : 0.10, x, y);
+      } else if(wt === 'pierce'){
+        burst(1700, 5.0, heavy ? 0.16 : 0.10, 0.035, x, y, true);
+        burst(300,  1.6, heavy ? 0.20 : 0.12, heavy ? 0.10 : 0.06, x, y);
+      } else if(wt === 'burn'){
+        burst(700, 0.9, heavy ? 0.22 : 0.14, heavy ? 0.30 : 0.18, x, y, true);
+      } else if(wt === 'dark' || wt === 'holy'){
+        tone(wt === 'holy' ? 'sine' : 'triangle', wt === 'holy' ? 620 : 200,
+             wt === 'holy' ? 980 : 90, heavy ? 0.17 : 0.11, 0.22, x, y);
+      } else {
+        burst(heavy ? 190 : 420, 1.1, heavy ? 0.30 : 0.19, heavy ? 0.16 : 0.09, x, y);
+      }
+    },
+    /* a swing that found nothing. Cheap, frequent, and the reason a fight has rhythm. */
+    whiff(x, y, heavy){ if(ok('whiff', 90)) swept(heavy ? 900 : 1500, heavy ? 240 : 420, 1.4, heavy ? 0.10 : 0.065, heavy ? 0.20 : 0.13, x, y, true); },
+    /* caught on something. Steel rings; leather and bone do not. */
+    block(x, y, metal){
+      if(!ok('block', 70)) return;
+      if(metal){ burst(2600, 4.0, 0.11, 0.03, x, y, true); ring(880, 0.085, 0.42, x, y); }
+      /* hide and bone: a dull whump with a knock on top, and no ring at all */
+      else { burst(150, 0.7, 0.26, 0.10, x, y); burst(900, 2.0, 0.10, 0.04, x, y, true); }
+    },
+    shot(x, y){ if(ok('shot', 60)){ swept(1600, 700, 2.0, 0.09, 0.09, x, y, true); burst(900, 2.2, 0.11, 0.08, x, y); } },
+    /* an arrow arriving. Different sound entirely from the string letting go. */
+    thud(x, y){ if(ok('thud', 55)){ burst(200, 1.2, 0.28, 0.08, x, y); burst(1300, 3.0, 0.09, 0.03, x, y, true); } },
+    sever(x, y){
+      if(!ok('sever', 140)) return;
+      burst(2200, 6.0, 0.20, 0.025, x, y, true);   /* the bone giving, which is the worst of it */
+      burst(150, 0.8, 0.42, 0.34, x, y);
+      tone('sawtooth', 260, 60, 0.13, 0.30, x, y);
+    },
+    /* a body arriving on the ground, and the dust it puts up */
+    bodyfall(x, y, big){
+      if(!ok('fall', 120)) return;
+      burst(90, 0.6, big ? 0.34 : 0.22, big ? 0.22 : 0.15, x, y);
+      swept(700, 180, 0.9, big ? 0.11 : 0.07, big ? 0.5 : 0.34, x, y, true);
+    },
     death(x, y){ if(ok('death', 220)) tone('sine', 150, 42, 0.19, 0.75, x, y); },
-    cast(x, y){ if(ok('cast', 110)) tone('triangle', 180, 720, 0.13, 0.30, x, y); },
-    build(x, y){ if(ok('build', 90)) burst(320, 1.4, 0.18, 0.14, x, y); },
-    ui(){ if(ok('ui', 25)) burst(2200, 4, 0.05, 0.035); },
+
+    /* ---------- the arts ---------- */
+    cast(x, y, gift){
+      if(!ok('cast', 110)) return;
+      if(gift === 'destruction'){ swept(300, 2400, 1.2, 0.13, 0.26, x, y, true); tone('sawtooth', 120, 300, 0.08, 0.22, x, y); }
+      else if(gift === 'dark'){ tone('triangle', 300, 70, 0.14, 0.42, x, y); burst(180, 1.2, 0.10, 0.30, x, y); }
+      else if(gift === 'divine'){ ring(660, 0.09, 0.9, x, y); tone('sine', 440, 880, 0.07, 0.30, x, y); }
+      else if(gift === 'dust'){ swept(2600, 500, 3.0, 0.075, 0.34, x, y, true); }
+      else tone('triangle', 180, 720, 0.13, 0.30, x, y);
+    },
+    /* something is bound at the circle: a swell, and then the thing is standing there */
+    rite(x, y){
+      if(!ok('rite', 400)) return;
+      tone('sawtooth', 55, 110, 0.14, 1.1, x, y);
+      tone('triangle', 330, 165, 0.075, 1.3, x, y);
+      burst(240, 0.8, 0.12, 0.9, x, y);
+    },
+
+    /* ---------- work ---------- */
+    /* the base-building loop is half the game, so it gets to be audible */
+    chop(x, y){ if(ok('chop', 210)){ burst(280, 3.0, 0.20, 0.08, x, y); burst(1500, 2.0, 0.09, 0.03, x, y, true); } },
+    mine(x, y){ if(ok('mine', 210)){ burst(2800, 7.0, 0.14, 0.025, x, y, true); burst(160, 1.0, 0.20, 0.16, x, y); } },
+    hammer(x, y){ if(ok('hammer', 240)){ burst(2000, 5.0, 0.11, 0.03, x, y, true); ring(520, 0.075, 0.30, x, y); } },
+    build(x, y){ if(ok('build', 300)) burst(320, 1.4, 0.18, 0.14, x, y); },
+    /* a frame that becomes a building — one beat heavier than the hammering that got it there */
+    raised(x, y){ if(ok('raised', 600)){ burst(200, 0.9, 0.26, 0.34, x, y); ring(330, 0.07, 0.7, x, y); } },
+    /* dry ground under a boot. Throttled hard: this is one pair of feet, not the whole squad. */
+    step(x, y){ if(ok('step', 165)) burst(1100 + Math.random() * 700, 1.2, 0.030, 0.035, x, y, true); },
+
+    /* ---------- interface ---------- */
+    /* white, not brown — a 2.2 kHz band of brown noise has almost nothing in it, and this
+       click was very nearly inaudible before it fired on every button in the game */
+    ui(){ if(ok('ui', 25)) burst(2200, 4, 0.06, 0.035, undefined, undefined, true); },
+    /* a menu opening is a heavier, duller thing than a button inside it */
+    open(){ if(ok('open', 90)){ burst(700, 2.0, 0.06, 0.06); burst(180, 1.0, 0.05, 0.09); } },
+    /* an order refused: the one UI sound that is allowed to be unpleasant */
+    deny(){ if(ok('deny', 120)) tone('square', 200, 130, 0.045, 0.11); },
     /* news landing has its own small sound, because it is the one thing you must not miss */
     news(bad){ if(ok('news', 200)) tone('sine', bad ? 420 : 300, bad ? 300 : 560, 0.075, 0.24); },
   };
@@ -3105,6 +3383,10 @@ function attack(a, d){
   if(rnd() > hc){
     xpGain(d, 'def', (d.blocking ? 0.14 : 0.07) * clamp((a.stats.atk+4)/(d.stats.def+4), .2, 2));
     addFloat(d.x, d.y-0.9, d.blocking ? 'blocked' : 'miss', d.blocking ? '#8fb5d4' : '#9c8a6e');
+    /* a guard caught it, or it went past — two very different sounds, and between them they
+       are most of what gives a fight its rhythm */
+    if(d.blocking) AU.block(d.x, d.y, !!(d.armor && METAL_ARMOR.has(d.armor)));
+    else AU.whiff(a.x, a.y, !!(a.big > 1.2) || !!(a.weapon && ITEMS[a.weapon].wt === 'blunt'));
     return;
   }
   const w = a.weapon ? ITEMS[a.weapon] : null;
@@ -3214,7 +3496,7 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
     }
   }
   const part = d.parts[pk];
-  AU.hit(d.x, d.y, dmg >= 16);
+  AU.hit(d.x, d.y, dmg >= 16, wt);
   part.hp -= dmg;
   part.bandaged = false;
   part.bleed += dmg * (wt==='cut' ? 0.09 : wt==='burn' ? 0.02 : wt==='dark' ? 0.03 : wt==='holy' ? 0.01 : 0.04);
@@ -3253,6 +3535,7 @@ function updateState(c, loud){
     if(c.phantom){ dispelPhantom(c); return; }   /* an illusion has no knees to buckle */
     if(c.drag){ c.drag.captured = false; c.drag = null; }
     c.state = 'down'; clearOrders(c); c.downT = 0;
+    AU.bodyfall(c.x, c.y, (c.big || 1) > 1.3);
     if(loud || c.faction==='player') log(`${c.name} is down.`, c.faction==='player'?'bad':'');
   }
   if(c.state==='down' && !vitalDown && c.blood > (c.race==='hollow' ? 20 : 50) && !c.captured && !(c.race==='hollow' && severedN >= 2)) {
@@ -3263,6 +3546,8 @@ function updateState(c, loud){
 function kill(c, by){
   if(c.state==='dead') return;
   AU.death(c.x, c.y);
+  /* anything still on its feet when it dies has one more thing left to do */
+  if(c.state === 'ok') AU.bodyfall(c.x, c.y, (c.big || 1) > 1.3);
   if(c.captain){
     /* the standard falls; the line breaks */
     let routed = 0;
@@ -3578,6 +3863,7 @@ function completeBlueprint(bp){
   if(i < 0) return;
   blueprints.splice(i, 1);
   placeStructure(bp.type, bp.x, bp.y);
+  AU.raised(bp.x + (bp.w || 1) / 2, bp.y + (bp.h || 1) / 2);
   log(`${BUILD_TYPES[bp.type].name} raised — the crew steps back and it stands on its own.`, 'good');
 }
 function bpNeeded(bp){
@@ -4259,6 +4545,13 @@ function stepToward(c, tx, ty, dt){
   else if(!isBlocked3(c, c.x, ny)){ c.y = ny; }
   else return true; /* stuck: give up */
   if(c.faction==='player') xpGain(c, 'ath', dt*0.008);
+  /* FOOTFALL. A stride is about a tile. The cheap camera test comes first so a hundred
+     bodies walking somewhere off-screen cost nothing; the audio layer throttles what
+     survives, so a crowd reads as a crowd rather than a drum solo. Servitors float. */
+  if(!c.servitor && (c.strideD = (c.strideD || 0) + sp) > 1.15){
+    c.strideD = 0;
+    if(Math.abs(c.x - camX) + Math.abs(c.y - camY) < 22) AU.step(c.x, c.y);
+  }
   return dist(c.x,c.y,tx,ty) < 0.1;
 }
 /* A* on the tile grid, octile heuristic, no corner cutting */
@@ -4625,6 +4918,14 @@ function physics(c, dt){
         return;
       }
       c.gatherT += dt * (1 + c.stats.labor*0.05);
+      /* the SWING, not the yield. A tick every five seconds is a payout; work needs a beat
+         under it or a camp full of labourers sounds like an empty field. */
+      c.swingT = (c.swingT || 0) - dt;
+      if(c.swingT <= 0){
+        c.swingT = 0.8 + rnd() * 0.4;
+        if(g.kind === 'wood') AU.chop(c.x, c.y);
+        else if(g.kind !== 'fish') AU.mine(c.x, c.y);
+      }
       if(c.gatherT >= 5){
         c.gatherT = 0;
         invAdd(c, g.kind, 1);
@@ -5045,6 +5346,8 @@ function physics(c, dt){
             bp.progress += dt * (0.025 + c.stats.labor * 0.0012);
             c._working = 0.5; if(rnd() < dt * 0.08) xpGain(c, 'labor', 0.35);
             if(rnd() < dt * 0.7) addSpecks(c.x, c.y - 0.5, '#b0a890', 2);
+            c.swingT = (c.swingT || 0) - dt;
+            if(c.swingT <= 0){ c.swingT = 0.7 + rnd() * 0.4; AU.build(c.x, c.y); }
             if(bp.progress >= 1) completeBlueprint(bp);
           }
         }
@@ -5083,6 +5386,8 @@ function physics(c, dt){
         return;
       }
       c.craftT = (c.craftT || 0) + dt * (1 + c.stats.crafting * 0.05);
+      c.swingT = (c.swingT || 0) - dt;
+      if(c.swingT <= 0){ c.swingT = 0.9 + rnd() * 0.5; AU.hammer(c.x, c.y); }
       if(c.craftT >= MATS_SECS){
         c.craftT = 0;
         if(campSpend(MATS_RECIPE)){
@@ -6512,6 +6817,9 @@ function risenCap(caster){
 }
 function spendCast(c, key){
   if(key !== 'veil') breakVeil(c, 'works a formula');
+  /* every branch has its own noise. Fire climbs, the dark falls, the divine rings, and
+     dust goes the wrong way down and takes the room's edges with it. */
+  AU.cast(c.x, c.y, SPELLS[key].gift);
   c.mana -= SPELLS[key].cost;
   c.castCd = 1.4;
   xpGain(c, 'magic', 0.5);
@@ -6950,7 +7258,7 @@ function craftUndead(kind, caster, circle){
   if(risenLoad(caster) + ut.weight > risenCap(caster)){
     log(`Binding full: ${risenLoad(caster)}/${risenCap(caster)} — ${ut.name} needs ${ut.weight}.`, 'bad'); return false;
   }
-  if(!Object.keys(ut.cost).every(k => (stash[k]||0) >= ut.cost[k])){ log('Missing materials.', 'bad'); return false; }
+  if(!Object.keys(ut.cost).every(k => (stash[k]||0) >= ut.cost[k])){ refuse('Missing materials.'); return false; }
   for(const k of Object.keys(ut.cost)) campTake(k, ut.cost[k]);
   const m = caster.stats.magic * (research.done.necromancy ? 1.5 : 1);
   const p = findOpenNear(circle.x+1, circle.y+1, 2.5);
@@ -7015,6 +7323,7 @@ function craftUndead(kind, caster, circle){
   caster.mana -= ut.mana; caster.castCd = 1.4;
   xpGain(caster, 'magic', 0.8);
   addSpecks(p.x, p.y-0.5, '#8a6ab5', 12);
+  AU.rite(p.x, p.y);
   say(u, '...');
   log(`${ut.name} bound.`, 'good');
   refreshSquadBar(); refreshInv(); refreshCharPanel();
@@ -7129,7 +7438,7 @@ function openBoneMarket(necro){
       if(!lead) btn.title = 'You need a dark-gifted mind to hold the leash.';
       else if(!room) btn.title = `${lead.name}'s binding is full.`;
       btn.onclick = () => {
-        if(cats < price){ log('Not enough gold.', 'bad'); return; }
+        if(cats < price){ refuse('Not enough gold.'); return; }
         if(!lead){ log('You need a dark-gifted mind to hold the leash.', 'bad'); return; }
         if(risenLoad(lead) + (u.bindWeight || 1) > risenCap(lead)){ log(`${lead.name}'s binding is full.`, 'bad'); return; }
         cats -= price;
@@ -7344,12 +7653,15 @@ function updateProjectiles(dt){
       const loud = p.caster.faction==='player' || p.target.faction==='player';
       if(p.arrow && rnd() < clamp(0.15 + p.target.stats.def*0.008, 0, 0.4)){
         addFloat(p.target.x, p.target.y-0.9, 'miss', '#9c8a6e');
+        AU.whiff(p.target.x, p.target.y, false);
       } else {
         applyDamage(p.caster, p.target, pickPart(), p.dmg, p.wt, loud, false, false, p.ap);
         if(p.mark && p.target.state !== 'dead'){
           p.target.markT = MARK_TIME;
           addFloat(p.target.x, p.target.y-1.2, 'MARKED', '#a970e8');
         }
+        if(p.arrow) AU.thud(p.target.x, p.target.y);   /* the arrival, not the loosing */
+        applyDamage(p.caster, p.target, pickPart(), p.dmg, p.wt, loud);
         if(p.ff){
           log(`${p.caster.name}'s stray shot hit ${p.target.name}!`, 'bad');
           say(p.target, 'WATCH IT!');
@@ -7397,7 +7709,7 @@ let wldT = 0;
 let simAcc = 0;
 const SIM_DT = 1 / 30;
 /* options: small dials, kept outside the save so they survive new worlds */
-const opts = {fps: false, seeAll: false, dpr: 'auto', shadows: 'high', sound: true, vol: 0.6};
+const opts = {fps: false, seeAll: false, dpr: 'auto', shadows: 'high', sound: true, vol: 0.6, amb: 1.0};
 try { Object.assign(opts, JSON.parse(localStorage.getItem('dustward_opts') || '{}')); } catch(e){}
 function saveOpts(){ try { localStorage.setItem('dustward_opts', JSON.stringify(opts)); } catch(e){} }
 function applyOpts(){
@@ -12553,7 +12865,7 @@ function openScriptorium(){
       const u = chars.find(x => x.id === +uid2);
       if(!u) return;
       const cost2 = u.gift === br ? 5 : 10;
-      if(research.rp < cost2){ log('Not enough insight.', 'bad'); return; }
+      if(research.rp < cost2){ refuse('Not enough insight.'); return; }
       research.rp -= cost2;
       attGain(u, br, 60);
       rndr();
@@ -12684,7 +12996,7 @@ function openResearch(){
       if(t.needs && !pBuilds.some(pb => pb.type === t.needs)){
         log(`Study needs a ${BUILD_TYPES[t.needs].name} to work at.`, 'bad'); return;
       }
-      if(cats < t.cost){ log('Not enough gold.', 'bad'); return; }
+      if(cats < t.cost){ refuse('Not enough gold.'); return; }
       const mats = t.mats || {};
       if(!canAfford(mats)){ log(`Need ${costText(mats)}.`, 'bad'); return; }
       if(t.needsQuest && !immortalFavor(t.needsQuest)){ log('The road is walked before it is written. Find them. Earn it.', 'bad'); return; }
@@ -12963,8 +13275,15 @@ let modalOpen = false;
 function openModal(title, sub){
   $('modaltitle').textContent = title; $('modalsub').textContent = sub;
   $('modal').style.display = 'flex'; modalOpen = true; paused = true; syncPauseBtn();
+  AU.open();
 }
 $('modalclose').onclick = () => { $('modal').style.display='none'; modalOpen = false; };
+/* every button in the game clicks, without every button having to remember to. Delegated in
+   the capture phase so it still fires for handlers that stop propagation on their way out. */
+document.addEventListener('click', e => {
+  const b = e.target && e.target.closest ? e.target.closest('button') : null;
+  if(b && !b.disabled) AU.ui();
+}, true);
 const _chb = document.getElementById('btn-chron'); if(_chb) _chb.onclick = () => openChronicles();
 function openInventory(c){
   openModal('BACKPACK — ' + c.name, 'Personal load. Equip, eat, hand to a squadmate, stash, or drop. [I] reopens.');
@@ -13082,7 +13401,7 @@ function openVendor(v){
         if(cats < bp) break;
         cats -= bp; town.stock[k]--; addItem(k, 1); bought++;
       }
-      if(!bought){ log('Not enough gold.', 'bad'); return; }
+      if(!bought){ refuse('Not enough gold.'); return; }
       refreshTop(); refreshInv(); render();
     });
     body.querySelectorAll('[data-sell]').forEach(b => b.onclick = (e) => {
@@ -13118,7 +13437,7 @@ function openCaravanTrade(tr){
       const k = b.dataset.buy, price = cBuy(k);
       if(!Number.isFinite(cats) || !Number.isFinite(price) || price <= 0){ log('No deal can be struck.', 'bad'); return; }
       const n = Math.min(e.shiftKey?10:1, Math.floor(cats/price));
-      if(!Number.isFinite(n) || n <= 0){ log('Not enough gold.', 'bad'); return; }
+      if(!Number.isFinite(n) || n <= 0){ refuse('Not enough gold.'); return; }
       cats -= price*n; addItem(k, n); refreshTop(); refreshInv(); rndr();
     });
     body.querySelectorAll('[data-sell]').forEach(b => b.onclick = (e) => {
@@ -13148,7 +13467,7 @@ function openBar(v){
         <button data-payoff="1">PAY ${fine}</button>`;
       body.appendChild(pd);
       pd.querySelector('[data-payoff]').onclick = () => {
-        if(cats < fine){ log('Not enough gold.', 'bad'); return; }
+        if(cats < fine){ refuse('Not enough gold.'); return; }
         cats -= fine; town.rep = 0; town.warnedHostile = false; town.necroHostile = false; town.necroWarned = false;
         log(`${town.name} agrees to forget. For now.`, 'good');
         refreshTop(); render();
@@ -13195,7 +13514,7 @@ function openBar(v){
       const couple = squadCouple();
       if(!couple){ log('Only a wed couple may take in a child.', 'bad'); return; }
       if(player().filter(c=>(!c.undead||c.lich) && !c.settler).length >= SQUAD_CAP){ log(`Squad is full (${SQUAD_CAP}).`, 'bad'); return; }
-      if(cats < o.fee){ log('Not enough gold.', 'bad'); return; }
+      if(cats < o.fee){ refuse('Not enough gold.'); return; }
       cats -= o.fee;
       const p = findOpenNear(v.x, v.y+1, 2);
       const kid = makeChar(o.name, 'player', p.x, p.y, {...o.stats, age:o.age, race:o.race});
@@ -13211,11 +13530,11 @@ function openBar(v){
          spread it into gold AND the stash. Demand a real, finite count. */
       if(!Number.isFinite(cats) || !Number.isFinite(bp) || bp <= 0){ log('The barkeep cannot make change.', 'bad'); return; }
       const n = Math.min(e.shiftKey ? 10 : 1, Math.floor(cats/bp));
-      if(!Number.isFinite(n) || n <= 0){ log('Not enough gold.', 'bad'); return; }
+      if(!Number.isFinite(n) || n <= 0){ refuse('Not enough gold.'); return; }
       cats -= bp*n; addItem(k, n); refreshTop(); refreshInv(); render();
     });
     body.querySelectorAll('[data-mule]').forEach(b => b.onclick = () => {
-      if(cats < 600){ log('Not enough gold.', 'bad'); return; }
+      if(cats < 600){ refuse('Not enough gold.'); return; }
       cats -= 600;
       const p = findOpenNear(v.x, v.y+1, 2);
       const m = makeChar('Mule ' + (++muleN), 'player', p.x, p.y, {atk:2, def:4, tough:14, ath:5, labor:20});
@@ -13228,7 +13547,7 @@ function openBar(v){
     body.querySelectorAll('[data-hire]').forEach(b => b.onclick = () => {
       const i = +b.dataset.hire, r = town.recruits[i];
       if(player().filter(c=>!c.undead || c.lich).length >= SQUAD_CAP){ log(`Squad is full (${SQUAD_CAP}).`, 'bad'); return; }
-      if(cats < r.cost){ log('Not enough gold.', 'bad'); return; }
+      if(cats < r.cost){ refuse('Not enough gold.'); return; }
       cats -= r.cost;
       town.recruits.splice(i,1);
       const p = findOpenNear(v.x, v.y+1, 2);
@@ -13321,6 +13640,12 @@ function openOptions(){
     const cur = opts.sound === false ? 0 : (opts.vol == null ? 0.6 : opts.vol);
     const next = steps[(steps.findIndex(v => Math.abs(v - cur) < 0.01) + 1) % steps.length];
     opts.vol = next; opts.sound = next > 0;
+    AU.init(); AU.setVolume();
+  });
+  row('AMBIENCE — wind, grit, the far-off', Math.round((opts.amb == null ? 1 : opts.amb) * 100) + '%', () => {
+    const steps = [0, 0.35, 0.7, 1.0];
+    const cur = opts.amb == null ? 1 : opts.amb;
+    opts.amb = steps[(steps.findIndex(v => Math.abs(v - cur) < 0.01) + 1) % steps.length];
     AU.init(); AU.setVolume();
   });
   const note = document.createElement('div');
@@ -14124,7 +14449,7 @@ function resolvePetition(t, p, eff){
   t.petitions.splice(t.petitions.indexOf(p), 1);
   switch(eff){
     case 'relief':
-      if(cats < 100){ log('Not enough gold.', 'bad'); t.petitions.push(p); return; }
+      if(cats < 100){ refuse('Not enough gold.'); t.petitions.push(p); return; }
       cats -= 100; t.order = clamp(t.order + 6, 0, 100);
       log(`Relief granted. ${t.name} remembers a full table. (+order)`, 'good'); break;
     case 'refuse':
@@ -14188,7 +14513,7 @@ function openRule(px, py, t){
     for(const [k, P] of Object.entries(TOWN_PROJECTS)){
       if(t.projectsDone && t.projectsDone[k]){ pr.push({label:`✓ ${P.name} — built`, fn:()=>{}}); continue; }
       pr.push({label:`${P.name} — ${P.cost}g, ${P.days}d (${P.desc})`, fn:()=>{
-        if(cats < P.cost){ log('Not enough gold.', 'bad'); return; }
+        if(cats < P.cost){ refuse('Not enough gold.'); return; }
         cats -= P.cost;
         t.project = {k, done: day + P.days};
         log(`${t.name} breaks ground on the ${P.name}. Done day ${t.project.done}.`, 'good');
@@ -14199,7 +14524,7 @@ function openRule(px, py, t){
   }});
   items.push({label: t.caravanOut ? `CARAVAN ON THE ROAD (${t.caravanOut.leg})` : 'SEND A CARAVAN — 500g stake', fn:()=>{
     if(t.caravanOut){ log('Your caravan is already out. One road at a time.', ''); return; }
-    if(cats < 500){ log('Not enough gold for the stake.', 'bad'); return; }
+    if(cats < 500){ refuse('Not enough gold for the stake.'); return; }
     const dests = towns.filter(o => o !== t && !o.sacked && !(t.warWith === o));
     if(!dests.length){ log('No open road to trade down.', 'bad'); return; }
     cats -= 500;
@@ -14223,7 +14548,7 @@ function openRule(px, py, t){
   }});
   items.push({label: t.feastCd > day ? `FEAST HELD (ready day ${t.feastCd})` : 'HOLD A FEAST (200c, +order)', fn:()=>{
     if(t.feastCd > day){ log('The town is still sleeping off the last one.'); return; }
-    if(cats < 200){ log('Not enough gold.', 'bad'); return; }
+    if(cats < 200){ refuse('Not enough gold.'); return; }
     cats -= 200; t.feastCd = day + 3; t.order = clamp(t.order + 8, 0, 100);
     log(`${t.name} feasts under your banner. (+order)`, 'good'); refreshTop();
   }});
@@ -14234,7 +14559,7 @@ function openRule(px, py, t){
       const oi = towns.indexOf(o), ti = towns.indexOf(t);
       if(t.warWith === o){
         dip.push({label:`SUE FOR PEACE W/ ${o.name} (600c)`, fn:()=>{
-          if(cats < 600){ log('Not enough gold.', 'bad'); return; }
+          if(cats < 600){ refuse('Not enough gold.'); return; }
           cats -= 600;
           const L = o.leader, odds = L && L.trait==='ironfisted' ? 0.45 : L && L.trait==='mercantile' ? 0.85 : 0.65;
           if(rnd() < odds){
@@ -14248,7 +14573,7 @@ function openRule(px, py, t){
       } else {
         if(!(t.pacts && t.pacts[oi])){
           dip.push({label:`TRADE PACT W/ ${o.name} (400c)`, fn:()=>{
-            if(cats < 400){ log('Not enough gold.', 'bad'); return; }
+            if(cats < 400){ refuse('Not enough gold.'); return; }
             if(o.warWith === t){ log(`${o.name} is at war with you. Trade waits on peace.`, 'bad'); return; }
             cats -= 400; t.pacts = t.pacts || {}; t.pacts[oi] = true;
             relSet(ti, oi, relGet(ti, oi) + 15);
@@ -14276,7 +14601,7 @@ function openRule(px, py, t){
 }
 function payTribute(t, L){
   const cost = 300;
-  if(cats < cost){ log('Not enough gold.', 'bad'); return; }
+  if(cats < cost){ refuse('Not enough gold.'); return; }
   cats -= cost;
   const gain = L.trait==='mercantile' ? 22 : L.trait==='pious' ? 10 : 15;
   t.rep = clamp(t.rep + gain, -100, 100);
@@ -14286,7 +14611,7 @@ function payTribute(t, L){
 function brokerPeace(t, L){
   const cost = 800;
   if(!t.warWith){ log('There is no war to end here.', ''); return; }
-  if(cats < cost){ log('Not enough gold.', 'bad'); return; }
+  if(cats < cost){ refuse('Not enough gold.'); return; }
   cats -= cost;
   const o = t.warWith;
   if(rnd() < audienceOdds('peace', L, t)){
@@ -14304,7 +14629,7 @@ function brokerPeace(t, L){
 }
 function inciteWar(t, L, target){
   const cost = 1500;
-  if(cats < cost){ log('Not enough gold.', 'bad'); return; }
+  if(cats < cost){ refuse('Not enough gold.'); return; }
   if(t.warWith || target.warWith){ log('Their swords are already spoken for.', ''); return; }
   cats -= cost;
   if(rnd() < audienceOdds('war', L, t)){
