@@ -1532,7 +1532,7 @@ function worldEvent(kind, x, y, text){
 const NEWS_TONE = {
   war:'bad', sack:'bad', plague:'bad', rebellion:'bad', conquest:'bad', ambush:'bad',
   camp:'bad', attention:'bad', bloodmoon:'bad', rift:'bad', sixfold:'bad', purge:'bad',
-  fracture:'bad', dread:'', compact:'good',
+  fracture:'bad', dread:'', compact:'good', door:'bad', fallen:'bad', ruin:'bad',
   peace:'good', pact:'good', sealed:'good', razed:'good',
 };
 function newsAge(e){
@@ -4648,7 +4648,7 @@ function travel(c, x, y, dt, arrive=0.15){
 function clearOrders(c){
   if(concExclusive(c) && !concMobile(c)) endConcentration(c);   /* a rooted light goes out when you move; a lantern travels with you */
   c.target = null; c.moveTarget = null; c.healTarget = null;
-  c.lootTarget = null; c.tradeTarget = null; c.bedTarget = null; c.pickupTarget = null; c.phylTarget = null; c.sealTarget = null;
+  c.lootTarget = null; c.tradeTarget = null; c.bedTarget = null; c.pickupTarget = null; c.phylTarget = null; c.sealTarget = null; c.doorWork = false;
   c.gather = null; c.attackMove = null; c.healProg = 0; c.gatherT = 0;
   c.chestTarget = null; c.targetManual = false; c.fleeT = 0;
   c.structTarget = null; c.repairTarget = null; c.stuckT = 0;
@@ -4801,6 +4801,7 @@ function physics(c, dt){
   if(c.resting) return;
   useStairs(c);
   escapeIfStuck(c);
+  if(c.doorWork && workTheDoor(c, dt)) return;   /* the door outranks every other thing */
   if(sealTick(c, dt)) return;   /* closing a tear is the only work that outranks a knife */
   if(mawFeed(c, dt)) return;   /* the Maw is here for the bodies, not for you */
   /* A ROOM GARRISON holds its chamber — redoubt guards and cave dwellers alike. It will not
@@ -5899,6 +5900,161 @@ function compactBeacon(r){
   }
 }
 function riftCap(){ return Math.max(1, noticeTier) + fractureStage; }   /* the sky never fully closed */
+/* ============================================================ THE SECOND FRACTURE ITSELF
+   The ladder ends here. This is not a harder difficulty band — it is a different game, and
+   it is one you can lose without the run ending, because a game-over screen would throw away
+   the most interesting thing about losing: living in what is left.
+
+   Three moving parts.
+
+   THE DOOR. One tear, far larger than the others, and it does not drift shut and it cannot
+   be birthed out of. Closing it is the whole objective and it costs more than any one camp
+   has ever held — which is what the Compact's warehouses were for. The rite takes real time
+   and the ground around it does not stay quiet while you work.
+
+   THE SIEGES. Every town that did not sign is surrounded. A besieged town loses order and
+   people, and when its order breaks it falls. Signed towns hold: the muster is standing on
+   the wall and the common stock is feeding them. That is sanctuary, and it is the reason the
+   sixth and seventh signature were worth arguing for.
+
+   THE SPIRAL. Every town lost widens the door, drops everyone else's order, and lets worse
+   things through. Losing is not a single event; it is a slope that gets steeper. */
+let theDoor = null;              /* the primary tear. There is only ever one. */
+let ruin = false;                /* every seat has fallen and the world belongs to it */
+const DOOR_SEAL_COST = {vflesh:60, iron:40, remains:80};
+const DOOR_WORK = 240;           /* seconds of sustained rite, at magic 0 */
+function fractureOpen(){ return fracture >= 100; }
+function openTheDoor(){
+  if(theDoor) return theDoor;
+  /* it opens where the world is thinnest — the oldest standing tear, or failing that, out
+     past the fences where nobody built anything */
+  let x, y;
+  const oldest = rifts.slice().sort((a,b) => b.age - a.age)[0];
+  if(oldest){ x = oldest.x; y = oldest.y; closeRift(oldest, null); }
+  else { const q = findOpenNear(ri(60, W-60), ri(60, H-60), 12); x = q.x; y = q.y; }
+  theDoor = {x, y, r: 14, seal: 0, work: 0, opened: day, fed: 0};
+  log('THE SKY HAS OPENED. Not a tear — a door, and it is standing wide. Whatever has been watching the fences is not watching any more.', 'bad');
+  worldEvent('door', x, y, 'The sky has opened out past the fences. Not a tear this time. A door, and it is standing wide.');
+  AU.news();
+  return theDoor;
+}
+function doorSealCost(){
+  /* every seat that falls makes the closing dearer — the door is wider for it */
+  const lost = towns.filter(t => t.sacked > 0).length;
+  const k = 1 + lost * 0.22;
+  const out = {};
+  for(const key in DOOR_SEAL_COST) out[key] = Math.ceil(DOOR_SEAL_COST[key] * k);
+  return out;
+}
+/* the rite at the door: long, expensive, and it has to be paid for at the end */
+function workTheDoor(c, dt){
+  const d = theDoor; if(!d) { c.doorWork = false; return false; }
+  if(!c.gift || (c.undead && !c.lich)){ c.doorWork = false; return false; }
+  if(!travel(c, d.x, d.y, dt, 3.0)) return true;
+  if(c.mana < 2){ if(rnd() < dt*0.2) log(`${c.name} has nothing left to give the rite.`, 'bad'); return true; }
+  c.mana -= dt * 2.0;
+  d.work += dt * (1 + c.stats.magic * 0.04);
+  if(rnd() < dt * 4) addSpecks(d.x + (rnd()-0.5)*6, d.y + (rnd()-0.5)*6, '#d8c8ff', 3);
+  if(d.work >= DOOR_WORK){
+    const cost = doorSealCost();
+    const paid = sealStock(cost);
+    if(!paid && !canAfford(cost)){
+      if(rnd() < dt*0.15)
+        log(`The rite is ready and there is nothing to close it with. It wants ${costText(cost)}${compactActive() ? ' and the common stock is short' : ' — and no Compact stands to find it'}.`, 'bad');
+      d.work = DOOR_WORK;
+      return true;
+    }
+    if(!paid) campSpend(cost);
+    closeTheDoor(c);
+  }
+  return true;
+}
+function closeTheDoor(by){
+  const d = theDoor; if(!d) return;
+  for(let j = chars.length - 1; j >= 0; j--){
+    const g = chars[j];
+    if(g.faction === 'gaunt' && g.doorborn && g.state !== 'dead'){ addSpecks(g.x, g.y, '#6a4a7a', 10); chars.splice(j, 1); }
+  }
+  addSpecks(d.x, d.y, '#ffffff', 120);
+  theDoor = null;
+  fracture = 92; fractureStage = fractureStageOf(fracture);   /* the sky is shut. It is not healed. */
+  log('THE DOOR IS SHUT. The dust is falling again — falling, which it has not properly done since before any of this. It is not over. It is survivable.', 'good');
+  worldEvent('door', by ? by.x : W/2, by ? by.y : H/2,
+    'The door in the sky has been closed. Whoever did it is standing out there in the dust.');
+  AU.news();
+  for(const t of towns) if(!t.sacked) t.order = clamp((t.order ?? 55) + 25, 0, 100);
+}
+/* what pours out of it, and what it does to the seven seats */
+function doorTick(dh){
+  const d = theDoor; if(!d) return;
+  d.fed += dh;
+  /* the door does not birth and it does not drift shut. It just keeps sending things. */
+  const pop = chars.filter(g => g.doorborn && g.state !== 'dead').length;
+  if(pop < 10 + towns.filter(t => t.sacked > 0).length * 3 && rnd() < dh * 0.5){
+    const q = findOpenNear(d.x + ri(-8, 8), d.y + ri(-8, 8), 6);
+    const g = spawnGaunt(pick(['maw','stalker','shrike','maw']), q.x, q.y);
+    if(g){ g.doorborn = true; g.nightborn = false;
+      /* they go for the seats, not for the waste */
+      const tgt = towns.filter(t => !t.sacked)[ri(0, Math.max(0, towns.filter(t=>!t.sacked).length-1))];
+      if(tgt) g.guard = {x: tgt.x + ri(-8,8), y: tgt.y + ri(-8,8)};
+    }
+  }
+}
+/* THE SIEGES: what the Compact was actually for */
+function siegeTick(){
+  if(!fractureOpen()) return;
+  const standing = towns.filter(t => !t.sacked);
+  for(const t of standing){
+    const sanctuary = inCompact(t) && compactActive();
+    /* A signed seat has the muster on its wall and the common stock behind it. A seat that
+       was entered by writ has the same wall and half the will to stand on it: sanctuary
+       holds it, but not comfortably, and a bad siege can still take it. People do not die
+       well for a signature somebody else put on their behalf. */
+    if(sanctuary){
+      const w = compactWeight(t);
+      if(t.compactWilling){
+        t.order = clamp((t.order ?? 55) + 0.5 * w, 0, 100);
+        continue;
+      }
+      const pressing = chars.filter(g => g.doorborn && g.state !== 'dead' &&
+        dist(g.x, g.y, t.x, t.y) < (t.def.wall ? t.def.wall.r + 10 : 18)).length;
+      t.order = clamp((t.order ?? 55) - (0.9 + pressing * 0.35), 0, 100);
+      if((t.order ?? 55) <= 0 && !t.sacked) fallToTheDark(t);
+      continue;
+    }
+    /* an unsigned one is on its own, and the door knows where it is */
+    const pressing = chars.filter(g => g.doorborn && g.state !== 'dead' &&
+      dist(g.x, g.y, t.x, t.y) < (t.def.wall ? t.def.wall.r + 10 : 18)).length;
+    const bite = 2.5 + pressing * 0.8;
+    t.order = clamp((t.order ?? 55) - bite, 0, 100);
+    if(rnd() < 0.3 + pressing * 0.05){
+      const civ = chars.find(c => c.civ && c.homeTown === t && c.state !== 'dead');
+      if(civ) kill(civ, null);
+    }
+    if((t.order ?? 55) <= 0 && !t.sacked) fallToTheDark(t);
+  }
+  if(!ruin && towns.every(t => t.sacked > 0)) enterRuin();
+}
+function fallToTheDark(t){
+  t.sacked = 9;
+  t.order = 0;
+  compactRelease(t);
+  for(const c of chars) if(c.civ && c.homeTown === t && rnd() < 0.45) kill(c, null);
+  if(t.leader) succeed(t, 'was taken when the dark came over the wall');
+  log(`${t.name} HAS FALLEN. Whatever came over its wall is still in there.`, 'bad');
+  worldEvent('fallen', t.x, t.y, `${t.name} has fallen to what came through the door. There is nobody left on its walls.`);
+  AU.news();
+  /* THE SPIRAL: a lost seat widens the door and shakes every seat still standing */
+  if(theDoor) theDoor.r += 2;
+  for(const o of towns) if(!o.sacked) o.order = clamp((o.order ?? 55) - 8, 0, 100);
+  bumpNotice(6);
+}
+function enterRuin(){
+  ruin = true;
+  log('EVERY SEAT HAS FALLEN. There is no one left to warn, no one left to sign anything, and no one left to bury the last of them. The dust goes on falling. So, apparently, do you.', 'bad');
+  worldEvent('ruin', W/2, H/2, 'The last of the seven has gone quiet. There is nothing out there now but the waste and whatever is walking in it.');
+  AU.news();
+}
 function riftTick(dh){
   /* the world is thin now. It was never whole to begin with — and it gets thinner when you work the formulae. */
   if(rifts.length < riftCap() && rnd() < (0.004 + noticeTier * 0.0016) * dh){
@@ -7913,6 +8069,7 @@ function update(dt){
   rebuildCharGrid();
   reapPhylacteries();
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
+  if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
   gauntTick(dt / HOUR_SEC);   /* the dark is never empty for long */
   wldT += dt;
   const wtick = wldT >= 0.25;
@@ -7926,6 +8083,7 @@ function update(dt){
     hour -= 24; day++;
     advanceFracture(1);              /* the sky gets one day closer, and never further */
     for(const t of towns) dreadTick(t);
+    siegeTick();                     /* the door presses on every seat that did not sign */
     compactProduce();                /* the signed seats put their hands to it... */
     compactTithe();                  /* ...and what they make goes to the common stock */
     compactStrainTick();             /* and one left to rot walks back out */
@@ -10693,8 +10851,49 @@ const syncStairs = makeDynGroup(
   }
 );
 const syncRifts = makeDynGroup(
-  () => rifts.map(r => r.id + ':' + r.r.toFixed(1)).join('|'),
+  () => rifts.map(r => r.id + ':' + r.r.toFixed(1)).join('|') +
+        (theDoor ? '|DOOR:' + theDoor.r.toFixed(1) + ':' + Math.floor(theDoor.work) : ''),
   (g) => {
+    /* THE DOOR. Everything about it is the tear geometry at a scale nothing else reaches,
+       because it should read instantly as the same thing and unmistakably worse. */
+    if(theDoor){
+      const d = theDoor, y = groundY(d.x, d.y);
+      const scar = new THREE.Mesh(
+        new THREE.CircleGeometry(d.r * 1.6, 40),
+        new THREE.MeshBasicMaterial({color:0x1a0e26, transparent:true, opacity:0.7, depthWrite:false})
+      );
+      scar.rotation.x = -Math.PI/2;
+      scar.position.set(d.x, y + 0.07, d.y);
+      scar.renderOrder = 3;
+      g.add(scar);
+      const tear = new THREE.Mesh(
+        new THREE.PlaneGeometry(6 + d.r*0.5, 34 + d.r*0.9),
+        new THREE.MeshBasicMaterial({color:0x000000, side:THREE.DoubleSide, transparent:true, opacity:0.97})
+      );
+      tear.position.set(d.x, y + 17 + d.r*0.45, d.y);
+      tear.userData.spin = true;
+      g.add(tear);
+      const halo = new THREE.Mesh(
+        new THREE.PlaneGeometry(13 + d.r*0.9, 40 + d.r*1.1),
+        new THREE.MeshBasicMaterial({color:0x9a6ae8, side:THREE.DoubleSide, transparent:true, opacity:0.26, depthWrite:false})
+      );
+      halo.position.set(d.x, y + 17 + d.r*0.45, d.y);
+      halo.userData.spin = true;
+      g.add(halo);
+      /* the rite, when it is being worked: a ring closing on the door */
+      if(d.work > 0){
+        const k = clamp(d.work / DOOR_WORK, 0, 1);
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(d.r * 1.6 * (1 - k * 0.85), d.r * 1.6 * (1 - k * 0.85) + 0.7, 44),
+          new THREE.MeshBasicMaterial({color:0xd8c8ff, transparent:true, opacity:0.55,
+            side:THREE.DoubleSide, depthWrite:false})
+        );
+        ring.rotation.x = -Math.PI/2;
+        ring.position.set(d.x, y + 0.12, d.y);
+        ring.renderOrder = 4;
+        g.add(ring);
+      }
+    }
     for(const r of rifts){
       const y = groundY(r.x, r.y);
       /* the scar on the ground: the dust does not settle here */
@@ -12581,9 +12780,12 @@ function refreshTop(){
     if(fractureStage < 1){ el.style.display = 'none'; }
     else {
       el.style.display = '';
-      const col = fractureStage >= 5 ? '#e8443a' : fractureStage >= 4 ? '#c4543a'
+      const col = ruin ? '#8a2418' : fractureStage >= 5 ? '#e8443a' : fractureStage >= 4 ? '#c4543a'
                 : fractureStage >= 3 ? '#c07a3a' : '#a08a5a';
-      el.textContent = FRACTURE_STAGES[fractureStage].name;
+      const lost = towns.filter(t => t.sacked > 0).length;
+      el.textContent = ruin ? 'THE WASTE'
+        : theDoor ? `THE DOOR · ${Math.round(theDoor.work / DOOR_WORK * 100)}% · ${7 - lost}/7 standing`
+        : FRACTURE_STAGES[fractureStage].name;
       el.style.color = col;
       el.style.borderColor = fractureStage >= 3 ? col : 'var(--edge)';
     }
@@ -14372,6 +14574,14 @@ cv.addEventListener('mousedown', e => {
       openImmortal(im);
       return;
     }
+    /* right-click the door: send everyone who can hold a formula. It takes all of them. */
+    if(theDoor && dist(theDoor.x, theDoor.y, wx, wy) < theDoor.r * 0.7){
+      const able = movers.filter(m => m.gift && (!m.undead || m.lich));
+      if(!able.length){ log('The door answers to a formula and nothing else. Bring somebody who can hold one.', 'bad'); return; }
+      for(const m of able){ clearOrders(m); m.doorWork = true; }
+      log(`${able.length === 1 ? able[0].name + ' goes' : able.length + ' go'} to the door. It wants ${costText(doorSealCost())} at the end of it, and a very long time in between.`, '');
+      return;
+    }
     /* right-click a tear: send whoever can work a formula to close it */
     const rf = rifts.find(r => dist(r.x, r.y, wx, wy) < r.r * 0.55);
     if(rf){
@@ -15015,7 +15225,7 @@ function snapshot(){
     followId: c.follow ? c.follow.id : null,
     job:c.job, job2:c.job2||null, grp:c.grp||null, heldAt:c.heldAt||null, heldT:c.heldT||0, midden:c.midden||null, caveId:c.caveId||null, roomId:(c.roomId??null), caveDweller:!!c.caveDweller, floor: c.floor||0, captured:!!c.captured, dragId: c.drag ? c.drag.id : null,
     clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
-    servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered,
+    servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
     bindWeight:c.bindWeight, shortTag:c.shortTag,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
@@ -15036,6 +15246,7 @@ function snapshot(){
   return {
     v:20, cats, bloodMoon, redoubts:[...redoubts], stash:{...stash}, oreFields, nodeUses:[...nodeUses], phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
+    theDoor: theDoor ? {...theDoor} : null, ruin,
     rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, coilShrine, coilExposed, coilStruck,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
     camps: camps.map(c => ({id:c.id, x:c.x, y:c.y, fac:c.fac, cap:c.cap, tents:c.tents})),
@@ -15130,6 +15341,8 @@ function restore(d){
   compact.stock  = d.compact ? {...(d.compact.stock||{})} : {};
   compact.muster = d.compact ? [...(d.compact.muster||[])] : [];
   compact.founded = d.compact ? (d.compact.founded||0) : 0;
+  theDoor = d.theDoor ? {...d.theDoor} : null;
+  ruin = !!d.ruin;
   bloodMoon = d.bloodMoon || 0;
   redoubts.length = 0;
   if(Array.isArray(d.redoubts)) for(const r of d.redoubts) redoubts.push(r);
@@ -15186,6 +15399,7 @@ function restore(d){
     c.servitor = !!s.servitor; c.minded = !!s.minded; c.crafted = !!s.crafted; c.autoFight = !!s.autoFight;
     c.onlyArt = s.onlyArt || null; c.speedMult = s.speedMult || 0;
     c.markT = s.markT || 0; c.heat = s.heat || 0; c.mustered = !!s.mustered;
+    c.doorborn = !!s.doorborn; c.doorWork = !!s.doorWork;
     c.neutral = !!s.neutral; c.provoked = !!s.provoked; c.bossKey = s.bossKey || null; c.dropItems = s.dropItems || null;
     c.scholar = !!s.scholar; c.quest = s.quest || null; c.questsDone = s.questsDone || 0; c.offered = !!s.offered;
     c.immortal = s.immortal || null; c.questGive = s.questGive || null; c.questDone = !!s.questDone; c.friendly = !!s.friendly; c.construct = !!s.construct; c.redoubtId = s.redoubtId || null;
