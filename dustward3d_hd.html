@@ -145,6 +145,7 @@
   <div class="chip" data-tip="day">DAY <b id="ui-day">1</b> <span id="ui-time">06:00</span></div>
   <div class="chip" id="ui-rep" data-tip="rep"></div>
   <div class="chip" id="ui-notice" data-tip="notice"></div>
+  <div class="chip" id="ui-fracture" data-tip="fracture"></div>
   <button id="btn-pause">PAUSE</button>
   <button id="btn-sp1" class="on">1x</button>
   <button id="btn-sp3">3x</button>
@@ -1537,6 +1538,7 @@ function worldEvent(kind, x, y, text){
 const NEWS_TONE = {
   war:'bad', sack:'bad', plague:'bad', rebellion:'bad', conquest:'bad', ambush:'bad',
   camp:'bad', attention:'bad', bloodmoon:'bad', rift:'bad', sixfold:'bad', purge:'bad',
+  fracture:'bad', dread:'', compact:'good', door:'bad', fallen:'bad', ruin:'bad',
   peace:'good', pact:'good', sealed:'good', razed:'good',
 };
 function newsAge(e){
@@ -4769,7 +4771,7 @@ function travel(c, x, y, dt, arrive=0.15){
 function clearOrders(c){
   if(concExclusive(c) && !concMobile(c)) endConcentration(c);   /* a rooted light goes out when you move; a lantern travels with you */
   c.target = null; c.moveTarget = null; c.healTarget = null;
-  c.lootTarget = null; c.tradeTarget = null; c.bedTarget = null; c.pickupTarget = null; c.phylTarget = null; c.sealTarget = null;
+  c.lootTarget = null; c.tradeTarget = null; c.bedTarget = null; c.pickupTarget = null; c.phylTarget = null; c.sealTarget = null; c.doorWork = false;
   c.gather = null; c.attackMove = null; c.healProg = 0; c.gatherT = 0;
   c.chestTarget = null; c.targetManual = false; c.fleeT = 0;
   c.structTarget = null; c.repairTarget = null; c.stuckT = 0;
@@ -4923,6 +4925,7 @@ function physics(c, dt){
   if(c.resting) return;
   useStairs(c);
   escapeIfStuck(c);
+  if(c.doorWork && workTheDoor(c, dt)) return;   /* the door outranks every other thing */
   if(sealTick(c, dt)) return;   /* closing a tear is the only work that outranks a knife */
   if(mawFeed(c, dt)) return;   /* the Maw is here for the bodies, not for you */
   /* A ROOM GARRISON holds its chamber — redoubt guards and cave dwellers alike. It will not
@@ -5644,6 +5647,7 @@ function openRift(x, y, why){
   const r = {id: ++riftN, x: p.x, y: p.y, r: 6, age: 0, spawned: 0, seal: 0};
   rifts.push(r);
   worldEvent('rift', r.x, r.y, why || 'The air tore open out in the waste. Something is coming through.');
+  compactBeacon(r);                  /* the signed seats hear it at once, not eventually */
   log('A TEAR HAS OPENED. The dust is falling upward around it.', 'bad');
   addSpecks(r.x, r.y, '#a970e8', 40);
   return r;
@@ -5657,7 +5661,551 @@ function reapPhylacteries(){
     }
   }
 }
-function riftCap(){ return Math.max(1, noticeTier); }   /* the sky never fully closed */
+/* ============================================================ THE SECOND FRACTURE
+   `noticed` is heat: it rises when you work the formulae and it drains when you keep your
+   head down. That makes it a fine measure of your exposure and a useless doom clock, because
+   anything a player can drain to zero is a difficulty setting rather than a deadline.
+
+   So there are two hands on this. `fracture` is ratcheted — it only ever goes up, and there
+   is nothing you can do to walk it back. The calendar advances it on its own, which sets the
+   floor: the sky opens by roughly FRACTURE_DAYS whatever you do. Living at high notice
+   advances it faster, which makes the player complicit in their own apocalypse. Rush the
+   power and it arrives early and finds you alone.
+
+   The accelerant deliberately does not engage below ATTENDED. Ordinary casting has to stay
+   free, or the whole magic system reads as a penalty and the correct play becomes never
+   touching it. */
+const FRACTURE_DAYS = 120;        /* calendar-only days to land it; the one number to tune */
+const FRACTURE_STAGES = [
+  {at:0,   name:'THE DUST FALLS',      tell:null},
+  {at:20,  name:'A STILLNESS',
+   tell:'The dust stopped falling. For eleven seconds, across the whole of the waste, it simply stopped — and then it went on as if nothing had happened.'},
+  {at:40,  name:'THE THINNING',
+   tell:'The tears are not closing on their own any more. Caravans go out on the north road and the road gives some of them back.'},
+  {at:60,  name:'THE WATCHERS WAKE',
+   tell:'Something very old has finished turning over. The gaunts have stopped watching the fences and started walking through them.'},
+  {at:80,  name:'THE SKY LEANS',
+   tell:'The sky is LEANING. There is no other word that fits it. Whatever is behind the dust is close enough now to press against it.'},
+  {at:100, name:'THE SECOND FRACTURE',
+   tell:'THE SKY HAS OPENED. Not a tear this time — a door, and it is standing wide. Nine generations of dust falling, and this is what it was falling towards.'},
+];
+let fracture = 0, fractureStage = 0;
+function fractureStageOf(v){
+  let i = 0;
+  for(let k = 0; k < FRACTURE_STAGES.length; k++) if(v >= FRACTURE_STAGES[k].at) i = k;
+  return i;
+}
+/* the accelerant: what your own work adds on top of the calendar, per day */
+function fractureAccel(){
+  return noticeTier >= 3 ? 0.85 : noticeTier >= 2 ? 0.35 : 0;
+}
+function advanceFracture(days){
+  if(fracture >= 100) return;
+  const before = fractureStage;
+  fracture = Math.min(100, fracture + (100 / FRACTURE_DAYS + fractureAccel()) * days);
+  fractureStage = fractureStageOf(fracture);
+  if(fractureStage > before){
+    for(let k = before + 1; k <= fractureStage; k++){
+      const st = FRACTURE_STAGES[k];
+      if(!st.tell) continue;
+      log(st.tell, 'bad');
+      /* Announced as a world event, not a log line — so it travels at news speed and the
+         towns LEARN it. The ladder is itself the evidence the Compact will be argued from. */
+      const anchor = player().find(c => c.state !== 'dead') || {x: W/2, y: H/2};
+      worldEvent('fracture', anchor.x, anchor.y, st.tell);
+      AU.news();
+    }
+  }
+}
+/* How close the sky is, as the rest of the code wants to ask it */
+function fractureName(){ return FRACTURE_STAGES[fractureStage].name; }
+
+/* ---------- WHAT THE TOWNS BELIEVE ----------
+   A town will not sign anything because you told it the world is ending. It signs because
+   it has worked that out for itself, and it works that out from what it has actually heard.
+   `t.known` already records which events reached a town and when — so dread is read off the
+   news the town has, weighted by how near it happened and how long ago, minus a steady drip
+   of denial. Doomsaying with no evidence behind it gets nothing, which is correct.
+
+   What counts as evidence depends on who is sitting in the hall. A pious leader is moved by
+   portent and a mercantile one by a ledger, and neither is much interested in the other's
+   proof. */
+const DREAD_WEIGHT = {          /* base persuasive force of an event kind */
+  fracture: 26, rift: 14, sixfold: 12, bloodmoon: 6, attention: 8, omen: 7,
+  sack: 9, razed: 5, plague: 7, ambush: 4, camp: 3, war: 3, sundered: 10, coil: 8,
+  purge: 4, rebellion: 3, conquest: 4,
+};
+/* trait multiplier per kind. 1.0 = it lands as written; 0 = that leader does not care. */
+const DREAD_TRAIT = {
+  pious:      {fracture:1.5, omen:1.8, bloodmoon:1.6, sundered:1.5, coil:1.5, sixfold:1.4,
+               rift:1.0, sack:0.7, war:0.4, camp:0.3, ambush:0.4, conquest:0.5},
+  mercantile: {ambush:1.8, camp:1.6, war:1.5, sack:1.4, plague:1.3, rift:0.9,
+               omen:0.3, bloodmoon:0.3, fracture:0.8, sixfold:0.5, coil:0.4},
+  warlike:    {sack:1.7, razed:1.6, war:1.5, rift:1.2, sixfold:1.3, purge:1.4,
+               omen:0.2, bloodmoon:0.3, fracture:0.7, coil:0.4, plague:0.6},
+  craven:     {},   /* everything frightens them; the floor multiplier does the work */
+  ironfisted: {rebellion:1.6, conquest:1.5, war:1.2, sack:1.1,
+               omen:0.2, bloodmoon:0.2, fracture:0.6, rift:0.7, sixfold:0.5, coil:0.3},
+  /* A JUST seat is moved by what is being done to people, and not much by portents. */
+  just:       {sack:1.5, razed:1.5, plague:1.4, ambush:1.3, camp:1.2, rebellion:1.2,
+               rift:1.0, omen:0.4, bloodmoon:0.4, fracture:1.0, sixfold:0.8},
+  /* A CUNNING one is not frightened of anything. It is interested in which way the wind is
+     going to blow, and it reads the sky itself before it reads a report of a raid. */
+  cunning:    {fracture:1.4, rift:1.2, sixfold:1.2, coil:1.1, sundered:1.2, attention:1.3,
+               ambush:0.6, camp:0.5, war:0.9, omen:0.7, bloodmoon:0.6},
+};
+/* craven hears everything and hears it loudly; ironfisted discounts all of it and wants to
+   be shown a kept house instead (see the order term below) */
+const DREAD_FLOOR = {pious:0.9, mercantile:0.85, warlike:0.85, craven:1.3,
+                     ironfisted:0.65, just:0.9, cunning:0.8};
+function dreadOf(t){ return t.dread || 0; }
+/* ---------- BEARING WITNESS ----------
+   Ambient news gets a hall uneasy and no further; denial is a strong drink. The gap is
+   closed by somebody standing in the room and saying what they have seen — which is the
+   one thing the player has and the town does not. `playerKnown` is the testimony, and
+   what is in the pack is the proof.
+
+   Every seat wants a different kind of proof, and none of them are much moved by the wrong
+   one. Carrying the First Doctrine into a pious hall is worth more than a year of rumour;
+   carrying it to a cunning one gets you a polite nod. */
+const WITNESS_COOL = 4;      /* days between hearings — a hall will not be badgered */
+function witnessProof(t, c){
+  /* What the bearer is carrying, and what this seat makes of it. A hall can only be shown
+     a thing once — after that they have seen it, and holding it up again is theatre. */
+  const trait = (t.leader && t.leader.trait) || 'craven';
+  const out = [];
+  t.shown = t.shown || {};
+  const has = k => (stash[k] || 0) > 0 && !t.shown[k];
+  if(has('doctrine')) out.push({k:'doctrine', label:'The First Doctrine',
+    w: trait==='pious' ? 15 : trait==='cunning' ? 8 : trait==='just' ? 6 : 3});
+  if(has('sunder')) out.push({k:'sunder', label:'a piece of Sundered Marrow, still warm',
+    w: trait==='pious' ? 9 : trait==='cunning' ? 8 : trait==='mercantile' ? 7 : 5});
+  if(has('remains')) out.push({k:'remains', label:'what was left of a gaunt',
+    w: trait==='warlike' ? 9 : trait==='just' ? 7 : trait==='craven' ? 8 : 4});
+  if(has('tome')) out.push({k:'tome', label:'a weathered tome',
+    w: trait==='pious' ? 6 : trait==='cunning' ? 4 : 2});
+  return out;
+}
+function witnessValue(t, c){
+  /* the testimony itself: fracture-relevant things YOU have seen, that they have not */
+  const trait = (t.leader && t.leader.trait) || 'craven';
+  const tab = DREAD_TRAIT[trait] || {}, floor = DREAD_FLOOR[trait] ?? 1;
+  let told = 0;
+  for(const e of events){
+    if(playerKnown[e.id] == null) continue;               /* you have to know it */
+    if(t.known && t.known[e.id] != null) continue;        /* and they must not */
+    const w = DREAD_WEIGHT[e.kind]; if(!w) continue;
+    const mult = tab[e.kind] !== undefined ? tab[e.kind] : 1;
+    told += w * mult * 0.14;
+  }
+  /* they have to be willing to listen to YOU: standing counts */
+  const standing = 1 + clamp(t.rep, -40, 60) / 90;
+  return clamp(told * floor * standing, 0, 14);
+}
+function counselSeat(t, c){
+  if(!t.leader){ log(`${t.name} has nobody in the hall to hear it.`, 'bad'); return false; }
+  if(t.witnessCd && day < t.witnessCd){
+    log(`${t.name}'s hall has heard you out already. Give it a few days.`, 'bad'); return false;
+  }
+  if(t.rep < -25){
+    log(`${t.name} will not seat you. Mend that first.`, 'bad'); return false;
+  }
+  const told = witnessValue(t, c);
+  const proof = witnessProof(t, c);
+  const pw = proof.reduce((n,x) => n + x.w, 0);
+  const gain = told + pw;
+  t.witnessCd = day + WITNESS_COOL;
+  if(gain < 2){
+    log(`${c.name} says their piece in ${t.name}. Nothing in it is news, and nothing in it is proof.`, '');
+    return false;
+  }
+  t.dread = clamp((t.dread || 0) + gain, 0, 100);
+  /* They have now seen these, and they now know what you told them — which is exactly why
+     you cannot walk the same circuit twice for the same payment. */
+  t.shown = t.shown || {};
+  for(const x of proof) t.shown[x.k] = day;
+  for(const e of events) if(playerKnown[e.id] != null) townLearns(t, e);
+  const L = t.leader;
+  const shown = proof.length ? ` They are shown ${proof.map(x=>x.label).join(', ')}.` : '';
+  log(`${c.name} is heard in ${t.name}.${shown} ${L.title} ${L.name} listens — ${L.knownFor}. (+${Math.round(gain)} dread)`, 'good');
+  AU.news();
+  return true;
+}
+function dreadTick(t){
+  const trait = (t.leader && t.leader.trait) || 'craven';
+  const floor = DREAD_FLOOR[trait] ?? 1;
+  const tab = DREAD_TRAIT[trait] || {};
+  /* Dread is a belief that builds, not a level that settles. It takes a small increment
+     each day from what the hall has lately heard and from the state of the sky, against a
+     steady drip of denial — so a quiet world talks itself back down and a loud one does not.
+     Only recent news presses: a hall remembers a tear from last spring, but it is not
+     frightened by it today. */
+  let press = 0;
+  for(const e of events){
+    if(day - e.day > 20) continue;                        /* lately */
+    if(t.known && t.known[e.id] == null) continue;        /* and it has to have heard */
+    const w = DREAD_WEIGHT[e.kind]; if(!w) continue;
+    const mult = tab[e.kind] !== undefined ? tab[e.kind] : 1;
+    if(mult <= 0) continue;
+    /* near still matters, but gently — they only hear about local things as it is, and
+       discounting hard on top of that made ambient news worth nothing at all */
+    const near = 1 / (1 + dist(t.x, t.y, e.x, e.y) / 260);
+    press += w * mult * near * 0.020;
+  }
+  /* the sky argues on its own behalf, and it gets louder */
+  press += fractureStage * 0.22;
+  /* AN IRONFISTED SEAT is not frightened into anything. Show it a town held together. */
+  if(trait === 'ironfisted'){
+    const held = towns.filter(o => o.playerRuled);
+    if(held.length){
+      const avgOrder = held.reduce((n,o) => n + (o.order ?? 55), 0) / held.length;
+      press += Math.max(0, (avgOrder - 45)) * 0.006 * held.length;
+    }
+  }
+  const DENIAL = 0.22;
+  t.dread = clamp((t.dread || 0) + press * floor - DENIAL, 0, 100);
+  /* Hysteresis, so a hall that is ready to treat does not flicker in and out of it on a
+     single day's news — and so a spike that decays away does not leave a permanent lie
+     sitting in the panel. */
+  if(!t.dreadWoke && t.dread >= 60){
+    t.dreadWoke = true;
+    const L = t.leader;
+    log(`${t.name} has stopped arguing about it. ${L ? L.title + ' ' + L.name : 'The seat'} will hear terms now.`, 'good');
+    worldEvent('dread', t.x, t.y, `${t.name} is preparing for something. They will not say what.`);
+  } else if(t.dreadWoke && t.dread < 45){
+    t.dreadWoke = false;
+    log(`${t.name} has talked itself back down. Whatever you had agreed is off the table.`, 'bad');
+  }
+}
+/* ---------- THE COMPACT ----------
+   Dread gets a hall to the table. It does not get them to sign, because signing costs them
+   something real and they know it: stores out of their own warehouse into a common stock,
+   hands off their own walls into a shared muster, and a town square full of people who have
+   just been told the sky is coming down. A town that signs is WEAKER for it, immediately,
+   and only stronger if enough others sign too.
+
+   That is the whole point. A free alliance is a menu item; one that costs the signatory
+   something is a decision, and a decision the player has to argue for.
+
+   Conquest is the other road and it is deliberately the worse bargain. A town you hold joins
+   without asking, which is fast — but a garrison that serves at knifepoint contributes half
+   of what a willing one does, and it resents the levy twice as hard. Take all seven by force
+   and you will have a Compact on paper and very little in the warehouse. */
+const COMPACT_MIN = 3;                    /* below this it is a handshake, not a Compact */
+const COMPACT_TITHE = {vflesh:3, iron:2, remains:4};   /* per signatory, per day */
+const compact = {signed: [], stock: {}, muster: [], founded: 0};
+function compactSize(){ return compact.signed.length; }
+function inCompact(t){ return compact.signed.includes(towns.indexOf(t)); }
+function compactActive(){ return compactSize() >= COMPACT_MIN; }
+/* A town held at knifepoint gives half of what a willing one gives, and resents it double. */
+function compactWeight(t){ return t.playerRuled && !t.compactWilling ? 0.5 : 1; }
+function compactStrength(){
+  return towns.reduce((n,t) => n + (inCompact(t) ? compactWeight(t) : 0), 0);
+}
+function compactCanSign(t){
+  if(inCompact(t)) return {ok:false, why:'already signed'};
+  if(t.sacked) return {ok:false, why:'the town is in ruins'};
+  if(!t.leader) return {ok:false, why:'there is nobody in the hall'};
+  if(t.playerRuled) return {ok:true, forced:true};
+  if(!t.dreadWoke) return {ok:false, why:'they do not believe you yet'};
+  if(t.warWith) return {ok:false, why:'they are at war and will not look past it'};
+  if(t.rep < 0) return {ok:false, why:'they do not trust you'};
+  return {ok:true, forced:false};
+}
+function compactSign(t){
+  const chk = compactCanSign(t);
+  if(!chk.ok){ log(`${t.name} will not sign — ${chk.why}.`, 'bad'); return false; }
+  compact.signed.push(towns.indexOf(t));
+  if(!compact.founded) compact.founded = day;
+  t.compactWilling = !chk.forced;
+  /* WHAT IT COSTS THEM, TODAY. Stores out of the warehouse, hands off the wall, and a
+     square full of people who have just been told what is coming. */
+  const took = {};
+  for(const k of ['vflesh','iron','remains','mats','stone']){
+    const have = t.stock[k] || 0;
+    if(have <= 0) continue;
+    const give = Math.max(1, Math.floor(have * 0.35));
+    t.stock[k] = have - give;
+    compact.stock[k] = (compact.stock[k] || 0) + give;
+    took[k] = give;
+  }
+  /* three of their guards muster out; a forced signatory sends them badly */
+  const own = chars.filter(c => c.homeTown === t && c.guard && c.state === 'ok');
+  const send = Math.min(own.length, chk.forced ? 2 : 3);
+  for(let i = 0; i < send; i++){
+    const g = own[i];
+    g.mustered = true; g.guard = null;
+    compact.muster.push(g.id);
+  }
+  /* and the square does not like it */
+  const bite = chk.forced ? 22 : 12;
+  t.order = clamp((t.order ?? 55) - bite, 0, 100);
+  const L = t.leader;
+  if(chk.forced){
+    log(`${t.name} is entered into the Compact. Nobody asked the hall. ${send} of its guards muster out and the square knows why. (−${bite} order)`, '');
+  } else {
+    log(`${L.title} ${L.name} signs for ${t.name}. ${Object.keys(took).length ? 'Stores go to the common stock' : 'There is nothing in the warehouse to give'}, ${send} guards muster out, and the square is told what is coming. (−${bite} order)`, 'good');
+  }
+  worldEvent('compact', t.x, t.y,
+    `${t.name} has entered into a Compact against what is coming. ${compactSize()} of the seven have signed.`);
+  AU.news();
+  if(compactSize() === COMPACT_MIN)
+    log('THE COMPACT STANDS. Three seats is enough to call it one. The common stock is open, and the muster answers.', 'good');
+  return true;
+}
+function compactRelease(t){
+  const i = compact.signed.indexOf(towns.indexOf(t));
+  if(i < 0) return;
+  compact.signed.splice(i, 1);
+  for(const c of chars) if(c.homeTown === t && c.mustered){ c.mustered = false; }
+  compact.muster = compact.muster.filter(id => {
+    const c = charById.get(id); return c && c.mustered;
+  });
+  log(`${t.name} is out of the Compact.`, 'bad');
+  worldEvent('compact', t.x, t.y, `${t.name} has walked away from the Compact.`);
+}
+/* A town's warehouse is seeded once at worldgen and otherwise only grows when you sell into
+   it — so a tithe on its own is a drain on a finite pool, and the common stock would have
+   looked healthy for a week and then quietly starved.
+
+   A signed town is organised for this. Its people render flesh, work iron and gather what the
+   tears leave behind, because that is now the work. Production is scaled by how willing the
+   town is and by how well it is actually being run: a hall in chaos makes nothing, and a town
+   held at knifepoint makes half. That puts the whole endgame supply chain on the order system
+   rather than on a number I invented. */
+function compactProduce(){
+  for(const t of towns){
+    if(!inCompact(t) || t.sacked) continue;
+    const civs = chars.filter(c => c.civ && c.homeTown === t && c.state !== 'dead').length;
+    const rate = compactWeight(t) * clamp((t.order ?? 55) / 70, 0, 1.4) * (0.5 + civs * 0.05);
+    if(rate <= 0) continue;
+    t.stock.vflesh  = (t.stock.vflesh  || 0) + rate * 1.1;
+    t.stock.iron    = (t.stock.iron    || 0) + rate * 0.7;
+    t.stock.remains = (t.stock.remains || 0) + rate * 1.3;
+  }
+}
+/* what the Compact is making per day, for the panel — so the chain is legible */
+function compactOutput(){
+  let n = 0;
+  for(const t of towns){
+    if(!inCompact(t) || t.sacked) continue;
+    const civs = chars.filter(c => c.civ && c.homeTown === t && c.state !== 'dead').length;
+    n += compactWeight(t) * clamp((t.order ?? 55) / 70, 0, 1.4) * (0.5 + civs * 0.05);
+  }
+  return n;
+}
+/* THE TITHE: signed towns keep feeding the common stock, weighted by how willing they are */
+function compactTithe(){
+  if(!compactActive()) return;
+  for(const t of towns){
+    if(!inCompact(t)) continue;
+    if(t.sacked || (t.order ?? 55) < 20) continue;   /* a town in chaos sends nothing */
+    const w = compactWeight(t);
+    for(const k in COMPACT_TITHE){
+      const want = COMPACT_TITHE[k] * w;
+      const have = t.stock[k] || 0;
+      const give = Math.min(have, want);
+      if(give <= 0) continue;
+      t.stock[k] = have - give;
+      compact.stock[k] = (compact.stock[k] || 0) + give;
+    }
+  }
+}
+/* A town that has been dragged in and left to rot walks out again. */
+function compactStrainTick(){
+  for(const t of towns){
+    if(!inCompact(t)) continue;
+    if((t.order ?? 55) < 12 && rnd() < 0.25) compactRelease(t);
+  }
+}
+/* ---- what the Compact is FOR ----
+   The common stock pays for closing tears. One camp's warehouse cannot do it at the rate the
+   sky opens them; seven can. Sealing draws on the Compact first and your own stores after. */
+function sealStock(cost){
+  if(!compactActive()) return false;
+  for(const k in cost) if((compact.stock[k] || 0) < cost[k]) return false;
+  for(const k in cost) compact.stock[k] -= cost[k];
+  return true;
+}
+/* THE MUSTER: the hands the towns gave up. They go where the tears are, which is the one
+   thing a town guard standing on a post has never done. */
+function musterTick(){
+  if(!compactActive() || !rifts.length) return;
+  for(const id of compact.muster){
+    const c = charById.get(id);
+    if(!c || c.state !== 'ok' || !c.mustered) continue;
+    if(c.target && c.target.state === 'ok') continue;
+    let best = null, bd = 1e9;
+    for(const r of rifts){ const d = dist(c.x, c.y, r.x, r.y); if(d < bd){ bd = d; best = r; } }
+    if(!best) continue;
+    c.guard = {x: best.x, y: best.y};      /* stand at the tear, not on the wall */
+  }
+}
+/* THE BEACON CHAIN: signed towns watch for each other, so a tear opening is news at once
+   instead of news eventually. */
+function compactBeacon(r){
+  if(!compactActive()) return;
+  for(const t of towns) if(inCompact(t)) townLearns(t, events[events.length - 1]);
+  if(compactSize() >= 5){
+    log(`The beacons have it: a tear at ${Math.round(r.x)}, ${Math.round(r.y)}. Every signed seat knows already.`, 'bad');
+  }
+}
+function riftCap(){ return Math.max(1, noticeTier) + fractureStage; }   /* the sky never fully closed */
+/* ============================================================ THE SECOND FRACTURE ITSELF
+   The ladder ends here. This is not a harder difficulty band — it is a different game, and
+   it is one you can lose without the run ending, because a game-over screen would throw away
+   the most interesting thing about losing: living in what is left.
+
+   Three moving parts.
+
+   THE DOOR. One tear, far larger than the others, and it does not drift shut and it cannot
+   be birthed out of. Closing it is the whole objective and it costs more than any one camp
+   has ever held — which is what the Compact's warehouses were for. The rite takes real time
+   and the ground around it does not stay quiet while you work.
+
+   THE SIEGES. Every town that did not sign is surrounded. A besieged town loses order and
+   people, and when its order breaks it falls. Signed towns hold: the muster is standing on
+   the wall and the common stock is feeding them. That is sanctuary, and it is the reason the
+   sixth and seventh signature were worth arguing for.
+
+   THE SPIRAL. Every town lost widens the door, drops everyone else's order, and lets worse
+   things through. Losing is not a single event; it is a slope that gets steeper. */
+let theDoor = null;              /* the primary tear. There is only ever one. */
+let ruin = false;                /* every seat has fallen and the world belongs to it */
+const DOOR_SEAL_COST = {vflesh:60, iron:40, remains:80};
+const DOOR_WORK = 240;           /* seconds of sustained rite, at magic 0 */
+function fractureOpen(){ return fracture >= 100; }
+function openTheDoor(){
+  if(theDoor) return theDoor;
+  /* it opens where the world is thinnest — the oldest standing tear, or failing that, out
+     past the fences where nobody built anything */
+  let x, y;
+  const oldest = rifts.slice().sort((a,b) => b.age - a.age)[0];
+  if(oldest){ x = oldest.x; y = oldest.y; closeRift(oldest, null); }
+  else { const q = findOpenNear(ri(60, W-60), ri(60, H-60), 12); x = q.x; y = q.y; }
+  theDoor = {x, y, r: 14, seal: 0, work: 0, opened: day, fed: 0};
+  log('THE SKY HAS OPENED. Not a tear — a door, and it is standing wide. Whatever has been watching the fences is not watching any more.', 'bad');
+  worldEvent('door', x, y, 'The sky has opened out past the fences. Not a tear this time. A door, and it is standing wide.');
+  AU.news();
+  return theDoor;
+}
+function doorSealCost(){
+  /* every seat that falls makes the closing dearer — the door is wider for it */
+  const lost = towns.filter(t => t.sacked > 0).length;
+  const k = 1 + lost * 0.22;
+  const out = {};
+  for(const key in DOOR_SEAL_COST) out[key] = Math.ceil(DOOR_SEAL_COST[key] * k);
+  return out;
+}
+/* the rite at the door: long, expensive, and it has to be paid for at the end */
+function workTheDoor(c, dt){
+  const d = theDoor; if(!d) { c.doorWork = false; return false; }
+  if(!c.gift || (c.undead && !c.lich)){ c.doorWork = false; return false; }
+  if(!travel(c, d.x, d.y, dt, 3.0)) return true;
+  if(c.mana < 2){ if(rnd() < dt*0.2) log(`${c.name} has nothing left to give the rite.`, 'bad'); return true; }
+  c.mana -= dt * 2.0;
+  d.work += dt * (1 + c.stats.magic * 0.04);
+  if(rnd() < dt * 4) addSpecks(d.x + (rnd()-0.5)*6, d.y + (rnd()-0.5)*6, '#d8c8ff', 3);
+  if(d.work >= DOOR_WORK){
+    const cost = doorSealCost();
+    const paid = sealStock(cost);
+    if(!paid && !canAfford(cost)){
+      if(rnd() < dt*0.15)
+        log(`The rite is ready and there is nothing to close it with. It wants ${costText(cost)}${compactActive() ? ' and the common stock is short' : ' — and no Compact stands to find it'}.`, 'bad');
+      d.work = DOOR_WORK;
+      return true;
+    }
+    if(!paid) campSpend(cost);
+    closeTheDoor(c);
+  }
+  return true;
+}
+function closeTheDoor(by){
+  const d = theDoor; if(!d) return;
+  for(let j = chars.length - 1; j >= 0; j--){
+    const g = chars[j];
+    if(g.faction === 'gaunt' && g.doorborn && g.state !== 'dead'){ addSpecks(g.x, g.y, '#6a4a7a', 10); chars.splice(j, 1); }
+  }
+  addSpecks(d.x, d.y, '#ffffff', 120);
+  theDoor = null;
+  fracture = 92; fractureStage = fractureStageOf(fracture);   /* the sky is shut. It is not healed. */
+  log('THE DOOR IS SHUT. The dust is falling again — falling, which it has not properly done since before any of this. It is not over. It is survivable.', 'good');
+  worldEvent('door', by ? by.x : W/2, by ? by.y : H/2,
+    'The door in the sky has been closed. Whoever did it is standing out there in the dust.');
+  AU.news();
+  for(const t of towns) if(!t.sacked) t.order = clamp((t.order ?? 55) + 25, 0, 100);
+}
+/* what pours out of it, and what it does to the seven seats */
+function doorTick(dh){
+  const d = theDoor; if(!d) return;
+  d.fed += dh;
+  /* the door does not birth and it does not drift shut. It just keeps sending things. */
+  const pop = chars.filter(g => g.doorborn && g.state !== 'dead').length;
+  if(pop < 10 + towns.filter(t => t.sacked > 0).length * 3 && rnd() < dh * 0.5){
+    const q = findOpenNear(d.x + ri(-8, 8), d.y + ri(-8, 8), 6);
+    const g = spawnGaunt(pick(['maw','stalker','shrike','maw']), q.x, q.y);
+    if(g){ g.doorborn = true; g.nightborn = false;
+      /* they go for the seats, not for the waste */
+      const tgt = towns.filter(t => !t.sacked)[ri(0, Math.max(0, towns.filter(t=>!t.sacked).length-1))];
+      if(tgt) g.guard = {x: tgt.x + ri(-8,8), y: tgt.y + ri(-8,8)};
+    }
+  }
+}
+/* THE SIEGES: what the Compact was actually for */
+function siegeTick(){
+  if(!fractureOpen()) return;
+  const standing = towns.filter(t => !t.sacked);
+  for(const t of standing){
+    const sanctuary = inCompact(t) && compactActive();
+    /* A signed seat has the muster on its wall and the common stock behind it. A seat that
+       was entered by writ has the same wall and half the will to stand on it: sanctuary
+       holds it, but not comfortably, and a bad siege can still take it. People do not die
+       well for a signature somebody else put on their behalf. */
+    if(sanctuary){
+      const w = compactWeight(t);
+      if(t.compactWilling){
+        t.order = clamp((t.order ?? 55) + 0.5 * w, 0, 100);
+        continue;
+      }
+      const pressing = chars.filter(g => g.doorborn && g.state !== 'dead' &&
+        dist(g.x, g.y, t.x, t.y) < (t.def.wall ? t.def.wall.r + 10 : 18)).length;
+      t.order = clamp((t.order ?? 55) - (0.9 + pressing * 0.35), 0, 100);
+      if((t.order ?? 55) <= 0 && !t.sacked) fallToTheDark(t);
+      continue;
+    }
+    /* an unsigned one is on its own, and the door knows where it is */
+    const pressing = chars.filter(g => g.doorborn && g.state !== 'dead' &&
+      dist(g.x, g.y, t.x, t.y) < (t.def.wall ? t.def.wall.r + 10 : 18)).length;
+    const bite = 2.5 + pressing * 0.8;
+    t.order = clamp((t.order ?? 55) - bite, 0, 100);
+    if(rnd() < 0.3 + pressing * 0.05){
+      const civ = chars.find(c => c.civ && c.homeTown === t && c.state !== 'dead');
+      if(civ) kill(civ, null);
+    }
+    if((t.order ?? 55) <= 0 && !t.sacked) fallToTheDark(t);
+  }
+  if(!ruin && towns.every(t => t.sacked > 0)) enterRuin();
+}
+function fallToTheDark(t){
+  t.sacked = 9;
+  t.order = 0;
+  compactRelease(t);
+  for(const c of chars) if(c.civ && c.homeTown === t && rnd() < 0.45) kill(c, null);
+  if(t.leader) succeed(t, 'was taken when the dark came over the wall');
+  log(`${t.name} HAS FALLEN. Whatever came over its wall is still in there.`, 'bad');
+  worldEvent('fallen', t.x, t.y, `${t.name} has fallen to what came through the door. There is nobody left on its walls.`);
+  AU.news();
+  /* THE SPIRAL: a lost seat widens the door and shakes every seat still standing */
+  if(theDoor) theDoor.r += 2;
+  for(const o of towns) if(!o.sacked) o.order = clamp((o.order ?? 55) - 8, 0, 100);
+  bumpNotice(6);
+}
+function enterRuin(){
+  ruin = true;
+  log('EVERY SEAT HAS FALLEN. There is no one left to warn, no one left to sign anything, and no one left to bury the last of them. The dust goes on falling. So, apparently, do you.', 'bad');
+  worldEvent('ruin', W/2, H/2, 'The last of the seven has gone quiet. There is nothing out there now but the waste and whatever is walking in it.');
+  AU.news();
+}
 function riftTick(dh){
   /* the world is thin now. It was never whole to begin with — and it gets thinner when you work the formulae. */
   if(rifts.length < riftCap() && rnd() < (0.004 + noticeTier * 0.0016) * dh){
@@ -5665,7 +6213,11 @@ function riftTick(dh){
     const a = rnd() * Math.PI * 2, d = 22 + rnd() * 30;
     const x = clamp(Math.round(anchor.x + Math.cos(a) * d), 6, W-7);
     const y = clamp(Math.round(anchor.y + Math.sin(a) * d), 6, H-7);
-    if(tileAt(x, y) !== 3 && nearestTownDist(x, y) > 16 && !riftAt(x, y)) openRift(x, y);
+    /* The waste kept them at arm's length. It stops doing that: by THE WATCHERS WAKE a tear
+       can open on a town's doorstep, which is the whole reason to have got the walls in
+       order before then. */
+    const keepOut = [16, 12, 8, 3, 0, 0][fractureStage] ?? 0;
+    if(tileAt(x, y) !== 3 && nearestTownDist(x, y) > keepOut && !riftAt(x, y)) openRift(x, y);
   }
   for(const r of rifts){
     r.age += dh;
@@ -5741,12 +6293,16 @@ function sealTick(c, dt){
   if(rnd() < dt * 3) addSpecks(r.x + (rnd()-0.5)*2, r.y + (rnd()-0.5)*2, '#d8c8ff', 2);
   bumpNotice(dt * 0.05);   /* it feels you working at the edges of it */
   if(r.seal >= 30){
-    if(!canAfford(RIFT_SEAL_COST)){
-      if(rnd() < dt*0.2) log(`The rite needs ${costText(RIFT_SEAL_COST)} to close it for good.`, 'bad');
+    /* The Compact's warehouses answer first. One camp's stores cannot close tears at the
+       rate the sky opens them; seven towns' can, which is most of why you signed them. */
+    const fromCompact = sealStock(RIFT_SEAL_COST);
+    if(!fromCompact && !canAfford(RIFT_SEAL_COST)){
+      if(rnd() < dt*0.2) log(`The rite needs ${costText(RIFT_SEAL_COST)} to close it for good${compactActive() ? ' — and the common stock is empty' : ''}.`, 'bad');
       r.seal = 30;
       return true;
     }
-    campSpend(RIFT_SEAL_COST);
+    if(!fromCompact) campSpend(RIFT_SEAL_COST);
+    else if(rnd() < 0.5) log('The common stock pays for the closing. That is what it is for.', 'good');
     if(r.r >= 10){ addItem('formula_w', 1); log('Sealed at full width: the closing rite itself was worth writing down. +1 Worn Formula.', 'good'); }
     closeRift(r, c);
     c.sealTarget = null;
@@ -7789,6 +8345,7 @@ function update(dt){
   rebuildCharGrid();
   reapPhylacteries();
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
+  if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
   gauntTick(dt / HOUR_SEC);   /* the dark is never empty for long */
   wldT += dt;
   const wtick = wldT >= 0.25;
@@ -7800,6 +8357,12 @@ function update(dt){
   hour += dh;
   if(hour >= 24){
     hour -= 24; day++;
+    advanceFracture(1);              /* the sky gets one day closer, and never further */
+    for(const t of towns) dreadTick(t);
+    siegeTick();                     /* the door presses on every seat that did not sign */
+    compactProduce();                /* the signed seats put their hands to it... */
+    compactTithe();                  /* ...and what they make goes to the common stock */
+    compactStrainTick();             /* and one left to rot walks back out */
     regrowNodes();   /* the waste reclaims what was taken */
     gauntDawn();     /* and the dark takes back its own */
     bloodMoonRoll();
@@ -8397,6 +8960,7 @@ function update(dt){
   if(necroT > 1){
     necroT = 0;
     refreshBindStrain();
+    musterTick();                    /* the hands the towns gave up go where the tears are */
     /* ---------- THE WORLD ANSWERS THE SIZE OF YOUR HOST ----------
        menaceFlag used to be a yes/no. A host of four and a host of thirty read the same to
        the world, so there was never a reason to stop growing. `hostSize` is what you are
@@ -10618,8 +11182,49 @@ const syncStairs = makeDynGroup(
   }
 );
 const syncRifts = makeDynGroup(
-  () => rifts.map(r => r.id + ':' + r.r.toFixed(1)).join('|'),
+  () => rifts.map(r => r.id + ':' + r.r.toFixed(1)).join('|') +
+        (theDoor ? '|DOOR:' + theDoor.r.toFixed(1) + ':' + Math.floor(theDoor.work) : ''),
   (g) => {
+    /* THE DOOR. Everything about it is the tear geometry at a scale nothing else reaches,
+       because it should read instantly as the same thing and unmistakably worse. */
+    if(theDoor){
+      const d = theDoor, y = groundY(d.x, d.y);
+      const scar = new THREE.Mesh(
+        new THREE.CircleGeometry(d.r * 1.6, 40),
+        new THREE.MeshBasicMaterial({color:0x1a0e26, transparent:true, opacity:0.7, depthWrite:false})
+      );
+      scar.rotation.x = -Math.PI/2;
+      scar.position.set(d.x, y + 0.07, d.y);
+      scar.renderOrder = 3;
+      g.add(scar);
+      const tear = new THREE.Mesh(
+        new THREE.PlaneGeometry(6 + d.r*0.5, 34 + d.r*0.9),
+        new THREE.MeshBasicMaterial({color:0x000000, side:THREE.DoubleSide, transparent:true, opacity:0.97})
+      );
+      tear.position.set(d.x, y + 17 + d.r*0.45, d.y);
+      tear.userData.spin = true;
+      g.add(tear);
+      const halo = new THREE.Mesh(
+        new THREE.PlaneGeometry(13 + d.r*0.9, 40 + d.r*1.1),
+        new THREE.MeshBasicMaterial({color:0x9a6ae8, side:THREE.DoubleSide, transparent:true, opacity:0.26, depthWrite:false})
+      );
+      halo.position.set(d.x, y + 17 + d.r*0.45, d.y);
+      halo.userData.spin = true;
+      g.add(halo);
+      /* the rite, when it is being worked: a ring closing on the door */
+      if(d.work > 0){
+        const k = clamp(d.work / DOOR_WORK, 0, 1);
+        const ring = new THREE.Mesh(
+          new THREE.RingGeometry(d.r * 1.6 * (1 - k * 0.85), d.r * 1.6 * (1 - k * 0.85) + 0.7, 44),
+          new THREE.MeshBasicMaterial({color:0xd8c8ff, transparent:true, opacity:0.55,
+            side:THREE.DoubleSide, depthWrite:false})
+        );
+        ring.rotation.x = -Math.PI/2;
+        ring.position.set(d.x, y + 0.12, d.y);
+        ring.renderOrder = 4;
+        g.add(ring);
+      }
+    }
     for(const r of rifts){
       const y = groundY(r.x, r.y);
       /* the scar on the ground: the dust does not settle here */
@@ -12443,6 +13048,7 @@ const TIPS = {
   gold: '<b>GOLD</b>Trade, recruits, buildings and tribute all run through this.<i>Seats you hold pay daily.</i>',
   day:  '<b>THE CALENDAR</b>Eight real seconds to the game hour. Bodies age, fields yield and the world turns on the day.',
   rep:  '<b>STANDING</b>What the nearest town thinks of you. Spill blood inside the walls and watch it fall.',
+  fracture:'<b>THE SKY</b>How far the Second Fracture has come. It does not go back down. The calendar moves it on its own; working the formulae where you can be heard moves it faster.<i>You cannot stop this. You can be ready for it, or you can be somewhere else when it lands.</i>',
   notice:'<b>NOTICE</b>How much attention your work with the dead has drawn. It forgets a quiet camp quickly — but once it has actually turned its head it does not look away fast.<i>Every formula you work is heard.</i>',
   chron:'<b>CHRONICLES [L]</b>Everything you have been told, and everything you have seen — including news of the wider world and who carried it to you.',
   build:'<b>BUILD [B]</b>Place structures. Blueprints need materials hauled to them before anyone can raise them.',
@@ -12506,6 +13112,23 @@ function refreshTop(){
     el.textContent = d.name;
     el.style.color = col;
     el.style.borderColor = noticeTier >= 2 ? col : 'var(--edge)';
+  }
+  {
+    /* The sky, as a number you cannot argue with. Shown from A STILLNESS on — before that
+       there is nothing to report and a countdown on day one would only be noise. */
+    const el = $('ui-fracture');
+    if(fractureStage < 1){ el.style.display = 'none'; }
+    else {
+      el.style.display = '';
+      const col = ruin ? '#8a2418' : fractureStage >= 5 ? '#e8443a' : fractureStage >= 4 ? '#c4543a'
+                : fractureStage >= 3 ? '#c07a3a' : '#a08a5a';
+      const lost = towns.filter(t => t.sacked > 0).length;
+      el.textContent = ruin ? 'THE WASTE'
+        : theDoor ? `THE DOOR · ${Math.round(theDoor.work / DOOR_WORK * 100)}% · ${7 - lost}/7 standing`
+        : FRACTURE_STAGES[fractureStage].name;
+      el.style.color = col;
+      el.style.borderColor = fractureStage >= 3 ? col : 'var(--edge)';
+    }
   }
 }
 const STANCE_ICONS = {melee:'⚔', ranged:'➶', medic:'✚', tank:'⛨', hold:'⊞'};
@@ -12832,10 +13455,29 @@ function openWarTable(){
   openModal('THE WAR TABLE', 'Lead soldiers on a painted map. The world, as well as it can be known from here.');
   const body = $('modalbody');
   body.innerHTML = '';
+  /* THE COMPACT — only once there is a sky worth signing against */
+  if(fractureStage >= 1){
+    const h = document.createElement('div');
+    h.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:2px;margin-bottom:4px';
+    h.textContent = 'THE COMPACT'; body.appendChild(h);
+    const n = compactSize(), str = compactStrength();
+    const row = document.createElement('div'); row.className = 'trow';
+    const stockTxt = Object.keys(compact.stock).length
+      ? Object.entries(compact.stock).filter(([,v])=>v>0).map(([k,v])=>`${ITEMS[k]?ITEMS[k].name:k} ${Math.floor(v)}`).join(' · ')
+      : 'empty';
+    const held = towns.filter(t => inCompact(t) && !t.compactWilling).length;
+    row.innerHTML = n === 0
+      ? `<span class="tn" style="color:var(--dust)">Nobody has signed. Seven seats, and every one of them would rather this were somebody else's problem.</span>`
+      : `<span class="tn">${n}/7 signed${held ? ` <span style="color:#c07a3a">(${held} held by force, worth half)</span>` : ''} · strength ${str.toFixed(1)}` +
+        `${compactActive() ? '' : ` <span style="color:var(--dust)">— needs ${COMPACT_MIN} to stand</span>`}` +
+        `<br><span style="color:var(--dust)">common stock: ${stockTxt} · muster: ${compact.muster.filter(id=>{const c=charById.get(id);return c&&c.state==='ok';}).length} under arms` +
+        ` · the signed towns are working at ${compactOutput().toFixed(1)}/day (a closing costs ${costText(RIFT_SEAL_COST)})</span></span>`;
+    body.appendChild(row);
+  }
   /* THE SEATS */
   {
     const h = document.createElement('div');
-    h.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:2px;margin-bottom:4px';
+    h.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:2px;margin:10px 0 4px';
     h.textContent = 'THE SEATS'; body.appendChild(h);
     for(const t of towns){
       const L = t.leader;
@@ -12844,7 +13486,50 @@ function openWarTable(){
       const ruled = t.playerRuled ? ' <span style="color:#d4a040">YOURS</span>' : '';
       const rep2 = t.rep > 15 ? 'friendly' : t.rep < -15 ? 'hostile' : 'neutral';
       const row = document.createElement('div'); row.className = 'trow';
-      row.innerHTML = `<span class="tn">${t.name}${ruled}${war}${sack} <span style="color:var(--dust)">${L ? `${L.title} ${L.name} · ${L.trait} · ${Math.max(0, day - (L.since||0))}d in the seat` : 'no ruler'} · ${rep2} to you</span></span>`;
+      /* what this hall believes about the sky, once there is anything to believe */
+      const dv = Math.round(t.dread || 0);
+      const dread = fractureStage < 1 ? '' :
+        ` · <span style="color:${dv >= 60 ? '#d4a040' : dv >= 30 ? '#c07a3a' : 'var(--dust)'}">${
+          dv >= 60 ? 'READY TO TREAT' : dv >= 30 ? 'uneasy' : 'in denial'} ${dv}</span>`;
+      row.innerHTML = `<span class="tn">${t.name}${ruled}${war}${sack} <span style="color:var(--dust)">${L ? `${L.title} ${L.name} · ${L.trait} · ${Math.max(0, day - (L.since||0))}d in the seat` : 'no ruler'} · ${rep2} to you</span>${dread}</span>`;
+      /* BEAR WITNESS: somebody of yours has to be standing in the town to say it. Enabled
+         only when there is actually something to tell them or show them, so the button is
+         never a lie about whether the trip was worth making. */
+      if(fractureStage >= 1 && L && !t.playerRuled){
+        const here = player().find(c => c.state === 'ok' && !c.undead &&
+          dist(c.x, c.y, t.x, t.y) < (t.def.wall ? t.def.wall.r + 4 : 16));
+        const worth = here ? witnessValue(t, here) + witnessProof(t, here).reduce((n,x)=>n+x.w, 0) : 0;
+        const b = document.createElement('button');
+        b.style.cssText = 'padding:1px 5px;font-size:10px;margin-left:6px';
+        const cooling = t.witnessCd && day < t.witnessCd;
+        b.textContent = cooling ? 'HEARD YOU (' + Math.ceil(t.witnessCd - day) + 'd)'
+                      : !here ? 'NOBODY THERE'
+                      : worth < 2 ? 'NOTHING NEW TO TELL'
+                      : 'BEAR WITNESS (+' + Math.round(worth) + ')';
+        b.disabled = cooling || !here || worth < 2;
+        b.onclick = () => { if(counselSeat(t, here)) dreadTick(t); openWarTable(); };
+        row.appendChild(b);
+      }
+      /* THE COMPACT: signing is a decision with a price, so the button says the price */
+      if(fractureStage >= 1 && t.leader && !t.sacked){
+        const cb = document.createElement('button');
+        cb.style.cssText = 'padding:1px 5px;font-size:10px;margin-left:4px';
+        if(inCompact(t)){
+          cb.textContent = t.compactWilling ? 'SIGNED' : 'SIGNED (held)';
+          cb.disabled = true;
+          cb.style.color = t.compactWilling ? '#d4a040' : '#c07a3a';
+        } else {
+          const chk = compactCanSign(t);
+          cb.textContent = chk.ok ? (chk.forced ? 'ENTER BY WRIT' : 'PUT THE COMPACT') : 'WILL NOT SIGN';
+          cb.disabled = !chk.ok;
+          cb.title = chk.ok
+            ? (chk.forced ? 'A town you hold joins without being asked — and gives half as much.'
+                          : 'Costs them stores, three guards and twelve points of order.')
+            : chk.why;
+          cb.onclick = () => { compactSign(t); openWarTable(); };
+        }
+        row.appendChild(cb);
+      }
       body.appendChild(row);
     }
   }
@@ -14238,6 +14923,14 @@ cv.addEventListener('mousedown', e => {
       openImmortal(im);
       return;
     }
+    /* right-click the door: send everyone who can hold a formula. It takes all of them. */
+    if(theDoor && dist(theDoor.x, theDoor.y, wx, wy) < theDoor.r * 0.7){
+      const able = movers.filter(m => m.gift && (!m.undead || m.lich));
+      if(!able.length){ log('The door answers to a formula and nothing else. Bring somebody who can hold one.', 'bad'); return; }
+      for(const m of able){ clearOrders(m); m.doorWork = true; }
+      log(`${able.length === 1 ? able[0].name + ' goes' : able.length + ' go'} to the door. It wants ${costText(doorSealCost())} at the end of it, and a very long time in between.`, '');
+      return;
+    }
     /* right-click a tear: send whoever can work a formula to close it */
     const rf = rifts.find(r => dist(r.x, r.y, wx, wy) < r.r * 0.55);
     if(rf){
@@ -14881,7 +15574,7 @@ function snapshot(){
     followId: c.follow ? c.follow.id : null,
     job:c.job, job2:c.job2||null, grp:c.grp||null, heldAt:c.heldAt||null, heldT:c.heldT||0, midden:c.midden||null, caveId:c.caveId||null, roomId:(c.roomId??null), caveDweller:!!c.caveDweller, floor: c.floor||0, captured:!!c.captured, dragId: c.drag ? c.drag.id : null,
     clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
-    servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0,
+    servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
     bindWeight:c.bindWeight, shortTag:c.shortTag,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
@@ -14900,7 +15593,9 @@ function snapshot(){
     pilgrimDestI: c.pilgrimage ? towns.indexOf(c.pilgrimage.dest) : -1,
   });
   return {
-    v:20, cats, bloodMoon, redoubts:[...redoubts], stash:{...stash}, oreFields, nodeUses:[...nodeUses], phylacteries, phylN, noticed, noticeTier,
+    v:20, cats, bloodMoon, redoubts:[...redoubts], stash:{...stash}, oreFields, nodeUses:[...nodeUses], phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
+    compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
+    theDoor: theDoor ? {...theDoor} : null, ruin,
     rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, coilShrine, coilExposed, coilStruck,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
     camps: camps.map(c => ({id:c.id, x:c.x, y:c.y, fac:c.fac, cap:c.cap, tents:c.tents})),
@@ -14912,6 +15607,8 @@ function snapshot(){
       order: t.order ?? 55, pacts: {...(t.pacts||{})}, petitions: (t.petitions||[]).map(p=>({k:p.k, txt:p.txt, opts:p.opts, expires:p.expires, filed:!!p.filed})),
       feastCd: t.feastCd||0, rebelDay: t.rebelDay||0, promise: t.promise ? {...t.promise} : null,
       project: t.project ? {...t.project} : null, projectsDone: {...(t.projectsDone||{})}, lastTribute: t.lastTribute||0,
+      dread: t.dread||0, dreadWoke: !!t.dreadWoke, shown: {...(t.shown||{})}, witnessCd: t.witnessCd||0,
+      compactWilling: !!t.compactWilling,
       caravanOut: t.caravanOut ? {...t.caravanOut, dest: {...t.caravanOut.dest}} : null})),
     explored: packExplored(),
     nodeUses: [...nodeUses.entries()],
@@ -14991,6 +15688,14 @@ function restore(d){
   if(Array.isArray(d.phylacteries)) for(const p of d.phylacteries) phylacteries.push({...p, _rect:null});
   phylN = d.phylN || 0;
   noticed = d.noticed || 0;
+  fracture = d.fracture || 0;
+  fractureStage = fractureStageOf(fracture);
+  compact.signed = d.compact ? [...(d.compact.signed||[])] : [];
+  compact.stock  = d.compact ? {...(d.compact.stock||{})} : {};
+  compact.muster = d.compact ? [...(d.compact.muster||[])] : [];
+  compact.founded = d.compact ? (d.compact.founded||0) : 0;
+  theDoor = d.theDoor ? {...d.theDoor} : null;
+  ruin = !!d.ruin;
   bloodMoon = d.bloodMoon || 0;
   redoubts.length = 0;
   if(Array.isArray(d.redoubts)) for(const r of d.redoubts) redoubts.push(r);
@@ -15046,7 +15751,8 @@ function restore(d){
     c.structMult = s.structMult || 1; c.bindWeight = s.bindWeight || 1; c.shortTag = s.shortTag || '';
     c.servitor = !!s.servitor; c.minded = !!s.minded; c.crafted = !!s.crafted; c.autoFight = !!s.autoFight;
     c.onlyArt = s.onlyArt || null; c.speedMult = s.speedMult || 0;
-    c.markT = s.markT || 0; c.heat = s.heat || 0;
+    c.markT = s.markT || 0; c.heat = s.heat || 0; c.mustered = !!s.mustered;
+    c.doorborn = !!s.doorborn; c.doorWork = !!s.doorWork;
     c.neutral = !!s.neutral; c.provoked = !!s.provoked; c.bossKey = s.bossKey || null; c.dropItems = s.dropItems || null;
     c.scholar = !!s.scholar; c.quest = s.quest || null; c.questsDone = s.questsDone || 0; c.offered = !!s.offered;
     c.immortal = s.immortal || null; c.questGive = s.questGive || null; c.questDone = !!s.questDone; c.friendly = !!s.friendly; c.construct = !!s.construct; c.redoubtId = s.redoubtId || null;
@@ -15112,6 +15818,9 @@ function restore(d){
     t.leaderSeats = ts.leaderSeats || 0;
     t.playerRuled = !!ts.playerRuled; t.settlerT = ts.settlerT || 0;
     t.order = ts.order ?? 55; t.pacts = {...(ts.pacts||{})}; t.petitions = (ts.petitions||[]).map(p=>({...p}));
+    t.dread = ts.dread || 0; t.dreadWoke = !!ts.dreadWoke;
+    t.shown = {...(ts.shown||{})}; t.witnessCd = ts.witnessCd || 0;
+    t.compactWilling = !!ts.compactWilling;
     t.feastCd = ts.feastCd || 0; t.rebelDay = ts.rebelDay || 0; t.promise = ts.promise ? {...ts.promise} : null;
     t.project = ts.project ? {...ts.project} : null; t.projectsDone = {...(ts.projectsDone||{})}; t.lastTribute = ts.lastTribute || 0;
     t.caravanOut = ts.caravanOut ? {...ts.caravanOut, dest: {...ts.caravanOut.dest}} : null;
