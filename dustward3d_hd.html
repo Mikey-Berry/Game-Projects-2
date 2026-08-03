@@ -3639,6 +3639,8 @@ function kill(c, by){
   if(c.state==='dead') return;
   /* the ledger is written here, not inferred from a body that will be gone in two days */
   if(c.bossKey && !bossSlain[c.bossKey]) bossSlain[c.bossKey] = day;
+  /* a risen that has done the work is a candidate for a name */
+  if(by && by.undead && by.crafted) by.kills = (by.kills || 0) + 1;
   AU.death(c.x, c.y);
   /* anything still on its feet when it dies has one more thing left to do */
   if(c.state === 'ok') AU.bodyfall(c.x, c.y, (c.big || 1) > 1.3);
@@ -7937,15 +7939,19 @@ function wardedFrom(c){
   }
   return null;
 }
-function craftUndead(kind, caster, circle){
+function craftUndead(kind, caster, circle, shape){
   const ut = UNDEAD_TYPES[kind];
   if(!research.done[ut.tech]){ log(`Requires research: ${TECHS[ut.tech].name}.`, 'bad'); return false; }
   if(caster.mana < ut.mana){ log(`${caster.name} needs ${ut.mana} mana.`, 'bad'); return false; }
   if(risenLoad(caster) + ut.weight > risenCap(caster)){
     log(`Binding full: ${risenLoad(caster)}/${risenCap(caster)} — ${ut.name} needs ${ut.weight}.`, 'bad'); return false;
   }
-  if(!Object.keys(ut.cost).every(k => (stash[k]||0) >= ut.cost[k])){ refuse('Missing materials.'); return false; }
-  for(const k of Object.keys(ut.cost)) campTake(k, ut.cost[k]);
+  /* shaping past the free budget is paid for in material, on top of the recipe */
+  const extra = shape ? shapeCost(shape, caster) : {};
+  const bill = {...ut.cost};
+  for(const k in extra) bill[k] = (bill[k] || 0) + extra[k];
+  if(!Object.keys(bill).every(k => (stash[k]||0) >= bill[k])){ refuse('Missing materials.'); return false; }
+  for(const k of Object.keys(bill)) campTake(k, bill[k]);
   const m = caster.stats.magic * (research.done.necromancy ? 1.5 : 1);
   const p = findOpenNear(circle.x+1, circle.y+1, 2.5);
   let u;
@@ -8005,13 +8011,16 @@ function craftUndead(kind, caster, circle){
   u.undead = true; u.crafted = true; u.master = caster; u.hunger = 100;
   u.guardTarget = caster;
   u.bindWeight = ut.weight; u.shortTag = ut.tag + risenN;
+  /* the shaping goes on before it stands up, and renames it if it came out extreme */
+  applyShape(u, shape);
+  if(u.shapeName) u.name = u.shapeName + ' ' + u.name.replace(/^(Risen|Colossus|Gravehound|Hollow Brute|Marrow Archer|Bone Mule|Servitor|Skeleton Mage) /, '');
   chars.push(u);
   caster.mana -= ut.mana; caster.castCd = 1.4;
   xpGain(caster, 'magic', 0.8);
   addSpecks(p.x, p.y-0.5, '#8a6ab5', 12);
   AU.rite(p.x, p.y);
   say(u, '...');
-  log(`${ut.name} bound.`, 'good');
+  log(`${u.name} bound.${u.shape ? ` Mass ${u.shape.mass}, force ${u.shape.force}, haste ${u.shape.haste}.` : ''}`, 'good');
   refreshSquadBar(); refreshInv(); refreshCharPanel();
   return true;
 }
@@ -8358,6 +8367,115 @@ function openImmortal(c){
   };
   draw();
 }
+/* ---------- THE SHAPING ----------
+   A risen came off the circle exactly as the recipe wrote it, every time. The only decision
+   was which of seven recipes, and after that they were interchangeable — which is a strange
+   thing for a craft whose entire premise is that you are building a body out of parts.
+
+   Shaping is three axes with a fixed budget between them, so every point of one is a point
+   off another. You cannot make a fast, huge, cheap thing. You can make a bone golem that
+   hits like a collapsing wall and arrives next week, or something that arrives immediately
+   and comes apart when looked at.
+
+   Materials buy budget. That is the only way to raise the ceiling, and it is where the time
+   and love goes: a risen you spent a fortune on is measurably a different animal from one
+   you knocked together out of a corpse and some hide. */
+const SHAPE_AXES = [
+  {k:'mass',  label:'MASS',   lo:'wiry',      hi:'colossal',
+   desc:'Bulk, blood and reach. Everything about it gets heavier, including how long it takes to get anywhere.'},
+  {k:'force', label:'FORCE',  lo:'feeble',    hi:'ruinous',
+   desc:'What it does when it connects. Bought at the cost of everything else.'},
+  {k:'haste', label:'HASTE',  lo:'shambling', hi:'quick',
+   desc:'How fast it crosses ground and how often it swings. The first thing mass takes away.'},
+];
+const SHAPE_BUDGET_BASE = 6;          /* points to spend across the three axes */
+const SHAPE_MAX = 5;                  /* per axis */
+/* what a point costs, above the free allocation */
+const SHAPE_EXTRA = {vflesh:4, remains:3, iron:2};
+function shapeBudget(caster){
+  return SHAPE_BUDGET_BASE + Math.floor((caster.stats.magic || 0) / 12) +
+         (research.done.necromancy ? 2 : 0) + (research.done.ossuary_rites ? 2 : 0);
+}
+/* Apply a shape to a freshly bound risen. The multipliers are deliberately steep: a shape
+   that reads as an extreme on the slider has to feel like one in the field. */
+function applyShape(u, shape){
+  if(!shape) return;
+  u.shape = {...shape};
+  const m = (shape.mass  || 0) - 2;    /* -2..+3 around the middle */
+  const f = (shape.force || 0) - 2;
+  const h = (shape.haste || 0) - 2;
+  /* MASS: size, blood and reach, paid for in pace */
+  u.big = Math.max(0.6, (u.big || 1) * (1 + m * 0.22));
+  const bl = Math.max(20, Math.round((u.maxBlood || 70) * (1 + m * 0.30)));
+  u.blood = u.maxBlood = bl;
+  u.stats.tough = Math.max(1, u.stats.tough * (1 + m * 0.22));
+  /* FORCE: what it does on contact */
+  if(u.clawDmg) u.clawDmg = Math.max(1, u.clawDmg * (1 + f * 0.26));
+  u.stats.atk = Math.max(1, u.stats.atk * (1 + f * 0.20));
+  /* HASTE: pace and swing rate, dragged down hard by mass */
+  const pace = 1 + h * 0.20 - Math.max(0, m) * 0.16;
+  u.speedMult = Math.max(0.25, (u.speedMult || 1) * pace);
+  u.stats.ath = Math.max(1, u.stats.ath * (1 + h * 0.18));
+  /* A colossal thing is a wall whether you meant it to be or not — and a wiry one is not,
+     even when the recipe it came off was. A Skittering Brute that draws blades toward it is
+     a contradiction; the whole reason to build one is that it does not. */
+  if(m >= 2) u.taunt = true;
+  else if(m <= -1) u.taunt = false;   /* wiry, not merely average — the middle keeps whatever the recipe gave it */
+  u.shapeName = shapeNameFor(shape);
+}
+/* the thing earns its own description, so the roster reads as bodies rather than recipes */
+function shapeNameFor(sh){
+  const m = sh.mass || 0, f = sh.force || 0, h = sh.haste || 0;
+  if(m >= 4 && h <= 1) return 'Bone Golem';
+  if(m >= 4)           return 'Colossus-Wrought';
+  if(h >= 4 && m <= 1) return 'Skittering';
+  if(f >= 4 && m <= 2) return 'Render';
+  if(f >= 4)           return 'Breaker';
+  if(h >= 3)           return 'Loping';
+  if(m >= 3)           return 'Heavy';
+  if(m <= 1 && f <= 1 && h <= 1) return 'Shoddy';
+  return null;
+}
+function shapeCost(shape, caster){
+  const spent = (shape.mass||0) + (shape.force||0) + (shape.haste||0);
+  const over = Math.max(0, spent - shapeBudget(caster));
+  if(!over) return {};
+  const out = {};
+  for(const k in SHAPE_EXTRA) out[k] = SHAPE_EXTRA[k] * over;
+  return out;
+}
+/* ---------- PROMOTION ----------
+   A lieutenant used to be something that happened TO you: raise a named corpse and one
+   arrived. There was no way to look at a risen that had been through nine fights with you
+   and decide it had earned a name. */
+const PROMOTE_COST = {vflesh:12, remains:10, iron:6, tome:1};
+function canPromote(u, caster){
+  if(!u || u.lieutenant || u.lich) return {ok:false, why:'already stands apart'};
+  if(!u.undead || !u.crafted) return {ok:false, why:'not yours to raise up'};
+  if(u.master !== caster) return {ok:false, why:'bound to another will'};
+  if((u.kills || 0) < 6) return {ok:false, why:`has taken ${u.kills||0} of the 6 lives it needs`};
+  if(!canAfford(PROMOTE_COST)) return {ok:false, why:`needs ${costText(PROMOTE_COST)}`};
+  return {ok:true};
+}
+function promote(u, caster){
+  const chk = canPromote(u, caster);
+  if(!chk.ok){ log(`It cannot be raised up — ${chk.why}.`, 'bad'); return false; }
+  campSpend(PROMOTE_COST);
+  u.lieutenant = true;                 /* and so it stops counting against the binding */
+  u.minded = true;                     /* a lieutenant keeps a mind. That is the difference. */
+  u.shortTag = 'LT';
+  u.stats.atk   *= 1.15;
+  u.stats.def   *= 1.15;
+  u.stats.tough *= 1.15;
+  u.blood = u.maxBlood = Math.round(u.maxBlood * 1.2);
+  /* it gets a name, because that is what promotion is */
+  u.name = pickNameFor(rnd() < 0.5 ? 'f' : 'm', true);
+  log(`${u.name} is raised up. It is a lieutenant now — it keeps a mind, it holds a name, and it no longer weighs against your binding.`, 'good');
+  worldEvent('lieutenant', u.x, u.y, `Something that was raised has been given a name. That is not how this is supposed to work.`);
+  AU.news();
+  refreshSquadBar(); refreshCharPanel();
+  return true;
+}
 function openBinding(circle){
   const ritualist = player().filter(c => c.gift==='dark' && !c.undead && c.state==='ok' && dist(c.x,c.y,circle.x+1,circle.y+1) < 4)
     .sort((a,b)=>b.stats.magic-a.stats.magic)[0]
@@ -8390,15 +8508,91 @@ function openBinding(circle){
       sep.textContent = 'BINDINGS';
       body.appendChild(sep);
     }
+    /* ---- THE SHAPING BENCH ----
+       Three sliders against one budget, so every point of one is a point off another. The
+       panel says what it will cost and what it will come out as before anything is bound. */
+    circle.shape = circle.shape || {mass:2, force:2, haste:2};
+    const sh = circle.shape;
+    const budget = shapeBudget(ritualist);
+    const spent = sh.mass + sh.force + sh.haste;
+    const over = Math.max(0, spent - budget);
+    const extra = shapeCost(sh, ritualist);
+    {
+      const h = document.createElement('div');
+      h.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:1px;margin:2px 0 4px';
+      h.textContent = 'THE SHAPING'; body.appendChild(h);
+      const note = document.createElement('div');
+      note.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:6px';
+      const preview = shapeNameFor(sh);
+      note.innerHTML = `${spent}/${budget} points` +
+        (over ? ` · <span style="color:#c07a3a">${over} over — pays ${costText(extra)} on top</span>` : ' · within the binding') +
+        (preview ? ` · it will come out <span style="color:var(--bone)">${preview}</span>` : '');
+      body.appendChild(note);
+      for(const ax of SHAPE_AXES){
+        const row = document.createElement('div'); row.className = 'trow';
+        const v = sh[ax.k];
+        const bar = '▮'.repeat(v) + '▯'.repeat(SHAPE_MAX - v);
+        row.innerHTML = `<span class="tn">${ax.label} <span style="color:var(--bone)">${bar}</span> ` +
+          `<span style="color:var(--dust)">${v <= 1 ? ax.lo : v >= 4 ? ax.hi : '—'} · ${ax.desc}</span></span>`;
+        const minus = document.createElement('button');
+        minus.textContent = '−'; minus.style.cssText = 'padding:1px 7px;font-size:11px';
+        minus.disabled = v <= 0;
+        minus.onclick = () => { sh[ax.k] = Math.max(0, v - 1); rndr(); };
+        const plus = document.createElement('button');
+        plus.textContent = '+'; plus.style.cssText = 'padding:1px 7px;font-size:11px;margin-left:3px';
+        plus.disabled = v >= SHAPE_MAX;
+        plus.onclick = () => { sh[ax.k] = Math.min(SHAPE_MAX, v + 1); rndr(); };
+        row.appendChild(minus); row.appendChild(plus);
+        body.appendChild(row);
+      }
+      const rst = document.createElement('button');
+      rst.textContent = 'EVEN'; rst.style.cssText = 'padding:1px 6px;font-size:10px;margin-bottom:8px';
+      rst.onclick = () => { circle.shape = {mass:2, force:2, haste:2}; rndr(); };
+      body.appendChild(rst);
+      const sep = document.createElement('div');
+      sep.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:1px;margin:10px 0 4px';
+      sep.textContent = 'BINDINGS'; body.appendChild(sep);
+    }
     for(const [k, ut] of Object.entries(UNDEAD_TYPES)){
       const row = document.createElement('div'); row.className = 'trow';
-      const costTxt = Object.keys(ut.cost).map(ck => `${ut.cost[ck]} ${ITEMS[ck].name}`).join(' + ');
+      const bill = {...ut.cost};
+      for(const ck in extra) bill[ck] = (bill[ck] || 0) + extra[ck];
+      const costTxt = Object.keys(bill).map(ck => `${bill[ck]} ${ITEMS[ck].name}`).join(' + ');
       const locked = !research.done[ut.tech];
+      const afford = canAfford(bill);
       row.innerHTML = `<span class="tn">${ut.name} <span style="color:var(--dust)">${ut.desc} · ${costTxt} · ${ut.mana} mana · slots ${ut.weight}</span></span>
-        <span>${locked ? `<span style="color:var(--dust)">needs ${TECHS[ut.tech].name}</span>` : `<button data-bind="${k}">BIND</button>`}</span>`;
+        <span>${locked ? `<span style="color:var(--dust)">needs ${TECHS[ut.tech].name}</span>` : `<button data-bind="${k}" ${afford?'':'disabled'}>BIND</button>`}</span>`;
       body.appendChild(row);
     }
-    body.querySelectorAll('[data-bind]').forEach(b => b.onclick = () => { craftUndead(b.dataset.bind, ritualist, circle); rndr(); });
+    body.querySelectorAll('[data-bind]').forEach(b => b.onclick = () => { craftUndead(b.dataset.bind, ritualist, circle, {...circle.shape}); rndr(); });
+    /* ---- RAISING ONE UP ----
+       Anything of yours that has done the work can be given a name and a mind. */
+    {
+      const mine = chars.filter(u => u.undead && u.crafted && !u.lieutenant && !u.lich &&
+        u.state !== 'dead' && u.master === ritualist);
+      if(mine.length){
+        const h = document.createElement('div');
+        h.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:1px;margin:12px 0 4px';
+        h.textContent = 'RAISE ONE UP'; body.appendChild(h);
+        const note = document.createElement('div');
+        note.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:4px';
+        note.textContent = `A lieutenant keeps a mind, holds a name, and stops weighing against your binding. ${costText(PROMOTE_COST)}, and six lives taken.`;
+        body.appendChild(note);
+        for(const u of mine.slice(0, 12)){
+          const chk = canPromote(u, ritualist);
+          const row = document.createElement('div'); row.className = 'trow';
+          const shTxt = u.shape ? ` · m${u.shape.mass}/f${u.shape.force}/h${u.shape.haste}` : '';
+          row.innerHTML = `<span class="tn">${u.name} <span style="color:var(--dust)">${u.kills||0} taken${shTxt}</span></span>`;
+          const btn = document.createElement('button');
+          btn.textContent = 'RAISE UP';
+          btn.disabled = !chk.ok;
+          btn.title = chk.ok ? 'Give it a name.' : chk.why;
+          btn.onclick = () => { if(promote(u, ritualist)) rndr(); };
+          row.appendChild(btn);
+          body.appendChild(row);
+        }
+      }
+    }
     /* THE LAST RITE */
     if(research.done.last_rite && !ritualist.lich){
       const h = document.createElement('div');
@@ -15806,7 +16000,7 @@ function snapshot(){
     followId: c.follow ? c.follow.id : null,
     job:c.job, job2:c.job2||null, grp:c.grp||null, heldAt:c.heldAt||null, heldT:c.heldT||0, midden:c.midden||null, caveId:c.caveId||null, roomId:(c.roomId??null), caveDweller:!!c.caveDweller, floor: c.floor||0, captured:!!c.captured, dragId: c.drag ? c.drag.id : null,
     clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
-    servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
+    servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
     bindWeight:c.bindWeight, shortTag:c.shortTag,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
@@ -15991,6 +16185,7 @@ function restore(d){
     c.servitor = !!s.servitor; c.minded = !!s.minded; c.crafted = !!s.crafted; c.autoFight = !!s.autoFight;
     c.onlyArt = s.onlyArt || null; c.speedMult = s.speedMult || 0;
     c.markT = s.markT || 0; c.heat = s.heat || 0; c.mustered = !!s.mustered;
+    c.shape = s.shape ? {...s.shape} : null; c.shapeName = s.shapeName || null; c.kills = s.kills || 0;
     c.doorborn = !!s.doorborn; c.doorWork = !!s.doorWork;
     c.neutral = !!s.neutral; c.provoked = !!s.provoked; c.bossKey = s.bossKey || null; c.dropItems = s.dropItems || null;
     c.scholar = !!s.scholar; c.quest = s.quest || null; c.questsDone = s.questsDone || 0; c.offered = !!s.offered;
