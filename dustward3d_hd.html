@@ -1584,6 +1584,7 @@ const NEWS_TONE = {
   war:'bad', sack:'bad', plague:'bad', rebellion:'bad', conquest:'bad', ambush:'bad',
   camp:'bad', attention:'bad', bloodmoon:'bad', rift:'bad', sixfold:'bad', purge:'bad',
   fracture:'bad', dread:'', compact:'good', door:'bad', fallen:'bad', ruin:'bad',
+  rite:'bad', lieutenant:'good',
   peace:'good', pact:'good', sealed:'good', razed:'good',
 };
 function newsAge(e){
@@ -4977,6 +4978,7 @@ function physics(c, dt){
       } else return;   /* feet planted while the swing is committed */
     }
   }
+  if(c.riting){ c.blocking = false; return; }       /* the rite has them. They are not available. */
   if(c.staggerT > 0){ c.staggerT -= dt; return; }   /* stumbling — no orders land */
   c._ox = c.x; c._oy = c.y;   /* remember where the feet were: passing blades punish movers */
   c.atkCd -= dt;
@@ -8080,8 +8082,84 @@ function openCrypt(crypt){
   };
   rndr();
 }
+/* ---------- THE LAST RITE, AS A SCENE ----------
+   Ascension was a confirm dialog. The single largest thing a character can do in this game —
+   giving another person wholly, and coming back something else — resolved instantly, in a
+   modal, with nobody else in the world aware it had happened.
+
+   It takes time now, and the time is dangerous. The ritualist stands rooted and defenceless
+   at the circle while the rite runs; the noise of it reaches a long way; and what hears it
+   comes. The rest of the squad has one job, which is to see that nothing reaches the circle
+   before the rite finishes. Interrupt it and the working collapses — the sacrifice is spent
+   either way, because that is the kind of thing this is. */
+const RITE_WORK = 42;                 /* seconds of standing still, at magic 25 */
+let theRite = null;                   /* {ritualist, sacrifice, x, y, work, drawn} */
+function beginAscension(ritualist, sacrifice){
+  if(theRite) { log('A rite is already open. One at a time.', 'bad'); return; }
+  campTake('remains', 10);            /* the crown is a key, not a candle — it endures */
+  theRite = {ritualist, sacrifice, x: ritualist.x, y: ritualist.y, work: 0, drawn: 0, t: 0};
+  clearOrders(ritualist); clearOrders(sacrifice);
+  ritualist.riting = true; sacrifice.riting = true;
+  log(`${ritualist.name} opens the Last Rite. It will take a long time and they cannot move or defend themselves while it runs.`, 'bad');
+  log('KEEP THE CIRCLE. Anything that reaches them collapses the working — and the price is paid either way.', 'bad');
+  say(ritualist, 'Hold the ring. Whatever comes.');
+  worldEvent('rite', ritualist.x, ritualist.y,
+    'Somebody is working something very old out past the fences. The air over it has gone wrong.');
+  AU.news();
+}
+function riteTick(dt){
+  const r = theRite; if(!r) return;
+  const c = r.ritualist, sac = r.sacrifice;
+  if(c.state !== 'ok' || sac.state !== 'ok'){ collapseRite(c.state !== 'ok' ? 'the ritualist went down' : 'the offering was killed'); return; }
+  /* rooted: the rite happens where it was opened, or not at all */
+  if(dist(c.x, c.y, r.x, r.y) > 2.5){ collapseRite(`${c.name} was driven off the circle`); return; }
+  c.mana = Math.max(0, c.mana - dt * 1.2);
+  r.work += dt * (1 + c.stats.magic * 0.035);
+  r.t += dt;
+  /* it is heard, and what hears it walks */
+  bumpNotice(dt * 0.9);
+  if(rnd() < dt * 6) addSpecks(r.x + (rnd()-0.5)*4, r.y + (rnd()-0.5)*4, '#a970e8', 3);
+  /* the dark answers in waves, and the waves get worse */
+  const wave = Math.floor(r.work / (RITE_WORK / 3));
+  if(wave > r.drawn){
+    r.drawn = wave;
+    const n = 2 + wave;
+    for(let i = 0; i < n; i++){
+      const a = rnd() * Math.PI * 2, d = 16 + rnd() * 8;
+      const q = findOpenNear(Math.round(r.x + Math.cos(a)*d), Math.round(r.y + Math.sin(a)*d), 5);
+      const g = spawnGaunt(wave >= 2 ? pick(['maw','stalker','shrike']) : pick(['gaunt','stalker']), q.x, q.y);
+      if(g){ g.nightborn = false; g.guard = {x: r.x, y: r.y}; g.riteborn = true; }
+    }
+    log(wave >= 3 ? 'THEY ARE COMING FOR THE CIRCLE. Hold.' :
+        wave === 2 ? 'More of them. The rite is louder than it was.' :
+                     'Something has heard it. It is coming.', 'bad');
+    AU.news();
+  }
+  if(r.work >= RITE_WORK) completeAscension();
+}
+function collapseRite(why){
+  const r = theRite; if(!r) return;
+  const {ritualist, sacrifice} = r;
+  theRite = null;
+  ritualist.riting = false; sacrifice.riting = false;
+  /* the offering is spent either way. That is the kind of thing this is. */
+  if(sacrifice.state !== 'dead'){
+    selected = selected.filter(x => x !== sacrifice);
+    const ci = chars.indexOf(sacrifice); if(ci >= 0) chars.splice(ci, 1);
+  }
+  log(`THE RITE COLLAPSES — ${why}. ${sacrifice.name} is gone regardless. Nothing was gained.`, 'bad');
+  say(ritualist, 'No. No, it was RIGHT THERE —');
+  bumpNotice(4);
+  refreshSquadBar(); refreshCharPanel();
+}
+function completeAscension(){
+  const r = theRite; if(!r) return;
+  const {ritualist, sacrifice} = r;
+  theRite = null;
+  ritualist.riting = false;
+  performAscension(ritualist, sacrifice);
+}
 function performAscension(ritualist, sacrifice){
-  campTake('remains', 10);   /* the crown is a key, not a candle — it endures for the next rite */
   /* the sacrifice is given wholly — no corpse remains */
   clearOrders(sacrifice);
   selected = selected.filter(x => x !== sacrifice);
@@ -8655,8 +8733,10 @@ function openBinding(circle){
     body.querySelectorAll('[data-sac]').forEach(b => b.onclick = () => {
         const sac = chars.find(c => c.id === +b.dataset.sac);
         if(!sac) return;
-        if(!confirm(`Give ${sac.name} to the rite, permanently, so that ${ritualist.name} may ascend? This cannot be undone.`)) return;
-        performAscension(ritualist, sac);
+        if(!confirm(`Give ${sac.name} to the rite, permanently, so that ${ritualist.name} may ascend?\n\n` +
+          `The rite takes a long time. ${ritualist.name} cannot move or fight while it runs, and it will be heard. ` +
+          `Keep the circle — if anything reaches them the working collapses and ${sac.name} is spent regardless.`)) return;
+        beginAscension(ritualist, sac);
         $('modal').style.display='none'; modalOpen = false;
       });
     } else if(ritualist.lich){
@@ -8766,6 +8846,7 @@ let fpsEMA = 60, simMs = 0, renderMs = 0;
 function update(dt){
   rebuildCharGrid();
   reapPhylacteries();
+  riteTick(dt);               /* and somebody is in the middle of something */
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
   if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
   gauntTick(dt / HOUR_SEC);   /* the dark is never empty for long */
@@ -11609,10 +11690,31 @@ const syncStairs = makeDynGroup(
 );
 const syncRifts = makeDynGroup(
   () => rifts.map(r => r.id + ':' + r.r.toFixed(1)).join('|') +
-        (theDoor ? '|DOOR:' + theDoor.r.toFixed(1) + ':' + Math.floor(theDoor.work) : ''),
+        (theDoor ? '|DOOR:' + theDoor.r.toFixed(1) + ':' + Math.floor(theDoor.work) : '') +
+        (theRite ? '|RITE:' + Math.floor(theRite.work) : ''),
   (g) => {
     /* THE DOOR. Everything about it is the tear geometry at a scale nothing else reaches,
        because it should read instantly as the same thing and unmistakably worse. */
+    if(theRite){
+      /* a ring of light closing on the circle: the one thing the squad is defending */
+      const y = groundY(theRite.x, theRite.y);
+      const k = clamp(theRite.work / RITE_WORK, 0, 1);
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(6.5 * (1 - k * 0.8), 6.5 * (1 - k * 0.8) + 0.55, 40),
+        new THREE.MeshBasicMaterial({color:0xc9a6ff, transparent:true, opacity:0.7,
+          side:THREE.DoubleSide, depthWrite:false}));
+      ring.rotation.x = -Math.PI/2;
+      ring.position.set(theRite.x, y + 0.14, theRite.y);
+      ring.renderOrder = 5;
+      g.add(ring);
+      const pool = new THREE.Mesh(
+        new THREE.CircleGeometry(6.5, 34),
+        new THREE.MeshBasicMaterial({color:0x2a1044, transparent:true, opacity:0.42, depthWrite:false}));
+      pool.rotation.x = -Math.PI/2;
+      pool.position.set(theRite.x, y + 0.09, theRite.y);
+      pool.renderOrder = 4;
+      g.add(pool);
+    }
     if(theDoor){
       const d = theDoor, y = groundY(d.x, d.y);
       const scar = new THREE.Mesh(
