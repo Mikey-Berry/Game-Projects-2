@@ -879,6 +879,7 @@ function makeChar(name, faction, x, y, o={}){
       blades:o.blades??1, blunt:o.blunt??1, ranged:o.ranged??1, martial:o.martial??1,
       smithing:o.smithing??1, crafting:o.crafting??1, farming:o.farming??1, brewing:o.brewing??1,
       gunnery:o.gunnery??1},
+    conviction: o.conviction || rollConviction(), regard: o.regard || 0,
     gift: (o.race==='chimera' ? null : (o.gift||null)), hollowTier: o.hollowTier??0, nascent: false, xpDebt: null, mana: 15 + Math.floor(o.magic??1), castCd: 0,
     concentrating: null,   /* {key, lock, exclusive} while sustaining a concentration spell */
     att: {divine:0, destruction:0, dark:0, dust:0, ...((o.gift && o.race!=='chimera') ? {[o.gift]: 2} : {})},
@@ -1491,6 +1492,235 @@ for(const t of towns){
   const n = ri(3,5);
   for(let i=0;i<n;i++) t.recruits.push(makeRecruit(t));
 }
+/* ============================================================ WHAT THEY THINK OF YOU
+   The squad had no opinion. You could sack a town, raise its dead, and the medic who has
+   walked beside you for sixty days would carry on handing out bandages as though nothing had
+   occurred. There is a marriage system, a grief system and a courtship system, and underneath
+   all of it nobody minded anything.
+
+   Everybody now carries a CONVICTION — the thing they cannot get past — and a running score
+   of what they make of you. Deeds move that score, weighted by conviction, so the same act
+   costs you a compassionate medic dearly and costs a cold one nothing. Education dampens the
+   swing in both directions: a lettered person argues themselves into and out of things more
+   slowly than somebody who simply knows what they saw.
+
+   At the ends of the scale they act. They leave, or they turn on you, or they decide you are
+   the only thing worth following. */
+const CONVICTIONS = {
+  compassion: {label:'Compassionate', short:'compassion',
+    blurb:'Cannot stomach cruelty to people who cannot answer back.',
+    weights:{sack:-3.0, civkill:-3.4, raise:-1.1, conquer:-1.6, town_saved:2.4, heal:0.9, rift_sealed:1.1, compact:1.5}},
+  cold: {label:'Cold', short:'cold',
+    blurb:'Weighs outcomes and does not weigh much else. Hard to appal, hard to move.',
+    weights:{sack:-0.3, civkill:-0.3, raise:0.1, conquer:0.4, town_saved:0.6, rift_sealed:0.6, gold:1.0, compact:0.8}},
+  devout: {label:'Devout', short:'devout',
+    blurb:'The Church was right about the dead. Every rite you work is a wound.',
+    weights:{raise:-2.6, lich:-6.0, sack:-1.4, civkill:-1.8, rift_sealed:2.2, town_saved:1.6, purge_killed:-2.0}},
+  ambitious: {label:'Ambitious', short:'ambition',
+    blurb:'Following somebody who is going somewhere. Weakness is the only sin.',
+    weights:{conquer:2.4, sack:1.0, boss:2.0, compact:1.2, gold:1.2, retreat:-1.4, town_lost:-2.0}},
+  loyal: {label:'Loyal', short:'loyalty',
+    blurb:'Decided about you a long time ago. Takes a great deal to undecide.',
+    weights:{sack:-0.6, civkill:-0.8, raise:-0.2, town_saved:1.2, squadmate_lost:-1.6, rescued:3.0}},
+  cruel: {label:'Cruel', short:'cruelty',
+    blurb:'Enjoys the work. Mercy reads as squeamishness.',
+    weights:{sack:2.2, civkill:1.6, raise:1.0, conquer:1.6, town_saved:-0.8, mercy:-1.2}},
+  scholar: {label:'Inquisitive', short:'inquiry',
+    blurb:'Here for what the Fracture left behind. Everything else is weather.',
+    weights:{research:2.2, rift_sealed:1.4, boss:1.0, formula:2.0, raise:0.4, sack:-0.6}},
+  haunted: {label:'Haunted', short:'the dead',
+    blurb:'Lost somebody to the dark and has not put it down. Wants it ended, whatever that costs.',
+    weights:{rift_sealed:2.6, boss:1.8, gaunt_killed:0.8, door_closed:5.0, raise:-0.8, retreat:-1.0}},
+};
+const CONVICTION_KEYS = Object.keys(CONVICTIONS);
+/* -100..100. The bands are where behaviour changes. */
+const REGARD = [
+  {at:-100, key:'murderous', label:'MURDEROUS', tell:'is going to do something about you'},
+  {at:-60,  key:'hostile',   label:'SEETHING',  tell:'will not take another order much longer'},
+  {at:-30,  key:'strained',  label:'STRAINED',  tell:'is having second thoughts'},
+  {at:-10,  key:'neutral',   label:'',          tell:''},
+  {at:25,   key:'warm',      label:'WARM',      tell:'is glad to be here'},
+  {at:60,   key:'devoted',   label:'DEVOTED',   tell:'would follow you into the door'},
+  {at:88,   key:'zealot',    label:'ZEALOT',    tell:'has stopped seeing you as a person'},
+];
+function regardBand(v){ let b = REGARD[0]; for(const r of REGARD) if(v >= r.at) b = r; return b; }
+function regardOf(c){ return c.regard || 0; }
+/* Education is a damper, not a direction: the lettered move slower both ways. */
+function convictionSwing(c){
+  const lettered = (c.stats && c.stats.magic > 12) || c.scholar || c.minded === 'lettered';
+  return lettered ? 0.65 : 1;
+}
+/* THE DEED LEDGER. Anything the player does that somebody might have a view about comes
+   through here once, and every living member of the squad reacts according to what they are. */
+function deed(kind, mag, where){
+  const m = mag === undefined ? 1 : mag;
+  for(const c of chars){
+    if(c.faction !== 'player' || c.state === 'dead') continue;
+    if(c.undead && !c.lich && !c.lieutenant && !c.minded) continue;   /* hands do not have views */
+    if(c.settler) continue;
+    const conv = CONVICTIONS[c.conviction] || CONVICTIONS.cold;
+    const w = conv.weights[kind];
+    if(!w) continue;
+    const before = regardBand(c.regard || 0);
+    c.regard = clamp((c.regard || 0) + w * m * convictionSwing(c), -100, 100);
+    const after = regardBand(c.regard);
+    if(after.key !== before.key && after.tell){
+      log(`${c.name} ${after.tell}.`, after.at < 0 ? 'bad' : 'good');
+      if(after.at <= -60 || after.at >= 60) say(c, after.at < 0 ? '...' : 'I am with you.');
+    }
+  }
+}
+/* ---------- WHAT THEY DO ABOUT IT ----------
+   A number nobody acts on is a number. These are the acts. */
+function regardTick(){
+  for(const c of chars){
+    if(c.faction !== 'player' || c.state === 'dead' || c.settler) continue;
+    if(c.undead && !c.lich && !c.lieutenant && !c.minded) continue;
+    const v = c.regard || 0;
+    /* DEVOTION: they stop needing to be paid, and they will not be moved */
+    if(v >= 60 && !c.devoted){ c.devoted = true; c.morale = 100;
+      log(`${c.name} has thrown in with you completely. Whatever it is you are doing, they are doing it too.`, 'good'); }
+    if(v < 45 && c.devoted){ c.devoted = false; }
+    /* WALKING OUT: not a betrayal. They simply stop being yours. */
+    if(v <= -60 && !c.leaving && rnd() < 0.25){
+      c.leaving = day + 1;
+      log(`${c.name} says they are done. They will be gone by tomorrow unless something changes.`, 'bad');
+      say(c, 'I did not sign on for this.');
+    }
+    if(c.leaving && v > -35){ c.leaving = null; log(`${c.name} has thought better of leaving.`, 'good'); }
+    if(c.leaving && day >= c.leaving){
+      c.leaving = null;
+      /* the cruel and the ambitious do not walk. They take a swing on the way out. */
+      const conv = c.conviction;
+      if((conv === 'cruel' || conv === 'ambitious') && v <= -75){ turnOn(c); }
+      else departSquad(c);
+    }
+  }
+}
+function departSquad(c){
+  log(`${c.name} has left. They took what they were carrying and did not look back.`, 'bad');
+  worldEvent('departure', c.x, c.y, `Somebody has walked out on the necromancer's outfit.`);
+  c.faction = 'drifter'; c.neutral = true; c.regard = 0;
+  c.job = null; clearOrders(c);
+  selected = selected.filter(x => x !== c);
+  refreshSquadBar(); refreshCharPanel(); AU.news();
+}
+function turnOn(c){
+  log(`${c.name} TURNS ON YOU. They were never going to just walk away.`, 'bad');
+  say(c, 'You should have seen this coming.');
+  worldEvent('betrayal', c.x, c.y, `One of the necromancer's own has turned on them.`);
+  c.faction = 'bandit'; c.neutral = false; c.provoked = true; c.regard = -100;
+  c.target = player()[0] || null;
+  clearOrders(c);
+  selected = selected.filter(x => x !== c);
+  refreshSquadBar(); refreshCharPanel(); AU.news();
+}
+/* ---------- WHAT THEY SAY ABOUT IT ----------
+   Townsfolk had four lines apiece and your own squad had none at all. Somebody who has just
+   watched you burn out a town and raise its dead ought to have something to say about it,
+   and what they say ought to depend on who they are and how far past their limit you have
+   taken them. */
+const CONV_TALK = {
+  compassion: {
+    warm:  ['You could have left them all. You did not. I notice that.',
+            'There is a version of this that is just butchery. This is not that one. Keep it that way.',
+            'I have set more bones this month than in the two years before it. Good.'],
+    ok:    ['I keep a list of the ones we could not reach. It is not a long list yet.',
+            'Somebody has to count them. Might as well be me.',
+            'I did not come out here for the money. I want that on the record.'],
+    bad:   ['That was somebody\'s daughter.','I am going to be honest — I did not think you had that in you.',
+            'You did not have to do it that way. You chose to.'],
+    awful: ['I cannot keep doing this.','Every night I think about walking. One of these nights I will.',
+            'Do not talk to me. Not today.'],
+  },
+  cold: {
+    warm:  ['Efficient. I approve.','The ledger is healthy. That is the only sermon I have.',
+            'You do not waste people. It is rarer than it should be.'],
+    ok:    ['I have no opinion on it. That is not the same as approving.',
+            'Point me at it and it stops moving. The rest is your business.',
+            'Sentiment is expensive out here. I do not carry any.'],
+    bad:   ['That was poorly done. Not wrong. Poorly done.','You spent more than you needed to.',
+            'I am recalculating what this contract is worth.'],
+    awful: ['The arithmetic has stopped working in your favour.','I am no longer sure this pays.'],
+  },
+  devout: {
+    warm:  ['You closed a tear today. Whatever else you are, you did that.',
+            'The Church would not understand you. I am beginning to.',
+            'I say the words at night and lately they still mean something. Good.'],
+    ok:    ['I pray for the dead we make. Somebody should.',
+            'There is a line. I am watching where you put your feet.',
+            'You have not made me choose yet. Do not.'],
+    bad:   ['That was a sin. I will not dress it up.','The dead should stay dead. You know I think that.',
+            'I am praying harder than I used to. That is not a compliment.'],
+    awful: ['You have made a thing of yourself.','I cannot absolve this. I cannot even look at it.',
+            'God forgive me for having stood here as long as I did.'],
+  },
+  ambitious: {
+    warm:  ['Now we are getting somewhere.','I picked the right outfit. Do not make me wrong about it.',
+            'They will write this down. I intend to be in it.'],
+    ok:    ['When do we move on the next one?','I did not come out here to hold ground.',
+            'You have a good thing here. It could be bigger.'],
+    bad:   ['We are standing still and standing still is dying slowly.',
+            'You had them and you let them keep it. Why?','That was weakness. Say what you like.'],
+    awful: ['You are not going anywhere, and neither am I while I follow you.',
+            'I have been thinking about what I would do differently.'],
+  },
+  loyal: {
+    warm:  ['Wherever you are going.','I stopped asking a long time ago. It has worked out.',
+            'You came back for me. I do not forget that sort of thing.'],
+    ok:    ['I am here.','You do not have to explain it to me.','Say the word.'],
+    bad:   ['I am not arguing. I am just quiet.','I have been with you a long time. Long enough to say that was wrong.'],
+    awful: ['I defended you. To people who were right.','Do not ask me for anything today.'],
+  },
+  cruel: {
+    warm:  ['That was good work. I mean it.','You have stopped apologising. It suits you.',
+            'More of that.'],
+    ok:    ['Are we doing anything today or not?','I get bored. You would not like me bored.',
+            'They always run. I do not know why they bother.'],
+    bad:   ['You let them go. Why did you let them go?','Mercy is just violence you postponed.',
+            'This is getting soft.'],
+    awful: ['I am wasted here.','One of these days I am going to stop asking permission.'],
+  },
+  scholar: {
+    warm:  ['Do you understand what we recovered? No. Neither do I, yet. That is the good part.',
+            'Nine hundred years of records and we are adding to them.',
+            'I would not trade this posting for a chair in any hall left standing.'],
+    ok:    ['I am writing all of this down, you understand.',
+            'Everything out here is a question somebody stopped asking.',
+            'Hold still — no, I am measuring something.'],
+    bad:   ['We burned a library to win a fight. Do you know what was in it? No. Nor do I. Ever.',
+            'That is knowledge we will not get back.'],
+    awful: ['You are destroying more than you find.','I could be doing this somewhere the work survives.'],
+  },
+  haunted: {
+    warm:  ['One less door. One less.','I sleep, some nights now. Did you know that.',
+            'Whatever it costs. I told you that at the start and I meant it.'],
+    ok:    ['It took my brother on the north road. I have not been the same since and I do not want to be.',
+            'Every one we put down is one that does not take somebody else.',
+            'I am not afraid of it. I am something worse than afraid of it.'],
+    bad:   ['We are making more of them. Do you understand that we are making more of them.',
+            'That is the same dark. You are just holding this end of it.'],
+    awful: ['You have become the thing I came out here to end.'],
+  },
+};
+function convBand(v){ return v >= 25 ? 'warm' : v >= -10 ? 'ok' : v >= -45 ? 'bad' : 'awful'; }
+function squadBark(c){
+  const tab = CONV_TALK[c.conviction]; if(!tab) return null;
+  const pool = tab[convBand(c.regard || 0)] || tab.ok;
+  return pool && pool.length ? pick(pool) : null;
+}
+function rollConviction(){
+  /* weighted: most people are ordinary, extremes are rarer */
+  const r = rnd();
+  if(r < 0.20) return 'compassion';
+  if(r < 0.38) return 'cold';
+  if(r < 0.52) return 'loyal';
+  if(r < 0.64) return 'devout';
+  if(r < 0.76) return 'ambitious';
+  if(r < 0.86) return 'scholar';
+  if(r < 0.94) return 'haunted';
+  return 'cruel';
+}
 function makeRecruit(t){
   const lvl = ri(2,9);
   const rrace = rollNpcRace();
@@ -1498,7 +1728,7 @@ function makeRecruit(t){
   const gift = rrace==='chimera' ? null : (rnd() < (t.def.giftChance || .35) ? (rnd() < dustW ? 'dust' : GIFTS[ri(0,2)]) : null);
   const rsex = rnd() < 0.5 ? 'f' : 'm';
   return {
-    name: pickNameFor(rsex, true), sex: rsex, race: rrace, cost: Math.round((250 + lvl*140 + ri(0,200) + (gift ? (gift==='dust' ? 150 : 400) : 0) + (rrace==='chimera' ? 450 : 0)) * (t.def.key==='ironscar' ? 0.7 : 1)),
+    name: pickNameFor(rsex, true), sex: rsex, race: rrace, conviction: rollConviction(), cost: Math.round((250 + lvl*140 + ri(0,200) + (gift ? (gift==='dust' ? 150 : 400) : 0) + (rrace==='chimera' ? 450 : 0)) * (t.def.key==='ironscar' ? 0.7 : 1)),
     stats:{atk:lvl+ri(-1,2), def:lvl+ri(-1,2), tough:lvl+ri(-1,2), ath:ri(2,7), medic:ri(1,6),
       magic: gift ? (t.def.undeadFriendly ? ri(5,11) : ri(2,7)) : 1, labor:ri(1,6), armr:ri(1,8)},
     gift,
@@ -1584,7 +1814,7 @@ const NEWS_TONE = {
   war:'bad', sack:'bad', plague:'bad', rebellion:'bad', conquest:'bad', ambush:'bad',
   camp:'bad', attention:'bad', bloodmoon:'bad', rift:'bad', sixfold:'bad', purge:'bad',
   fracture:'bad', dread:'', compact:'good', door:'bad', fallen:'bad', ruin:'bad',
-  rite:'bad', lieutenant:'good',
+  rite:'bad', lieutenant:'good', departure:'bad', betrayal:'bad',
   peace:'good', pact:'good', sealed:'good', razed:'good',
 };
 function newsAge(e){
@@ -3574,7 +3804,10 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
   }
   /* bosses shrug off NPC scraps — their fights are reserved for you */
   if(d.bossKey && a && a.faction !== 'player') dmg *= 0.15;
-  if(a && a.faction==='player' && d.faction==='town' && d.homeTown) dropRep(d.homeTown, 4);
+  if(a && a.faction==='player' && d.faction==='town' && d.homeTown){
+    dropRep(d.homeTown, 4);
+    if(d.civ && !incid) deed('civkill', 1, d.homeTown);   /* a stray cleave is not a choice; this was */
+  }
   /* `provoked` is a grudge held against YOU specifically — so only your own deliberate blow
      may set it. A stray cleave, a splash, or a bandit's arrow is not a declaration of war,
      and anyone still holding a quest for you gets one warning before the door closes. */
@@ -3642,6 +3875,13 @@ function kill(c, by){
   if(c.bossKey && !bossSlain[c.bossKey]) bossSlain[c.bossKey] = day;
   /* a risen that has done the work is a candidate for a name */
   if(by && by.undead && by.crafted) by.kills = (by.kills || 0) + 1;
+  /* and the squad notices what you spend your days killing */
+  if(by && by.faction === 'player'){
+    if(c.bossKey) deed('boss', 1);
+    else if(c.faction === 'gaunt') deed('gaunt_killed', 0.25);
+    else if(c.faction === 'purge') deed('purge_killed', 0.5);
+    if(c.faction === 'player' && c !== by) deed('squadmate_lost', 1);
+  }
   AU.death(c.x, c.y);
   /* anything still on its feet when it dies has one more thing left to do */
   if(c.state === 'ok') AU.bodyfall(c.x, c.y, (c.big || 1) > 1.3);
@@ -6031,6 +6271,7 @@ function compactSign(t){
   }
   worldEvent('compact', t.x, t.y,
     `${t.name} has entered into a Compact against what is coming. ${compactSize()} of the seven have signed.`);
+  deed('compact', chk.forced ? 0.5 : 1, t);
   AU.news();
   if(compactSize() === COMPACT_MIN)
     log('THE COMPACT STANDS. Three seats is enough to call it one. The common stock is open, and the muster answers.', 'good');
@@ -6213,6 +6454,7 @@ function closeTheDoor(by){
   theDoor = null;
   fracture = 92; fractureStage = fractureStageOf(fracture);   /* the sky is shut. It is not healed. */
   log('THE DOOR IS SHUT. The dust is falling again — falling, which it has not properly done since before any of this. It is not over. It is survivable.', 'good');
+  deed('door_closed', 1);             /* the haunted have been waiting their whole lives for this */
   worldEvent('door', by ? by.x : W/2, by ? by.y : H/2,
     'The door in the sky has been closed. Whoever did it is standing out there in the dust.');
   AU.news();
@@ -6276,6 +6518,7 @@ function fallToTheDark(t){
   for(const c of chars) if(c.civ && c.homeTown === t && rnd() < 0.45) kill(c, null);
   if(t.leader) succeed(t, 'was taken when the dark came over the wall');
   log(`${t.name} HAS FALLEN. Whatever came over its wall is still in there.`, 'bad');
+  deed('town_lost', 1, t);
   worldEvent('fallen', t.x, t.y, `${t.name} has fallen to what came through the door. There is nobody left on its walls.`);
   AU.news();
   /* THE SPIRAL: a lost seat widens the door and shakes every seat still standing */
@@ -6403,6 +6646,7 @@ function closeRift(r, by){
     }
   }
   bumpNotice(-16);   /* closing a wound is the surest way to be forgotten */
+  deed('rift_sealed', 1);
   addSpecks(r.x, r.y, '#e8dcff', 50);
   log(`${by ? by.name : 'Someone'} closed the tear. The dark loses its grip, a little.`, 'good');
   worldEvent('sealed', r.x, r.y, 'The tear in the waste has been closed. The roads are a fraction safer.');
@@ -7692,6 +7936,7 @@ function castRaise(c, body){
     log(`${c.name} raised the dead${body.looted ? '' : ' — kit and all'}.`, 'good');
   }
   bumpNotice(isUnique ? 2.8 : 1.15);   /* undeath is a parlour trick of the Old Ones. They hear it performed. */
+  deed('raise', isUnique ? 1.6 : 1);
   /* what the world took, it does not give back just because you asked it to stand up */
   for(const k of PARTS){
     const bp = body.parts && body.parts[k];
@@ -8173,6 +8418,7 @@ function performAscension(ritualist, sacrifice){
   addSpecks(ritualist.x, ritualist.y-0.5, '#8a6ab5', 20);
   addSpecks(ritualist.x, ritualist.y-0.5, '#d4a040', 10);
   log(`${ritualist.name} has ascended. The flesh is gone; the will endures. (+10 MAG)`, 'good');
+  deed('lich', 1);                    /* the devout will not forgive this one */
   log('A lich does not fall unconscious. Break the body and the spark sheds a phylactery — carry it home and rebuild them.', '');
   refreshSquadBar(); refreshCharPanel(); refreshInv(); refreshTop();
 }
@@ -8863,6 +9109,7 @@ function update(dt){
     advanceFracture(1);              /* the sky gets one day closer, and never further */
     for(const t of towns) dreadTick(t);
     siegeTick();                     /* the door presses on every seat that did not sign */
+    regardTick();                    /* and what your own people make of all this */
     compactProduce();                /* the signed seats put their hands to it... */
     compactTithe();                  /* ...and what they make goes to the common stock */
     compactStrainTick();             /* and one left to rot walks back out */
@@ -9639,6 +9886,17 @@ function update(dt){
   if(wtick) for(const c of chars){
     if(c.faction!=='town' || c.state!=='ok') continue;
     for(const k of PARTS){ const p = c.parts[k]; if(!p.severed && p.hp < p.max){ p.hp = Math.min(p.max, p.hp + wdh*1.5); p.bleed *= Math.pow(0.9, wdt/0.016); } }
+  }
+  /* your own people have views, and occasionally air them */
+  if(wtick) for(const c of chars){
+    if(c.faction !== 'player' || c.state !== 'ok' || c.target || c.bubble) continue;
+    if(c.undead && !c.lich && !c.lieutenant && !c.minded) continue;
+    if(c.settler || !c.conviction) continue;
+    c.talkT = (c.talkT || 20 + rnd() * 50) - wdt;
+    if(c.talkT > 0) continue;
+    c.talkT = 45 + rnd() * 90;
+    const line = squadBark(c);
+    if(line) say(c, line);
   }
   /* townsfolk go about their day: wander, pause, gossip in pairs */
   if(wtick) for(const c of chars){
@@ -13576,6 +13834,7 @@ const TIPS = {
   gold: '<b>GOLD</b>Trade, recruits, buildings and tribute all run through this.<i>Seats you hold pay daily.</i>',
   day:  '<b>THE CALENDAR</b>Eight real seconds to the game hour. Bodies age, fields yield and the world turns on the day.',
   rep:  '<b>STANDING</b>What the nearest town thinks of you. Spill blood inside the walls and watch it fall.',
+  conviction:'<b>CONVICTION</b>The thing this one cannot get past. Every deed you do is weighed against it, and the weighing is different for each of them \u2014 a sack that costs you a compassionate medic dearly costs a cold one almost nothing.<i>Push somebody far enough and they walk. Push the wrong somebody far enough and they do not walk.</i>',
   fracture:'<b>THE SKY</b>How far the Second Fracture has come. It does not go back down. The calendar moves it on its own; working the formulae where you can be heard moves it faster.<i>You cannot stop this. You can be ready for it, or you can be somewhere else when it lands.</i>',
   notice:'<b>NOTICE</b>How much attention your work with the dead has drawn. It forgets a quiet camp quickly — but once it has actually turned its head it does not look away fast.<i>Every formula you work is heard.</i>',
   chron:'<b>CHRONICLES [L]</b>Everything you have been told, and everything you have seen — including news of the wider world and who carried it to you.',
@@ -13818,6 +14077,15 @@ function refreshCharPanel(){
   $('stats').innerHTML = ['atk','def','tough','ath','medic','magic','labor','armr','gunnery']
     .map(s=>`<span data-tip="${s}">${s.toUpperCase()}</span><b data-tip="${s}">${(Math.floor(c.stats[s]*10)/10).toFixed(1)}</b>`).join('');
   const giftTxt = c.gift ? ` · <span style="color:#a98ad4">✦ ${c.gift.toUpperCase()}</span>` : '';
+  /* what they are, and what they currently make of you */
+  let convTxt = '';
+  if(c.conviction && c.faction === 'player' && (!c.undead || c.lich || c.lieutenant || c.minded)){
+    const cv = CONVICTIONS[c.conviction], bd = regardBand(c.regard || 0);
+    const col = (c.regard||0) <= -30 ? '#c4543a' : (c.regard||0) >= 25 ? '#8aa04a' : 'var(--dust)';
+    convTxt = ` · <span style="color:#c8a86a" data-tip="conviction">${cv.label}</span>` +
+      (bd.label ? ` · <span style="color:${col}">${bd.label}</span>` : '') +
+      (c.leaving ? ` · <span style="color:#c4543a">LEAVING</span>` : '');
+  }
   const invTxt = Object.keys(c.inv||{}).length
     ? ' · CARRYING ' + Object.keys(c.inv).map(k=>c.inv[k]+' '+ITEMS[k].name.toLowerCase()).join(', ')
     : '';
@@ -13844,7 +14112,7 @@ function refreshCharPanel(){
   const ldNow = invWeight(c).toFixed(0), ldCap = invCap(c).toFixed(0);
   $('equip').innerHTML = `<b>${ageTxt}</b>${c.goal ? ' · goal: '+c.goal : ''} · WPN <b>${c.weapon?ITEMS[c.weapon].name:'Fists'}</b> · ARM <b>${c.armor?ITEMS[c.armor].name:'None'}</b>` +
     (c.pack ? ` · PACK <b>${ITEMS[c.pack].name}</b>` : '') +
-    `${giftTxt}<br><span style="color:${+ldNow > +ldCap ? 'var(--rust)' : 'var(--dust)'}">LOAD ${ldNow}/${ldCap}kg${invTxt}</span>`;
+    `${giftTxt}${convTxt}<br><span style="color:${+ldNow > +ldCap ? 'var(--rust)' : 'var(--dust)'}">LOAD ${ldNow}/${ldCap}kg${invTxt}</span>`;
   const sr = $('stancerow');
   sr.innerHTML = '';
   if(c.undead && !c.lich){
@@ -14296,6 +14564,7 @@ function openResearch(){
       campSpend(mats);
       if(t.rp) research.rp -= t.rp;
       research.active = key; research.left = t.hours;
+      deed('research', 1);
       refreshTop(); refreshInv(); rndr();
     });
   };
@@ -14783,7 +15052,9 @@ function openBar(v){
       const row = document.createElement('div'); row.className='trow';
       const g = r.gift ? ` <span style="color:#a98ad4">✦ ${r.gift}</span>` : '';
       const raceLbl = (RACES[r.race] ? RACES[r.race].label : 'Human');
-      row.innerHTML = `<span class="tn">${r.name}${g} <span style="color:var(--dust)">${raceLbl} · atk ${r.stats.atk} · def ${r.stats.def} · tough ${r.stats.tough} · med ${r.stats.medic}${r.gift?' · mag '+r.stats.magic:''}</span></span>
+      const cv = CONVICTIONS[r.conviction] || CONVICTIONS.cold;
+      row.innerHTML = `<span class="tn">${r.name}${g} <span style="color:#c8a86a">${cv.label}</span> <span style="color:var(--dust)">${raceLbl} · atk ${r.stats.atk} · def ${r.stats.def} · tough ${r.stats.tough} · med ${r.stats.medic}${r.gift?' · mag '+r.stats.magic:''}</span>` +
+        `<br><span style="color:var(--dust);font-size:11px">${cv.blurb}</span></span>
         <button data-hire="${i}">HIRE ${r.cost}g</button>`;
       body.appendChild(row);
     });
@@ -15725,6 +15996,7 @@ function claimTown(t, by){
   const text = `${by.name} has claimed ${t.name}. The banner over the hall is a stranger's now.`;
   log(text, 'good');
   worldEvent('conquest', t.x, t.y, text);
+  deed('conquer', 1, t);              /* the squad has opinions about this */
   refreshTop();
 }
 /* ---------- audience: politics you can put your hands on ---------- */
@@ -16102,7 +16374,8 @@ function snapshot(){
     followId: c.follow ? c.follow.id : null,
     job:c.job, job2:c.job2||null, grp:c.grp||null, heldAt:c.heldAt||null, heldT:c.heldT||0, midden:c.midden||null, caveId:c.caveId||null, roomId:(c.roomId??null), caveDweller:!!c.caveDweller, floor: c.floor||0, captured:!!c.captured, dragId: c.drag ? c.drag.id : null,
     clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
-    servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
+    servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0,
+    conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
     bindWeight:c.bindWeight, shortTag:c.shortTag,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
@@ -16288,6 +16561,8 @@ function restore(d){
     c.onlyArt = s.onlyArt || null; c.speedMult = s.speedMult || 0;
     c.markT = s.markT || 0; c.heat = s.heat || 0; c.mustered = !!s.mustered;
     c.shape = s.shape ? {...s.shape} : null; c.shapeName = s.shapeName || null; c.kills = s.kills || 0;
+    c.conviction = s.conviction || c.conviction || rollConviction(); c.regard = s.regard || 0;
+    c.devoted = !!s.devoted; c.leaving = s.leaving || null;
     c.doorborn = !!s.doorborn; c.doorWork = !!s.doorWork;
     c.neutral = !!s.neutral; c.provoked = !!s.provoked; c.bossKey = s.bossKey || null; c.dropItems = s.dropItems || null;
     c.scholar = !!s.scholar; c.quest = s.quest || null; c.questsDone = s.questsDone || 0; c.offered = !!s.offered;
