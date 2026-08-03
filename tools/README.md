@@ -48,6 +48,7 @@ runs showed to be noise. Run each side two or three times, alternating.
 | `doorsave.js` | Save/load fidelity for the door, the doorborn, fallen seats and the ruin flag. |
 | `fight.js` | 900 combat resolutions across every weapon × armour pair. Watches for throws and for NaN reaching a blood pool or a body part. |
 | `wepsoak.js` | 160 weapon and armour swap cycles, then a save/load round trip. Catches geometry leaks and orphaned meshes. |
+| `immortal.js` | Walks both immortal roads stage by stage through the real UI, checks every gated stage refuses until its condition is met, and confirms favor outlives the giver's corpse. |
 
 ### Balance
 

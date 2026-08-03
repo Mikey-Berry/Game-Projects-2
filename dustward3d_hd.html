@@ -3592,6 +3592,8 @@ function updateState(c, loud){
 }
 function kill(c, by){
   if(c.state==='dead') return;
+  /* the ledger is written here, not inferred from a body that will be gone in two days */
+  if(c.bossKey && !bossSlain[c.bossKey]) bossSlain[c.bossKey] = day;
   AU.death(c.x, c.y);
   /* anything still on its feet when it dies has one more thing left to do */
   if(c.state === 'ok') AU.bodyfall(c.x, c.y, (c.big || 1) > 1.3);
@@ -4136,7 +4138,39 @@ const TECHS = {
 };
 const research = { done:{}, active:null, left:0, rp:0 };
 const FORMULA_KEYS = ['formula_t','formula_w','formula_p'];
-function immortalFavor(kind){ return chars.some(c => c.questGive === kind && c.questDone); }
+/* ---------- FAVOR, AND WHERE IT LIVES ----------
+   This used to ask `chars.some(c => c.questGive === kind && c.questDone)` — that is, it read
+   the favor off the immortal's body. The corpse reaper takes dead bodies out of `chars` two
+   days after they fall, and both immortals are bosses with real stats that a player can and
+   does kill. So: finish Verity's road, kill her afterwards, wait two days, and The Unclouding
+   silently relocked itself forever with no message and no way back.
+
+   A thing that was earned is not stored on a corpse. */
+const favors = {};                  /* 'radiant' | 'sigil' -> the day it was earned */
+function immortalFavor(kind){ return !!favors[kind]; }
+function grantFavor(kind){
+  if(favors[kind]) return;
+  favors[kind] = day;
+  const opened = Object.keys(TECHS).filter(k => TECHS[k].needsQuest === kind);
+  for(const k of opened)
+    log(`A road opens: ${TECHS[k].name} can be studied now. ${TECHS[k].desc}`, 'good');
+}
+/* ---------- WHAT THEY HAVE OUTLIVED ----------
+   Two ledgers the questlines read from. Neither existed: the game knew a boss had died only
+   in the sense that its body was lying somewhere, and knew nothing at all about where the
+   player had been. */
+const bossSlain = {};               /* bossKey -> day it fell */
+const placesSeen = {};              /* tag -> day somebody of yours stood there */
+function sawPlace(tag){ if(!placesSeen[tag]) placesSeen[tag] = day; }
+function witnessTick(){
+  /* the sundered ground: reagent hunters call it a fortune, and the ones who came back do */
+  for(const st of corpseSites){
+    if(player().some(c => c.state !== 'dead' && dist(c.x, c.y, st.x, st.y) < 14)){ sawPlace('corpse'); break; }
+  }
+  /* Paladin ground. They do not suffer necromancers here, which is the point of going. */
+  if(bastion && player().some(c => c.state !== 'dead' && dist(c.x, c.y, bastion.x, bastion.y) < BASTION_R - 6))
+    sawPlace('bastion');
+}
 const MATS_RECIPE = {wood:2, stone:2};   /* what a sawyer turns into one Build Material */
 const MATS_SECS = 6;
 const RECIPES = {
@@ -8068,65 +8102,214 @@ function openBoneMarket(necro){
 }
 /* ---------- what the immortals want ----------
    Neither of them wants to fight you. They want the one thing their own road cannot give. */
-const QUESTS = {
+/* ---------- THE TWO LONG ROADS ----------
+   Each immortal was a single fetch: bring ten of a thing, receive a pile of loot, done. The
+   reward at the end of it is one of the three ascension paths in the game, and it was being
+   sold for one errand.
+
+   They are five stages each now, and the stages are the character. Verity cannot want
+   anything, so every one of her asks is an experiment in whether she still can — flesh that
+   was grown rather than healed, ground that is still dying, a woman who took the same road
+   and came out a killer, the Church that made her, and finally nothing at all. The
+   Sigil-Bound is losing his name, so every one of his is a way of holding on — keep the
+   sigils lit, ask something else that came through wrong whether it remembers, read the
+   records, take the crown off a king who also refused to finish, and then decide whether he
+   wants to hear what you found.
+
+   Four objective kinds, all reading ledgers the game now keeps: `fetch` off the stores,
+   `slay` and `destroy` off bossSlain, `visit` off placesSeen. */
+const IMMORTAL_LINES = {
   radiant: {
-    ask: 'The light healed me young forever. It also unmade everything in me that could want. ' +
-         'Bring me Quickened Flesh — ten measures — and I will see if a thing grown, not healed, can still feel.',
-    need: {vflesh: 10},
-    give: () => { addItem('tome', 3); addItem('a_arm', 1); addItem('formula_p', 1); cats += 3000; },
-    giveTxt: '3 Codices, an Articulated Arm, a Preserved Formula, 3000 gold',
-    done: 'She takes the flesh in both hands. For one moment something moves behind her face. ' +
-          '"Ah," she says. "So that is what it was." She gives you what she has. She does not need it.',
+    open: 'Verity, the Unclouded',
+    stages: [
+      { kind:'fetch', need:{vflesh:10},
+        ask:'The light healed me young forever. It also unmade everything in me that could want. ' +
+            'Bring me Quickened Flesh — ten measures — and I will see if a thing GROWN, not healed, can still feel.',
+        hint:'Verity wants ten measures of Quickened Flesh.',
+        done:'She takes the flesh in both hands. For one moment something moves behind her face. ' +
+             '"Ah," she says. "So that is what it was." Then it is gone, and she looks at her hands as though they belong to somebody else.',
+        give: () => { addItem('tome', 2); cats += 800; },
+        giveTxt:'2 Codices, 800 gold' },
+      { kind:'visit', at:'corpse', also:{sunder:1},
+        ask:'There is ground out in the deep waste where something died during the Fracture and has not finished. ' +
+            'Nine generations and it is STILL DYING. Go and stand in it. Bring me back a piece. ' +
+            'I want to hold the one thing in this world that is doing what I cannot.',
+        hint:'Stand in the Sundered ground, and bring Verity a piece of Sundered Marrow.',
+        done:'She holds the marrow until it stops being warm. "It is going," she says. ' +
+             '"It is actually going. Do you know I have never watched anything arrive at the end of itself? ' +
+             'They took that from me and called it a blessing."',
+        give: () => { addItem('formula_p', 1); addItem('bandage', 8); cats += 1200; },
+        giveTxt:'a Preserved Formula, 8 bandages, 1200 gold' },
+      { kind:'slay', boss:'ash',
+        ask:'There is a woman out there who walked the same road I did. Sister Ash. The light gave her CERTAINTY ' +
+            'where it gave me quiet, and she has been burning people with it ever since. ' +
+            'I need to know which of us it actually made. Kill her, and tell me how she died.',
+        hint:'Sister Ash walks the waste. Verity wants her dead, and wants to hear about it.',
+        done:'"Did she doubt?" she asks. "At the end?" You tell her. She is quiet a long time. ' +
+             '"Then it was not the light," she says. "It was only ever us. That is worse. That is so much worse."',
+        give: () => { addItem('formula_w', 2); addItem('a_pla', 1); cats += 1800; },
+        giveTxt:'2 Worn Formulae, an Iron Plate, 1800 gold' },
+      { kind:'visit', at:'bastion',
+        ask:'The Church made me. Their sons hold a fortress out past the flats now and they would burn what you keep. ' +
+            'Walk into their ground. Not to fight — to STAND there. I want to know whether the place that made me ' +
+            'would still have me, and I cannot go and ask.',
+        hint:'Set foot inside Paladin territory at the Bastion, and come back.',
+        done:'"And nobody stopped you," she says. "Ninety years and they have forgotten there was ever anything to guard against. ' +
+             'I outlived my own heresy. There is nothing left out there that remembers me well enough to hate me."',
+        give: () => { addItem('a_arm', 1); addItem('formula_p', 1); cats += 2200; },
+        giveTxt:'an Articulated Arm, a Preserved Formula, 2200 gold' },
+      { kind:'fetch', need:{},
+        ask:'I have nothing left to ask for. That is the whole of my condition and you have watched it for a season now. ' +
+            'So: stay. Stand here while I try to want to stop. If I can find the wanting, I will give you the road ' +
+            'that got me here — and you may walk it better than I did.',
+        hint:'Verity asks for nothing. Go and stand with her.',
+        done:'She closes her eyes. Nothing happens for a long time. Then, very quietly: "No. Still nothing." ' +
+             'She opens them and looks almost amused. "Well. You were here. That is nearer than I have been in ninety years." ' +
+             'She tells you how it was done. THE UNCLOUDING is yours to study.',
+        give: () => { addItem('tome', 3); addItem('formula_p', 1); cats += 3000; },
+        giveTxt:'3 Codices, a Preserved Formula, 3000 gold — and The Unclouding' },
+    ],
   },
   sigil: {
-    ask: 'THE SIGILS ARE FADING. ETCHED IN COPPER, THEY HOLD ME IN. BRING IRON AND COPPER — ' +
-         'TWELVE AND EIGHT — AND I WILL BE MYSELF A WHILE LONGER.',
-    need: {iron: 12, c_ingot: 8},
-    give: () => { addItem('a_leg', 1); addItem('w_nod', 1); addItem('iron', 10); addItem('formula_p', 1); cats += 2500; },
-    giveTxt: 'an Articulated Leg, a Nodachi, 10 Iron, a Preserved Formula, 2500 gold',
-    done: 'The armour goes still while the sigils take. When it moves again it stands straighter. ' +
-          '"I REMEMBER HER NAME," it says. "I WILL NOT TELL YOU. IT IS THE ONLY THING I HAVE."',
+    open: 'The Sigil-Bound',
+    stages: [
+      { kind:'fetch', need:{iron:12, c_ingot:8},
+        ask:'THE SIGILS ARE FADING. ETCHED IN COPPER, THEY HOLD ME IN. BRING IRON AND COPPER — TWELVE AND EIGHT — ' +
+            'AND I WILL BE MYSELF A WHILE LONGER.',
+        hint:'The Sigil-Bound needs 12 Iron and 8 Copper Ingots.',
+        done:'The armour goes still while the sigils take. When it moves again it stands straighter. ' +
+             '"BETTER," it says. "I CAN HOLD MORE OF IT NOW. I DO NOT KNOW WHAT I AM HOLDING, BUT THERE IS MORE OF IT."',
+        give: () => { addItem('iron', 8); cats += 900; },
+        giveTxt:'8 Iron, 900 gold' },
+      { kind:'destroy', boss:'sixfold',
+        ask:'SOMETHING COMES THROUGH THE TEARS WHEN THEY REACH FULL WIDTH. SIX LEGS, JOINTED WRONG. ' +
+            'IT CAME THROUGH INCOMPLETE AND IT KEPT WALKING ANYWAY. SO DID I. ' +
+            'PUT IT DOWN AND TELL ME IF THERE WAS ANYTHING IN IT THAT KNEW ITS OWN NAME.',
+        hint:'A Sixfold walks the waste. Destroy it — the Sigil-Bound wants to know what was in it.',
+        done:'"NOTHING," IT REPEATS. "NOTHING IN IT AT ALL." A long pause. "THEN THE DIFFERENCE BETWEEN US IS ONLY ' +
+             'THAT I AM STILL LOOKING. I WILL TAKE THAT. IT IS NOT MUCH BUT I WILL TAKE IT."',
+        give: () => { addItem('w_nod', 1); addItem('c_ingot', 10); cats += 1500; },
+        giveTxt:'a Nodachi, 10 Copper Ingots, 1500 gold' },
+      { kind:'fetch', need:{codex:1},
+        ask:'THE GOLDEN AGE WROTE EVERYTHING DOWN. SOMEWHERE IN THOSE RECORDS IS A LIST OF WHO WENT INTO THE METAL. ' +
+            'BRING ME A CODEX. I WILL READ IT MYSELF — I DO NOT TRUST ANOTHER MOUTH WITH THIS.',
+        hint:'Bring the Sigil-Bound a Transmutation Codex.',
+        done:'It reads for two days without moving. "THERE WERE ELEVEN OF US," it says at last. ' +
+             '"ELEVEN NAMES. IT DOES NOT SAY WHICH ONE IS STANDING HERE."',
+        give: () => { addItem('formula_p', 1); addItem('iron', 12); cats += 2000; },
+        giveTxt:'a Preserved Formula, 12 Iron, 2000 gold' },
+      { kind:'slay', boss:'king',
+        ask:'THERE IS A DEAD KING HOLDING COURT IN A RUIN. HE REFUSED TO FINISH, THE SAME AS I DID. ' +
+            'HE WORE A CROWN, WHICH MEANS SOMEBODY KEPT HIS RECORDS. ' +
+            'TAKE IT OFF HIM AND BRING IT. I DO NOT WANT THE CROWN. I WANT WHAT IS ENGRAVED INSIDE IT.',
+        hint:'The Ossuary King holds court in a far ruin. Kill him.',
+        done:'It turns the crown over and finds the engraving on the inner band. It reads it. It reads it again. ' +
+             '"HE WAS AT THE POURING," it says. "HE SIGNED FOR IT. ELEVEN NAMES AND HIS HAND UNDER ALL OF THEM."',
+        give: () => { addItem('a_leg', 1); addItem('formula_w', 2); cats += 2500; },
+        giveTxt:'an Articulated Leg, 2 Worn Formulae, 2500 gold' },
+      { kind:'fetch', need:{},
+        ask:'I HAVE IT. I HAVE HAD IT SINCE THE CROWN. I HAVE NOT SAID IT OUT LOUD BECAUSE ONCE I DO ' +
+            'I WILL KNOW WHETHER IT FITS, AND IF IT DOES NOT FIT THEN THERE IS NOBODY IN HERE AT ALL. ' +
+            'STAND WHERE I CAN SEE YOU. I WILL SAY IT WITH A WITNESS OR NOT AT ALL.',
+        hint:'The Sigil-Bound has the name. Go and stand where he can see you.',
+        done:'It says the name. Quietly, for once — barely a voice at all. Then it stands there a while. ' +
+             '"IT FITS," it says. "IT FITS." And then, almost gently: "YOU WILL WANT THE RITE. TAKE IT. ' +
+             'I DID IT WRONG AND I HAVE HAD TWO HUNDRED YEARS TO WORK OUT HOW." THE SIGIL RITE is yours to study.',
+        give: () => { addItem('w_kingsfang', 1); addItem('formula_p', 1); cats += 3000; },
+        giveTxt:'Kingsfang, a Preserved Formula, 3000 gold — and The Sigil Rite' },
+    ],
   },
 };
+/* is the stage in front of them satisfied? */
+function stageMet(st){
+  if(!st) return false;
+  if(st.kind === 'fetch')  return canAfford(st.need || {});
+  if(st.kind === 'slay' || st.kind === 'destroy') return !!bossSlain[st.boss];
+  if(st.kind === 'visit')  return !!placesSeen[st.at] && canAfford(st.also || {});
+  return false;
+}
+function stageProgress(st){
+  if(!st) return '';
+  if(st.kind === 'fetch'){
+    const ks = Object.keys(st.need || {});
+    return ks.length ? ks.map(k => `${ITEMS[k].name} ${campHas(k)}/${st.need[k]}`).join(' · ')
+                     : 'nothing to bring — only your presence';
+  }
+  if(st.kind === 'slay')    return bossSlain[st.boss] ? 'it is done' : 'not yet dead';
+  if(st.kind === 'destroy') return bossSlain[st.boss] ? 'it is down' : 'still walking';
+  if(st.kind === 'visit'){
+    const been = placesSeen[st.at] ? 'you have stood there' : 'you have not been';
+    const extra = Object.keys(st.also || {}).map(k => `${ITEMS[k].name} ${campHas(k)}/${st.also[k]}`).join(' · ');
+    return extra ? `${been} · ${extra}` : been;
+  }
+  return '';
+}
 function openImmortal(c){
-  const q = QUESTS[c.questGive];
-  if(!q) return;
+  const line = IMMORTAL_LINES[c.questGive];
+  if(!line) return;
+  const total = line.stages.length;
   openModal(c.name.toUpperCase(),
     c.immortal === 'divine' ? 'She has not aged in ninety years. She cannot look at the sun.'
                             : 'A suit of armour with somebody still in it. Most of somebody.');
   const body = $('modalbody');
   const draw = () => {
     body.innerHTML = '';
+    const at = c.questStage || 0;
+    const finished = at >= total;
+    /* how far along the road is */
+    const track = document.createElement('div');
+    track.style.cssText = 'color:var(--dust);font-size:11px;letter-spacing:2px;margin-bottom:8px';
+    track.textContent = finished ? 'THE ROAD IS WALKED' : `THE ROAD — ${at + 1} OF ${total}`;
+    body.appendChild(track);
     const say2 = document.createElement('div');
     say2.style.cssText = 'color:var(--bone);font-style:italic;line-height:1.5;margin-bottom:10px';
-    say2.textContent = c.questDone ? q.done : q.ask;
-    body.appendChild(say2);
-    if(c.questDone){
+    if(finished){
+      say2.textContent = line.stages[total - 1].done;
+      body.appendChild(say2);
       const d = document.createElement('div');
       d.style.cssText = 'color:var(--dust)';
-      d.textContent = 'There is nothing more they want from you.';
+      d.textContent = 'There is nothing more they want from you. There was never very much.';
       body.appendChild(d);
       return;
     }
+    const st = line.stages[at];
+    say2.textContent = st.ask;
+    body.appendChild(say2);
     const row = document.createElement('div'); row.className = 'trow';
-    const have = Object.keys(q.need).map(k => `${ITEMS[k].name} ${campHas(k)}/${q.need[k]}`).join(' · ');
-    row.innerHTML = `<span class="tn">${have} <span style="color:var(--dust)">→ ${q.giveTxt}</span></span>`;
+    row.innerHTML = `<span class="tn">${stageProgress(st)} <span style="color:var(--dust)">→ ${st.giveTxt}</span></span>`;
     const btn = document.createElement('button');
-    btn.textContent = 'GIVE';
-    btn.disabled = !canAfford(q.need);
+    const ok = stageMet(st);
+    btn.textContent = st.kind === 'fetch' && !Object.keys(st.need || {}).length ? 'STAY' : 'GIVE';
+    btn.disabled = !ok;
     btn.onclick = () => {
-      if(!campSpend(q.need)) return;
-      q.give();
-      c.questDone = true;
-      /* they are not allies. They are simply no longer indifferent. */
-      c.friendly = true;
-      bumpNotice(-6);
-      log(`${c.name} is in your debt. They will not forget it — they cannot.`, 'good');
-      worldEvent('immortal', c.x, c.y, `Something very old out in the waste has taken a liking to somebody.`);
+      if(!stageMet(st)) return;
+      /* a fetch stage is paid for; a slay or a visit was paid for out there */
+      if(st.kind === 'fetch' && Object.keys(st.need || {}).length && !campSpend(st.need)) return;
+      if(st.kind === 'visit' && Object.keys(st.also || {}).length && !campSpend(st.also)) return;
+      st.give();
+      c.questStage = at + 1;
+      c.friendly = true;              /* not an ally. Simply no longer indifferent. */
+      bumpNotice(-4);
+      if(c.questStage >= total){
+        c.questDone = true;
+        grantFavor(c.questGive);
+        log(`${c.name} has told you the whole of it. The road is yours to walk.`, 'good');
+        worldEvent('immortal', c.x, c.y,
+          `Something very old out in the waste has finished saying what it had to say.`);
+      } else {
+        log(`${c.name} is satisfied — for now. ${line.stages[c.questStage].hint}`, 'good');
+      }
+      AU.news();
       refreshTop(); refreshInv(); draw();
     };
     row.appendChild(btn);
     body.appendChild(row);
+    if(!ok){
+      const h = document.createElement('div');
+      h.style.cssText = 'color:var(--dust);font-size:11px;margin-top:8px';
+      h.textContent = st.hint;
+      body.appendChild(h);
+    }
   };
   draw();
 }
@@ -8960,6 +9143,7 @@ function update(dt){
   if(necroT > 1){
     necroT = 0;
     refreshBindStrain();
+    witnessTick();                   /* where your people have actually set foot */
     musterTick();                    /* the hands the towns gave up go where the tears are */
     /* ---------- THE WORLD ANSWERS THE SIZE OF YOUR HOST ----------
        menaceFlag used to be a yes/no. A host of four and a host of thirty read the same to
@@ -15578,7 +15762,7 @@ function snapshot(){
     bindWeight:c.bindWeight, shortTag:c.shortTag,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
-    immortal:c.immortal||null, questGive:c.questGive||null, questDone:!!c.questDone, friendly:!!c.friendly, construct:!!c.construct, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
+    immortal:c.immortal||null, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
     carryId: c.carry ? c.carry.id : null,
     lich: !!c.lich, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
     guardTargetId: c.guardTarget ? c.guardTarget.id : null,
@@ -15596,6 +15780,7 @@ function snapshot(){
     v:20, cats, bloodMoon, redoubts:[...redoubts], stash:{...stash}, oreFields, nodeUses:[...nodeUses], phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
+    favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen},
     rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, coilShrine, coilExposed, coilStruck,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
     camps: camps.map(c => ({id:c.id, x:c.x, y:c.y, fac:c.fac, cap:c.cap, tents:c.tents})),
@@ -15696,6 +15881,12 @@ function restore(d){
   compact.founded = d.compact ? (d.compact.founded||0) : 0;
   theDoor = d.theDoor ? {...d.theDoor} : null;
   ruin = !!d.ruin;
+  for(const k in favors) delete favors[k];
+  for(const k in bossSlain) delete bossSlain[k];
+  for(const k in placesSeen) delete placesSeen[k];
+  Object.assign(favors, d.favors || {});
+  Object.assign(bossSlain, d.bossSlain || {});
+  Object.assign(placesSeen, d.placesSeen || {});
   bloodMoon = d.bloodMoon || 0;
   redoubts.length = 0;
   if(Array.isArray(d.redoubts)) for(const r of d.redoubts) redoubts.push(r);
@@ -15755,7 +15946,12 @@ function restore(d){
     c.doorborn = !!s.doorborn; c.doorWork = !!s.doorWork;
     c.neutral = !!s.neutral; c.provoked = !!s.provoked; c.bossKey = s.bossKey || null; c.dropItems = s.dropItems || null;
     c.scholar = !!s.scholar; c.quest = s.quest || null; c.questsDone = s.questsDone || 0; c.offered = !!s.offered;
-    c.immortal = s.immortal || null; c.questGive = s.questGive || null; c.questDone = !!s.questDone; c.friendly = !!s.friendly; c.construct = !!s.construct; c.redoubtId = s.redoubtId || null;
+    c.immortal = s.immortal || null; c.questGive = s.questGive || null; c.questDone = !!s.questDone; c.questStage = s.questStage || 0;
+    /* saves from before the questlines: a finished single-step quest counts as the road walked */
+    if(c.questDone && c.questGive && IMMORTAL_LINES[c.questGive]){
+      c.questStage = IMMORTAL_LINES[c.questGive].stages.length;
+      favors[c.questGive] = favors[c.questGive] || 1;
+    } c.friendly = !!s.friendly; c.construct = !!s.construct; c.redoubtId = s.redoubtId || null;
     c.roomId = (s.roomId ?? null); c.redoubtDeep = s.redoubtDeep || null; c.concentrating = s.concentrating || null; c.weaponFlame = !!s.weaponFlame; c.weaponHallow = !!s.weaponHallow; c.arts = s.arts || null; c.lightbearer = !!s.lightbearer; c.hiddenNecro = !!s.hiddenNecro;
     if(c.redoubtDeep != null && c.roomId != null){
       const rd = redoubts.find(x => x.id === c.redoubtDeep);
