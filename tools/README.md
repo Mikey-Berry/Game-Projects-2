@@ -53,6 +53,7 @@ runs showed to be noise. Run each side two or three times, alternating.
 | `rite.js` | The Last Rite as a scene: that it opens rather than resolving, draws three waves, completes undisturbed, and collapses — still spending the offering — if the ritualist is driven off the circle or the offering is killed. |
 | `shaping.js` | Binds the same recipe at three shapes and reports what actually came out — a Bone Golem should be seven times slower than a Skittering one, not five percent. Also checks promotion is gated on kills and frees a binding slot. |
 | `names.js` | Name collision rate across a fresh world, and samples of what the generator produced. |
+| `decay.js` | The corpse economy end to end: the stage ladder and how long each lasts in real time, what each stage raises into, that salt holds a body indefinitely, that a mule hauls three and a person one, and that all of it round-trips through a save. |
 | `corpses.js` | How long a corpse actually lasts in real minutes at each game speed, how many things are competing for it, and what a body is worth once you have one. Answers "am I imagining that bodies vanish too fast" with a number. |
 
 ### Balance

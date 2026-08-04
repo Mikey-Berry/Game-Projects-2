@@ -179,7 +179,7 @@
   <div id="stancerow" data-tip="stance" style="display:flex;gap:4px;margin-top:6px"></div>
   <div id="jobrow" data-tip="job" style="display:flex;gap:4px;margin-top:4px;align-items:center"></div>
   <div id="spellrow" style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap"></div>
-  <div id="cpanel-actions"><button id="btn-selfaid">BANDAGE SELF</button><button id="btn-drop" style="display:none">DROP BODY</button><button id="btn-goal" title="What are they working toward?">GOAL</button><button id="btn-court" style="display:none">COURT</button><button id="btn-marry" style="display:none">WED</button><button id="btn-rename">✎</button></div>
+  <div id="cpanel-actions"><button id="btn-selfaid">BANDAGE SELF</button><button id="btn-drop" style="display:none">DROP BODY</button><button id="btn-salt" style="display:none" title="Pack what you are carrying in brine. It stops rotting where it is.">CURE</button><button id="btn-goal" title="What are they working toward?">GOAL</button><button id="btn-court" style="display:none">COURT</button><button id="btn-marry" style="display:none">WED</button><button id="btn-rename">✎</button></div>
 </div>
 
 <div class="hud" id="buildbar"></div>
@@ -393,7 +393,7 @@ function regrowNodes(){
 const KG = {wood:2, stone:3, copper:2, iron_ore:3.5, c_ingot:1.5, iron:2.5, coal:1.5, vflesh:2, mats:2.5, fabric:0.5, meat:0.6, fruit:0.4, fish:0.6,
   bandage:0.4, rum:1, hide:1, hide_lev:2, tome:1, remains:2, crown:1,
   w_plank:2.5, w_club:2, w_kat:2, w_rkat:2, w_nod:3.5, w_bow:1.5, w_xbow:3, w_kingsfang:3, w_pyre:2.5,
-  w_lance:3, w_sever:3, aether_cell:0.3, a_carap:5, codex:1, lead:4, gold_bar:2, formula_t:0.3, formula_w:0.3, formula_p:0.3, sunder:2, doctrine:0.5,
+  w_lance:3, w_sever:3, aether_cell:0.3, salt:1, a_carap:5, codex:1, lead:4, gold_bar:2, formula_t:0.3, formula_w:0.3, formula_p:0.3, sunder:2, doctrine:0.5,
   a_rag:1, a_lea:3, a_pla:6, a_lev:3, a_shroud:1, a_baroness:5, a_marshal:6, pack_s:1.5, pack_l:3};
 const ITEMS = {
   meat:    {name:'Dried Meat',    base:16,  type:'food', feed:40},
@@ -431,6 +431,8 @@ const ITEMS = {
   gold_bar:{name:'Gold Bar',      base:1400,type:'trade'},
   /* `ap` is armour piercing: the fraction of a suit's resistance the shot simply ignores.
      A hunting arrow finds a gap now and then; a crossbow bolt was invented to punch mail. */
+  salt:    {name:'Salt',          base:26,  type:'trade',
+    desc:'Coarse grey brine-salt off the flats. Packs a body against the rot, which is a use nobody in Saltmere mentions out loud'},
   w_bow:   {name:'Hunting Bow',   base:260, type:'weapon', dmg:11, wt:'pierce', range:7, ap:0.20, rof:1.9},
   w_xbow:  {name:'Crossbow',      base:750, type:'weapon', dmg:18, wt:'pierce', range:8, ap:0.40},
   a_rag:   {name:'Rag Shirt',     base:60,  type:'armor',  def:.08, pen:.05},
@@ -555,7 +557,7 @@ const TOWNS = [
     lore:'No walls, no fear. The wardens\' fire and the gravekeepers\' dead are gate enough.'},
   {key:'saltmere',  name:'SALTMERE',   pref:1, giftChance:.28,
     wall:{r:23, mat:'wood', hp:400}, guards:11, civs:20,
-    mult:{copper:1.4, fabric:1.05, rum:0.85, hide:1.3, meat:1.15, fruit:1.25, fish:0.55},
+    mult:{copper:1.4, fabric:1.05, rum:0.85, hide:1.3, meat:1.15, fruit:1.25, fish:0.55, salt:0.35},
     civBarks:['The flats give salt, the salt gives everything else.','We mind the tide-marks. You should too.','Outsiders taste of copper. We can tell.','Cure it in brine and it keeps till judgment.','Low tide at dusk. Stay off the pans.'],
     lore:'A shuttered town on the salt flats, curing fish and hoarding brine. They marry among themselves, bury among themselves, and count every stranger twice.'},
   {key:'ironscar',  name:'IRONSCAR',   pref:2, giftChance:.42, mercs:true,
@@ -620,7 +622,7 @@ function rollQuality(skill){
 }
 function tierKey(base, t){ return t==='n' ? base : base + '_' + t; }
 const VENDOR_STOCK = {
-  general: ['meat','fruit','fish','bandage','mats','wood','stone','copper','fabric','rum','hide','pack_s','pack_l'],
+  general: ['meat','fruit','fish','bandage','mats','wood','stone','copper','fabric','rum','hide','salt','pack_s','pack_l'],
   weapons: ['w_plank','w_club','w_rkat','w_kat','w_nod','w_bow','w_xbow','a_rag','a_lea','a_pla'],
   robotics:['p_arm','p_leg','bandage'],
   occult:  ['tome','formula_t','formula_w','sunder','bandage','fabric','rum','mats','meat','remains','a_shroud','aether_cell'],
@@ -934,11 +936,42 @@ function armorPen(c){
   if(!it || !it.pen) return 0;
   return it.pen * (1 - clamp(c.stats.armr, 0, 100)/125);
 }
+/* A Bone Mule was a beast of burden with nothing in the world to carry. It hauls the dead
+   now — three at a time, which is the difference between a battlefield you can strip and one
+   you can only pick at. Everything else manages one body over a shoulder. */
+function carryCap(c){ return c.mule ? 3 : 1; }
+function carried(c){ return (c.carry ? 1 : 0) + (c.carryList ? c.carryList.length : 0); }
+function takeBody(c, body){
+  if(!body || body.state !== 'dead') return false;
+  if(carried(c) >= carryCap(c)){ log(`${c.name} has their hands full.`, 'bad'); return false; }
+  if(c.mule){
+    c.carryList = c.carryList || [];
+    c.carryList.push(body);
+  } else c.carry = body;
+  log(`${c.name} took up ${body.name}.` + (c.mule ? ` (${carried(c)}/${carryCap(c)})` : ''), '');
+  refreshCharPanel();
+  return true;
+}
+function bodiesOf(c){
+  const out = [];
+  if(c.carry) out.push(c.carry);
+  if(c.carryList) for(const b of c.carryList) out.push(b);
+  return out;
+}
+function dropBodies(c){
+  const n = carried(c);
+  if(!n) return false;
+  c.carry = null; c.carryList = null;
+  log(`${c.name} set ${n > 1 ? n + ' bodies' : 'the body'} down.`, '');
+  refreshCharPanel();
+  return true;
+}
 function moveSpeed(c){
   let s = 3.4 * (1 + c.stats.ath*0.012);
   s *= 1 - armorPen(c);
   if(c.drag) s *= 0.7;
   if(c.carry) s *= 0.8;
+  if(c.carryList && c.carryList.length) s *= Math.pow(0.93, c.carryList.length);   /* a laden mule is a slow mule */
   if(c.phyl) s *= 0.92;   /* it is heavier than it looks */
   if(weather.storm > 0) s *= 0.85;
   s *= raceOf(c).speed;
@@ -1473,6 +1506,7 @@ for(const t of towns){
   t.stock = {};
   const seed = (k, n) => t.stock[k] = (t.stock[k]||0) + n;
   for(const k of ['meat','fruit','fish','bandage','mats','wood','stone','copper','fabric','rum','hide']) seed(k, ri(4,10));
+  seed('salt', t.def.key === 'saltmere' ? ri(40, 70) : ri(3, 9));   /* the flats give salt */
   seed('pack_s', 2); seed('pack_l', 1);
   for(const k of ['w_plank','w_club','w_rkat','w_kat','w_bow']) seed(tierKey(k, pick(['c','n','n','f'])), ri(1,3));
   seed(tierKey('a_rag', 'n'), 3); seed(tierKey('a_lea', pick(['c','n','f'])), 2);
@@ -2900,6 +2934,12 @@ for(let i=0; i<3; i++){
     const p = findOpenNear(hm.x + ri(-8,8), hm.y + ri(-8,8), 5);
     const b = makeChar('Pauper', 'town', p.x, p.y, {atk:ri(4,9), def:ri(4,8), tough:ri(4,8)});
     b.state = 'dead'; b.homeTown = hm; b.deadAt = day + hour/24;
+    /* These went into `corpses` and nowhere else, which meant three things nobody had
+       noticed: syncChars iterates `chars`, so they had no mesh and were invisible; the
+       snapshot serialises `chars`, so they evaporated on the first save; and they are the
+       graveyard beside the one undead-friendly town, which is exactly where a starting
+       necromancer goes looking for bodies. */
+    chars.push(b);
     corpses.push(b);
   }
 })();
@@ -5408,8 +5448,8 @@ function physics(c, dt){
     if(!corpses.includes(t)){ c.carryTarget = null; }
     else if(travel(c, t.x, t.y, dt, 1.0)){
       /* only one body per set of hands */
-      if(chars.some(o => o.carry === t)){ log('Someone already has that body.', ''); }
-      else { c.carry = t; log(`${c.name} shouldered the body.`, ''); refreshCharPanel(); }
+      if(chars.some(o => o.carry === t || (o.carryList && o.carryList.includes(t)))){ log('Someone already has that body.', ''); }
+      else takeBody(c, t);
       c.carryTarget = null;
     } else return;
   }
@@ -5557,7 +5597,7 @@ function physics(c, dt){
   }
   /* combat */
   if(c.target){
-    if(c.carry){ log(`${c.name} dropped the body to fight.`, ''); c.carry = null; refreshCharPanel(); }
+    if(carried(c)){ log(`${c.name} dropped what they were carrying to fight.`, ''); dropBodies(c); }
     const t = c.target;
     if(t.state !== 'ok'){ c.target = null; c.path = null; return; }
     /* a bodyguard never chases beyond reach of the ward */
@@ -7426,15 +7466,20 @@ function lootCorpse(t){
     }
   }
   if(t.beast){ addItem('hide', ri(1,2)); got.push('Hound Hide'); }
-  log((got.length ? `Looted: ${got.join(', ')}.` : 'Nothing worth taking.') + ' (Right-click again to harvest remains.)', got.length?'good':'');
+  const dstate = decayStage(t);
+  log((got.length ? `Looted: ${got.join(', ')}.` : 'Nothing worth taking.') +
+      ` The body is ${dstate.label}${t.salted ? ', and cured' : ''}. (Right-click again to harvest remains.)`, got.length?'good':'');
   refreshTop(); refreshInv();
 }
 function harvestCorpse(t){
-  const n = 1 + (rnd() < 0.4 ? 1 : 0);
+  /* a fresh body gives up more than a picked-over one */
+  const dk = decayStage(t);
+  const n = Math.max(1, dk.remains - (rnd() < 0.4 ? 0 : 1));
   addItem('remains', n);
+  if(dk.k === 'fresh' && rnd() < 0.35) addItem('vflesh', 1);
   const ci = corpses.indexOf(t); if(ci>=0) corpses.splice(ci,1);
   const xi = chars.indexOf(t); if(xi>=0) chars.splice(xi,1);
-  log(`Harvested ${n} Mortal Remains.`, 'good');
+  log(`Harvested ${n} Mortal Remains from a ${dk.label} body.`, 'good');
   refreshInv();
 }
 
@@ -7901,6 +7946,53 @@ function castHeal(c, ally){
   }
   spendCast(c, 'heal');
 }
+/* ============================================================ THE CORPSE ECONOMY
+   A body used to last two game days and then cease to exist. At HOUR_SEC 8 that is six real
+   minutes at 1x and seventy-eight seconds at speed 5, which is where most play happens — so
+   an early necromancer who cleared a camp and then walked over to raise it arrived at bare
+   ground. It was also a cliff: a corpse at 1.9 days was identical to one at 0.1, and then it
+   was nothing.
+
+   Bodies rot in stages now, and the last stage is BONES, which do not rot. Nothing you kill
+   is ever entirely wasted — it is only ever worth less. That fixes the supply problem and the
+   invisibility problem with the same change, because a battlefield stays a battlefield and
+   you can read what is on it.
+
+   Everything downstream reads `decayStage`: what it raises into, what it is worth harvested,
+   and what it looks like. */
+const DECAY = [
+  {k:'fresh',   at:0,  label:'fresh',      raise:1.00, remains:3, col:'#8a2418', tint:1.00},
+  {k:'cooling', at:2,  label:'cooling',    raise:0.86, remains:3, col:'#6e2a1e', tint:0.92},
+  {k:'spoiled', at:5,  label:'spoiled',    raise:0.66, remains:2, col:'#5a5038', tint:0.78},
+  {k:'bones',   at:11, label:'bare bones', raise:0.44, remains:1, col:'#ddd6c0', tint:1.10},
+];
+const BONE_DUST = 34;           /* even bones go, eventually — but not on any timescale that stings */
+const CORPSE_CAP = 420;         /* the ground can only hold so many before the sim notices */
+function corpseAge(c){ return (day + hour/24) - (c.deadAt || 0); }
+function decayStage(c){
+  if(c.salted) return DECAY[Math.min(c.saltedAt ?? 0, DECAY.length-1)];   /* brine holds it where it was */
+  const a = corpseAge(c);
+  let d = DECAY[0];
+  for(const s of DECAY) if(a >= s.at) d = s;
+  return d;
+}
+function decayIndex(c){ return DECAY.indexOf(decayStage(c)); }
+/* THE SALT. Saltmere has been saying it since the first day: cure it in brine and it keeps
+   till judgment. This is that, and it is the only thing in the game that stops a clock. */
+const SALT_PER_BODY = 2;
+function saltBody(c){
+  if(!c || c.state !== 'dead') return false;
+  if(c.salted){ log('That one is already cured.', 'bad'); return false; }
+  if(decayIndex(c) >= DECAY.length - 1){ log('There is nothing left on it to cure.', 'bad'); return false; }
+  if(!canAfford({salt: SALT_PER_BODY})){ log(`Curing a body takes ${SALT_PER_BODY} Salt.`, 'bad'); return false; }
+  campSpend({salt: SALT_PER_BODY});
+  c.saltedAt = decayIndex(c);
+  c.salted = true;
+  log(`${c.name} is packed in brine. It will keep as it is.`, 'good');
+  addSpecks(c.x, c.y - 0.3, '#e8e4d4', 12);
+  refreshInv();
+  return true;
+}
 function castRaise(c, body){
   const isUnique = !!body.bossKey && !body.beast;   /* named humanoids become lieutenants; monstrous bosses do not */
   if(isUnique){
@@ -7923,8 +8015,10 @@ function castRaise(c, body){
     r.big = body.big || 1;
     log(`${c.name} bound ${body.name} into undeath — a lieutenant rises.`, 'good');
   } else {
-    /* a corpse is never stronger dead than it was in life; the necromancer's skill only closes the gap */
-    const m = c.stats.magic * (research.done.necromancy ? 1.5 : 1);
+    /* A corpse is never stronger dead than it was in life; the necromancer's skill only
+       closes the gap — and what the rot has already taken, it does not give back. */
+    const dk = decayStage(body), rot = dk.raise;
+    const m = c.stats.magic * (research.done.necromancy ? 1.5 : 1) * rot;
     r = makeChar('Risen ' + (++risenN), c.faction, body.x, body.y,
       {atk:Math.min(4+m*0.7, bs.atk), def:Math.min(3+m*0.5, bs.def), tough:Math.min(3+m*0.4, bs.tough), ath:6, magic:1, labor:5,
        weapon: body.looted ? null : body.weapon, armor: body.looted ? null : body.armor});
@@ -7933,7 +8027,14 @@ function castRaise(c, body){
       if(body.inv) r.inv = {...body.inv};
     }
     r.shortTag = 'R' + risenN;
-    log(`${c.name} raised the dead${body.looted ? '' : ' — kit and all'}.`, 'good');
+    /* what rotted off does not come back on: by the time it is bare bones there is nothing
+       holding a jacket to it, and the blood it stands up with is what is left */
+    r.rot = dk.k;
+    if(rot < 0.7){ r.armor = null; r.pack = null; }
+    if(rot < 0.5){ r.weapon = null; r.inv = null; }
+    if(dk.k !== 'fresh') r.name = (dk.k === 'bones' ? 'Bone-Risen ' : dk.k === 'spoiled' ? 'Rotted ' : '') + r.name;
+    log(`${c.name} raised ${dk.k === 'fresh' ? 'the dead' : 'a ' + dk.label + ' body'}${body.looted || rot < 0.5 ? '' : ' — kit and all'}. ` +
+        `${dk.k === 'fresh' ? '' : `It comes up at ${Math.round(rot*100)}% of what it was.`}`, 'good');
   }
   bumpNotice(isUnique ? 2.8 : 1.15);   /* undeath is a parlour trick of the Old Ones. They hear it performed. */
   deed('raise', isUnique ? 1.6 : 1);
@@ -7948,6 +8049,13 @@ function castRaise(c, body){
     }
   }
   r.undead = true; r.master = c; r.hunger = 100; r.blood = 70; r.maxBlood = 70;
+  /* and what the rot took, it keeps: this has to land after the flat pool above, which was
+     quietly overwriting it — a bone-risen and a fresh one were standing up with the same
+     seventy points of blood. */
+  if(r.rot && r.rot !== 'fresh'){
+    const rr = (DECAY.find(x => x.k === r.rot) || DECAY[0]).raise;
+    r.blood = r.maxBlood = Math.max(18, Math.round(70 * (0.55 + rr * 0.45)));
+  }
   r.guardTarget = c;
   chars.push(r);
   say(r, '...rrh...');
@@ -9670,13 +9778,27 @@ function update(dt){
         if(t.recruits.length < 6) t.recruits.push(makeRecruit(t));
       }
     }
-    /* the dust reclaims old corpses (player dead linger longer, but go too) */
-    const now = day + hour/24;
-    for(let i=corpses.length-1; i>=0; i--){
-      const c = corpses[i];
-      if(now - (c.deadAt||0) > (c.faction==='player' ? 4 : 2)){
-        corpses.splice(i,1);
-        const ci = chars.indexOf(c); if(ci>=0) chars.splice(ci,1);
+    /* The dust reclaims what is left, but it takes its time about it now, and bones are the
+       last thing to go. A salted body is not on the clock at all. Over the cap the oldest
+       bones go first, so a long violent game cannot fill the ground indefinitely. */
+    {
+      const now = day + hour/24;
+      for(let i=corpses.length-1; i>=0; i--){
+        const c = corpses[i];
+        if(c.salted) continue;
+        const life = (c.faction === 'player' ? BONE_DUST * 1.4 : BONE_DUST);
+        if(now - (c.deadAt||0) > life){
+          corpses.splice(i,1);
+          const ci = chars.indexOf(c); if(ci>=0) chars.splice(ci,1);
+        }
+      }
+      if(corpses.length > CORPSE_CAP){
+        const spare = corpses.filter(c => !c.salted).sort((a,b)=>(a.deadAt||0)-(b.deadAt||0));
+        for(let i = 0; i < corpses.length - CORPSE_CAP && i < spare.length; i++){
+          const c = spare[i];
+          const k = corpses.indexOf(c); if(k>=0) corpses.splice(k,1);
+          const ci = chars.indexOf(c); if(ci>=0) chars.splice(ci,1);
+        }
       }
     }
   }
@@ -10029,6 +10151,10 @@ function update(dt){
   for(const v of vendors) if(v.bubble && (v.bubble.t -= dt) <= 0) v.bubble = null;
   /* carried corpses ride along */
   for(const c of chars){
+    if(c.carryList && c.carryList.length){
+      c.carryList = c.carryList.filter(b => corpses.includes(b));
+      c.carryList.forEach((b, i) => { b.x = c.x - 0.5 + i * 0.34; b.y = c.y + 0.4; b.floor = c.floor || 0; });
+    }
     if(c.carry){
       if(!corpses.includes(c.carry)){ c.carry = null; continue; }
       c.carry.x = c.x - 0.4; c.carry.y = c.y + 0.25;
@@ -12192,7 +12318,7 @@ function factionColor(c){
 }
 function colorKeyOf(c){
   /* sex is part of the silhouette, so it belongs in the rebuild key */
-  return factionColor(c) + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'');
+  return factionColor(c) + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + '|' + (c.rot||'');
 }
 const SKINS = ['#8a5c34', '#6e4426', '#a06c40', '#5a3820', '#96683a'];
 const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0'];
@@ -12447,7 +12573,13 @@ function buildCharMesh(c){
   const bodyBase = new THREE.Color(factionColor(c));
   bodyBase.multiplyScalar(0.9 + h2*0.2);
   const bodyCol = '#' + bodyBase.getHexString();
-  const skinCol = c.undead ? '#e0dcc8'
+  /* ---- WHAT IT WAS RAISED FROM, VISIBLE ACROSS A FIELD ----
+     An army of forty needs to be readable at a glance: which of these came up out of fresh
+     kills and which are bone I scraped off a month-old battlefield. Rot drives the colour,
+     so a host raised in a hurry off old ground looks like one. */
+  const ROT_SKIN = {fresh:'#b8a894', cooling:'#a09580', spoiled:'#7d8268', bones:'#e6dfc8'};
+  const skinCol = (c.undead && !c.lich && c.rot && ROT_SKIN[c.rot]) ? ROT_SKIN[c.rot]
+    : c.undead ? '#e0dcc8'
     : c.immortal==='divine' ? '#f2ead8'
     : c.construct ? '#8a9098'
     : c.race==='homunculus' ? PALE[Math.floor(h1*PALE.length)]
@@ -12487,7 +12619,11 @@ function buildCharMesh(c){
   /* what a risen was bound FOR shows in the frame: a brute is built thick, an archer lean */
   const kin = risen ? (c.kin || null) : null;
   const kinLimb = kin === 'brute' ? 1.55 : kin === 'colossus' ? 1.9 : kin === 'archer' ? 0.82 : 1;
-  const LIMB = (fem ? 0.88 : 1) * (risen ? 0.66 * kinLimb : 1);   /* limb thickness — bone is thin */
+  /* Rot reads in the build as well as the colour: something raised fresh still has meat on
+     it, something scraped off a month-old field is a frame with a rag hung on it. */
+  const ROT_LIMB = {fresh:1.22, cooling:1.06, spoiled:0.92, bones:0.78};
+  const rotLimb = (risen && c.rot && ROT_LIMB[c.rot]) ? ROT_LIMB[c.rot] : 1;
+  const LIMB = (fem ? 0.88 : 1) * (risen ? 0.66 * kinLimb * rotLimb : 1);   /* limb thickness — bone is thin */
   if(c.beast){
     if(c.servitor){
       /* A BOUND SERVITOR: a skull and nothing under it. The jaw hangs a finger's width free of
@@ -13200,7 +13336,19 @@ function syncChars(dt){
       if(veiled){ m.opacity = 0.28; m.transparent = true; }
       else if(c.phantom){ m.opacity = 0.82; m.transparent = true; }
       else { m.opacity = 1; m.transparent = false; }
-      if(c.state==='dead' && !m._greyed){ m.color.multiplyScalar(0.45); m._greyed = true; }
+      if(c.state==='dead'){
+        /* Not a flat grey any more: a body reads its own decay from across the field, and
+           re-tints as it goes over, so a battlefield visibly ages. */
+        const st = decayStage(c);
+        if(m._greyStage !== st.k){
+          if(m._base === undefined) m._base = m.color.getHex();
+          m.color.setHex(m._base);
+          m.color.multiplyScalar(0.45 * st.tint);
+          if(st.k === 'bones') m.color.lerp(new THREE.Color('#cfc7ad'), 0.55);
+          else if(st.k === 'spoiled') m.color.lerp(new THREE.Color('#5c5a44'), 0.35);
+          m._greyStage = st.k; m._greyed = true;
+        }
+      }
     }
     for(const m of [e.weaponMat, e.shieldMat]){
       if(!m) continue;
@@ -14073,7 +14221,19 @@ function refreshCharPanel(){
   } else {
     $('cp-manarow').style.display = 'none';
   }
-  $('btn-drop').style.display = c.carry ? 'inline-block' : 'none';
+  $('btn-drop').style.display = carried(c) ? 'inline-block' : 'none';
+  if(carried(c)) $('btn-drop').textContent = carried(c) > 1 ? `DROP ${carried(c)} BODIES` : 'DROP BODY';
+  {
+    /* curing what you are carrying: the one thing that stops a body's clock */
+    const load = bodiesOf(c).filter(b => !b.salted && decayIndex(b) < DECAY.length - 1);
+    const sb = $('btn-salt');
+    sb.style.display = load.length ? 'inline-block' : 'none';
+    if(load.length){
+      const need = load.length * SALT_PER_BODY;
+      sb.textContent = `CURE ${load.length > 1 ? load.length + ' (' + need + ' salt)' : '(' + need + ' salt)'}`;
+      sb.disabled = !canAfford({salt: need});
+    }
+  }
   $('stats').innerHTML = ['atk','def','tough','ath','medic','magic','labor','armr','gunnery']
     .map(s=>`<span data-tip="${s}">${s.toUpperCase()}</span><b data-tip="${s}">${(Math.floor(c.stats[s]*10)/10).toFixed(1)}</b>`).join('');
   const giftTxt = c.gift ? ` · <span style="color:#a98ad4">✦ ${c.gift.toUpperCase()}</span>` : '';
@@ -14198,6 +14358,15 @@ function refreshCharPanel(){
   jr.appendChild(jb);
   jr.appendChild(mkJobButton(2));   /* the fallback trade sits beside the first */
 }
+$('btn-salt').onclick = () => {
+  const c = selected[0]; if(!c) return;
+  const load = bodiesOf(c).filter(b => !b.salted && decayIndex(b) < DECAY.length - 1);
+  if(!load.length) return;
+  let n = 0;
+  for(const b of load) if(saltBody(b)) n++;
+  if(n) log(`${n > 1 ? n + ' bodies are' : 'The body is'} packed against the rot. They will keep as they are.`, 'good');
+  refreshCharPanel();
+};
 $('btn-selfaid').onclick = () => {
   const c = selected[0]; if(!c || c.state!=='ok') return;
   if(c.undead){ log(c.lich ? 'Gauze does nothing for bone. Rest, or endure.' : 'The risen lack the wit for medicine.', 'bad'); return; }
@@ -14655,7 +14824,7 @@ function openCrafting(kind, bench){
 }
 $('btn-drop').onclick = () => {
   const c = selected[0];
-  if(c && c.carry){ log(`${c.name} set the body down.`, ''); c.carry = null; refreshCharPanel(); }
+  if(c) dropBodies(c);
 };
 $('btn-marry').onclick = () => {
   if(selected.length !== 2) return;
@@ -16375,12 +16544,14 @@ function snapshot(){
     job:c.job, job2:c.job2||null, grp:c.grp||null, heldAt:c.heldAt||null, heldT:c.heldT||0, midden:c.midden||null, caveId:c.caveId||null, roomId:(c.roomId??null), caveDweller:!!c.caveDweller, floor: c.floor||0, captured:!!c.captured, dragId: c.drag ? c.drag.id : null,
     clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
     servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0,
-    conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
+    conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null,
+    salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
     bindWeight:c.bindWeight, shortTag:c.shortTag,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
     immortal:c.immortal||null, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
     carryId: c.carry ? c.carry.id : null,
+    carryIds: c.carryList ? c.carryList.map(b => b.id) : null,
     lich: !!c.lich, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
     guardTargetId: c.guardTarget ? c.guardTarget.id : null,
     npcNecro: !!c.npcNecro, lieutenant: !!c.lieutenant, civ: !!c.civ, merc: !!c.merc,
@@ -16561,6 +16732,7 @@ function restore(d){
     c.onlyArt = s.onlyArt || null; c.speedMult = s.speedMult || 0;
     c.markT = s.markT || 0; c.heat = s.heat || 0; c.mustered = !!s.mustered;
     c.shape = s.shape ? {...s.shape} : null; c.shapeName = s.shapeName || null; c.kills = s.kills || 0;
+    c.salted = !!s.salted; c.saltedAt = s.saltedAt ?? null; c.rot = s.rot || null;
     c.conviction = s.conviction || c.conviction || rollConviction(); c.regard = s.regard || 0;
     c.devoted = !!s.devoted; c.leaving = s.leaving || null;
     c.doorborn = !!s.doorborn; c.doorWork = !!s.doorWork;
@@ -16595,6 +16767,7 @@ function restore(d){
     if(c.civ) c.civT = rnd()*10;
     if(s.pilgrimDestI >= 0) c.pilgrimage = {dest: towns[s.pilgrimDestI], waitT: 0};
     c._mid = s.masterId; c._fid = s.followId; c._did = s.dragId; c._cid = s.carryId; c._gid = s.guardTargetId;
+    c._cids = s.carryIds || null;
     byId[c.id] = c;
     return c;
   };
@@ -16662,6 +16835,7 @@ function restore(d){
     if(c._fid) c.follow = byId[c._fid] || null;
     if(c._did) c.drag = byId[c._did] || null;
     if(c._cid) c.carry = corpses.find(x => x.id === c._cid) || null;
+    if(c._cids) c.carryList = c._cids.map(id => corpses.find(x => x.id === id)).filter(Boolean);
     if(c._gid) c.guardTarget = byId[c._gid] || null;
   };
   for(const c of chars) relink(c);
