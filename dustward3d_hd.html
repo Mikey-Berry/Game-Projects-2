@@ -1390,6 +1390,24 @@ function heftOf(c){
   if(!w) return (c.big || 1) > 1.3 ? 1.25 : 0.85;   /* a fist is quick. A maw is not. */
   return 1.0;                                        /* a drawn bow has its own clock below */
 }
+/* ---------- WHAT THE HAND KNOWS ----------
+   The weight of a weapon is a fact about the weapon. How much of that weight you FEEL is a
+   fact about you. Someone who has spent years on a nodachi carries it in the line of the
+   swing and recovers on balance; someone who picked one up this morning fights the thing
+   as much as the enemy, and every beat of the swing is longer for it.
+
+   So skill scales heft for CADENCE ONLY — the wind, the recovery, the cooldown. It never
+   touches damage, stagger, knockback or sound: mastery is not a reason for a nodachi to
+   land softer. A master swings a heavy weapon more often. It hits exactly as hard.
+
+   Journeyman (15, where the harness measures) is the neutral point, and the curve is
+   deliberately asymmetric — the gulf between a novice and a competent hand is wider than
+   the one between competent and master, because that is where it is felt. */
+function skillEase(c){
+  const s = c.stats[wSkillKey(c)] || 0;
+  return clamp(s >= 15 ? 1 - (s - 15) * 0.0026 : 1 + (15 - s) * 0.009, 0.80, 1.14);
+}
+function swingHeft(c){ return heftOf(c) * skillEase(c); }
 function atkPower(c){
   const w = c.weapon ? ITEMS[c.weapon] : null;
   let d;
@@ -3749,9 +3767,14 @@ function pickPart(){
   return 'r.leg';
 }
 function hitChance(a, d){
-  const skillEdge = a.stats[wSkillKey(a)] * 0.004 - packPenalty(a) * 0.25 + packPenalty(d) * 0.15;
+  const sk = a.stats[wSkillKey(a)] || 0;
+  const skillEdge = sk * 0.004 - packPenalty(a) * 0.25 + packPenalty(d) * 0.15;
   const love = sweetheart(a) ? 0.06 : 0;
-  return clamp(0.55 + (a.stats.atk - d.stats.def)*0.02 + skillEdge + love, 0.15, 0.94);
+  /* A big weapon is not merely slower in an untrained hand, it is wilder: the arc is long
+     and there is no getting it back once it is going. Skill buys that back entirely, which
+     is why a master with a nodachi is frightening and a farmhand with one is a liability. */
+  const wild = Math.max(0, heftOf(a) - 1) * 0.30 * clamp(1 - sk/70, 0, 1);
+  return clamp(0.55 + (a.stats.atk - d.stats.def)*0.02 + skillEdge + love - wild, 0.15, 0.94);
 }
 /* combat feedback: floating text + particle specks */
 const particles = [], projectiles = [];
@@ -3879,10 +3902,28 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
   /* a heavy blow lands like a wall: stagger + shove, blunt worst of all. Weight lowers the
      bar it has to clear, raises the odds once it does, and shoves harder when it takes —
      and a raised guard is far less help against it than it used to be. */
-  if(a && d.state === 'ok' && dmg > (11 + d.stats.tough * 0.28) / ahf && !d.bossKey){
-    const stChance = clamp((wt === 'blunt' ? 0.65 : 0.4) * ahf, 0.1, 0.95) * (d.blocking ? 0.55 : 1);
+  /* The bar a blow has to clear to rock someone. It used to be `11 + tough*0.28`, which
+     read sensibly and behaved terribly: toughness ALSO cuts incoming damage, so the bar
+     climbed while the blow shrank and the two crossed at about tough 40. Past that a body
+     could not be staggered by anything, by any weapon, ever — measured at a flat zero for
+     a veteran under an iron club. Resistance is the intent; immunity was not. The toughness
+     term is now small enough that the lines never cross, and the actual defending is done
+     below by `brace`, which is bounded and therefore cannot become an off-switch. */
+  if(a && d.state === 'ok' && dmg > (11 + d.stats.tough * 0.06) / ahf && !d.bossKey){
+    /* BRACING. Taking a heavy blow and keeping your feet is a thing bodies learn. Until now
+       `armr` did exactly one thing in this game — offset its own encumbrance — which was
+       thin for a stat you earn by being hit, so it gets the job it should always have had:
+       knowing how to stand in a suit and let it carry the shock instead of being thrown
+       around inside it. It counts only when there is actually a suit on.
+
+       Toughness is deliberately the JUNIOR term here, despite being the obvious one. It
+       already resists stagger twice over — it raises the bar a blow has to clear, and it
+       cuts the damage that has to clear it. Weighting it a third time here took a veteran
+       from 65% staggered to 0%, which is not a defence, it is an immunity. */
+    const brace = clamp((d.armor ? d.stats.armr * 0.004 : 0) + d.stats.tough * 0.0022, 0, 0.55);
+    const stChance = clamp((wt === 'blunt' ? 0.65 : 0.4) * ahf, 0.1, 0.95) * (d.blocking ? 0.55 : 1) * (1 - brace);
     if(rnd() < stChance){
-      d.staggerT = Math.max(d.staggerT || 0, 0.35 * clamp(ahf, 0.8, 1.5));
+      d.staggerT = Math.max(d.staggerT || 0, 0.35 * clamp(ahf, 0.8, 1.5) * (1 - clamp(d.stats.tough * 0.002, 0, 0.3)));
       d.windup = null; d.recoverT = 0;
       const dd = Math.max(0.01, dist(a.x, a.y, d.x, d.y));
       nudge(d, (d.x - a.x)/dd * 0.28 * ahf, (d.y - a.y)/dd * 0.28 * ahf);
@@ -5770,8 +5811,8 @@ function physics(c, dt){
          cooldown you were free to walk around during — which is why every fight in the game
          had the texture of a click contest. Now: wind, land, recover. All three scale with
          what you are holding. */
-      const hf = heftOf(c);
-      c.atkCd = 1.70 * Math.pow(hf, 0.95) / (1 + c.stats.atk*0.015) * (1 + armorPen(c)*0.7)
+      const hf = swingHeft(c);   /* what the weapon weighs in THIS hand */
+      c.atkCd = 1.62 * Math.pow(hf, 0.95) / (1 + c.stats.atk*0.011) * (1 + armorPen(c)*0.7)
               / (!c.weapon && !c.beast && !c.undead ? 1 + c.stats.martial*0.01 : 1);
       /* the wind: the blade goes back, and everyone watching can see where it is going */
       const wind = 0.34 * Math.pow(hf, 1.3);
@@ -7266,7 +7307,7 @@ function findNode(c, kind){
   return null;
 }
 function hitStructure(c, st){
-  const hf = heftOf(c);
+  const hf = swingHeft(c);   /* a cadence, so it reads the weapon as this hand feels it */
   c.atkCd = 1.4 * Math.pow(hf, 0.95) / (1 + c.stats.atk*0.01);
   const w = c.weapon ? ITEMS[c.weapon] : null;
   let dmg = atkPower(c) * (c.structMult||1) * (w && w.wt==='blunt' ? 1.3 : 1) * 0.6;

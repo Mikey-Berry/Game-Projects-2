@@ -55,8 +55,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       chars.length = 0;
       if (typeof charGrid !== 'undefined' && charGrid.clear) charGrid.clear();
 
-      const a = makeChar('A', 'player', S.x, S.y, { atk: 20, blades: 15, blunt: 15, ranged: 15, martial: 15 });
-      const d = makeChar('D', 'bandit', S.x + (opts.range ? 4 : 0.7), S.y, { def: 12, tough: opts.tough || 12, ath: 10 });
+      const sk = opts.skill === undefined ? 15 : opts.skill;
+      const a = makeChar('A', 'player', S.x, S.y, { atk: 20, blades: sk, blunt: sk, ranged: sk, martial: sk });
+      const d = makeChar('D', 'bandit', S.x + (opts.range ? 4 : 0.7), S.y,
+        { def: 12, tough: opts.tough || 12, ath: 10, armr: opts.armr || 0 });
       a.state = d.state = 'ok';
       a.weapon = wep; d.armor = armor || null;
       a.stance = opts.range ? 'ranged' : 'melee';
@@ -181,6 +183,19 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       'club v katana+plate':  duel('w_club', 'w_kat', 'a_pla'),
     };
 
+    /* ---- what skill is worth ---- the same weapon in hands of increasing competence,
+       plus what a body's toughness and armour training buy it against being knocked about. */
+    const ladder = {};
+    for (const wep of ['w_kat', 'w_nod']) {
+      for (const sk of [0, 15, 40, 70, 100]) {
+        const r = bout(wep, null, { skill: sk });
+        ladder[ITEMS[wep].name + ' @ skill ' + sk] = r;
+      }
+    }
+    const bracing = {};
+    for (const [lab, tough, armr] of [['green (t0/a0)', 0, 0], ['seasoned (t50/a50)', 50, 50], ['veteran (t100/a100)', 100, 100]])
+      bracing['club vs ' + lab] = bout('w_club', 'a_pla', { tough, armr });
+
     const melee = {};
     for (const w of ['w_plank', 'w_rkat', 'w_club', 'w_kat', 'w_nod', 'w_kingsfang', 'w_pyre', 'w_sever'])
       melee[ITEMS[w].name] = bout(w, null, {});
@@ -191,7 +206,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     for (const w of ['w_bow', 'w_xbow', 'w_lance'])
       ranged[ITEMS[w].name] = bout(w, null, { range: true });
 
-    return { melee, armoured, ranged, roots, duels };
+    return { melee, armoured, ranged, roots, duels, ladder, bracing };
   });
 
   const fmt = (title, rows) => {
@@ -204,6 +219,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   fmt('MELEE, unarmoured target', out.melee);
   fmt('MELEE, iron plate', out.armoured);
   fmt('RANGED, unarmoured target', out.ranged);
+  fmt('WHAT SKILL IS WORTH (same weapon, rising competence)', out.ladder);
+  fmt('WHAT BRACING IS WORTH (iron club vs iron plate)', out.bracing);
   console.log('\nRECOVERY ACTUALLY ROOTS (drift per frame, world units)');
   for (const [k, v] of Object.entries(out.roots))
     console.log('  ' + k.padEnd(12) + 'free ' + String(v.driftPerFreeFrame).padStart(7) +
