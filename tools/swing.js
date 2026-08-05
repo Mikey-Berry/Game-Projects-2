@@ -89,7 +89,10 @@ const OUT = path.resolve(process.argv[3] || path.join(__dirname, 'swing.png'));
   }
 
   /* one row per weapon, so a light blade and a heavy one can be read against each other */
-  const payload = rows.map(r => ({ wep: ITEMS[WEPS[0]] ? r.wep : r.wep, imgs: r.shots.map(s => s.toString('base64')) }));
+  /* ITEMS is a browser global. Reaching for it out here threw a ReferenceError every run,
+     after the whole capture loop had already been paid for — which looked exactly like a
+     hang, because the frames were gathered and then thrown away. */
+  const payload = rows.map(r => ({ wep: r.wep, imgs: r.shots.map(s => s.toString('base64')) }));
   const names = await p.evaluate(ws => ws.map(w => ITEMS[w].name), WEPS);
   const sheet = await p.evaluate(async ({ payload, names }) => {
     const all = await Promise.all(payload.map(r => Promise.all(r.imgs.map(d => new Promise(res => {
