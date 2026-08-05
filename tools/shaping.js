@@ -20,23 +20,34 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
    const circle={x:caster.x, y:caster.y};
    R.budget = shapeBudget(caster);
    // three deliberate extremes off the same recipe
+   const N = {mass:2, force:2, haste:2, knit:2, plate:2, quiet:2, will:2};
    const builds = {
-     'golem  (m5 f4 h0)': {mass:5, force:4, haste:0},
-     'even   (m2 f2 h2)': {mass:2, force:2, haste:2},
-     'skitter(m0 f1 h5)': {mass:0, force:1, haste:5},
-     'MAXED  (m5 f5 h5)': {mass:5, force:5, haste:5},
+     'even':            {...N},
+     'golem':           {...N, mass:5, force:4, haste:0},
+     'skitterer':       {...N, mass:0, force:1, haste:5},
+     'shambles (kn0)':  {...N, knit:0},
+     'seamless (kn5)':  {...N, knit:5},
+     'bone-plated':     {...N, plate:3},
+     'chitin-grafted':  {...N, plate:5},
+     'silent (q5)':     {...N, quiet:5, mass:1},
+     'clamorous (q0)':  {...N, quiet:0},
+     'leashed (w0)':    {...N, will:0},
+     'unbound (w5)':    {...N, will:5},
    };
    R.shapes={};
    for(const [label, sh] of Object.entries(builds)){
      caster.mana=999;
+     for(const x of chars) if(x.master===caster) x.master=null;   // clear the binding
      const before=chars.length;
      craftUndead('brute', caster, circle, sh);
      const u=chars[chars.length-1];
      if(chars.length===before){ R.shapes[label]='BIND FAILED'; continue; }
-     R.shapes[label]={ name:u.name, big:+(u.big||1).toFixed(2), blood:u.maxBlood,
-       atk:Math.round(u.stats.atk), tough:Math.round(u.stats.tough),
-       claw:Math.round(u.clawDmg||0), speed:+moveSpeed(u).toFixed(2),
-       taunt:!!u.taunt, cost:costText(shapeCost(sh, caster))||'within budget' };
+     R.shapes[label]={ name:u.name, blood:u.maxBlood, speed:+moveSpeed(u).toFixed(2),
+       knitMult:+(u.knit??1).toFixed(2), construct:!!u.construct,
+       partMax:Math.round(u.parts.chest.max),
+       plating:u.natArmor?`${u.natArmor.cls} ${(u.natArmor.def*100).toFixed(0)}%`:'bare',
+       noise:+(u.noise??0).toFixed(2), leash:u.leash,
+       cost:costText(shapeCost(sh, caster))||'within budget' };
    }
    // promotion: gated on kills, then real
    caster.mana=999;

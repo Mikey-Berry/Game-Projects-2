@@ -51,6 +51,7 @@ runs showed to be noise. Run each side two or three times, alternating.
 | `immortal.js` | Walks both immortal roads stage by stage through the real UI, checks every gated stage refuses until its condition is met, and confirms favor outlives the giver's corpse. |
 | `regard.js` | Runs one of every conviction through the same career and checks they diverge, that education damps the swing, and that the ends of the scale actually act — walking out, turning, devotion. |
 | `rite.js` | The Last Rite as a scene: that it opens rather than resolving, draws three waves, completes undisturbed, and collapses — still spending the offering — if the ritualist is driven off the circle or the offering is killed. |
+| `axes.js` | That the four non-combat shaping axes actually bite in the sim rather than merely setting a field: knit against real severance rolls, plating through the damage-type matrix, quiet against accrued notice, will against attack and pace off the lead. |
 | `shaping.js` | Binds the same recipe at three shapes and reports what actually came out — a Bone Golem should be seven times slower than a Skittering one, not five percent. Also checks promotion is gated on kills and frees a binding slot. |
 | `names.js` | Name collision rate across a fresh world, and samples of what the generator produced. |
 | `decay.js` | The corpse economy end to end: the stage ladder and how long each lasts in real time, what each stage raises into, that salt holds a body indefinitely, that a mule hauls three and a person one, and that all of it round-trips through a save. |

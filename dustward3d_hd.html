@@ -972,6 +972,7 @@ function moveSpeed(c){
   if(c.drag) s *= 0.7;
   if(c.carry) s *= 0.8;
   if(c.carryList && c.carryList.length) s *= Math.pow(0.93, c.carryList.length);   /* a laden mule is a slow mule */
+  if(c.frayed) s *= 1 - 0.35 * (c.frayT || 0);
   if(c.phyl) s *= 0.92;   /* it is heavier than it looks */
   if(weather.storm > 0) s *= 0.85;
   s *= raceOf(c).speed;
@@ -1392,6 +1393,7 @@ function atkPower(c){
   const armFactor = (a) => a.severed ? (a.pros ? Math.max(.35, prosVal(a)) : .35) : a.hp <= 0 ? .5 : a.hp < 50 ? .75 : 1;
   d *= Math.max(armFactor(la), armFactor(ra));
   if(c.hunger <= 0) d *= .6;
+  if(c.frayed) d *= 1 - 0.45 * (c.frayT || 0);   /* the binding is stretched thin out here */
   return d;
 }
 
@@ -3806,6 +3808,12 @@ function armorClassOf(c){
 /* The single mitigation path. Everything that hurts a body goes through here unless it is
    explicitly `raw` — bleeding out and starving are already past the armour. */
 function mitigate(d, dmg, wt, ap, a){
+  /* grafted plating sits under whatever it is wearing and answers to the same matchups */
+  if(d.natArmor){
+    const m = (PEN[d.natArmor.cls] && PEN[d.natArmor.cls][wt]) !== undefined ? PEN[d.natArmor.cls][wt] : 1;
+    const def = Math.min(0.7, d.natArmor.def * m * (1 - (ap || 0)));
+    dmg *= (1 - def);
+  }
   if(d.armor){
     const cls = armorClassOf(d);
     const m = (PEN[cls] && PEN[cls][wt]) !== undefined ? PEN[cls][wt] : 1;
@@ -3871,7 +3879,7 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
   addFloat(d.x, d.y-0.9, String(Math.round(dmg)), d.faction==='player' ? '#ff6a4a' : wt==='burn' ? '#ffb03a' : '#e8dcc4');
   addSpecks(d.x, d.y-0.3, d.undead ? '#d8d4c8' : '#8a2418');
   /* severance: cutting weapons, non-vital limbs deep in the red */
-  if(!d.construct && !VITAL.has(pk) && wt==='cut' && part.hp < -45 && !part.severed && rnd() < .3){
+  if(!d.construct && !VITAL.has(pk) && wt==='cut' && part.hp < -45 * (d.knit || 1) && !part.severed && rnd() < .3 * (d.knit || 1)){
     part.severed = true; part.pros = false; part.bleed += 3;
     AU.sever(d.x, d.y);
     say(d, 'AAAGH!');
@@ -7508,6 +7516,33 @@ function bindStrain(c){
   return c ? Math.min(0.62, (c._bindW || 0) * 0.05) : 0;
 }
 /* recomputed on the necro tick rather than per-hit — risenLoad walks the roster */
+/* THE NOISE OF A HOST. Every shaped body carries a `noise`; the sum of it is heard once a
+   second. This is the loop that ties the necromancy bench to the Fracture clock — build big
+   and loud and the sky opens sooner, which is a cost nothing else in the shaping charges. */
+function hostNoiseTick(){
+  let n = 0;
+  for(const c of chars){
+    if(c.faction !== 'player' || !c.undead || c.state === 'dead') continue;
+    n += (c.noise === undefined ? 0.75 : c.noise);
+  }
+  if(n > 4) bumpNotice((n - 4) * 0.004);
+}
+/* WILL. A leashed body is cheap because it only works where its master can hold it. Past its
+   leash the binding frays: it slows, it hits softer, and it says so. */
+function leashTick(){
+  for(const c of chars){
+    if(!c.undead || c.state === 'dead' || !c.master || c.lich || c.lieutenant) continue;
+    if(c.leash === undefined) continue;
+    const m = c.master;
+    const far = (m && m.state !== 'dead') ? dist(c.x, c.y, m.x, m.y) : 1e9;
+    const slack = far - c.leash;
+    const was = !!c.frayed;
+    c.frayed = slack > 0;
+    c.frayT = c.frayed ? clamp(slack / 40, 0, 1) : 0;
+    if(c.frayed && !was && c.faction === 'player' && rnd() < 0.4)
+      say(c, pick(['...', 'far...', '*shudders*']));
+  }
+}
 function refreshBindStrain(){
   const load = new Map();
   for(const x of chars){
@@ -8819,8 +8854,17 @@ const SHAPE_AXES = [
    desc:'What it does when it connects. Bought at the cost of everything else.'},
   {k:'haste', label:'HASTE',  lo:'shambling', hi:'quick',
    desc:'How fast it crosses ground and how often it swings. The first thing mass takes away.'},
+  /* ---- the four that trade combat against something that is not combat ---- */
+  {k:'knit',  label:'KNIT',   lo:'shoddy',    hi:'seamless',
+   desc:'How well it is put together. Badly, and limbs come off in a cut fight; well, and there is no seam for a blade to find.'},
+  {k:'plate', label:'PLATING',lo:'bare',      hi:'chitinous',
+   desc:'What is grafted over it. Bone sheds a cut and folds under a hammer; chitin turns a point and cracks. Both are dead weight.'},
+  {k:'quiet', label:'QUIET',  lo:'clamorous', hi:'silent',
+   desc:'How loud the thing is by existing. A host of loud ones is heard, and what hears it has been getting closer for nine generations.'},
+  {k:'will',  label:'WILL',   lo:'leashed',   hi:'unbound',
+   desc:'How far from its master it still works. Leashed is cheap and must be kept close; unbound operates alone.'},
 ];
-const SHAPE_BUDGET_BASE = 6;          /* points to spend across the three axes */
+const SHAPE_BUDGET_BASE = 14;         /* seven axes at neutral — an even body is free */
 const SHAPE_MAX = 5;                  /* per axis */
 /* what a point costs, above the free allocation */
 const SHAPE_EXTRA = {vflesh:4, remains:3, iron:2};
@@ -8848,6 +8892,31 @@ function applyShape(u, shape){
   const pace = 1 + h * 0.20 - Math.max(0, m) * 0.16;
   u.speedMult = Math.max(0.25, (u.speedMult || 1) * pace);
   u.stats.ath = Math.max(1, u.stats.ath * (1 + h * 0.18));
+  /* ---- KNIT: how well it is put together ----
+     Severance is already simulated — a cut limb deep in the red comes off at a flat 30%. A
+     shoddy body doubles that and its parts give out sooner; a seamless one is a construct,
+     which is the same exemption the automatons already use. */
+  const kn = (shape.knit ?? 2) - 2;
+  u.knit = Math.max(0, 1 - kn * 0.30);          /* multiplier on severance chance and depth */
+  if((shape.knit ?? 2) >= 5) u.construct = true;
+  for(const k in u.parts){
+    u.parts[k].max = Math.max(8, Math.round(u.parts[k].max * (1 + kn * 0.16)));
+    u.parts[k].hp = u.parts[k].max;
+  }
+  /* ---- PLATING: what is grafted over it ----
+     Read through the same damage-type matrix everything else uses, so a bone-plated body is
+     wrong for a hammer and a chitinous one is wrong for a club. Both are dead weight. */
+  const pl = shape.plate ?? 2;
+  if(pl >= 4)      u.natArmor = {def: 0.26 + (pl - 4) * 0.10, cls: 'chitin'};
+  else if(pl === 3) u.natArmor = {def: 0.18, cls: 'plate'};
+  else             u.natArmor = null;    /* two is neutral, and neutral is bare */
+  if(pl >= 3) u.speedMult = (u.speedMult || 1) * (1 - (pl - 2) * 0.07);
+  /* ---- QUIET: how loud it is by existing ----
+     The one axis that reaches outside the fight. Notice feeds the Fracture clock, so a host
+     of loud bodies is a host that brings the sky down sooner. */
+  u.noise = Math.max(0.05, 1.5 - (shape.quiet ?? 2) * 0.30);
+  /* ---- WILL: how far it works from the hand that made it ---- */
+  u.leash = 10 + (shape.will ?? 2) * 14;        /* tiles before the binding starts to fray */
   /* A colossal thing is a wall whether you meant it to be or not — and a wiry one is not,
      even when the recipe it came off was. A Skittering Brute that draws blades toward it is
      a contradiction; the whole reason to build one is that it does not. */
@@ -8858,6 +8927,13 @@ function applyShape(u, shape){
 /* the thing earns its own description, so the roster reads as bodies rather than recipes */
 function shapeNameFor(sh){
   const m = sh.mass || 0, f = sh.force || 0, h = sh.haste || 0;
+  const kn = sh.knit ?? 2, pl = sh.plate ?? 2, q = sh.quiet ?? 2, w = sh.will ?? 2;
+  if(pl >= 4 && m >= 4) return 'Carapace-Wrought';
+  if(pl >= 4)           return 'Chitin-Grafted';
+  if(kn >= 5)           return 'Seamless';
+  if(kn <= 0)           return 'Shambles';
+  if(q >= 5 && m <= 1)  return 'Silent';
+  if(w >= 5)            return 'Unbound';
   if(m >= 4 && h <= 1) return 'Bone Golem';
   if(m >= 4)           return 'Colossus-Wrought';
   if(h >= 4 && m <= 1) return 'Skittering';
@@ -8869,7 +8945,7 @@ function shapeNameFor(sh){
   return null;
 }
 function shapeCost(shape, caster){
-  const spent = (shape.mass||0) + (shape.force||0) + (shape.haste||0);
+  const spent = SHAPE_AXES.reduce((n, ax) => n + (shape[ax.k] || 0), 0);
   const over = Math.max(0, spent - shapeBudget(caster));
   if(!over) return {};
   const out = {};
@@ -8943,10 +9019,11 @@ function openBinding(circle){
     /* ---- THE SHAPING BENCH ----
        Three sliders against one budget, so every point of one is a point off another. The
        panel says what it will cost and what it will come out as before anything is bound. */
-    circle.shape = circle.shape || {mass:2, force:2, haste:2};
+    circle.shape = circle.shape || {mass:2, force:2, haste:2, knit:2, plate:2, quiet:2, will:2};
+    for(const ax of SHAPE_AXES) if(circle.shape[ax.k] === undefined) circle.shape[ax.k] = 2;
     const sh = circle.shape;
     const budget = shapeBudget(ritualist);
-    const spent = sh.mass + sh.force + sh.haste;
+    const spent = SHAPE_AXES.reduce((n, ax) => n + (sh[ax.k] || 0), 0);
     const over = Math.max(0, spent - budget);
     const extra = shapeCost(sh, ritualist);
     {
@@ -8979,7 +9056,7 @@ function openBinding(circle){
       }
       const rst = document.createElement('button');
       rst.textContent = 'EVEN'; rst.style.cssText = 'padding:1px 6px;font-size:10px;margin-bottom:8px';
-      rst.onclick = () => { circle.shape = {mass:2, force:2, haste:2}; rndr(); };
+      rst.onclick = () => { circle.shape = {mass:2, force:2, haste:2, knit:2, plate:2, quiet:2, will:2}; rndr(); };
       body.appendChild(rst);
       const sep = document.createElement('div');
       sep.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:1px;margin:10px 0 4px';
@@ -9835,6 +9912,8 @@ function update(dt){
   if(necroT > 1){
     necroT = 0;
     refreshBindStrain();
+    hostNoiseTick();                 /* a loud host is heard, and what hears it is not patient */
+    leashTick();                     /* and one held on a short lead frays off the end of it */
     witnessTick();                   /* where your people have actually set foot */
     musterTick();                    /* the hands the towns gave up go where the tears are */
     /* ---------- THE WORLD ANSWERS THE SIZE OF YOUR HOST ----------
@@ -16545,7 +16624,8 @@ function snapshot(){
     clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
     servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null,
-    salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
+    salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null,
+    knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
     bindWeight:c.bindWeight, shortTag:c.shortTag,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
@@ -16733,6 +16813,10 @@ function restore(d){
     c.markT = s.markT || 0; c.heat = s.heat || 0; c.mustered = !!s.mustered;
     c.shape = s.shape ? {...s.shape} : null; c.shapeName = s.shapeName || null; c.kills = s.kills || 0;
     c.salted = !!s.salted; c.saltedAt = s.saltedAt ?? null; c.rot = s.rot || null;
+    if(s.knit != null) c.knit = s.knit;
+    if(s.natArmor) c.natArmor = {...s.natArmor};
+    if(s.noise != null) c.noise = s.noise;
+    if(s.leash != null) c.leash = s.leash;
     c.conviction = s.conviction || c.conviction || rollConviction(); c.regard = s.regard || 0;
     c.devoted = !!s.devoted; c.leaving = s.leaving || null;
     c.doorborn = !!s.doorborn; c.doorWork = !!s.doorWork;
