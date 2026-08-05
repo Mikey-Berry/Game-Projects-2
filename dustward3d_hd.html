@@ -420,7 +420,7 @@ const ITEMS = {
   aether_cell:{name:'Aether Cell', base:220, type:'mat',
     desc:'A pre-Fall charge cell, still holding. Nobody alive knows how they were made, and nobody is making more'},
   w_lance: {name:'Aether Lance',  base:9000,type:'weapon', dmg:44, wt:'pierce', range:9, pre:true, nullOnly:true,
-    rof:4.0, lance:true, charge:true, ap:0.80,
+    rof:4.6, draw:0.55, lance:true, charge:true, ap:0.80,
     desc:'A golden-age firearm that transmutes latent ether to plasma. In a gifted hand the interference cascades — the lance and the hand go together. Only the alchemically deaf can carry one.'},
   w_sever: {name:'Sundering Edge',base:9500,type:'weapon', dmg:40, wt:'cut',    pre:true},
   a_carap: {name:'Alchemic Carapace', base:11000, type:'armor', pre:true, def:.52, pen:.30},
@@ -433,8 +433,8 @@ const ITEMS = {
      A hunting arrow finds a gap now and then; a crossbow bolt was invented to punch mail. */
   salt:    {name:'Salt',          base:26,  type:'trade',
     desc:'Coarse grey brine-salt off the flats. Packs a body against the rot, which is a use nobody in Saltmere mentions out loud'},
-  w_bow:   {name:'Hunting Bow',   base:260, type:'weapon', dmg:11, wt:'pierce', range:7, ap:0.20, rof:1.9},
-  w_xbow:  {name:'Crossbow',      base:750, type:'weapon', dmg:18, wt:'pierce', range:8, ap:0.40},
+  w_bow:   {name:'Hunting Bow',   base:260, type:'weapon', dmg:11, wt:'pierce', range:7, ap:0.20, rof:2.6, draw:0.45},
+  w_xbow:  {name:'Crossbow',      base:750, type:'weapon', dmg:18, wt:'pierce', range:8, ap:0.40, rof:3.2, draw:0.30},
   a_rag:   {name:'Rag Shirt',     base:60,  type:'armor',  def:.08, pen:.05},
   a_lea:   {name:'Leather Jacket',base:380, type:'armor',  def:.18, pen:.14},
   a_pla:   {name:'Iron Plate',    base:1300,type:'armor',  def:.35, pen:.32},
@@ -896,7 +896,7 @@ function makeChar(name, faction, x, y, o={}){
     targetManual: false, blocking: false, fleeT: 0, follow: null, caravan: null, mobileVendor: false,
     job: null, jobNodeT: 0, drag: null, gnaw: null, captured: false,
     eater: false, warF: -1, warT: -1, campId: -1, rebelOf: -1, sick: 0, isLeader: -1,
-    windup: null, staggerT: 0, flinchT: 0, castT: 0, oppCd: 0,
+    windup: null, staggerT: 0, flinchT: 0, castT: 0, oppCd: 0, recoverT: 0, recoverDur: 0,
     age: o.age ?? ri(18, 38), goal: null, wasChild: false, legacyTrade: null,
     race: o.race || 'human', sex: o.sex || (rnd() < 0.5 ? 'f' : 'm'), spouse: 0, partner: 0, grief: 0, pregnant: 0, omni: !!o.omni,
     clawDmg: 0, big: 1, taunt: false, structMult: 1, bindWeight: 1, shortTag: '',
@@ -1269,7 +1269,7 @@ function nascentDeath(c, by){
   c.x = p.x; c.y = p.y; c.floor = 0;
   c.state = 'ok'; c.blood = Math.max(10, c.maxBlood * 0.3);
   for(const part of Object.values(c.parts)){ part.hp = Math.max(part.hp, 20); part.bleed = 0; part.severed = false; part.pros = false; }
-  c.target = null; c.windup = null; c.staggerT = 0; c.downT = 0;
+  c.target = null; c.windup = null; c.staggerT = 0; c.downT = 0; c.recoverT = 0;
   /* dying like that is loud, in the way that matters */
   if(noticeTier < 3) bumpNotice(NOTICE_TIERS[noticeTier + 1].at - noticed + 0.5);
   log(`${c.name} dies — and wakes at the circle, gasping like a swimmer. Their kit lies where they fell.`, 'bad');
@@ -1367,6 +1367,29 @@ function poolTake(k, n){
   }
   return n - need;
 }
+/* ---------- HEFT: HOW MUCH WEAPON THERE IS TO MOVE ----------
+   Every melee weapon in the game used to swing at exactly the same rate. Measured: a plank
+   and a Sundering Edge both at 0.83 swings a second, both with the same 0.26s telegraph,
+   and only the damage number told them apart. That is why a fight read like a click contest
+   instead of an exchange of blows — nothing about picking up a nodachi changed how it felt
+   to hold, only how big the number was.
+
+   Heft is the one dial that fixes it. 1.0 is a katana: the middle sword, the thing every
+   other cadence is read against. It lengthens the wind, lengthens the recovery, raises the
+   damage and hardens the impact — so a heavy weapon throws fewer, slower, far more
+   expensive blows. DPS comes out close to where it was on purpose: the choice between a
+   nodachi and a katana is meant to be a choice about tempo and exposure, not a strictly
+   better number. What changes is the grain of the fight. */
+const HEFT = {
+  w_plank: 0.85, w_rkat: 0.90, w_kat: 1.00, w_club: 1.15, w_pyre: 1.20,
+  w_kingsfang: 1.35, w_sever: 1.40, w_nod: 1.60,
+};
+function heftOf(c){
+  const w = c.weapon ? ITEMS[c.weapon] : null;
+  if(w && !w.range) return HEFT[w.tierOf || c.weapon] || 1.0;
+  if(!w) return (c.big || 1) > 1.3 ? 1.25 : 0.85;   /* a fist is quick. A maw is not. */
+  return 1.0;                                        /* a drawn bow has its own clock below */
+}
 function atkPower(c){
   const w = c.weapon ? ITEMS[c.weapon] : null;
   let d;
@@ -1374,6 +1397,12 @@ function atkPower(c){
   else if(c.clawDmg) d = c.clawDmg;
   else if(c.undead || c.beast) d = 8;
   else d = 4 + c.stats.martial * 0.5;
+  /* Fewer blows, each one worth more — and deliberately worth ENOUGH more. The exponent is
+     set so effective DPS comes out flat across the whole heft range: picking up a nodachi
+     must not be a damage decision. What you buy with it is impact and stagger, and what you
+     pay is the seconds you spend rooted in the wind and the follow-through. Melee only — a
+     bow's rate of fire is its own problem, handled where it is drawn. */
+  if(!w || !w.range) d *= Math.pow(heftOf(c), 1.04);
   d *= 1 + c.stats[wSkillKey(c)] * 0.015;
   d *= 1 - packPenalty(c);
   if(c.race==='hollow' && c.blood < 60) d *= 1.15;
@@ -3737,21 +3766,25 @@ function attack(a, d){
   if(a.phantom) return;             /* an illusion's blade cuts nothing */
   breakVeil(a, 'strikes');
   const isPlayerFight = a.faction==='player' || d.faction==='player';
-  a.lungeT = 0.18;
+  const hf = heftOf(a);
+  a.lungeT = a.lungeDur = 0.18 * hf;   /* a heavy swing drives the whole body after it */
+  a.lungeK = 0.35 * hf;
   const dd = Math.max(0.01, dist(a.x,a.y,d.x,d.y));
   a.lungeDX = (d.x-a.x)/dd; a.lungeDY = (d.y-a.y)/dd;
   xpGain(a, 'atk', 0.05 * clamp((d.stats.def+4)/(a.stats.atk+4), .2, 2));
   xpGain(a, wSkillKey(a), 0.08);
   if(a.armor) xpGain(a, 'armr', 0.04);
   let hc = hitChance(a,d);
-  if(d.blocking) hc *= 0.45;
+  /* A guard turns a light blade by finding the line. It does much less against something
+     that never needed a line: a nodachi coming down does not care what is in the way. */
+  if(d.blocking) hc *= clamp(0.45 * Math.pow(hf, 1.6), 0.30, 0.85);
   if(rnd() > hc){
     xpGain(d, 'def', (d.blocking ? 0.14 : 0.07) * clamp((a.stats.atk+4)/(d.stats.def+4), .2, 2));
     addFloat(d.x, d.y-0.9, d.blocking ? 'blocked' : 'miss', d.blocking ? '#8fb5d4' : '#9c8a6e');
     /* a guard caught it, or it went past — two very different sounds, and between them they
        are most of what gives a fight its rhythm */
     if(d.blocking) AU.block(d.x, d.y, !!(d.armor && METAL_ARMOR.has(d.armor)));
-    else AU.whiff(a.x, a.y, !!(a.big > 1.2) || !!(a.weapon && ITEMS[a.weapon].wt === 'blunt'));
+    else AU.whiff(a.x, a.y, hf >= 1.25 || !!(a.big > 1.2) || !!(a.weapon && ITEMS[a.weapon].wt === 'blunt'));
     return;
   }
   const w = a.weapon ? ITEMS[a.weapon] : null;
@@ -3839,15 +3872,21 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
   if(!raw) dmg = mitigate(d, dmg, wt, ap, a);
   /* an awakened parasite remembers what it was bred to kill */
   if(a && a.race==='hollow' && a.hollowTier >= 1 && d.gauntKind) dmg *= 1.35;
-  if(dmg > 6 && d.flinchT !== undefined) d.flinchT = 0.18;
-  /* a heavy blow lands like a wall: stagger + shove, blunt worst of all */
-  if(a && d.state === 'ok' && dmg > 11 + d.stats.tough * 0.28 && !d.bossKey){
-    const stChance = (wt === 'blunt' ? 0.65 : 0.4) * (d.blocking ? 0.4 : 1);
+  /* how much weapon was behind it. Projectiles and spells come through here too and have
+     no heft of their own — they land exactly as they always did. */
+  const ahf = a ? heftOf(a) : 1;
+  if(dmg > 6 && d.flinchT !== undefined) d.flinchT = Math.min(0.34, 0.18 * ahf);
+  /* a heavy blow lands like a wall: stagger + shove, blunt worst of all. Weight lowers the
+     bar it has to clear, raises the odds once it does, and shoves harder when it takes —
+     and a raised guard is far less help against it than it used to be. */
+  if(a && d.state === 'ok' && dmg > (11 + d.stats.tough * 0.28) / ahf && !d.bossKey){
+    const stChance = clamp((wt === 'blunt' ? 0.65 : 0.4) * ahf, 0.1, 0.95) * (d.blocking ? 0.55 : 1);
     if(rnd() < stChance){
-      d.staggerT = Math.max(d.staggerT || 0, 0.35);
-      d.windup = null;
+      d.staggerT = Math.max(d.staggerT || 0, 0.35 * clamp(ahf, 0.8, 1.5));
+      d.windup = null; d.recoverT = 0;
       const dd = Math.max(0.01, dist(a.x, a.y, d.x, d.y));
-      nudge(d, (d.x - a.x)/dd * 0.28, (d.y - a.y)/dd * 0.28);
+      nudge(d, (d.x - a.x)/dd * 0.28 * ahf, (d.y - a.y)/dd * 0.28 * ahf);
+      if(typeof kickCam === 'function') kickCam(d.x, d.y, clamp(0.10 + dmg*0.006, 0, 0.42) * clamp(ahf, 0.7, 1.6));
     }
   }
   /* bosses shrug off NPC scraps — their fights are reserved for you */
@@ -3870,14 +3909,14 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
     }
   }
   const part = d.parts[pk];
-  AU.hit(d.x, d.y, dmg >= 16, wt);
+  AU.hit(d.x, d.y, dmg >= 16 || ahf >= 1.25, wt);
   part.hp -= dmg;
   part.bandaged = false;
   part.bleed += dmg * (wt==='cut' ? 0.09 : wt==='burn' ? 0.02 : wt==='dark' ? 0.03 : wt==='holy' ? 0.01 : 0.04);
   if(d.armor) xpGain(d, 'armr', 0.06);
   d.hitT = 0.14;
   addFloat(d.x, d.y-0.9, String(Math.round(dmg)), d.faction==='player' ? '#ff6a4a' : wt==='burn' ? '#ffb03a' : '#e8dcc4');
-  addSpecks(d.x, d.y-0.3, d.undead ? '#d8d4c8' : '#8a2418');
+  addSpecks(d.x, d.y-0.3, d.undead ? '#d8d4c8' : '#8a2418', Math.round(4 * clamp(ahf, 0.8, 1.7) * (dmg >= 16 ? 1.6 : 1)));
   /* severance: cutting weapons, non-vital limbs deep in the red */
   if(!d.construct && !VITAL.has(pk) && wt==='cut' && part.hp < -45 * (d.knit || 1) && !part.severed && rnd() < .3 * (d.knit || 1)){
     part.severed = true; part.pros = false; part.bleed += 3;
@@ -5209,14 +5248,18 @@ function physics(c, dt){
     }
   }
   if(c.phantom && (c.phantomT -= dt) <= 0){ dispelPhantom(c); return; }
-  if(c.state !== 'ok'){ c.windup = null; return; }
+  if(c.state !== 'ok'){ c.windup = null; c.recoverT = 0; return; }
   /* a committed swing: rooted, then it lands — or whiffs if the target slipped away */
   if(c.windup){
-    if(c.staggerT > 0){ c.windup = null; }
+    if(c.staggerT > 0){ c.windup = null; c.recoverT = 0; }   /* reeling is not recovering */
     else {
       c.windup.t -= dt;
       if(c.windup.t <= 0){
         const wu = c.windup; c.windup = null;
+        /* the swing is spent. Whether it found anything or not, the body has to come back
+           for the blade — a miss costs the same recovery a hit does, which is what makes
+           committing to a heavy weapon a decision rather than a free upgrade. */
+        if(wu.kind === 'melee') c.recoverT = c.recoverDur || 0.22;
         const tgt = chars.find(o => o.id === wu.tgt);
         const reach = wu.kind === 'ranged' ? 9 : 1.7;
         if(tgt && tgt.state === 'ok' && dist(c.x, c.y, tgt.x, tgt.y) <= reach &&
@@ -5277,6 +5320,12 @@ function physics(c, dt){
   c.mana = Math.min(maxMana(c), c.mana + dt*0.5);
   if(c.dot) applyDot(c, dt);
   c.blocking = false;
+  /* RECOVERY: the beat after the blade lands. Feet planted, guard down, no new orders —
+     the swing is over and the body has not caught up with it yet. Placed after the timers
+     so the cooldown, mana and bleeding all keep running underneath; only the will to act
+     is gone. Everything above this line — stagger, the rite, a committed windup — still
+     outranks it, and being hit hard enough to stagger cancels it outright. */
+  if(c.recoverT > 0){ c.recoverT -= dt; return; }
   if(c.concentrating){
     concentrationTick(c, dt);
     /* an EXCLUSIVE concentration (Ainzopha'ar's Light) roots the caster: no move, no fight,
@@ -5673,7 +5722,13 @@ function physics(c, dt){
     if(w && w.range){
       if(d < 1.7){ c.blocking = true; return; }        /* too close: guard, don't shoot */
       if(d > w.range){ travel(c, t.x, t.y, dt, w.range - 0.5); return; } /* no firing on the move */
-      if(c.atkCd <= 0 && !c.windup){ c.windup = {t: 0.34, kind: 'ranged', tgt: t.id, dur: 0.34}; }
+      /* the draw. A crossbow is already spanned and only has to be brought up; a bow has
+         to be pulled and held; the lance has to spin something up that was never meant to
+         be fired twice in a minute. The cost of each is paid on the other side, in rof. */
+      if(c.atkCd <= 0 && !c.windup){
+        const draw = w.draw || 0.38;
+        c.windup = {t: draw, kind: 'ranged', tgt: t.id, dur: draw};
+      }
       return;
     }
     if(d > 1.0){
@@ -5711,10 +5766,19 @@ function physics(c, dt){
     }
     else if(c.atkCd <= 0 && !c.windup){
       if((t.floor||0) !== (c.floor||0)){ c.target = null; return; }   /* you cannot knife a man on a wall */
-      c.atkCd = 1.25 / (1 + c.stats.atk*0.015) * (1 + armorPen(c)*0.7)
+      /* THE THREE BEATS OF A SWING. It used to be two — a flat 0.26s telegraph and then a
+         cooldown you were free to walk around during — which is why every fight in the game
+         had the texture of a click contest. Now: wind, land, recover. All three scale with
+         what you are holding. */
+      const hf = heftOf(c);
+      c.atkCd = 1.70 * Math.pow(hf, 0.95) / (1 + c.stats.atk*0.015) * (1 + armorPen(c)*0.7)
               / (!c.weapon && !c.beast && !c.undead ? 1 + c.stats.martial*0.01 : 1);
-      /* the swing telegraphs: a beat of windup before the blade commits */
-      c.windup = {t: 0.26, kind: 'melee', tgt: t.id, dur: 0.26};
+      /* the wind: the blade goes back, and everyone watching can see where it is going */
+      const wind = 0.34 * Math.pow(hf, 1.3);
+      c.windup = {t: wind, kind: 'melee', tgt: t.id, dur: wind};
+      /* the recovery, spent after the blow lands: rooted, guard down, and the heavier the
+         weapon the longer you are standing in it. This is the cost of the big number. */
+      c.recoverDur = 0.22 * Math.pow(hf, 1.4);
     }
     return;
   }
@@ -7202,11 +7266,12 @@ function findNode(c, kind){
   return null;
 }
 function hitStructure(c, st){
-  c.atkCd = 1.4 / (1 + c.stats.atk*0.01);
+  const hf = heftOf(c);
+  c.atkCd = 1.4 * Math.pow(hf, 0.95) / (1 + c.stats.atk*0.01);
   const w = c.weapon ? ITEMS[c.weapon] : null;
   let dmg = atkPower(c) * (c.structMult||1) * (w && w.wt==='blunt' ? 1.3 : 1) * 0.6;
   st.hp -= dmg;
-  c.lungeT = 0.18;
+  c.lungeT = c.lungeDur = 0.18 * hf; c.lungeK = 0.35 * hf;
   const dd = Math.max(0.01, dist(c.x,c.y,st.x+0.5,st.y+0.5));
   c.lungeDX = (st.x+0.5-c.x)/dd; c.lungeDY = (st.y+0.5-c.y)/dd;
   addSpecks(st.x+0.5, st.y+0.3, '#8c8272', 3);
@@ -10417,6 +10482,21 @@ let camDist = 28, camDistTarget = 28;
 let camYaw = 0, camYawT = 0;
 let camPitch = 0.95, camPitchT = 0.95;
 let camSX = 0, camSY = 0, camInit = false;   /* smoothed camera anchor (targets stay camX/camY) */
+/* ---------- THE PUNCH IN THE EYE ----------
+   A heavy blow landing in view kicks the camera. This is the cheapest weight in the game:
+   the sim does not know it happened, the eye does, and the player reads it as force. Kept
+   small and short on purpose — a fight is a great many blows, and a camera that lurches at
+   every one of them is a camera nobody can play behind. The biggest recent blow owns the
+   eye, so a pitched battle settles into a low constant rumble rather than a fit. */
+let camKick = 0, camKickX = 0, camKickY = 0;
+function kickCam(x, y, mag){
+  if(mag <= camKick) return;
+  const d = Math.hypot(x - camSX, y - camSY);
+  if(d > 26) return;                       /* too far off to be felt */
+  camKick = Math.min(0.5, mag * (1 - d/26));
+  const a = rnd()*Math.PI*2;
+  camKickX = Math.cos(a); camKickY = Math.sin(a);
+}
 let camFY = 0;                               /* smoothed storey lift */
 function camRight(){ return [Math.cos(camYaw), -Math.sin(camYaw)]; }
 function camFwd(){ return [-Math.sin(camYaw), -Math.cos(camYaw)]; }
@@ -13225,7 +13305,7 @@ function syncChars(dt){
     e.g.visible = true;
     const gy = groundY(c.x, c.y) + floorY(c.floor);
     let px = c.x, pz = c.y;
-    if(c.lungeT > 0){ const k = (c.lungeT/0.18)*0.35; px += c.lungeDX*k; pz += c.lungeDY*k; }
+    if(c.lungeT > 0){ const k = (c.lungeT/(c.lungeDur||0.18))*(c.lungeK||0.35); px += c.lungeDX*k; pz += c.lungeDY*k; }
     e.g.position.set(px, gy, pz);
     const ageScale = (!c.undead && !c.beast && c.age < 16) ? 0.55 + (c.age/16)*0.45 : 1;
     const bs = (c.big || 1) * ageScale;
@@ -13354,6 +13434,15 @@ function syncChars(dt){
           spineX = -0.02 + u*0.3;
         }
       }
+      /* follow-through: the blade is down and out past the target and the body has to come
+         back for it. Reads as the weight of the swing more than the swing itself does. */
+      if(c.recoverT > 0 && !c.windup){
+        const u = clamp(c.recoverT / (c.recoverDur || 0.22), 0, 1);
+        armR = 0.55*u; elbR = -0.15 - u*0.20;
+        armL = 0.30 - u*0.20; elbL = -0.35;
+        spineX = 0.30*u; headX = 0.12*u;
+        legL = -0.18*u; legR = 0.14*u; kneeR = 0.30*u;
+      }
       /* block: shield up, braced */
       if(c.blocking && !c.windup){
         armL = -1.2; elbL = -0.9;
@@ -13387,7 +13476,7 @@ function syncChars(dt){
         spineX -= 0.22 * (c.flinchT/0.18);
         headX -= 0.3 * (c.flinchT/0.18);
       }
-      const snap = c.windup ? 30 : 14;   /* committed swings move fast */
+      const snap = c.windup ? 30 : (c.recoverT > 0 ? 20 : 14);   /* committed swings move fast */
       P(e.armL, 'x', armL, snap); P(e.armR, 'x', armR, snap);
       P(e.elbL, 'x', elbL, snap); P(e.elbR, 'x', elbR, snap);
       P(e.legL, 'x', legL); P(e.legR, 'x', legR);
@@ -13964,10 +14053,11 @@ function render(){
   camFY += (floorY(selFloor) - camFY) * Math.min(1, rdt * 5);
   const focusY = Math.max(0, groundY(camSX, camSY)) + 0.8 + camFY;
   const horiz = Math.cos(camPitch) * camDist;
+  camKick = Math.max(0, camKick - rdt * 2.8);   /* ~0.18s tail on the hardest blow */
   camera.position.set(
-    camSX + Math.sin(camYaw) * horiz,
-    focusY + Math.sin(camPitch) * camDist,
-    camSY + Math.cos(camYaw) * horiz);
+    camSX + Math.sin(camYaw) * horiz + camKickX * camKick,
+    focusY + Math.sin(camPitch) * camDist + camKickY * camKick * 0.6,
+    camSY + Math.cos(camYaw) * horiz + camKickY * camKick);
   camera.lookAt(camSX, focusY, camSY);
   updateSky();
   water.position.y = -0.22 + Math.sin(now*0.001)*0.03;

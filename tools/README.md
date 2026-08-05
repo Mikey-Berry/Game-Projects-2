@@ -37,6 +37,12 @@ Set `DUSTWARD_CHROME` to use a specific browser binary; otherwise Playwright's o
 do — a single before/after pair once looked like a 44% sim regression that three interleaved
 runs showed to be noise. Run each side two or three times, alternating.
 
+**Average anything with a hit roll in it.** The same build measured one nodachi duel at 3.6s
+and the next at 20s, purely on which body part the hits happened to land in. A single fight
+is not a measurement. `cadence.js` runs nine and reports mean and median for exactly this
+reason; the unaveraged version of that number would have been reported as a 3x slowdown when
+the truth was 45%.
+
 ## What each one measures
 
 ### Correctness — run these before committing
@@ -66,6 +72,7 @@ runs showed to be noise. Run each side two or three times, alternating.
 | `dps2.js` | Effective DPS per weapon against five target archetypes, through the game's real mitigation. |
 | `ttk.js` | Swings to put a target down, by weapon and armour. The readable form of the matchup table — it is where "the club beats plate" stops being a claim. |
 | `behave.js` | Lance cells and overheat, massed-fire stray scaling, the Darkbolt mark (must be +10% for undead and +0% for the living), binding strain. |
+| `cadence.js` | How a fight *feels*, in numbers: swings per second, the length of the telegraph, the fraction of the fight you are rooted and cannot act, damage per landed blow and how often it staggers. Where `ttk.js` zeroes the cooldown to ask a balance question, this one leaves the clock alone to ask a pacing one. It is the probe that showed every melee weapon in the game — plank to Sundering Edge — swinging at an identical 0.83/s behind an identical 0.26s wind. Also proves the recovery beat actually roots a body, and averages nine duels to report how long a fight really takes. |
 
 ### The endgame
 
