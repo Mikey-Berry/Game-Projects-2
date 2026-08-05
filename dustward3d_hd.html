@@ -914,7 +914,8 @@ function makeChar(name, faction, x, y, o={}){
        one. Transient — emplacementTick re-derives `manning` every tick, so neither is saved. */
     manning: null, gunT: 0,
     path: null, pathGoal: null, repathT: 0,
-    hitT: 0, lungeT: 0, lungeDX: 0, lungeDY: 0,
+    hitT: 0, lungeT: 0, lungeDX: 0, lungeDY: 0, lungeDur: 0, lungeK: 0,
+    shoveT: 0, shoveDur: 0, shoveK: 0, shoveDX: 0, shoveDY: 0,
     undead: false, master: null,
     atkCd: 0, downT: 0, guard: o.guard||null, homeTown: o.homeTown||null,
     squad: o.squad||null, wanderT: 0, looted: false, vt: o.vt||null,
@@ -1269,7 +1270,7 @@ function nascentDeath(c, by){
   c.x = p.x; c.y = p.y; c.floor = 0;
   c.state = 'ok'; c.blood = Math.max(10, c.maxBlood * 0.3);
   for(const part of Object.values(c.parts)){ part.hp = Math.max(part.hp, 20); part.bleed = 0; part.severed = false; part.pros = false; }
-  c.target = null; c.windup = null; c.staggerT = 0; c.downT = 0; c.recoverT = 0;
+  c.target = null; c.windup = null; c.staggerT = 0; c.downT = 0; c.recoverT = 0; c.shoveT = 0;
   /* dying like that is loud, in the way that matters */
   if(noticeTier < 3) bumpNotice(NOTICE_TIERS[noticeTier + 1].at - noticed + 0.5);
   log(`${c.name} dies — and wakes at the circle, gasping like a swimmer. Their kit lies where they fell.`, 'bad');
@@ -3807,7 +3808,11 @@ function attack(a, d){
     /* a guard caught it, or it went past — two very different sounds, and between them they
        are most of what gives a fight its rhythm */
     if(d.blocking) AU.block(d.x, d.y, !!(d.armor && METAL_ARMOR.has(d.armor)));
-    else AU.whiff(a.x, a.y, hf >= 1.25 || !!(a.big > 1.2) || !!(a.weapon && ITEMS[a.weapon].wt === 'blunt'));
+    else {
+      AU.whiff(a.x, a.y, hf >= 1.25 || !!(a.big > 1.2) || !!(a.weapon && ITEMS[a.weapon].wt === 'blunt'));
+      /* the cost of missing with something heavy, made visible: it goes into the dirt */
+      if(hf >= 1.15) addSpecks(a.x + (d.x-a.x)*0.45, a.y + (d.y-a.y)*0.45, '#8c8272', Math.round(2*hf));
+    }
     return;
   }
   const w = a.weapon ? ITEMS[a.weapon] : null;
@@ -3927,6 +3932,11 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
       d.windup = null; d.recoverT = 0;
       const dd = Math.max(0.01, dist(a.x, a.y, d.x, d.y));
       nudge(d, (d.x - a.x)/dd * 0.28 * ahf, (d.y - a.y)/dd * 0.28 * ahf);
+      /* nudge() moves the body a fraction of a tile instantly, which the eye reads as a
+         teleport rather than as being driven back. Give the render something to slide. */
+      d.shoveT = d.shoveDur = 0.22 * clamp(ahf, 0.8, 1.6);
+      d.shoveK = 0.30 * clamp(ahf, 0.8, 1.6);
+      d.shoveDX = (d.x - a.x)/dd; d.shoveDY = (d.y - a.y)/dd;
       if(typeof kickCam === 'function') kickCam(d.x, d.y, clamp(0.10 + dmg*0.006, 0, 0.42) * clamp(ahf, 0.7, 1.6));
     }
   }
@@ -5300,7 +5310,22 @@ function physics(c, dt){
         /* the swing is spent. Whether it found anything or not, the body has to come back
            for the blade — a miss costs the same recovery a hit does, which is what makes
            committing to a heavy weapon a decision rather than a free upgrade. */
-        if(wu.kind === 'melee') c.recoverT = c.recoverDur || 0.22;
+        if(wu.kind === 'melee'){
+          c.recoverT = c.recoverDur || 0.22;
+          /* a big weapon moves enough air to be seen doing it. Emitted on the beat the arc
+             completes, along the line of the swing, so a nodachi coming through leaves a
+             visible sweep and a knife leaves nothing. */
+          const swf = heftOf(c);
+          if(swf >= 1.15){
+            const tg = chars.find(o => o.id === wu.tgt);
+            const ax = tg ? tg.x - c.x : 1, ay = tg ? tg.y - c.y : 0;
+            const al = Math.max(0.01, Math.hypot(ax, ay));
+            for(let i = 0; i < Math.round(3 * swf); i++){
+              const sp = 0.55 + i*0.24;
+              addSpecks(c.x + ax/al*sp, c.y + ay/al*sp - 0.2, '#b9ae97', 1);
+            }
+          }
+        }
         const tgt = chars.find(o => o.id === wu.tgt);
         const reach = wu.kind === 'ranged' ? 9 : 1.7;
         if(tgt && tgt.state === 'ok' && dist(c.x, c.y, tgt.x, tgt.y) <= reach &&
@@ -5358,6 +5383,7 @@ function physics(c, dt){
   if(c.hitT > 0) c.hitT -= dt;
     if(c.flinchT > 0) c.flinchT -= dt;
   if(c.lungeT > 0) c.lungeT -= dt;
+  if(c.shoveT > 0) c.shoveT -= dt;
   c.mana = Math.min(maxMana(c), c.mana + dt*0.5);
   if(c.dot) applyDot(c, dt);
   c.blocking = false;
@@ -13347,6 +13373,8 @@ function syncChars(dt){
     const gy = groundY(c.x, c.y) + floorY(c.floor);
     let px = c.x, pz = c.y;
     if(c.lungeT > 0){ const k = (c.lungeT/(c.lungeDur||0.18))*(c.lungeK||0.35); px += c.lungeDX*k; pz += c.lungeDY*k; }
+    /* driven back: the slide trails the blow rather than snapping with it */
+    if(c.shoveT > 0){ const k = (c.shoveT/(c.shoveDur||0.22))*(c.shoveK||0.30); px += c.shoveDX*k; pz += c.shoveDY*k; }
     e.g.position.set(px, gy, pz);
     const ageScale = (!c.undead && !c.beast && c.age < 16) ? 0.55 + (c.age/16)*0.45 : 1;
     const bs = (c.big || 1) * ageScale;
@@ -13438,6 +13466,10 @@ function syncChars(dt){
       let armL = sw*0.8, armR = -sw*0.8, elbL = -0.25 - Math.max(0, sw)*0.4, elbR = -0.25 - Math.max(0, -sw)*0.4;
       let legL = -sw, legR = sw, kneeL = Math.max(0, -sw)*0.9, kneeR = Math.max(0, sw)*0.9;
       let spineX = moving ? 0.08 : idle, headX = 0;
+      /* the two channels that carry weight but are not limbs: how far the torso has turned
+         through the swing, and how far the body has sunk into it. Applied past the joints. */
+      let swingYaw = 0, swingDrop = 0;
+      const hv = Math.min(1.35, heftOf(c));   /* raw weapon weight — what the EYE should read */
       /* the robed dead do not walk, they arrive: no stride, no swing. The legs are under
          the robe and the arms hang until there is something worth raising them for —
          every layer below this one (fight, windup, block, cast, stagger) still overrides. */
@@ -13461,18 +13493,33 @@ function syncChars(dt){
           armL = -1.35; elbL = -0.1;
           armR = -1.1 + k*0.25; elbR = -1.2 + k*1.0;
           spineX = 0.06; headX = -0.05;
-        } else if(k < 0.55){
-          /* raise: blade back over the shoulder */
-          const u = k/0.55;
-          armR = -0.5 - u*1.9; elbR = -0.7 - u*0.5;
-          armL = 0.35 + u*0.3;
-          spineX = 0.12 - u*0.14;
+        } else if(k < 0.62){
+          /* THE WIND. Eased so the blade travels fast off the mark and then SETTLES —
+             it arrives at the top of the arc early and hangs there for the rest of the
+             beat. That hang is anticipation, and it is most of what tells a watching
+             player how much is about to arrive. The old curve was linear and read as a
+             machine cycling rather than a person gathering themselves. */
+          const u = k/0.62, e1 = 1 - Math.pow(1 - u, 2.4);
+          armR = -0.5 - e1*2.05; elbR = -0.7 - e1*0.55;
+          armL = 0.35 + e1*0.34; elbL = -0.5 - e1*0.20;
+          spineX = 0.12 - e1*0.20;
+          headX = -e1*0.06;                       /* eyes stay on them while the body coils */
+          swingYaw = -e1 * 0.46 * hv;             /* wind the torso AWAY from the target */
+          legL = -0.10*e1; legR = 0.18*e1; kneeR = 0.26*e1;   /* weight onto the back foot */
+          swingDrop = 0.035 * e1 * hv;
         } else {
-          /* commit: the blade comes down hard */
-          const u = (k-0.55)/0.45;
-          armR = -2.4 + u*2.9; elbR = -1.2 + u*1.1;
-          armL = 0.65 - u*0.5;
-          spineX = -0.02 + u*0.3;
+          /* THE COMMIT. Eased the other way: almost the whole arc happens in the first
+             instants and then trails, which is what a mass already moving actually does.
+             The torso whips through and PAST the target, the back leg drives, and the
+             body sinks — a heavy blow is thrown with the legs, not the arm. */
+          const u = (k-0.62)/0.38, e2 = Math.pow(u, 0.52);
+          armR = -2.55 + e2*3.05; elbR = -1.25 + e2*1.15;
+          armL = 0.69 - e2*0.56; elbL = -0.70 + e2*0.35;
+          spineX = -0.08 + e2*0.44;
+          headX = e2*0.14;                        /* the head follows the blade down */
+          swingYaw = (-0.46 + e2*0.78) * hv;
+          legL = -0.10 + e2*0.36; legR = 0.18 - e2*0.34; kneeL = e2*0.32; kneeR = 0.26 - e2*0.26;
+          swingDrop = (0.035 + e2*0.105) * hv;
         }
       }
       /* follow-through: the blade is down and out past the target and the body has to come
@@ -13483,6 +13530,10 @@ function syncChars(dt){
         armL = 0.30 - u*0.20; elbL = -0.35;
         spineX = 0.30*u; headX = 0.12*u;
         legL = -0.18*u; legR = 0.14*u; kneeR = 0.30*u;
+        /* still turned through from the follow-through, and still low. The body unwinds
+           back to guard over the whole beat instead of snapping there. */
+        swingYaw = 0.34 * u * hv;
+        swingDrop = 0.085 * u * hv;
       }
       /* block: shield up, braced */
       if(c.blocking && !c.windup){
@@ -13509,8 +13560,15 @@ function syncChars(dt){
       }
       /* stagger: reeling */
       if(c.staggerT > 0){
-        spineX = -0.28 + Math.sin(Date.now()*0.02) * 0.12;
-        armL = 0.6; armR = 0.6; elbL = -0.9; elbR = -0.9;
+        /* Driven off the stagger's OWN clock, so it reels hardest at the moment of the hit
+           and recovers visibly rather than wobbling at a fixed rate off Date.now() — which
+           meant a light stumble and a hammer blow looked exactly the same. */
+        const u = clamp(c.staggerT / 0.35, 0, 1.3);
+        spineX = -0.32*u + Math.sin(c.staggerT * 34) * 0.11 * u;
+        armL = 0.62*u; armR = 0.62*u; elbL = -0.9; elbR = -0.9;
+        headX = -0.20*u;
+        legL = 0.22*u; kneeR = 0.30*u;
+        swingYaw = Math.sin(c.staggerT * 26) * 0.16 * u;
       }
       /* flinch: a jerk backward on hard hits */
       if(c.flinchT > 0){
@@ -13523,6 +13581,13 @@ function syncChars(dt){
       P(e.legL, 'x', legL); P(e.legR, 'x', legR);
       P(e.kneeL, 'x', kneeL); P(e.kneeR, 'x', kneeR);
       P(e.spine, 'x', spineX, 10); P(e.headG, 'x', headX, 10);
+      /* the whole body turns and sinks. Snapped harder than the limbs during a committed
+         swing so the whip reads, eased back the rest of the time. */
+      const bodySnap = c.windup ? 26 : (c.staggerT > 0 ? 22 : 12);
+      e._yaw = (e._yaw || 0) + (swingYaw - (e._yaw || 0)) * Math.min(1, dt*bodySnap);
+      e._drop = (e._drop || 0) + (swingDrop - (e._drop || 0)) * Math.min(1, dt*bodySnap);
+      e.g.rotation.y += e._yaw;
+      e.g.position.y -= e._drop;
     }
     /* limbs & gear */
     if(!c.beast){

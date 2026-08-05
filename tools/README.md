@@ -97,6 +97,7 @@ the truth was 45%.
 | harness | what it renders |
 |---|---|
 | `wep3.js` | One character holding one weapon, close. `node tools/wep3.js w_nod out.png` |
+| `swing.js` | A swing, frame by frame, as a contact sheet — one row per weapon so a light blade and a heavy one can be read against each other. Animation is the one thing here that cannot be checked with a number, and a pose that looks right in the source can still read as a machine cycling. It steps the sim by hand at a fixed dt so frames are evenly spaced in *sim* time rather than wall time. `node tools/swing.js w_nod,w_kat out.png` |
 | `town.js` | A town from above. `node tools/town.js out.png <townIndex>` |
 
 ## Notes
