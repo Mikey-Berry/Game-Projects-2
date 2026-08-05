@@ -21,7 +21,7 @@ const OUT = path.resolve(process.argv[3] || path.join(__dirname, 'swing.png'));
     executablePath: process.env.DUSTWARD_CHROME || undefined,
     args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--disable-gpu-sandbox', '--no-sandbox'],
   });
-  const p = await b.newPage({ viewport: { width: 900, height: 720 } });
+  const p = await b.newPage({ viewport: { width: 560, height: 470 } });
   const errs = [];
   p.on('pageerror', e => errs.push(e.message.slice(0, 200)));
   await p.goto('file://' + path.join(__dirname, 'game.html'), { waitUntil: 'load' });
@@ -46,7 +46,7 @@ const OUT = path.resolve(process.argv[3] || path.join(__dirname, 'swing.png'));
     chars.push(a, d);
     window.__A = a; window.__D = d;
     camX = S.x + 0.4; camY = S.y; camSX = camX; camSY = camY;
-    camDist = camDistTarget = 5.4; camPitchT = camPitch = 0.34; camYawT = camYaw = 1.35;
+    camDist = camDistTarget = 5.0; camPitchT = camPitch = 0.34; camYawT = camYaw = 1.35;
     hour = 11;                       /* midday: the pose has to be visible to be judged */
     speed = 0;                       /* the world holds still; we step the duel ourselves */
     /* strip the HUD: every panel in the way of the thing being looked at. The WebGL canvas
@@ -77,10 +77,10 @@ const OUT = path.resolve(process.argv[3] || path.join(__dirname, 'swing.png'));
       physics(a, dt);
       return { wind: a.windup ? a.windup.t / a.windup.dur : -1, rec: a.recoverT, cd: a.atkCd };
     }, DT);
-    await p.waitForTimeout(70);   /* let the render loop draw the new pose */
+    await p.waitForTimeout(55);   /* let the render loop draw the new pose */
     if (!started && st.wind >= 0) started = true;
     if (started) {
-      if (frames % 2 === 0) shots.push(await p.screenshot({ clip: { x: 275, y: 150, width: 350, height: 430 } }));
+      if (frames % 2 === 0) shots.push(await p.screenshot({ clip: { x: 150, y: 70, width: 270, height: 340 } }));
       frames++;
       if (st.wind < 0 && st.rec <= 0 && frames > 6) break;
     }
