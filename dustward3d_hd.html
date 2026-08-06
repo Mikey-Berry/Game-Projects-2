@@ -647,6 +647,16 @@ const towns = [], buildings = [], vendors = [], beds = [], drops = [], phylacter
    initialization", which takes the game with it rather than failing quietly. */
 const cells = [];
 const CELL_HP = 100;   /* up here for the same reason `cells` is: the town planner uses it */
+/* A town that can afford walls can afford better bars. `order` is a town's grip on itself,
+   so a well-run place holds people and a failing one does not — which makes the same
+   jailbreak a different proposition in Copperhold than in somewhere that has stopped
+   caring, without needing a new mechanism to say so. */
+function cellHpFor(t){
+  if(!t) return CELL_HP;
+  const order = t.order ?? 55;
+  const walled = (t.def && t.def.wall) ? 1.15 : 1;
+  return Math.round(CELL_HP * walled * (0.7 + order / 140));
+}
 function areaClear(x,y,w,h){
   for(let j=y-1;j<y+h+1;j++) for(let i=x-1;i<x+w+1;i++){
     const t = tileAt(i,j);
@@ -802,7 +812,12 @@ function placeTownAt(def, cx0, cy0){
       /* three cells along the back wall. A cell is a place, not a building — whoever is in
          it is held there, exactly the way the middens hold what the Larder-Kin drags off. */
       for(let i=0;i<3;i++) cells.push({x:bx+1.2+i*1.3, y:by+1.4, town:t, holds:0, kind:'town',
-        hp:CELL_HP, maxHp:CELL_HP});
+        hp:cellHpFor(t), maxHp:cellHpFor(t)});
+      /* Somewhere for a warden to stand. Escapes are suppressed by a body in the room, and
+         until this existed nothing ever put one there — a town cell was only as secure as
+         whoever happened to wander past, which made a well-built escape system almost
+         impossible to actually see. */
+      t.gaolPost = {x: bx + 2.4, y: by + 2.6};
     }
   }
   /* town walls: a ring with gates north and south; water makes its own gaps */
@@ -4277,7 +4292,9 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
     dropRep(d.homeTown, 4);
     if(d.civ && !incid){
       deed('civkill', 1, d.homeTown);   /* a stray cleave is not a choice; this was */
-      crime(d.state === 'dead' ? 'murder' : 'assault', d.x, d.y, a);
+      /* A man may be knocked down in a tavern and the town shrugs; the same blow with a
+         blade in your hand is assault. Fists start a brawl, not a war. */
+      crime(d.state === 'dead' ? 'murder' : (wepOf(a) ? 'assault' : 'brawl'), d.x, d.y, a);
     }
   }
   /* `provoked` is a grudge held against YOU specifically — so only your own deliberate blow
@@ -5318,8 +5335,25 @@ function ai(c, dt){
     if(c.follow.state === 'dead'){ c.follow = null; }
     else { if(dist(c.x,c.y,c.follow.x,c.follow.y) > 3) c.moveTarget = {x:c.follow.x, y:c.follow.y}; return; }
   }
-  /* guards return to post */
+  /* THE WATCH. A guard whose town is holding somebody takes the gaol first — one of them,
+     the nearest, so a town does not empty its walls to stare at one prisoner. Everyone else
+     returns to their own post as before. */
   if(c.guard){
+    const t2 = c.homeTown;
+    if(t2 && t2.gaolPost && cells.some(cl => cl.town === t2 && cl.holds)){
+      const gp = t2.gaolPost;
+      const mine = dist(c.x, c.y, gp.x, gp.y);
+      let nearer = false;
+      for(const o of chars){
+        if(o === c || o.faction !== 'town' || o.civ || o.state !== 'ok' || o.homeTown !== t2 || !o.guard) continue;
+        if(dist(o.x, o.y, gp.x, gp.y) < mine){ nearer = true; break; }
+      }
+      if(!nearer){
+        if(dist(c.x, c.y, gp.x, gp.y) > 1.4) c.moveTarget = {x: gp.x, y: gp.y};
+        else c.moveTarget = null;
+        return;
+      }
+    }
     if(dist(c.x,c.y,c.guard.x,c.guard.y) > 1.5) c.moveTarget = {x:c.guard.x, y:c.guard.y};
     return;
   }

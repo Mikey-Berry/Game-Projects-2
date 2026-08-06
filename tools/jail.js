@@ -211,6 +211,41 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     R.escapeeHostile = runner.provoked ? 'hostile and running' : 'NOT HOSTILE';
     R.cellRelocked = pcell.holds === 0 && pcell.hp === pcell.maxHp ? 'cell reset' : 'CELL LEFT BROKEN';
 
+    /* --- 11b. THE WATCH TURNS OUT. The escape mechanic was well built and almost never
+       seen, because nothing ever put a guard at the gaol. A town holding somebody must
+       send exactly one, and that one must hold the cell. --- */
+    const tc = cells.find(c => c.kind === 'town' && c.town && c.town.gaolPost);
+    const tt = tc.town;
+    R.gaolPostExists = !!tt.gaolPost;
+    for (const o of chars) if (o.homeTown === tt && o.guard) { o.x = tt.x - 12; o.y = tt.y - 12; o.moveTarget = null; }
+    const lag = makeChar('Lag', 'bandit', tc.x, tc.y, { atk: 30, tough: 40 });
+    lag.state = 'ok'; chars.push(lag);
+    jail(lag, tc, 9);
+    let atPost = 0;
+    /* ai() decides where to go, physics() walks there. Driving only physics leaves a guard
+       with intent it never formed — the post logic lives in ai. */
+    for (let i = 0; i < 60 * 40; i++) {
+      rebuildCharGrid();
+      for (const o of chars) if (o.faction === 'town' && o.guard && o.homeTown === tt) { ai(o, 1 / 30); physics(o, 1 / 30); }
+    }
+    for (const o of chars) if (o.faction === 'town' && o.guard && o.homeTown === tt &&
+      dist(o.x, o.y, tt.gaolPost.x, tt.gaolPost.y) < 2.5) atPost++;
+    R.wardenTookPost = atPost >= 1 ? atPost + ' on the gaol' : 'NOBODY CAME';
+    R.notTheWholeWatch = atPost <= 2 ? 'rest stayed on their own posts' : 'WHOLE GARRISON ABANDONED THE WALLS';
+
+    /* and with a warden there, the bars hold */
+    tc.hp = 30;
+    for (let i = 0; i < 60 * 40; i++) {
+      rebuildCharGrid();
+      for (const o of chars) if (o.faction === 'town' && o.guard && o.homeTown === tt) { ai(o, 1 / 30); physics(o, 1 / 30); }
+      physics(lag, 1 / 30);
+    }
+    R.wardenHolds = lag.jailedAt ? 'held (hp ' + Math.round(tc.hp) + ')' : 'ESCAPED PAST THE WARDEN';
+
+    /* cell quality varies with how well the town is run */
+    const hps = [...new Set(cells.filter(c => c.kind === 'town').map(c => c.maxHp))];
+    R.cellQuality = hps.length > 1 ? hps.length + ' grades: ' + Math.min(...hps) + '-' + Math.max(...hps) : 'ALL IDENTICAL';
+
     /* --- 12. bar progress survives a save --- */
     const runner2 = makeChar('Runner2', 'bandit', pcell.x, pcell.y, { atk: 30, tough: 40 });
     runner2.state = 'ok'; chars.push(runner2);
