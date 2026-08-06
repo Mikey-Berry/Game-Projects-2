@@ -1011,8 +1011,16 @@ const legFactor = (leg) => leg.severed ? (leg.pros ? prosVal(leg) : 0.16) : leg.
   if(c.hunger <= 0) s *= (c.construct ? .35 : .6);
   return Math.max(0.5, s);
 }
+/* ---------- WHAT THEY ARE HOLDING ----------
+   `c.weapon` is a KEY, and it round-trips through saves. Any key that stops existing —
+   renamed, removed, or written by a build where the item was defined — becomes a landmine:
+   ITEMS[key] is undefined and the next thing to read a field off it throws. That is where
+   "Cannot read properties of undefined (reading 'wt')" came from, out of the whiff sound of
+   all places, which is why it fired at a seemingly random moment mid-fight rather than on
+   load. Everything asks here now, and an unknown key reads as empty hands. */
+function wepOf(c){ return (c && c.weapon && ITEMS[c.weapon]) || null; }
 function wSkillKey(c){
-  const w = c.weapon ? ITEMS[c.weapon] : null;
+  const w = wepOf(c);
   if(!w) return 'martial';
   return w.wt==='pierce' ? 'ranged' : w.wt==='cut' ? 'blades' : 'blunt';
 }
@@ -1412,7 +1420,7 @@ const HEFT = {
 const TWO_HAND = new Set(['w_nod', 'w_kingsfang', 'w_sever', 'w_pyre', 'w_kat',
                           'w_bow', 'w_xbow', 'w_lance']);
 function twoHanded(c){
-  const w = c.weapon ? ITEMS[c.weapon] : null;
+  const w = wepOf(c);
   if(!w) return false;
   return TWO_HAND.has(w.tierOf || c.weapon);
 }
@@ -1462,7 +1470,7 @@ function pickMove(c, t){
   return 'slash';
 }
 function heftOf(c){
-  const w = c.weapon ? ITEMS[c.weapon] : null;
+  const w = wepOf(c);
   if(w && !w.range) return HEFT[w.tierOf || c.weapon] || 1.0;
   if(!w) return (c.big || 1) > 1.3 ? 1.25 : 0.85;   /* a fist is quick. A maw is not. */
   return 1.0;                                        /* a drawn bow has its own clock below */
@@ -1486,7 +1494,7 @@ function skillEase(c){
 }
 function swingHeft(c){ return heftOf(c) * skillEase(c); }
 function atkPower(c){
-  const w = c.weapon ? ITEMS[c.weapon] : null;
+  const w = wepOf(c);
   let d;
   if(w) d = w.dmg;
   else if(c.clawDmg) d = c.clawDmg;
@@ -3885,13 +3893,13 @@ function attack(a, d){
        are most of what gives a fight its rhythm */
     if(d.blocking) AU.block(d.x, d.y, !!(d.armor && METAL_ARMOR.has(d.armor)));
     else {
-      AU.whiff(a.x, a.y, hf >= 1.25 || !!(a.big > 1.2) || !!(a.weapon && ITEMS[a.weapon].wt === 'blunt'));
+      AU.whiff(a.x, a.y, hf >= 1.25 || !!(a.big > 1.2) || (wepOf(a) || {}).wt === 'blunt');
       /* the cost of missing with something heavy, made visible: it goes into the dirt */
       if(hf >= 1.15) addSpecks(a.x + (d.x-a.x)*0.45, a.y + (d.y-a.y)*0.45, '#8c8272', Math.round(2*hf));
     }
     return;
   }
-  const w = a.weapon ? ITEMS[a.weapon] : null;
+  const w = wepOf(a);
   const wt = w ? w.wt : 'blunt';
   if(!w && !a.beast && !a.undead && a.stats.martial >= 15){ d.staggerT = Math.max(d.staggerT, 0.45); d.windup = null; }
   const mvA = MOVES[a.swingMove] || MOVES.slash;
@@ -5925,7 +5933,7 @@ function physics(c, dt){
          cooldown you were free to walk around during — which is why every fight in the game
          had the texture of a click contest. Now: wind, land, recover. All three scale with
          what you are holding. */
-      const mvKey = (c.weapon && !ITEMS[c.weapon].range) || !c.weapon ? pickMove(c, t) : 'slash';
+      const mvKey = !(wepOf(c) || {}).range ? pickMove(c, t) : 'slash';
       const mv = MOVES[mvKey];
       c.swingMove = mvKey;
       /* finding a new one is worth being told about, once */
@@ -10618,14 +10626,26 @@ function computeVision(){
     }
   }
   litIdx.length = 0;
-  /* eyes see farther by day; a storm swallows everything */
+  /* ---------- HOW FAR ANYONE CAN SEE ----------
+     Eyes see farther by day; a storm swallows everything. The base was 11 tiles at night
+     and 19 at noon, set when the world was smaller — against a camera that sits back at 28
+     and shows a good deal more than that, so the fog crowded in tighter than the view and
+     the map felt like it was being read through a letterbox.
+
+     And now that the ranges can actually be climbed, height is worth something: standing on
+     a shoulder shows you the country, which is the oldest reason there is to go up a hill.
+     That makes the climb — slow, and it costs you — a decision rather than a detour. */
   const dayness = clamp(Math.sin((hour-6)/13*Math.PI), 0, 1);
-  const r = (11 + dayness*8) * (weather.storm > 0 ? 0.55 : 1);
+  const base = 17 + dayness*13;
+  const stormK = weather.storm > 0 ? 0.55 : 1;
   for(const c of chars){
     if(c.faction!=='player' || c.state==='dead') continue;
-    stampVision(c.x, c.y, r);
+    let r = base;
+    const h = heightAt(c.x, c.y);
+    if(h > 1.2) r += Math.min(18, (h - 1.2) * 1.9);   /* the view from up there */
+    stampVision(c.x, c.y, r * stormK);
   }
-  for(const b of pBuilds) stampVision(b.x + b.w/2, b.y + b.h/2, 8);
+  for(const b of pBuilds) stampVision(b.x + b.w/2, b.y + b.h/2, 11);
   for(const t of towns) if(t.playerRuled) stampVision(t.x, t.y, t.def.wall ? t.def.wall.r + 3 : 15);
   if(changed || visChanged) fogDirty = true;
   if(visChanged) syncDecorFog();   /* the newly-seen ground raises what stands on it */
@@ -15082,7 +15102,7 @@ function refreshCharPanel(){
   const raceTxt = c.race && c.race !== 'human' ? ' · ' + RACES[c.race].label : '';
   const ageTxt = (c.undead ? (c.lich ? 'ageless' : '—') : Math.floor(c.age) + 'y') + raceTxt + relTxt;
   const ldNow = invWeight(c).toFixed(0), ldCap = invCap(c).toFixed(0);
-  $('equip').innerHTML = `<b>${ageTxt}</b>${c.goal ? ' · goal: '+c.goal : ''} · WPN <b>${c.weapon?ITEMS[c.weapon].name:'Fists'}</b> · ARM <b>${c.armor?ITEMS[c.armor].name:'None'}</b>` +
+  $('equip').innerHTML = `<b>${ageTxt}</b>${c.goal ? ' · goal: '+c.goal : ''} · WPN <b>${(wepOf(c)||{}).name || 'Fists'}</b> · ARM <b>${(c.armor&&ITEMS[c.armor]?ITEMS[c.armor].name:'None')}</b>` +
     (c.pack ? ` · PACK <b>${ITEMS[c.pack].name}</b>` : '') +
     `${giftTxt}${convTxt}<br><span style="color:${+ldNow > +ldCap ? 'var(--rust)' : 'var(--dust)'}">LOAD ${ldNow}/${ldCap}kg${invTxt}</span>`;
   const sr = $('stancerow');
@@ -17526,7 +17546,12 @@ function restore(d){
       smithing:1, crafting:1, farming:1, brewing:1}, s.stats);
     c.gift = s.gift; c.mana = s.mana; c.stance = s.stance||'melee';
     c.parts = s.parts; c.blood = s.blood; c.maxBlood = s.maxBlood; c.hunger = s.hunger;
-    c.weapon = s.weapon; c.armor = s.armor; c.state = s.state; c.undead = !!s.undead;
+    /* Drop gear the build no longer knows about, rather than carrying a key that will
+       throw the first time anything looks at it. Repairing on load beats guarding forever. */
+    c.weapon = (s.weapon && ITEMS[s.weapon]) ? s.weapon : null;
+    c.armor  = (s.armor  && ITEMS[s.armor])  ? s.armor  : null;
+    if(s.weapon && !ITEMS[s.weapon]) console.warn('dropped unknown weapon from save:', s.weapon);
+    if(s.armor && !ITEMS[s.armor]) console.warn('dropped unknown armor from save:', s.armor); c.state = s.state; c.undead = !!s.undead;
     c.beast = s.beast; c.loot = s.loot; c.deadAt = s.deadAt; c.looted = s.looted; c.robbed = s.robbed; c.swag = s.swag ? {gold: s.swag.gold, items: {...s.swag.items}} : null;
     c.guard = s.guard; c.homeTown = s.homeTownI>=0 ? towns[s.homeTownI] : null;
     c.mobileVendor = !!s.mobileVendor;
