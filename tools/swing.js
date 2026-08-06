@@ -40,13 +40,16 @@ const OUT = path.resolve(process.argv[3] || path.join(__dirname, 'swing.png'));
     const S = window.__S || { x: 600, y: 600 };
     chars.length = 0;
     const a = makeChar('Swinger', 'player', S.x, S.y, { atk: 20, blades: 40, blunt: 40, tough: 20 });
-    const d = makeChar('Post', 'bandit', S.x + 0.75, S.y, { def: 6, tough: 90 });
+    /* a bow refuses to fire inside 1.7 tiles — it guards instead. Standing the target at
+       arm's length meant every ranged row came back empty. */
+    window.__R = (ITEMS[wep] && ITEMS[wep].range) ? 5 : 0.75;
+    const d = makeChar('Post', 'bandit', S.x + window.__R, S.y, { def: 6, tough: 90 });
     a.state = d.state = 'ok'; a.weapon = wep; d.armor = 'a_pla';
     a.target = d; a.targetManual = true;
     chars.push(a, d);
     window.__A = a; window.__D = d;
-    camX = S.x + 0.4; camY = S.y; camSX = camX; camSY = camY;
-    camDist = camDistTarget = 5.0; camPitchT = camPitch = 0.34; camYawT = camYaw = 1.35;
+    camX = S.x + 0.25; camY = S.y; camSX = camX; camSY = camY;
+    camDist = camDistTarget = 5.6; camPitchT = camPitch = 0.34; camYawT = camYaw = 1.35;
     hour = 11;                       /* midday: the pose has to be visible to be judged */
     speed = 0;                       /* the world holds still; we step the duel ourselves */
     /* Strip the HUD: the WebGL canvas and nothing else. Hiding the panels one by one with
@@ -70,7 +73,7 @@ const OUT = path.resolve(process.argv[3] || path.join(__dirname, 'swing.png'));
   for (let i = 0; i < 260 && shots.length < 8; i++) {
     const st = await p.evaluate((dt) => {
       const a = window.__A, d = window.__D;
-      d.x = window.__S.x + 0.75; d.y = window.__S.y; d.state = 'ok'; d.staggerT = 0;
+      d.x = window.__S.x + window.__R; d.y = window.__S.y; d.state = 'ok'; d.staggerT = 0;
       for (const k in d.parts) d.parts[k].hp = 100;
       d.blood = 100;
       a.target = d; a.targetManual = true;
