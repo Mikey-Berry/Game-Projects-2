@@ -54,6 +54,17 @@ const WEPS = ['w_plank', 'w_club', 'w_rkat', 'w_kat', 'w_nod', 'w_kingsfang',
     document.head.appendChild(hs);
   });
 
+  await p.waitForTimeout(1500);
+  const diag = await p.evaluate(() => {
+    const a = window.__A, e = charMeshes.get(a.id);
+    const v = new THREE.Vector3(a.x, 1, a.y).project(camera);
+    return { chars: chars.length, hasMesh: !!e, visible: !!(e && e.g && e.g.visible),
+             screenX: +(( v.x*0.5+0.5)*560).toFixed(0), screenY: +((-v.y*0.5+0.5)*470).toFixed(0),
+             camPos: [camera.position.x, camera.position.y, camera.position.z].map(n2 => +n2.toFixed(1)),
+             charAt: [a.x, a.y] };
+  });
+  console.log('diag', JSON.stringify(diag));
+
   const shots = [], names = [];
   for (const wep of WEPS) {
     const rng = await p.evaluate((w) => {
@@ -61,7 +72,6 @@ const WEPS = ['w_plank', 'w_club', 'w_rkat', 'w_kat', 'w_nod', 'w_kingsfang',
       a.weapon = w;
       const r = !!(ITEMS[w] && ITEMS[w].range);
       a.stance = r ? 'ranged' : 'melee';
-      syncChars();
       return r;
     }, wep);
     /* settle the pose, holding the swing open at a fixed point of the beat */
