@@ -71,7 +71,7 @@ const WHO = (process.argv[3] || 'human,scaleborn,gaunt,maw,strider,sixfold').spl
       c.state = 'ok';
       chars.push(c);
       window.__C = c;
-      return c.name + '   big ' + (c.big || 1).toFixed(2) + '  x' + vscaleOf(c).toFixed(2);
+      return c.name + ' [' + (c.race || '-') + ']  big ' + (c.big || 1).toFixed(2) + '  x' + vscaleOf(c).toFixed(2);
     }, who);
     await p.waitForTimeout(2200);
     /* let it walk, so the tail and stride are doing something */
@@ -80,12 +80,26 @@ const WHO = (process.argv[3] || 'human,scaleborn,gaunt,maw,strider,sixfold').spl
         const c = window.__C, S = window.__S;
         c.moveTarget = { x: S.x + 3, y: S.y };
         physics(c, 1 / 30);
+        /* Build the rig by hand. syncChars() is driven off the SIM step, and the harness
+           freezes the world at speed 0 to hold a pose — so the sim never advances and no
+           new rig is ever built. grips.js gets away with it by making one character and
+           only swapping its weapon; every subject here is a fresh body, so every subject
+           after the first rendered as the previous one's leftover mesh. */
+        syncChars(1 / 30);
         if (Math.hypot(c.x - S.x, c.y - S.y) > 1.2) { c.x = S.x; c.y = S.y; }
       });
       await p.waitForTimeout(30);
     }
+    const built = await p.evaluate(() => {
+      const e = charMeshes.get(window.__C.id);
+      return { race: window.__C.race, mesh: !!e, tail: !!(e && e.tail), parts: e ? e.g.children.length : 0,
+               id: window.__C.id, meshCount: charMeshes.size, keys: [...charMeshes.keys()].slice(0, 6),
+               seeAll: (typeof debugSeeAll !== 'undefined') ? debugSeeAll : 'undef',
+               vis: visAt(window.__C.x, window.__C.y), inChars: chars.indexOf(window.__C) };
+    });
     shots.push(await p.screenshot({ clip: { x: 140, y: 40, width: 290, height: 400 } }));
-    labels.push(lab);
+    labels.push(lab + '  ' + (built.tail ? 'TAIL' : 'no-tail') + ' n=' + built.parts);
+    if (!built.mesh) console.log('  WARNING: no rig built —', JSON.stringify(built));
   }
 
   const sheet = await p.evaluate(async ({ imgs, labels }) => {
