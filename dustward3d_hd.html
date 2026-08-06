@@ -640,6 +640,12 @@ function useBandageCharge(){
 function bandageChargesTotal(){ return kitOpen + (stash.bandage||0)*8; }
 
 const towns = [], buildings = [], vendors = [], beds = [], drops = [], phylacteries = [];
+/* Cells live here, beside `beds`, because the town planner fills both while it lays a town
+   out — and the planner runs during module execution. Declared down with the rest of the
+   law, four thousand lines below, it was in its temporal dead zone when the first gaol was
+   placed and the whole script died on the spot: "Cannot access 'cells' before
+   initialization", which takes the game with it rather than failing quietly. */
+const cells = [];
 function areaClear(x,y,w,h){
   for(let j=y-1;j<y+h+1;j++) for(let i=x-1;i<x+w+1;i++){
     const t = tileAt(i,j);
@@ -764,6 +770,7 @@ function placeTownAt(def, cx0, cy0){
     [  5,-17, 4, 4, null, 'SHRINE'],
     [-18,  4, 5, 4, null, 'STABLE'],
     [ 13,-10, 5, 4, null, 'STOREHOUSE'],
+    [ -3,-17, 5, 4, null, 'GAOL'],          /* the watch has to put people somewhere */
     [-18, -6, 4, 4, null, 'HOUSE'],
     [ 13, 12, 4, 4, null, 'HOUSE'],
     [-11, 14, 4, 4, null, 'HOUSE'],
@@ -790,6 +797,10 @@ function placeTownAt(def, cx0, cy0){
         name: vt==='bar' ? 'Barkeep' : vt==='robotics' ? 'Roboticist' : vt==='weapons' ? 'Smith' : 'Trader'});
     } else if(label==='INN'){
       for(let i=0;i<5;i++) beds.push({x:bx+1.2+i*1.1, y:by+1.5, fee: def.undeadFriendly ? 10 : 25, user:null, town:t});
+    } else if(label==='GAOL'){
+      /* three cells along the back wall. A cell is a place, not a building — whoever is in
+         it is held there, exactly the way the middens hold what the Larder-Kin drags off. */
+      for(let i=0;i<3;i++) cells.push({x:bx+1.2+i*1.3, y:by+1.4, town:t, holds:0, kind:'town'});
     }
   }
   /* town walls: a ring with gates north and south; water makes its own gaps */
@@ -895,6 +906,7 @@ function makeChar(name, faction, x, y, o={}){
     bedTarget: null, resting: null, gather: null, attackMove: null, chestTarget: null,
     targetManual: false, blocking: false, fleeT: 0, follow: null, caravan: null, mobileVendor: false,
     job: null, jobNodeT: 0, drag: null, gnaw: null, captured: false,
+    jailedAt: null, jailT: 0, heldKit: null, arrestTarget: null, breakT: 0,
     eater: false, warF: -1, warT: -1, campId: -1, rebelOf: -1, sick: 0, isLeader: -1,
     windup: null, staggerT: 0, flinchT: 0, castT: 0, oppCd: 0, recoverT: 0, recoverDur: 0,
     age: o.age ?? ri(18, 38), goal: null, wasChild: false, legacyTrade: null,
@@ -3829,6 +3841,87 @@ const AU = (() => {
     news(bad){ if(ok('news', 200)) tone('sine', bad ? 420 : 300, bad ? 300 : 560, 0.075, 0.24); },
   };
 })();
+/* ============================================================ THE LAW
+   A town has always been able to hate you — dropRep, provoked, and one warning before the
+   door closes. What it could not do was DEAL with you. Everything short of murder was a
+   number going down, and murder was a fight to the death in the street, because a guard had
+   no third option between ignoring you and killing you.
+
+   Cells give them the third option. `bounty` is what a town wants you for; guards subdue
+   rather than finish anyone with a price on them, and what they take, they put somewhere.
+
+   The severities are deliberately not flat. This is a world where a man may be killed in a
+   tavern brawl and the town shrugs, and where raising him afterwards is the thing they hang
+   people for. */
+const CRIMES = {
+  brawl:      {bounty: 30,  days: 1, label: 'brawling'},
+  theft:      {bounty: 60,  days: 2, label: 'theft'},
+  contraband: {bounty: 90,  days: 2, label: 'carrying what the gate forbids'},
+  assault:    {bounty: 120, days: 3, label: 'assault'},
+  desecrate:  {bounty: 180, days: 4, label: 'desecration'},
+  graverob:   {bounty: 240, days: 5, label: 'robbing the dead'},
+  murder:     {bounty: 400, days: 8, label: 'murder'},
+  formula:    {bounty: 260, days: 5, label: 'working a formula inside the walls'},
+  walkdead:   {bounty: 300, days: 6, label: 'walking the dead through the gate'},
+  raising:    {bounty: 900, days: 20, label: 'raising the dead inside the walls'},
+};
+/* Nobody is wanted for what nobody saw. A crime needs an eye on it — a guard, or a
+   townsperson close enough and alive enough to carry the tale. */
+function witnessNear(x, y, t, r){
+  for(const o of charsNear(x, y, r || 11)){
+    if(o.state !== 'ok' || o.faction !== 'town') continue;
+    if(o.homeTown && o.homeTown !== t) continue;
+    if(dist(o.x, o.y, x, y) > (r || 11)) continue;
+    if(!losBlocked(o.x, o.y, x, y, 0)) return o;
+  }
+  return null;
+}
+function townAt(x, y){
+  for(const t of towns){
+    const r = (t.def.wall ? t.def.wall.r : 20) + 4;
+    if(Math.abs(x - t.x) <= r && Math.abs(y - t.y) <= r) return t;
+  }
+  return null;
+}
+/* Register an offence. Returns the town that wants you for it, or null if nobody saw. */
+function crime(kind, x, y, by){
+  const spec = CRIMES[kind]; if(!spec) return null;
+  const t = townAt(x, y); if(!t) return null;
+  if(t.playerRuled) return null;                 /* your own town does not arrest you */
+  if(by && by.faction !== 'player') return null;
+  /* the undead-friendly places did not care before and do not start now */
+  if(t.def.undeadFriendly && (kind === 'raising' || kind === 'walkdead' || kind === 'formula')) return null;
+  const saw = witnessNear(x, y, t);
+  if(!saw) return null;
+  t.bounty = (t.bounty || 0) + spec.bounty;
+  t.wanted = true;
+  dropRep(t, Math.round(spec.bounty / 12));
+  say(saw, pick(['GUARDS!', 'Stop them!', 'You saw that — everyone saw that!']));
+  log(`${saw.name} saw. ${t.name} wants you for ${spec.label} — bounty ${t.bounty}.`, 'bad');
+  /* the watch turns out */
+  for(const g of chars){
+    if(g.faction !== 'town' || g.state !== 'ok' || g.civ) continue;
+    if(g.homeTown !== t || dist(g.x, g.y, x, y) > 34) continue;
+    g.arrestTarget = by || null;
+    g.provoked = true;
+  }
+  return t;
+}
+/* Walking a host of risen past the gate of a town that has opinions about the dead. Checked
+   on a slow tick rather than per-frame: it is a standing offence, not an instant. */
+let _walkDeadT = 0;
+function walkingDeadCheck(dt){
+  if((_walkDeadT -= dt) > 0) return;
+  _walkDeadT = 4;
+  for(const c of chars){
+    if(c.faction !== 'player' || !c.undead || c.state !== 'ok') continue;
+    const t = townAt(c.x, c.y);
+    if(!t || t.playerRuled || t.def.undeadFriendly) continue;
+    const r = (t.def.wall ? t.def.wall.r : 20);
+    if(Math.abs(c.x - t.x) > r || Math.abs(c.y - t.y) > r) continue;   /* inside the ring */
+    if(crime('walkdead', c.x, c.y, chars.find(o => o.faction === 'player' && !o.undead) || null)) return;
+  }
+}
 /* ============================================================ DAMAGE & MEDICINE */
 function skillCap(c){ return c.lich ? 150 : (c.race==='hollow' && c.hollowTier >= 1 ? 125 : (raceOf(c).cap || 100)); }
 function xpGain(c, stat, amt){
@@ -3989,6 +4082,11 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
   /* how much weapon was behind it. Projectiles and spells come through here too and have
      no heft of their own — they land exactly as they always did. */
   const ahf = a ? heftOf(a) : 1;
+  /* a blow struck to take someone alive stops short of the last of them */
+  if(wantsAlive(a, d)){
+    const worst = Math.min(...Object.values(d.parts).map(pt => pt.hp));
+    if(worst < 18) dmg = Math.min(dmg, 1);
+  }
   if(dmg > 6 && d.flinchT !== undefined) d.flinchT = Math.min(0.34, 0.18 * ahf);
   /* a heavy blow lands like a wall: stagger + shove, blunt worst of all. Weight lowers the
      bar it has to clear, raises the odds once it does, and shoves harder when it takes —
@@ -4030,7 +4128,10 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
   if(d.bossKey && a && a.faction !== 'player') dmg *= 0.15;
   if(a && a.faction==='player' && d.faction==='town' && d.homeTown){
     dropRep(d.homeTown, 4);
-    if(d.civ && !incid) deed('civkill', 1, d.homeTown);   /* a stray cleave is not a choice; this was */
+    if(d.civ && !incid){
+      deed('civkill', 1, d.homeTown);   /* a stray cleave is not a choice; this was */
+      crime(d.state === 'dead' ? 'murder' : 'assault', d.x, d.y, a);
+    }
   }
   /* `provoked` is a grudge held against YOU specifically — so only your own deliberate blow
      may set it. A stray cleave, a splash, or a bandit's arrow is not a declaration of war,
@@ -4093,6 +4194,41 @@ function updateState(c, loud){
     if(c.faction==='player') log(`${c.name} is back on their feet.`, 'good');
   }
 }
+/* ---------- TAKEN ALIVE ----------
+   Guards stop at unconscious when there is a price on someone: a body is worth nothing and
+   a prisoner is worth the bounty. This is what gives the watch a third option between
+   ignoring you and killing you, and it is the whole reason the cells exist. */
+function wantsAlive(a, d){
+  if(!a || a.faction !== 'town' || a.civ) return false;
+  if(d.undead || d.construct || d.beast) return false;
+  const t = a.homeTown;
+  return !!(t && t.bounty > 0 && d.faction === 'player');
+}
+function jail(c, cell, days){
+  c.jailedAt = cell; c.jailT = days;
+  c.captured = false; c.drag = null; c.target = null; c.moveTarget = null;
+  c.x = cell.x; c.y = cell.y; c.floor = 0;
+  cell.holds = c.id;
+  if(c.state === 'down') c.state = 'ok';
+  for(const part of Object.values(c.parts)) part.hp = Math.max(part.hp, 15);
+  c.blood = Math.max(c.blood, 45);
+}
+/* what they take off you at the door, and what you get back at the end of it */
+function stripKit(c){
+  if(c.heldKit) return;
+  c.heldKit = {weapon: c.weapon || null, armor: c.armor || null, inv: Object.assign({}, c.inv || {})};
+  c.weapon = null; c.armor = null;
+  if(c.inv) for(const k of Object.keys(c.inv)) delete c.inv[k];
+}
+function returnKit(c){
+  if(!c.heldKit) return;
+  c.weapon = (c.heldKit.weapon && ITEMS[c.heldKit.weapon]) ? c.heldKit.weapon : null;
+  c.armor  = (c.heldKit.armor  && ITEMS[c.heldKit.armor])  ? c.heldKit.armor  : null;
+  c.inv = c.inv || {};
+  for(const [k, v] of Object.entries(c.heldKit.inv || {})) if(ITEMS[k]) c.inv[k] = (c.inv[k] || 0) + v;
+  c.heldKit = null;
+}
+function freeCell(t){ return cells.find(cl => cl.town === t && !cl.holds); }
 function kill(c, by){
   if(c.state==='dead') return;
   /* the ledger is written here, not inferred from a body that will be gone in two days */
@@ -5470,6 +5606,13 @@ function physics(c, dt){
       } else return;   /* feet planted while the swing is committed */
     }
   }
+  /* IN A CELL. Nothing else reaches you in here: no orders, no fighting, no work. The
+     sentence runs on the calendar, so a day inside is a day the world moves without you. */
+  if(c.jailedAt){
+    c.blocking = false; c.target = null; c.moveTarget = null;
+    c.x = c.jailedAt.x; c.y = c.jailedAt.y;
+    return;
+  }
   if(c.riting){ c.blocking = false; return; }       /* the rite has them. They are not available. */
   if(c.staggerT > 0){ c.staggerT -= dt; return; }   /* stumbling — no orders land */
   c._ox = c.x; c._oy = c.y;   /* remember where the feet were: passing blades punish movers */
@@ -5959,6 +6102,45 @@ function physics(c, dt){
       c.recoverDur = 0.22 * Math.pow(hf, 1.4) * mv.rec;
     }
     return;
+  }
+  /* ---- THE WATCH TAKES THEM IN ----
+     A guard carrying someone walks them to the nearest empty cell and shuts the door. If
+     every cell is full the town has to settle for driving them off, which is its own kind
+     of pressure on a player who keeps getting caught. */
+  if(c.faction === 'town' && !c.civ){
+    if(c.drag){
+      const v = c.drag;
+      if(!chars.includes(v) || v.state === 'dead' || v.jailedAt){ if(v) v.captured = false; c.drag = null; }
+      else {
+        const cell = freeCell(c.homeTown);
+        if(!cell){ v.captured = false; c.drag = null; }
+        else if(travel(c, cell.x, cell.y, dt, 0.9) || dist(c.x, c.y, cell.x, cell.y) < 1.6){
+          const t = c.homeTown;
+          const days = Math.max(1, Math.round((t.bounty || 60) / 80));
+          stripKit(v);
+          jail(v, cell, days);
+          t.bounty = 0; t.wanted = false;
+          for(const g of chars) if(g.arrestTarget === v) g.arrestTarget = null;
+          c.drag = null;
+          if(v.faction === 'player')
+            log(`${v.name} is in the cells at ${t.name}. ${days} day${days>1?'s':''}, and they kept the kit.`, 'bad');
+        }
+        return;
+      }
+    }
+    /* nothing to carry: is there someone on the ground who is owed a cell? */
+    if(!c.drag && c.homeTown && (c.homeTown.bounty || 0) > 0){
+      const dp = chars.find(o => o.state === 'down' && !o.undead && !o.captured && !o.jailedAt &&
+        o.faction === 'player' && dist(c.x, c.y, o.x, o.y) < 5);
+      if(dp && freeCell(c.homeTown)){
+        c.drag = dp; dp.captured = true; c.target = null; c.arrestTarget = null;
+        say(c, pick(['On your feet.', 'You are coming with me.', "That's enough out of you."]));
+        return;
+      }
+      if(c.arrestTarget && chars.includes(c.arrestTarget) && c.arrestTarget.state === 'ok'){
+        c.target = c.arrestTarget; c.targetManual = false;
+      }
+    }
   }
   /* a rescue: go to the heap and cut them out of it */
   if(c.rescueTarget){
@@ -8272,6 +8454,8 @@ function saltBody(c){
   return true;
 }
 function castRaise(c, body){
+  /* the thing they hang people for, done where somebody can see it */
+  crime('raising', c.x, c.y, c);
   const isUnique = !!body.bossKey && !body.beast;   /* named humanoids become lieutenants; monstrous bosses do not */
   if(isUnique){
     const lieuCap = (c.lich ? 2 : 1) + (research.done.necromancy ? 1 : 0);
@@ -9521,6 +9705,7 @@ function update(dt){
   rebuildCharGrid();
   reapPhylacteries();
   riteTick(dt);               /* and somebody is in the middle of something */
+  walkingDeadCheck(dt);       /* and whether anyone is walking the dead past a gate */
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
   if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
   gauntTick(dt / HOUR_SEC);   /* the dark is never empty for long */
@@ -9534,6 +9719,18 @@ function update(dt){
   hour += dh;
   if(hour >= 24){
     hour -= 24; day++;
+    /* a day inside is a day the world moved without you */
+    for(const c of chars){
+      if(!c.jailedAt || c.state === 'dead') continue;
+      if(--c.jailT > 0) continue;
+      const t = c.jailedAt.town, was = c.jailedAt;
+      was.holds = 0; c.jailedAt = null;
+      returnKit(c);
+      c.x = (t ? t.x : c.x) + 2.5; c.y = (t ? t.y : c.y) + 2.5;
+      if(t){ t.wanted = false; t.bounty = 0; }
+      if(c.faction === 'player')
+        log(`${c.name} walks out of the cells at ${t ? t.name : 'the gaol'}. Debt paid, kit returned.`, 'good');
+    }
     advanceFracture(1);              /* the sky gets one day closer, and never further */
     for(const t of towns) dreadTick(t);
     siegeTick();                     /* the door presses on every seat that did not sign */
@@ -11676,6 +11873,7 @@ const BUILD_STYLE = {
   'SHRINE':         {pitch: 1.05, wallH: 2.1, kind: 'civic',   prop: 'banners'},
   'STABLE':         {pitch: 0.45, wallH: 1.9, kind: 'home',    prop: 'crates'},
   'STOREHOUSE':     {pitch: 0,    wallH: 2.3, kind: 'trade',   prop: 'crates'},
+  'GAOL':           {pitch: 0.30, wallH: 2.6, kind: 'civic',   prop: 'bars'},
   'NET LOFT':       {pitch: 0.50, wallH: 2.2, kind: 'trade',   prop: 'sign'},
   'COUNTING HOUSE': {pitch: 0.80, wallH: 2.4, kind: 'civic',   prop: 'banners'},
   'ORCHARD HOUSE':  {pitch: 0.68, wallH: 2.2, kind: 'trade',   prop: 'crates'},
@@ -17368,6 +17566,10 @@ function snapshot(){
     stats:c.stats, gift:c.gift, mana:c.mana, stance:c.stance, parts:c.parts,
     blood:c.blood, maxBlood:c.maxBlood, hunger:c.hunger,
     weapon:c.weapon, armor:c.armor, state:c.state, undead:c.undead,
+    /* A sentence that does not survive a save is a sentence you serve by reloading, and
+       kit held at the gaol would simply vanish. The cell is stored by index. */
+    jailCell: c.jailedAt ? cells.indexOf(c.jailedAt) : -1, jailT: c.jailT || 0,
+    heldKit: c.heldKit || null,
     masterId:c.master ? c.master.id : null, guard:c.guard,
     homeTownI: c.homeTown ? towns.indexOf(c.homeTown) : -1,
     beast:!!c.beast, loot:c.loot||0, deadAt:c.deadAt||0, looted:!!c.looted, robbed:!!c.robbed, swag: c.swag ? {gold: c.swag.gold, items: {...c.swag.items}} : null,
@@ -17548,6 +17750,10 @@ function restore(d){
     c.parts = s.parts; c.blood = s.blood; c.maxBlood = s.maxBlood; c.hunger = s.hunger;
     /* Drop gear the build no longer knows about, rather than carrying a key that will
        throw the first time anything looks at it. Repairing on load beats guarding forever. */
+    c.jailT = s.jailT || 0;
+    c.heldKit = s.heldKit || null;
+    if(s.jailCell >= 0 && cells[s.jailCell]){ c.jailedAt = cells[s.jailCell]; cells[s.jailCell].holds = c.id; }
+    else c.jailedAt = null;
     c.weapon = (s.weapon && ITEMS[s.weapon]) ? s.weapon : null;
     c.armor  = (s.armor  && ITEMS[s.armor])  ? s.armor  : null;
     if(s.weapon && !ITEMS[s.weapon]) console.warn('dropped unknown weapon from save:', s.weapon);
