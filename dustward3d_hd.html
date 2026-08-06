@@ -914,14 +914,19 @@ function makeChar(name, faction, x, y, o={}){
        one. Transient — emplacementTick re-derives `manning` every tick, so neither is saved. */
     manning: null, gunT: 0,
     path: null, pathGoal: null, repathT: 0,
-    hitT: 0, lungeT: 0, lungeDX: 0, lungeDY: 0, lungeDur: 0, lungeK: 0,
+    hitT: 0, looseT: 0, lungeT: 0, lungeDX: 0, lungeDY: 0, lungeDur: 0, lungeK: 0,
     shoveT: 0, shoveDur: 0, shoveK: 0, shoveDX: 0, shoveDY: 0,
     undead: false, master: null,
     atkCd: 0, downT: 0, guard: o.guard||null, homeTown: o.homeTown||null,
     squad: o.squad||null, wanderT: 0, looted: false, vt: o.vt||null,
   };
 }
-function say(c, text){ c.bubble = {text, t:2.6}; }
+/* A said line is read by a person, not by the simulation, so it lasts in seconds of THEIR
+   time. It used to be ticked inside physics() on the scaled sim dt, which meant 2.6 seconds
+   at speed 1 and about half a second at speed 5 — exactly when a fight is busiest and the
+   lines matter most. tickBubbles() below runs off the render clock instead. */
+const BUBBLE_T = 4.2;
+function say(c, text){ c.bubble = {text, t: BUBBLE_T}; }
 function pick(arr){ return arr[ri(0, arr.length-1)]; }
 const chars = [], corpses = [];
 function player(){ return chars.filter(c => c.faction==='player' && c.state!=='dead' && !c.phantom); }
@@ -5330,7 +5335,6 @@ function jobHasWork(c, j){
   }
 }
 function physics(c, dt){
-  if(c.bubble && (c.bubble.t -= dt) <= 0) c.bubble = null;
   if(c.veilT > 0) c.veilT -= dt;
   if(c.markT > 0) c.markT -= dt;              /* a darkbolt's mark fades on its own */
   if(c.heat > 0) c.heat = Math.max(0, c.heat - dt * 0.55);   /* a lance cooling in the hand */
@@ -5383,7 +5387,14 @@ function physics(c, dt){
         /* the swing is spent. Whether it found anything or not, the body has to come back
            for the blade — a miss costs the same recovery a hit does, which is what makes
            committing to a heavy weapon a decision rather than a free upgrade. */
+        if(wu.kind === 'ranged'){
+          /* the loose. Short, but without it the string hand teleported from full draw back
+             to guard between frames and the shot had no follow-through at all. */
+          c.recoverT = c.recoverDur = 0.20;
+          c.looseT = 0.20;
+        }
         if(wu.kind === 'melee'){
+          c.looseT = 0;
           c.recoverT = c.recoverDur || 0.22;
           /* a big weapon moves enough air to be seen doing it. Emitted on the beat the arc
              completes, along the line of the swing, so a nodachi coming through leaves a
@@ -5460,6 +5471,7 @@ function physics(c, dt){
     if(c.flinchT > 0) c.flinchT -= dt;
   if(c.lungeT > 0) c.lungeT -= dt;
   if(c.shoveT > 0) c.shoveT -= dt;
+  if(c.looseT > 0) c.looseT -= dt;
   c.mana = Math.min(maxMana(c), c.mana + dt*0.5);
   if(c.dot) applyDot(c, dt);
   c.blocking = false;
@@ -5925,8 +5937,12 @@ function physics(c, dt){
         }
       }
       const hf = swingHeft(c);   /* what the weapon weighs in THIS hand */
-      c.atkCd = 1.62 * Math.pow(hf, 0.95) / (1 + c.stats.atk*0.011) * (1 + armorPen(c)*0.7)
-              / (!c.weapon && !c.beast && !c.undead ? 1 + c.stats.martial*0.01 : 1);
+      /* `martial` used to get a second bite here, on top of the one it already takes through
+         swingHeft -> skillEase (wSkillKey returns 'martial' for the unarmed). Two mechanisms
+         for one stat, compounding. skillEase is the general one and applies to everybody, so
+         the special case goes: a brawler is quick because the skill lightens the hands, the
+         same way it lightens a nodachi. */
+      c.atkCd = 1.62 * Math.pow(hf, 0.95) / (1 + c.stats.atk*0.011) * (1 + armorPen(c)*0.7);
       /* the wind: the blade goes back, and everyone watching can see where it is going */
       const wind = 0.34 * Math.pow(hf, 1.3) * mv.wind;
       c.windup = {t: wind, kind: 'melee', tgt: t.id, dur: wind, mv: mvKey};
@@ -10446,7 +10462,6 @@ function update(dt){
       c.barkCd = 25;
     }
   }
-  for(const v of vendors) if(v.bubble && (v.bubble.t -= dt) <= 0) v.bubble = null;
   /* carried corpses ride along */
   for(const c of chars){
     if(c.carryList && c.carryList.length){
@@ -10655,6 +10670,11 @@ let camFY = 0;                               /* smoothed storey lift */
 function camRight(){ return [Math.cos(camYaw), -Math.sin(camYaw)]; }
 function camFwd(){ return [-Math.sin(camYaw), -Math.cos(camYaw)]; }
 
+/* real seconds, so a line holds for as long at speed 5 as it does paused */
+function tickBubbles(rdt){
+  for(const c of chars) if(c.bubble && (c.bubble.t -= rdt) <= 0) c.bubble = null;
+  for(const v of vendors) if(v.bubble && (v.bubble.t -= rdt) <= 0) v.bubble = null;
+}
 function fit3d(){
   renderer.setSize(innerWidth, innerHeight);
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -11435,6 +11455,21 @@ function box(parent, w,h,d, col, x,y,z, shadow=true, opts){
   parent.add(m); return m;
 }
 function groundY(x, y){ return Math.max(heightAt(x, y), -0.1); }
+/* ---------- HOW BIG A THING LOOKS ----------
+   `big` is a GAMEPLAY number: it sets pace, heft, how many bodies can crowd a target, and
+   it is written into every save. How large a thing READS is a separate question, and for
+   the tear-born the answer is "larger than you" — they are not people and should not be
+   built to a person's scale.
+
+   Derived from what the creature is rather than stored on it, so there is nothing to
+   persist and nothing that can drift out of step with a loaded save. Purely the model:
+   a Watcher still moves, crowds and staggers exactly as it did. */
+function vscaleOf(c){
+  if(c.bossKey === 'sixfold') return 1.35;   /* the boss stays the biggest thing in the world */
+  if(c.kin === 'strider') return 1.30;       /* eldritch, and it should loom */
+  if(c.gauntKind) return 1.22;               /* the Watchers, whatever shape they wear */
+  return 1;
+}
 
 /* ---------- instanced decor ---------- */
 {
@@ -13439,10 +13474,77 @@ function buildCharMesh(c){
         if(h2 > 0.62) obox(0.12, 0.30, 0.10, hc, 0, 0.10, -0.19, e.headG);   /* a long braid */
       }
     }
+    /* ---------- SCALEBORN ----------
+       They were a human silhouette with two flat green slabs bolted to the shoulder blades,
+       and at any real camera distance that reads as a person wearing a sandwich board. What
+       makes a reptile read as a reptile, in roughly this order: a SNOUT where a flat face
+       should be, a TAIL behind changing the whole outline, a ridge of spines down the back,
+       and only then wings — which are the least of it and were doing all the work.
+
+       Everything hangs off the existing joints, so armour, damage tinting and the animation
+       layers all keep working untouched. */
     if(c.race==='scaleborn' && !c.undead){
-      const wl = obox(0.07, 0.52, 0.3, '#4a5c38', -0.28, 0.32, -0.26, e.spine);
-      const wr = obox(0.07, 0.52, 0.3, '#4a5c38', 0.28, 0.32, -0.26, e.spine);
-      wl.rotation.x = 0.25; wr.rotation.x = 0.25;
+      const scale = skinCol;
+      const dark  = dk(scale, 0.62);
+      const belly = '#' + new THREE.Color(scale).lerp(new THREE.Color('#e8dcc4'), 0.42).getHexString();
+      const membrane = '#' + new THREE.Color(scale).lerp(new THREE.Color('#2a1a18'), 0.45).getHexString();
+
+      /* the snout: a muzzle box off the face, a narrower tip, and a jaw under it */
+      e.boxBody.push(obox(0.175, 0.135, 0.20, scale, 0, 0.205, 0.20, e.headG));
+      e.boxBody.push(obox(0.125, 0.095, 0.10, scale, 0, 0.205, 0.32, e.headG));
+      e.boxBody.push(obox(0.145, 0.055, 0.17, belly, 0, 0.142, 0.20, e.headG));   /* the lower jaw */
+      for(const nx of [-0.045, 0.045])                                            /* nostrils */
+        e.boxBody.push(obox(0.028, 0.028, 0.02, dark, nx, 0.232, 0.365, e.headG));
+      /* a swept crest of horns, back over the skull */
+      for(let i = 0; i < 3; i++){
+        const t2 = i / 2;
+        for(const hx of [-0.085, 0.085]){
+          const hn = obox(0.045 - t2*0.012, 0.055 + t2*0.075, 0.11, dark,
+                          hx, 0.37 + t2*0.03, -0.02 - t2*0.13, e.headG);
+          hn.rotation.x = 0.55 + t2*0.35;
+        }
+      }
+      /* dorsal ridge: spines down the spine, tallest at the shoulders */
+      for(let i = 0; i < 5; i++){
+        const t2 = i / 4;
+        e.boxBody.push(obox(0.05, 0.10 - t2*0.045, 0.075, dark,
+                            0, 0.50 - i*0.135, -0.135 - t2*0.01, e.spine));
+      }
+      /* belly plating — the one thing that keeps the chest from reading as a shirt */
+      for(let i = 0; i < 3; i++)
+        e.boxBody.push(obox(0.30 - i*0.03, 0.075, 0.02, belly, 0, 0.36 - i*0.105, 0.142, e.spine));
+
+      /* THE TAIL. Its own joint chain hanging off the hips, so it can be given a sway in
+         the pose layer — a rigid tail reads worse than no tail at all. */
+      e.tail = [];
+      let par = g, ty = 0.80, tz = -0.16;
+      for(let i = 0; i < 5; i++){
+        const seg = new THREE.Group();
+        seg.position.set(0, i === 0 ? ty : 0, i === 0 ? tz : -0.19);
+        par.add(seg);
+        const w = 0.155 - i*0.026;
+        e.boxBody.push(obox(w, w, 0.20, i > 2 ? dark : scale, 0, 0, -0.10, seg));
+        if(i < 3) e.boxBody.push(obox(0.035, 0.07 - i*0.015, 0.10, dark, 0, w*0.55, -0.10, seg));
+        e.tail.push(seg);
+        par = seg;
+      }
+      e.tail[0].rotation.x = 0.30;
+
+      /* wings last, and folded rather than spread: a membrane over two spars, swept back
+         along the ribs the way a thing that mostly walks would carry them */
+      for(const side of [-1, 1]){
+        const sh = new THREE.Group();
+        sh.position.set(side*0.24, 0.44, -0.10); e.spine.add(sh);
+        sh.rotation.set(0.30, side*0.55, side*0.35);
+        e.boxBody.push(obox(0.055, 0.055, 0.46, dark, 0, 0, -0.22, sh));        /* leading spar */
+        const mem = obox(0.035, 0.30, 0.40, membrane, 0, -0.14, -0.20, sh);
+        mem.rotation.x = -0.18;
+        const low = new THREE.Group();
+        low.position.set(0, 0, -0.44); sh.add(low);
+        low.rotation.set(0, side*0.75, 0);
+        e.boxBody.push(obox(0.045, 0.045, 0.34, dark, 0, 0, -0.17, low));       /* the fold */
+        e.boxBody.push(obox(0.03, 0.22, 0.30, membrane, 0, -0.10, -0.15, low));
+      }
     }
     /* arms: shoulder pivot -> upper arm -> elbow pivot -> forearm (+ fist) */
     const mkArm = (side) => {
@@ -13573,7 +13675,7 @@ function syncChars(dt){
     if(c.shoveT > 0){ const k = (c.shoveT/(c.shoveDur||0.22))*(c.shoveK||0.30); px += c.shoveDX*k; pz += c.shoveDY*k; }
     e.g.position.set(px, gy, pz);
     const ageScale = (!c.undead && !c.beast && c.age < 16) ? 0.55 + (c.age/16)*0.45 : 1;
-    const bs = (c.big || 1) * ageScale;
+    const bs = (c.big || 1) * vscaleOf(c) * ageScale;
     e.g.scale.set(bs * (e.baseSX||1), bs * (e.baseSY||1), bs * (e.baseSX||1));
     /* facing */
     const mvx = c.x - e.lastX, mvz = c.y - e.lastY;
@@ -13728,9 +13830,18 @@ function syncChars(dt){
                jaw and keeps coming across the beat. The old pose extended the LEFT arm as
                the bow arm while the bow mesh hangs off the right elbow, so the string was
                being drawn by the hand that was holding the bow. */
-            armR = -1.34; elbR = -0.10; armRz = -0.12;
-            armL = -0.72 - k*0.30; elbL = -1.55 - k*0.55; armLz = -0.30 - k*0.14;
-            spineY = -0.48; headY = 0.42; spineX = 0.03;
+            /* The string hand starts FORWARD, at the bow, where an arrow is nocked — and
+               travels the whole way back to the jaw across the beat. The previous version
+               began the draw already half-drawn and moved the hand 0.30 of a radian in
+               total, so the pose read as an archer without ever reading as drawing. Eased
+               like the melee wind: most of the travel early, then it holds at full draw,
+               which is where the tension of a bow actually lives. */
+            const dz = 1 - Math.pow(1 - k, 2.6);
+            armR = -1.34 - dz*0.04; elbR = -0.10; armRz = -0.12;
+            armL = -1.20 + dz*0.62;                 /* forward at the bow -> back past the jaw */
+            elbL = -0.30 - dz*2.05;                 /* arm folds up as the elbow rides back */
+            armLz = -0.04 - dz*0.52;                /* and comes across to the string line */
+            spineY = -0.48 - dz*0.06; headY = 0.42; spineX = 0.03 + dz*0.05;
             legL = -0.20; legR = 0.17; kneeL = 0.15; kneeR = 0.12;
             swingDrop = 0.010;
           } else {
@@ -13831,7 +13942,18 @@ function syncChars(dt){
       }
       /* follow-through: the blade is down and out past the target and the body has to come
          back for it. Reads as the weight of the swing more than the swing itself does. */
-      if(c.recoverT > 0 && !c.windup){
+      /* THE LOOSE: bow arm still locked on the target, string hand flown back past the ear.
+         Held for a fifth of a second, which is all it takes to read as a shot rather than a
+         pose change. */
+      if(c.looseT > 0 && !c.windup){
+        const u = clamp(c.looseT / 0.20, 0, 1);
+        armR = -1.34; elbR = -0.10; armRz = -0.12;
+        armL = -0.58 + u*0.10; elbL = -2.35 - u*0.30; armLz = -0.56 - u*0.22;
+        spineY = -0.54; headY = 0.42; spineX = 0.08;
+        legL = -0.20; legR = 0.17; kneeL = 0.15; kneeR = 0.12;
+        swingDrop = 0.010;
+      }
+      else if(c.recoverT > 0 && !c.windup){
         const u = clamp(c.recoverT / (c.recoverDur || 0.22), 0, 1);
         armR = 0.55*u; elbR = -0.15 - u*0.20;
         armL = 0.30 - u*0.20; elbL = -0.35;
@@ -13906,6 +14028,16 @@ function syncChars(dt){
       P(e.spine, 'y', spineY, 11); P(e.headG, 'y', headY, 11);
       /* the whole body turns and sinks. Snapped harder than the limbs during a committed
          swing so the whip reads, eased back the rest of the time. */
+      /* the tail counterweights the body: it lags the stride, and swings harder when the
+         legs are moving. A rigid one reads worse than none at all. */
+      if(e.tail){
+        const amp = moving ? 0.30 : 0.10;
+        for(let i = 0; i < e.tail.length; i++){
+          const lag = Math.sin(e.phase * 0.5 - i * 0.55) * amp * (0.55 + i * 0.16);
+          P(e.tail[i], 'y', lag, 8);
+          P(e.tail[i], 'x', (i === 0 ? 0.30 : 0.05) + Math.sin(e.phase * 0.5 - i * 0.7) * 0.05, 8);
+        }
+      }
       const bodySnap = c.windup ? 26 : (c.staggerT > 0 ? 22 : 12);
       e._yaw = (e._yaw || 0) + (swingYaw - (e._yaw || 0)) * Math.min(1, dt*bodySnap);
       e._drop = (e._drop || 0) + (swingDrop - (e._drop || 0)) * Math.min(1, dt*bodySnap);
@@ -14467,6 +14599,7 @@ function render(){
   }
   const rdt = Math.min(0.05, (now - lastRenderT)/1000);
   lastRenderT = now;
+  tickBubbles(rdt);
   camDist = lerp(camDist, camDistTarget, Math.min(1, rdt*6));
   camYaw += (camYawT - camYaw) * Math.min(1, rdt*8);
   /* the eye must stay above the fog sheet (y=6) at any zoom */
