@@ -71,8 +71,15 @@ const WHO = (process.argv[3] || 'human,scaleborn,gaunt,maw,strider,sixfold').spl
       c.state = 'ok';
       chars.push(c);
       window.__C = c;
-      return c.name + ' [' + (c.race || '-') + ']  big ' + (c.big || 1).toFixed(2) + '  x' + vscaleOf(c).toFixed(2);
+      return c.name + '  x' + ((c.big || 1) * vscaleOf(c)).toFixed(2);
     }, who);
+    await p.evaluate(() => {
+      /* frame to the subject: a Sixfold at a townsfolk's camera distance is mostly off the
+         top of the picture, which tells you nothing about either of them */
+      const c = window.__C, sc = (c.big || 1) * vscaleOf(c);
+      camDistTarget = camDist = 5.0 + sc * 3.4;
+      camY = camSY = window.__S.y + sc * 0.35;
+    });
     await p.waitForTimeout(2200);
     /* let it walk, so the tail and stride are doing something */
     for (let i = 0; i < 22; i++) {
@@ -113,7 +120,7 @@ const WHO = (process.argv[3] || 'human,scaleborn,gaunt,maw,strider,sixfold').spl
     g.fillStyle = '#12100d'; g.fillRect(0, 0, cv.width, cv.height);
     L.forEach((im, i) => {
       g.drawImage(im, i * w, LBL);
-      g.fillStyle = '#ffd479'; g.font = 'bold 15px monospace';
+      g.fillStyle = '#ffd479'; g.font = 'bold 14px monospace';
       g.fillText(labels[i], i * w + 8, 20);
       g.strokeStyle = '#3a342a'; g.strokeRect(i * w + 0.5, LBL + 0.5, w - 1, h - 1);
     });
