@@ -646,6 +646,7 @@ const towns = [], buildings = [], vendors = [], beds = [], drops = [], phylacter
    placed and the whole script died on the spot: "Cannot access 'cells' before
    initialization", which takes the game with it rather than failing quietly. */
 const cells = [];
+const CELL_HP = 100;   /* up here for the same reason `cells` is: the town planner uses it */
 function areaClear(x,y,w,h){
   for(let j=y-1;j<y+h+1;j++) for(let i=x-1;i<x+w+1;i++){
     const t = tileAt(i,j);
@@ -800,7 +801,8 @@ function placeTownAt(def, cx0, cy0){
     } else if(label==='GAOL'){
       /* three cells along the back wall. A cell is a place, not a building — whoever is in
          it is held there, exactly the way the middens hold what the Larder-Kin drags off. */
-      for(let i=0;i<3;i++) cells.push({x:bx+1.2+i*1.3, y:by+1.4, town:t, holds:0, kind:'town'});
+      for(let i=0;i<3;i++) cells.push({x:bx+1.2+i*1.3, y:by+1.4, town:t, holds:0, kind:'town',
+        hp:CELL_HP, maxHp:CELL_HP});
     }
   }
   /* town walls: a ring with gates north and south; water makes its own gaps */
@@ -3853,6 +3855,62 @@ const AU = (() => {
    The severities are deliberately not flat. This is a world where a man may be killed in a
    tavern brawl and the town shrugs, and where raising him afterwards is the thing they hang
    people for. */
+/* ---------- GETTING OUT ----------
+   A sentence you can only sit through is a wait, not a situation, and a prisoner nobody has
+   to guard is a number on a shelf. Both problems have the same answer: the bars are a thing
+   that can be worked at, slowly, by anyone with nothing else to do — and the only reliable
+   cure is somebody standing there watching.
+
+   Deliberately slow. A short sentence is easier served than escaped; it is the long ones,
+   and the prisoners you meant to keep, where this starts to matter. */
+function watchersOn(cell, prisoner){
+  /* who is standing close enough to stop this. For a town cell that is the watch; for one
+     of yours it is anyone of yours who is not themselves locked up. */
+  let n = 0;
+  for(const o of charsNear(cell.x, cell.y, 7)){
+    if(o.state !== 'ok' || o === prisoner || o.jailedAt) continue;
+    if(dist(o.x, o.y, cell.x, cell.y) > 7) continue;
+    if(cell.kind === 'town'){ if(o.faction === 'town' && !o.civ && o.homeTown === cell.town) n++; }
+    else if(o.faction === 'player' && !o.undead) n++;
+  }
+  return n;
+}
+/* returns true if they got out this tick */
+function workTheBars(c, dt){
+  const cell = c.jailedAt;
+  if(!cell) return false;
+  if(cell.hp === undefined){ cell.hp = CELL_HP; cell.maxHp = CELL_HP; }
+  const watch = watchersOn(cell, c);
+  if(watch > 0){
+    /* watched: no progress, and the damage gets made good */
+    cell.hp = Math.min(cell.maxHp, cell.hp + dt * 2.2 * watch);
+    c.barsT = 0;
+    return false;
+  }
+  /* a body with nothing to do but pull at a bar. Strength and stubbornness both count. */
+  const rate = 0.42 + c.stats.atk * 0.012 + c.stats.tough * 0.006 + c.stats.martial * 0.004;
+  cell.hp -= dt * rate;
+  c.barsT = (c.barsT || 0) + dt;
+  if(rnd() < dt * 0.25) addSpecks(cell.x, cell.y + 0.4, '#6b6357', 1);
+  if(cell.hp > 0) return false;
+  /* out */
+  cell.hp = cell.maxHp; cell.holds = 0;
+  const wasTown = cell.kind === 'town' ? cell.town : null;
+  c.jailedAt = null; c.jailT = 0; c.barsT = 0;
+  returnKit(c);                       /* they take what was on the shelf on the way past */
+  c.x = cell.x + 1.4; c.y = cell.y + 1.2;
+  if(c.prisoner){
+    /* one of yours, gone — and they are not going to forget who held them */
+    c.prisoner = false; c.captured = false; c.provoked = true; c.fleeT = 16;
+    log(`${c.name} has broken out of the cells and is running.`, 'bad');
+  } else if(wasTown){
+    /* a jailbreak is its own crime, and the town wants you for that too now */
+    wasTown.bounty = (wasTown.bounty || 0) + 200; wasTown.wanted = true;
+    dropRep(wasTown, 18);
+    log(`${c.name} is out of the cells at ${wasTown.name}. They will want that back.`, 'bad');
+  }
+  return true;
+}
 const CRIMES = {
   brawl:      {bounty: 30,  days: 1, label: 'brawling'},
   theft:      {bounty: 60,  days: 2, label: 'theft'},
@@ -4717,7 +4775,8 @@ function placeStructure(type, tx, ty){
   const bt = BUILD_TYPES[type];
   const b = {type, x:tx, y:ty, w:bt.w, h:bt.h, growth:0};
   if(type==='wall'){ b.hp = 250; b.maxHp = 250; }
-  if(type==='cell') cells.push({x: tx + 0.9, y: ty + 0.9, town: null, holds: 0, kind: 'player', build: b});
+  if(type==='cell') cells.push({x: tx + 0.9, y: ty + 0.9, town: null, holds: 0, kind: 'player', build: b,
+    hp: CELL_HP, maxHp: CELL_HP});
   pBuilds.push(b);
   /* a wall's top is a rampart. It always was, structurally — the game just never let anyone
      stand on it. Reaching it is a separate problem, and the Rampart Stair is the answer. */
@@ -5682,6 +5741,7 @@ function physics(c, dt){
   if(c.jailedAt){
     c.blocking = false; c.target = null; c.moveTarget = null;
     c.x = c.jailedAt.x; c.y = c.jailedAt.y;
+    workTheBars(c, dt);   /* the one thing left to do in here */
     return;
   }
   if(c.riting){ c.blocking = false; return; }       /* the rite has them. They are not available. */
@@ -16909,6 +16969,25 @@ cv.addEventListener('mousedown', e => {
       for(const m of movers){ clearOrders(m); m.target = foe; m.targetManual = true; }
       return;
     }
+    /* someone of yours in a town's cells, and no watch standing over them */
+    const caged = chars.find(c => c.faction === 'player' && c.jailedAt && c.jailedAt.kind === 'town' &&
+      dist(c.x, c.y, wx, wy) < 1.2);
+    if(caged){
+      const watch = watchersOn(caged.jailedAt, caged);
+      if(watch > 0){ log(`The watch is standing over that cell. Deal with them first.`, 'bad'); return; }
+      showCtxMenu(e.clientX, e.clientY, [
+        {label:'BREAK THEM OUT', fn:()=>{
+          const cell = caged.jailedAt, t2 = cell.town;
+          cell.holds = 0; cell.hp = cell.maxHp;
+          caged.jailedAt = null; caged.jailT = 0; caged.barsT = 0;
+          returnKit(caged);
+          caged.x = cell.x + 1.4; caged.y = cell.y + 1.2;
+          if(t2){ t2.bounty = (t2.bounty || 0) + 200; t2.wanted = true; dropRep(t2, 18); }
+          log(`${caged.name} is out. ${t2 ? t2.name : 'The town'} will want that back.`, 'bad');
+        }},
+        {label:'LEAVE THEM TO IT', fn:()=>{}}]);
+      return;
+    }
     /* one of yours, in one of your cells */
     const pris = chars.find(c => c.prisoner && c.jailedAt && c.jailedAt.kind === 'player' &&
       dist(c.x, c.y, wx, wy) < 1.1);
@@ -17685,7 +17764,7 @@ function snapshot(){
     weapon:c.weapon, armor:c.armor, state:c.state, undead:c.undead,
     /* A sentence that does not survive a save is a sentence you serve by reloading, and
        kit held at the gaol would simply vanish. The cell is stored by index. */
-    jailCell: c.jailedAt ? cells.indexOf(c.jailedAt) : -1, jailT: c.jailT || 0,
+    jailCell: c.jailedAt ? cells.indexOf(c.jailedAt) : -1, jailT: c.jailT || 0, barsT: c.barsT || 0,
     heldKit: c.heldKit || null, prisoner: !!c.prisoner, breakT: c.breakT || 0,
     masterId:c.master ? c.master.id : null, guard:c.guard,
     homeTownI: c.homeTown ? towns.indexOf(c.homeTown) : -1,
@@ -17750,6 +17829,7 @@ function snapshot(){
     bastionWalls: bastion ? bastion.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [],
     chars: chars.filter(c => !c.phantom).map(sChar),
     corpseIds: corpses.map(c=>c.id),
+    cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       store: b.store ? {...b.store} : undefined,
       stored: b.stored ? b.stored.map(sChar) : undefined})),
@@ -17769,7 +17849,8 @@ function restore(d){
      every load, and since a sentence is stored as an INDEX into this array, every prisoner
      in the world would wake up in somebody else's cell. */
   for(let i = cells.length - 1; i >= 0; i--) if(cells[i].kind === 'player') cells.splice(i, 1);
-  for(const cl of cells) cl.holds = 0;
+  for(const cl of cells){ cl.holds = 0; cl.hp = CELL_HP; }
+  window._cellHp = d.cellHp || null;   /* applied once the player cells are back below */
   for(const b of d.pBuilds){
     const pb = placeStructure(b.type, b.x, b.y);
     if(b.hp !== undefined && pb.maxHp) pb.hp = b.hp;
@@ -17777,6 +17858,14 @@ function restore(d){
        here, because the save may list the turret before the wall it is bolted to. Take the
        saved answer instead of re-deriving one from a half-built camp. */
     if(isEmpl(b.type) && b.floor !== undefined) pb.floor = b.floor;
+  }
+  /* a night's work on a bar is not undone by loading the game */
+  if(window._cellHp){
+    for(let i = 0; i < cells.length && i < window._cellHp.length; i++){
+      const v = window._cellHp[i];
+      if(typeof v === 'number') cells[i].hp = v;
+    }
+    window._cellHp = null;
   }
   /* Walls are restored by matching the freshly-generated ring against the saved one and
      applying the saved damage (removed segments, current hp). But if the save was made in
@@ -17873,7 +17962,7 @@ function restore(d){
     c.parts = s.parts; c.blood = s.blood; c.maxBlood = s.maxBlood; c.hunger = s.hunger;
     /* Drop gear the build no longer knows about, rather than carrying a key that will
        throw the first time anything looks at it. Repairing on load beats guarding forever. */
-    c.jailT = s.jailT || 0;
+    c.jailT = s.jailT || 0; c.barsT = s.barsT || 0;
     c.heldKit = s.heldKit || null;
     c.prisoner = !!s.prisoner; c.breakT = s.breakT || 0;
     if(s.jailCell >= 0 && cells[s.jailCell]){ c.jailedAt = cells[s.jailCell]; cells[s.jailCell].holds = c.id; }

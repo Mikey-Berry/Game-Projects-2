@@ -49,6 +49,7 @@ the truth was 45%.
 
 | harness | what it checks |
 |---|---|
+| `boot.js` | Does the game still start. Ten seconds, no assertions, one question: did anything throw on load or on starting a world. The single-file layout makes one mistake very easy and very hard to see — a `const` declared beside the code that uses it, thousands of lines below the worldgen that *also* uses it, sits in its temporal dead zone when the world is built, kills the whole script, and makes every other harness fail somewhere unrelated. That happened twice while building the gaol. Run it first. |
 | `towncheck.js` | Town geometry: overlapping footprints, buildings touching walls or standing in water, every door reachable by flood fill from the plaza, wells/flags/vendors/beds/guard posts in the open, town spacing. Takes a path, so it can be run across seeds. |
 | `roundtrip.js` | Save/load fidelity for the Fracture clock, every hall's dread and wake state, shown-proofs, cooldowns, and the whole Compact including the muster roster. |
 | `doorsave.js` | Save/load fidelity for the door, the doorborn, fallen seats and the ruin flag. |

@@ -141,6 +141,45 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     if (v2) ransomPrisoner(v2);
     R.ransomPaid = cats > before ? '+' + (cats - before) + ' cats' : 'NO PAYMENT';
     R.cellFreedAfter = cells.filter(c => c.kind === 'player' && !c.holds).length === 1 ? 'cell free again' : 'CELL STILL FLAGGED';
+
+    /* --- 11. THE BARS. A watched cell must hold; an unwatched one must not. --- */
+    const pcell = cells.find(c => c.kind === 'player');
+    const runner = makeChar('Runner', 'bandit', pcell.x, pcell.y, { atk: 30, tough: 40, martial: 20 });
+    runner.state = 'ok'; chars.push(runner);
+    stripKit(runner); jail(runner, pcell, 0); runner.prisoner = true;
+
+    /* watched: a warden standing on the cell */
+    const warden = makeChar('Warden', 'player', pcell.x + 1, pcell.y, { atk: 20 });
+    warden.state = 'ok'; chars.push(warden);
+    pcell.hp = 40;
+    /* charsNear reads the spatial hash, which update() rebuilds every tick. Driving physics()
+       directly leaves it stale, so the warden was invisible to watchersOn and the cell read
+       as unguarded. */
+    for (let i = 0; i < 60 * 30; i++) { rebuildCharGrid(); physics(runner, 1 / 30); }
+    R.watchedHeld = runner.jailedAt ? 'held (hp ' + Math.round(pcell.hp) + ', repaired)' : 'ESCAPED WHILE WATCHED';
+
+    /* unwatched: EVERYONE of yours walks away. The taker from the seize test was still
+       standing beside the cell and counted, quite correctly, as a guard. */
+    for (const o of chars) {
+      if (o.faction !== 'player' || o.jailedAt) continue;
+      o.x = pcell.x + 60; o.y = pcell.y + 60;
+    }
+    let secs = 0;
+    for (let i = 0; i < 60 * 30 * 12 && runner.jailedAt; i++) { rebuildCharGrid(); physics(runner, 1 / 30); secs += 1 / 30; }
+    R.unwatchedOut = runner.jailedAt ? 'NEVER GOT OUT' : 'out after ' + Math.round(secs) + 's of work';
+    R.escapeeArmed = runner.weapon !== undefined ? 'kit back on the way past' : 'kit lost';
+    R.escapeeHostile = runner.provoked ? 'hostile and running' : 'NOT HOSTILE';
+    R.cellRelocked = pcell.holds === 0 && pcell.hp === pcell.maxHp ? 'cell reset' : 'CELL LEFT BROKEN';
+
+    /* --- 12. bar progress survives a save --- */
+    const runner2 = makeChar('Runner2', 'bandit', pcell.x, pcell.y, { atk: 30, tough: 40 });
+    runner2.state = 'ok'; chars.push(runner2);
+    jail(runner2, pcell, 0); runner2.prisoner = true;
+    pcell.hp = 55;
+    const idx = cells.indexOf(pcell);
+    restore(JSON.parse(JSON.stringify(snapshot())));
+    R.cellHpKept = Math.abs((cells[idx] ? cells[idx].hp : -1) - 55) < 1.5 ?
+      'damage kept (' + Math.round(cells[idx].hp) + ')' : 'DAMAGE RESET to ' + (cells[idx] ? cells[idx].hp : '?');
     return R;
   });
 
@@ -148,8 +187,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   for (const [k, v] of Object.entries(out)) {
     console.log('  ' + k.padEnd(18) + (typeof v === 'object' ? JSON.stringify(v) : v));
   }
-  const bad = JSON.stringify(out).match(/should|LOST|KILLED|WALKED OUT|STILL INSIDE|NOT REGISTERED/);
-  console.log('\n' + (bad ? '*** SOMETHING IS NOT WIRED ***' : 'THE LAW WORKS'));
+  /* Any SHOUTED phrase in a value is a failure marker — an allow-list of known failure
+     words let "ESCAPED WHILE WATCHED" through as a pass. */
+  const bad = Object.values(out).map(v => typeof v === 'object' ? JSON.stringify(v) : String(v))
+    .filter(v => /\b[A-Z]{3,}(\s+[A-Z]{2,})*\b/.test(v) && !/^\d/.test(v));
+  console.log('\n' + (bad.length ? '*** NOT WIRED: ' + bad.join(' | ') + ' ***' : 'THE LAW WORKS'));
   if (errs.length) console.log('errs:', errs.length, errs.slice(0, 4));
   await b.close();
 })();
