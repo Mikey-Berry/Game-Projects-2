@@ -983,6 +983,15 @@ function moveSpeed(c){
   else if(ld > 0.5) s *= 1 - (ld-0.5)*0.5;
   if(c.big > 1) s *= 1 - (c.big - 1) * 0.28;
   if(c.speedMult) s *= c.speedMult;   /* some things were not built to arrive quickly */
+  /* THE GRADE. Mountains are walkable now, and a mountain you cross as fast as a road is
+     not really terrain — the route over a range should be the slow way, chosen because it
+     is short or because someone is waiting for you on the road. The cheap height test comes
+     first so the thousand bodies down on the flat never pay for the gradient lookup. */
+  if(typeof heightAt === 'function' && heightAt(c.x, c.y) > 1.5){
+    const h0 = heightAt(c.x, c.y);
+    const grade = Math.max(Math.abs(heightAt(c.x+1, c.y) - h0), Math.abs(heightAt(c.x, c.y+1) - h0));
+    if(grade > 0.22) s *= 1 - Math.min(0.45, (grade - 0.22) * 0.5);
+  }
   const ll = c.parts['l.leg'], rl = c.parts['r.leg'];
 /* ---------- what a graft is worth ----------
    tier 1 bone graft: it holds you up. Barely.
@@ -10862,27 +10871,117 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
     let lift = 0;
     for(const m of mountains){
       const d = Math.hypot(vx - m.x, vy - m.y);
-      if(d > m.r * 1.35) continue;
-      const t = clamp(1 - d / (m.r * 1.35), 0, 1);
-      /* smoothstep^1.6 gives a rounded shoulder that steepens toward the top */
-      const dome = Math.pow(t * t * (3 - 2 * t), 1.6);
+      if(d > m.r * 1.85) continue;
+      const t = clamp(1 - d / (m.r * 1.85), 0, 1);
+      /* Was smoothstep^1.6 over a 1.35r footprint, which steepened toward the summit and
+         put the whole upper mass past any slope a foot could take — measured at up to 1.81
+         units of rise in a single tile, against a character 1.8 units tall. The same peak
+         height now spreads over a footprint half again as wide, and the exponent no longer
+         piles the gradient into the top. */
+      const dome = Math.pow(t * t * (3 - 2 * t), 1.15);
       /* ridged noise so a peak is not a bald hemisphere */
-      const ridge = (fbm(vx * 0.06, vy * 0.06, 4) - 0.5) * 0.5 * t;
+      const ridge = (fbm(vx * 0.06, vy * 0.06, 4) - 0.5) * 0.32 * t;   /* character, not chaos */
       lift = Math.max(lift, m.peak * dome + m.peak * ridge * 0.4);
     }
     if(lift > 0.01) HV[vy*(W+1)+vx] += lift;
   }
   /* mark the steep heart of each massif impassable: where the ground is high AND the local
      slope is severe, that is a cliff. The flanks stay open so a range can be skirted. */
+  /* ---- A WAY UP, THEN A HONEST GRADE, THEN THE CLIFFS ----
+     Order matters and the first attempt had it wrong: cliffs were decided first and the
+     path carved afterwards, so the carve flattened a corridor through ground that had
+     already been judged, and left a lip along both verges — measured at a 3.16 unit step
+     beside a trail, worse than the 1.81 the whole exercise set out to fix.
+
+     Now: carve the route, relax the whole massif so no single step is beyond a body, and
+     only then ask which faces are still cliff. Every rule reads the same final ground. */
+
+  /* 1. one route per massif, rim to summit, always stepping to the gentlest neighbour that
+        gains ground — which switchbacks across the face instead of running straight up it.
+        A slope rule alone cannot promise a route: ridged noise can ring a summit and seal
+        it, and a peak nobody can stand on is scenery rather than terrain. */
   for(const m of mountains){
-    const R = Math.ceil(m.r * 1.2);
+    let cx = Math.round(m.x + Math.cos(m.x * 1.7) * m.r * 1.7);
+    let cy = Math.round(m.y + Math.sin(m.x * 1.7) * m.r * 1.7);
+    const trail = [];
+    for(let step = 0; step < 400; step++){
+      trail.push([cx, cy]);
+      if(Math.hypot(cx - m.x, cy - m.y) < 1.5) break;
+      let best = null, bestCost = Infinity;
+      for(const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]){
+        const nx = cx + dx, ny = cy + dy;
+        if(nx<2||ny<2||nx>=W-2||ny>=H-2) continue;
+        const closer = Math.hypot(nx - m.x, ny - m.y) - Math.hypot(cx - m.x, cy - m.y);
+        if(closer > -0.05) continue;
+        const rise = Math.abs(heightAt(nx, ny) - heightAt(cx, cy));
+        const cost = rise * 3 + closer;
+        if(cost < bestCost){ bestCost = cost; best = [nx, ny]; }
+      }
+      if(!best) break;
+      cx = best[0]; cy = best[1];
+    }
+    m.trail = trail;
+    /* ease it wide and softly — a narrow hard carve is what cut the trench */
+    for(let i = 1; i < trail.length; i++){
+      const [x, y] = trail[i], [px, py] = trail[i-1];
+      const target = heightAt(px, py) + Math.sign(heightAt(x, y) - heightAt(px, py)) * 0.5;
+      for(let dy=-4; dy<=4; dy++) for(let dx=-4; dx<=4; dx++){
+        const vx = x+dx, vy = y+dy;
+        if(vx<0||vy<0||vx>W||vy>H) continue;
+        const w = 1 - Math.hypot(dx, dy) / 5.5;
+        if(w <= 0) continue;
+        const k = vy*(W+1)+vx;
+        HV[k] += (target - HV[k]) * w * 0.45;
+      }
+    }
+  }
+
+  /* 2. relax the massifs until no vertex stands more than a stride above its neighbours.
+        This is what actually bounds how sudden the land can get, and it cleans up the
+        verges of the carve at the same time. */
+  const RELAX_CAP = 1.45;
+  for(let pass = 0; pass < 4; pass++){
+    for(const m of mountains){
+      const R = Math.ceil(m.r * 1.95);
+      for(let dy=-R; dy<=R; dy++) for(let dx=-R; dx<=R; dx++){
+        const vx = m.x + dx, vy = m.y + dy;
+        if(vx<1||vy<1||vx>=W||vy>=H) continue;
+        const k = vy*(W+1)+vx;
+        let lo = Infinity;
+        for(const [ax, ay] of [[1,0],[-1,0],[0,1],[0,-1]]){
+          const h2 = HV[(vy+ay)*(W+1)+(vx+ax)];
+          if(h2 < lo) lo = h2;
+        }
+        if(HV[k] - lo > RELAX_CAP) HV[k] = lo + RELAX_CAP;
+      }
+    }
+  }
+  _terrMaxY = 0;
+  for(let i=0; i<HV.length; i++) if(HV[i] > _terrMaxY) _terrMaxY = HV[i];
+
+  /* 3. now ask what is cliff, off the ground as it finally stands. The old test summed two
+        CENTRAL differences, each spanning two tiles, and called anything over 1.15 a cliff —
+        about a 0.3 rise per tile, a gentle slope. Every massif in the world was sealed from
+        roughly 40% of its height upward, measured, all fourteen of them, and the
+        `hC > peak*0.72` clause below it never even got a say. */
+  const stepAt = (x, y) => {
+    const h = heightAt(x, y);
+    return Math.max(Math.abs(heightAt(x+1,y) - h), Math.abs(heightAt(x-1,y) - h),
+                    Math.abs(heightAt(x,y+1) - h), Math.abs(heightAt(x,y-1) - h));
+  };
+  const CLIFF = 0.92;   /* units of rise in one tile. A body is about 1.8 tall. */
+  const onTrail = new Set();
+  for(const m of mountains) for(const [x, y] of (m.trail || [])){
+    for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++) onTrail.add((y+dy)*W + (x+dx));
+  }
+  for(const m of mountains){
+    const R = Math.ceil(m.r * 1.95);
     for(let dy=-R; dy<=R; dy++) for(let dx=-R; dx<=R; dx++){
       const x = m.x + dx, y = m.y + dy;
       if(x<1||y<1||x>=W-1||y>=H-1) continue;
-      const hC = heightAt(x, y);
-      if(hC < m.peak * 0.42) continue;                 /* only the upper mass is cliff */
-      const slope = Math.abs(heightAt(x+1,y) - heightAt(x-1,y)) + Math.abs(heightAt(x,y+1) - heightAt(x,y-1));
-      if(slope > 1.15 || hC > m.peak * 0.72){
+      if(heightAt(x, y) < m.peak * 0.30) continue;    /* the low shoulders are never cliff */
+      if(onTrail.has(y*W + x)) continue;              /* the way up stays open */
+      if(stepAt(x, y) > CLIFF){
         if(towns.some(t => dist(t.x, t.y, x, y) < 16)) continue;   /* never wall a town */
         blocked.add(bkey(x, y, 0));
         /* The peaks are raised after baseBlocked was taken, and restore() rebuilds the world
@@ -10892,6 +10991,15 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
         baseBlocked.add(bkey(x, y, 0));
         if(terr[y*W+x] !== 3) terr[y*W+x] = 2;         /* reads as rock in the splat */
       }
+    }
+  }
+  /* and make sure the route itself is open, whatever else was decided */
+  for(const m of mountains) for(const [x, y] of (m.trail || [])){
+    for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++){
+      const tx = x+dx, ty = y+dy;
+      if(tx<1||ty<1||tx>=W-1||ty>=H-1) continue;
+      blocked.delete(bkey(tx, ty, 0));
+      baseBlocked.delete(bkey(tx, ty, 0));
     }
   }
 })();

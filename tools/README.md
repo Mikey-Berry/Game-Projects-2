@@ -61,6 +61,7 @@ the truth was 45%.
 | `shaping.js` | Binds the same recipe at three shapes and reports what actually came out — a Bone Golem should be seven times slower than a Skittering one, not five percent. Also checks promotion is gated on kills and frees a binding slot. |
 | `names.js` | Name collision rate across a fresh world, and samples of what the generator produced. |
 | `decay.js` | The corpse economy end to end: the stage ladder and how long each lasts in real time, what each stage raises into, that salt holds a body indefinitely, that a mule hauls three and a person one, and that all of it round-trips through a save. |
+| `terrain.js` | What the mountains are like to walk on: rise per tile across each massif, how high you can actually climb against how high it goes, whether any range cuts the map in two, and whether the cliffs and the routes up both survive a save. This is the probe that found all fourteen massifs sealed from 40% of their height upward. |
 | `corpses.js` | How long a corpse actually lasts in real minutes at each game speed, how many things are competing for it, and what a body is worth once you have one. Answers "am I imagining that bodies vanish too fast" with a number. |
 
 ### Balance
