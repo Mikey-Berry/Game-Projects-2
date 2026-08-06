@@ -37,6 +37,11 @@ const WHO = (process.argv[3] || 'human,scaleborn,gaunt,maw,strider,sixfold').spl
     camX = window.__S.x; camY = window.__S.y; camSX = camX; camSY = camY;
     camDist = camDistTarget = 8.5; camPitchT = camPitch = 0.30; camYawT = camYaw = 2.95;
     hour = 11; speed = 0;
+    /* Non-player characters are skipped by the renderer unless their tile is IN SIGHT, and
+       emptying `chars` removes every player unit, so nothing holds the fog open and every
+       subject renders as bare ground. Third harness in this project to come back blank for
+       a reason that was not the camera; the game has a flag for exactly this. */
+    debugSeeAll = true;
     renderer.domElement.id = '__gl';
     const hs = document.createElement('style'); hs.id = '__hide';
     hs.textContent = 'body > *:not(#__gl){display:none !important}';
