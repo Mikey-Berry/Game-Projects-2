@@ -64,6 +64,12 @@ const WHO = (process.argv[3] || 'human,scaleborn,gaunt,maw,strider,sixfold').spl
         c = spawnGaunt ? null : null;
         c = makeChar(GAUNTS[w].name, 'gaunt', S.x, S.y, { atk: 20 });
         c.beast = true; c.gauntKind = w; c.big = GAUNTS[w].big; c.clawDmg = GAUNTS[w].claw;
+      } else if (w === 'ash') {
+        c = makeChar('Sister Ash', 'exile', S.x, S.y, { atk: 50, def: 50, armr: 60 });
+        c.bossKey = 'ash'; c.weapon = 'w_pyre'; c.armor = 'a_pla'; c.sex = 'f';
+      } else if (w === 'baroness') {
+        c = makeChar('The Red Baroness', 'bandit', S.x, S.y, { atk: 40, def: 42, armr: 50 });
+        c.bossKey = 'baroness'; c.weapon = 'w_kat'; c.armor = 'a_baroness'; c.sex = 'f';
       } else {
         c = makeChar('Townsfolk', 'town', S.x, S.y, { atk: 10 });
         c.race = w; c.weapon = 'w_kat';
@@ -99,13 +105,13 @@ const WHO = (process.argv[3] || 'human,scaleborn,gaunt,maw,strider,sixfold').spl
     }
     const built = await p.evaluate(() => {
       const e = charMeshes.get(window.__C.id);
-      return { race: window.__C.race, mesh: !!e, tail: !!(e && e.tail), parts: e ? e.g.children.length : 0,
+      return { race: window.__C.race, mesh: !!e, tail: !!(e && (e.tail || e.cape)), parts: e ? e.g.children.length : 0,
                id: window.__C.id, meshCount: charMeshes.size, keys: [...charMeshes.keys()].slice(0, 6),
                seeAll: (typeof debugSeeAll !== 'undefined') ? debugSeeAll : 'undef',
                vis: visAt(window.__C.x, window.__C.y), inChars: chars.indexOf(window.__C) };
     });
     shots.push(await p.screenshot({ clip: { x: 140, y: 40, width: 290, height: 400 } }));
-    labels.push(lab + '  ' + (built.tail ? 'TAIL' : 'no-tail') + ' n=' + built.parts);
+    labels.push(lab);
     if (!built.mesh) console.log('  WARNING: no rig built —', JSON.stringify(built));
   }
 
