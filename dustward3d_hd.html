@@ -1385,6 +1385,23 @@ const HEFT = {
   w_plank: 0.85, w_rkat: 0.90, w_kat: 1.00, w_club: 1.15, w_pyre: 1.20,
   w_kingsfang: 1.35, w_sever: 1.40, w_nod: 1.60,
 };
+/* ---------- WHAT NEEDS BOTH HANDS ----------
+   The rig has always had full Group joints at every shoulder, hip and elbow, but the pose
+   code only ever wrote `.rotation.x` — so no arm could ever come ACROSS the body, and
+   therefore nothing could ever be held in two hands. Everything in the game was carried
+   one-handed at arm's length, including a nodachi, which is a weapon defined by needing
+   both. The off-hand just hung there.
+
+   `pos` on a bow or crossbow only moves the mesh; what sells a stance is where the hands
+   are. The weapon mesh is parented to the RIGHT elbow, which is why the bow arm below is
+   the right one and the left hand is the one that draws. */
+const TWO_HAND = new Set(['w_nod', 'w_kingsfang', 'w_sever', 'w_pyre', 'w_kat',
+                          'w_bow', 'w_xbow', 'w_lance']);
+function twoHanded(c){
+  const w = c.weapon ? ITEMS[c.weapon] : null;
+  if(!w) return false;
+  return TWO_HAND.has(w.tierOf || c.weapon);
+}
 function heftOf(c){
   const w = c.weapon ? ITEMS[c.weapon] : null;
   if(w && !w.range) return HEFT[w.tierOf || c.weapon] || 1.0;
@@ -13470,6 +13487,14 @@ function syncChars(dt){
          through the swing, and how far the body has sunk into it. Applied past the joints. */
       let swingYaw = 0, swingDrop = 0;
       const hv = Math.min(1.35, heftOf(c));   /* raw weapon weight — what the EYE should read */
+      /* the channels a fighting stance needs and a standing one never did: arms across the
+         body, feet apart, and a torso bladed to the target independently of the hips. */
+      if(e._hipZL === undefined){ e._hipZL = e.legL.rotation.z; e._hipZR = e.legR.rotation.z; }
+      let armLz = 0, armRz = 0, legLz = e._hipZL, legRz = e._hipZR, spineY = 0, headY = 0;
+      const th = twoHanded(c);
+      const wI = c.weapon ? ITEMS[c.weapon] : null;
+      const bow = !!(wI && wI.range && !wI.lance && (wI.tierOf || c.weapon) === 'w_bow');
+      const gun = !!(wI && wI.range && !bow);
       /* the robed dead do not walk, they arrive: no stride, no swing. The legs are under
          the robe and the arms hang until there is something worth raising them for —
          every layer below this one (fight, windup, block, cast, stagger) still overrides. */
@@ -13479,20 +13504,52 @@ function syncChars(dt){
         legL = 0; legR = 0; kneeL = 0; kneeR = 0;
         spineX = idle;
       }
-      /* fight stance: weapon side coiled, off-hand forward */
+      /* THE GUARD. Not "arms in a slightly different place" — a stance: bladed to the
+         target so the shoulder line points at them, knees bent, one foot forward and one
+         back, weight down. This is the pose the eye spends most of a fight looking at, and
+         it was a person standing bolt upright with their feet together. */
       if(inFight && !c.windup){
-        armR = -0.5; elbR = -0.7;
-        armL = 0.35; elbL = -0.5;
-        spineX = 0.12;
+        spineX = 0.16; spineY = -0.34; headY = 0.26;     /* body turns, eyes stay on them */
+        legL = -0.30; legR = 0.26; kneeL = 0.34; kneeR = 0.28;
+        legLz = e._hipZL - 0.11; legRz = e._hipZR + 0.11;
+        swingDrop = 0.085;                                /* sunk into it */
+        if(bow){
+          /* an archer stands side-on: bow arm out and locked, draw hand light at the jaw */
+          armR = -1.28; elbR = -0.12; armRz = -0.12;
+          armL = -0.80; elbL = -1.75; armLz = -0.34;
+          spineY = -0.58; headY = 0.48;
+        } else if(gun){
+          /* a crossbow is shouldered and braced with the off hand under the stock */
+          armR = -1.24; elbR = -0.48; armRz = -0.06;
+          armL = -1.14; elbL = -0.60; armLz = 0.46;
+          spineY = -0.40; headY = 0.32;
+        } else {
+          armR = -0.62; elbR = -0.88;
+          armL = 0.30; elbL = -0.55;
+        }
       }
       /* windup -> strike arc, driven by the sim's own timer */
       if(c.windup){
         const k = 1 - c.windup.t / c.windup.dur;   /* 0 -> 1 across the swing */
         if(c.windup.kind === 'ranged'){
-          /* draw: both hands to the bow, leaning in */
-          armL = -1.35; elbL = -0.1;
-          armR = -1.1 + k*0.25; elbR = -1.2 + k*1.0;
           spineX = 0.06; headX = -0.05;
+          legL = -0.28; legR = 0.24; kneeL = 0.30; kneeR = 0.24;
+          legLz = e._hipZL - 0.11; legRz = e._hipZR + 0.11;
+          swingDrop = 0.07;
+          if(bow){
+            /* THE DRAW. Bow arm locked out and still; the string hand comes back to the
+               jaw and keeps coming across the beat. The old pose extended the LEFT arm as
+               the bow arm while the bow mesh hangs off the right elbow, so the string was
+               being drawn by the hand that was holding the bow. */
+            armR = -1.34; elbR = -0.10; armRz = -0.12;
+            armL = -0.72 - k*0.30; elbL = -1.55 - k*0.55; armLz = -0.30 - k*0.14;
+            spineY = -0.62; headY = 0.50;
+          } else {
+            /* shouldered: it comes up to the eye and settles */
+            armR = -1.18 - k*0.14; elbR = -0.44 - k*0.10; armRz = -0.06;
+            armL = -1.08 - k*0.12; elbL = -0.58 - k*0.06; armLz = 0.46;
+            spineY = -0.44; headY = 0.36;
+          }
         } else if(k < 0.62){
           /* THE WIND. Eased so the blade travels fast off the mark and then SETTLES —
              it arrives at the top of the arc early and hangs there for the rest of the
@@ -13504,7 +13561,9 @@ function syncChars(dt){
           armL = 0.35 + e1*0.34; elbL = -0.5 - e1*0.20;
           spineX = 0.12 - e1*0.20;
           headX = -e1*0.06;                       /* eyes stay on them while the body coils */
-          swingYaw = -e1 * 0.46 * hv;             /* wind the torso AWAY from the target */
+          swingYaw = -e1 * 0.17 * hv;             /* the FEET barely turn... */
+          spineY = -0.34 - e1*0.26;                 /* ...the torso does the winding */
+          headY = 0.30 + e1*0.22;                   /* and the eyes stay on them throughout */
           legL = -0.10*e1; legR = 0.18*e1; kneeR = 0.26*e1;   /* weight onto the back foot */
           swingDrop = 0.035 * e1 * hv;
         } else {
@@ -13517,7 +13576,9 @@ function syncChars(dt){
           armL = 0.69 - e2*0.56; elbL = -0.70 + e2*0.35;
           spineX = -0.08 + e2*0.44;
           headX = e2*0.14;                        /* the head follows the blade down */
-          swingYaw = (-0.46 + e2*0.78) * hv;
+          swingYaw = (-0.17 + e2*0.30) * hv;
+          spineY = -0.60 + e2*0.78;                 /* whip through and past */
+          headY = 0.52 - e2*0.46;
           legL = -0.10 + e2*0.36; legR = 0.18 - e2*0.34; kneeL = e2*0.32; kneeR = 0.26 - e2*0.26;
           swingDrop = (0.035 + e2*0.105) * hv;
         }
@@ -13532,13 +13593,25 @@ function syncChars(dt){
         legL = -0.18*u; legR = 0.14*u; kneeR = 0.30*u;
         /* still turned through from the follow-through, and still low. The body unwinds
            back to guard over the whole beat instead of snapping there. */
-        swingYaw = 0.34 * u * hv;
-        swingDrop = 0.085 * u * hv;
+        swingYaw = 0.13 * u * hv;
+        spineY = 0.18*u - 0.34*(1-u);               /* unwinds back to the guard */
+        headY = 0.26;
+        swingDrop = 0.085 * u * hv + 0.06;
+      }
+      /* BOTH HANDS ON IT. Applied after the arc rather than inside each branch, so the grip
+         holds through guard, wind, commit and follow-through alike — a two-handed weapon
+         that reverts to one hand the moment it is swung is worse than one that never had
+         the grip at all. The hands sit apart on the haft, which is how a two-handed grip
+         actually works, so the arms do not have to meet at a point the rig cannot reach. */
+      if(th && !bow && !gun && !c.blocking && (inFight || c.windup || c.recoverT > 0)){
+        armL = armR + 0.14; elbL = elbR - 0.28;
+        armLz = 0.56; armRz = -0.22;
       }
       /* block: shield up, braced */
       if(c.blocking && !c.windup){
-        armL = -1.2; elbL = -0.9;
-        spineX = 0.16;
+        armL = -1.2; elbL = -0.9; armLz = 0;   /* the shield hand leaves the haft */
+        spineX = 0.16; spineY = -0.22; headY = 0.18;
+        legL = -0.26; legR = 0.22; kneeL = 0.30; kneeR = 0.26;
       }
       /* cast: off-hand thrust out */
       if(c.castT > 0){
@@ -13581,6 +13654,10 @@ function syncChars(dt){
       P(e.legL, 'x', legL); P(e.legR, 'x', legR);
       P(e.kneeL, 'x', kneeL); P(e.kneeR, 'x', kneeR);
       P(e.spine, 'x', spineX, 10); P(e.headG, 'x', headX, 10);
+      /* the channels that make it a stance rather than a posture */
+      P(e.armL, 'z', armLz, snap); P(e.armR, 'z', armRz, snap);
+      P(e.legL, 'z', legLz); P(e.legR, 'z', legRz);
+      P(e.spine, 'y', spineY, 11); P(e.headG, 'y', headY, 11);
       /* the whole body turns and sinks. Snapped harder than the limbs during a committed
          swing so the whip reads, eased back the rest of the time. */
       const bodySnap = c.windup ? 26 : (c.staggerT > 0 ? 22 : 12);
