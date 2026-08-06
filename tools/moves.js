@@ -51,7 +51,7 @@ const KEYS = ['slash', 'overhead', 'thrust', 'cleave', 'rising', 'spin'];
     hs.textContent = 'body > *:not(#__gl){display:none !important}';
     document.head.appendChild(hs);
     /* top-level functions are window properties here, so the chooser can be pinned */
-    window.__realPick = pickMove;
+    window.__realPick = pickMove;   /* put back after the sweep — see below */
   }, WEP);
 
   const DT = 1 / 30, rows = [];
@@ -83,6 +83,10 @@ const KEYS = ['slash', 'overhead', 'thrust', 'cleave', 'rising', 'spin'];
     }
     rows.push({ key, shots });
   }
+
+  /* unpin the chooser: anything added after this loop would otherwise silently run with
+     whichever move the last row happened to force */
+  await p.evaluate(() => { if (window.__realPick) window.pickMove = window.__realPick; });
 
   const labels = await p.evaluate(ks => ks.map(k => {
     const m = MOVES[k];

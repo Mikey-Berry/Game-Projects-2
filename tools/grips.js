@@ -63,7 +63,13 @@ const WEPS = ['w_plank', 'w_club', 'w_rkat', 'w_kat', 'w_nod', 'w_kingsfang',
              camPos: [camera.position.x, camera.position.y, camera.position.z].map(n2 => +n2.toFixed(1)),
              charAt: [a.x, a.y] };
   });
-  console.log('diag', JSON.stringify(diag));
+  /* Only speak up when something is off. This check exists because the first version of
+     this sheet came back with eleven empty cells and the camera got blamed twice; the
+     character was dead centre the whole time and the meshes simply had not been built yet. */
+  if (!diag.hasMesh || !diag.visible || diag.screenX < 150 || diag.screenX > 420 ||
+      diag.screenY < 70 || diag.screenY > 410) {
+    console.log('WARNING: subject not framed —', JSON.stringify(diag));
+  }
 
   const shots = [], names = [];
   for (const wep of WEPS) {
