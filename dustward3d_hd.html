@@ -1402,6 +1402,51 @@ function twoHanded(c){
   if(!w) return false;
   return TWO_HAND.has(w.tierOf || c.weapon);
 }
+/* ---------- WHAT KIND OF SWING ----------
+   One arc, thrown at everything, forever: the same overhead chop whether the target was a
+   lone armoured knight or the middle of a press of six. The cleave that catches bystanders
+   already existed in the resolution, but nothing about the animation ever admitted it, so
+   the most interesting thing the combat did was invisible.
+
+   A move decides four things at once — how long the wind is, how much of the blow lands,
+   how many bodies the arc can take, and how wide that arc is — and the animation is built
+   from the same record, so what you see is what resolved. `skill` is the weapon skill it
+   takes before a fighter finds it at all, which is the Kenshi shape: the same sword gets
+   more dangerous in the hand as much as on paper. */
+const MOVES = {
+  slash:   {label:'slash',    wind:1.00, rec:1.00, dmg:1.00, extra:1, arc:0.95, stag:1.00, skill:0},
+  overhead:{label:'overhand', wind:1.18, rec:1.15, dmg:1.18, extra:0, arc:0.50, stag:1.35, skill:0},
+  thrust:  {label:'thrust',   wind:0.80, rec:0.85, dmg:0.94, extra:0, arc:0.35, stag:0.70, skill:0, ap:0.25},
+  cleave:  {label:'wide cleave', wind:1.12, rec:1.22, dmg:0.88, extra:2, arc:1.30, stag:1.10, skill:25,
+            note:'one stroke, and the whole rank in front of it'},
+  rising:  {label:'rising cut',  wind:0.95, rec:1.05, dmg:1.06, extra:1, arc:0.80, stag:1.18, skill:45,
+            note:'up through the guard, where nobody is looking'},
+  spin:    {label:'turning cut', wind:1.28, rec:1.38, dmg:0.84, extra:4, arc:3.15, stag:1.22, skill:70,
+            note:'the whole body around, and everything within reach of it'},
+};
+/* Chosen by the situation first and the dice second — a fighter surrounded reaches for the
+   wide stroke, and one facing a single man in plate puts the point in instead. */
+function pickMove(c, t){
+  const sk = c.stats[wSkillKey(c)] || 0;
+  let crowd = 0;
+  for(const o of charsNear(c.x, c.y, 2.1)){
+    if(o !== c && o.state === 'ok' && hostile(c, o) && dist(c.x, c.y, o.x, o.y) < 1.9) crowd++;
+  }
+  const plated = t && t.armor && (ITEMS[t.armor].def || 0) >= 0.30;
+  const hv = heftOf(c);
+  const w = [];
+  const add = (k, n2) => { if(sk >= MOVES[k].skill && n2 > 0) w.push([k, n2]); };
+  add('slash', 10);
+  add('overhead', 6 + (hv >= 1.2 ? 7 : 0) + (crowd <= 1 ? 3 : 0));
+  add('thrust', 5 + (plated ? 11 : 0) + (crowd <= 1 ? 3 : 0));
+  add('cleave', crowd >= 2 ? 9 + crowd * 4 : 2);
+  add('rising', 6 + (plated ? 3 : 0));
+  add('spin', crowd >= 3 ? 8 + crowd * 4 : (crowd >= 2 ? 3 : 0));
+  let tot = 0; for(const [, n2] of w) tot += n2;
+  let r = rnd() * tot;
+  for(const [k, n2] of w){ r -= n2; if(r <= 0) return k; }
+  return 'slash';
+}
 function heftOf(c){
   const w = c.weapon ? ITEMS[c.weapon] : null;
   if(w && !w.range) return HEFT[w.tierOf || c.weapon] || 1.0;
@@ -3835,7 +3880,8 @@ function attack(a, d){
   const w = a.weapon ? ITEMS[a.weapon] : null;
   const wt = w ? w.wt : 'blunt';
   if(!w && !a.beast && !a.undead && a.stats.martial >= 15){ d.staggerT = Math.max(d.staggerT, 0.45); d.windup = null; }
-  let dmg = atkPower(a) * (0.75 + rnd()*0.5);
+  const mvA = MOVES[a.swingMove] || MOVES.slash;
+  let dmg = atkPower(a) * (0.75 + rnd()*0.5) * mvA.dmg;
   /* BURNING EDGE: fire on the weapon hits harder, and leaves a small burn */
   if(a.weaponFlame && isConcentrating(a, 'firebrand')){
     dmg *= 1.35;
@@ -3851,8 +3897,9 @@ function attack(a, d){
   xpGain(d, 'tough', 0.06);
   const pk = pickPart();
   const part = d.parts[pk];
-  if(part.severed){ return applyDamage(a, d, 'chest', dmg, wt, isPlayerFight); }
-  applyDamage(a, d, pk, dmg, wt, isPlayerFight);
+  /* a driven point finds the gap a swung edge cannot */
+  if(part.severed){ return applyDamage(a, d, 'chest', dmg, wt, isPlayerFight, false, false, mvA.ap || 0); }
+  applyDamage(a, d, pk, dmg, wt, isPlayerFight, false, false, mvA.ap || 0);
 }
 /* ---------- WHAT THE ARMOUR IS MADE OF, AND WHAT IS COMING AT IT ----------
    Armour used to be a single `def` number, and it was consulted only by attack(). Every
@@ -3943,7 +3990,7 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
        cuts the damage that has to clear it. Weighting it a third time here took a veteran
        from 65% staggered to 0%, which is not a defence, it is an immunity. */
     const brace = clamp((d.armor ? d.stats.armr * 0.004 : 0) + d.stats.tough * 0.0022, 0, 0.55);
-    const stChance = clamp((wt === 'blunt' ? 0.65 : 0.4) * ahf, 0.1, 0.95) * (d.blocking ? 0.55 : 1) * (1 - brace);
+    const stChance = clamp((wt === 'blunt' ? 0.65 : 0.4) * ahf * ((MOVES[a.swingMove] || MOVES.slash).stag), 0.1, 0.95) * (d.blocking ? 0.55 : 1) * (1 - brace);
     if(rnd() < stChance){
       d.staggerT = Math.max(d.staggerT || 0, 0.35 * clamp(ahf, 0.8, 1.5) * (1 - clamp(d.stats.tough * 0.002, 0, 0.3)));
       d.windup = null; d.recoverT = 0;
@@ -5319,7 +5366,7 @@ function physics(c, dt){
   if(c.state !== 'ok'){ c.windup = null; c.recoverT = 0; return; }
   /* a committed swing: rooted, then it lands — or whiffs if the target slipped away */
   if(c.windup){
-    if(c.staggerT > 0){ c.windup = null; c.recoverT = 0; }   /* reeling is not recovering */
+    if(c.staggerT > 0){ c.windup = null; c.recoverT = 0; c.swingMove = null; }   /* reeling is not recovering */
     else {
       c.windup.t -= dt;
       if(c.windup.t <= 0){
@@ -5353,8 +5400,11 @@ function physics(c, dt){
             /* the blade doesn't stop at the first body: cleave through the arc */
             const wpn = c.weapon ? ITEMS[c.weapon] : null;
             if(wpn && !wpn.range){
-              const heavy = wpn.dmg >= 16;
-              const maxExtra = heavy ? 2 : 1;
+              /* the move decides the reach of the stroke, not the weapon's damage tier —
+                 a turning cut takes the ring; a thrust takes one man */
+              const mvR = MOVES[wu.mv] || MOVES.slash;
+              const maxExtra = mvR.extra + (wpn.dmg >= 16 ? 1 : 0);
+              const arcR = mvR.arc;
               const aim = Math.atan2(tgt.y - c.y, tgt.x - c.x);
               let struck = 0;
               for(const o of charsNear(c.x, c.y, 1.9)){
@@ -5366,7 +5416,7 @@ function physics(c, dt){
                 let ang = Math.atan2(o.y - c.y, o.x - c.x) - aim;
                 while(ang > Math.PI) ang -= Math.PI*2;
                 while(ang < -Math.PI) ang += Math.PI*2;
-                if(Math.abs(ang) > 0.95) continue;
+                if(Math.abs(ang) > arcR) continue;
                 if(hostile(c, o)){
                   applyDamage(c, o, pickPart(), atkPower(c) * 0.6, wpn.wt, c.faction==='player' || o.faction==='player', true);
                   retaliate(o, c);
@@ -5854,15 +5904,26 @@ function physics(c, dt){
          cooldown you were free to walk around during — which is why every fight in the game
          had the texture of a click contest. Now: wind, land, recover. All three scale with
          what you are holding. */
+      const mvKey = (c.weapon && !ITEMS[c.weapon].range) || !c.weapon ? pickMove(c, t) : 'slash';
+      const mv = MOVES[mvKey];
+      c.swingMove = mvKey;
+      /* finding a new one is worth being told about, once */
+      if(mv.skill > 0 && c.faction === 'player'){
+        if(!c.knownMoves) c.knownMoves = {};
+        if(!c.knownMoves[mvKey]){
+          c.knownMoves[mvKey] = 1;
+          log(`${c.name} has the ${mv.label} now — ${mv.note}`, 'good');
+        }
+      }
       const hf = swingHeft(c);   /* what the weapon weighs in THIS hand */
       c.atkCd = 1.62 * Math.pow(hf, 0.95) / (1 + c.stats.atk*0.011) * (1 + armorPen(c)*0.7)
               / (!c.weapon && !c.beast && !c.undead ? 1 + c.stats.martial*0.01 : 1);
       /* the wind: the blade goes back, and everyone watching can see where it is going */
-      const wind = 0.34 * Math.pow(hf, 1.3);
-      c.windup = {t: wind, kind: 'melee', tgt: t.id, dur: wind};
+      const wind = 0.34 * Math.pow(hf, 1.3) * mv.wind;
+      c.windup = {t: wind, kind: 'melee', tgt: t.id, dur: wind, mv: mvKey};
       /* the recovery, spent after the blow lands: rooted, guard down, and the heavier the
          weapon the longer you are standing in it. This is the cost of the big number. */
-      c.recoverDur = 0.22 * Math.pow(hf, 1.4);
+      c.recoverDur = 0.22 * Math.pow(hf, 1.4) * mv.rec;
     }
     return;
   }
@@ -13557,37 +13618,92 @@ function syncChars(dt){
             armL = -1.08 - k*0.12; elbL = -0.58 - k*0.06; armLz = 0.46;
             spineY = -0.44; headY = 0.36;
           }
-        } else if(k < 0.62){
-          /* THE WIND. Eased so the blade travels fast off the mark and then SETTLES —
-             it arrives at the top of the arc early and hangs there for the rest of the
-             beat. That hang is anticipation, and it is most of what tells a watching
-             player how much is about to arrive. The old curve was linear and read as a
-             machine cycling rather than a person gathering themselves. */
-          const u = k/0.62, e1 = 1 - Math.pow(1 - u, 2.4);
-          armR = -0.5 - e1*2.05; elbR = -0.7 - e1*0.55;
-          armL = 0.35 + e1*0.34; elbL = -0.5 - e1*0.20;
-          spineX = 0.12 - e1*0.20;
-          headX = -e1*0.06;                       /* eyes stay on them while the body coils */
-          swingYaw = -e1 * 0.17 * hv;             /* the FEET barely turn... */
-          spineY = -0.34 - e1*0.26;                 /* ...the torso does the winding */
-          headY = 0.30 + e1*0.22;                   /* and the eyes stay on them throughout */
-          legL = -0.10*e1; legR = 0.18*e1; kneeR = 0.26*e1;   /* weight onto the back foot */
-          swingDrop = 0.028 + 0.012 * e1 * hv;
         } else {
-          /* THE COMMIT. Eased the other way: almost the whole arc happens in the first
-             instants and then trails, which is what a mass already moving actually does.
-             The torso whips through and PAST the target, the back leg drives, and the
-             body sinks — a heavy blow is thrown with the legs, not the arm. */
-          const u = (k-0.62)/0.38, e2 = Math.pow(u, 0.52);
-          armR = -2.55 + e2*3.05; elbR = -1.25 + e2*1.15;
-          armL = 0.69 - e2*0.56; elbL = -0.70 + e2*0.35;
-          spineX = -0.08 + e2*0.44;
-          headX = e2*0.14;                        /* the head follows the blade down */
-          swingYaw = (-0.17 + e2*0.30) * hv;
-          spineY = -0.60 + e2*0.78;                 /* whip through and past */
-          headY = 0.52 - e2*0.46;
-          legL = -0.10 + e2*0.36; legR = 0.18 - e2*0.34; kneeL = e2*0.32; kneeR = 0.26 - e2*0.26;
-          swingDrop = 0.028 + (0.012 + e2*0.030) * hv;
+          /* SIX ARCS, one per move, built from the same record the resolution reads — so the
+             stroke you watch is the stroke that decided who it caught. Every one of them
+             keeps the same two-beat shape: the wind eased so the blade arrives early and
+             HANGS (that hang is the anticipation, and it is most of what tells a watching
+             player how much is about to arrive), then a commit eased the other way, almost
+             all of it in the first instants and then trailing, which is what a mass already
+             moving actually does. What differs is the path. */
+          const mvK = c.windup.mv || 'slash';
+          const winding = k < 0.62;
+          const u = winding ? k/0.62 : (k-0.62)/0.38;
+          const e1 = 1 - Math.pow(1 - u, 2.4);      /* the wind: fast, then settling */
+          const e2 = Math.pow(u, 0.52);             /* the commit: explosive, then trailing */
+          /* shared body: coil onto the back foot, then drive off it */
+          if(winding){
+            spineX = 0.12 - e1*0.20; headX = -e1*0.06;
+            swingYaw = -e1 * 0.17 * hv;
+            legL = -0.10*e1; legR = 0.18*e1; kneeR = 0.26*e1 + 0.20;
+            swingDrop = 0.028 + 0.012 * e1 * hv;
+            spineY = -0.34 - e1*0.26; headY = 0.30 + e1*0.22;
+          } else {
+            spineX = -0.08 + e2*0.44; headX = e2*0.14;
+            swingYaw = (-0.17 + e2*0.30) * hv;
+            legL = -0.10 + e2*0.36; legR = 0.18 - e2*0.34; kneeL = e2*0.32; kneeR = 0.46 - e2*0.26;
+            swingDrop = 0.028 + (0.012 + e2*0.030) * hv;
+            spineY = -0.60 + e2*0.78; headY = 0.52 - e2*0.46;
+          }
+          if(mvK === 'thrust'){
+            /* the point comes back beside the ribs and is PUT somewhere. Barely any torso
+               rotation — a thrust is a step and an arm, and it is the fastest thing here. */
+            if(winding){
+              armR = -0.55 - e1*0.28; elbR = -0.85 - e1*1.25; armRz = -0.22 - e1*0.16;
+              spineY = -0.34 - e1*0.20; spineX = 0.16 - e1*0.06;
+            } else {
+              armR = -0.83 + -0.62*e2; elbR = -2.10 + e2*2.02; armRz = -0.38 + e2*0.30;
+              spineY = -0.54 + e2*0.50; spineX = 0.10 + e2*0.16;
+              swingYaw = (-0.06 + e2*0.10) * hv;
+            }
+          } else if(mvK === 'cleave' || mvK === 'spin'){
+            /* horizontal. The blade goes out to the side at shoulder height and stays there
+               all the way through — which is exactly why these are the strokes that take
+               more than one body. The turning cut carries the whole frame around with it. */
+            const wide = mvK === 'spin' ? 1.35 : 1.0;
+            if(winding){
+              armR = -1.15 - e1*0.22; elbR = -0.55 + e1*0.20;
+              armRz = -0.30 - e1*0.80*wide;
+              spineY = -0.34 - e1*0.42*wide; headY = 0.30 + e1*0.30;
+              if(mvK === 'spin') swingYaw = -e1 * 0.75;
+            } else {
+              armR = -1.37 + e2*0.14; elbR = -0.35 - e2*0.10;
+              armRz = (-1.10*wide) + e2*2.20*wide;
+              spineY = -0.76*wide + e2*1.30*wide; headY = 0.60 - e2*0.52;
+              if(mvK === 'spin') swingYaw = -0.75 + e2*3.30;   /* all the way round */
+            }
+          } else if(mvK === 'rising'){
+            /* from underneath: the blade drops behind the knee, the body sinks, and then
+               everything comes up at once through where a guard is not. */
+            if(winding){
+              armR = -0.5 + e1*1.30; elbR = -0.88 + e1*0.55; armRz = -0.22 - e1*0.20;
+              spineX = 0.16 + e1*0.24; swingDrop = 0.028 + e1*0.055;
+              kneeL = 0.52 + e1*0.30; kneeR = 0.44 + e1*0.26;
+            } else {
+              armR = 0.80 - e2*2.70; elbR = -0.33 - e2*0.45; armRz = -0.42 + e2*0.34;
+              spineX = 0.40 - e2*0.62; swingDrop = 0.083 - e2*0.070;
+              kneeL = 0.82 - e2*0.60; kneeR = 0.70 - e2*0.48;
+              headX = -e2*0.16;                    /* chin comes up with the cut */
+            }
+          } else if(mvK === 'overhead'){
+            /* straight up and straight down, the heaviest and the slowest */
+            if(winding){
+              armR = -0.5 - e1*2.15; elbR = -0.7 - e1*0.60; armRz = -0.22 + e1*0.16;
+              armL = 0.35 + e1*0.34; elbL = -0.5 - e1*0.20;
+            } else {
+              armR = -2.65 + e2*3.15; elbR = -1.30 + e2*1.20; armRz = -0.06 - e2*0.14;
+              armL = 0.69 - e2*0.56; elbL = -0.70 + e2*0.35;
+            }
+          } else {
+            /* the slash: a diagonal off the shoulder, the plain honest stroke */
+            if(winding){
+              armR = -0.5 - e1*1.30; elbR = -0.88 - e1*0.30; armRz = -0.22 - e1*0.50;
+              armL = 0.35 + e1*0.30; elbL = -0.5 - e1*0.18;
+            } else {
+              armR = -1.80 + e2*1.15; elbR = -1.18 + e2*0.95; armRz = -0.72 + e2*1.35;
+              armL = 0.65 - e2*0.52; elbL = -0.68 + e2*0.33;
+            }
+          }
         }
       }
       /* follow-through: the blade is down and out past the target and the body has to come
@@ -13612,7 +13728,7 @@ function syncChars(dt){
          actually works, so the arms do not have to meet at a point the rig cannot reach. */
       if(th && !bow && !gun && !c.blocking && (inFight || c.windup || c.recoverT > 0)){
         armL = armR + 0.14; elbL = elbR - 0.28;
-        armLz = 0.56; armRz = -0.22;
+        armLz = clamp(0.56 + armRz*0.75, -0.35, 1.45);   /* the off hand goes where the haft goes */
       }
       /* block: shield up, braced */
       if(c.blocking && !c.windup){
