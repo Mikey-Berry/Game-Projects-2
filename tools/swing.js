@@ -49,7 +49,7 @@ const OUT = path.resolve(process.argv[3] || path.join(__dirname, 'swing.png'));
     chars.push(a, d);
     window.__A = a; window.__D = d;
     camX = S.x + 0.25; camY = S.y; camSX = camX; camSY = camY;
-    camDist = camDistTarget = 5.6; camPitchT = camPitch = 0.34; camYawT = camYaw = 1.35;
+    camDist = camDistTarget = 5.6; camPitchT = camPitch = 0.34; camYawT = camYaw = 2.95;
     hour = 11;                       /* midday: the pose has to be visible to be judged */
     speed = 0;                       /* the world holds still; we step the duel ourselves */
     /* Strip the HUD: the WebGL canvas and nothing else. Hiding the panels one by one with
