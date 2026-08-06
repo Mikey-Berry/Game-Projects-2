@@ -3922,6 +3922,65 @@ function walkingDeadCheck(dt){
     if(crime('walkdead', c.x, c.y, chars.find(o => o.faction === 'player' && !o.undead) || null)) return;
   }
 }
+/* ---------- WHAT A PRISONER IS FOR ----------
+   Three things you can do with someone in your cells, and they are three different kinds of
+   person to be. The conviction system already has opinions about all of it, so the choice
+   costs something with the people standing next to you — which is the point. */
+function ransomValue(v){
+  let g = 120 + Math.round((v.stats.atk + v.stats.def + v.stats.tough) * 2.2);
+  if(v.bossKey) g *= 4;
+  if(v.squad) g = Math.round(g * 1.3);
+  return g;
+}
+function prisonerRelease(v, mode){
+  const cell = v.jailedAt;
+  if(cell) cell.holds = 0;
+  v.jailedAt = null; v.jailT = 0; v.prisoner = false; v.captured = false;
+  if(mode !== 'recruit') returnKit(v); else v.heldKit = null;
+  v.x += 1.2;
+}
+function ransomPrisoner(v){
+  const g = ransomValue(v);
+  cats += g;
+  /* the people they came from remember being paid, not being beaten */
+  const t = v.homeTown || null;
+  if(t) dropRep(t, -6);
+  prisonerRelease(v, 'ransom');
+  v.provoked = false; v.faction = v.faction === 'player' ? 'town' : v.faction;
+  v.fleeT = 12;
+  deed('ransom', 1, t);
+  log(`${v.name} is ransomed back for ${g} gold. They do not look at you on the way out.`, 'good');
+  refreshInv();
+}
+function sellPrisoner(v){
+  if(!slaverCamp){ log('There is nobody buying. The camp is broken.', 'bad'); return; }
+  const g = Math.round(ransomValue(v) * 0.75);
+  cats += g;
+  prisonerRelease(v, 'sold');
+  const i = chars.indexOf(v); if(i >= 0) chars.splice(i, 1);
+  deed('slave_sold', 1);
+  log(`${v.name} is sold to the camp for ${g} gold. The chain goes on somebody else now.`, 'bad');
+  refreshInv();
+}
+/* Breaking someone takes days, and it does not always work: a hard case never turns. */
+function recruitPrisoner(v){
+  if(v.breakT < 6){
+    log(`${v.name} is not broken yet. ${6 - v.breakT} more day${6 - v.breakT > 1 ? 's' : ''} in the dark.`, 'bad');
+    return;
+  }
+  const odds = clamp(0.30 + v.breakT * 0.05 - v.stats.tough * 0.004, 0.10, 0.85);
+  if(rnd() > odds){
+    v.breakT = Math.max(0, v.breakT - 3);
+    log(`${v.name} spits on the floor. Not this time.`, 'bad');
+    return;
+  }
+  prisonerRelease(v, 'recruit');
+  v.faction = 'player'; v.provoked = false; v.squad = null; v.homeTown = null;
+  v.conviction = v.conviction || 'loyal';
+  deed('recruit_prisoner', 1);
+  log(`${v.name} takes the offer. Whatever they were before, they are yours now.`, 'good');
+  refreshSquadBar();
+}
 /* ============================================================ DAMAGE & MEDICINE */
 function skillCap(c){ return c.lich ? 150 : (c.race==='hollow' && c.hollowTier >= 1 ? 125 : (raceOf(c).cap || 100)); }
 function xpGain(c, stat, amt){
@@ -4506,6 +4565,8 @@ const BUILD_TYPES = {
   rampart: {name:'Rampart Stair', cost:{wood:8, mats:4}, w:1, h:1,
     desc:'A stair to the wall-tops. Without one, the rampart is a shelf nobody can reach'},
   shack:   {name:'Shack',     mats:25, w:3, h:3, desc:'Free bed inside — 8x healing'},
+  cell:    {name:'Holding Cell', cost:{stone:18, mats:10, iron:4}, w:2, h:2,
+    desc:'Somewhere to put what you drag off the field. A prisoner can be ransomed, broken to your service, or sold — and each of those is a different kind of person to be'},
   farm:    {name:'Farm',      mats:20, w:2, h:2, desc:'Grows 3 greenfruit / day'},
   r_bench: {name:'Research Bench', mats:15, w:2, h:2, desc:'Unlock technology. Needs a living mind nearby.'},
   script:  {name:'Scriptorium', cost:{mats:18, fabric:6}, w:2, h:2,
@@ -4639,6 +4700,15 @@ function deconstruct(b){
       c.floor = 0; c.wantFloor = null; c.afterStair = null; c.path = null;
     }
   }
+  if(b.type === 'cell'){
+    /* tearing down a cell lets out whoever was in it, rather than deleting a person */
+    for(let i = cells.length - 1; i >= 0; i--){
+      if(cells[i].build !== b) continue;
+      const held = chars.find(c => c.jailedAt === cells[i]);
+      if(held){ held.jailedAt = null; held.jailT = 0; returnKit(held); held.provoked = true; }
+      cells.splice(i, 1);
+    }
+  }
   pBuilds.splice(idx, 1);
   log(`The ${BUILD_TYPES[b.type].name} comes down. Recovered: ${back.length ? back.join(', ') : 'nothing worth carrying'}.`, 'good');
   refreshInv();
@@ -4647,6 +4717,7 @@ function placeStructure(type, tx, ty){
   const bt = BUILD_TYPES[type];
   const b = {type, x:tx, y:ty, w:bt.w, h:bt.h, growth:0};
   if(type==='wall'){ b.hp = 250; b.maxHp = 250; }
+  if(type==='cell') cells.push({x: tx + 0.9, y: ty + 0.9, town: null, holds: 0, kind: 'player', build: b});
   pBuilds.push(b);
   /* a wall's top is a rampart. It always was, structurally — the game just never let anyone
      stand on it. Reaching it is a separate problem, and the Rampart Stair is the answer. */
@@ -5457,7 +5528,7 @@ function clearOrders(c){
   c.gather = null; c.attackMove = null; c.healProg = 0; c.gatherT = 0;
   c.chestTarget = null; c.targetManual = false; c.fleeT = 0;
   c.structTarget = null; c.repairTarget = null; c.stuckT = 0;
-  c.carryTarget = null; c.rescueTarget = null;
+  c.carryTarget = null; c.rescueTarget = null; c.seizeTarget = null;
   c.guardTarget = null; c.haulTarget = null;
   c.path = null; c.pathGoal = null;
   if(c.resting){ c.resting.user = null; c.resting = null; }
@@ -5870,8 +5941,11 @@ function physics(c, dt){
       return;
     }
   }
-  /* slaver hauling a captive to camp */
-  if(c.drag){
+  /* Slaver hauling a captive to camp. Gated on the faction now: this was a bare `if(c.drag)`,
+     so it caught ANY dragger — including one of your own carrying a prisoner back to your
+     cells, who would quietly turn around and deliver them to the slavers instead. It sits
+     above the seize handler, returns every tick, and so swallowed the order whole. */
+  if(c.drag && c.faction !== 'player'){
     const v = c.drag;
     if(v.state==='dead' || !v.captured){ c.drag = null; }
     else if(!slaverCamp){ v.captured = false; c.drag = null; }
@@ -6140,6 +6214,31 @@ function physics(c, dt){
       if(c.arrestTarget && chars.includes(c.arrestTarget) && c.arrestTarget.state === 'ok'){
         c.target = c.arrestTarget; c.targetManual = false;
       }
+    }
+  }
+  /* ---- SEIZING ---- your own people drag a downed enemy back to a cell of your own. The
+     same shape as the watch taking you in, from the other side of it. */
+  if(c.faction === 'player' && c.seizeTarget){
+    const v = c.seizeTarget;
+    if(!chars.includes(v) || v.state === 'dead' || v.jailedAt){ c.seizeTarget = null; c.drag = null; if(v) v.captured = false; }
+    else if(!c.drag){
+      if(v.state !== 'down'){ c.seizeTarget = null; }
+      else if(dist(c.x, c.y, v.x, v.y) > 1.4){ travel(c, v.x, v.y, dt, 0.9); return; }
+      else { c.drag = v; v.captured = true; say(c, 'Up. You are coming with us.'); return; }
+    } else {
+      const cell = cells.find(cl => cl.kind === 'player' && !cl.holds);
+      if(!cell){
+        if(!c._noCell){ c._noCell = 1; log('Nowhere to put them — build a Holding Cell first.', 'bad'); }
+        c.drag.captured = false; c.drag = null; c.seizeTarget = null;
+      } else if(travel(c, cell.x, cell.y, dt, 0.8) || dist(c.x, c.y, cell.x, cell.y) < 1.5){
+        const v2 = c.drag;
+        stripKit(v2);
+        jail(v2, cell, 0);            /* held at your pleasure — no sentence to run out */
+        v2.prisoner = true; v2.breakT = 0;
+        c.drag = null; c.seizeTarget = null;
+        log(`${v2.name} is in the cells. They are yours to deal with.`, 'good');
+      }
+      return;
     }
   }
   /* a rescue: go to the heap and cut them out of it */
@@ -9722,6 +9821,7 @@ function update(dt){
     /* a day inside is a day the world moved without you */
     for(const c of chars){
       if(!c.jailedAt || c.state === 'dead') continue;
+      if(c.prisoner){ c.breakT = (c.breakT || 0) + 1; continue; }   /* held at your pleasure */
       if(--c.jailT > 0) continue;
       const t = c.jailedAt.town, was = c.jailedAt;
       was.holds = 0; c.jailedAt = null;
@@ -16802,10 +16902,27 @@ cv.addEventListener('mousedown', e => {
       if(foe.state === 'down'){
         showCtxMenu(e.clientX, e.clientY, [
           {label:'EXECUTE', fn:()=>{ const m = movers[0]; clearOrders(m); m.execTarget = foe; }},
+          {label:'SEIZE', fn:()=>{ const m = movers[0]; clearOrders(m); m.seizeTarget = foe; }},
           {label:'LEAVE THEM', fn:()=>{}}]);
         return;
       }
       for(const m of movers){ clearOrders(m); m.target = foe; m.targetManual = true; }
+      return;
+    }
+    /* one of yours, in one of your cells */
+    const pris = chars.find(c => c.prisoner && c.jailedAt && c.jailedAt.kind === 'player' &&
+      dist(c.x, c.y, wx, wy) < 1.1);
+    if(pris){
+      const val = ransomValue(pris);
+      const opts = [
+        {label:`RANSOM  (+${val}g)`, fn:()=>ransomPrisoner(pris)},
+        {label:`BREAK TO SERVICE  (${pris.breakT||0}/6 days)`, fn:()=>recruitPrisoner(pris)},
+      ];
+      if(slaverCamp) opts.push({label:`SELL TO THE CAMP  (+${Math.round(val*0.75)}g)`, fn:()=>sellPrisoner(pris)});
+      opts.push({label:'TURN THEM LOOSE', fn:()=>{ prisonerRelease(pris, 'free'); pris.fleeT = 14;
+        log(`${pris.name} is let go. They run, and they remember.`, ''); }});
+      opts.push({label:'LEAVE THEM', fn:()=>{}});
+      showCtxMenu(e.clientX, e.clientY, opts);
       return;
     }
     /* captured ally? free them if the slavers are dealt with */
@@ -17569,7 +17686,7 @@ function snapshot(){
     /* A sentence that does not survive a save is a sentence you serve by reloading, and
        kit held at the gaol would simply vanish. The cell is stored by index. */
     jailCell: c.jailedAt ? cells.indexOf(c.jailedAt) : -1, jailT: c.jailT || 0,
-    heldKit: c.heldKit || null,
+    heldKit: c.heldKit || null, prisoner: !!c.prisoner, breakT: c.breakT || 0,
     masterId:c.master ? c.master.id : null, guard:c.guard,
     homeTownI: c.homeTown ? towns.indexOf(c.homeTown) : -1,
     beast:!!c.beast, loot:c.loot||0, deadAt:c.deadAt||0, looted:!!c.looted, robbed:!!c.robbed, swag: c.swag ? {gold: c.swag.gold, items: {...c.swag.items}} : null,
@@ -17647,6 +17764,12 @@ function restore(d){
   pBuilds.length = 0;
   blocked.clear(); for(const k of baseBlocked) blocked.add(k);
   beds.length = 0; for(const b of baseBeds) beds.push({...b, user:null});
+  /* Town cells come from worldgen and are never rebuilt; player cells are re-created by the
+     placeStructure calls below. Without this the player's cells accumulate a fresh copy on
+     every load, and since a sentence is stored as an INDEX into this array, every prisoner
+     in the world would wake up in somebody else's cell. */
+  for(let i = cells.length - 1; i >= 0; i--) if(cells[i].kind === 'player') cells.splice(i, 1);
+  for(const cl of cells) cl.holds = 0;
   for(const b of d.pBuilds){
     const pb = placeStructure(b.type, b.x, b.y);
     if(b.hp !== undefined && pb.maxHp) pb.hp = b.hp;
@@ -17752,6 +17875,7 @@ function restore(d){
        throw the first time anything looks at it. Repairing on load beats guarding forever. */
     c.jailT = s.jailT || 0;
     c.heldKit = s.heldKit || null;
+    c.prisoner = !!s.prisoner; c.breakT = s.breakT || 0;
     if(s.jailCell >= 0 && cells[s.jailCell]){ c.jailedAt = cells[s.jailCell]; cells[s.jailCell].holds = c.id; }
     else c.jailedAt = null;
     c.weapon = (s.weapon && ITEMS[s.weapon]) ? s.weapon : null;

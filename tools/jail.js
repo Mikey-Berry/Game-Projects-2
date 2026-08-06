@@ -105,6 +105,42 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     R.kitReturned = h2 && h2.weapon === 'w_kat' && h2.armor === 'a_pla' ? 'kit back' :
       'KIT LOST (weapon ' + (h2 ? h2.weapon : '-') + ')';
     R.invReturned = h2 && (h2.inv || {}).remains === 3 ? 'goods back' : 'GOODS LOST';
+    /* --- 9. YOUR cells: seize, hold, and the whole thing through a save --- */
+    const camp = { x: t.x + 40, y: t.y + 40 };
+    const pb = placeStructure('cell', Math.round(camp.x), Math.round(camp.y));
+    R.playerCellMade = cells.filter(c => c.kind === 'player').length;
+    const vic = makeChar('Captive', 'bandit', camp.x + 1, camp.y, { atk: 20, def: 15, tough: 20 });
+    vic.state = 'down'; vic.weapon = 'w_club'; chars.push(vic);
+    const taker = makeChar('Taker', 'player', camp.x + 2, camp.y, { atk: 20, ath: 40 });
+    taker.state = 'ok'; chars.push(taker);
+    taker.seizeTarget = vic;
+    for (let i = 0; i < 900 && !vic.jailedAt; i++) physics(taker, 1 / 30);
+    R.seized = vic.jailedAt ? 'in a cell of yours' : 'NEVER SEIZED';
+    if (!vic.jailedAt) R.seizeDiag = {
+      seizeTarget: !!taker.seizeTarget, drag: !!taker.drag, target: !!taker.target,
+      takerState: taker.state, vicState: vic.state, vicCaptured: !!vic.captured,
+      apart: +dist(taker.x, taker.y, vic.x, vic.y).toFixed(2),
+      cellBlocked: isBlocked(camp.x + 0.9, camp.y + 0.9, 0),
+      takerBlocked: isBlocked(taker.x, taker.y, 0), fleeT: taker.fleeT,
+    };
+    R.seizedStripped = !vic.weapon ? 'kit taken' : 'KIT NOT TAKEN';
+    R.ransomWorth = ransomValue(vic);
+
+    /* two loads must not leave two copies of the cell, nor move the prisoner */
+    const snap = JSON.parse(JSON.stringify(snapshot()));
+    restore(JSON.parse(JSON.stringify(snap)));
+    restore(JSON.parse(JSON.stringify(snap)));
+    const pcells = cells.filter(c => c.kind === 'player').length;
+    const v2 = chars.find(c => c.name === 'Captive');
+    R.cellsAfterTwoLoads = pcells === 1 ? '1 (correct)' : pcells + ' COPIES';
+    R.prisonerAfterLoad = v2 && v2.jailedAt && v2.jailedAt.kind === 'player' ? 'still held, right cell' :
+      (v2 && v2.jailedAt ? 'HELD IN THE WRONG CELL' : 'PRISONER LOST');
+
+    /* --- 10. ransom pays out --- */
+    const before = cats;
+    if (v2) ransomPrisoner(v2);
+    R.ransomPaid = cats > before ? '+' + (cats - before) + ' cats' : 'NO PAYMENT';
+    R.cellFreedAfter = cells.filter(c => c.kind === 'player' && !c.holds).length === 1 ? 'cell free again' : 'CELL STILL FLAGGED';
     return R;
   });
 
