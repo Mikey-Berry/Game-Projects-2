@@ -142,6 +142,46 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     R.ransomPaid = cats > before ? '+' + (cats - before) + ' cats' : 'NO PAYMENT';
     R.cellFreedAfter = cells.filter(c => c.kind === 'player' && !c.holds).length === 1 ? 'cell free again' : 'CELL STILL FLAGGED';
 
+    /* --- 10b. the newly wired crimes: each must register when seen --- */
+    const seenAt = { x: t.x + 1, y: t.y + 1 };
+    const witness = chars.find(o => o.faction === 'town' && o.state === 'ok' && o.homeTown === t);
+    if (witness) { witness.x = t.x + 2; witness.y = t.y + 1; }
+    const hand = makeChar('Hand', 'player', seenAt.x, seenAt.y, { atk: 20 });
+    hand.state = 'ok'; chars.push(hand);
+    rebuildCharGrid();
+
+    const wanted = (fn) => { t.bounty = 0; t.wanted = false; fn(); return t.bounty; };
+
+    /* robbing the dead: taking a body up inside the walls */
+    const body = makeChar('Departed', 'town', seenAt.x, seenAt.y, {});
+    body.state = 'dead'; body.homeTown = t; chars.push(body); corpses.push(body);
+    R.graverob = wanted(() => takeBody(hand, body)) > 0 ? 'wanted' : 'NOT A CRIME';
+
+    /* theft: going through a townsman's pockets in front of the town */
+    const dead2 = makeChar('Neighbour', 'town', seenAt.x, seenAt.y, {});
+    dead2.state = 'dead'; dead2.homeTown = t; dead2.weapon = 'w_kat'; chars.push(dead2);
+    R.theft = wanted(() => lootCorpse(dead2)) > 0 ? 'wanted' : 'NOT A CRIME';
+
+    /* contraband: a guard, close, and something in the pack the gate forbids */
+    const grd = chars.find(o => o.faction === 'town' && !o.civ && o.state === 'ok' && o.homeTown === t);
+    if (grd) { grd.x = seenAt.x + 1; grd.y = seenAt.y; }
+    hand.inv = { remains: 2 };
+    rebuildCharGrid();
+    t.bounty = 0; t.wanted = false;
+    for (let i = 0; i < 200 && !t.bounty; i++) contrabandCheck();
+    R.contraband = t.bounty > 0 ? 'found on a search' : 'NEVER SEARCHED';
+    hand.inv = {};
+
+    /* and none of them stick when nobody is looking */
+    for (const o of chars) if (o.faction === 'town' && dist(o.x, o.y, 6, 6) > 1) { /* leave them */ }
+    const lone = makeChar('Lone', 'player', 5, 5, { atk: 20 });
+    lone.state = 'ok'; chars.push(lone);
+    const body2 = makeChar('Nobody', 'town', 5, 5, {});
+    body2.state = 'dead'; chars.push(body2); corpses.push(body2);
+    rebuildCharGrid();
+    R.unseenGraverob = wanted(() => takeBody(lone, body2)) === 0 ? 'ignored' : 'REGISTERED UNSEEN';
+    t.bounty = 0; t.wanted = false;
+
     /* --- 11. THE BARS. A watched cell must hold; an unwatched one must not. --- */
     const pcell = cells.find(c => c.kind === 'player');
     const runner = makeChar('Runner', 'bandit', pcell.x, pcell.y, { atk: 30, tough: 40, martial: 20 });

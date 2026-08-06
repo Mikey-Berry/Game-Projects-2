@@ -963,6 +963,9 @@ function carryCap(c){ return c.mule ? 3 : 1; }
 function carried(c){ return (c.carry ? 1 : 0) + (c.carryList ? c.carryList.length : 0); }
 function takeBody(c, body){
   if(!body || body.state !== 'dead') return false;
+  /* Carrying a corpse out of a town is the signature crime of this trade, and until now it
+     was free. The town has to be able to see you do it. */
+  if(c.faction === 'player') crime('graverob', body.x, body.y, c);
   if(carried(c) >= carryCap(c)){ log(`${c.name} has their hands full.`, 'bad'); return false; }
   if(c.mule){
     c.carryList = c.carryList || [];
@@ -3967,10 +3970,37 @@ function crime(kind, x, y, by){
 }
 /* Walking a host of risen past the gate of a town that has opinions about the dead. Checked
    on a slow tick rather than per-frame: it is a standing offence, not an instant. */
+const CONTRABAND = {remains: 'grave-goods', tome: 'a forbidden book', doctrine: 'heretical doctrine',
+                    sunder: 'a piece of the Fracture itself', formula_p: 'a proscribed formula'};
+/* A search is not a scan of the whole world: it takes a guard, standing close, in daylight
+   enough to see. Slow-ticked with the walking-dead check for the same reason. */
+function contrabandCheck(){
+  for(const c of player()){
+    if(c.state !== 'ok' || c.undead) continue;
+    const t = townAt(c.x, c.y);
+    if(!t || t.playerRuled || t.def.undeadFriendly) continue;
+    const r = (t.def.wall ? t.def.wall.r : 20);
+    if(Math.abs(c.x - t.x) > r || Math.abs(c.y - t.y) > r) continue;
+    /* the shared pool is `stash`; there is no global `inv` — a name I assumed and boot.js
+       rejected on the first load, which is the whole reason it runs first now */
+    const carried2 = Object.keys(CONTRABAND).filter(k => (c.inv && c.inv[k] > 0) || (stash[k] || 0) > 0);
+    if(!carried2.length) continue;
+    /* one guard, near, and not every pass — a gate is a bottleneck, not a scanner */
+    const g = charsNear(c.x, c.y, 6).find(o => o.faction === 'town' && !o.civ && o.state === 'ok' &&
+      o.homeTown === t && dist(o.x, o.y, c.x, c.y) < 6);
+    if(!g || rnd() > 0.20) continue;
+    say(g, 'Open the pack.');
+    if(crime('contraband', c.x, c.y, c)){
+      log(`${g.name} finds ${CONTRABAND[carried2[0]]} on ${c.name}.`, 'bad');
+      return;
+    }
+  }
+}
 let _walkDeadT = 0;
 function walkingDeadCheck(dt){
   if((_walkDeadT -= dt) > 0) return;
   _walkDeadT = 4;
+  contrabandCheck();
   for(const c of chars){
     if(c.faction !== 'player' || !c.undead || c.state !== 'ok') continue;
     const t = townAt(c.x, c.y);
@@ -8045,6 +8075,8 @@ function retaliate(t, attacker){
   t.moveTarget = null; t.path = null; t.pathGoal = null;
 }
 function lootCorpse(t){
+  /* going through the pockets of somebody's neighbour, in front of the neighbours */
+  if(t && (t.faction === 'town' || t.homeTown)) crime('theft', t.x, t.y, player()[0] || null);
   if(t.looted){ return harvestCorpse(t); }
   t.looted = true;
   let got = [];
