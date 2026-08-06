@@ -51,7 +51,10 @@ const N = 8;
     chars.push(a, d);
     window.__A = a; window.__D = d; window.__RNG = rng;
     camX = S.x + 0.25; camY = S.y; camSX = camX; camSY = camY;
-    camDist = camDistTarget = 5.2; camPitchT = camPitch = 0.30; camYawT = camYaw = 1.35;
+    /* Profile. A rotation sweep has to be judged from the same angle the defect was spotted
+       at — from three-quarters you cannot tell "pointing forward" from "pointing across", and
+       both lance sweeps run from there were unreadable. */
+    camDist = camDistTarget = 5.4; camPitchT = camPitch = 0.30; camYawT = camYaw = 2.95;
     hour = 11; speed = 0;
     renderer.domElement.id = '__gl';
     const hs = document.createElement('style'); hs.id = '__hide';
