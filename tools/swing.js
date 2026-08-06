@@ -49,11 +49,14 @@ const OUT = path.resolve(process.argv[3] || path.join(__dirname, 'swing.png'));
     camDist = camDistTarget = 5.0; camPitchT = camPitch = 0.34; camYawT = camYaw = 1.35;
     hour = 11;                       /* midday: the pose has to be visible to be judged */
     speed = 0;                       /* the world holds still; we step the duel ourselves */
-    /* strip the HUD: every panel in the way of the thing being looked at. The WebGL canvas
-       and nothing else. */
-    for(const el of Array.from(document.body.children)){
-      if(el !== renderer.domElement) el.style.display = 'none';
-    }
+    /* Strip the HUD: the WebGL canvas and nothing else. Hiding the panels one by one with
+       inline styles does not hold — the game re-shows them whenever a panel refreshes, and
+       the katana row of the first comparison sheet came out buried behind the character
+       readout. A stylesheet with !important outranks anything set inline afterwards. */
+    renderer.domElement.id = '__gl';
+    let hs = document.getElementById('__hide');
+    if(!hs){ hs = document.createElement('style'); hs.id = '__hide'; document.head.appendChild(hs); }
+    hs.textContent = 'body > *:not(#__gl){display:none !important}';
   }, wep);
 
   /* step until a swing is actually committed, then capture across the whole beat */
@@ -66,8 +69,6 @@ const OUT = path.resolve(process.argv[3] || path.join(__dirname, 'swing.png'));
   let started = false, frames = 0;
   for (let i = 0; i < 260 && shots.length < 8; i++) {
     const st = await p.evaluate((dt) => {
-      /* the HUD comes back whenever a panel refreshes — put it away every frame */
-      for(const el of Array.from(document.body.children)) if(el !== renderer.domElement) el.style.display = 'none';
       const a = window.__A, d = window.__D;
       d.x = window.__S.x + 0.75; d.y = window.__S.y; d.state = 'ok'; d.staggerT = 0;
       for (const k in d.parts) d.parts[k].hp = 100;
