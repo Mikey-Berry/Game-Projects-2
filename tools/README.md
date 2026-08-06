@@ -37,12 +37,19 @@ Set `DUSTWARD_CHROME` to use a specific browser binary; otherwise Playwright's o
 do — a single before/after pair once looked like a 44% sim regression that three interleaved
 runs showed to be noise. Run each side two or three times, alternating.
 
+**Average anything with a hit roll in it.** The same build measured one nodachi duel at 3.6s
+and the next at 20s, purely on which body part the hits happened to land in. A single fight
+is not a measurement. `cadence.js` runs nine and reports mean and median for exactly this
+reason; the unaveraged version of that number would have been reported as a 3x slowdown when
+the truth was 45%.
+
 ## What each one measures
 
 ### Correctness — run these before committing
 
 | harness | what it checks |
 |---|---|
+| `boot.js` | Does the game still start. Ten seconds, no assertions, one question: did anything throw on load or on starting a world. The single-file layout makes one mistake very easy and very hard to see — a `const` declared beside the code that uses it, thousands of lines below the worldgen that *also* uses it, sits in its temporal dead zone when the world is built, kills the whole script, and makes every other harness fail somewhere unrelated. That happened twice while building the gaol. Run it first. |
 | `towncheck.js` | Town geometry: overlapping footprints, buildings touching walls or standing in water, every door reachable by flood fill from the plaza, wells/flags/vendors/beds/guard posts in the open, town spacing. Takes a path, so it can be run across seeds. |
 | `roundtrip.js` | Save/load fidelity for the Fracture clock, every hall's dread and wake state, shown-proofs, cooldowns, and the whole Compact including the muster roster. |
 | `doorsave.js` | Save/load fidelity for the door, the doorborn, fallen seats and the ruin flag. |
@@ -55,6 +62,8 @@ runs showed to be noise. Run each side two or three times, alternating.
 | `shaping.js` | Binds the same recipe at three shapes and reports what actually came out — a Bone Golem should be seven times slower than a Skittering one, not five percent. Also checks promotion is gated on kills and frees a binding slot. |
 | `names.js` | Name collision rate across a fresh world, and samples of what the generator produced. |
 | `decay.js` | The corpse economy end to end: the stage ladder and how long each lasts in real time, what each stage raises into, that salt holds a body indefinitely, that a mule hauls three and a person one, and that all of it round-trips through a save. |
+| `jail.js` | The law end to end: that an unwitnessed crime is not a crime, that a witnessed one raises a bounty, that guards subdue rather than finish someone with a price on them, that a lethal blow gets capped, that kit is confiscated, that a cell holds against a move order, that all of it survives a save, and that the sentence expires and returns what was taken. A jail is a lot of state that only works when several systems agree, and any one of them silently not firing leaves a feature that looks implemented and never happens in play. |
+| `terrain.js` | What the mountains are like to walk on: rise per tile across each massif, how high you can actually climb against how high it goes, whether any range cuts the map in two, and whether the cliffs and the routes up both survive a save. This is the probe that found all fourteen massifs sealed from 40% of their height upward. |
 | `corpses.js` | How long a corpse actually lasts in real minutes at each game speed, how many things are competing for it, and what a body is worth once you have one. Answers "am I imagining that bodies vanish too fast" with a number. |
 
 ### Balance
@@ -66,6 +75,7 @@ runs showed to be noise. Run each side two or three times, alternating.
 | `dps2.js` | Effective DPS per weapon against five target archetypes, through the game's real mitigation. |
 | `ttk.js` | Swings to put a target down, by weapon and armour. The readable form of the matchup table — it is where "the club beats plate" stops being a claim. |
 | `behave.js` | Lance cells and overheat, massed-fire stray scaling, the Darkbolt mark (must be +10% for undead and +0% for the living), binding strain. |
+| `cadence.js` | How a fight *feels*, in numbers: swings per second, the length of the telegraph, the fraction of the fight you are rooted and cannot act, damage per landed blow and how often it staggers. Where `ttk.js` zeroes the cooldown to ask a balance question, this one leaves the clock alone to ask a pacing one. It is the probe that showed every melee weapon in the game — plank to Sundering Edge — swinging at an identical 0.83/s behind an identical 0.26s wind. Also walks the same weapon up a skill ladder (what competence is worth), measures what toughness and armour training buy against being knocked about, proves the recovery beat actually roots a body, and averages nine duels to report how long a fight really takes. |
 
 ### The endgame
 
@@ -90,6 +100,7 @@ runs showed to be noise. Run each side two or three times, alternating.
 | harness | what it renders |
 |---|---|
 | `wep3.js` | One character holding one weapon, close. `node tools/wep3.js w_nod out.png` |
+| `swing.js` | A swing, frame by frame, as a contact sheet — one row per weapon so a light blade and a heavy one can be read against each other. Animation is the one thing here that cannot be checked with a number, and a pose that looks right in the source can still read as a machine cycling. It steps the sim by hand at a fixed dt so frames are evenly spaced in *sim* time rather than wall time. `node tools/swing.js w_nod,w_kat out.png` |
 | `town.js` | A town from above. `node tools/town.js out.png <townIndex>` |
 
 ## Notes

@@ -420,7 +420,7 @@ const ITEMS = {
   aether_cell:{name:'Aether Cell', base:220, type:'mat',
     desc:'A pre-Fall charge cell, still holding. Nobody alive knows how they were made, and nobody is making more'},
   w_lance: {name:'Aether Lance',  base:9000,type:'weapon', dmg:44, wt:'pierce', range:9, pre:true, nullOnly:true,
-    rof:4.0, lance:true, charge:true, ap:0.80,
+    rof:4.6, draw:0.55, lance:true, charge:true, ap:0.80,
     desc:'A golden-age firearm that transmutes latent ether to plasma. In a gifted hand the interference cascades — the lance and the hand go together. Only the alchemically deaf can carry one.'},
   w_sever: {name:'Sundering Edge',base:9500,type:'weapon', dmg:40, wt:'cut',    pre:true},
   a_carap: {name:'Alchemic Carapace', base:11000, type:'armor', pre:true, def:.52, pen:.30},
@@ -433,8 +433,8 @@ const ITEMS = {
      A hunting arrow finds a gap now and then; a crossbow bolt was invented to punch mail. */
   salt:    {name:'Salt',          base:26,  type:'trade',
     desc:'Coarse grey brine-salt off the flats. Packs a body against the rot, which is a use nobody in Saltmere mentions out loud'},
-  w_bow:   {name:'Hunting Bow',   base:260, type:'weapon', dmg:11, wt:'pierce', range:7, ap:0.20, rof:1.9},
-  w_xbow:  {name:'Crossbow',      base:750, type:'weapon', dmg:18, wt:'pierce', range:8, ap:0.40},
+  w_bow:   {name:'Hunting Bow',   base:260, type:'weapon', dmg:11, wt:'pierce', range:7, ap:0.20, rof:2.6, draw:0.45},
+  w_xbow:  {name:'Crossbow',      base:750, type:'weapon', dmg:18, wt:'pierce', range:8, ap:0.40, rof:3.2, draw:0.30},
   a_rag:   {name:'Rag Shirt',     base:60,  type:'armor',  def:.08, pen:.05},
   a_lea:   {name:'Leather Jacket',base:380, type:'armor',  def:.18, pen:.14},
   a_pla:   {name:'Iron Plate',    base:1300,type:'armor',  def:.35, pen:.32},
@@ -640,6 +640,13 @@ function useBandageCharge(){
 function bandageChargesTotal(){ return kitOpen + (stash.bandage||0)*8; }
 
 const towns = [], buildings = [], vendors = [], beds = [], drops = [], phylacteries = [];
+/* Cells live here, beside `beds`, because the town planner fills both while it lays a town
+   out — and the planner runs during module execution. Declared down with the rest of the
+   law, four thousand lines below, it was in its temporal dead zone when the first gaol was
+   placed and the whole script died on the spot: "Cannot access 'cells' before
+   initialization", which takes the game with it rather than failing quietly. */
+const cells = [];
+const CELL_HP = 100;   /* up here for the same reason `cells` is: the town planner uses it */
 function areaClear(x,y,w,h){
   for(let j=y-1;j<y+h+1;j++) for(let i=x-1;i<x+w+1;i++){
     const t = tileAt(i,j);
@@ -764,6 +771,7 @@ function placeTownAt(def, cx0, cy0){
     [  5,-17, 4, 4, null, 'SHRINE'],
     [-18,  4, 5, 4, null, 'STABLE'],
     [ 13,-10, 5, 4, null, 'STOREHOUSE'],
+    [ -3,-17, 5, 4, null, 'GAOL'],          /* the watch has to put people somewhere */
     [-18, -6, 4, 4, null, 'HOUSE'],
     [ 13, 12, 4, 4, null, 'HOUSE'],
     [-11, 14, 4, 4, null, 'HOUSE'],
@@ -790,6 +798,11 @@ function placeTownAt(def, cx0, cy0){
         name: vt==='bar' ? 'Barkeep' : vt==='robotics' ? 'Roboticist' : vt==='weapons' ? 'Smith' : 'Trader'});
     } else if(label==='INN'){
       for(let i=0;i<5;i++) beds.push({x:bx+1.2+i*1.1, y:by+1.5, fee: def.undeadFriendly ? 10 : 25, user:null, town:t});
+    } else if(label==='GAOL'){
+      /* three cells along the back wall. A cell is a place, not a building — whoever is in
+         it is held there, exactly the way the middens hold what the Larder-Kin drags off. */
+      for(let i=0;i<3;i++) cells.push({x:bx+1.2+i*1.3, y:by+1.4, town:t, holds:0, kind:'town',
+        hp:CELL_HP, maxHp:CELL_HP});
     }
   }
   /* town walls: a ring with gates north and south; water makes its own gaps */
@@ -895,8 +908,9 @@ function makeChar(name, faction, x, y, o={}){
     bedTarget: null, resting: null, gather: null, attackMove: null, chestTarget: null,
     targetManual: false, blocking: false, fleeT: 0, follow: null, caravan: null, mobileVendor: false,
     job: null, jobNodeT: 0, drag: null, gnaw: null, captured: false,
+    jailedAt: null, jailT: 0, heldKit: null, arrestTarget: null, breakT: 0,
     eater: false, warF: -1, warT: -1, campId: -1, rebelOf: -1, sick: 0, isLeader: -1,
-    windup: null, staggerT: 0, flinchT: 0, castT: 0, oppCd: 0,
+    windup: null, staggerT: 0, flinchT: 0, castT: 0, oppCd: 0, recoverT: 0, recoverDur: 0,
     age: o.age ?? ri(18, 38), goal: null, wasChild: false, legacyTrade: null,
     race: o.race || 'human', sex: o.sex || (rnd() < 0.5 ? 'f' : 'm'), spouse: 0, partner: 0, grief: 0, pregnant: 0, omni: !!o.omni,
     clawDmg: 0, big: 1, taunt: false, structMult: 1, bindWeight: 1, shortTag: '',
@@ -914,13 +928,19 @@ function makeChar(name, faction, x, y, o={}){
        one. Transient — emplacementTick re-derives `manning` every tick, so neither is saved. */
     manning: null, gunT: 0,
     path: null, pathGoal: null, repathT: 0,
-    hitT: 0, lungeT: 0, lungeDX: 0, lungeDY: 0,
+    hitT: 0, looseT: 0, lungeT: 0, lungeDX: 0, lungeDY: 0, lungeDur: 0, lungeK: 0,
+    shoveT: 0, shoveDur: 0, shoveK: 0, shoveDX: 0, shoveDY: 0,
     undead: false, master: null,
     atkCd: 0, downT: 0, guard: o.guard||null, homeTown: o.homeTown||null,
     squad: o.squad||null, wanderT: 0, looted: false, vt: o.vt||null,
   };
 }
-function say(c, text){ c.bubble = {text, t:2.6}; }
+/* A said line is read by a person, not by the simulation, so it lasts in seconds of THEIR
+   time. It used to be ticked inside physics() on the scaled sim dt, which meant 2.6 seconds
+   at speed 1 and about half a second at speed 5 — exactly when a fight is busiest and the
+   lines matter most. tickBubbles() below runs off the render clock instead. */
+const BUBBLE_T = 4.2;
+function say(c, text){ c.bubble = {text, t: BUBBLE_T}; }
 function pick(arr){ return arr[ri(0, arr.length-1)]; }
 const chars = [], corpses = [];
 function player(){ return chars.filter(c => c.faction==='player' && c.state!=='dead' && !c.phantom); }
@@ -943,6 +963,9 @@ function carryCap(c){ return c.mule ? 3 : 1; }
 function carried(c){ return (c.carry ? 1 : 0) + (c.carryList ? c.carryList.length : 0); }
 function takeBody(c, body){
   if(!body || body.state !== 'dead') return false;
+  /* Carrying a corpse out of a town is the signature crime of this trade, and until now it
+     was free. The town has to be able to see you do it. */
+  if(c.faction === 'player') crime('graverob', body.x, body.y, c);
   if(carried(c) >= carryCap(c)){ log(`${c.name} has their hands full.`, 'bad'); return false; }
   if(c.mule){
     c.carryList = c.carryList || [];
@@ -982,6 +1005,15 @@ function moveSpeed(c){
   else if(ld > 0.5) s *= 1 - (ld-0.5)*0.5;
   if(c.big > 1) s *= 1 - (c.big - 1) * 0.28;
   if(c.speedMult) s *= c.speedMult;   /* some things were not built to arrive quickly */
+  /* THE GRADE. Mountains are walkable now, and a mountain you cross as fast as a road is
+     not really terrain — the route over a range should be the slow way, chosen because it
+     is short or because someone is waiting for you on the road. The cheap height test comes
+     first so the thousand bodies down on the flat never pay for the gradient lookup. */
+  if(typeof heightAt === 'function' && heightAt(c.x, c.y) > 1.5){
+    const h0 = heightAt(c.x, c.y);
+    const grade = Math.max(Math.abs(heightAt(c.x+1, c.y) - h0), Math.abs(heightAt(c.x, c.y+1) - h0));
+    if(grade > 0.22) s *= 1 - Math.min(0.45, (grade - 0.22) * 0.5);
+  }
   const ll = c.parts['l.leg'], rl = c.parts['r.leg'];
 /* ---------- what a graft is worth ----------
    tier 1 bone graft: it holds you up. Barely.
@@ -996,8 +1028,16 @@ const legFactor = (leg) => leg.severed ? (leg.pros ? prosVal(leg) : 0.16) : leg.
   if(c.hunger <= 0) s *= (c.construct ? .35 : .6);
   return Math.max(0.5, s);
 }
+/* ---------- WHAT THEY ARE HOLDING ----------
+   `c.weapon` is a KEY, and it round-trips through saves. Any key that stops existing —
+   renamed, removed, or written by a build where the item was defined — becomes a landmine:
+   ITEMS[key] is undefined and the next thing to read a field off it throws. That is where
+   "Cannot read properties of undefined (reading 'wt')" came from, out of the whiff sound of
+   all places, which is why it fired at a seemingly random moment mid-fight rather than on
+   load. Everything asks here now, and an unknown key reads as empty hands. */
+function wepOf(c){ return (c && c.weapon && ITEMS[c.weapon]) || null; }
 function wSkillKey(c){
-  const w = c.weapon ? ITEMS[c.weapon] : null;
+  const w = wepOf(c);
   if(!w) return 'martial';
   return w.wt==='pierce' ? 'ranged' : w.wt==='cut' ? 'blades' : 'blunt';
 }
@@ -1269,7 +1309,7 @@ function nascentDeath(c, by){
   c.x = p.x; c.y = p.y; c.floor = 0;
   c.state = 'ok'; c.blood = Math.max(10, c.maxBlood * 0.3);
   for(const part of Object.values(c.parts)){ part.hp = Math.max(part.hp, 20); part.bleed = 0; part.severed = false; part.pros = false; }
-  c.target = null; c.windup = null; c.staggerT = 0; c.downT = 0;
+  c.target = null; c.windup = null; c.staggerT = 0; c.downT = 0; c.recoverT = 0; c.shoveT = 0;
   /* dying like that is loud, in the way that matters */
   if(noticeTier < 3) bumpNotice(NOTICE_TIERS[noticeTier + 1].at - noticed + 0.5);
   log(`${c.name} dies — and wakes at the circle, gasping like a swimmer. Their kit lies where they fell.`, 'bad');
@@ -1367,13 +1407,122 @@ function poolTake(k, n){
   }
   return n - need;
 }
+/* ---------- HEFT: HOW MUCH WEAPON THERE IS TO MOVE ----------
+   Every melee weapon in the game used to swing at exactly the same rate. Measured: a plank
+   and a Sundering Edge both at 0.83 swings a second, both with the same 0.26s telegraph,
+   and only the damage number told them apart. That is why a fight read like a click contest
+   instead of an exchange of blows — nothing about picking up a nodachi changed how it felt
+   to hold, only how big the number was.
+
+   Heft is the one dial that fixes it. 1.0 is a katana: the middle sword, the thing every
+   other cadence is read against. It lengthens the wind, lengthens the recovery, raises the
+   damage and hardens the impact — so a heavy weapon throws fewer, slower, far more
+   expensive blows. DPS comes out close to where it was on purpose: the choice between a
+   nodachi and a katana is meant to be a choice about tempo and exposure, not a strictly
+   better number. What changes is the grain of the fight. */
+const HEFT = {
+  w_plank: 0.85, w_rkat: 0.90, w_kat: 1.00, w_club: 1.15, w_pyre: 1.20,
+  w_kingsfang: 1.35, w_sever: 1.40, w_nod: 1.60,
+};
+/* ---------- WHAT NEEDS BOTH HANDS ----------
+   The rig has always had full Group joints at every shoulder, hip and elbow, but the pose
+   code only ever wrote `.rotation.x` — so no arm could ever come ACROSS the body, and
+   therefore nothing could ever be held in two hands. Everything in the game was carried
+   one-handed at arm's length, including a nodachi, which is a weapon defined by needing
+   both. The off-hand just hung there.
+
+   `pos` on a bow or crossbow only moves the mesh; what sells a stance is where the hands
+   are. The weapon mesh is parented to the RIGHT elbow, which is why the bow arm below is
+   the right one and the left hand is the one that draws. */
+const TWO_HAND = new Set(['w_nod', 'w_kingsfang', 'w_sever', 'w_pyre', 'w_kat',
+                          'w_bow', 'w_xbow', 'w_lance']);
+function twoHanded(c){
+  const w = wepOf(c);
+  if(!w) return false;
+  return TWO_HAND.has(w.tierOf || c.weapon);
+}
+/* ---------- WHAT KIND OF SWING ----------
+   One arc, thrown at everything, forever: the same overhead chop whether the target was a
+   lone armoured knight or the middle of a press of six. The cleave that catches bystanders
+   already existed in the resolution, but nothing about the animation ever admitted it, so
+   the most interesting thing the combat did was invisible.
+
+   A move decides four things at once — how long the wind is, how much of the blow lands,
+   how many bodies the arc can take, and how wide that arc is — and the animation is built
+   from the same record, so what you see is what resolved. `skill` is the weapon skill it
+   takes before a fighter finds it at all, which is the Kenshi shape: the same sword gets
+   more dangerous in the hand as much as on paper. */
+const MOVES = {
+  slash:   {label:'slash',    wind:1.00, rec:1.00, dmg:1.00, extra:1, arc:0.95, stag:1.00, skill:0},
+  overhead:{label:'overhand', wind:1.18, rec:1.15, dmg:1.18, extra:0, arc:0.50, stag:1.35, skill:0},
+  thrust:  {label:'thrust',   wind:0.80, rec:0.85, dmg:0.94, extra:0, arc:0.35, stag:0.70, skill:0, ap:0.25},
+  cleave:  {label:'wide cleave', wind:1.12, rec:1.22, dmg:0.88, extra:2, arc:1.30, stag:1.10, skill:25,
+            note:'one stroke, and the whole rank in front of it'},
+  rising:  {label:'rising cut',  wind:0.95, rec:1.05, dmg:1.06, extra:1, arc:0.80, stag:1.18, skill:45,
+            note:'up through the guard, where nobody is looking'},
+  spin:    {label:'turning cut', wind:1.28, rec:1.38, dmg:0.84, extra:4, arc:3.15, stag:1.22, skill:70,
+            note:'the whole body around, and everything within reach of it'},
+};
+/* Chosen by the situation first and the dice second — a fighter surrounded reaches for the
+   wide stroke, and one facing a single man in plate puts the point in instead. */
+function pickMove(c, t){
+  const sk = c.stats[wSkillKey(c)] || 0;
+  let crowd = 0;
+  for(const o of charsNear(c.x, c.y, 2.1)){
+    if(o !== c && o.state === 'ok' && hostile(c, o) && dist(c.x, c.y, o.x, o.y) < 1.9) crowd++;
+  }
+  const plated = t && t.armor && (ITEMS[t.armor].def || 0) >= 0.30;
+  const hv = heftOf(c);
+  const w = [];
+  const add = (k, n2) => { if(sk >= MOVES[k].skill && n2 > 0) w.push([k, n2]); };
+  add('slash', 10);
+  add('overhead', 6 + (hv >= 1.2 ? 7 : 0) + (crowd <= 1 ? 3 : 0));
+  add('thrust', 5 + (plated ? 11 : 0) + (crowd <= 1 ? 3 : 0));
+  add('cleave', crowd >= 2 ? 9 + crowd * 4 : 2);
+  add('rising', 6 + (plated ? 3 : 0));
+  add('spin', crowd >= 3 ? 8 + crowd * 4 : (crowd >= 2 ? 3 : 0));
+  let tot = 0; for(const [, n2] of w) tot += n2;
+  let r = rnd() * tot;
+  for(const [k, n2] of w){ r -= n2; if(r <= 0) return k; }
+  return 'slash';
+}
+function heftOf(c){
+  const w = wepOf(c);
+  if(w && !w.range) return HEFT[w.tierOf || c.weapon] || 1.0;
+  if(!w) return (c.big || 1) > 1.3 ? 1.25 : 0.85;   /* a fist is quick. A maw is not. */
+  return 1.0;                                        /* a drawn bow has its own clock below */
+}
+/* ---------- WHAT THE HAND KNOWS ----------
+   The weight of a weapon is a fact about the weapon. How much of that weight you FEEL is a
+   fact about you. Someone who has spent years on a nodachi carries it in the line of the
+   swing and recovers on balance; someone who picked one up this morning fights the thing
+   as much as the enemy, and every beat of the swing is longer for it.
+
+   So skill scales heft for CADENCE ONLY — the wind, the recovery, the cooldown. It never
+   touches damage, stagger, knockback or sound: mastery is not a reason for a nodachi to
+   land softer. A master swings a heavy weapon more often. It hits exactly as hard.
+
+   Journeyman (15, where the harness measures) is the neutral point, and the curve is
+   deliberately asymmetric — the gulf between a novice and a competent hand is wider than
+   the one between competent and master, because that is where it is felt. */
+function skillEase(c){
+  const s = c.stats[wSkillKey(c)] || 0;
+  return clamp(s >= 15 ? 1 - (s - 15) * 0.0026 : 1 + (15 - s) * 0.009, 0.80, 1.14);
+}
+function swingHeft(c){ return heftOf(c) * skillEase(c); }
 function atkPower(c){
-  const w = c.weapon ? ITEMS[c.weapon] : null;
+  const w = wepOf(c);
   let d;
   if(w) d = w.dmg;
   else if(c.clawDmg) d = c.clawDmg;
   else if(c.undead || c.beast) d = 8;
   else d = 4 + c.stats.martial * 0.5;
+  /* Fewer blows, each one worth more — and deliberately worth ENOUGH more. The exponent is
+     set so effective DPS comes out flat across the whole heft range: picking up a nodachi
+     must not be a damage decision. What you buy with it is impact and stagger, and what you
+     pay is the seconds you spend rooted in the wind and the follow-through. Melee only — a
+     bow's rate of fire is its own problem, handled where it is drawn. */
+  if(!w || !w.range) d *= Math.pow(heftOf(c), 1.04);
   d *= 1 + c.stats[wSkillKey(c)] * 0.015;
   d *= 1 - packPenalty(c);
   if(c.race==='hollow' && c.blood < 60) d *= 1.15;
@@ -3697,6 +3846,229 @@ const AU = (() => {
     news(bad){ if(ok('news', 200)) tone('sine', bad ? 420 : 300, bad ? 300 : 560, 0.075, 0.24); },
   };
 })();
+/* ============================================================ THE LAW
+   A town has always been able to hate you — dropRep, provoked, and one warning before the
+   door closes. What it could not do was DEAL with you. Everything short of murder was a
+   number going down, and murder was a fight to the death in the street, because a guard had
+   no third option between ignoring you and killing you.
+
+   Cells give them the third option. `bounty` is what a town wants you for; guards subdue
+   rather than finish anyone with a price on them, and what they take, they put somewhere.
+
+   The severities are deliberately not flat. This is a world where a man may be killed in a
+   tavern brawl and the town shrugs, and where raising him afterwards is the thing they hang
+   people for. */
+/* ---------- GETTING OUT ----------
+   A sentence you can only sit through is a wait, not a situation, and a prisoner nobody has
+   to guard is a number on a shelf. Both problems have the same answer: the bars are a thing
+   that can be worked at, slowly, by anyone with nothing else to do — and the only reliable
+   cure is somebody standing there watching.
+
+   Deliberately slow. A short sentence is easier served than escaped; it is the long ones,
+   and the prisoners you meant to keep, where this starts to matter. */
+function watchersOn(cell, prisoner){
+  /* who is standing close enough to stop this. For a town cell that is the watch; for one
+     of yours it is anyone of yours who is not themselves locked up. */
+  let n = 0;
+  for(const o of charsNear(cell.x, cell.y, 7)){
+    if(o.state !== 'ok' || o === prisoner || o.jailedAt) continue;
+    if(dist(o.x, o.y, cell.x, cell.y) > 7) continue;
+    if(cell.kind === 'town'){ if(o.faction === 'town' && !o.civ && o.homeTown === cell.town) n++; }
+    else if(o.faction === 'player' && !o.undead) n++;
+  }
+  return n;
+}
+/* returns true if they got out this tick */
+function workTheBars(c, dt){
+  const cell = c.jailedAt;
+  if(!cell) return false;
+  if(cell.hp === undefined){ cell.hp = CELL_HP; cell.maxHp = CELL_HP; }
+  const watch = watchersOn(cell, c);
+  if(watch > 0){
+    /* watched: no progress, and the damage gets made good */
+    cell.hp = Math.min(cell.maxHp, cell.hp + dt * 2.2 * watch);
+    c.barsT = 0;
+    return false;
+  }
+  /* a body with nothing to do but pull at a bar. Strength and stubbornness both count. */
+  const rate = 0.42 + c.stats.atk * 0.012 + c.stats.tough * 0.006 + c.stats.martial * 0.004;
+  cell.hp -= dt * rate;
+  c.barsT = (c.barsT || 0) + dt;
+  if(rnd() < dt * 0.25) addSpecks(cell.x, cell.y + 0.4, '#6b6357', 1);
+  if(cell.hp > 0) return false;
+  /* out */
+  cell.hp = cell.maxHp; cell.holds = 0;
+  const wasTown = cell.kind === 'town' ? cell.town : null;
+  c.jailedAt = null; c.jailT = 0; c.barsT = 0;
+  returnKit(c);                       /* they take what was on the shelf on the way past */
+  c.x = cell.x + 1.4; c.y = cell.y + 1.2;
+  if(c.prisoner){
+    /* one of yours, gone — and they are not going to forget who held them */
+    c.prisoner = false; c.captured = false; c.provoked = true; c.fleeT = 16;
+    log(`${c.name} has broken out of the cells and is running.`, 'bad');
+  } else if(wasTown){
+    /* a jailbreak is its own crime, and the town wants you for that too now */
+    wasTown.bounty = (wasTown.bounty || 0) + 200; wasTown.wanted = true;
+    dropRep(wasTown, 18);
+    log(`${c.name} is out of the cells at ${wasTown.name}. They will want that back.`, 'bad');
+  }
+  return true;
+}
+const CRIMES = {
+  brawl:      {bounty: 30,  days: 1, label: 'brawling'},
+  theft:      {bounty: 60,  days: 2, label: 'theft'},
+  contraband: {bounty: 90,  days: 2, label: 'carrying what the gate forbids'},
+  assault:    {bounty: 120, days: 3, label: 'assault'},
+  desecrate:  {bounty: 180, days: 4, label: 'desecration'},
+  graverob:   {bounty: 240, days: 5, label: 'robbing the dead'},
+  murder:     {bounty: 400, days: 8, label: 'murder'},
+  formula:    {bounty: 260, days: 5, label: 'working a formula inside the walls'},
+  walkdead:   {bounty: 300, days: 6, label: 'walking the dead through the gate'},
+  raising:    {bounty: 900, days: 20, label: 'raising the dead inside the walls'},
+};
+/* Nobody is wanted for what nobody saw. A crime needs an eye on it — a guard, or a
+   townsperson close enough and alive enough to carry the tale. */
+function witnessNear(x, y, t, r){
+  for(const o of charsNear(x, y, r || 11)){
+    if(o.state !== 'ok' || o.faction !== 'town') continue;
+    if(o.homeTown && o.homeTown !== t) continue;
+    if(dist(o.x, o.y, x, y) > (r || 11)) continue;
+    if(!losBlocked(o.x, o.y, x, y, 0)) return o;
+  }
+  return null;
+}
+function townAt(x, y){
+  for(const t of towns){
+    const r = (t.def.wall ? t.def.wall.r : 20) + 4;
+    if(Math.abs(x - t.x) <= r && Math.abs(y - t.y) <= r) return t;
+  }
+  return null;
+}
+/* Register an offence. Returns the town that wants you for it, or null if nobody saw. */
+function crime(kind, x, y, by){
+  const spec = CRIMES[kind]; if(!spec) return null;
+  const t = townAt(x, y); if(!t) return null;
+  if(t.playerRuled) return null;                 /* your own town does not arrest you */
+  if(by && by.faction !== 'player') return null;
+  /* the undead-friendly places did not care before and do not start now */
+  if(t.def.undeadFriendly && (kind === 'raising' || kind === 'walkdead' || kind === 'formula')) return null;
+  const saw = witnessNear(x, y, t);
+  if(!saw) return null;
+  t.bounty = (t.bounty || 0) + spec.bounty;
+  t.wanted = true;
+  dropRep(t, Math.round(spec.bounty / 12));
+  say(saw, pick(['GUARDS!', 'Stop them!', 'You saw that — everyone saw that!']));
+  log(`${saw.name} saw. ${t.name} wants you for ${spec.label} — bounty ${t.bounty}.`, 'bad');
+  /* the watch turns out */
+  for(const g of chars){
+    if(g.faction !== 'town' || g.state !== 'ok' || g.civ) continue;
+    if(g.homeTown !== t || dist(g.x, g.y, x, y) > 34) continue;
+    g.arrestTarget = by || null;
+    g.provoked = true;
+  }
+  return t;
+}
+/* Walking a host of risen past the gate of a town that has opinions about the dead. Checked
+   on a slow tick rather than per-frame: it is a standing offence, not an instant. */
+const CONTRABAND = {remains: 'grave-goods', tome: 'a forbidden book', doctrine: 'heretical doctrine',
+                    sunder: 'a piece of the Fracture itself', formula_p: 'a proscribed formula'};
+/* A search is not a scan of the whole world: it takes a guard, standing close, in daylight
+   enough to see. Slow-ticked with the walking-dead check for the same reason. */
+function contrabandCheck(){
+  for(const c of player()){
+    if(c.state !== 'ok' || c.undead) continue;
+    const t = townAt(c.x, c.y);
+    if(!t || t.playerRuled || t.def.undeadFriendly) continue;
+    const r = (t.def.wall ? t.def.wall.r : 20);
+    if(Math.abs(c.x - t.x) > r || Math.abs(c.y - t.y) > r) continue;
+    /* the shared pool is `stash`; there is no global `inv` — a name I assumed and boot.js
+       rejected on the first load, which is the whole reason it runs first now */
+    const carried2 = Object.keys(CONTRABAND).filter(k => (c.inv && c.inv[k] > 0) || (stash[k] || 0) > 0);
+    if(!carried2.length) continue;
+    /* one guard, near, and not every pass — a gate is a bottleneck, not a scanner */
+    const g = charsNear(c.x, c.y, 6).find(o => o.faction === 'town' && !o.civ && o.state === 'ok' &&
+      o.homeTown === t && dist(o.x, o.y, c.x, c.y) < 6);
+    if(!g || rnd() > 0.20) continue;
+    say(g, 'Open the pack.');
+    if(crime('contraband', c.x, c.y, c)){
+      log(`${g.name} finds ${CONTRABAND[carried2[0]]} on ${c.name}.`, 'bad');
+      return;
+    }
+  }
+}
+let _walkDeadT = 0;
+function walkingDeadCheck(dt){
+  if((_walkDeadT -= dt) > 0) return;
+  _walkDeadT = 4;
+  contrabandCheck();
+  for(const c of chars){
+    if(c.faction !== 'player' || !c.undead || c.state !== 'ok') continue;
+    const t = townAt(c.x, c.y);
+    if(!t || t.playerRuled || t.def.undeadFriendly) continue;
+    const r = (t.def.wall ? t.def.wall.r : 20);
+    if(Math.abs(c.x - t.x) > r || Math.abs(c.y - t.y) > r) continue;   /* inside the ring */
+    if(crime('walkdead', c.x, c.y, chars.find(o => o.faction === 'player' && !o.undead) || null)) return;
+  }
+}
+/* ---------- WHAT A PRISONER IS FOR ----------
+   Three things you can do with someone in your cells, and they are three different kinds of
+   person to be. The conviction system already has opinions about all of it, so the choice
+   costs something with the people standing next to you — which is the point. */
+function ransomValue(v){
+  let g = 120 + Math.round((v.stats.atk + v.stats.def + v.stats.tough) * 2.2);
+  if(v.bossKey) g *= 4;
+  if(v.squad) g = Math.round(g * 1.3);
+  return g;
+}
+function prisonerRelease(v, mode){
+  const cell = v.jailedAt;
+  if(cell) cell.holds = 0;
+  v.jailedAt = null; v.jailT = 0; v.prisoner = false; v.captured = false;
+  if(mode !== 'recruit') returnKit(v); else v.heldKit = null;
+  v.x += 1.2;
+}
+function ransomPrisoner(v){
+  const g = ransomValue(v);
+  cats += g;
+  /* the people they came from remember being paid, not being beaten */
+  const t = v.homeTown || null;
+  if(t) dropRep(t, -6);
+  prisonerRelease(v, 'ransom');
+  v.provoked = false; v.faction = v.faction === 'player' ? 'town' : v.faction;
+  v.fleeT = 12;
+  deed('ransom', 1, t);
+  log(`${v.name} is ransomed back for ${g} gold. They do not look at you on the way out.`, 'good');
+  refreshInv();
+}
+function sellPrisoner(v){
+  if(!slaverCamp){ log('There is nobody buying. The camp is broken.', 'bad'); return; }
+  const g = Math.round(ransomValue(v) * 0.75);
+  cats += g;
+  prisonerRelease(v, 'sold');
+  const i = chars.indexOf(v); if(i >= 0) chars.splice(i, 1);
+  deed('slave_sold', 1);
+  log(`${v.name} is sold to the camp for ${g} gold. The chain goes on somebody else now.`, 'bad');
+  refreshInv();
+}
+/* Breaking someone takes days, and it does not always work: a hard case never turns. */
+function recruitPrisoner(v){
+  if(v.breakT < 6){
+    log(`${v.name} is not broken yet. ${6 - v.breakT} more day${6 - v.breakT > 1 ? 's' : ''} in the dark.`, 'bad');
+    return;
+  }
+  const odds = clamp(0.30 + v.breakT * 0.05 - v.stats.tough * 0.004, 0.10, 0.85);
+  if(rnd() > odds){
+    v.breakT = Math.max(0, v.breakT - 3);
+    log(`${v.name} spits on the floor. Not this time.`, 'bad');
+    return;
+  }
+  prisonerRelease(v, 'recruit');
+  v.faction = 'player'; v.provoked = false; v.squad = null; v.homeTown = null;
+  v.conviction = v.conviction || 'loyal';
+  deed('recruit_prisoner', 1);
+  log(`${v.name} takes the offer. Whatever they were before, they are yours now.`, 'good');
+  refreshSquadBar();
+}
 /* ============================================================ DAMAGE & MEDICINE */
 function skillCap(c){ return c.lich ? 150 : (c.race==='hollow' && c.hollowTier >= 1 ? 125 : (raceOf(c).cap || 100)); }
 function xpGain(c, stat, amt){
@@ -3720,9 +4092,14 @@ function pickPart(){
   return 'r.leg';
 }
 function hitChance(a, d){
-  const skillEdge = a.stats[wSkillKey(a)] * 0.004 - packPenalty(a) * 0.25 + packPenalty(d) * 0.15;
+  const sk = a.stats[wSkillKey(a)] || 0;
+  const skillEdge = sk * 0.004 - packPenalty(a) * 0.25 + packPenalty(d) * 0.15;
   const love = sweetheart(a) ? 0.06 : 0;
-  return clamp(0.55 + (a.stats.atk - d.stats.def)*0.02 + skillEdge + love, 0.15, 0.94);
+  /* A big weapon is not merely slower in an untrained hand, it is wilder: the arc is long
+     and there is no getting it back once it is going. Skill buys that back entirely, which
+     is why a master with a nodachi is frightening and a farmhand with one is a liability. */
+  const wild = Math.max(0, heftOf(a) - 1) * 0.30 * clamp(1 - sk/70, 0, 1);
+  return clamp(0.55 + (a.stats.atk - d.stats.def)*0.02 + skillEdge + love - wild, 0.15, 0.94);
 }
 /* combat feedback: floating text + particle specks */
 const particles = [], projectiles = [];
@@ -3737,27 +4114,36 @@ function attack(a, d){
   if(a.phantom) return;             /* an illusion's blade cuts nothing */
   breakVeil(a, 'strikes');
   const isPlayerFight = a.faction==='player' || d.faction==='player';
-  a.lungeT = 0.18;
+  const hf = heftOf(a);
+  a.lungeT = a.lungeDur = 0.18 * hf;   /* a heavy swing drives the whole body after it */
+  a.lungeK = 0.35 * hf;
   const dd = Math.max(0.01, dist(a.x,a.y,d.x,d.y));
   a.lungeDX = (d.x-a.x)/dd; a.lungeDY = (d.y-a.y)/dd;
   xpGain(a, 'atk', 0.05 * clamp((d.stats.def+4)/(a.stats.atk+4), .2, 2));
   xpGain(a, wSkillKey(a), 0.08);
   if(a.armor) xpGain(a, 'armr', 0.04);
   let hc = hitChance(a,d);
-  if(d.blocking) hc *= 0.45;
+  /* A guard turns a light blade by finding the line. It does much less against something
+     that never needed a line: a nodachi coming down does not care what is in the way. */
+  if(d.blocking) hc *= clamp(0.45 * Math.pow(hf, 1.6), 0.30, 0.85);
   if(rnd() > hc){
     xpGain(d, 'def', (d.blocking ? 0.14 : 0.07) * clamp((a.stats.atk+4)/(d.stats.def+4), .2, 2));
     addFloat(d.x, d.y-0.9, d.blocking ? 'blocked' : 'miss', d.blocking ? '#8fb5d4' : '#9c8a6e');
     /* a guard caught it, or it went past — two very different sounds, and between them they
        are most of what gives a fight its rhythm */
     if(d.blocking) AU.block(d.x, d.y, !!(d.armor && METAL_ARMOR.has(d.armor)));
-    else AU.whiff(a.x, a.y, !!(a.big > 1.2) || !!(a.weapon && ITEMS[a.weapon].wt === 'blunt'));
+    else {
+      AU.whiff(a.x, a.y, hf >= 1.25 || !!(a.big > 1.2) || (wepOf(a) || {}).wt === 'blunt');
+      /* the cost of missing with something heavy, made visible: it goes into the dirt */
+      if(hf >= 1.15) addSpecks(a.x + (d.x-a.x)*0.45, a.y + (d.y-a.y)*0.45, '#8c8272', Math.round(2*hf));
+    }
     return;
   }
-  const w = a.weapon ? ITEMS[a.weapon] : null;
+  const w = wepOf(a);
   const wt = w ? w.wt : 'blunt';
   if(!w && !a.beast && !a.undead && a.stats.martial >= 15){ d.staggerT = Math.max(d.staggerT, 0.45); d.windup = null; }
-  let dmg = atkPower(a) * (0.75 + rnd()*0.5);
+  const mvA = MOVES[a.swingMove] || MOVES.slash;
+  let dmg = atkPower(a) * (0.75 + rnd()*0.5) * mvA.dmg;
   /* BURNING EDGE: fire on the weapon hits harder, and leaves a small burn */
   if(a.weaponFlame && isConcentrating(a, 'firebrand')){
     dmg *= 1.35;
@@ -3773,8 +4159,9 @@ function attack(a, d){
   xpGain(d, 'tough', 0.06);
   const pk = pickPart();
   const part = d.parts[pk];
-  if(part.severed){ return applyDamage(a, d, 'chest', dmg, wt, isPlayerFight); }
-  applyDamage(a, d, pk, dmg, wt, isPlayerFight);
+  /* a driven point finds the gap a swung edge cannot */
+  if(part.severed){ return applyDamage(a, d, 'chest', dmg, wt, isPlayerFight, false, false, mvA.ap || 0); }
+  applyDamage(a, d, pk, dmg, wt, isPlayerFight, false, false, mvA.ap || 0);
 }
 /* ---------- WHAT THE ARMOUR IS MADE OF, AND WHAT IS COMING AT IT ----------
    Armour used to be a single `def` number, and it was consulted only by attack(). Every
@@ -3839,22 +4226,59 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
   if(!raw) dmg = mitigate(d, dmg, wt, ap, a);
   /* an awakened parasite remembers what it was bred to kill */
   if(a && a.race==='hollow' && a.hollowTier >= 1 && d.gauntKind) dmg *= 1.35;
-  if(dmg > 6 && d.flinchT !== undefined) d.flinchT = 0.18;
-  /* a heavy blow lands like a wall: stagger + shove, blunt worst of all */
-  if(a && d.state === 'ok' && dmg > 11 + d.stats.tough * 0.28 && !d.bossKey){
-    const stChance = (wt === 'blunt' ? 0.65 : 0.4) * (d.blocking ? 0.4 : 1);
+  /* how much weapon was behind it. Projectiles and spells come through here too and have
+     no heft of their own — they land exactly as they always did. */
+  const ahf = a ? heftOf(a) : 1;
+  /* a blow struck to take someone alive stops short of the last of them */
+  if(wantsAlive(a, d)){
+    const worst = Math.min(...Object.values(d.parts).map(pt => pt.hp));
+    if(worst < 18) dmg = Math.min(dmg, 1);
+  }
+  if(dmg > 6 && d.flinchT !== undefined) d.flinchT = Math.min(0.34, 0.18 * ahf);
+  /* a heavy blow lands like a wall: stagger + shove, blunt worst of all. Weight lowers the
+     bar it has to clear, raises the odds once it does, and shoves harder when it takes —
+     and a raised guard is far less help against it than it used to be. */
+  /* The bar a blow has to clear to rock someone. It used to be `11 + tough*0.28`, which
+     read sensibly and behaved terribly: toughness ALSO cuts incoming damage, so the bar
+     climbed while the blow shrank and the two crossed at about tough 40. Past that a body
+     could not be staggered by anything, by any weapon, ever — measured at a flat zero for
+     a veteran under an iron club. Resistance is the intent; immunity was not. The toughness
+     term is now small enough that the lines never cross, and the actual defending is done
+     below by `brace`, which is bounded and therefore cannot become an off-switch. */
+  if(a && d.state === 'ok' && dmg > (11 + d.stats.tough * 0.06) / ahf && !d.bossKey){
+    /* BRACING. Taking a heavy blow and keeping your feet is a thing bodies learn. Until now
+       `armr` did exactly one thing in this game — offset its own encumbrance — which was
+       thin for a stat you earn by being hit, so it gets the job it should always have had:
+       knowing how to stand in a suit and let it carry the shock instead of being thrown
+       around inside it. It counts only when there is actually a suit on.
+
+       Toughness is deliberately the JUNIOR term here, despite being the obvious one. It
+       already resists stagger twice over — it raises the bar a blow has to clear, and it
+       cuts the damage that has to clear it. Weighting it a third time here took a veteran
+       from 65% staggered to 0%, which is not a defence, it is an immunity. */
+    const brace = clamp((d.armor ? d.stats.armr * 0.004 : 0) + d.stats.tough * 0.0022, 0, 0.55);
+    const stChance = clamp((wt === 'blunt' ? 0.65 : 0.4) * ahf * ((MOVES[a.swingMove] || MOVES.slash).stag), 0.1, 0.95) * (d.blocking ? 0.55 : 1) * (1 - brace);
     if(rnd() < stChance){
-      d.staggerT = Math.max(d.staggerT || 0, 0.35);
-      d.windup = null;
+      d.staggerT = Math.max(d.staggerT || 0, 0.35 * clamp(ahf, 0.8, 1.5) * (1 - clamp(d.stats.tough * 0.002, 0, 0.3)));
+      d.windup = null; d.recoverT = 0;
       const dd = Math.max(0.01, dist(a.x, a.y, d.x, d.y));
-      nudge(d, (d.x - a.x)/dd * 0.28, (d.y - a.y)/dd * 0.28);
+      nudge(d, (d.x - a.x)/dd * 0.28 * ahf, (d.y - a.y)/dd * 0.28 * ahf);
+      /* nudge() moves the body a fraction of a tile instantly, which the eye reads as a
+         teleport rather than as being driven back. Give the render something to slide. */
+      d.shoveT = d.shoveDur = 0.22 * clamp(ahf, 0.8, 1.6);
+      d.shoveK = 0.30 * clamp(ahf, 0.8, 1.6);
+      d.shoveDX = (d.x - a.x)/dd; d.shoveDY = (d.y - a.y)/dd;
+      if(typeof kickCam === 'function') kickCam(d.x, d.y, clamp(0.10 + dmg*0.006, 0, 0.42) * clamp(ahf, 0.7, 1.6));
     }
   }
   /* bosses shrug off NPC scraps — their fights are reserved for you */
   if(d.bossKey && a && a.faction !== 'player') dmg *= 0.15;
   if(a && a.faction==='player' && d.faction==='town' && d.homeTown){
     dropRep(d.homeTown, 4);
-    if(d.civ && !incid) deed('civkill', 1, d.homeTown);   /* a stray cleave is not a choice; this was */
+    if(d.civ && !incid){
+      deed('civkill', 1, d.homeTown);   /* a stray cleave is not a choice; this was */
+      crime(d.state === 'dead' ? 'murder' : 'assault', d.x, d.y, a);
+    }
   }
   /* `provoked` is a grudge held against YOU specifically — so only your own deliberate blow
      may set it. A stray cleave, a splash, or a bandit's arrow is not a declaration of war,
@@ -3870,14 +4294,14 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
     }
   }
   const part = d.parts[pk];
-  AU.hit(d.x, d.y, dmg >= 16, wt);
+  AU.hit(d.x, d.y, dmg >= 16 || ahf >= 1.25, wt);
   part.hp -= dmg;
   part.bandaged = false;
   part.bleed += dmg * (wt==='cut' ? 0.09 : wt==='burn' ? 0.02 : wt==='dark' ? 0.03 : wt==='holy' ? 0.01 : 0.04);
   if(d.armor) xpGain(d, 'armr', 0.06);
   d.hitT = 0.14;
   addFloat(d.x, d.y-0.9, String(Math.round(dmg)), d.faction==='player' ? '#ff6a4a' : wt==='burn' ? '#ffb03a' : '#e8dcc4');
-  addSpecks(d.x, d.y-0.3, d.undead ? '#d8d4c8' : '#8a2418');
+  addSpecks(d.x, d.y-0.3, d.undead ? '#d8d4c8' : '#8a2418', Math.round(4 * clamp(ahf, 0.8, 1.7) * (dmg >= 16 ? 1.6 : 1)));
   /* severance: cutting weapons, non-vital limbs deep in the red */
   if(!d.construct && !VITAL.has(pk) && wt==='cut' && part.hp < -45 * (d.knit || 1) && !part.severed && rnd() < .3 * (d.knit || 1)){
     part.severed = true; part.pros = false; part.bleed += 3;
@@ -3917,6 +4341,41 @@ function updateState(c, loud){
     if(c.faction==='player') log(`${c.name} is back on their feet.`, 'good');
   }
 }
+/* ---------- TAKEN ALIVE ----------
+   Guards stop at unconscious when there is a price on someone: a body is worth nothing and
+   a prisoner is worth the bounty. This is what gives the watch a third option between
+   ignoring you and killing you, and it is the whole reason the cells exist. */
+function wantsAlive(a, d){
+  if(!a || a.faction !== 'town' || a.civ) return false;
+  if(d.undead || d.construct || d.beast) return false;
+  const t = a.homeTown;
+  return !!(t && t.bounty > 0 && d.faction === 'player');
+}
+function jail(c, cell, days){
+  c.jailedAt = cell; c.jailT = days;
+  c.captured = false; c.drag = null; c.target = null; c.moveTarget = null;
+  c.x = cell.x; c.y = cell.y; c.floor = 0;
+  cell.holds = c.id;
+  if(c.state === 'down') c.state = 'ok';
+  for(const part of Object.values(c.parts)) part.hp = Math.max(part.hp, 15);
+  c.blood = Math.max(c.blood, 45);
+}
+/* what they take off you at the door, and what you get back at the end of it */
+function stripKit(c){
+  if(c.heldKit) return;
+  c.heldKit = {weapon: c.weapon || null, armor: c.armor || null, inv: Object.assign({}, c.inv || {})};
+  c.weapon = null; c.armor = null;
+  if(c.inv) for(const k of Object.keys(c.inv)) delete c.inv[k];
+}
+function returnKit(c){
+  if(!c.heldKit) return;
+  c.weapon = (c.heldKit.weapon && ITEMS[c.heldKit.weapon]) ? c.heldKit.weapon : null;
+  c.armor  = (c.heldKit.armor  && ITEMS[c.heldKit.armor])  ? c.heldKit.armor  : null;
+  c.inv = c.inv || {};
+  for(const [k, v] of Object.entries(c.heldKit.inv || {})) if(ITEMS[k]) c.inv[k] = (c.inv[k] || 0) + v;
+  c.heldKit = null;
+}
+function freeCell(t){ return cells.find(cl => cl.town === t && !cl.holds); }
 function kill(c, by){
   if(c.state==='dead') return;
   /* the ledger is written here, not inferred from a body that will be gone in two days */
@@ -4194,6 +4653,8 @@ const BUILD_TYPES = {
   rampart: {name:'Rampart Stair', cost:{wood:8, mats:4}, w:1, h:1,
     desc:'A stair to the wall-tops. Without one, the rampart is a shelf nobody can reach'},
   shack:   {name:'Shack',     mats:25, w:3, h:3, desc:'Free bed inside — 8x healing'},
+  cell:    {name:'Holding Cell', cost:{stone:18, mats:10, iron:4}, w:2, h:2,
+    desc:'Somewhere to put what you drag off the field. A prisoner can be ransomed, broken to your service, or sold — and each of those is a different kind of person to be'},
   farm:    {name:'Farm',      mats:20, w:2, h:2, desc:'Grows 3 greenfruit / day'},
   r_bench: {name:'Research Bench', mats:15, w:2, h:2, desc:'Unlock technology. Needs a living mind nearby.'},
   script:  {name:'Scriptorium', cost:{mats:18, fabric:6}, w:2, h:2,
@@ -4327,6 +4788,15 @@ function deconstruct(b){
       c.floor = 0; c.wantFloor = null; c.afterStair = null; c.path = null;
     }
   }
+  if(b.type === 'cell'){
+    /* tearing down a cell lets out whoever was in it, rather than deleting a person */
+    for(let i = cells.length - 1; i >= 0; i--){
+      if(cells[i].build !== b) continue;
+      const held = chars.find(c => c.jailedAt === cells[i]);
+      if(held){ held.jailedAt = null; held.jailT = 0; returnKit(held); held.provoked = true; }
+      cells.splice(i, 1);
+    }
+  }
   pBuilds.splice(idx, 1);
   log(`The ${BUILD_TYPES[b.type].name} comes down. Recovered: ${back.length ? back.join(', ') : 'nothing worth carrying'}.`, 'good');
   refreshInv();
@@ -4335,6 +4805,8 @@ function placeStructure(type, tx, ty){
   const bt = BUILD_TYPES[type];
   const b = {type, x:tx, y:ty, w:bt.w, h:bt.h, growth:0};
   if(type==='wall'){ b.hp = 250; b.maxHp = 250; }
+  if(type==='cell') cells.push({x: tx + 0.9, y: ty + 0.9, town: null, holds: 0, kind: 'player', build: b,
+    hp: CELL_HP, maxHp: CELL_HP});
   pBuilds.push(b);
   /* a wall's top is a rampart. It always was, structurally — the game just never let anyone
      stand on it. Reaching it is a separate problem, and the Rampart Stair is the answer. */
@@ -5145,7 +5617,7 @@ function clearOrders(c){
   c.gather = null; c.attackMove = null; c.healProg = 0; c.gatherT = 0;
   c.chestTarget = null; c.targetManual = false; c.fleeT = 0;
   c.structTarget = null; c.repairTarget = null; c.stuckT = 0;
-  c.carryTarget = null; c.rescueTarget = null;
+  c.carryTarget = null; c.rescueTarget = null; c.seizeTarget = null;
   c.guardTarget = null; c.haulTarget = null;
   c.path = null; c.pathGoal = null;
   if(c.resting){ c.resting.user = null; c.resting = null; }
@@ -5167,7 +5639,6 @@ function jobHasWork(c, j){
   }
 }
 function physics(c, dt){
-  if(c.bubble && (c.bubble.t -= dt) <= 0) c.bubble = null;
   if(c.veilT > 0) c.veilT -= dt;
   if(c.markT > 0) c.markT -= dt;              /* a darkbolt's mark fades on its own */
   if(c.heat > 0) c.heat = Math.max(0, c.heat - dt * 0.55);   /* a lance cooling in the hand */
@@ -5209,14 +5680,40 @@ function physics(c, dt){
     }
   }
   if(c.phantom && (c.phantomT -= dt) <= 0){ dispelPhantom(c); return; }
-  if(c.state !== 'ok'){ c.windup = null; return; }
+  if(c.state !== 'ok'){ c.windup = null; c.recoverT = 0; return; }
   /* a committed swing: rooted, then it lands — or whiffs if the target slipped away */
   if(c.windup){
-    if(c.staggerT > 0){ c.windup = null; }
+    if(c.staggerT > 0){ c.windup = null; c.recoverT = 0; c.swingMove = null; }   /* reeling is not recovering */
     else {
       c.windup.t -= dt;
       if(c.windup.t <= 0){
         const wu = c.windup; c.windup = null;
+        /* the swing is spent. Whether it found anything or not, the body has to come back
+           for the blade — a miss costs the same recovery a hit does, which is what makes
+           committing to a heavy weapon a decision rather than a free upgrade. */
+        if(wu.kind === 'ranged'){
+          /* the loose. Short, but without it the string hand teleported from full draw back
+             to guard between frames and the shot had no follow-through at all. */
+          c.recoverT = c.recoverDur = 0.20;
+          c.looseT = 0.20;
+        }
+        if(wu.kind === 'melee'){
+          c.looseT = 0;
+          c.recoverT = c.recoverDur || 0.22;
+          /* a big weapon moves enough air to be seen doing it. Emitted on the beat the arc
+             completes, along the line of the swing, so a nodachi coming through leaves a
+             visible sweep and a knife leaves nothing. */
+          const swf = heftOf(c);
+          if(swf >= 1.15){
+            const tg = chars.find(o => o.id === wu.tgt);
+            const ax = tg ? tg.x - c.x : 1, ay = tg ? tg.y - c.y : 0;
+            const al = Math.max(0.01, Math.hypot(ax, ay));
+            for(let i = 0; i < Math.round(3 * swf); i++){
+              const sp = 0.55 + i*0.24;
+              addSpecks(c.x + ax/al*sp, c.y + ay/al*sp - 0.2, '#b9ae97', 1);
+            }
+          }
+        }
         const tgt = chars.find(o => o.id === wu.tgt);
         const reach = wu.kind === 'ranged' ? 9 : 1.7;
         if(tgt && tgt.state === 'ok' && dist(c.x, c.y, tgt.x, tgt.y) <= reach &&
@@ -5227,8 +5724,11 @@ function physics(c, dt){
             /* the blade doesn't stop at the first body: cleave through the arc */
             const wpn = c.weapon ? ITEMS[c.weapon] : null;
             if(wpn && !wpn.range){
-              const heavy = wpn.dmg >= 16;
-              const maxExtra = heavy ? 2 : 1;
+              /* the move decides the reach of the stroke, not the weapon's damage tier —
+                 a turning cut takes the ring; a thrust takes one man */
+              const mvR = MOVES[wu.mv] || MOVES.slash;
+              const maxExtra = mvR.extra + (wpn.dmg >= 16 ? 1 : 0);
+              const arcR = mvR.arc;
               const aim = Math.atan2(tgt.y - c.y, tgt.x - c.x);
               let struck = 0;
               for(const o of charsNear(c.x, c.y, 1.9)){
@@ -5240,7 +5740,7 @@ function physics(c, dt){
                 let ang = Math.atan2(o.y - c.y, o.x - c.x) - aim;
                 while(ang > Math.PI) ang -= Math.PI*2;
                 while(ang < -Math.PI) ang += Math.PI*2;
-                if(Math.abs(ang) > 0.95) continue;
+                if(Math.abs(ang) > arcR) continue;
                 if(hostile(c, o)){
                   applyDamage(c, o, pickPart(), atkPower(c) * 0.6, wpn.wt, c.faction==='player' || o.faction==='player', true);
                   retaliate(o, c);
@@ -5266,6 +5766,14 @@ function physics(c, dt){
       } else return;   /* feet planted while the swing is committed */
     }
   }
+  /* IN A CELL. Nothing else reaches you in here: no orders, no fighting, no work. The
+     sentence runs on the calendar, so a day inside is a day the world moves without you. */
+  if(c.jailedAt){
+    c.blocking = false; c.target = null; c.moveTarget = null;
+    c.x = c.jailedAt.x; c.y = c.jailedAt.y;
+    workTheBars(c, dt);   /* the one thing left to do in here */
+    return;
+  }
   if(c.riting){ c.blocking = false; return; }       /* the rite has them. They are not available. */
   if(c.staggerT > 0){ c.staggerT -= dt; return; }   /* stumbling — no orders land */
   c._ox = c.x; c._oy = c.y;   /* remember where the feet were: passing blades punish movers */
@@ -5274,9 +5782,17 @@ function physics(c, dt){
   if(c.hitT > 0) c.hitT -= dt;
     if(c.flinchT > 0) c.flinchT -= dt;
   if(c.lungeT > 0) c.lungeT -= dt;
+  if(c.shoveT > 0) c.shoveT -= dt;
+  if(c.looseT > 0) c.looseT -= dt;
   c.mana = Math.min(maxMana(c), c.mana + dt*0.5);
   if(c.dot) applyDot(c, dt);
   c.blocking = false;
+  /* RECOVERY: the beat after the blade lands. Feet planted, guard down, no new orders —
+     the swing is over and the body has not caught up with it yet. Placed after the timers
+     so the cooldown, mana and bleeding all keep running underneath; only the will to act
+     is gone. Everything above this line — stagger, the rite, a committed windup — still
+     outranks it, and being hit hard enough to stagger cancels it outright. */
+  if(c.recoverT > 0){ c.recoverT -= dt; return; }
   if(c.concentrating){
     concentrationTick(c, dt);
     /* an EXCLUSIVE concentration (Ainzopha'ar's Light) roots the caster: no move, no fight,
@@ -5515,8 +6031,11 @@ function physics(c, dt){
       return;
     }
   }
-  /* slaver hauling a captive to camp */
-  if(c.drag){
+  /* Slaver hauling a captive to camp. Gated on the faction now: this was a bare `if(c.drag)`,
+     so it caught ANY dragger — including one of your own carrying a prisoner back to your
+     cells, who would quietly turn around and deliver them to the slavers instead. It sits
+     above the seize handler, returns every tick, and so swallowed the order whole. */
+  if(c.drag && c.faction !== 'player'){
     const v = c.drag;
     if(v.state==='dead' || !v.captured){ c.drag = null; }
     else if(!slaverCamp){ v.captured = false; c.drag = null; }
@@ -5673,7 +6192,13 @@ function physics(c, dt){
     if(w && w.range){
       if(d < 1.7){ c.blocking = true; return; }        /* too close: guard, don't shoot */
       if(d > w.range){ travel(c, t.x, t.y, dt, w.range - 0.5); return; } /* no firing on the move */
-      if(c.atkCd <= 0 && !c.windup){ c.windup = {t: 0.34, kind: 'ranged', tgt: t.id, dur: 0.34}; }
+      /* the draw. A crossbow is already spanned and only has to be brought up; a bow has
+         to be pulled and held; the lance has to spin something up that was never meant to
+         be fired twice in a minute. The cost of each is paid on the other side, in rof. */
+      if(c.atkCd <= 0 && !c.windup){
+        const draw = w.draw || 0.38;
+        c.windup = {t: draw, kind: 'ranged', tgt: t.id, dur: draw};
+      }
       return;
     }
     if(d > 1.0){
@@ -5711,12 +6236,100 @@ function physics(c, dt){
     }
     else if(c.atkCd <= 0 && !c.windup){
       if((t.floor||0) !== (c.floor||0)){ c.target = null; return; }   /* you cannot knife a man on a wall */
-      c.atkCd = 1.25 / (1 + c.stats.atk*0.015) * (1 + armorPen(c)*0.7)
-              / (!c.weapon && !c.beast && !c.undead ? 1 + c.stats.martial*0.01 : 1);
-      /* the swing telegraphs: a beat of windup before the blade commits */
-      c.windup = {t: 0.26, kind: 'melee', tgt: t.id, dur: 0.26};
+      /* THE THREE BEATS OF A SWING. It used to be two — a flat 0.26s telegraph and then a
+         cooldown you were free to walk around during — which is why every fight in the game
+         had the texture of a click contest. Now: wind, land, recover. All three scale with
+         what you are holding. */
+      const mvKey = !(wepOf(c) || {}).range ? pickMove(c, t) : 'slash';
+      const mv = MOVES[mvKey];
+      c.swingMove = mvKey;
+      /* finding a new one is worth being told about, once */
+      if(mv.skill > 0 && c.faction === 'player'){
+        if(!c.knownMoves) c.knownMoves = {};
+        if(!c.knownMoves[mvKey]){
+          c.knownMoves[mvKey] = 1;
+          log(`${c.name} has the ${mv.label} now — ${mv.note}`, 'good');
+        }
+      }
+      const hf = swingHeft(c);   /* what the weapon weighs in THIS hand */
+      /* `martial` used to get a second bite here, on top of the one it already takes through
+         swingHeft -> skillEase (wSkillKey returns 'martial' for the unarmed). Two mechanisms
+         for one stat, compounding. skillEase is the general one and applies to everybody, so
+         the special case goes: a brawler is quick because the skill lightens the hands, the
+         same way it lightens a nodachi. */
+      c.atkCd = 1.62 * Math.pow(hf, 0.95) / (1 + c.stats.atk*0.011) * (1 + armorPen(c)*0.7);
+      /* the wind: the blade goes back, and everyone watching can see where it is going */
+      const wind = 0.34 * Math.pow(hf, 1.3) * mv.wind;
+      c.windup = {t: wind, kind: 'melee', tgt: t.id, dur: wind, mv: mvKey};
+      /* the recovery, spent after the blow lands: rooted, guard down, and the heavier the
+         weapon the longer you are standing in it. This is the cost of the big number. */
+      c.recoverDur = 0.22 * Math.pow(hf, 1.4) * mv.rec;
     }
     return;
+  }
+  /* ---- THE WATCH TAKES THEM IN ----
+     A guard carrying someone walks them to the nearest empty cell and shuts the door. If
+     every cell is full the town has to settle for driving them off, which is its own kind
+     of pressure on a player who keeps getting caught. */
+  if(c.faction === 'town' && !c.civ){
+    if(c.drag){
+      const v = c.drag;
+      if(!chars.includes(v) || v.state === 'dead' || v.jailedAt){ if(v) v.captured = false; c.drag = null; }
+      else {
+        const cell = freeCell(c.homeTown);
+        if(!cell){ v.captured = false; c.drag = null; }
+        else if(travel(c, cell.x, cell.y, dt, 0.9) || dist(c.x, c.y, cell.x, cell.y) < 1.6){
+          const t = c.homeTown;
+          const days = Math.max(1, Math.round((t.bounty || 60) / 80));
+          stripKit(v);
+          jail(v, cell, days);
+          t.bounty = 0; t.wanted = false;
+          for(const g of chars) if(g.arrestTarget === v) g.arrestTarget = null;
+          c.drag = null;
+          if(v.faction === 'player')
+            log(`${v.name} is in the cells at ${t.name}. ${days} day${days>1?'s':''}, and they kept the kit.`, 'bad');
+        }
+        return;
+      }
+    }
+    /* nothing to carry: is there someone on the ground who is owed a cell? */
+    if(!c.drag && c.homeTown && (c.homeTown.bounty || 0) > 0){
+      const dp = chars.find(o => o.state === 'down' && !o.undead && !o.captured && !o.jailedAt &&
+        o.faction === 'player' && dist(c.x, c.y, o.x, o.y) < 5);
+      if(dp && freeCell(c.homeTown)){
+        c.drag = dp; dp.captured = true; c.target = null; c.arrestTarget = null;
+        say(c, pick(['On your feet.', 'You are coming with me.', "That's enough out of you."]));
+        return;
+      }
+      if(c.arrestTarget && chars.includes(c.arrestTarget) && c.arrestTarget.state === 'ok'){
+        c.target = c.arrestTarget; c.targetManual = false;
+      }
+    }
+  }
+  /* ---- SEIZING ---- your own people drag a downed enemy back to a cell of your own. The
+     same shape as the watch taking you in, from the other side of it. */
+  if(c.faction === 'player' && c.seizeTarget){
+    const v = c.seizeTarget;
+    if(!chars.includes(v) || v.state === 'dead' || v.jailedAt){ c.seizeTarget = null; c.drag = null; if(v) v.captured = false; }
+    else if(!c.drag){
+      if(v.state !== 'down'){ c.seizeTarget = null; }
+      else if(dist(c.x, c.y, v.x, v.y) > 1.4){ travel(c, v.x, v.y, dt, 0.9); return; }
+      else { c.drag = v; v.captured = true; say(c, 'Up. You are coming with us.'); return; }
+    } else {
+      const cell = cells.find(cl => cl.kind === 'player' && !cl.holds);
+      if(!cell){
+        if(!c._noCell){ c._noCell = 1; log('Nowhere to put them — build a Holding Cell first.', 'bad'); }
+        c.drag.captured = false; c.drag = null; c.seizeTarget = null;
+      } else if(travel(c, cell.x, cell.y, dt, 0.8) || dist(c.x, c.y, cell.x, cell.y) < 1.5){
+        const v2 = c.drag;
+        stripKit(v2);
+        jail(v2, cell, 0);            /* held at your pleasure — no sentence to run out */
+        v2.prisoner = true; v2.breakT = 0;
+        c.drag = null; c.seizeTarget = null;
+        log(`${v2.name} is in the cells. They are yours to deal with.`, 'good');
+      }
+      return;
+    }
   }
   /* a rescue: go to the heap and cut them out of it */
   if(c.rescueTarget){
@@ -7202,11 +7815,12 @@ function findNode(c, kind){
   return null;
 }
 function hitStructure(c, st){
-  c.atkCd = 1.4 / (1 + c.stats.atk*0.01);
+  const hf = swingHeft(c);   /* a cadence, so it reads the weapon as this hand feels it */
+  c.atkCd = 1.4 * Math.pow(hf, 0.95) / (1 + c.stats.atk*0.01);
   const w = c.weapon ? ITEMS[c.weapon] : null;
   let dmg = atkPower(c) * (c.structMult||1) * (w && w.wt==='blunt' ? 1.3 : 1) * 0.6;
   st.hp -= dmg;
-  c.lungeT = 0.18;
+  c.lungeT = c.lungeDur = 0.18 * hf; c.lungeK = 0.35 * hf;
   const dd = Math.max(0.01, dist(c.x,c.y,st.x+0.5,st.y+0.5));
   c.lungeDX = (st.x+0.5-c.x)/dd; c.lungeDY = (st.y+0.5-c.y)/dd;
   addSpecks(st.x+0.5, st.y+0.3, '#8c8272', 3);
@@ -7461,6 +8075,8 @@ function retaliate(t, attacker){
   t.moveTarget = null; t.path = null; t.pathGoal = null;
 }
 function lootCorpse(t){
+  /* going through the pockets of somebody's neighbour, in front of the neighbours */
+  if(t && (t.faction === 'town' || t.homeTown)) crime('theft', t.x, t.y, player()[0] || null);
   if(t.looted){ return harvestCorpse(t); }
   t.looted = true;
   let got = [];
@@ -8029,6 +8645,8 @@ function saltBody(c){
   return true;
 }
 function castRaise(c, body){
+  /* the thing they hang people for, done where somebody can see it */
+  crime('raising', c.x, c.y, c);
   const isUnique = !!body.bossKey && !body.beast;   /* named humanoids become lieutenants; monstrous bosses do not */
   if(isUnique){
     const lieuCap = (c.lich ? 2 : 1) + (research.done.necromancy ? 1 : 0);
@@ -9278,6 +9896,7 @@ function update(dt){
   rebuildCharGrid();
   reapPhylacteries();
   riteTick(dt);               /* and somebody is in the middle of something */
+  walkingDeadCheck(dt);       /* and whether anyone is walking the dead past a gate */
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
   if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
   gauntTick(dt / HOUR_SEC);   /* the dark is never empty for long */
@@ -9291,6 +9910,19 @@ function update(dt){
   hour += dh;
   if(hour >= 24){
     hour -= 24; day++;
+    /* a day inside is a day the world moved without you */
+    for(const c of chars){
+      if(!c.jailedAt || c.state === 'dead') continue;
+      if(c.prisoner){ c.breakT = (c.breakT || 0) + 1; continue; }   /* held at your pleasure */
+      if(--c.jailT > 0) continue;
+      const t = c.jailedAt.town, was = c.jailedAt;
+      was.holds = 0; c.jailedAt = null;
+      returnKit(c);
+      c.x = (t ? t.x : c.x) + 2.5; c.y = (t ? t.y : c.y) + 2.5;
+      if(t){ t.wanted = false; t.bounty = 0; }
+      if(c.faction === 'player')
+        log(`${c.name} walks out of the cells at ${t ? t.name : 'the gaol'}. Debt paid, kit returned.`, 'good');
+    }
     advanceFracture(1);              /* the sky gets one day closer, and never further */
     for(const t of towns) dreadTick(t);
     siegeTick();                     /* the door presses on every seat that did not sign */
@@ -10227,7 +10859,6 @@ function update(dt){
       c.barkCd = 25;
     }
   }
-  for(const v of vendors) if(v.bubble && (v.bubble.t -= dt) <= 0) v.bubble = null;
   /* carried corpses ride along */
   for(const c of chars){
     if(c.carryList && c.carryList.length){
@@ -10384,14 +11015,26 @@ function computeVision(){
     }
   }
   litIdx.length = 0;
-  /* eyes see farther by day; a storm swallows everything */
+  /* ---------- HOW FAR ANYONE CAN SEE ----------
+     Eyes see farther by day; a storm swallows everything. The base was 11 tiles at night
+     and 19 at noon, set when the world was smaller — against a camera that sits back at 28
+     and shows a good deal more than that, so the fog crowded in tighter than the view and
+     the map felt like it was being read through a letterbox.
+
+     And now that the ranges can actually be climbed, height is worth something: standing on
+     a shoulder shows you the country, which is the oldest reason there is to go up a hill.
+     That makes the climb — slow, and it costs you — a decision rather than a detour. */
   const dayness = clamp(Math.sin((hour-6)/13*Math.PI), 0, 1);
-  const r = (11 + dayness*8) * (weather.storm > 0 ? 0.55 : 1);
+  const base = 17 + dayness*13;
+  const stormK = weather.storm > 0 ? 0.55 : 1;
   for(const c of chars){
     if(c.faction!=='player' || c.state==='dead') continue;
-    stampVision(c.x, c.y, r);
+    let r = base;
+    const h = heightAt(c.x, c.y);
+    if(h > 1.2) r += Math.min(18, (h - 1.2) * 1.9);   /* the view from up there */
+    stampVision(c.x, c.y, r * stormK);
   }
-  for(const b of pBuilds) stampVision(b.x + b.w/2, b.y + b.h/2, 8);
+  for(const b of pBuilds) stampVision(b.x + b.w/2, b.y + b.h/2, 11);
   for(const t of towns) if(t.playerRuled) stampVision(t.x, t.y, t.def.wall ? t.def.wall.r + 3 : 15);
   if(changed || visChanged) fogDirty = true;
   if(visChanged) syncDecorFog();   /* the newly-seen ground raises what stands on it */
@@ -10417,10 +11060,30 @@ let camDist = 28, camDistTarget = 28;
 let camYaw = 0, camYawT = 0;
 let camPitch = 0.95, camPitchT = 0.95;
 let camSX = 0, camSY = 0, camInit = false;   /* smoothed camera anchor (targets stay camX/camY) */
+/* ---------- THE PUNCH IN THE EYE ----------
+   A heavy blow landing in view kicks the camera. This is the cheapest weight in the game:
+   the sim does not know it happened, the eye does, and the player reads it as force. Kept
+   small and short on purpose — a fight is a great many blows, and a camera that lurches at
+   every one of them is a camera nobody can play behind. The biggest recent blow owns the
+   eye, so a pitched battle settles into a low constant rumble rather than a fit. */
+let camKick = 0, camKickX = 0, camKickY = 0;
+function kickCam(x, y, mag){
+  if(mag <= camKick) return;
+  const d = Math.hypot(x - camSX, y - camSY);
+  if(d > 26) return;                       /* too far off to be felt */
+  camKick = Math.min(0.5, mag * (1 - d/26));
+  const a = rnd()*Math.PI*2;
+  camKickX = Math.cos(a); camKickY = Math.sin(a);
+}
 let camFY = 0;                               /* smoothed storey lift */
 function camRight(){ return [Math.cos(camYaw), -Math.sin(camYaw)]; }
 function camFwd(){ return [-Math.sin(camYaw), -Math.cos(camYaw)]; }
 
+/* real seconds, so a line holds for as long at speed 5 as it does paused */
+function tickBubbles(rdt){
+  for(const c of chars) if(c.bubble && (c.bubble.t -= rdt) <= 0) c.bubble = null;
+  for(const v of vendors) if(v.bubble && (v.bubble.t -= rdt) <= 0) v.bubble = null;
+}
 function fit3d(){
   renderer.setSize(innerWidth, innerHeight);
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -10637,27 +11300,117 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
     let lift = 0;
     for(const m of mountains){
       const d = Math.hypot(vx - m.x, vy - m.y);
-      if(d > m.r * 1.35) continue;
-      const t = clamp(1 - d / (m.r * 1.35), 0, 1);
-      /* smoothstep^1.6 gives a rounded shoulder that steepens toward the top */
-      const dome = Math.pow(t * t * (3 - 2 * t), 1.6);
+      if(d > m.r * 1.85) continue;
+      const t = clamp(1 - d / (m.r * 1.85), 0, 1);
+      /* Was smoothstep^1.6 over a 1.35r footprint, which steepened toward the summit and
+         put the whole upper mass past any slope a foot could take — measured at up to 1.81
+         units of rise in a single tile, against a character 1.8 units tall. The same peak
+         height now spreads over a footprint half again as wide, and the exponent no longer
+         piles the gradient into the top. */
+      const dome = Math.pow(t * t * (3 - 2 * t), 1.15);
       /* ridged noise so a peak is not a bald hemisphere */
-      const ridge = (fbm(vx * 0.06, vy * 0.06, 4) - 0.5) * 0.5 * t;
+      const ridge = (fbm(vx * 0.06, vy * 0.06, 4) - 0.5) * 0.32 * t;   /* character, not chaos */
       lift = Math.max(lift, m.peak * dome + m.peak * ridge * 0.4);
     }
     if(lift > 0.01) HV[vy*(W+1)+vx] += lift;
   }
   /* mark the steep heart of each massif impassable: where the ground is high AND the local
      slope is severe, that is a cliff. The flanks stay open so a range can be skirted. */
+  /* ---- A WAY UP, THEN A HONEST GRADE, THEN THE CLIFFS ----
+     Order matters and the first attempt had it wrong: cliffs were decided first and the
+     path carved afterwards, so the carve flattened a corridor through ground that had
+     already been judged, and left a lip along both verges — measured at a 3.16 unit step
+     beside a trail, worse than the 1.81 the whole exercise set out to fix.
+
+     Now: carve the route, relax the whole massif so no single step is beyond a body, and
+     only then ask which faces are still cliff. Every rule reads the same final ground. */
+
+  /* 1. one route per massif, rim to summit, always stepping to the gentlest neighbour that
+        gains ground — which switchbacks across the face instead of running straight up it.
+        A slope rule alone cannot promise a route: ridged noise can ring a summit and seal
+        it, and a peak nobody can stand on is scenery rather than terrain. */
   for(const m of mountains){
-    const R = Math.ceil(m.r * 1.2);
+    let cx = Math.round(m.x + Math.cos(m.x * 1.7) * m.r * 1.7);
+    let cy = Math.round(m.y + Math.sin(m.x * 1.7) * m.r * 1.7);
+    const trail = [];
+    for(let step = 0; step < 400; step++){
+      trail.push([cx, cy]);
+      if(Math.hypot(cx - m.x, cy - m.y) < 1.5) break;
+      let best = null, bestCost = Infinity;
+      for(const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]){
+        const nx = cx + dx, ny = cy + dy;
+        if(nx<2||ny<2||nx>=W-2||ny>=H-2) continue;
+        const closer = Math.hypot(nx - m.x, ny - m.y) - Math.hypot(cx - m.x, cy - m.y);
+        if(closer > -0.05) continue;
+        const rise = Math.abs(heightAt(nx, ny) - heightAt(cx, cy));
+        const cost = rise * 3 + closer;
+        if(cost < bestCost){ bestCost = cost; best = [nx, ny]; }
+      }
+      if(!best) break;
+      cx = best[0]; cy = best[1];
+    }
+    m.trail = trail;
+    /* ease it wide and softly — a narrow hard carve is what cut the trench */
+    for(let i = 1; i < trail.length; i++){
+      const [x, y] = trail[i], [px, py] = trail[i-1];
+      const target = heightAt(px, py) + Math.sign(heightAt(x, y) - heightAt(px, py)) * 0.5;
+      for(let dy=-4; dy<=4; dy++) for(let dx=-4; dx<=4; dx++){
+        const vx = x+dx, vy = y+dy;
+        if(vx<0||vy<0||vx>W||vy>H) continue;
+        const w = 1 - Math.hypot(dx, dy) / 5.5;
+        if(w <= 0) continue;
+        const k = vy*(W+1)+vx;
+        HV[k] += (target - HV[k]) * w * 0.45;
+      }
+    }
+  }
+
+  /* 2. relax the massifs until no vertex stands more than a stride above its neighbours.
+        This is what actually bounds how sudden the land can get, and it cleans up the
+        verges of the carve at the same time. */
+  const RELAX_CAP = 1.45;
+  for(let pass = 0; pass < 4; pass++){
+    for(const m of mountains){
+      const R = Math.ceil(m.r * 1.95);
+      for(let dy=-R; dy<=R; dy++) for(let dx=-R; dx<=R; dx++){
+        const vx = m.x + dx, vy = m.y + dy;
+        if(vx<1||vy<1||vx>=W||vy>=H) continue;
+        const k = vy*(W+1)+vx;
+        let lo = Infinity;
+        for(const [ax, ay] of [[1,0],[-1,0],[0,1],[0,-1]]){
+          const h2 = HV[(vy+ay)*(W+1)+(vx+ax)];
+          if(h2 < lo) lo = h2;
+        }
+        if(HV[k] - lo > RELAX_CAP) HV[k] = lo + RELAX_CAP;
+      }
+    }
+  }
+  _terrMaxY = 0;
+  for(let i=0; i<HV.length; i++) if(HV[i] > _terrMaxY) _terrMaxY = HV[i];
+
+  /* 3. now ask what is cliff, off the ground as it finally stands. The old test summed two
+        CENTRAL differences, each spanning two tiles, and called anything over 1.15 a cliff —
+        about a 0.3 rise per tile, a gentle slope. Every massif in the world was sealed from
+        roughly 40% of its height upward, measured, all fourteen of them, and the
+        `hC > peak*0.72` clause below it never even got a say. */
+  const stepAt = (x, y) => {
+    const h = heightAt(x, y);
+    return Math.max(Math.abs(heightAt(x+1,y) - h), Math.abs(heightAt(x-1,y) - h),
+                    Math.abs(heightAt(x,y+1) - h), Math.abs(heightAt(x,y-1) - h));
+  };
+  const CLIFF = 0.92;   /* units of rise in one tile. A body is about 1.8 tall. */
+  const onTrail = new Set();
+  for(const m of mountains) for(const [x, y] of (m.trail || [])){
+    for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++) onTrail.add((y+dy)*W + (x+dx));
+  }
+  for(const m of mountains){
+    const R = Math.ceil(m.r * 1.95);
     for(let dy=-R; dy<=R; dy++) for(let dx=-R; dx<=R; dx++){
       const x = m.x + dx, y = m.y + dy;
       if(x<1||y<1||x>=W-1||y>=H-1) continue;
-      const hC = heightAt(x, y);
-      if(hC < m.peak * 0.42) continue;                 /* only the upper mass is cliff */
-      const slope = Math.abs(heightAt(x+1,y) - heightAt(x-1,y)) + Math.abs(heightAt(x,y+1) - heightAt(x,y-1));
-      if(slope > 1.15 || hC > m.peak * 0.72){
+      if(heightAt(x, y) < m.peak * 0.30) continue;    /* the low shoulders are never cliff */
+      if(onTrail.has(y*W + x)) continue;              /* the way up stays open */
+      if(stepAt(x, y) > CLIFF){
         if(towns.some(t => dist(t.x, t.y, x, y) < 16)) continue;   /* never wall a town */
         blocked.add(bkey(x, y, 0));
         /* The peaks are raised after baseBlocked was taken, and restore() rebuilds the world
@@ -10667,6 +11420,15 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
         baseBlocked.add(bkey(x, y, 0));
         if(terr[y*W+x] !== 3) terr[y*W+x] = 2;         /* reads as rock in the splat */
       }
+    }
+  }
+  /* and make sure the route itself is open, whatever else was decided */
+  for(const m of mountains) for(const [x, y] of (m.trail || [])){
+    for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++){
+      const tx = x+dx, ty = y+dy;
+      if(tx<1||ty<1||tx>=W-1||ty>=H-1) continue;
+      blocked.delete(bkey(tx, ty, 0));
+      baseBlocked.delete(bkey(tx, ty, 0));
     }
   }
 })();
@@ -11102,6 +11864,21 @@ function box(parent, w,h,d, col, x,y,z, shadow=true, opts){
   parent.add(m); return m;
 }
 function groundY(x, y){ return Math.max(heightAt(x, y), -0.1); }
+/* ---------- HOW BIG A THING LOOKS ----------
+   `big` is a GAMEPLAY number: it sets pace, heft, how many bodies can crowd a target, and
+   it is written into every save. How large a thing READS is a separate question, and for
+   the tear-born the answer is "larger than you" — they are not people and should not be
+   built to a person's scale.
+
+   Derived from what the creature is rather than stored on it, so there is nothing to
+   persist and nothing that can drift out of step with a loaded save. Purely the model:
+   a Watcher still moves, crowds and staggers exactly as it did. */
+function vscaleOf(c){
+  if(c.bossKey === 'sixfold') return 1.35;   /* the boss stays the biggest thing in the world */
+  if(c.kin === 'strider') return 1.30;       /* eldritch, and it should loom */
+  if(c.gauntKind) return 1.22;               /* the Watchers, whatever shape they wear */
+  return 1;
+}
 
 /* ---------- instanced decor ---------- */
 {
@@ -11288,6 +12065,7 @@ const BUILD_STYLE = {
   'SHRINE':         {pitch: 1.05, wallH: 2.1, kind: 'civic',   prop: 'banners'},
   'STABLE':         {pitch: 0.45, wallH: 1.9, kind: 'home',    prop: 'crates'},
   'STOREHOUSE':     {pitch: 0,    wallH: 2.3, kind: 'trade',   prop: 'crates'},
+  'GAOL':           {pitch: 0.30, wallH: 2.6, kind: 'civic',   prop: 'bars'},
   'NET LOFT':       {pitch: 0.50, wallH: 2.2, kind: 'trade',   prop: 'sign'},
   'COUNTING HOUSE': {pitch: 0.80, wallH: 2.4, kind: 'civic',   prop: 'banners'},
   'ORCHARD HOUSE':  {pitch: 0.68, wallH: 2.2, kind: 'trade',   prop: 'crates'},
@@ -12487,7 +13265,12 @@ const WEAPONS = {
     {w:0.052,h:0.98, d:0.024, y:-0.81, col:'#b9c2cc'},
     {w:0.018,h:0.98, d:0.030, x:0.016, y:-0.81, col:WC.edge}]},
   /* limbs above and below the hand, string down the inside face */
-  w_bow: {rest:{x:0.10, y:1.45, z:0.14, pos:{x:0.13, y:-0.28, z:0.02}}, parts:[
+  /* rest.x was 0.10, authored when the bow hung at the side of a standing figure. The
+     archer's stance extends that arm, and the mesh is a child of the elbow, so it inherited
+     the whole forward rotation and lay diagonally across the chest. Swept the axis against
+     the held draw pose: below 1.0 it is diagonal, above 1.6 it lies over, and 1.03-1.34
+     stands the limbs upright. */
+  w_bow: {rest:{x:1.20, y:1.45, z:0.14, pos:{x:0.13, y:-0.28, z:0.02}}, parts:[
     {w:0.048,h:0.18, d:0.062, y: 0,    z: 0.035, col:WC.bowDk},
     {w:0.036,h:0.34, d:0.05,  y: 0.22, z: 0.025, rx:-0.30, col:WC.bow},
     {w:0.036,h:0.34, d:0.05,  y:-0.22, z: 0.025, rx: 0.30, col:WC.bow},
@@ -12495,7 +13278,12 @@ const WEAPONS = {
     {w:0.028,h:0.10, d:0.04,  y:-0.40, z:-0.02,  col:WC.bowDk},
     {w:0.012,h:0.84, d:0.012, y: 0,    z:-0.055, col:WC.cord}]},
   /* a stock that points where you are pointing, and a lath across it */
-  w_xbow: {rest:{x:0.30, y:-0.16, pos:{x:0.09, y:-0.30, z:0.07}}, parts:[
+  /* Both of these pointed at the sky. Same cause as the bow: the euler was authored
+     against a figure standing straight, and the braced firing stance rotates the arm
+     forward under it. Swept in profile — the only view where "forward" and "across" can
+     be told apart — 1.40 lays them level with the working end LEADING. -1.40 is level too
+     and is the trap: the weapon is the right way up and back to front, stock forward. */
+  w_xbow: {rest:{x:1.40, y:-0.16, pos:{x:0.09, y:-0.30, z:0.07}}, parts:[
     {w:0.055,h:0.055,d:0.54, y: 0.02, z:0.22, col:'#5d4a30'},
     {w:0.44, h:0.036,d:0.042,y: 0.02, z:0.42, col:WC.iron},
     {w:0.05, h:0.13, d:0.07,  y:-0.07, z:0.03, col:'#3a322a'},
@@ -12523,7 +13311,7 @@ const WEAPONS = {
     {w:0.026,h:0.70, d:0.022, x: 0.024,y:-0.56, col:WC.pale},
     {w:0.022,h:0.62, d:0.014, y:-0.52, col:WC.voidLt}]},
   /* not a blade at all: a golden-age firearm, held across the body */
-  w_lance: {rest:{x:0.34, y:-0.14, pos:{x:0.09, y:-0.30, z:0.05}}, parts:[
+  w_lance: {rest:{x:1.40, y:-0.14, pos:{x:0.09, y:-0.30, z:0.05}}, parts:[
     {w:0.065,h:0.10, d:0.26,  y:-0.01, z:0.08, col:WC.gunDk},
     {w:0.050,h:0.13, d:0.15,  y:-0.10, z:-0.06,col:'#2a2620'},
     {w:0.045,h:0.045,d:0.48,  y: 0.03, z:0.42, col:WC.gun},
@@ -13096,10 +13884,149 @@ function buildCharMesh(c){
         if(h2 > 0.62) obox(0.12, 0.30, 0.10, hc, 0, 0.10, -0.19, e.headG);   /* a long braid */
       }
     }
+    /* ---------- SCALEBORN ----------
+       They were a human silhouette with two flat green slabs bolted to the shoulder blades,
+       and at any real camera distance that reads as a person wearing a sandwich board. What
+       makes a reptile read as a reptile, in roughly this order: a SNOUT where a flat face
+       should be, a TAIL behind changing the whole outline, a ridge of spines down the back,
+       and only then wings — which are the least of it and were doing all the work.
+
+       Everything hangs off the existing joints, so armour, damage tinting and the animation
+       layers all keep working untouched. */
     if(c.race==='scaleborn' && !c.undead){
-      const wl = obox(0.07, 0.52, 0.3, '#4a5c38', -0.28, 0.32, -0.26, e.spine);
-      const wr = obox(0.07, 0.52, 0.3, '#4a5c38', 0.28, 0.32, -0.26, e.spine);
-      wl.rotation.x = 0.25; wr.rotation.x = 0.25;
+      const scale = skinCol;
+      /* `dk` further up is block-scoped to the face builder and not visible from here —
+         reaching for it threw a ReferenceError out of buildCharMesh every time a scaleborn
+         was rigged, which is a crash in the render path, not a cosmetic problem. */
+      const dark  = '#' + new THREE.Color(scale).multiplyScalar(0.62).getHexString();
+      const belly = '#' + new THREE.Color(scale).lerp(new THREE.Color('#e8dcc4'), 0.42).getHexString();
+      const membrane = '#' + new THREE.Color(scale).lerp(new THREE.Color('#2a1a18'), 0.45).getHexString();
+
+      /* the snout: a muzzle box off the face, a narrower tip, and a jaw under it */
+      e.boxBody.push(obox(0.175, 0.135, 0.20, scale, 0, 0.205, 0.20, e.headG));
+      e.boxBody.push(obox(0.125, 0.095, 0.10, scale, 0, 0.205, 0.32, e.headG));
+      e.boxBody.push(obox(0.145, 0.055, 0.17, belly, 0, 0.142, 0.20, e.headG));   /* the lower jaw */
+      for(const nx of [-0.045, 0.045])                                            /* nostrils */
+        e.boxBody.push(obox(0.028, 0.028, 0.02, dark, nx, 0.232, 0.365, e.headG));
+      /* a swept crest of horns, back over the skull */
+      for(let i = 0; i < 3; i++){
+        const t2 = i / 2;
+        for(const hx of [-0.085, 0.085]){
+          const hn = obox(0.045 - t2*0.012, 0.055 + t2*0.075, 0.11, dark,
+                          hx, 0.37 + t2*0.03, -0.02 - t2*0.13, e.headG);
+          hn.rotation.x = 0.55 + t2*0.35;
+        }
+      }
+      /* dorsal ridge: spines down the spine, tallest at the shoulders */
+      for(let i = 0; i < 5; i++){
+        const t2 = i / 4;
+        e.boxBody.push(obox(0.05, 0.10 - t2*0.045, 0.075, dark,
+                            0, 0.50 - i*0.135, -0.135 - t2*0.01, e.spine));
+      }
+      /* belly plating — the one thing that keeps the chest from reading as a shirt */
+      for(let i = 0; i < 3; i++)
+        e.boxBody.push(obox(0.30 - i*0.03, 0.075, 0.02, belly, 0, 0.36 - i*0.105, 0.142, e.spine));
+
+      /* THE TAIL. Its own joint chain hanging off the hips, so it can be given a sway in
+         the pose layer — a rigid tail reads worse than no tail at all. */
+      e.tail = [];
+      let par = g, ty = 0.80, tz = -0.16;
+      for(let i = 0; i < 5; i++){
+        const seg = new THREE.Group();
+        seg.position.set(0, i === 0 ? ty : 0, i === 0 ? tz : -0.19);
+        par.add(seg);
+        const w = 0.155 - i*0.026;
+        e.boxBody.push(obox(w, w, 0.20, i > 2 ? dark : scale, 0, 0, -0.10, seg));
+        if(i < 3) e.boxBody.push(obox(0.035, 0.07 - i*0.015, 0.10, dark, 0, w*0.55, -0.10, seg));
+        e.tail.push(seg);
+        par = seg;
+      }
+      e.tail[0].rotation.x = 0.30;
+
+      /* wings last, and folded rather than spread: a membrane over two spars, swept back
+         along the ribs the way a thing that mostly walks would carry them */
+      for(const side of [-1, 1]){
+        const sh = new THREE.Group();
+        sh.position.set(side*0.24, 0.44, -0.10); e.spine.add(sh);
+        sh.rotation.set(0.30, side*0.55, side*0.35);
+        e.boxBody.push(obox(0.055, 0.055, 0.46, dark, 0, 0, -0.22, sh));        /* leading spar */
+        const mem = obox(0.035, 0.30, 0.40, membrane, 0, -0.14, -0.20, sh);
+        mem.rotation.x = -0.18;
+        const low = new THREE.Group();
+        low.position.set(0, 0, -0.44); sh.add(low);
+        low.rotation.set(0, side*0.75, 0);
+        e.boxBody.push(obox(0.045, 0.045, 0.34, dark, 0, 0, -0.17, low));       /* the fold */
+        e.boxBody.push(obox(0.03, 0.22, 0.30, membrane, 0, -0.10, -0.15, low));
+      }
+    }
+    /* ---------- THE TWO WHO ARE NOT BEASTS ----------
+       Every other named thing in the world has a shape of its own; these two were an
+       armoured woman and an armoured woman, told apart only by what colour of plate the
+       shared rig happened to be tinted. A boss the player is meant to remember has to be
+       recognisable at the distance the camera actually sits at, which means silhouette —
+       a tall mitre and a hanging stole, or a crown and a cloak — not detail. */
+    if(c.bossKey === 'ash' || c.bossKey === 'baroness'){
+      const shade = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
+      e.cape = [];
+      if(c.bossKey === 'ash'){
+        /* SISTER ASH. An inquisitor gone out into the waste and stayed there: the mitre
+           still on, the stole still hung, both of them burnt down to what the fire left. */
+        const cloth = '#6e6257', ember = '#d9542a', pale = '#cfc4ad';
+        const mitre = obox(0.30, 0.30, 0.26, cloth, 0, 0.52, -0.01, e.headG);
+        mitre.rotation.x = -0.06;
+        e.boxBody.push(obox(0.20, 0.16, 0.19, shade(cloth, 0.78), 0, 0.70, -0.02, e.headG));
+        e.boxBody.push(obox(0.055, 0.13, 0.055, ember, 0, 0.83, -0.02, e.headG));  /* the flame on top */
+        /* the veil, falling either side of the face */
+        for(const vx of [-0.165, 0.165])
+          e.boxBody.push(obox(0.06, 0.34, 0.20, cloth, vx, 0.26, -0.03, e.headG));
+        /* embers where the eyes should be — she has been looking at fires a long time */
+        for(const ex of [-0.06, 0.06]){
+          const g2 = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color: 0xff7a2e}));
+          g2.scale.set(0.045, 0.035, 0.02); g2.position.set(ex, 0.265, 0.152); e.headG.add(g2);
+        }
+        /* the stole: a long band down the front, and a censer chain at the hip */
+        e.boxBody.push(obox(0.13, 0.62, 0.03, cloth, 0, 0.20, 0.145, e.spine));
+        for(let i = 0; i < 3; i++)
+          e.boxBody.push(obox(0.15, 0.035, 0.035, pale, 0, 0.42 - i*0.20, 0.155, e.spine));
+        e.boxBody.push(obox(0.10, 0.10, 0.10, shade(pale, 0.7), 0.20, -0.06, 0.10, e.spine));
+        /* a short burnt mantle behind, in segments so it can drag */
+        let par = e.spine, py = 0.46;
+        for(let i = 0; i < 3; i++){
+          const seg = new THREE.Group();
+          seg.position.set(0, i === 0 ? py : -0.20, i === 0 ? -0.14 : 0);
+          par.add(seg);
+          e.boxBody.push(obox(0.50 - i*0.09, 0.22, 0.035, shade(cloth, 0.82 - i*0.12), 0, -0.11, 0, seg));
+          e.cape.push(seg); par = seg;
+        }
+      } else {
+        /* THE RED BARONESS. Bandit royalty, and everything about her is the claim: a crown
+           beaten out of somebody else's iron, pauldrons too big to be practical, and a long
+           red cloak that exists to be seen coming. */
+        const red = '#8e2420', iron = '#4a4640', gold = '#c9a23a';
+        for(let i = 0; i < 7; i++){
+          const a2 = (i / 7) * Math.PI * 2;
+          const sp = obox(0.035, 0.10 + (i % 2) * 0.07, 0.035, gold,
+                          Math.cos(a2) * 0.155, 0.44 + (i % 2) * 0.03, Math.sin(a2) * 0.155 - 0.01, e.headG);
+          sp.rotation.z = -Math.cos(a2) * 0.30; sp.rotation.x = Math.sin(a2) * 0.30;
+        }
+        e.boxBody.push(obox(0.34, 0.075, 0.33, iron, 0, 0.40, -0.01, e.headG));   /* the band */
+        /* pauldrons: the widest thing about her, which is the point */
+        for(const side of [-1, 1]){
+          e.boxBody.push(obox(0.24, 0.16, 0.28, iron, side*0.30, 0.52, 0, e.spine));
+          e.boxBody.push(obox(0.20, 0.09, 0.24, red, side*0.30, 0.61, 0, e.spine));
+          e.boxBody.push(obox(0.07, 0.14, 0.07, gold, side*0.30, 0.70, 0, e.spine));
+        }
+        e.boxBody.push(obox(0.30, 0.20, 0.10, red, 0, 0.50, 0.13, e.spine));       /* high collar */
+        /* the cloak, long and segmented so it drags a beat behind her */
+        let par = e.spine, py = 0.50;
+        for(let i = 0; i < 4; i++){
+          const seg = new THREE.Group();
+          seg.position.set(0, i === 0 ? py : -0.24, i === 0 ? -0.16 : 0);
+          par.add(seg);
+          e.boxBody.push(obox(0.58 - i*0.06, 0.26, 0.04, i % 2 ? red : shade(red, 0.86), 0, -0.13, 0, seg));
+          e.cape.push(seg); par = seg;
+        }
+      }
     }
     /* arms: shoulder pivot -> upper arm -> elbow pivot -> forearm (+ fist) */
     const mkArm = (side) => {
@@ -13225,10 +14152,12 @@ function syncChars(dt){
     e.g.visible = true;
     const gy = groundY(c.x, c.y) + floorY(c.floor);
     let px = c.x, pz = c.y;
-    if(c.lungeT > 0){ const k = (c.lungeT/0.18)*0.35; px += c.lungeDX*k; pz += c.lungeDY*k; }
+    if(c.lungeT > 0){ const k = (c.lungeT/(c.lungeDur||0.18))*(c.lungeK||0.35); px += c.lungeDX*k; pz += c.lungeDY*k; }
+    /* driven back: the slide trails the blow rather than snapping with it */
+    if(c.shoveT > 0){ const k = (c.shoveT/(c.shoveDur||0.22))*(c.shoveK||0.30); px += c.shoveDX*k; pz += c.shoveDY*k; }
     e.g.position.set(px, gy, pz);
     const ageScale = (!c.undead && !c.beast && c.age < 16) ? 0.55 + (c.age/16)*0.45 : 1;
-    const bs = (c.big || 1) * ageScale;
+    const bs = (c.big || 1) * vscaleOf(c) * ageScale;
     e.g.scale.set(bs * (e.baseSX||1), bs * (e.baseSY||1), bs * (e.baseSX||1));
     /* facing */
     const mvx = c.x - e.lastX, mvz = c.y - e.lastY;
@@ -13317,6 +14246,18 @@ function syncChars(dt){
       let armL = sw*0.8, armR = -sw*0.8, elbL = -0.25 - Math.max(0, sw)*0.4, elbR = -0.25 - Math.max(0, -sw)*0.4;
       let legL = -sw, legR = sw, kneeL = Math.max(0, -sw)*0.9, kneeR = Math.max(0, sw)*0.9;
       let spineX = moving ? 0.08 : idle, headX = 0;
+      /* the two channels that carry weight but are not limbs: how far the torso has turned
+         through the swing, and how far the body has sunk into it. Applied past the joints. */
+      let swingYaw = 0, swingDrop = 0;
+      const hv = Math.min(1.35, heftOf(c));   /* raw weapon weight — what the EYE should read */
+      /* the channels a fighting stance needs and a standing one never did: arms across the
+         body, feet apart, and a torso bladed to the target independently of the hips. */
+      if(e._hipZL === undefined){ e._hipZL = e.legL.rotation.z; e._hipZR = e.legR.rotation.z; }
+      let armLz = 0, armRz = 0, legLz = e._hipZL, legRz = e._hipZR, spineY = 0, headY = 0;
+      const th = twoHanded(c);
+      const wI = c.weapon ? ITEMS[c.weapon] : null;
+      const bow = !!(wI && wI.range && !wI.lance && (wI.tierOf || c.weapon) === 'w_bow');
+      const gun = !!(wI && wI.range && !bow);
       /* the robed dead do not walk, they arrive: no stride, no swing. The legs are under
          the robe and the arms hang until there is something worth raising them for —
          every layer below this one (fight, windup, block, cast, stagger) still overrides. */
@@ -13326,38 +14267,201 @@ function syncChars(dt){
         legL = 0; legR = 0; kneeL = 0; kneeR = 0;
         spineX = idle;
       }
-      /* fight stance: weapon side coiled, off-hand forward */
+      /* THE GUARD. Not "arms in a slightly different place" — a stance: bladed to the
+         target so the shoulder line points at them, knees bent, one foot forward and one
+         back, weight down. This is the pose the eye spends most of a fight looking at, and
+         it was a person standing bolt upright with their feet together. */
       if(inFight && !c.windup){
-        armR = -0.5; elbR = -0.7;
-        armL = 0.35; elbL = -0.5;
-        spineX = 0.12;
+        spineX = 0.16; spineY = -0.34; headY = 0.26;     /* body turns, eyes stay on them */
+        legL = -0.34; legR = 0.30; kneeL = 0.52; kneeR = 0.44;
+        legLz = e._hipZL - 0.11; legRz = e._hipZR + 0.11;
+        swingDrop = 0.028;   /* the KNEES carry the crouch; the root only takes a little.
+                                Sinking the root instead put the boots under the terrain and
+                                the legs disappeared from every frame of the swing. */
+        if(bow){
+          /* An archer is not a swordsman with a bow. The whole body is a platform: side-on,
+             standing tall, knees nearly straight, because everything that moves is error at
+             the far end of the shot. Bow arm out and locked, draw hand light at the jaw. */
+          armR = -1.28; elbR = -0.12; armRz = -0.12;
+          armL = -0.80; elbL = -1.75; armLz = -0.34;
+          spineY = -0.46; headY = 0.40; spineX = 0.04;
+          legL = -0.20; legR = 0.17; kneeL = 0.15; kneeR = 0.12;
+          swingDrop = 0.010;
+        } else if(gun){
+          /* A crossbow or a lance is braced, not balanced: weight forward over a bent front
+             knee, back leg straight behind, leaning into the thing rather than standing
+             beside it. Off hand under the stock. */
+          armR = -1.24; elbR = -0.48; armRz = -0.06;
+          armL = -1.14; elbL = -0.60; armLz = 0.46;
+          spineY = -0.38; headY = 0.30; spineX = 0.13;
+          legL = -0.40; legR = 0.30; kneeL = 0.44; kneeR = 0.08;
+          swingDrop = 0.030;
+        } else {
+          armR = -0.62; elbR = -0.88;
+          armL = 0.30; elbL = -0.55;
+        }
       }
       /* windup -> strike arc, driven by the sim's own timer */
       if(c.windup){
         const k = 1 - c.windup.t / c.windup.dur;   /* 0 -> 1 across the swing */
         if(c.windup.kind === 'ranged'){
-          /* draw: both hands to the bow, leaning in */
-          armL = -1.35; elbL = -0.1;
-          armR = -1.1 + k*0.25; elbR = -1.2 + k*1.0;
-          spineX = 0.06; headX = -0.05;
-        } else if(k < 0.55){
-          /* raise: blade back over the shoulder */
-          const u = k/0.55;
-          armR = -0.5 - u*1.9; elbR = -0.7 - u*0.5;
-          armL = 0.35 + u*0.3;
-          spineX = 0.12 - u*0.14;
+          headX = -0.05;
+          legLz = e._hipZL - 0.11; legRz = e._hipZR + 0.11;
+          if(bow){
+            /* THE DRAW. Bow arm locked out and still; the string hand comes back to the
+               jaw and keeps coming across the beat. The old pose extended the LEFT arm as
+               the bow arm while the bow mesh hangs off the right elbow, so the string was
+               being drawn by the hand that was holding the bow. */
+            /* The string hand starts FORWARD, at the bow, where an arrow is nocked — and
+               travels the whole way back to the jaw across the beat. The previous version
+               began the draw already half-drawn and moved the hand 0.30 of a radian in
+               total, so the pose read as an archer without ever reading as drawing. Eased
+               like the melee wind: most of the travel early, then it holds at full draw,
+               which is where the tension of a bow actually lives. */
+            const dz = 1 - Math.pow(1 - k, 2.6);
+            armR = -1.34 - dz*0.04; elbR = -0.10; armRz = -0.12;
+            armL = -1.20 + dz*0.62;                 /* forward at the bow -> back past the jaw */
+            elbL = -0.30 - dz*2.05;                 /* arm folds up as the elbow rides back */
+            armLz = -0.04 - dz*0.52;                /* and comes across to the string line */
+            spineY = -0.48 - dz*0.06; headY = 0.42; spineX = 0.03 + dz*0.05;
+            legL = -0.20; legR = 0.17; kneeL = 0.15; kneeR = 0.12;
+            swingDrop = 0.010;
+          } else {
+            /* shouldered: it comes up to the eye and settles */
+            armR = -1.18 - k*0.14; elbR = -0.44 - k*0.10; armRz = -0.06;
+            armL = -1.08 - k*0.12; elbL = -0.58 - k*0.06; armLz = 0.46;
+            spineY = -0.42; headY = 0.34; spineX = 0.13 + k*0.04;
+            legL = -0.40; legR = 0.30; kneeL = 0.44; kneeR = 0.08;
+            swingDrop = 0.030;
+          }
         } else {
-          /* commit: the blade comes down hard */
-          const u = (k-0.55)/0.45;
-          armR = -2.4 + u*2.9; elbR = -1.2 + u*1.1;
-          armL = 0.65 - u*0.5;
-          spineX = -0.02 + u*0.3;
+          /* SIX ARCS, one per move, built from the same record the resolution reads — so the
+             stroke you watch is the stroke that decided who it caught. Every one of them
+             keeps the same two-beat shape: the wind eased so the blade arrives early and
+             HANGS (that hang is the anticipation, and it is most of what tells a watching
+             player how much is about to arrive), then a commit eased the other way, almost
+             all of it in the first instants and then trailing, which is what a mass already
+             moving actually does. What differs is the path. */
+          const mvK = c.windup.mv || 'slash';
+          const winding = k < 0.62;
+          const u = winding ? k/0.62 : (k-0.62)/0.38;
+          const e1 = 1 - Math.pow(1 - u, 2.4);      /* the wind: fast, then settling */
+          const e2 = Math.pow(u, 0.52);             /* the commit: explosive, then trailing */
+          /* shared body: coil onto the back foot, then drive off it */
+          if(winding){
+            spineX = 0.12 - e1*0.20; headX = -e1*0.06;
+            swingYaw = -e1 * 0.17 * hv;
+            legL = -0.10*e1; legR = 0.18*e1; kneeR = 0.26*e1 + 0.20;
+            swingDrop = 0.028 + 0.012 * e1 * hv;
+            spineY = -0.34 - e1*0.26; headY = 0.30 + e1*0.22;
+          } else {
+            spineX = -0.08 + e2*0.44; headX = e2*0.14;
+            swingYaw = (-0.17 + e2*0.30) * hv;
+            legL = -0.10 + e2*0.36; legR = 0.18 - e2*0.34; kneeL = e2*0.32; kneeR = 0.46 - e2*0.26;
+            swingDrop = 0.028 + (0.012 + e2*0.030) * hv;
+            spineY = -0.60 + e2*0.78; headY = 0.52 - e2*0.46;
+          }
+          if(mvK === 'thrust'){
+            /* the point comes back beside the ribs and is PUT somewhere. Barely any torso
+               rotation — a thrust is a step and an arm, and it is the fastest thing here. */
+            if(winding){
+              armR = -0.55 - e1*0.28; elbR = -0.85 - e1*1.25; armRz = -0.22 - e1*0.16;
+              spineY = -0.34 - e1*0.20; spineX = 0.16 - e1*0.06;
+            } else {
+              armR = -0.83 + -0.62*e2; elbR = -2.10 + e2*2.02; armRz = -0.38 + e2*0.30;
+              spineY = -0.54 + e2*0.50; spineX = 0.10 + e2*0.16;
+              swingYaw = (-0.06 + e2*0.10) * hv;
+            }
+          } else if(mvK === 'cleave' || mvK === 'spin'){
+            /* horizontal. The blade goes out to the side at shoulder height and stays there
+               all the way through — which is exactly why these are the strokes that take
+               more than one body. The turning cut carries the whole frame around with it. */
+            const wide = mvK === 'spin' ? 1.35 : 1.0;
+            if(winding){
+              armR = -1.15 - e1*0.22; elbR = -0.55 + e1*0.20;
+              armRz = -0.30 - e1*0.80*wide;
+              spineY = -0.34 - e1*0.42*wide; headY = 0.30 + e1*0.30;
+              if(mvK === 'spin') swingYaw = -e1 * 0.75;
+            } else {
+              armR = -1.37 + e2*0.14; elbR = -0.35 - e2*0.10;
+              armRz = (-1.10*wide) + e2*2.20*wide;
+              spineY = -0.76*wide + e2*1.30*wide; headY = 0.60 - e2*0.52;
+              if(mvK === 'spin') swingYaw = -0.75 + e2*3.30;   /* all the way round */
+            }
+          } else if(mvK === 'rising'){
+            /* from underneath: the blade drops behind the knee, the body sinks, and then
+               everything comes up at once through where a guard is not. */
+            if(winding){
+              armR = -0.5 + e1*1.30; elbR = -0.88 + e1*0.55; armRz = -0.22 - e1*0.20;
+              spineX = 0.16 + e1*0.24; swingDrop = 0.028 + e1*0.055;
+              kneeL = 0.52 + e1*0.30; kneeR = 0.44 + e1*0.26;
+            } else {
+              armR = 0.80 - e2*2.70; elbR = -0.33 - e2*0.45; armRz = -0.42 + e2*0.34;
+              spineX = 0.40 - e2*0.62; swingDrop = 0.083 - e2*0.070;
+              kneeL = 0.82 - e2*0.60; kneeR = 0.70 - e2*0.48;
+              headX = -e2*0.16;                    /* chin comes up with the cut */
+            }
+          } else if(mvK === 'overhead'){
+            /* straight up and straight down, the heaviest and the slowest */
+            if(winding){
+              armR = -0.5 - e1*2.15; elbR = -0.7 - e1*0.60; armRz = -0.22 + e1*0.16;
+              armL = 0.35 + e1*0.34; elbL = -0.5 - e1*0.20;
+            } else {
+              armR = -2.65 + e2*3.15; elbR = -1.30 + e2*1.20; armRz = -0.06 - e2*0.14;
+              armL = 0.69 - e2*0.56; elbL = -0.70 + e2*0.35;
+            }
+          } else {
+            /* the slash: a diagonal off the shoulder, the plain honest stroke */
+            if(winding){
+              armR = -0.5 - e1*1.30; elbR = -0.88 - e1*0.30; armRz = -0.22 - e1*0.50;
+              armL = 0.35 + e1*0.30; elbL = -0.5 - e1*0.18;
+            } else {
+              armR = -1.80 + e2*1.15; elbR = -1.18 + e2*0.95; armRz = -0.72 + e2*1.35;
+              armL = 0.65 - e2*0.52; elbL = -0.68 + e2*0.33;
+            }
+          }
         }
+      }
+      /* follow-through: the blade is down and out past the target and the body has to come
+         back for it. Reads as the weight of the swing more than the swing itself does. */
+      /* THE LOOSE: bow arm still locked on the target, string hand flown back past the ear.
+         Held for a fifth of a second, which is all it takes to read as a shot rather than a
+         pose change. */
+      if(c.looseT > 0 && !c.windup){
+        const u = clamp(c.looseT / 0.20, 0, 1);
+        armR = -1.34; elbR = -0.10; armRz = -0.12;
+        armL = -0.58 + u*0.10; elbL = -2.35 - u*0.30; armLz = -0.56 - u*0.22;
+        spineY = -0.54; headY = 0.42; spineX = 0.08;
+        legL = -0.20; legR = 0.17; kneeL = 0.15; kneeR = 0.12;
+        swingDrop = 0.010;
+      }
+      else if(c.recoverT > 0 && !c.windup){
+        const u = clamp(c.recoverT / (c.recoverDur || 0.22), 0, 1);
+        armR = 0.55*u; elbR = -0.15 - u*0.20;
+        armL = 0.30 - u*0.20; elbL = -0.35;
+        spineX = 0.30*u; headX = 0.12*u;
+        legL = -0.18*u; legR = 0.14*u; kneeR = 0.30*u;
+        /* still turned through from the follow-through, and still low. The body unwinds
+           back to guard over the whole beat instead of snapping there. */
+        swingYaw = 0.13 * u * hv;
+        spineY = 0.18*u - 0.34*(1-u);               /* unwinds back to the guard */
+        headY = 0.26;
+        swingDrop = 0.028 + 0.030 * u * hv;
+      }
+      /* BOTH HANDS ON IT. Applied after the arc rather than inside each branch, so the grip
+         holds through guard, wind, commit and follow-through alike — a two-handed weapon
+         that reverts to one hand the moment it is swung is worse than one that never had
+         the grip at all. The hands sit apart on the haft, which is how a two-handed grip
+         actually works, so the arms do not have to meet at a point the rig cannot reach. */
+      if(th && !bow && !gun && !c.blocking && (inFight || c.windup || c.recoverT > 0)){
+        armL = armR + 0.14; elbL = elbR - 0.28;
+        armLz = clamp(0.56 + armRz*0.75, -0.35, 1.45);   /* the off hand goes where the haft goes */
       }
       /* block: shield up, braced */
       if(c.blocking && !c.windup){
-        armL = -1.2; elbL = -0.9;
-        spineX = 0.16;
+        armL = -1.2; elbL = -0.9; armLz = 0;   /* the shield hand leaves the haft */
+        spineX = 0.16; spineY = -0.22; headY = 0.18;
+        legL = -0.26; legR = 0.22; kneeL = 0.30; kneeR = 0.26;
       }
       /* cast: off-hand thrust out */
       if(c.castT > 0){
@@ -13379,20 +14483,57 @@ function syncChars(dt){
       }
       /* stagger: reeling */
       if(c.staggerT > 0){
-        spineX = -0.28 + Math.sin(Date.now()*0.02) * 0.12;
-        armL = 0.6; armR = 0.6; elbL = -0.9; elbR = -0.9;
+        /* Driven off the stagger's OWN clock, so it reels hardest at the moment of the hit
+           and recovers visibly rather than wobbling at a fixed rate off Date.now() — which
+           meant a light stumble and a hammer blow looked exactly the same. */
+        const u = clamp(c.staggerT / 0.35, 0, 1.3);
+        spineX = -0.32*u + Math.sin(c.staggerT * 34) * 0.11 * u;
+        armL = 0.62*u; armR = 0.62*u; elbL = -0.9; elbR = -0.9;
+        headX = -0.20*u;
+        legL = 0.22*u; kneeR = 0.30*u;
+        swingYaw = Math.sin(c.staggerT * 26) * 0.16 * u;
       }
       /* flinch: a jerk backward on hard hits */
       if(c.flinchT > 0){
         spineX -= 0.22 * (c.flinchT/0.18);
         headX -= 0.3 * (c.flinchT/0.18);
       }
-      const snap = c.windup ? 30 : 14;   /* committed swings move fast */
+      const snap = c.windup ? 30 : (c.recoverT > 0 ? 20 : 14);   /* committed swings move fast */
       P(e.armL, 'x', armL, snap); P(e.armR, 'x', armR, snap);
       P(e.elbL, 'x', elbL, snap); P(e.elbR, 'x', elbR, snap);
       P(e.legL, 'x', legL); P(e.legR, 'x', legR);
       P(e.kneeL, 'x', kneeL); P(e.kneeR, 'x', kneeR);
       P(e.spine, 'x', spineX, 10); P(e.headG, 'x', headX, 10);
+      /* the channels that make it a stance rather than a posture */
+      P(e.armL, 'z', armLz, snap); P(e.armR, 'z', armRz, snap);
+      P(e.legL, 'z', legLz); P(e.legR, 'z', legRz);
+      P(e.spine, 'y', spineY, 11); P(e.headG, 'y', headY, 11);
+      /* the whole body turns and sinks. Snapped harder than the limbs during a committed
+         swing so the whip reads, eased back the rest of the time. */
+      /* the tail counterweights the body: it lags the stride, and swings harder when the
+         legs are moving. A rigid one reads worse than none at all. */
+      /* a cloak drags a beat behind the body — the same trick as the tail, and the reason
+         either boss reads as moving rather than sliding */
+      if(e.cape){
+        for(let i = 0; i < e.cape.length; i++){
+          const sway = Math.sin(e.phase * 0.6 - i * 0.5) * (moving ? 0.13 : 0.035);
+          P(e.cape[i], 'x', (moving ? 0.20 : 0.06) + sway * 0.5 + i * 0.04, 7);
+          P(e.cape[i], 'z', sway, 7);
+        }
+      }
+      if(e.tail){
+        const amp = moving ? 0.30 : 0.10;
+        for(let i = 0; i < e.tail.length; i++){
+          const lag = Math.sin(e.phase * 0.5 - i * 0.55) * amp * (0.55 + i * 0.16);
+          P(e.tail[i], 'y', lag, 8);
+          P(e.tail[i], 'x', (i === 0 ? 0.30 : 0.05) + Math.sin(e.phase * 0.5 - i * 0.7) * 0.05, 8);
+        }
+      }
+      const bodySnap = c.windup ? 26 : (c.staggerT > 0 ? 22 : 12);
+      e._yaw = (e._yaw || 0) + (swingYaw - (e._yaw || 0)) * Math.min(1, dt*bodySnap);
+      e._drop = (e._drop || 0) + (swingDrop - (e._drop || 0)) * Math.min(1, dt*bodySnap);
+      e.g.rotation.y += e._yaw;
+      e.g.position.y -= e._drop;
     }
     /* limbs & gear */
     if(!c.beast){
@@ -13949,6 +15090,7 @@ function render(){
   }
   const rdt = Math.min(0.05, (now - lastRenderT)/1000);
   lastRenderT = now;
+  tickBubbles(rdt);
   camDist = lerp(camDist, camDistTarget, Math.min(1, rdt*6));
   camYaw += (camYawT - camYaw) * Math.min(1, rdt*8);
   /* the eye must stay above the fog sheet (y=6) at any zoom */
@@ -13964,10 +15106,11 @@ function render(){
   camFY += (floorY(selFloor) - camFY) * Math.min(1, rdt * 5);
   const focusY = Math.max(0, groundY(camSX, camSY)) + 0.8 + camFY;
   const horiz = Math.cos(camPitch) * camDist;
+  camKick = Math.max(0, camKick - rdt * 2.8);   /* ~0.18s tail on the hardest blow */
   camera.position.set(
-    camSX + Math.sin(camYaw) * horiz,
-    focusY + Math.sin(camPitch) * camDist,
-    camSY + Math.cos(camYaw) * horiz);
+    camSX + Math.sin(camYaw) * horiz + camKickX * camKick,
+    focusY + Math.sin(camPitch) * camDist + camKickY * camKick * 0.6,
+    camSY + Math.cos(camYaw) * horiz + camKickY * camKick);
   camera.lookAt(camSX, focusY, camSY);
   updateSky();
   water.position.y = -0.22 + Math.sin(now*0.001)*0.03;
@@ -14349,7 +15492,7 @@ function refreshCharPanel(){
   const raceTxt = c.race && c.race !== 'human' ? ' · ' + RACES[c.race].label : '';
   const ageTxt = (c.undead ? (c.lich ? 'ageless' : '—') : Math.floor(c.age) + 'y') + raceTxt + relTxt;
   const ldNow = invWeight(c).toFixed(0), ldCap = invCap(c).toFixed(0);
-  $('equip').innerHTML = `<b>${ageTxt}</b>${c.goal ? ' · goal: '+c.goal : ''} · WPN <b>${c.weapon?ITEMS[c.weapon].name:'Fists'}</b> · ARM <b>${c.armor?ITEMS[c.armor].name:'None'}</b>` +
+  $('equip').innerHTML = `<b>${ageTxt}</b>${c.goal ? ' · goal: '+c.goal : ''} · WPN <b>${(wepOf(c)||{}).name || 'Fists'}</b> · ARM <b>${(c.armor&&ITEMS[c.armor]?ITEMS[c.armor].name:'None')}</b>` +
     (c.pack ? ` · PACK <b>${ITEMS[c.pack].name}</b>` : '') +
     `${giftTxt}${convTxt}<br><span style="color:${+ldNow > +ldCap ? 'var(--rust)' : 'var(--dust)'}">LOAD ${ldNow}/${ldCap}kg${invTxt}</span>`;
   const sr = $('stancerow');
@@ -15851,10 +16994,46 @@ cv.addEventListener('mousedown', e => {
       if(foe.state === 'down'){
         showCtxMenu(e.clientX, e.clientY, [
           {label:'EXECUTE', fn:()=>{ const m = movers[0]; clearOrders(m); m.execTarget = foe; }},
+          {label:'SEIZE', fn:()=>{ const m = movers[0]; clearOrders(m); m.seizeTarget = foe; }},
           {label:'LEAVE THEM', fn:()=>{}}]);
         return;
       }
       for(const m of movers){ clearOrders(m); m.target = foe; m.targetManual = true; }
+      return;
+    }
+    /* someone of yours in a town's cells, and no watch standing over them */
+    const caged = chars.find(c => c.faction === 'player' && c.jailedAt && c.jailedAt.kind === 'town' &&
+      dist(c.x, c.y, wx, wy) < 1.2);
+    if(caged){
+      const watch = watchersOn(caged.jailedAt, caged);
+      if(watch > 0){ log(`The watch is standing over that cell. Deal with them first.`, 'bad'); return; }
+      showCtxMenu(e.clientX, e.clientY, [
+        {label:'BREAK THEM OUT', fn:()=>{
+          const cell = caged.jailedAt, t2 = cell.town;
+          cell.holds = 0; cell.hp = cell.maxHp;
+          caged.jailedAt = null; caged.jailT = 0; caged.barsT = 0;
+          returnKit(caged);
+          caged.x = cell.x + 1.4; caged.y = cell.y + 1.2;
+          if(t2){ t2.bounty = (t2.bounty || 0) + 200; t2.wanted = true; dropRep(t2, 18); }
+          log(`${caged.name} is out. ${t2 ? t2.name : 'The town'} will want that back.`, 'bad');
+        }},
+        {label:'LEAVE THEM TO IT', fn:()=>{}}]);
+      return;
+    }
+    /* one of yours, in one of your cells */
+    const pris = chars.find(c => c.prisoner && c.jailedAt && c.jailedAt.kind === 'player' &&
+      dist(c.x, c.y, wx, wy) < 1.1);
+    if(pris){
+      const val = ransomValue(pris);
+      const opts = [
+        {label:`RANSOM  (+${val}g)`, fn:()=>ransomPrisoner(pris)},
+        {label:`BREAK TO SERVICE  (${pris.breakT||0}/6 days)`, fn:()=>recruitPrisoner(pris)},
+      ];
+      if(slaverCamp) opts.push({label:`SELL TO THE CAMP  (+${Math.round(val*0.75)}g)`, fn:()=>sellPrisoner(pris)});
+      opts.push({label:'TURN THEM LOOSE', fn:()=>{ prisonerRelease(pris, 'free'); pris.fleeT = 14;
+        log(`${pris.name} is let go. They run, and they remember.`, ''); }});
+      opts.push({label:'LEAVE THEM', fn:()=>{}});
+      showCtxMenu(e.clientX, e.clientY, opts);
       return;
     }
     /* captured ally? free them if the slavers are dealt with */
@@ -16615,6 +17794,10 @@ function snapshot(){
     stats:c.stats, gift:c.gift, mana:c.mana, stance:c.stance, parts:c.parts,
     blood:c.blood, maxBlood:c.maxBlood, hunger:c.hunger,
     weapon:c.weapon, armor:c.armor, state:c.state, undead:c.undead,
+    /* A sentence that does not survive a save is a sentence you serve by reloading, and
+       kit held at the gaol would simply vanish. The cell is stored by index. */
+    jailCell: c.jailedAt ? cells.indexOf(c.jailedAt) : -1, jailT: c.jailT || 0, barsT: c.barsT || 0,
+    heldKit: c.heldKit || null, prisoner: !!c.prisoner, breakT: c.breakT || 0,
     masterId:c.master ? c.master.id : null, guard:c.guard,
     homeTownI: c.homeTown ? towns.indexOf(c.homeTown) : -1,
     beast:!!c.beast, loot:c.loot||0, deadAt:c.deadAt||0, looted:!!c.looted, robbed:!!c.robbed, swag: c.swag ? {gold: c.swag.gold, items: {...c.swag.items}} : null,
@@ -16678,6 +17861,7 @@ function snapshot(){
     bastionWalls: bastion ? bastion.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [],
     chars: chars.filter(c => !c.phantom).map(sChar),
     corpseIds: corpses.map(c=>c.id),
+    cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       store: b.store ? {...b.store} : undefined,
       stored: b.stored ? b.stored.map(sChar) : undefined})),
@@ -16692,6 +17876,13 @@ function restore(d){
   pBuilds.length = 0;
   blocked.clear(); for(const k of baseBlocked) blocked.add(k);
   beds.length = 0; for(const b of baseBeds) beds.push({...b, user:null});
+  /* Town cells come from worldgen and are never rebuilt; player cells are re-created by the
+     placeStructure calls below. Without this the player's cells accumulate a fresh copy on
+     every load, and since a sentence is stored as an INDEX into this array, every prisoner
+     in the world would wake up in somebody else's cell. */
+  for(let i = cells.length - 1; i >= 0; i--) if(cells[i].kind === 'player') cells.splice(i, 1);
+  for(const cl of cells){ cl.holds = 0; cl.hp = CELL_HP; }
+  window._cellHp = d.cellHp || null;   /* applied once the player cells are back below */
   for(const b of d.pBuilds){
     const pb = placeStructure(b.type, b.x, b.y);
     if(b.hp !== undefined && pb.maxHp) pb.hp = b.hp;
@@ -16699,6 +17890,14 @@ function restore(d){
        here, because the save may list the turret before the wall it is bolted to. Take the
        saved answer instead of re-deriving one from a half-built camp. */
     if(isEmpl(b.type) && b.floor !== undefined) pb.floor = b.floor;
+  }
+  /* a night's work on a bar is not undone by loading the game */
+  if(window._cellHp){
+    for(let i = 0; i < cells.length && i < window._cellHp.length; i++){
+      const v = window._cellHp[i];
+      if(typeof v === 'number') cells[i].hp = v;
+    }
+    window._cellHp = null;
   }
   /* Walls are restored by matching the freshly-generated ring against the saved one and
      applying the saved damage (removed segments, current hp). But if the save was made in
@@ -16793,7 +17992,17 @@ function restore(d){
       smithing:1, crafting:1, farming:1, brewing:1}, s.stats);
     c.gift = s.gift; c.mana = s.mana; c.stance = s.stance||'melee';
     c.parts = s.parts; c.blood = s.blood; c.maxBlood = s.maxBlood; c.hunger = s.hunger;
-    c.weapon = s.weapon; c.armor = s.armor; c.state = s.state; c.undead = !!s.undead;
+    /* Drop gear the build no longer knows about, rather than carrying a key that will
+       throw the first time anything looks at it. Repairing on load beats guarding forever. */
+    c.jailT = s.jailT || 0; c.barsT = s.barsT || 0;
+    c.heldKit = s.heldKit || null;
+    c.prisoner = !!s.prisoner; c.breakT = s.breakT || 0;
+    if(s.jailCell >= 0 && cells[s.jailCell]){ c.jailedAt = cells[s.jailCell]; cells[s.jailCell].holds = c.id; }
+    else c.jailedAt = null;
+    c.weapon = (s.weapon && ITEMS[s.weapon]) ? s.weapon : null;
+    c.armor  = (s.armor  && ITEMS[s.armor])  ? s.armor  : null;
+    if(s.weapon && !ITEMS[s.weapon]) console.warn('dropped unknown weapon from save:', s.weapon);
+    if(s.armor && !ITEMS[s.armor]) console.warn('dropped unknown armor from save:', s.armor); c.state = s.state; c.undead = !!s.undead;
     c.beast = s.beast; c.loot = s.loot; c.deadAt = s.deadAt; c.looted = s.looted; c.robbed = s.robbed; c.swag = s.swag ? {gold: s.swag.gold, items: {...s.swag.items}} : null;
     c.guard = s.guard; c.homeTown = s.homeTownI>=0 ? towns[s.homeTownI] : null;
     c.mobileVendor = !!s.mobileVendor;
