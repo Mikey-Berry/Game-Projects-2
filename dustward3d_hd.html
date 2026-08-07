@@ -1745,7 +1745,7 @@ const CONVICTIONS = {
     weights:{sack:-0.3, civkill:-0.3, raise:0.1, conquer:0.4, town_saved:0.6, rift_sealed:0.6, gold:1.0, compact:0.8}},
   devout: {label:'Devout', short:'devout',
     blurb:'The Church was right about the dead. Every rite you work is a wound.',
-    weights:{raise:-2.6, lich:-6.0, sack:-1.4, civkill:-1.8, rift_sealed:2.2, town_saved:1.6, purge_killed:-2.0}},
+    weights:{raise:-2.6, lich:-6.0, sack:-1.4, civkill:-1.8, rift_sealed:2.2, town_saved:1.6, purge_killed:-2.0, found_mother:-3.2}},
   ambitious: {label:'Ambitious', short:'ambition',
     blurb:'Following somebody who is going somewhere. Weakness is the only sin.',
     weights:{conquer:2.4, sack:1.0, boss:2.0, compact:1.2, gold:1.2, retreat:-1.4, town_lost:-2.0, found_sister:-0.8}},
@@ -1757,10 +1757,10 @@ const CONVICTIONS = {
     weights:{sack:2.2, civkill:1.6, raise:1.0, conquer:1.6, town_saved:-0.8, mercy:-1.2}},
   scholar: {label:'Inquisitive', short:'inquiry',
     blurb:'Here for what the Fracture left behind. Everything else is weather.',
-    weights:{research:2.2, rift_sealed:1.4, boss:1.0, formula:2.0, raise:0.4, sack:-0.6}},
+    weights:{research:2.2, rift_sealed:1.4, boss:1.0, formula:2.0, raise:0.4, sack:-0.6, found_mother:2.4}},
   haunted: {label:'Haunted', short:'the dead',
     blurb:'Lost somebody to the dark and has not put it down. Wants it ended, whatever that costs.',
-    weights:{rift_sealed:2.6, boss:1.8, gaunt_killed:0.8, door_closed:5.0, raise:-0.8, retreat:-1.0, found_sister:1.8}},
+    weights:{rift_sealed:2.6, boss:1.8, gaunt_killed:0.8, door_closed:5.0, raise:-0.8, retreat:-1.0, found_sister:1.8, found_mother:1.2}},
 };
 const CONVICTION_KEYS = Object.keys(CONVICTIONS);
 /* -100..100. The bands are where behaviour changes. */
@@ -10099,6 +10099,7 @@ function update(dt){
   wantedCheck(dt);            /* and whether the watch has recognised anybody */
   rescueTick(dt);             /* and whether anyone is coming for what you took */
   ilsabetTick(dt);            /* and whether anyone has walked out far enough to find her */
+  motherTick(dt);             /* and whether anyone has gone far enough DOWN to find her */
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
   if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
   gauntTick(dt / HOUR_SEC);   /* the dark is never empty for long */
@@ -16929,6 +16930,7 @@ addEventListener('keydown', e => {
   if(e.key==='c' || e.key==='C'){ const c = selected[0]; if(c && c.gift){ const sp = spellsFor(c)[0]; if(sp) beginCast(c, sp[0]); } }
   if(e.key==='v' || e.key==='V'){ const c = selected[0]; if(c && c.gift){ const sp = spellsFor(c)[1]; if(sp) beginCast(c, sp[0]); } }
   if(e.key==='x' || e.key==='X'){ toggleConcentrationOff(); }
+  if(e.key==='q' || e.key==='Q'){ listenForMother(); }
   if(e.key==='Escape'){
     /* Esc backs out of anything modal, including the build menu (which used to need B again) */
     if(buildMode){ buildMode = null; refreshBuildBar && refreshBuildBar(); }
@@ -18118,6 +18120,8 @@ function snapshot(){
     cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
     search: {on: search.on, asked: {...search.asked}, found: search.found,
              siteId: search.siteId, leads: search.leads, met: search.met},
+    mother: {on: mother.on, caveId: mother.caveId, found: mother.found,
+             spoken: mother.spoken, reads: mother.reads, toldPrice: mother.toldPrice},
     shrines: shrines.map(sh => ({broken: !!sh.broken, hp: Math.round(sh.hp), reT: sh.reT || 0})),
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       store: b.store ? {...b.store} : undefined,
@@ -18143,6 +18147,11 @@ function restore(d){
     search.on = !!d.search.on; search.asked = {...(d.search.asked || {})};
     search.found = !!d.search.found; search.siteId = d.search.siteId ?? -1;
     search.leads = d.search.leads || 0; search.met = !!d.search.met;
+  }
+  if(d.mother){
+    mother.on = !!d.mother.on; mother.caveId = d.mother.caveId ?? -1;
+    mother.found = !!d.mother.found; mother.spoken = !!d.mother.spoken;
+    mother.reads = d.mother.reads || 0; mother.toldPrice = !!d.mother.toldPrice;
   }
   /* a shrine you broke stays broken, and the clock on it keeps running */
   if(d.shrines) for(let i = 0; i < shrines.length && i < d.shrines.length; i++){
@@ -18528,6 +18537,141 @@ function ilsabetTick(dt){
   log('ILSABET. She is standing in the middle of a corpse-field, alive, and the tears around her have all been sealed. She has been doing this for years.', 'good');
   log('She has seen the crown. Talk to her.', 'good');
 }
+/* ---------- THE DESCENT: LOOKING FOR MOTHER ----------
+   The world already says who she is; nobody has put the two halves together. The Scholars
+   ask "what it was we were TAKING" and never answer it. Malathuun is out in the waste in
+   pieces, and every reagent hunter in the world is living off the marrow. And at the bottom
+   of every cave in this map is "a sealed Golden-Age bunker and what it was built to keep."
+
+   The answer is that the golden age found two of them. It sundered one and it KEPT the
+   other, because a corpse is a windfall and a prisoner is an income. What they drew off her
+   is the alchemy. The Fracture is the bill.
+
+   A Hollow is a rider in a borrowed body that "takes a cut of everything the host learns"
+   and is "saving up for something" — that is the race blurb, written long before this. The
+   riders are pieces of her. Ascension is a piece growing back toward the whole. So Saga is
+   not looking for a god; he is looking for the rest of himself, and Mother is not a title.
+
+   Finding her is deliberately NOT Lyonart's quest in a different hat. His is social — ask in
+   halls, three tellings, information moving by rumour. This one is spatial and bodily: he
+   can feel her, the sense sharpens as he grows, and the only way to use it is to walk. */
+const mother = {on:false, caveId:-1, found:false, spoken:false, reads:0, toldPrice:false};
+function startTheDescent(me){
+  mother.on = true; mother.found = false; mother.spoken = false; mother.reads = 0; mother.toldPrice = false;
+  /* one cave's bottom bunker is her cell. Which one is decided now and never shown. */
+  mother.caveId = (typeof caves !== 'undefined' && caves.length) ? caves[ri(0, caves.length - 1)].id : -1;
+  worldEvent('mother', me.x, me.y,
+    'Something walked out of a sealed redoubt in the waste, alone, wearing what the people inside it were wearing. It did not close the door behind it.');
+  log('MOTHER. You were cut off something and fitted to a body, and the something is still alive and still held. She is under a mountain. Press Q to be quiet and listen.', 'good');
+}
+function motherCave(){ return (typeof caves !== 'undefined') ? caves.find(v => v.id === mother.caveId) : null; }
+/* Which hole somebody is standing in. `caveId` is stamped on the things that LIVE down there,
+   never on anyone who walked in, so membership has to be read off the geometry: a negative
+   floor, inside one of that cave's carved rooms. Small numbers — a handful of caves, a dozen
+   rooms each — and it is only asked on a keypress or a two-second tick. */
+function caveContaining(c){
+  if((c.floor || 0) >= 0 || typeof caves === 'undefined') return null;
+  const f = c.floor || 0;
+  for(const cv of caves) for(const rm of cv.rooms){
+    if(rm.f !== f) continue;
+    if(c.x >= rm.x0 - 1 && c.x <= rm.x1 + 1 && c.y >= rm.y0 - 1 && c.y <= rm.y1 + 1) return cv;
+  }
+  return null;
+}
+/* How well this body hears her. A rider hears more than a host; dust is the art they took
+   off her, so an adept of it is listening on her own frequency. */
+function acuityOf(c){
+  return (c.race === 'hollow' ? 1 : 0) + (c.hollowTier || 0) + attOf(c, 'dust') + (c.gift === 'dust' ? 1 : 0);
+}
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+function bearingFrom(c, tx, ty){
+  /* screen-north is -y. Eight points, and only the well-attuned get to hear it. */
+  const a = Math.atan2(tx - c.x, -(ty - c.y));
+  return COMPASS[((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8];
+}
+/* A reading, taken deliberately. Vague at the surface and unmistakable in the right hole —
+   which is the whole point: the sense does not solve the problem, it rewards descending. */
+function listenForMother(){
+  if(!mother.on){ return; }
+  const c = selected.find(o => o.faction === 'player' && o.state === 'ok') || player().find(o => o.state === 'ok');
+  if(!c){ log('There is nobody standing to listen with.', ''); return; }
+  const cv = motherCave();
+  const acu = acuityOf(c);
+  if(acu <= 0){ say(c, 'I can hear the wind. That is all I have ever been able to hear.'); return; }
+  mother.reads++;
+  if(!cv){ say(c, 'Nothing. She is not under this world.'); return; }
+  const below = (c.floor || 0) < 0;
+  const d = dist(c.x, c.y, cv.mouth.x, cv.mouth.y);
+  /* underground, in the right hole: the reading stops being a guess */
+  if(below && caveContaining(c) === cv){
+    const bottom = -cv.depth;
+    if((c.floor || 0) <= bottom) say(c, 'She is through this wall. She has stopped pretending to breathe.');
+    else say(c, `Down. ${Math.abs(bottom - (c.floor || 0))} more floors of down.`);
+    return;
+  }
+  if(below){ say(c, 'Rock, and water moving in it, and nothing that knows my name. Wrong hole.'); return; }
+  const band = d < 18 ? 'close' : d < 45 ? 'near' : d < 90 ? 'far' : 'distant';
+  const dir = acu >= 3 ? bearingFrom(c, cv.mouth.x, cv.mouth.y) : null;
+  const lines = {
+    close:   'Under my feet. Not under this ground — under the ROCK. There is a way in and it is very near.',
+    near:    'Closer. It is like standing near a struck bell an hour after.',
+    far:     'She is out there. A long walk, and then a long way down.',
+    distant: 'Almost nothing. A pull, the way a tooth pulls before it goes.',
+  };
+  say(c, lines[band] + (dir ? ` It comes from the ${dir}.` : ''));
+  if(!dir && acu < 3 && mother.reads === 2)
+    log('The reading is blunt. A better ear for the dust art would give it a direction.', '');
+}
+/* She is not a boss and there is nothing here to kill. She is a voice behind a seal that was
+   built by people who knew exactly what they had. Reaching her is the leg; opening her is
+   the price, and the price is named out loud the moment she speaks. */
+let _mthT = 0;
+function motherTick(dt){
+  if(!mother.on || mother.spoken) return;
+  if((_mthT -= dt) > 0) return;
+  _mthT = 2;
+  const cv = motherCave();
+  if(!cv || !cv.vault) return;
+  const v = cv.vault;
+  const near = player().find(c => c.state === 'ok' && (c.floor || 0) === v.f && dist(c.x, c.y, v.x, v.y) < 9);
+  if(!near) return;
+  mother.found = true; mother.spoken = true;
+  sawPlace('mother');
+  worldEvent('mother', cv.mouth.x, cv.mouth.y,
+    'At the bottom of a cave under the mountains there is a door the golden age welded shut from the outside, and something behind it is awake and has been the whole time.');
+  motherSpeaks(near);
+}
+function motherSpeaks(c){
+  /* What she says is read off the world, not off a quest step. She has been listening to it
+     through him for as long as he has been walking around in it. */
+  const me = player().find(o => o.race === 'hollow') || c;
+  const tier = me.hollowTier || 0;
+  const kin = Object.keys(bossSlain).length;
+  const dustMastery = attOf(me, 'dust');
+  log('THE SEAL. A slab of golden-age alloy, welded from the outside, with eleven signatures cut into it. It is warm.', 'good');
+  const open = tier >= 2 ?
+    'You came back finished. Then put your hand on it — the weld only ever held against a rider.' :
+    'You came back as a piece. A piece cannot lift the lid it was cut through.';
+  say(c, open);
+  const lines = [];
+  lines.push(tier >= 2 ? 'CHILD. You are the whole of yourself and you still came. I did not expect that.' :
+             tier >= 1 ? 'CHILD. Awake, but still wearing somebody. I can hear the host under you, still frightened.' :
+                         'CHILD. Still riding. Still asleep. You found me with the part of me you kept — you will not open me with it.');
+  if(dustMastery >= 3) lines.push('You have mastered the art they took off me. Do you understand that when you work it, you are working ME?');
+  else if(dustMastery >= 2) lines.push('You use the art. Adequately. It was mine before it was a technique.');
+  if(kin >= 3) lines.push('Things have been dying out there in a pattern. That was you. Good. They made you for that and it is the one honest thing they did.');
+  if(noticeTier >= 2) lines.push('Something has been watching you come down. Not me. I have been watched for nine hundred years and I know the difference.');
+  if(bossSlain.sixfold) lines.push('You put down the sixfold thing. It came through the same hole I am behind. It did not come through whole. Neither did you.');
+  if(placesSeen.corpse) lines.push('You have stood on my brother. They cut him apart and sold the pieces by weight. They kept me because a corpse is a windfall and a prisoner is an income.');
+  lines.push(tier >= 2 ? 'The weld is eleven names deep. You will find that you outweigh all of them.' :
+    'The way through is not a key and it is not a blade. Give the rider the whole of what you are — the gift, and everything you were saving it for. Come back as a thing and not a passenger.');
+  for(const l of lines) log('SHE SAYS: "' + l + '"', tier >= 2 ? 'good' : '');
+  if(tier < 2 && !mother.toldPrice){
+    mother.toldPrice = true;
+    log('THE PRICE IS NAMED: the Nascent Rite, at your circle. It burns the gift — the dust art you found her WITH — and gives the rider the whole body. That is what the seal weighs.', 'good');
+  }
+  deed('found_mother', 1);
+}
 const ORIGINS = {
   gravekeeper: {label:'Gravekeeper',
     blurb:'You kept the graves; the graves kept you. Three of you, near Greenrest, with tools and a little coin.',
@@ -18554,6 +18698,16 @@ const ORIGINS = {
   lyonart: {label:"Lyonart d'Alagadda", named:true,
     blurb:'Exiled Prince. He came through with the Sunken Crown on him and six of his household still following. He is looking for his sister, who was sent here first, for trying to stop what happened.',
     intro:'You wake at the world\'s edge with a crown nobody living should own and six of the dead who still answer to your name. Ilsabet came through before you. Find her.'},
+  /* ---------- THE SECOND NAMED ORIGIN ----------
+     Lyonart is a man with a title and a thing he cannot use. This one is not a man at all:
+     he is a weapon somebody grew, walking around inside the person they grew him in, and
+     the mechanical shape is the mirror image. Lyonart begins holding the endgame and
+     unable to reach it. Saga begins already one rung UP the endgame ladder — awakened,
+     the thirty percent already paid out of him — and the next rung costs him the art that
+     makes him himself. He does not need to find power. He needs to decide what to spend. */
+  saga: {label:'Saga Wordsworth', named:true, fixes:'He is a Hollow and a duster — the only start in the game that is. RACE and GIFT above do not apply to him.',
+    blurb:'A Hollow, and not an accident: the Scholars grew godkillers in the redoubts and he is one that walked out. Already awakened, high combat, a natural of the dust art. He is looking for Mother, who is a Great One, and who is still where the golden age left her.',
+    intro:'You wake in somebody else\'s body, on a floor of a redoubt where the people who made you are nine generations dead. The rider in you is awake and it has been awake a long time. It knows what it was cut from, and it knows she is still alive.'},
   soldier: {label:'Old Soldier',
     blurb:'Forty years of wars nobody won. One of you, hard as nails, with less road ahead than behind.',
     intro:'You wake alone, old bones aching: 300 gold, good plate, and habits that die harder than you will.'},
@@ -18580,7 +18734,11 @@ function buildCCreate(){
     ccPick[b.dataset.cck] = b.dataset.ccv;
     buildCCreate();
   });
-  $('ccblurb').textContent = RACES[ccPick.race].blurb + ' — ' + giftBlurbs[ccPick.gift] + ' — ' + ORIGINS[ccPick.origin].blurb;
+  /* A named origin can be somebody so particular that race and gift are not the player's to
+     pick. Saying nothing and quietly overriding the choice reads as a bug; say it instead. */
+  const og = ORIGINS[ccPick.origin];
+  $('ccblurb').textContent = og.fixes ? og.blurb + ' ' + og.fixes
+    : RACES[ccPick.race].blurb + ' — ' + giftBlurbs[ccPick.gift] + ' — ' + og.blurb;
 }
 buildCCreate();
 function applyCreation(race, gift, origin){
@@ -18651,6 +18809,30 @@ function applyCreation(race, gift, origin){
       chars.push(u);
     }
     startTheSearch(me);
+  } else if(origin === 'saga'){
+    /* He starts where he was made. The deep redoubt is a three-storey golden-age complex
+       with a Last Warden on the top floor — walking out of it is the first thing he ever
+       did, so he begins outside its door with it still open behind him. */
+    const home = (typeof redoubts !== 'undefined' && redoubts.length) ? redoubts[0] : null;
+    const at = home ? {x: home.x, y: home.y + (home.deep ? 12 : 10)} : bossSpot(44, 58);
+    const p = findOpenNear(at.x, at.y, 5);
+    /* HIGH COMBAT, and it should read as built rather than earned: no medic, no craft, no
+       labour, nothing a person picks up by living. They grew the parts they wanted, and
+       `hollowTier: 1` means the thirty percent came out of him on a table years ago — the
+       numbers here are what was left. Tier I is a fact about him, not a purchase: ceiling
+       125, and the things beyond take 35% more from him than from anybody else.
+       The dust gift carries att.dust 2 on its own (every gift starts adept in its own
+       branch) and dust is the only branch he can ever master, because mastery is reserved
+       for the born specialty and dust is what he is made of. */
+    me = mk(p, {atk:24, def:21, tough:17, ath:11, medic:2, magic:26, gift:'dust', race:'hollow',
+                hollowTier:1, weapon:'w_kat', armor:'a_pla', blades:34, armr:26,
+                labor:1, crafting:1, farming:0});
+    me.name = 'Saga Wordsworth';
+    me.conviction = 'scholar';
+    /* what a weapon owns: the kit it was issued, and four cells off a redoubt shelf that he
+       has nothing to fire — worth 220 apiece to anybody who does */
+    cats = 90; stash.bandage = 2; stash.aether_cell = 4;
+    startTheDescent(me);
   } else if(origin === 'testbed'){
     /* the court boots clean; the map reveal lives in OPTIONS (or F9) when wanted */
     const hm = towns.find(t => t.def.undeadFriendly) || startTown;
