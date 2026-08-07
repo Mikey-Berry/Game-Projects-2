@@ -450,6 +450,8 @@ const ITEMS = {
   formula_p:{name:'Preserved Formula', base:2400, type:'formula', rp:40,
     desc:'Sealed in wax before the sky opened. The hand that wrote it knew things nobody knows now.'},
   remains: {name:'Mortal Remains',base:30,  type:'trade'},
+  s_ash:   {name:'Sanctified Ash', base:340, type:'mat',
+    desc:'What is left of a shrine stone once the thing inside it has been let out. Warm, and it will not go cold. Whatever the faithful were keeping under there, an alchemist has other uses for'},
   crown:   {name:'Sunken Crown',  base:2500,type:'trade'},
   hide_lev:{name:'Leviathan Hide',base:150, type:'trade'},
   w_kingsfang:{name:'Kingsfang',  base:5000,type:'weapon', dmg:34, wt:'cut'},
@@ -645,7 +647,26 @@ const towns = [], buildings = [], vendors = [], beds = [], drops = [], phylacter
    law, four thousand lines below, it was in its temporal dead zone when the first gaol was
    placed and the whole script died on the spot: "Cannot access 'cells' before
    initialization", which takes the game with it rather than failing quietly. */
-const cells = [];
+const cells = [], shrines = [];
+/* ---------- CONSECRATED GROUND ----------
+   A SHRINE appeared exactly twice in this whole file: once in the town plan and once in the
+   roof table. It was a roof. Meanwhile `hallow` already meant "anathema to the dead" — but
+   only as a buff on a blade, never as a place.
+
+   So a shrine hallows the ground around it, and on that ground the dead are diminished: they
+   take more, they hit less, and the call does not carry. Which finally gives a shrine a
+   reason to stand, and gives DESECRATION a reason to happen — a necromancer who wants to
+   fight inside somebody's walls has to put the shrine down first, in front of everyone, and
+   that is a decision rather than vandalism. */
+const SHRINE_R = 19, SHRINE_HP = 220, RECONSECRATE_DAYS = 10;
+function consecratedAt(x, y){
+  for(const sh of shrines){
+    if(sh.broken) continue;
+    if(Math.abs(x - sh.x) > SHRINE_R || Math.abs(y - sh.y) > SHRINE_R) continue;
+    if(dist(x, y, sh.x, sh.y) <= SHRINE_R) return sh;
+  }
+  return null;
+}
 const CELL_HP = 100;   /* up here for the same reason `cells` is: the town planner uses it */
 /* A town that can afford walls can afford better bars. `order` is a town's grip on itself,
    so a well-run place holds people and a failing one does not — which makes the same
@@ -708,6 +729,10 @@ function placeBuilding(bx, by, w, h, label, town){
   const doorX = bx + Math.floor(w/2) - 1;
   const b = {x:bx, y:by, w, h, label, town, door:{x:doorX, y:by+h-1}};
   buildings.push(b);
+  if(label === 'SHRINE'){
+    shrines.push({x: bx + w/2, y: by + h/2, town, hp: SHRINE_HP, maxHp: SHRINE_HP,
+                  broken: false, reT: 0, bx, by, w, h});
+  }
   for(let j=by; j<by+h; j++) for(let i=bx; i<bx+w; i++){
     const edge = (i===bx || i===bx+w-1 || j===by || j===by+h-1);
     if(!edge) continue;
@@ -943,6 +968,7 @@ function makeChar(name, faction, x, y, o={}){
        one. Transient — emplacementTick re-derives `manning` every tick, so neither is saved. */
     manning: null, gunT: 0,
     path: null, pathGoal: null, repathT: 0,
+    rescueOf: 0,
     hitT: 0, looseT: 0, lungeT: 0, lungeDX: 0, lungeDY: 0, lungeDur: 0, lungeK: 0,
     shoveT: 0, shoveDur: 0, shoveK: 0, shoveDX: 0, shoveDY: 0,
     undead: false, master: null,
@@ -1538,6 +1564,7 @@ function atkPower(c){
      pay is the seconds you spend rooted in the wind and the follow-through. Melee only — a
      bow's rate of fire is its own problem, handled where it is drawn. */
   if(!w || !w.range) d *= Math.pow(heftOf(c), 1.04);
+  if(c.undead && consecratedAt(c.x, c.y)) d *= 0.78;   /* and they strike weakly on it */
   d *= 1 + c.stats[wSkillKey(c)] * 0.015;
   d *= 1 - packPenalty(c);
   if(c.race==='hollow' && c.blood < 60) d *= 1.15;
@@ -4011,6 +4038,72 @@ function contrabandCheck(){
     }
   }
 }
+/* ---------- WANTED ----------
+   `arrestTarget` was only ever set at the instant of the crime. Walk out, come back the
+   next day, and the watch ignored a nine-hundred bounty completely — so a bounty was at
+   once permanent and inert, and every crime was a one-off scuffle rather than a thing that
+   followed you. The watch recognises a wanted face now, and a bounty can be settled.
+
+   Recognition is not omniscience: a guard has to be able to SEE you, which means the veil
+   still works and night still helps. */
+let _wantedT = 0;
+function wantedCheck(dt){
+  if((_wantedT -= dt) > 0) return;
+  _wantedT = 2.5;
+  for(const t of towns){
+    if(!t.bounty || t.playerRuled) continue;
+    for(const c of player()){
+      if(c.state !== 'ok' || c.undead || c.jailedAt || c.veilT > 0) continue;
+      const r = (t.def.wall ? t.def.wall.r : 20) + 6;
+      if(Math.abs(c.x - t.x) > r || Math.abs(c.y - t.y) > r) continue;
+      for(const g of charsNear(c.x, c.y, 15)){
+        if(g.faction !== 'town' || g.civ || g.state !== 'ok' || g.homeTown !== t) continue;
+        if(g.arrestTarget || dist(g.x, g.y, c.x, c.y) > 15) continue;
+        if(losBlocked(g.x, g.y, c.x, c.y, 0)) continue;
+        g.arrestTarget = c; g.provoked = true;
+        say(g, pick(['That one. Take them.', 'I know that face.', 'You are wanted.']));
+        break;
+      }
+    }
+  }
+}
+/* Old debts get quieter. Not forgiven — a murder is still on the books for a long while —
+   but a town has other things to think about, and a bounty that never moves is a wall. */
+function bountyDecay(){
+  for(const t of towns){
+    if(!t.bounty) continue;
+    t.bounty = Math.max(0, t.bounty - Math.max(4, Math.round(t.bounty * 0.05)));
+    if(!t.bounty){ t.wanted = false; for(const g of chars) if(g.arrestTarget && g.homeTown === t) g.arrestTarget = null; }
+  }
+}
+/* ---------- THEY COME FOR THEIR OWN ----------
+   A prisoner in your cells was inert: you took one of somebody's people and nothing in the
+   world reacted. Their side knows where he is. Not a scripted raid — the nearest of his
+   own, told where to go, which in a game with this much wandering is quite enough to make
+   holding people a thing you have to actually defend. */
+let _rescueT = 0;
+function rescueTick(dt){
+  if((_rescueT -= dt) > 0) return;
+  _rescueT = 26;
+  for(const cl of cells){
+    if(cl.kind !== 'player' || !cl.holds) continue;
+    const v = chars.find(o => o.id === cl.holds);
+    if(!v || v.state === 'dead') continue;
+    const kin = chars.filter(o => o.state === 'ok' && o.faction === v.faction &&
+      o !== v && !o.jailedAt && !o.rescueOf && dist(o.x, o.y, cl.x, cl.y) < 150);
+    if(!kin.length) continue;
+    if(rnd() > 0.35) continue;
+    const n2 = Math.min(kin.length, ri(2, 4));
+    kin.sort((a2, b2) => dist(a2.x, a2.y, cl.x, cl.y) - dist(b2.x, b2.y, cl.x, cl.y));
+    for(let i = 0; i < n2; i++){
+      kin[i].rescueOf = v.id;
+      kin[i].moveTarget = {x: cl.x, y: cl.y};
+      kin[i].provoked = true;
+    }
+    log(`${v.name}'s people are coming for them.`, 'bad');
+    return;
+  }
+}
 let _walkDeadT = 0;
 function walkingDeadCheck(dt){
   if((_walkDeadT -= dt) > 0) return;
@@ -4227,6 +4320,9 @@ function mitigate(d, dmg, wt, ap, a){
     dmg *= (1 - def);
   }
   dmg *= (1 - Math.min(0.45, d.stats.tough * 0.006));
+  /* the dead take more where the ground is hallowed — the same relation a hallowed blade
+     already had to them, made a property of the PLACE instead of the weapon */
+  if(d.undead && consecratedAt(d.x, d.y)) dmg *= 1.35;
   /* BINDING STRAIN: a will stretched across a host of risen has less of itself left to
      hold its own body together. The bigger the army, the softer its master. */
   const strain = bindStrain(d);
@@ -6340,6 +6436,26 @@ function physics(c, dt){
       }
     }
   }
+  /* someone who came for one of their own: get to the cell and break it open */
+  if(c.rescueOf){
+    const v = chars.find(o => o.id === c.rescueOf);
+    const cl = v && v.jailedAt;
+    if(!v || !cl || v.state === 'dead'){ c.rescueOf = 0; }
+    else if(dist(c.x, c.y, cl.x, cl.y) > 1.8){ travel(c, cl.x, cl.y, dt, 1.2); return; }
+    else {
+      cl.hp -= dt * 9;                     /* hands from the outside work a great deal faster */
+      if(rnd() < dt * 0.6) addSpecks(cl.x, cl.y + 0.4, '#6b6357', 1);
+      if(cl.hp <= 0){
+        cl.hp = cl.maxHp; cl.holds = 0;
+        v.jailedAt = null; v.jailT = 0; v.prisoner = false; v.captured = false;
+        returnKit(v); v.provoked = true;
+        v.x = cl.x + 1.3; v.y = cl.y + 1.1;
+        log(`${v.name} has been cut out of the cells by their own.`, 'bad');
+        for(const o of chars) if(o.rescueOf === v.id) o.rescueOf = 0;
+      }
+      return;
+    }
+  }
   /* ---- SEIZING ---- your own people drag a downed enemy back to a cell of your own. The
      same shape as the watch taking you in, from the other side of it. */
   if(c.faction === 'player' && c.seizeTarget){
@@ -7849,6 +7965,7 @@ function findNode(c, kind){
   return null;
 }
 function hitStructure(c, st){
+  if(st.kind === 'shrine' && c.faction === 'player') crime('desecrate', st.x, st.y, c);
   const hf = swingHeft(c);   /* a cadence, so it reads the weapon as this hand feels it */
   c.atkCd = 1.4 * Math.pow(hf, 0.95) / (1 + c.stats.atk*0.01);
   const w = c.weapon ? ITEMS[c.weapon] : null;
@@ -7861,6 +7978,26 @@ function hitStructure(c, st){
   if(st.hp <= 0) destroyStructure(st);
 }
 function destroyStructure(st){
+  if(st.kind==='shrine'){
+    const sh = st.ref, t = sh.town;
+    sh.broken = true; sh.reT = RECONSECRATE_DAYS; sh.hp = 0;
+    /* the alchemist's share of it */
+    const ash = ri(2, 4);
+    addItem('s_ash', ash);
+    if(typeof research === 'object') research.rp = (research.rp || 0) + 12;
+    log(`The shrine stone at ${t ? t.name : 'the waste'} is broken open. ${ash} measures of sanctified ash, and the ground goes quiet.`, 'good');
+    if(t){
+      /* they will rebuild, and until they do the town is workable */
+      t.dread = clamp((t.dread || 0) + 14, 0, 100);
+      dropRep(t, 25);
+      worldEvent('desecrated', sh.x, sh.y,
+        `Something went through the shrine at ${t.name} in the night. The stone is open and the ground around it has stopped answering.`);
+    }
+    bumpNotice(3);
+    addSpecks(sh.x, sh.y + 0.5, '#cfc4ad', 24);
+    addFloat(sh.x, sh.y, 'UNHALLOWED', '#d9542a');
+    return;
+  }
   if(st.kind==='pwall'){
     blocked.delete(bkey(st.ref.x, st.ref.y));
     const i = pBuilds.indexOf(st.ref); if(i>=0) pBuilds.splice(i,1);
@@ -7880,6 +8017,14 @@ function destroyStructure(st){
 }
 function structAt(wx, wy){
   const tx = Math.floor(wx), ty = Math.floor(wy);
+  /* the shrine stone itself — the only building in the game you can put a hammer through,
+     because it is the only one that does something to you while it stands */
+  for(const sh of shrines){
+    if(sh.broken) continue;
+    if(tx < sh.bx || tx >= sh.bx + sh.w || ty < sh.by || ty >= sh.by + sh.h) continue;
+    return {kind:'shrine', ref:sh, town:sh.town, x:tx, y:ty,
+            get hp(){return sh.hp;}, set hp(v){sh.hp=v;}, get maxHp(){return sh.maxHp;}};
+  }
   const pw = pBuilds.find(b => b.type==='wall' && b.x===tx && b.y===ty);
   if(pw) return {kind:'pwall', ref:pw, x:tx, y:ty, get hp(){return pw.hp;}, set hp(v){pw.hp=v;}, get maxHp(){return pw.maxHp;}};
   if(bastion){
@@ -8679,6 +8824,16 @@ function saltBody(c){
   return true;
 }
 function castRaise(c, body){
+  /* Consecrated ground refuses the call outright. This is the whole reason to break a
+     shrine, and the reason a shrine is worth standing: a necromancer cannot work inside
+     somebody's walls until the stone is down. */
+  const holy = consecratedAt(body ? body.x : c.x, body ? body.y : c.y);
+  if(holy){
+    log(holy.town ? `The ground here is ${holy.town.name}'s, and it is holding. Break the shrine stone first.`
+                  : 'The ground here is hallowed. Nothing will answer.', 'bad');
+    addFloat(c.x, c.y - 1.2, 'HALLOWED', '#e8dcc4');
+    return false;
+  }
   /* the thing they hang people for, done where somebody can see it */
   crime('raising', c.x, c.y, c);
   const isUnique = !!body.bossKey && !body.beast;   /* named humanoids become lieutenants; monstrous bosses do not */
@@ -9931,6 +10086,8 @@ function update(dt){
   reapPhylacteries();
   riteTick(dt);               /* and somebody is in the middle of something */
   walkingDeadCheck(dt);       /* and whether anyone is walking the dead past a gate */
+  wantedCheck(dt);            /* and whether the watch has recognised anybody */
+  rescueTick(dt);             /* and whether anyone is coming for what you took */
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
   if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
   gauntTick(dt / HOUR_SEC);   /* the dark is never empty for long */
@@ -9944,6 +10101,17 @@ function update(dt){
   hour += dh;
   if(hour >= 24){
     hour -= 24; day++;
+    bountyDecay();
+    /* a broken shrine is not broken forever. They come back and set the stone, unless
+       somebody is standing on the ground to stop them — so desecration buys a window, not
+       a permanent unmaking. */
+    for(const sh of shrines){
+      if(!sh.broken) continue;
+      if(chars.some(o => o.faction === 'player' && o.state === 'ok' && dist(o.x, o.y, sh.x, sh.y) < 9)) continue;
+      if(--sh.reT > 0) continue;
+      sh.broken = false; sh.hp = sh.maxHp;
+      if(sh.town) log(`${sh.town.name} has set the shrine stone again. The ground answers.`, 'bad');
+    }
     /* a day inside is a day the world moved without you */
     for(const c of chars){
       if(!c.jailedAt || c.state === 'dead') continue;
@@ -17692,6 +17860,21 @@ function openAudience(px, py, lc){
   if(t.rep < -30){ talkTo(lc); return; }   /* they won't hear you */
   const items = [{label:'TALK', fn:()=>talkTo(lc)},
                  {label:'TRIBUTE (300)', fn:()=>payTribute(t, L)}];
+  /* SETTLE THE BOOKS. A bounty you can never pay is a wall; one you can always pay is a
+     toll. So the price is the bounty and a half, and it is only on offer to somebody who
+     walked in and asked — which means walking into the town that wants you. */
+  if(t.bounty > 0){
+    const price = Math.round(t.bounty * 1.5);
+    items.push({label:`SETTLE THE BOUNTY (${price})`, fn:()=>{
+      if(cats < price){ refuse ? refuse('Not enough coin.') : log('Not enough coin.', 'bad'); return; }
+      cats -= price;
+      t.bounty = 0; t.wanted = false;
+      for(const g of chars) if(g.arrestTarget && g.homeTown === t) g.arrestTarget = null;
+      dropRep(t, -10);
+      log(`${L ? L.name : t.name} takes the coin and the ledger closes. ${t.name} has no further business with you.`, 'good');
+      refreshTop(); refreshInv();
+    }});
+  }
   if(t.warWith) items.push({label:`BROKER PEACE W/ ${t.warWith.name} (800)`, fn:()=>brokerPeace(t, L)});
   else {
     const rivals = towns.filter(o => o !== t && !o.warWith);
@@ -17878,6 +18061,7 @@ function snapshot(){
       feastCd: t.feastCd||0, rebelDay: t.rebelDay||0, promise: t.promise ? {...t.promise} : null,
       project: t.project ? {...t.project} : null, projectsDone: {...(t.projectsDone||{})}, lastTribute: t.lastTribute||0,
       dread: t.dread||0, dreadWoke: !!t.dreadWoke, shown: {...(t.shown||{})}, witnessCd: t.witnessCd||0,
+      bounty: t.bounty||0, wanted: !!t.wanted,   /* what they still want you for */
       compactWilling: !!t.compactWilling,
       caravanOut: t.caravanOut ? {...t.caravanOut, dest: {...t.caravanOut.dest}} : null})),
     explored: packExplored(),
@@ -17896,6 +18080,7 @@ function snapshot(){
     chars: chars.filter(c => !c.phantom).map(sChar),
     corpseIds: corpses.map(c=>c.id),
     cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
+    shrines: shrines.map(sh => ({broken: !!sh.broken, hp: Math.round(sh.hp), reT: sh.reT || 0})),
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       store: b.store ? {...b.store} : undefined,
       stored: b.stored ? b.stored.map(sChar) : undefined})),
@@ -17916,6 +18101,13 @@ function restore(d){
      in the world would wake up in somebody else's cell. */
   for(let i = cells.length - 1; i >= 0; i--) if(cells[i].kind === 'player') cells.splice(i, 1);
   for(const cl of cells){ cl.holds = 0; cl.hp = CELL_HP; }
+  /* a shrine you broke stays broken, and the clock on it keeps running */
+  if(d.shrines) for(let i = 0; i < shrines.length && i < d.shrines.length; i++){
+    const sv = d.shrines[i];
+    shrines[i].broken = !!sv.broken;
+    shrines[i].hp = typeof sv.hp === 'number' ? sv.hp : shrines[i].maxHp;
+    shrines[i].reT = sv.reT || 0;
+  }
   window._cellHp = d.cellHp || null;   /* applied once the player cells are back below */
   for(const b of d.pBuilds){
     const pb = placeStructure(b.type, b.x, b.y);
@@ -18135,6 +18327,7 @@ function restore(d){
     t.playerRuled = !!ts.playerRuled; t.settlerT = ts.settlerT || 0;
     t.order = ts.order ?? 55; t.pacts = {...(ts.pacts||{})}; t.petitions = (ts.petitions||[]).map(p=>({...p}));
     t.dread = ts.dread || 0; t.dreadWoke = !!ts.dreadWoke;
+    t.bounty = ts.bounty || 0; t.wanted = !!ts.wanted;
     t.shown = {...(ts.shown||{})}; t.witnessCd = ts.witnessCd || 0;
     t.compactWilling = !!ts.compactWilling;
     t.feastCd = ts.feastCd || 0; t.rebelDay = ts.rebelDay || 0; t.promise = ts.promise ? {...ts.promise} : null;
