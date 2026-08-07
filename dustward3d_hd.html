@@ -1736,7 +1736,7 @@ for(const t of towns){
 const CONVICTIONS = {
   compassion: {label:'Compassionate', short:'compassion',
     blurb:'Cannot stomach cruelty to people who cannot answer back.',
-    weights:{sack:-3.0, civkill:-3.4, raise:-1.1, conquer:-1.6, town_saved:2.4, heal:0.9, rift_sealed:1.1, compact:1.5}},
+    weights:{sack:-3.0, civkill:-3.4, raise:-1.1, conquer:-1.6, town_saved:2.4, heal:0.9, rift_sealed:1.1, compact:1.5, found_sister:2.0}},
   cold: {label:'Cold', short:'cold',
     blurb:'Weighs outcomes and does not weigh much else. Hard to appal, hard to move.',
     weights:{sack:-0.3, civkill:-0.3, raise:0.1, conquer:0.4, town_saved:0.6, rift_sealed:0.6, gold:1.0, compact:0.8}},
@@ -1745,10 +1745,10 @@ const CONVICTIONS = {
     weights:{raise:-2.6, lich:-6.0, sack:-1.4, civkill:-1.8, rift_sealed:2.2, town_saved:1.6, purge_killed:-2.0}},
   ambitious: {label:'Ambitious', short:'ambition',
     blurb:'Following somebody who is going somewhere. Weakness is the only sin.',
-    weights:{conquer:2.4, sack:1.0, boss:2.0, compact:1.2, gold:1.2, retreat:-1.4, town_lost:-2.0}},
+    weights:{conquer:2.4, sack:1.0, boss:2.0, compact:1.2, gold:1.2, retreat:-1.4, town_lost:-2.0, found_sister:-0.8}},
   loyal: {label:'Loyal', short:'loyalty',
     blurb:'Decided about you a long time ago. Takes a great deal to undecide.',
-    weights:{sack:-0.6, civkill:-0.8, raise:-0.2, town_saved:1.2, squadmate_lost:-1.6, rescued:3.0}},
+    weights:{sack:-0.6, civkill:-0.8, raise:-0.2, town_saved:1.2, squadmate_lost:-1.6, rescued:3.0, found_sister:2.6}},
   cruel: {label:'Cruel', short:'cruelty',
     blurb:'Enjoys the work. Mercy reads as squeamishness.',
     weights:{sack:2.2, civkill:1.6, raise:1.0, conquer:1.6, town_saved:-0.8, mercy:-1.2}},
@@ -1757,7 +1757,7 @@ const CONVICTIONS = {
     weights:{research:2.2, rift_sealed:1.4, boss:1.0, formula:2.0, raise:0.4, sack:-0.6}},
   haunted: {label:'Haunted', short:'the dead',
     blurb:'Lost somebody to the dark and has not put it down. Wants it ended, whatever that costs.',
-    weights:{rift_sealed:2.6, boss:1.8, gaunt_killed:0.8, door_closed:5.0, raise:-0.8, retreat:-1.0}},
+    weights:{rift_sealed:2.6, boss:1.8, gaunt_killed:0.8, door_closed:5.0, raise:-0.8, retreat:-1.0, found_sister:1.8}},
 };
 const CONVICTION_KEYS = Object.keys(CONVICTIONS);
 /* -100..100. The bands are where behaviour changes. */
@@ -10088,6 +10088,7 @@ function update(dt){
   walkingDeadCheck(dt);       /* and whether anyone is walking the dead past a gate */
   wantedCheck(dt);            /* and whether the watch has recognised anybody */
   rescueTick(dt);             /* and whether anyone is coming for what you took */
+  ilsabetTick(dt);            /* and whether anyone has walked out far enough to find her */
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
   if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
   gauntTick(dt / HOUR_SEC);   /* the dark is never empty for long */
@@ -17860,6 +17861,8 @@ function openAudience(px, py, lc){
   if(t.rep < -30){ talkTo(lc); return; }   /* they won't hear you */
   const items = [{label:'TALK', fn:()=>talkTo(lc)},
                  {label:'TRIBUTE (300)', fn:()=>payTribute(t, L)}];
+  if(search.on && !search.found && !search.asked[t.def.key])
+    items.push({label:'ASK AFTER ILSABET', fn:()=>askAfterIlsabet(t, L)});
   /* SETTLE THE BOOKS. A bounty you can never pay is a wall; one you can always pay is a
      toll. So the price is the bounty and a half, and it is only on offer to somebody who
      walked in and asked — which means walking into the town that wants you. */
@@ -17887,6 +17890,29 @@ function openAudience(px, py, lc){
 }
 function talkTo(t){
   let line;
+  /* SHE HAS BEEN WATCHING THE NEWS COME IN. What she says is not about the crown, it is
+     about what her brother did with the time. There is nothing to accept here and no marker
+     to tick: the origin's payoff is finding out that the person you crossed a dead world for
+     has spent it doing the opposite of what you came to do. */
+  if(t.bossKey === 'ilsabet'){
+    /* There is no global deed ledger — deed() writes straight into each companion's regard
+       and keeps no tally. So read the world instead, which is more honest anyway: she is
+       judging what she can see and what the roads are saying, not consulting a scoreboard. */
+    const lich = player().some(c => c.lich);
+    const raised = player().filter(c => c.undead).length;
+    const worstRep = towns.reduce((m2, t2) => Math.min(m2, t2.rep ?? 0), 0);
+    const wanted = towns.some(t2 => (t2.bounty || 0) > 300);
+    const loud = noticeTier;
+    if(lich) line = "You did it, then. I felt it from here. Eleven years closing what our father opened, and you spent them becoming the thing he was afraid of.";
+    else if(wanted || worstRep <= -50) line = "I hear what follows you. I have been out here sealing tears with my hands, and there are towns that will not say your name indoors. Tell me you brought something other than the crown.";
+    else if(loud >= 2) line = "Something is paying attention to you. I can feel it standing behind you from here. Whatever you have been working, it has been heard.";
+    else if(raised > 6) line = "Six of the household came through with you. There are more now. You always did think the answer was more hands.";
+    else line = "Eleven years. I assumed they had killed you at home. Do not tell me why you came — I can see the crown from here.";
+    say(t, line);
+    t.questDone = true;
+    if(!t._greeted){ t._greeted = true; deed('found_sister', 1); log('You have found her.', 'good'); }
+    return;
+  }
   if(t.isLeader >= 0){
     const town = towns[t.isLeader];
     const L = town && town.leader;
@@ -18080,6 +18106,8 @@ function snapshot(){
     chars: chars.filter(c => !c.phantom).map(sChar),
     corpseIds: corpses.map(c=>c.id),
     cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
+    search: {on: search.on, asked: {...search.asked}, found: search.found,
+             siteId: search.siteId, leads: search.leads, met: search.met},
     shrines: shrines.map(sh => ({broken: !!sh.broken, hp: Math.round(sh.hp), reT: sh.reT || 0})),
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       store: b.store ? {...b.store} : undefined,
@@ -18101,6 +18129,11 @@ function restore(d){
      in the world would wake up in somebody else's cell. */
   for(let i = cells.length - 1; i >= 0; i--) if(cells[i].kind === 'player') cells.splice(i, 1);
   for(const cl of cells){ cl.holds = 0; cl.hp = CELL_HP; }
+  if(d.search){
+    search.on = !!d.search.on; search.asked = {...(d.search.asked || {})};
+    search.found = !!d.search.found; search.siteId = d.search.siteId ?? -1;
+    search.leads = d.search.leads || 0; search.met = !!d.search.met;
+  }
   /* a shrine you broke stays broken, and the clock on it keeps running */
   if(d.shrines) for(let i = 0; i < shrines.length && i < d.shrines.length; i++){
     const sv = d.shrines[i];
@@ -18414,6 +18447,76 @@ $('loadfile').addEventListener('change', e => {
 })();
 
 /* ============================================================ CHARACTER CREATION */
+/* ---------- THE SEARCH FOR ILSABET ----------
+   She was sent through first, and for the opposite reason: he was exiled for what he was
+   willing to do, she for what she tried to stop. The search is deliberately not a marker on
+   a map. It is three places that might know something, in a world where information already
+   moves by rumour and by asking people — so the quest is made of the systems that exist
+   rather than bolted on beside them.
+
+   Where she actually is, is decided at worldgen and not revealed. She is alive. What she has
+   become in the meantime is the part he is not ready for. */
+const search = {on: false, asked: {}, found: false, siteId: 0, leads: 0, met: false};
+function startTheSearch(me){
+  search.on = true; search.asked = {}; search.found = false; search.leads = 0; search.met = false;
+  /* she is somewhere out past the last of the towns — the corpse sites are the places the
+     exiled ended up, which is exactly where somebody sent here to die would have gone */
+  const sites = (typeof corpseSites !== 'undefined' && corpseSites.length) ? corpseSites : null;
+  search.siteId = sites ? ri(0, sites.length - 1) : -1;
+  worldEvent('ilsabet', me.x, me.y,
+    'A man came through at the edge of the world wearing a crown, with six dead walking behind him. He is asking after a woman. He does not ask politely.');
+  log("ILSABET. She came through before you, and they did not give her a retinue. Ask in the halls — somebody saw where she was sent.", 'good');
+}
+/* asking after her: any town leader, once each, and the third one puts it together */
+function askAfterIlsabet(t, L){
+  if(!search.on || search.found) return;
+  const key = t.def.key;
+  if(search.asked[key]){ log(`${L ? L.name : t.name} has told you what they know.`, ''); return; }
+  search.asked[key] = 1; search.leads++;
+  const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+  if(search.leads >= 3 && sites.length && search.siteId >= 0){
+    search.found = true;
+    const site = sites[search.siteId];
+    log(`${L ? L.name : t.name}: "A woman, alone, no kit, walked out past the last fence and did not come back. That was a long time ago." They mark the place.`, 'good');
+    worldEvent('ilsabet', site.x, site.y,
+      'Three tellings agree. A woman was put out past the last fence years ago, and walked toward the corpse-fields on purpose.');
+    say(L || t.leader || {name:t.name}, 'Nobody walks out that way to live.');
+  } else {
+    const said = [
+      '"There was a woman. Southern accent, no kit, would not say who sent her. She did not stay."',
+      '"I remember her. She asked which way the tears were, not which way the water was. That stays with you."',
+      '"She had your face on her, now you stand there. She went out past the fence and nobody stopped her."',
+    ][Math.min(search.leads - 1, 2)];
+    log(`${L ? L.name : t.name}: ${said}`, '');
+  }
+}
+/* She is not a marker that turns green. She is a person standing in a corpse-field who has
+   been doing the opposite of what her brother came here to do, and the meeting is the whole
+   point of the origin — so it waits until somebody actually walks out there. */
+let _ilsT = 0;
+function ilsabetTick(dt){
+  if(!search.on || !search.found || search.met) return;
+  if((_ilsT -= dt) > 0) return;
+  _ilsT = 3;
+  const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+  const site = sites[search.siteId];
+  if(!site) return;
+  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 14);
+  if(!near) return;
+  search.met = true;
+  const p2 = findOpenNear(site.x + ri(-3, 3), site.y + ri(-3, 3), 6) || {x: site.x, y: site.y};
+  const her = makeChar('Ilsabet d\'Alagadda', 'exile', p2.x, p2.y,
+    {atk:22, def:26, tough:20, ath:8, medic:40, magic:52, gift:'divine', armr:20,
+     weapon:'w_kat', armor:'a_lea'});
+  her.neutral = true; her.bossKey = 'ilsabet'; her.questGive = 'ilsabet';
+  her.blood = 150; her.maxBlood = 150;
+  her.conviction = 'compassion';
+  chars.push(her);
+  worldEvent('ilsabet', p2.x, p2.y,
+    'She is alive. She has been out here a long time, and she has not been idle: the tears in this stretch of waste are closed, one after another, by hand.');
+  log('ILSABET. She is standing in the middle of a corpse-field, alive, and the tears around her have all been sealed. She has been doing this for years.', 'good');
+  log('She has seen the crown. Talk to her.', 'good');
+}
 const ORIGINS = {
   gravekeeper: {label:'Gravekeeper',
     blurb:'You kept the graves; the graves kept you. Three of you, near Greenrest, with tools and a little coin.',
@@ -18430,6 +18533,16 @@ const ORIGINS = {
   testbed: {label:'TEST: Deathless Court',
     blurb:'FOR TESTING. A lich in good standing at Hollowmere: every formula recovered, a full compound already raised, a stocked yard, ten armed dead and two living adepts.',
     intro:'You wake already deathless, in a court you do not remember building. All tech unlocked. 20,000 gold. The yard is full.'},
+  /* ---------- THE FIRST NAMED ORIGIN ----------
+     Every other start is a role: a gravekeeper, an exile, somebody's freed property. This
+     one is a person, with a name he did not choose and a sister he intends to find. The
+     mechanical shape is deliberately front-loaded and hollow: he begins with the Sunken
+     Crown, which is the single hardest object in the game to obtain, and a retinue that
+     came out of the ground with him — and almost nothing else. No coin, no camp, no
+     standing anywhere, and a road that starts at the far edge of the map. */
+  lyonart: {label:"Lyonart d'Alagadda", named:true,
+    blurb:'Exiled Prince. He came through with the Sunken Crown on him and six of his household still following. He is looking for his sister, who was sent here first, for trying to stop what happened.',
+    intro:'You wake at the world\'s edge with a crown nobody living should own and six of the dead who still answer to your name. Ilsabet came through before you. Find her.'},
   soldier: {label:'Old Soldier',
     blurb:'Forty years of wars nobody won. One of you, hard as nails, with less road ahead than behind.',
     intro:'You wake alone, old bones aching: 300 gold, good plate, and habits that die harder than you will.'},
@@ -18459,6 +18572,11 @@ function applyCreation(race, gift, origin){
   selected = [];
   stash.mats = 0; stash.w_rkat = 0;
   const mk = (p, o) => { const c = makeChar(pickName(), 'player', p.x, p.y, o); chars.push(c); return c; };
+  /* Companions used to be dropped at a raw offset from the leader — p.x+1, p.y+0.5 — which is
+     fine until the leader's open tile happens to have a town wall or a building on one side of
+     it. Then somebody starts the run inside solid geometry. Ask for the offset, take open
+     ground if it isn't. */
+  const beside = (p, dx, dy) => isBlocked(p.x + dx, p.y + dy) ? findOpenNear(p.x, p.y, 3) : {x: p.x + dx, y: p.y + dy};
   const g = gift === 'none' ? null : gift;
   let me;
   if(origin === 'exile'){
@@ -18470,20 +18588,52 @@ function applyCreation(race, gift, origin){
     const base = slaverCamp ? slaverCamp : {x: startTown.x, y: startTown.y + 14};
     const p = findOpenNear(base.x + 6, base.y + 6, 4);
     me = mk(p, {atk:5, def:5, tough:12, ath:8, labor:14, medic:3, magic:4, gift:g, race});
-    mk({x:p.x+1, y:p.y+0.5}, {atk:6, def:4, tough:11, ath:8, labor:12, medic:5, magic:2});
+    mk(beside(p, 1, 0.5), {atk:6, def:4, tough:11, ath:8, labor:12, medic:5, magic:2});
     cats = 0; stash.mats = 6;
     for(const c of chars) if(c.faction==='slaver') c.provoked = true;
   } else if(origin === 'merchant'){
     const dp = towns.find(t=>t.def.key==='dustport') || startTown;
     const p = findOpenNear(dp.x, dp.y + 10, 4);
     me = mk(p, {atk:3, def:3, tough:4, ath:4, medic:4, magic:5, labor:4, gift:g, race});
-    mk({x:p.x+1, y:p.y+0.5}, {atk:3, def:4, tough:4, ath:4, medic:6, magic:3, gift: g==='divine' ? null : 'divine'});
-    mk({x:p.x-1, y:p.y+0.5}, {atk:4, def:3, tough:4, ath:4, medic:3, magic:3});
+    mk(beside(p, 1, 0.5), {atk:3, def:4, tough:4, ath:4, medic:6, magic:3, gift: g==='divine' ? null : 'divine'});
+    mk(beside(p, -1, 0.5), {atk:4, def:3, tough:4, ath:4, medic:3, magic:3});
     muleN++;
-    const m = makeChar('Mule '+muleN, 'player', p.x, p.y+1, {atk:2, def:4, tough:14, ath:5, labor:20});
+    const mp = beside(p, 0, 1);
+    const m = makeChar('Mule '+muleN, 'player', mp.x, mp.y, {atk:2, def:4, tough:14, ath:5, labor:20});
     m.beast = true; m.mule = true; m.fleeOnHit = true; m.blood = 120; m.maxBlood = 120;
     chars.push(m);
     cats = 3200; stash.mats = 40; stash.pack_s = 1;
+  } else if(origin === 'lyonart'){
+    /* the far edge, as far from anyone who might know the name as the map allows */
+    const spot = bossSpot(52, 68);
+    const p = findOpenNear(spot.x, spot.y, 5);
+    /* MAG 19, deliberately under the rite's 25. He owns the key and cannot turn it: the
+       crown is decades early and the craft is not. Starting him at 34 handed him the gate
+       as well as the key, which is the one thing this origin should not do. */
+    me = mk(p, {atk:14, def:13, tough:11, ath:6, medic:5, magic:19, gift:'dark', race,
+                weapon:'w_kat', armor:'a_lea', blades:22, labor:2, crafting:6});
+    me.name = "Lyonart d'Alagadda";
+    me.conviction = 'ambitious';
+    /* a prince's hands have not done a day's work, and it shows in everything but the Art */
+    cats = 180; stash.mats = 8; stash.bandage = 3; stash.remains = 4;
+    /* THE CROWN. He did not earn it and he cannot use it yet — the rite still wants MAG 25,
+       ten remains, and somebody he is willing to spend. What he has is the key, decades
+       early, and every reason not to be seen carrying it. */
+    storeItem('crown', 1, me);
+    /* six of the household, still following */
+    const HOUSE = ['Sworn Umbrel', 'Sworn Vayne', 'Sworn Cassock', 'Sworn Mirelle', 'Sworn Hask', 'Sworn Dorn'];
+    for(let i = 0; i < HOUSE.length; i++){
+      risenN++;
+      const q = findOpenNear(p.x + ri(-3, 3), p.y + ri(-3, 3), 5);
+      const u = makeChar(HOUSE[i], 'player', q.x, q.y,
+        {atk: 13 + ri(0, 5), def: 11 + ri(0, 4), tough: 13 + ri(0, 4), ath: 5,
+         weapon: i < 4 ? 'w_rkat' : 'w_bow', armor: 'a_rag'});
+      u.undead = true; u.master = me; u.guardTarget = me;
+      u.hunger = 100; u.bindWeight = 1; u.shortTag = 'H' + (i + 1);
+      u.blood = 75; u.maxBlood = 75;
+      chars.push(u);
+    }
+    startTheSearch(me);
   } else if(origin === 'testbed'){
     /* the court boots clean; the map reveal lives in OPTIONS (or F9) when wanted */
     const hm = towns.find(t => t.def.undeadFriendly) || startTown;
@@ -18551,7 +18701,7 @@ function applyCreation(race, gift, origin){
 
     cats = 20000;
     log('THE DEATHLESS COURT — all formulae recovered, the court assembled, the yard full.', 'good');
-  } else if(origin === 'soldier'){  } else if(origin === 'soldier'){
+  } else if(origin === 'soldier'){
     const p = findOpenNear(startTown.x, startTown.y + 9, 3);
     me = mk(p, {atk:24, def:22, tough:18, ath:5, medic:8, magic:3, gift:g, race, age:46,
       weapon:'w_kat', armor:'a_pla', armr:40, blades:20});
@@ -18559,8 +18709,8 @@ function applyCreation(race, gift, origin){
   } else {
     const p = findOpenNear(startTown.x, startTown.y + 9, 3);
     me = mk(p, {atk:4, def:4, tough:4, ath:4, medic:3, magic:4, gift:g, race});
-    mk({x:p.x+1, y:p.y+0.6}, {atk:5, def:3, tough:4, ath:4, medic:2, magic:3, gift:'destruction'});
-    mk({x:p.x-1, y:p.y+0.6}, {atk:3, def:4, tough:3, ath:4, medic:6, magic:3, gift:'divine'});
+    mk(beside(p, 1, 0.6), {atk:5, def:3, tough:4, ath:4, medic:2, magic:3, gift:'destruction'});
+    mk(beside(p, -1, 0.6), {atk:3, def:4, tough:3, ath:4, medic:6, magic:3, gift:'divine'});
     cats = 2000; stash.mats = 80; stash.w_rkat = 1;
   }
   camX = me.x; camY = me.y;
