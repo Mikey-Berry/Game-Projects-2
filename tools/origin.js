@@ -79,7 +79,13 @@ const KEY = process.argv[3] || 'lyonart';
     }
     const her = chars.find(c => c.bossKey === 'ilsabet');
     R.sheIsThere = her ? her.name + ', alive' : 'SHE NEVER APPEARED';
+    /* Not `her.neutral` — that flag was set and she was still going to shoot. She is faction
+       'exile', which carries Sister Ash's standing order to hunt any dead in sight, and he
+       arrives with six of them. Ask the function that actually decides. */
+    const dead = mine.filter(c => c.undead);
     R.sheIsNeutral = her && her.neutral ? 'not hostile' : 'HOSTILE OR MISSING';
+    R.sheHoldsFire = her && him && !hostile(her, him) && dead.every(u => !hostile(her, u) && !hostile(u, her)) ?
+      'she does not shoot the household' : 'SHE OPENS FIRE ON HIS DEAD';
 
     /* --- she reacts to what he became, not to a flag --- */
     if (her) {
