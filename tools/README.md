@@ -102,6 +102,7 @@ the truth was 45%.
 |---|---|
 | `wep3.js` | One character holding one weapon, close. `node tools/wep3.js w_nod out.png` |
 | `swing.js` | A swing, frame by frame, as a contact sheet — one row per weapon so a light blade and a heavy one can be read against each other. Animation is the one thing here that cannot be checked with a number, and a pose that looks right in the source can still read as a machine cycling. It steps the sim by hand at a fixed dt so frames are evenly spaced in *sim* time rather than wall time. `node tools/swing.js w_nod,w_kat out.png` |
+| `faces.js` | The named origins, front and back, in one row. `origin.js` will happily report THE PRINCE IS WHOLE while he stands there in the default hash-rolled body, because every assertion in it is about state — this is the only way to check the claim "long white hair and a dusty black coat" instead of asserting it. Three things it caught that reading the source did not: the faction blue showing through every gap in the trim (a named body has to replace `bodyCol`, not paint over it), the worn armour drawing on top of the coat in its own palette, and white hair on a pale face reading as one featureless block until a dark hairline and a fringe were put between them. `node tools/faces.js out.png` |
 | `town.js` | A town from above. `node tools/town.js out.png <townIndex>` |
 
 ## Notes

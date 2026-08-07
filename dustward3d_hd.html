@@ -13389,7 +13389,7 @@ function factionColor(c){
 }
 function colorKeyOf(c){
   /* sex is part of the silhouette, so it belongs in the rebuild key */
-  return factionColor(c) + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + '|' + (c.rot||'');
+  return factionColor(c) + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + '|' + (c.rot||'') + '|' + (c.face||'');
 }
 const SKINS = ['#8a5c34', '#6e4426', '#a06c40', '#5a3820', '#96683a'];
 const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0'];
@@ -13398,6 +13398,25 @@ const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0']
 const EYES = ['#3a2a18', '#4a3520', '#2f4a52', '#3d5a46', '#5a4a2a', '#2a2a30'];
 const PALE = ['#e6e0d4', '#ded7c9', '#e9e3d8', '#d6cfc0'];               /* homunculus: bloodless, ashen */
 const SCALES = ['#a83a2a', '#b3702a', '#c9a23a', '#2f5aa8'];            /* scaleborn: red, copper, gold, cobalt */
+/* ---------- THE FACES OF THE NAMED ----------
+   Everything else on two legs takes its skin, eyes and hair off a hash of its id, which is
+   what makes a crowd a crowd. A named origin is the one body in the world the player looks
+   at for the whole run, and picking it out of a squad bar has to be instant. `c.face` is
+   set once at creation, rides the save, and is part of the mesh's rebuild key.
+
+   Everything in here is silhouette-and-colour, not detail: at the distance this camera
+   actually sits at, what reads is the shape of the hair, the length of the coat, and one
+   bright spot of something that is not on anybody else. */
+const FACES = {
+  /* `body` replaces the faction tint on torso, hips, yoke and upper arms. Without it the
+     player blue shows through every gap in the trim and both of them came out pastel. */
+  /* White hair on a pale face is one silhouette, not two, unless the values are pulled
+     apart: the skin goes warmer and a shade down, the hair goes cold and near-white, and a
+     dark line is laid along the hairline so the head has an edge in it. */
+  lyonart: {skin:'#c8b79c', eye:'#0b0810', hair:'#fbf9f5', glow:false, body:'#151312'},
+  saga:    {skin:'#c6a179', eye:'#e8951e', hair:'#d4b747', glow:true,  body:'#3c4634'},
+};
+function faceOf(c){ return (c && c.face && FACES[c.face]) || null; }
 /* ---------- WEAPONS ----------
    Every weapon in the game used to be the same object: one 0.06 x 0.95 x 0.06 box in
    bone white, hung off the right elbow. A plank, a masterwork katana, a hunting bow and
@@ -13599,8 +13618,15 @@ function rebuildArmorLayer(e, c){
      Towns stock tiered leather from day one, so buying a jacket undressed you. */
   const worn = (ITEMS[c.armor] && ITEMS[c.armor].tierOf) || c.armor;
   const grade = ARMOR_TIER_TINT[(ITEMS[c.armor] && ITEMS[c.armor].tier) || 'n'] || 1;
+  /* A named origin's kit is still their kit. Rather than hide the armour under the coat (a
+     player should not lose their plate for being somebody), the suit is pulled toward the
+     character's own palette — the value structure that makes plate read as plate and leather
+     as leather survives, the colour does not. Without this, Lyonart wore a tan jacket over a
+     black coat and Saga's grey shell covered the sunflower. */
+  const FT = faceOf(c);
   const put = (w, h, d, col, x, y, z, parent) => {
     const m2 = new THREE.Mesh(BOXG, new THREE.MeshLambertMaterial({color: col}));
+    if(FT) m2.material.color.lerp(new THREE.Color(FT.body), 0.75);
     m2.material.color.multiplyScalar(grade);
     m2.scale.set(w, h, d); m2.position.set(x, y, z); m2.castShadow = true;
     parent.add(m2);
@@ -13653,13 +13679,18 @@ function buildCharMesh(c){
   const h1 = hash2(c.id*13, c.id*7), h2 = hash2(c.id*31, c.id*3), h3 = hash2(c.id*5, c.id*17);
   const bodyBase = new THREE.Color(factionColor(c));
   bodyBase.multiplyScalar(0.9 + h2*0.2);
-  const bodyCol = '#' + bodyBase.getHexString();
+  /* A named origin wears its own colour rather than its faction's. `faceOf` is safe here —
+     FACES is a plain table declared above, and this runs per mesh build, not at load. */
+  const _face0 = faceOf(c);
+  const bodyCol = _face0 ? _face0.body : '#' + bodyBase.getHexString();
   /* ---- WHAT IT WAS RAISED FROM, VISIBLE ACROSS A FIELD ----
      An army of forty needs to be readable at a glance: which of these came up out of fresh
      kills and which are bone I scraped off a month-old battlefield. Rot drives the colour,
      so a host raised in a hurry off old ground looks like one. */
   const ROT_SKIN = {fresh:'#b8a894', cooling:'#a09580', spoiled:'#7d8268', bones:'#e6dfc8'};
-  const skinCol = (c.undead && !c.lich && c.rot && ROT_SKIN[c.rot]) ? ROT_SKIN[c.rot]
+  const FACE = _face0;
+  const skinCol = FACE ? FACE.skin
+    : (c.undead && !c.lich && c.rot && ROT_SKIN[c.rot]) ? ROT_SKIN[c.rot]
     : c.undead ? '#e0dcc8'
     : c.immortal==='divine' ? '#f2ead8'
     : c.construct ? '#8a9098'
@@ -14060,12 +14091,18 @@ function buildCharMesh(c){
       }
       if(!hollowEyed){
         /* the risen keep their sockets and lose what was in them */
-        const eyeCol = c.race==='hollow' ? '#f2d016'
+        const eyeCol = FACE ? FACE.eye
+                     : c.race==='hollow' ? '#f2d016'
                      : c.race==='homunculus' ? '#f0ece4'
                      : c.immortal === 'divine' ? '#f6efd6'
                      : c.race==='scaleborn' ? '#d8a832'
                      : lighten(EYES[Math.floor(h2*EYES.length)], 0.5);
-        const glow = c.race==='hollow' || c.race==='homunculus' || c.immortal === 'divine';
+        const glow = FACE ? FACE.glow : (c.race==='hollow' || c.race==='homunculus' || c.immortal === 'divine');
+        /* A black eye on a pale face is the one case the shadow band works against: the
+           socket and the iris are the same darkness and the whole eye line closes up. Lift
+           the band instead, so the eyes read as two holes punched in something white. */
+        if(FACE && !FACE.glow)
+          e.boxBody.push(obox(0.235, 0.055, 0.021, lighten(FACE.skin, 0.35), 0, 0.265, 0.153, e.headG));
         for(const ex of [-0.066, 0.066]){
           const m = glow
             ? mk(BOXG, ownGlow(eyeCol), 0.052, 0.042, 0.02, ex, 0.266, 0.158, e.headG)
@@ -14081,6 +14118,38 @@ function buildCharMesh(c){
     }
     if(c.race==='homunculus' && !c.undead)
       obox(0.32, 0.1, 0.32, '#efeae0', 0, 0.42, -0.02, e.headG);
+    else if(FACE){
+      /* Named hair is authored, not rolled — the roll can and does come up bald. */
+      const hc = FACE.hair;
+      if(c.face === 'lyonart'){
+        /* LONG AND WHITE, and worn like somebody who has not cut it since he got here.
+           It is the whole read at range: a white fall on a black coat. */
+        obox(0.345, 0.12, 0.345, hc, 0, 0.425, -0.02, e.headG);
+        obox(0.315, 0.40, 0.11, hc, 0, 0.20, -0.168, e.headG);           /* down the back */
+        for(const sx of [-0.158, 0.158])
+          obox(0.085, 0.34, 0.215, hc, sx, 0.24, -0.01, e.headG);        /* framing the face */
+        obox(0.13, 0.22, 0.11, hc, 0, -0.06, -0.188, e.headG);           /* past the shoulder */
+        /* A fringe that comes DOWN over the brow, and a dark line under it. Without both,
+           white hair on a pale face is a single white block with two dots in it — the two
+           values are too close for colour alone to separate them at this camera. */
+        const fr = obox(0.335, 0.14, 0.11, hc, 0, 0.375, 0.135, e.headG);
+        fr.rotation.x = 0.20;
+        e.boxBody.push(obox(0.31, 0.026, 0.025, '#3d342c', 0, 0.325, 0.152, e.headG));
+        for(const sx of [-0.150, 0.150])   /* the locks read against the jaw, not the skull */
+          e.boxBody.push(obox(0.024, 0.30, 0.026, '#3d342c', sx, 0.235, 0.150, e.headG));
+      } else {
+        /* MESSY BLONDE. Mess is not a texture at this size, it is asymmetry: four slabs at
+           four heights, none of them agreeing with the one beside it. */
+        obox(0.34, 0.11, 0.34, hc, 0, 0.42, -0.02, e.headG);
+        const tuft = obox(0.20, 0.10, 0.16, hc, -0.07, 0.475, 0.03, e.headG);
+        tuft.rotation.z = 0.34; tuft.rotation.x = -0.18;
+        const tuft2 = obox(0.15, 0.09, 0.19, hc, 0.10, 0.465, -0.05, e.headG);
+        tuft2.rotation.z = -0.42;
+        const fringe = obox(0.30, 0.12, 0.10, hc, 0, 0.375, 0.135, e.headG);
+        fringe.rotation.x = 0.22;
+        obox(0.28, 0.13, 0.10, hc, 0, 0.345, -0.16, e.headG);            /* the back of the neck */
+      }
+    }
     else if(!c.undead && c.race!=='scaleborn' && (fem ? h2 > 0.04 : h2 > 0.18)){
       const hc = HAIRS[Math.floor(h3*HAIRS.length)];
       obox(0.33, 0.11, 0.33, hc, 0, 0.42, -0.02, e.headG);
@@ -14238,6 +14307,83 @@ function buildCharMesh(c){
           seg.position.set(0, i === 0 ? py : -0.24, i === 0 ? -0.16 : 0);
           par.add(seg);
           e.boxBody.push(obox(0.58 - i*0.06, 0.26, 0.04, i % 2 ? red : shade(red, 0.86), 0, -0.13, 0, seg));
+          e.cape.push(seg); par = seg;
+        }
+      }
+    }
+    /* ---------- WHAT THE NAMED ARE WEARING ----------
+       Same rule as the two above: readable at thirty tiles, which means one long garment
+       that moves and one thing on it that is not on anybody else. Both of these hang off
+       `e.cape`, which the animator already drags a beat behind the body. */
+    if(FACE){
+      const shade2 = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
+      e.cape = e.cape || [];
+      if(c.face === 'lyonart'){
+        /* FINE BLACK AND GOLD, AGED AND DUSTED. The dust is the whole point of him — the
+           clothes are still good and he has been walking in them for eleven years, so the
+           grey sits on the up-facing surfaces (shoulders, the top of every hem) and the
+           gold is only on the edges, where a tailor would have put it. */
+        const black = '#0a0908', gold = '#c49a2f', dust = '#8c8375';
+        e.boxBody.push(obox(0.53, 0.20, 0.30, black, 0, 0.50, 0, e.spine));       /* the coat over the yoke */
+        e.boxBody.push(obox(0.54, 0.045, 0.31, dust, 0, 0.615, 0, e.spine));      /* eleven years of it, settled on top */
+        e.boxBody.push(obox(0.26, 0.22, 0.10, black, 0, 0.56, 0.13, e.spine));    /* a standing collar */
+        e.boxBody.push(obox(0.28, 0.035, 0.035, gold, 0, 0.665, 0.150, e.spine)); /* its gold edge */
+        e.boxBody.push(obox(0.055, 0.52, 0.03, gold, 0, 0.24, 0.182, e.spine));   /* the placket, down the front */
+        for(let i = 0; i < 4; i++)                                                 /* frogging */
+          e.boxBody.push(obox(0.17, 0.028, 0.03, gold, 0, 0.44 - i*0.145, 0.184, e.spine));
+        e.boxBody.push(obox(0.44, 0.055, 0.29, gold, 0, 0.075, 0, e.spine));      /* a sash at the waist */
+        /* the coat's skirt: long, and dustier the further down it goes */
+        let par = e.spine, py = 0.44;
+        for(let i = 0; i < 4; i++){
+          const seg = new THREE.Group();
+          seg.position.set(0, i === 0 ? py : -0.23, i === 0 ? -0.15 : 0);
+          par.add(seg);
+          e.boxBody.push(obox(0.50 - i*0.04, 0.25, 0.04, shade2(black, 1 + i*0.10), 0, -0.125, 0, seg));
+          e.boxBody.push(obox(0.50 - i*0.04, 0.03, 0.045, shade2(dust, 0.75 + i*0.10), 0, -0.245, 0, seg));
+          e.cape.push(seg); par = seg;
+        }
+      } else {
+        /* RAGGED MILITARY GREEN, AND ONE SUNFLOWER. The coat is army issue nine generations
+           out of date and the hem has gone to strips; the flower is the only thing on him
+           that anybody chose. It is wilting, so it hangs off its stem rather than facing
+           out, and it is the single brightest thing in his silhouette. */
+        const green = '#414c39', worn = '#59634b', strap = '#2e281f';
+        const petal = '#d8ae2c', wilt = '#9a7c22', heart = '#3b2a14', stem = '#4d5c2e';
+        e.boxBody.push(obox(0.55, 0.22, 0.31, green, 0, 0.49, 0, e.spine));       /* the coat over the yoke */
+        e.boxBody.push(obox(0.56, 0.05, 0.32, worn, 0, 0.625, 0, e.spine));       /* sun-bleached shoulders */
+        e.boxBody.push(obox(0.24, 0.16, 0.12, worn, 0, 0.60, 0.12, e.spine));     /* a turned-down collar */
+        e.boxBody.push(obox(0.05, 0.46, 0.03, shade2(green, 0.7), 0, 0.28, 0.185, e.spine));  /* the front seam */
+        e.boxBody.push(obox(0.40, 0.055, 0.12, strap, 0, 0.185, 0.16, e.spine));  /* a belt across the chest */
+        /* THE POCKET, and the flower wilting out of it */
+        e.boxBody.push(obox(0.16, 0.14, 0.03, shade2(green, 0.82), -0.145, 0.30, 0.186, e.spine));
+        const sun = new THREE.Group();
+        sun.position.set(-0.155, 0.395, 0.215); sun.rotation.z = 0.62; sun.rotation.x = 0.30;
+        e.spine.add(sun);
+        e.boxBody.push(obox(0.024, 0.17, 0.024, stem, 0, -0.07, 0, sun));
+        for(let i = 0; i < 8; i++){
+          const a2 = (i / 8) * Math.PI * 2;
+          /* the lower petals have given up; the upper ones have not, quite */
+          const dead = Math.sin(a2) < -0.2;
+          const pt = obox(0.042, 0.105, 0.020, dead ? wilt : petal,
+                          Math.cos(a2) * 0.072, 0.070 + Math.sin(a2) * 0.072, 0.004, sun);
+          pt.rotation.z = -a2 + Math.PI / 2;
+          if(dead) pt.rotation.x = 0.6;
+          e.boxBody.push(pt);
+        }
+        e.boxBody.push(obox(0.070, 0.070, 0.030, heart, 0, 0.070, 0.014, sun));
+        /* the hem, gone to strips: four segments, and the strips get thinner and more
+           ragged the further down they hang */
+        let par = e.spine, py = 0.40;
+        for(let i = 0; i < 4; i++){
+          const seg = new THREE.Group();
+          seg.position.set(0, i === 0 ? py : -0.22, i === 0 ? -0.14 : 0);
+          par.add(seg);
+          e.boxBody.push(obox(0.48 - i*0.05, 0.24, 0.04, shade2(green, 1 + i*0.10), 0, -0.12, 0, seg));
+          if(i >= 2) for(const rx of [-0.14, 0.02, 0.15]){    /* torn strips below the hem */
+            const rag = obox(0.07, 0.13 + (rx > 0 ? 0.06 : 0), 0.035, shade2(worn, 0.9), rx, -0.29, 0, seg);
+            rag.rotation.z = rx * 0.9;
+            e.boxBody.push(rag);
+          }
           e.cape.push(seg); par = seg;
         }
       }
@@ -18070,7 +18216,7 @@ function snapshot(){
     immortal:c.immortal||null, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
     carryId: c.carry ? c.carry.id : null,
     carryIds: c.carryList ? c.carryList.map(b => b.id) : null,
-    lich: !!c.lich, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
+    lich: !!c.lich, face: c.face||null, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
     guardTargetId: c.guardTarget ? c.guardTarget.id : null,
     npcNecro: !!c.npcNecro, lieutenant: !!c.lieutenant, civ: !!c.civ, merc: !!c.merc,
     inv: {...c.inv}, pack: c.pack, mule: !!c.mule, fleeOnHit: !!c.fleeOnHit,
@@ -18320,7 +18466,7 @@ function restore(d){
       const rd = redoubts.find(x => x.id === c.redoubtDeep);
       if(rd && rd.rooms) c.homeRoom = rd.rooms.find(rm => rm.id === c.roomId) || null;
     }
-    c.lich = !!s.lich; c.hollowTier = s.hollowTier||0; c.nascent = !!s.nascent; c.xpDebt = s.xpDebt||null; c.settler = !!s.settler; c.chain = s.chain||null; c.coil = !!s.coil; c.pCaravan = s.pCaravan||0;
+    c.lich = !!s.lich; c.face = s.face||null; c.hollowTier = s.hollowTier||0; c.nascent = !!s.nascent; c.xpDebt = s.xpDebt||null; c.settler = !!s.settler; c.chain = s.chain||null; c.coil = !!s.coil; c.pCaravan = s.pCaravan||0;
     c.att = s.att || {divine:0, destruction:0, dark:0, dust:0, ...((s.gift && s.race!=='chimera') ? {[s.gift]: 2} : {})};
     c.attXp = s.attXp || {divine:0, destruction:0, dark:0, dust:0};
     c.npcNecro = !!s.npcNecro; c.lieutenant = !!s.lieutenant; c.civ = !!s.civ; c.merc = !!s.merc;
@@ -18788,6 +18934,7 @@ function applyCreation(race, gift, origin){
     me = mk(p, {atk:14, def:13, tough:11, ath:6, medic:5, magic:19, gift:'dark', race,
                 weapon:'w_kat', armor:'a_lea', blades:22, labor:2, crafting:6});
     me.name = "Lyonart d'Alagadda";
+    me.face = 'lyonart';        /* long white hair, black eyes, black-and-gold gone grey */
     me.conviction = 'ambitious';
     /* a prince's hands have not done a day's work, and it shows in everything but the Art */
     cats = 180; stash.mats = 8; stash.bandage = 3; stash.remains = 4;
@@ -18828,6 +18975,7 @@ function applyCreation(race, gift, origin){
                 hollowTier:1, weapon:'w_kat', armor:'a_pla', blades:34, armr:26,
                 labor:1, crafting:1, farming:0});
     me.name = 'Saga Wordsworth';
+    me.face = 'saga';           /* messy blonde, amber and lit, and the sunflower */
     me.conviction = 'scholar';
     /* what a weapon owns: the kit it was issued, and four cells off a redoubt shelf that he
        has nothing to fire — worth 220 apiece to anybody who does */
