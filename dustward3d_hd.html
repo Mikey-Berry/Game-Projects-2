@@ -949,6 +949,7 @@ function makeChar(name, faction, x, y, o={}){
     state: 'ok',                 // ok | down | dead
     moveTarget: null, target: null, healTarget: null, lootTarget: null, tradeTarget: null, pickupTarget: null,
     bedTarget: null, resting: null, gather: null, attackMove: null, chestTarget: null,
+    cmd: null, under: null,          /* a standing order, or whose band this body is in */
     targetManual: false, blocking: false, fleeT: 0, follow: null, caravan: null, mobileVendor: false,
     job: null, jobNodeT: 0, drag: null, gnaw: null, captured: false,
     jailedAt: null, jailT: 0, heldKit: null, arrestTarget: null, breakT: 0,
@@ -5518,6 +5519,218 @@ function patrolCentre(){
   const cx2 = sx / pBuilds.length, cy2 = sy / pBuilds.length;
   for(const b of pBuilds) far = Math.max(far, dist(b.x, b.y, cx2, cy2) + 3);
   return {x: cx2, y: cy2, r: Math.min(far, 20)};
+}
+/* ============================================================ COMMANDERS
+   Everything the player owns is driven one body at a time: you click, they go. That works up
+   to about six of them and then the game is a spreadsheet you operate with a mouse. A
+   commander is a body you hand a standing order and a handful of people to, who then goes
+   and does it without you — and, importantly, comes back and tells you what happened.
+
+   The whole thing is an ORCHESTRATION layer and deliberately writes no new movement, no new
+   fighting and no new looting. All of that already exists per unit, tested, in `physics`:
+
+     c.attackMove   march to a marker and take fights on the way
+     c.moveTarget   march to a marker and do not
+     c.chestTarget  walk to a chest and open it
+     c.lootTarget   walk to a body and strip it
+     c.guardTarget  shadow somebody and pounce on what threatens them
+
+   A commander converts one standing order into those fields, for itself and for its band,
+   about once a second. The band follows on `guardTarget` pointed at the captain, which is
+   the bodyguard behaviour already in the game — a band shadowing its captain and jumping
+   whatever comes at him IS a bodyguard, so there was nothing to write.
+
+   What is genuinely new is the JUDGEMENT: when to break off. A party that marches into a
+   corpse-field and dies quietly is worse than no feature, so a commander watches its own
+   band and turns for home, and where that line sits is a fact about the commander. */
+const CMD = {
+  patrol: {label:'PATROL',  blurb:'Walk a circuit of the ground around a point and fight what they find on it.'},
+  forage: {label:'FORAGE',  blurb:'Sweep the ground for chests and bodies, take what is there, bring it home.'},
+  escort: {label:'ESCORT',  blurb:'Keep station on somebody and put down what comes at them.'},
+  hold:   {label:'HOLD',    blurb:'Stand on a spot and refuse to be moved off it.'},
+};
+const CMD_R_MAX = 60;          /* how wide an order may be, in tiles */
+const CMD_LEASH = 130;         /* and how far from the anchor a band may ever get */
+let cmdN = 0;
+function bandOf(cdr){ return chars.filter(o => o.under === cdr.id && o.state !== 'dead'); }
+function commanders(){ return player().filter(c => c.cmd); }
+/* How deep this one pushes before turning for home, as the fraction of the band still on its
+   feet. This is the only number in here that makes one commander different from another, so
+   it is the one that had to be real rather than a constant: a hard captain presses on with
+   half the band down, and somebody who cannot stomach it turns back at the first body. */
+function grit(cdr){
+  let g = 0.62 - (cdr.stats.atk + cdr.stats.def) * 0.0042;
+  const conv = cdr.conviction;
+  if(conv === 'ambitious') g -= 0.14;      /* will spend them */
+  else if(conv === 'cruel') g -= 0.10;
+  else if(conv === 'cold') g -= 0.04;
+  else if(conv === 'loyal') g += 0.08;
+  else if(conv === 'compassion') g += 0.16;   /* will not */
+  return clamp(g, 0.15, 0.80);
+}
+function bandStanding(cdr){
+  const b = bandOf(cdr);
+  if(!b.length) return cdr.state === 'ok' ? 1 : 0;
+  return b.filter(o => o.state === 'ok').length / b.length;
+}
+function cmdSay(cdr, text, kind){
+  cdr.cmd.report = text;
+  say(cdr, text);
+  /* only shout about it when they are out of sight — a band working in the yard beside you
+     does not need to narrate itself */
+  if(visAt(Math.floor(cdr.x), Math.floor(cdr.y)) !== 2 || dist(cdr.x, cdr.y, camX, camY) > 30)
+    log(`${cdr.name}: ${text}`, kind || '');
+}
+function giveCommand(cdr, band, order, at, r){
+  if(!CMD[order]) return null;
+  standDown(cdr, true);
+  cmdN++;
+  cdr.cmd = {
+    order, ax: at.x, ay: at.y, r: clamp(r || 26, 8, CMD_R_MAX),
+    phase: 'out', leg: 0, t: 0, took: 0, fights: 0, id: cmdN,
+    wardId: (order === 'escort' && at.ward) ? at.ward.id : null,
+    home: {x: cdr.x, y: cdr.y}, report: '',
+  };
+  cdr.under = null;
+  /* A hand on an order is not also a woodcutter — but the trade is STASHED, not thrown away.
+     Clearing it outright meant a sawyer you sent on one patrol came back and never cut wood
+     again, and you would have to remember what everybody used to do. */
+  const shelve = (o) => { o.wasJob = [o.job || null, o.job2 || null]; o.job = null; o.job2 = null; o.gather = null; };
+  for(const o of band){
+    if(o === cdr) continue;
+    clearOrders(o);
+    o.under = cdr.id;
+    o.cmd = null;                 /* nobody commands under a commander */
+    shelve(o);
+  }
+  shelve(cdr);
+  clearOrders(cdr);
+  log(`${cdr.name} takes ${band.filter(o => o !== cdr).length} and moves out — ${CMD[order].label}.`, 'good');
+  return cdr.cmd;
+}
+function standDown(cdr, quiet){
+  if(!cdr.cmd) return;
+  const unshelve = (o) => { if(o.wasJob){ o.job = o.wasJob[0]; o.job2 = o.wasJob[1]; o.wasJob = null; } };
+  for(const o of bandOf(cdr)){ o.under = null; clearOrders(o); unshelve(o); }
+  cdr.cmd = null;
+  clearOrders(cdr);
+  unshelve(cdr);
+  if(typeof assignPatrolPosts === 'function') assignPatrolPosts();
+  if(!quiet) log(`${cdr.name}'s band stands down.`, '');
+}
+/* the ring of ground an order covers, walked as a circuit rather than orbited: a marching
+   band that follows a perfect circle reads as a clock hand and walks through walls */
+function cmdLeg(cdr){
+  const m = cdr.cmd, legs = 5;
+  const a = (m.leg / legs) * Math.PI * 2 + m.id * 0.7;
+  const rr = m.r * (0.55 + ((m.leg * 7 + m.id) % 5) * 0.09);
+  return {x: clamp(m.ax + Math.cos(a) * rr, 3, W - 4), y: clamp(m.ay + Math.sin(a) * rr, 3, H - 4)};
+}
+/* the nearest thing worth walking to, inside the order's ground. Chests first — a sealed
+   vault is worth more than anything you can strip off a body — then the dead. */
+function forageFind(cdr){
+  const m = cdr.cmd;
+  let best = null, bd = 1e9;
+  for(const ch of chests){
+    if(ch.opened || (ch.floor || 0) !== 0) continue;
+    const d = dist(ch.x, ch.y, m.ax, m.ay);
+    if(d > m.r) continue;
+    const w = dist(cdr.x, cdr.y, ch.x, ch.y) * 0.6;      /* a vault is worth a detour */
+    if(w < bd){ bd = w; best = {kind: 'chest', at: ch}; }
+  }
+  for(const b of corpses){
+    if(b.looted || (b.floor || 0) !== 0) continue;
+    if(dist(b.x, b.y, m.ax, m.ay) > m.r) continue;
+    const w = dist(cdr.x, cdr.y, b.x, b.y);
+    if(w < bd){ bd = w; best = {kind: 'corpse', at: b}; }
+  }
+  return best;
+}
+let _cmdT = 0;
+function commandTick(dt){
+  if((_cmdT -= dt) > 0) return;
+  _cmdT = 0.9;
+  for(const cdr of chars){
+    if(!cdr.cmd) continue;
+    if(cdr.faction !== 'player' || cdr.state === 'dead'){ standDown(cdr, true); continue; }
+    const m = cdr.cmd;
+    const band = bandOf(cdr);
+    /* the band follows the captain and fights what comes at him — the bodyguard path, which
+       already handles closing, threat pickup and not wandering off */
+    for(const o of band){
+      if(o.state !== 'ok') continue;
+      if(o.guardTarget !== cdr){ o.guardTarget = cdr; }
+    }
+    /* a captain on the floor is not commanding anybody */
+    if(cdr.state !== 'ok'){
+      if(m.phase !== 'down'){
+        m.phase = 'down';
+        log(`${cdr.name} is down. The band is holding over ${cdr.sex === 'f' ? 'her' : 'them'}.`, 'bad');
+      }
+      continue;
+    }
+    if(m.phase === 'down'){ m.phase = 'out'; cmdSay(cdr, 'Up. Re-forming.', ''); }
+    /* --- the judgement: is this still worth doing --- */
+    const standing = bandStanding(cdr);
+    const hurtCdr = cdr.blood < cdr.maxBlood * 0.45;
+    if(m.phase !== 'home' && (standing < grit(cdr) || hurtCdr)){
+      m.phase = 'home';
+      cmdSay(cdr, standing < grit(cdr) ? 'Too many down. Breaking off.' : 'I am cut. Pulling back.', 'bad');
+    }
+    /* and the leash: nobody wanders to the far side of the world on a patrol order */
+    if(m.phase !== 'home' && dist(cdr.x, cdr.y, m.ax, m.ay) > CMD_LEASH){
+      m.phase = 'home';
+      cmdSay(cdr, 'We are too far out. Turning back.', '');
+    }
+    if(m.phase === 'home'){
+      if(dist(cdr.x, cdr.y, m.home.x, m.home.y) < 4){
+        cmdSay(cdr, m.took ? `Back, with ${m.took} taken and ${m.fights} fought.` : 'Back. Nothing out there.', 'good');
+        standDown(cdr, true);
+      } else if(!cdr.moveTarget){
+        cdr.attackMove = null;
+        cdr.moveTarget = {x: m.home.x, y: m.home.y};
+      }
+      continue;
+    }
+    if(nearestEnemy(cdr, 9)){ m.fights += (m.fightSeen ? 0 : 1); m.fightSeen = true; continue; }
+    m.fightSeen = false;
+    /* --- the order itself --- */
+    if(m.order === 'hold'){
+      if(dist(cdr.x, cdr.y, m.ax, m.ay) > 3 && !cdr.moveTarget) cdr.moveTarget = {x: m.ax, y: m.ay};
+      continue;
+    }
+    if(m.order === 'escort'){
+      const w = chars.find(o => o.id === m.wardId && o.state !== 'dead');
+      if(!w){ m.phase = 'home'; cmdSay(cdr, 'Nothing left to escort.', 'bad'); continue; }
+      m.ax = w.x; m.ay = w.y;
+      if(dist(cdr.x, cdr.y, w.x, w.y) > 4 && !cdr.moveTarget) cdr.moveTarget = {x: w.x, y: w.y};
+      continue;
+    }
+    if(m.order === 'forage'){
+      /* mid-errand: leave them to finish it */
+      if(cdr.chestTarget && !cdr.chestTarget.opened) continue;
+      if(cdr.lootTarget && !cdr.lootTarget.looted) continue;
+      if(cdr.chestTarget || cdr.lootTarget){ m.took++; cdr.chestTarget = null; cdr.lootTarget = null; }
+      const find = forageFind(cdr);
+      if(!find){
+        m.phase = 'home';
+        cmdSay(cdr, m.took ? 'Ground is picked clean. Coming in.' : 'Nothing here worth carrying.', '');
+        continue;
+      }
+      const far = dist(cdr.x, cdr.y, find.at.x, find.at.y);
+      if(far > 6){ if(!cdr.attackMove) cdr.attackMove = {x: find.at.x, y: find.at.y}; continue; }
+      cdr.attackMove = null;
+      if(find.kind === 'chest') cdr.chestTarget = find.at; else cdr.lootTarget = find.at;
+      continue;
+    }
+    /* patrol: walk the circuit, taking whatever is on it */
+    const leg = cmdLeg(cdr);
+    if(!cdr.attackMove || dist(cdr.x, cdr.y, leg.x, leg.y) < 3){
+      if(dist(cdr.x, cdr.y, leg.x, leg.y) < 3){ m.leg++; m.rounds = (m.rounds || 0) + (m.leg % 5 === 0 ? 1 : 0); }
+      const nx = cmdLeg(cdr);
+      cdr.attackMove = {x: nx.x, y: nx.y};
+    }
+  }
 }
 /* two on watch means one north and one south — not both in the same corner */
 function assignPatrolPosts(){
@@ -10100,6 +10313,7 @@ function update(dt){
   rescueTick(dt);             /* and whether anyone is coming for what you took */
   ilsabetTick(dt);            /* and whether anyone has walked out far enough to find her */
   motherTick(dt);             /* and whether anyone has gone far enough DOWN to find her */
+  commandTick(dt);            /* and what the bands you sent out are doing about it */
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
   if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
   gauntTick(dt / HOUR_SEC);   /* the dark is never empty for long */
@@ -16028,6 +16242,50 @@ function refreshCharPanel(){
   };
   jr.appendChild(jb);
   jr.appendChild(mkJobButton(2));   /* the fallback trade sits beside the first */
+  /* ---------- COMMAND ----------
+     A job is what one hand does. An order is what a band does, and the band is whoever is
+     selected with the captain — so the button only appears with two or more picked, and the
+     one whose panel this is takes the band. On somebody already out, it is the recall. */
+  {
+    const cb = document.createElement('button');
+    const picked = () => selected.filter(u => u.faction === 'player' && u.state !== 'dead');
+    const out = !!c.cmd;
+    cb.textContent = out ? `ORDER: ${CMD[c.cmd.order].label}` : 'COMMAND…';
+    cb.style.cssText = 'padding:2px 6px;font-size:10px;' +
+      (out ? 'border-color:var(--gold);color:var(--gold)' : '');
+    cb.disabled = !out && (picked().length < 2 || !!c.under);
+    cb.title = c.under ? 'Already under somebody else\'s command.'
+      : picked().length < 2 ? 'Select the captain and the band together.' : '';
+    cb.onclick = () => {
+      const r3 = cb.getBoundingClientRect();
+      if(out){
+        showCtxMenu(r3.left, r3.bottom + 4, [
+          {label: `${c.cmd.phase === 'home' ? 'COMING IN' : 'IN THE FIELD'} — ${bandOf(c).length} with ${c.sex === 'f' ? 'her' : 'him'}`, fn: () => {}},
+          {label: 'RECALL — come home now', fn: () => {
+            c.cmd.phase = 'home'; cmdSay(c, 'Recalled. On our way in.', ''); refreshCharPanel(); }},
+          {label: 'STAND DOWN — here, now', fn: () => { standDown(c); refreshCharPanel(); }},
+        ]);
+        return;
+      }
+      const band = picked();
+      showCtxMenu(r3.left, r3.bottom + 4, Object.entries(CMD).map(([k, o]) => ({
+        label: o.label + ' — ' + o.blurb,
+        fn: () => {
+          /* the order is anchored where they are standing when it is given, which is what
+             makes "patrol this" mean the ground under your feet rather than a global radius */
+          const at = {x: c.x, y: c.y};
+          if(k === 'escort'){
+            const ward = band.find(u => u !== c && u.mule) || band.find(u => u !== c) || null;
+            if(!ward){ log('Nobody to escort.', 'bad'); return; }
+            at.ward = ward;
+          }
+          giveCommand(c, band, k, at, k === 'hold' ? 10 : 26);
+          refreshCharPanel(); refreshSquadBar();
+        },
+      })));
+    };
+    jr.appendChild(cb);
+  }
 }
 $('btn-salt').onclick = () => {
   const c = selected[0]; if(!c) return;
@@ -18293,7 +18551,9 @@ function snapshot(){
     beast:!!c.beast, loot:c.loot||0, deadAt:c.deadAt||0, looted:!!c.looted, robbed:!!c.robbed, swag: c.swag ? {gold: c.swag.gold, items: {...c.swag.items}} : null,
     mobileVendor:!!c.mobileVendor, caravanDestI: c.caravan ? towns.indexOf(c.caravan.dest) : -1,
     followId: c.follow ? c.follow.id : null,
-    job:c.job, job2:c.job2||null, grp:c.grp||null, heldAt:c.heldAt||null, heldT:c.heldT||0, midden:c.midden||null, caveId:c.caveId||null, roomId:(c.roomId??null), caveDweller:!!c.caveDweller, floor: c.floor||0, captured:!!c.captured, dragId: c.drag ? c.drag.id : null,
+    job:c.job, job2:c.job2||null, grp:c.grp||null,
+    cmd: c.cmd ? {...c.cmd, home:{...c.cmd.home}} : null, under: c.under ?? null,
+    wasJob: c.wasJob ? [...c.wasJob] : null, heldAt:c.heldAt||null, heldT:c.heldT||0, midden:c.midden||null, caveId:c.caveId||null, roomId:(c.roomId??null), caveDweller:!!c.caveDweller, floor: c.floor||0, captured:!!c.captured, dragId: c.drag ? c.drag.id : null,
     clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
     servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null,
@@ -18521,6 +18781,14 @@ function restore(d){
     c.mobileVendor = !!s.mobileVendor;
     if(s.caravanDestI >= 0) c.caravan = {dest: towns[s.caravanDestI], waitT: 0};
     c.job = s.job || null; c.job2 = s.job2 || null; c.grp = s.grp || null;
+    /* An order and the band it was given to are two halves of one thing: the captain carries
+       the order, every soldier carries the captain's id. Ids are preserved across a load, so
+       the band re-forms on its own — but `guardTarget` is an object reference and does NOT
+       survive, which is why commandTick re-points it every tick rather than only on the
+       order. Without that a loaded band stands in the field and never follows anybody. */
+    c.cmd = s.cmd ? {...s.cmd, home: s.cmd.home ? {...s.cmd.home} : {x: c.x, y: c.y}} : null;
+    c.under = s.under ?? null;
+    c.wasJob = s.wasJob ? [...s.wasJob] : null;   /* the trade they go back to when it is over */
     c.heldAt = s.heldAt || null; c.heldT = s.heldT || 0; c.midden = s.midden || null;
     if(c.heldAt){ const mm = middens.find(x => x.id === c.heldAt); if(mm && !mm.held.includes(c)) mm.held.push(c); }
     c.caveId = s.caveId || null; c.caveDweller = !!s.caveDweller;
