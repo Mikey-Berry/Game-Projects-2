@@ -106,6 +106,9 @@
 .ccopt{display:inline-block; margin:2px 4px 2px 0; padding:4px 10px; border:1px solid var(--dust);
   background:transparent; color:var(--bone); font-family:inherit; font-size:12px; cursor:pointer;}
 .ccopt.on{border-color:var(--gold); color:var(--gold);}
+/* a named origin is a person, not a role — it reads differently in the list */
+.ccopt.named{border-style:dashed; letter-spacing:1px;}
+.ccopt.named.on{border-style:solid;}
 #ccblurb{color:var(--dust); font-size:11px; min-height:28px; max-width:640px; margin:4px auto; text-align:left;}
 .overlay .help{width:480px;max-height:40vh;overflow-y:auto;text-align:left;font-size:12px;line-height:1.9;
     color:var(--dust);border:1px solid var(--edge);padding:16px 20px;margin-bottom:26px;background:var(--panel)}
@@ -450,6 +453,8 @@ const ITEMS = {
   formula_p:{name:'Preserved Formula', base:2400, type:'formula', rp:40,
     desc:'Sealed in wax before the sky opened. The hand that wrote it knew things nobody knows now.'},
   remains: {name:'Mortal Remains',base:30,  type:'trade'},
+  s_ash:   {name:'Sanctified Ash', base:340, type:'mat',
+    desc:'What is left of a shrine stone once the thing inside it has been let out. Warm, and it will not go cold. Whatever the faithful were keeping under there, an alchemist has other uses for'},
   crown:   {name:'Sunken Crown',  base:2500,type:'trade'},
   hide_lev:{name:'Leviathan Hide',base:150, type:'trade'},
   w_kingsfang:{name:'Kingsfang',  base:5000,type:'weapon', dmg:34, wt:'cut'},
@@ -645,8 +650,37 @@ const towns = [], buildings = [], vendors = [], beds = [], drops = [], phylacter
    law, four thousand lines below, it was in its temporal dead zone when the first gaol was
    placed and the whole script died on the spot: "Cannot access 'cells' before
    initialization", which takes the game with it rather than failing quietly. */
-const cells = [];
+const cells = [], shrines = [];
+/* ---------- CONSECRATED GROUND ----------
+   A SHRINE appeared exactly twice in this whole file: once in the town plan and once in the
+   roof table. It was a roof. Meanwhile `hallow` already meant "anathema to the dead" — but
+   only as a buff on a blade, never as a place.
+
+   So a shrine hallows the ground around it, and on that ground the dead are diminished: they
+   take more, they hit less, and the call does not carry. Which finally gives a shrine a
+   reason to stand, and gives DESECRATION a reason to happen — a necromancer who wants to
+   fight inside somebody's walls has to put the shrine down first, in front of everyone, and
+   that is a decision rather than vandalism. */
+const SHRINE_R = 19, SHRINE_HP = 220, RECONSECRATE_DAYS = 10;
+function consecratedAt(x, y){
+  for(const sh of shrines){
+    if(sh.broken) continue;
+    if(Math.abs(x - sh.x) > SHRINE_R || Math.abs(y - sh.y) > SHRINE_R) continue;
+    if(dist(x, y, sh.x, sh.y) <= SHRINE_R) return sh;
+  }
+  return null;
+}
 const CELL_HP = 100;   /* up here for the same reason `cells` is: the town planner uses it */
+/* A town that can afford walls can afford better bars. `order` is a town's grip on itself,
+   so a well-run place holds people and a failing one does not — which makes the same
+   jailbreak a different proposition in Copperhold than in somewhere that has stopped
+   caring, without needing a new mechanism to say so. */
+function cellHpFor(t){
+  if(!t) return CELL_HP;
+  const order = t.order ?? 55;
+  const walled = (t.def && t.def.wall) ? 1.15 : 1;
+  return Math.round(CELL_HP * walled * (0.7 + order / 140));
+}
 function areaClear(x,y,w,h){
   for(let j=y-1;j<y+h+1;j++) for(let i=x-1;i<x+w+1;i++){
     const t = tileAt(i,j);
@@ -698,6 +732,10 @@ function placeBuilding(bx, by, w, h, label, town){
   const doorX = bx + Math.floor(w/2) - 1;
   const b = {x:bx, y:by, w, h, label, town, door:{x:doorX, y:by+h-1}};
   buildings.push(b);
+  if(label === 'SHRINE'){
+    shrines.push({x: bx + w/2, y: by + h/2, town, hp: SHRINE_HP, maxHp: SHRINE_HP,
+                  broken: false, reT: 0, bx, by, w, h});
+  }
   for(let j=by; j<by+h; j++) for(let i=bx; i<bx+w; i++){
     const edge = (i===bx || i===bx+w-1 || j===by || j===by+h-1);
     if(!edge) continue;
@@ -802,7 +840,12 @@ function placeTownAt(def, cx0, cy0){
       /* three cells along the back wall. A cell is a place, not a building — whoever is in
          it is held there, exactly the way the middens hold what the Larder-Kin drags off. */
       for(let i=0;i<3;i++) cells.push({x:bx+1.2+i*1.3, y:by+1.4, town:t, holds:0, kind:'town',
-        hp:CELL_HP, maxHp:CELL_HP});
+        hp:cellHpFor(t), maxHp:cellHpFor(t)});
+      /* Somewhere for a warden to stand. Escapes are suppressed by a body in the room, and
+         until this existed nothing ever put one there — a town cell was only as secure as
+         whoever happened to wander past, which made a well-built escape system almost
+         impossible to actually see. */
+      t.gaolPost = {x: bx + 2.4, y: by + 2.6};
     }
   }
   /* town walls: a ring with gates north and south; water makes its own gaps */
@@ -906,6 +949,7 @@ function makeChar(name, faction, x, y, o={}){
     state: 'ok',                 // ok | down | dead
     moveTarget: null, target: null, healTarget: null, lootTarget: null, tradeTarget: null, pickupTarget: null,
     bedTarget: null, resting: null, gather: null, attackMove: null, chestTarget: null,
+    cmd: null, under: null,          /* a standing order, or whose band this body is in */
     targetManual: false, blocking: false, fleeT: 0, follow: null, caravan: null, mobileVendor: false,
     job: null, jobNodeT: 0, drag: null, gnaw: null, captured: false,
     jailedAt: null, jailT: 0, heldKit: null, arrestTarget: null, breakT: 0,
@@ -928,6 +972,7 @@ function makeChar(name, faction, x, y, o={}){
        one. Transient — emplacementTick re-derives `manning` every tick, so neither is saved. */
     manning: null, gunT: 0,
     path: null, pathGoal: null, repathT: 0,
+    rescueOf: 0,
     hitT: 0, looseT: 0, lungeT: 0, lungeDX: 0, lungeDY: 0, lungeDur: 0, lungeK: 0,
     shoveT: 0, shoveDur: 0, shoveK: 0, shoveDX: 0, shoveDY: 0,
     undead: false, master: null,
@@ -1523,6 +1568,7 @@ function atkPower(c){
      pay is the seconds you spend rooted in the wind and the follow-through. Melee only — a
      bow's rate of fire is its own problem, handled where it is drawn. */
   if(!w || !w.range) d *= Math.pow(heftOf(c), 1.04);
+  if(c.undead && consecratedAt(c.x, c.y)) d *= 0.78;   /* and they strike weakly on it */
   d *= 1 + c.stats[wSkillKey(c)] * 0.015;
   d *= 1 - packPenalty(c);
   if(c.race==='hollow' && c.blood < 60) d *= 1.15;
@@ -1694,28 +1740,28 @@ for(const t of towns){
 const CONVICTIONS = {
   compassion: {label:'Compassionate', short:'compassion',
     blurb:'Cannot stomach cruelty to people who cannot answer back.',
-    weights:{sack:-3.0, civkill:-3.4, raise:-1.1, conquer:-1.6, town_saved:2.4, heal:0.9, rift_sealed:1.1, compact:1.5}},
+    weights:{sack:-3.0, civkill:-3.4, raise:-1.1, conquer:-1.6, town_saved:2.4, heal:0.9, rift_sealed:1.1, compact:1.5, found_sister:2.0}},
   cold: {label:'Cold', short:'cold',
     blurb:'Weighs outcomes and does not weigh much else. Hard to appal, hard to move.',
     weights:{sack:-0.3, civkill:-0.3, raise:0.1, conquer:0.4, town_saved:0.6, rift_sealed:0.6, gold:1.0, compact:0.8}},
   devout: {label:'Devout', short:'devout',
     blurb:'The Church was right about the dead. Every rite you work is a wound.',
-    weights:{raise:-2.6, lich:-6.0, sack:-1.4, civkill:-1.8, rift_sealed:2.2, town_saved:1.6, purge_killed:-2.0}},
+    weights:{raise:-2.6, lich:-6.0, sack:-1.4, civkill:-1.8, rift_sealed:2.2, town_saved:1.6, purge_killed:-2.0, found_mother:-3.2}},
   ambitious: {label:'Ambitious', short:'ambition',
     blurb:'Following somebody who is going somewhere. Weakness is the only sin.',
-    weights:{conquer:2.4, sack:1.0, boss:2.0, compact:1.2, gold:1.2, retreat:-1.4, town_lost:-2.0}},
+    weights:{conquer:2.4, sack:1.0, boss:2.0, compact:1.2, gold:1.2, retreat:-1.4, town_lost:-2.0, found_sister:-0.8}},
   loyal: {label:'Loyal', short:'loyalty',
     blurb:'Decided about you a long time ago. Takes a great deal to undecide.',
-    weights:{sack:-0.6, civkill:-0.8, raise:-0.2, town_saved:1.2, squadmate_lost:-1.6, rescued:3.0}},
+    weights:{sack:-0.6, civkill:-0.8, raise:-0.2, town_saved:1.2, squadmate_lost:-1.6, rescued:3.0, found_sister:2.6}},
   cruel: {label:'Cruel', short:'cruelty',
     blurb:'Enjoys the work. Mercy reads as squeamishness.',
     weights:{sack:2.2, civkill:1.6, raise:1.0, conquer:1.6, town_saved:-0.8, mercy:-1.2}},
   scholar: {label:'Inquisitive', short:'inquiry',
     blurb:'Here for what the Fracture left behind. Everything else is weather.',
-    weights:{research:2.2, rift_sealed:1.4, boss:1.0, formula:2.0, raise:0.4, sack:-0.6}},
+    weights:{research:2.2, rift_sealed:1.4, boss:1.0, formula:2.0, raise:0.4, sack:-0.6, found_mother:2.4}},
   haunted: {label:'Haunted', short:'the dead',
     blurb:'Lost somebody to the dark and has not put it down. Wants it ended, whatever that costs.',
-    weights:{rift_sealed:2.6, boss:1.8, gaunt_killed:0.8, door_closed:5.0, raise:-0.8, retreat:-1.0}},
+    weights:{rift_sealed:2.6, boss:1.8, gaunt_killed:0.8, door_closed:5.0, raise:-0.8, retreat:-1.0, found_sister:1.8, found_mother:1.2}},
 };
 const CONVICTION_KEYS = Object.keys(CONVICTIONS);
 /* -100..100. The bands are where behaviour changes. */
@@ -3996,6 +4042,72 @@ function contrabandCheck(){
     }
   }
 }
+/* ---------- WANTED ----------
+   `arrestTarget` was only ever set at the instant of the crime. Walk out, come back the
+   next day, and the watch ignored a nine-hundred bounty completely — so a bounty was at
+   once permanent and inert, and every crime was a one-off scuffle rather than a thing that
+   followed you. The watch recognises a wanted face now, and a bounty can be settled.
+
+   Recognition is not omniscience: a guard has to be able to SEE you, which means the veil
+   still works and night still helps. */
+let _wantedT = 0;
+function wantedCheck(dt){
+  if((_wantedT -= dt) > 0) return;
+  _wantedT = 2.5;
+  for(const t of towns){
+    if(!t.bounty || t.playerRuled) continue;
+    for(const c of player()){
+      if(c.state !== 'ok' || c.undead || c.jailedAt || c.veilT > 0) continue;
+      const r = (t.def.wall ? t.def.wall.r : 20) + 6;
+      if(Math.abs(c.x - t.x) > r || Math.abs(c.y - t.y) > r) continue;
+      for(const g of charsNear(c.x, c.y, 15)){
+        if(g.faction !== 'town' || g.civ || g.state !== 'ok' || g.homeTown !== t) continue;
+        if(g.arrestTarget || dist(g.x, g.y, c.x, c.y) > 15) continue;
+        if(losBlocked(g.x, g.y, c.x, c.y, 0)) continue;
+        g.arrestTarget = c; g.provoked = true;
+        say(g, pick(['That one. Take them.', 'I know that face.', 'You are wanted.']));
+        break;
+      }
+    }
+  }
+}
+/* Old debts get quieter. Not forgiven — a murder is still on the books for a long while —
+   but a town has other things to think about, and a bounty that never moves is a wall. */
+function bountyDecay(){
+  for(const t of towns){
+    if(!t.bounty) continue;
+    t.bounty = Math.max(0, t.bounty - Math.max(4, Math.round(t.bounty * 0.05)));
+    if(!t.bounty){ t.wanted = false; for(const g of chars) if(g.arrestTarget && g.homeTown === t) g.arrestTarget = null; }
+  }
+}
+/* ---------- THEY COME FOR THEIR OWN ----------
+   A prisoner in your cells was inert: you took one of somebody's people and nothing in the
+   world reacted. Their side knows where he is. Not a scripted raid — the nearest of his
+   own, told where to go, which in a game with this much wandering is quite enough to make
+   holding people a thing you have to actually defend. */
+let _rescueT = 0;
+function rescueTick(dt){
+  if((_rescueT -= dt) > 0) return;
+  _rescueT = 26;
+  for(const cl of cells){
+    if(cl.kind !== 'player' || !cl.holds) continue;
+    const v = chars.find(o => o.id === cl.holds);
+    if(!v || v.state === 'dead') continue;
+    const kin = chars.filter(o => o.state === 'ok' && o.faction === v.faction &&
+      o !== v && !o.jailedAt && !o.rescueOf && dist(o.x, o.y, cl.x, cl.y) < 150);
+    if(!kin.length) continue;
+    if(rnd() > 0.35) continue;
+    const n2 = Math.min(kin.length, ri(2, 4));
+    kin.sort((a2, b2) => dist(a2.x, a2.y, cl.x, cl.y) - dist(b2.x, b2.y, cl.x, cl.y));
+    for(let i = 0; i < n2; i++){
+      kin[i].rescueOf = v.id;
+      kin[i].moveTarget = {x: cl.x, y: cl.y};
+      kin[i].provoked = true;
+    }
+    log(`${v.name}'s people are coming for them.`, 'bad');
+    return;
+  }
+}
 let _walkDeadT = 0;
 function walkingDeadCheck(dt){
   if((_walkDeadT -= dt) > 0) return;
@@ -4212,6 +4324,9 @@ function mitigate(d, dmg, wt, ap, a){
     dmg *= (1 - def);
   }
   dmg *= (1 - Math.min(0.45, d.stats.tough * 0.006));
+  /* the dead take more where the ground is hallowed — the same relation a hallowed blade
+     already had to them, made a property of the PLACE instead of the weapon */
+  if(d.undead && consecratedAt(d.x, d.y)) dmg *= 1.35;
   /* BINDING STRAIN: a will stretched across a host of risen has less of itself left to
      hold its own body together. The bigger the army, the softer its master. */
   const strain = bindStrain(d);
@@ -4277,7 +4392,9 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
     dropRep(d.homeTown, 4);
     if(d.civ && !incid){
       deed('civkill', 1, d.homeTown);   /* a stray cleave is not a choice; this was */
-      crime(d.state === 'dead' ? 'murder' : 'assault', d.x, d.y, a);
+      /* A man may be knocked down in a tavern and the town shrugs; the same blow with a
+         blade in your hand is assault. Fists start a brawl, not a war. */
+      crime(d.state === 'dead' ? 'murder' : (wepOf(a) ? 'assault' : 'brawl'), d.x, d.y, a);
     }
   }
   /* `provoked` is a grudge held against YOU specifically — so only your own deliberate blow
@@ -5136,6 +5253,13 @@ function revealedUndead(c){
 }
 /* fixed enmities that pierce a neutral creature's calm */
 function pierceNeutral(n, o){
+  /* Some people are exempt from the standing quarrel because they are somebody's family.
+     Ilsabet is faction 'exile' — she has spent eleven years closing tears by hand and belongs
+     nowhere else — but the exile rule is Sister Ash's rule: hunt any dead you can see. Lyonart
+     walks up to her with six of the household behind him, and without this his sister opens
+     fire on sight and the whole scene the origin is built around never happens. She judges him
+     in words instead. It runs both ways: his dead do not swing at her either. */
+  if(n.holdsFire || o.holdsFire) return false;
   if(n.faction==='exile') return revealedUndead(o);                      /* Ash hunts the dead she can see */
   if(n.undead) return o.faction==='purge' || o.faction==='exile';        /* the dead and their hunters */
   return false;
@@ -5318,8 +5442,25 @@ function ai(c, dt){
     if(c.follow.state === 'dead'){ c.follow = null; }
     else { if(dist(c.x,c.y,c.follow.x,c.follow.y) > 3) c.moveTarget = {x:c.follow.x, y:c.follow.y}; return; }
   }
-  /* guards return to post */
+  /* THE WATCH. A guard whose town is holding somebody takes the gaol first — one of them,
+     the nearest, so a town does not empty its walls to stare at one prisoner. Everyone else
+     returns to their own post as before. */
   if(c.guard){
+    const t2 = c.homeTown;
+    if(t2 && t2.gaolPost && cells.some(cl => cl.town === t2 && cl.holds)){
+      const gp = t2.gaolPost;
+      const mine = dist(c.x, c.y, gp.x, gp.y);
+      let nearer = false;
+      for(const o of chars){
+        if(o === c || o.faction !== 'town' || o.civ || o.state !== 'ok' || o.homeTown !== t2 || !o.guard) continue;
+        if(dist(o.x, o.y, gp.x, gp.y) < mine){ nearer = true; break; }
+      }
+      if(!nearer){
+        if(dist(c.x, c.y, gp.x, gp.y) > 1.4) c.moveTarget = {x: gp.x, y: gp.y};
+        else c.moveTarget = null;
+        return;
+      }
+    }
     if(dist(c.x,c.y,c.guard.x,c.guard.y) > 1.5) c.moveTarget = {x:c.guard.x, y:c.guard.y};
     return;
   }
@@ -5378,6 +5519,218 @@ function patrolCentre(){
   const cx2 = sx / pBuilds.length, cy2 = sy / pBuilds.length;
   for(const b of pBuilds) far = Math.max(far, dist(b.x, b.y, cx2, cy2) + 3);
   return {x: cx2, y: cy2, r: Math.min(far, 20)};
+}
+/* ============================================================ COMMANDERS
+   Everything the player owns is driven one body at a time: you click, they go. That works up
+   to about six of them and then the game is a spreadsheet you operate with a mouse. A
+   commander is a body you hand a standing order and a handful of people to, who then goes
+   and does it without you — and, importantly, comes back and tells you what happened.
+
+   The whole thing is an ORCHESTRATION layer and deliberately writes no new movement, no new
+   fighting and no new looting. All of that already exists per unit, tested, in `physics`:
+
+     c.attackMove   march to a marker and take fights on the way
+     c.moveTarget   march to a marker and do not
+     c.chestTarget  walk to a chest and open it
+     c.lootTarget   walk to a body and strip it
+     c.guardTarget  shadow somebody and pounce on what threatens them
+
+   A commander converts one standing order into those fields, for itself and for its band,
+   about once a second. The band follows on `guardTarget` pointed at the captain, which is
+   the bodyguard behaviour already in the game — a band shadowing its captain and jumping
+   whatever comes at him IS a bodyguard, so there was nothing to write.
+
+   What is genuinely new is the JUDGEMENT: when to break off. A party that marches into a
+   corpse-field and dies quietly is worse than no feature, so a commander watches its own
+   band and turns for home, and where that line sits is a fact about the commander. */
+const CMD = {
+  patrol: {label:'PATROL',  blurb:'Walk a circuit of the ground around a point and fight what they find on it.'},
+  forage: {label:'FORAGE',  blurb:'Sweep the ground for chests and bodies, take what is there, bring it home.'},
+  escort: {label:'ESCORT',  blurb:'Keep station on somebody and put down what comes at them.'},
+  hold:   {label:'HOLD',    blurb:'Stand on a spot and refuse to be moved off it.'},
+};
+const CMD_R_MAX = 60;          /* how wide an order may be, in tiles */
+const CMD_LEASH = 130;         /* and how far from the anchor a band may ever get */
+let cmdN = 0;
+function bandOf(cdr){ return chars.filter(o => o.under === cdr.id && o.state !== 'dead'); }
+function commanders(){ return player().filter(c => c.cmd); }
+/* How deep this one pushes before turning for home, as the fraction of the band still on its
+   feet. This is the only number in here that makes one commander different from another, so
+   it is the one that had to be real rather than a constant: a hard captain presses on with
+   half the band down, and somebody who cannot stomach it turns back at the first body. */
+function grit(cdr){
+  let g = 0.62 - (cdr.stats.atk + cdr.stats.def) * 0.0042;
+  const conv = cdr.conviction;
+  if(conv === 'ambitious') g -= 0.14;      /* will spend them */
+  else if(conv === 'cruel') g -= 0.10;
+  else if(conv === 'cold') g -= 0.04;
+  else if(conv === 'loyal') g += 0.08;
+  else if(conv === 'compassion') g += 0.16;   /* will not */
+  return clamp(g, 0.15, 0.80);
+}
+function bandStanding(cdr){
+  const b = bandOf(cdr);
+  if(!b.length) return cdr.state === 'ok' ? 1 : 0;
+  return b.filter(o => o.state === 'ok').length / b.length;
+}
+function cmdSay(cdr, text, kind){
+  cdr.cmd.report = text;
+  say(cdr, text);
+  /* only shout about it when they are out of sight — a band working in the yard beside you
+     does not need to narrate itself */
+  if(visAt(Math.floor(cdr.x), Math.floor(cdr.y)) !== 2 || dist(cdr.x, cdr.y, camX, camY) > 30)
+    log(`${cdr.name}: ${text}`, kind || '');
+}
+function giveCommand(cdr, band, order, at, r){
+  if(!CMD[order]) return null;
+  standDown(cdr, true);
+  cmdN++;
+  cdr.cmd = {
+    order, ax: at.x, ay: at.y, r: clamp(r || 26, 8, CMD_R_MAX),
+    phase: 'out', leg: 0, t: 0, took: 0, fights: 0, id: cmdN,
+    wardId: (order === 'escort' && at.ward) ? at.ward.id : null,
+    home: {x: cdr.x, y: cdr.y}, report: '',
+  };
+  cdr.under = null;
+  /* A hand on an order is not also a woodcutter — but the trade is STASHED, not thrown away.
+     Clearing it outright meant a sawyer you sent on one patrol came back and never cut wood
+     again, and you would have to remember what everybody used to do. */
+  const shelve = (o) => { o.wasJob = [o.job || null, o.job2 || null]; o.job = null; o.job2 = null; o.gather = null; };
+  for(const o of band){
+    if(o === cdr) continue;
+    clearOrders(o);
+    o.under = cdr.id;
+    o.cmd = null;                 /* nobody commands under a commander */
+    shelve(o);
+  }
+  shelve(cdr);
+  clearOrders(cdr);
+  log(`${cdr.name} takes ${band.filter(o => o !== cdr).length} and moves out — ${CMD[order].label}.`, 'good');
+  return cdr.cmd;
+}
+function standDown(cdr, quiet){
+  if(!cdr.cmd) return;
+  const unshelve = (o) => { if(o.wasJob){ o.job = o.wasJob[0]; o.job2 = o.wasJob[1]; o.wasJob = null; } };
+  for(const o of bandOf(cdr)){ o.under = null; clearOrders(o); unshelve(o); }
+  cdr.cmd = null;
+  clearOrders(cdr);
+  unshelve(cdr);
+  if(typeof assignPatrolPosts === 'function') assignPatrolPosts();
+  if(!quiet) log(`${cdr.name}'s band stands down.`, '');
+}
+/* the ring of ground an order covers, walked as a circuit rather than orbited: a marching
+   band that follows a perfect circle reads as a clock hand and walks through walls */
+function cmdLeg(cdr){
+  const m = cdr.cmd, legs = 5;
+  const a = (m.leg / legs) * Math.PI * 2 + m.id * 0.7;
+  const rr = m.r * (0.55 + ((m.leg * 7 + m.id) % 5) * 0.09);
+  return {x: clamp(m.ax + Math.cos(a) * rr, 3, W - 4), y: clamp(m.ay + Math.sin(a) * rr, 3, H - 4)};
+}
+/* the nearest thing worth walking to, inside the order's ground. Chests first — a sealed
+   vault is worth more than anything you can strip off a body — then the dead. */
+function forageFind(cdr){
+  const m = cdr.cmd;
+  let best = null, bd = 1e9;
+  for(const ch of chests){
+    if(ch.opened || (ch.floor || 0) !== 0) continue;
+    const d = dist(ch.x, ch.y, m.ax, m.ay);
+    if(d > m.r) continue;
+    const w = dist(cdr.x, cdr.y, ch.x, ch.y) * 0.6;      /* a vault is worth a detour */
+    if(w < bd){ bd = w; best = {kind: 'chest', at: ch}; }
+  }
+  for(const b of corpses){
+    if(b.looted || (b.floor || 0) !== 0) continue;
+    if(dist(b.x, b.y, m.ax, m.ay) > m.r) continue;
+    const w = dist(cdr.x, cdr.y, b.x, b.y);
+    if(w < bd){ bd = w; best = {kind: 'corpse', at: b}; }
+  }
+  return best;
+}
+let _cmdT = 0;
+function commandTick(dt){
+  if((_cmdT -= dt) > 0) return;
+  _cmdT = 0.9;
+  for(const cdr of chars){
+    if(!cdr.cmd) continue;
+    if(cdr.faction !== 'player' || cdr.state === 'dead'){ standDown(cdr, true); continue; }
+    const m = cdr.cmd;
+    const band = bandOf(cdr);
+    /* the band follows the captain and fights what comes at him — the bodyguard path, which
+       already handles closing, threat pickup and not wandering off */
+    for(const o of band){
+      if(o.state !== 'ok') continue;
+      if(o.guardTarget !== cdr){ o.guardTarget = cdr; }
+    }
+    /* a captain on the floor is not commanding anybody */
+    if(cdr.state !== 'ok'){
+      if(m.phase !== 'down'){
+        m.phase = 'down';
+        log(`${cdr.name} is down. The band is holding over ${cdr.sex === 'f' ? 'her' : 'them'}.`, 'bad');
+      }
+      continue;
+    }
+    if(m.phase === 'down'){ m.phase = 'out'; cmdSay(cdr, 'Up. Re-forming.', ''); }
+    /* --- the judgement: is this still worth doing --- */
+    const standing = bandStanding(cdr);
+    const hurtCdr = cdr.blood < cdr.maxBlood * 0.45;
+    if(m.phase !== 'home' && (standing < grit(cdr) || hurtCdr)){
+      m.phase = 'home';
+      cmdSay(cdr, standing < grit(cdr) ? 'Too many down. Breaking off.' : 'I am cut. Pulling back.', 'bad');
+    }
+    /* and the leash: nobody wanders to the far side of the world on a patrol order */
+    if(m.phase !== 'home' && dist(cdr.x, cdr.y, m.ax, m.ay) > CMD_LEASH){
+      m.phase = 'home';
+      cmdSay(cdr, 'We are too far out. Turning back.', '');
+    }
+    if(m.phase === 'home'){
+      if(dist(cdr.x, cdr.y, m.home.x, m.home.y) < 4){
+        cmdSay(cdr, m.took ? `Back, with ${m.took} taken and ${m.fights} fought.` : 'Back. Nothing out there.', 'good');
+        standDown(cdr, true);
+      } else if(!cdr.moveTarget){
+        cdr.attackMove = null;
+        cdr.moveTarget = {x: m.home.x, y: m.home.y};
+      }
+      continue;
+    }
+    if(nearestEnemy(cdr, 9)){ m.fights += (m.fightSeen ? 0 : 1); m.fightSeen = true; continue; }
+    m.fightSeen = false;
+    /* --- the order itself --- */
+    if(m.order === 'hold'){
+      if(dist(cdr.x, cdr.y, m.ax, m.ay) > 3 && !cdr.moveTarget) cdr.moveTarget = {x: m.ax, y: m.ay};
+      continue;
+    }
+    if(m.order === 'escort'){
+      const w = chars.find(o => o.id === m.wardId && o.state !== 'dead');
+      if(!w){ m.phase = 'home'; cmdSay(cdr, 'Nothing left to escort.', 'bad'); continue; }
+      m.ax = w.x; m.ay = w.y;
+      if(dist(cdr.x, cdr.y, w.x, w.y) > 4 && !cdr.moveTarget) cdr.moveTarget = {x: w.x, y: w.y};
+      continue;
+    }
+    if(m.order === 'forage'){
+      /* mid-errand: leave them to finish it */
+      if(cdr.chestTarget && !cdr.chestTarget.opened) continue;
+      if(cdr.lootTarget && !cdr.lootTarget.looted) continue;
+      if(cdr.chestTarget || cdr.lootTarget){ m.took++; cdr.chestTarget = null; cdr.lootTarget = null; }
+      const find = forageFind(cdr);
+      if(!find){
+        m.phase = 'home';
+        cmdSay(cdr, m.took ? 'Ground is picked clean. Coming in.' : 'Nothing here worth carrying.', '');
+        continue;
+      }
+      const far = dist(cdr.x, cdr.y, find.at.x, find.at.y);
+      if(far > 6){ if(!cdr.attackMove) cdr.attackMove = {x: find.at.x, y: find.at.y}; continue; }
+      cdr.attackMove = null;
+      if(find.kind === 'chest') cdr.chestTarget = find.at; else cdr.lootTarget = find.at;
+      continue;
+    }
+    /* patrol: walk the circuit, taking whatever is on it */
+    const leg = cmdLeg(cdr);
+    if(!cdr.attackMove || dist(cdr.x, cdr.y, leg.x, leg.y) < 3){
+      if(dist(cdr.x, cdr.y, leg.x, leg.y) < 3){ m.leg++; m.rounds = (m.rounds || 0) + (m.leg % 5 === 0 ? 1 : 0); }
+      const nx = cmdLeg(cdr);
+      cdr.attackMove = {x: nx.x, y: nx.y};
+    }
+  }
 }
 /* two on watch means one north and one south — not both in the same corner */
 function assignPatrolPosts(){
@@ -6304,6 +6657,26 @@ function physics(c, dt){
       if(c.arrestTarget && chars.includes(c.arrestTarget) && c.arrestTarget.state === 'ok'){
         c.target = c.arrestTarget; c.targetManual = false;
       }
+    }
+  }
+  /* someone who came for one of their own: get to the cell and break it open */
+  if(c.rescueOf){
+    const v = chars.find(o => o.id === c.rescueOf);
+    const cl = v && v.jailedAt;
+    if(!v || !cl || v.state === 'dead'){ c.rescueOf = 0; }
+    else if(dist(c.x, c.y, cl.x, cl.y) > 1.8){ travel(c, cl.x, cl.y, dt, 1.2); return; }
+    else {
+      cl.hp -= dt * 9;                     /* hands from the outside work a great deal faster */
+      if(rnd() < dt * 0.6) addSpecks(cl.x, cl.y + 0.4, '#6b6357', 1);
+      if(cl.hp <= 0){
+        cl.hp = cl.maxHp; cl.holds = 0;
+        v.jailedAt = null; v.jailT = 0; v.prisoner = false; v.captured = false;
+        returnKit(v); v.provoked = true;
+        v.x = cl.x + 1.3; v.y = cl.y + 1.1;
+        log(`${v.name} has been cut out of the cells by their own.`, 'bad');
+        for(const o of chars) if(o.rescueOf === v.id) o.rescueOf = 0;
+      }
+      return;
     }
   }
   /* ---- SEIZING ---- your own people drag a downed enemy back to a cell of your own. The
@@ -7815,6 +8188,7 @@ function findNode(c, kind){
   return null;
 }
 function hitStructure(c, st){
+  if(st.kind === 'shrine' && c.faction === 'player') crime('desecrate', st.x, st.y, c);
   const hf = swingHeft(c);   /* a cadence, so it reads the weapon as this hand feels it */
   c.atkCd = 1.4 * Math.pow(hf, 0.95) / (1 + c.stats.atk*0.01);
   const w = c.weapon ? ITEMS[c.weapon] : null;
@@ -7827,6 +8201,26 @@ function hitStructure(c, st){
   if(st.hp <= 0) destroyStructure(st);
 }
 function destroyStructure(st){
+  if(st.kind==='shrine'){
+    const sh = st.ref, t = sh.town;
+    sh.broken = true; sh.reT = RECONSECRATE_DAYS; sh.hp = 0;
+    /* the alchemist's share of it */
+    const ash = ri(2, 4);
+    addItem('s_ash', ash);
+    if(typeof research === 'object') research.rp = (research.rp || 0) + 12;
+    log(`The shrine stone at ${t ? t.name : 'the waste'} is broken open. ${ash} measures of sanctified ash, and the ground goes quiet.`, 'good');
+    if(t){
+      /* they will rebuild, and until they do the town is workable */
+      t.dread = clamp((t.dread || 0) + 14, 0, 100);
+      dropRep(t, 25);
+      worldEvent('desecrated', sh.x, sh.y,
+        `Something went through the shrine at ${t.name} in the night. The stone is open and the ground around it has stopped answering.`);
+    }
+    bumpNotice(3);
+    addSpecks(sh.x, sh.y + 0.5, '#cfc4ad', 24);
+    addFloat(sh.x, sh.y, 'UNHALLOWED', '#d9542a');
+    return;
+  }
   if(st.kind==='pwall'){
     blocked.delete(bkey(st.ref.x, st.ref.y));
     const i = pBuilds.indexOf(st.ref); if(i>=0) pBuilds.splice(i,1);
@@ -7846,6 +8240,14 @@ function destroyStructure(st){
 }
 function structAt(wx, wy){
   const tx = Math.floor(wx), ty = Math.floor(wy);
+  /* the shrine stone itself — the only building in the game you can put a hammer through,
+     because it is the only one that does something to you while it stands */
+  for(const sh of shrines){
+    if(sh.broken) continue;
+    if(tx < sh.bx || tx >= sh.bx + sh.w || ty < sh.by || ty >= sh.by + sh.h) continue;
+    return {kind:'shrine', ref:sh, town:sh.town, x:tx, y:ty,
+            get hp(){return sh.hp;}, set hp(v){sh.hp=v;}, get maxHp(){return sh.maxHp;}};
+  }
   const pw = pBuilds.find(b => b.type==='wall' && b.x===tx && b.y===ty);
   if(pw) return {kind:'pwall', ref:pw, x:tx, y:ty, get hp(){return pw.hp;}, set hp(v){pw.hp=v;}, get maxHp(){return pw.maxHp;}};
   if(bastion){
@@ -8645,6 +9047,16 @@ function saltBody(c){
   return true;
 }
 function castRaise(c, body){
+  /* Consecrated ground refuses the call outright. This is the whole reason to break a
+     shrine, and the reason a shrine is worth standing: a necromancer cannot work inside
+     somebody's walls until the stone is down. */
+  const holy = consecratedAt(body ? body.x : c.x, body ? body.y : c.y);
+  if(holy){
+    log(holy.town ? `The ground here is ${holy.town.name}'s, and it is holding. Break the shrine stone first.`
+                  : 'The ground here is hallowed. Nothing will answer.', 'bad');
+    addFloat(c.x, c.y - 1.2, 'HALLOWED', '#e8dcc4');
+    return false;
+  }
   /* the thing they hang people for, done where somebody can see it */
   crime('raising', c.x, c.y, c);
   const isUnique = !!body.bossKey && !body.beast;   /* named humanoids become lieutenants; monstrous bosses do not */
@@ -9897,6 +10309,11 @@ function update(dt){
   reapPhylacteries();
   riteTick(dt);               /* and somebody is in the middle of something */
   walkingDeadCheck(dt);       /* and whether anyone is walking the dead past a gate */
+  wantedCheck(dt);            /* and whether the watch has recognised anybody */
+  rescueTick(dt);             /* and whether anyone is coming for what you took */
+  ilsabetTick(dt);            /* and whether anyone has walked out far enough to find her */
+  motherTick(dt);             /* and whether anyone has gone far enough DOWN to find her */
+  commandTick(dt);            /* and what the bands you sent out are doing about it */
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
   if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
   gauntTick(dt / HOUR_SEC);   /* the dark is never empty for long */
@@ -9910,6 +10327,17 @@ function update(dt){
   hour += dh;
   if(hour >= 24){
     hour -= 24; day++;
+    bountyDecay();
+    /* a broken shrine is not broken forever. They come back and set the stone, unless
+       somebody is standing on the ground to stop them — so desecration buys a window, not
+       a permanent unmaking. */
+    for(const sh of shrines){
+      if(!sh.broken) continue;
+      if(chars.some(o => o.faction === 'player' && o.state === 'ok' && dist(o.x, o.y, sh.x, sh.y) < 9)) continue;
+      if(--sh.reT > 0) continue;
+      sh.broken = false; sh.hp = sh.maxHp;
+      if(sh.town) log(`${sh.town.name} has set the shrine stone again. The ground answers.`, 'bad');
+    }
     /* a day inside is a day the world moved without you */
     for(const c of chars){
       if(!c.jailedAt || c.state === 'dead') continue;
@@ -13175,7 +13603,7 @@ function factionColor(c){
 }
 function colorKeyOf(c){
   /* sex is part of the silhouette, so it belongs in the rebuild key */
-  return factionColor(c) + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + '|' + (c.rot||'');
+  return factionColor(c) + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + '|' + (c.rot||'') + '|' + (c.face||'');
 }
 const SKINS = ['#8a5c34', '#6e4426', '#a06c40', '#5a3820', '#96683a'];
 const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0'];
@@ -13184,6 +13612,25 @@ const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0']
 const EYES = ['#3a2a18', '#4a3520', '#2f4a52', '#3d5a46', '#5a4a2a', '#2a2a30'];
 const PALE = ['#e6e0d4', '#ded7c9', '#e9e3d8', '#d6cfc0'];               /* homunculus: bloodless, ashen */
 const SCALES = ['#a83a2a', '#b3702a', '#c9a23a', '#2f5aa8'];            /* scaleborn: red, copper, gold, cobalt */
+/* ---------- THE FACES OF THE NAMED ----------
+   Everything else on two legs takes its skin, eyes and hair off a hash of its id, which is
+   what makes a crowd a crowd. A named origin is the one body in the world the player looks
+   at for the whole run, and picking it out of a squad bar has to be instant. `c.face` is
+   set once at creation, rides the save, and is part of the mesh's rebuild key.
+
+   Everything in here is silhouette-and-colour, not detail: at the distance this camera
+   actually sits at, what reads is the shape of the hair, the length of the coat, and one
+   bright spot of something that is not on anybody else. */
+const FACES = {
+  /* `body` replaces the faction tint on torso, hips, yoke and upper arms. Without it the
+     player blue shows through every gap in the trim and both of them came out pastel. */
+  /* White hair on a pale face is one silhouette, not two, unless the values are pulled
+     apart: the skin goes warmer and a shade down, the hair goes cold and near-white, and a
+     dark line is laid along the hairline so the head has an edge in it. */
+  lyonart: {skin:'#c8b79c', eye:'#0b0810', hair:'#fbf9f5', glow:false, body:'#151312'},
+  saga:    {skin:'#c6a179', eye:'#e8951e', hair:'#d4b747', glow:true,  body:'#3c4634'},
+};
+function faceOf(c){ return (c && c.face && FACES[c.face]) || null; }
 /* ---------- WEAPONS ----------
    Every weapon in the game used to be the same object: one 0.06 x 0.95 x 0.06 box in
    bone white, hung off the right elbow. A plank, a masterwork katana, a hunting bow and
@@ -13385,8 +13832,15 @@ function rebuildArmorLayer(e, c){
      Towns stock tiered leather from day one, so buying a jacket undressed you. */
   const worn = (ITEMS[c.armor] && ITEMS[c.armor].tierOf) || c.armor;
   const grade = ARMOR_TIER_TINT[(ITEMS[c.armor] && ITEMS[c.armor].tier) || 'n'] || 1;
+  /* A named origin's kit is still their kit. Rather than hide the armour under the coat (a
+     player should not lose their plate for being somebody), the suit is pulled toward the
+     character's own palette — the value structure that makes plate read as plate and leather
+     as leather survives, the colour does not. Without this, Lyonart wore a tan jacket over a
+     black coat and Saga's grey shell covered the sunflower. */
+  const FT = faceOf(c);
   const put = (w, h, d, col, x, y, z, parent) => {
     const m2 = new THREE.Mesh(BOXG, new THREE.MeshLambertMaterial({color: col}));
+    if(FT) m2.material.color.lerp(new THREE.Color(FT.body), 0.75);
     m2.material.color.multiplyScalar(grade);
     m2.scale.set(w, h, d); m2.position.set(x, y, z); m2.castShadow = true;
     parent.add(m2);
@@ -13439,13 +13893,18 @@ function buildCharMesh(c){
   const h1 = hash2(c.id*13, c.id*7), h2 = hash2(c.id*31, c.id*3), h3 = hash2(c.id*5, c.id*17);
   const bodyBase = new THREE.Color(factionColor(c));
   bodyBase.multiplyScalar(0.9 + h2*0.2);
-  const bodyCol = '#' + bodyBase.getHexString();
+  /* A named origin wears its own colour rather than its faction's. `faceOf` is safe here —
+     FACES is a plain table declared above, and this runs per mesh build, not at load. */
+  const _face0 = faceOf(c);
+  const bodyCol = _face0 ? _face0.body : '#' + bodyBase.getHexString();
   /* ---- WHAT IT WAS RAISED FROM, VISIBLE ACROSS A FIELD ----
      An army of forty needs to be readable at a glance: which of these came up out of fresh
      kills and which are bone I scraped off a month-old battlefield. Rot drives the colour,
      so a host raised in a hurry off old ground looks like one. */
   const ROT_SKIN = {fresh:'#b8a894', cooling:'#a09580', spoiled:'#7d8268', bones:'#e6dfc8'};
-  const skinCol = (c.undead && !c.lich && c.rot && ROT_SKIN[c.rot]) ? ROT_SKIN[c.rot]
+  const FACE = _face0;
+  const skinCol = FACE ? FACE.skin
+    : (c.undead && !c.lich && c.rot && ROT_SKIN[c.rot]) ? ROT_SKIN[c.rot]
     : c.undead ? '#e0dcc8'
     : c.immortal==='divine' ? '#f2ead8'
     : c.construct ? '#8a9098'
@@ -13846,12 +14305,18 @@ function buildCharMesh(c){
       }
       if(!hollowEyed){
         /* the risen keep their sockets and lose what was in them */
-        const eyeCol = c.race==='hollow' ? '#f2d016'
+        const eyeCol = FACE ? FACE.eye
+                     : c.race==='hollow' ? '#f2d016'
                      : c.race==='homunculus' ? '#f0ece4'
                      : c.immortal === 'divine' ? '#f6efd6'
                      : c.race==='scaleborn' ? '#d8a832'
                      : lighten(EYES[Math.floor(h2*EYES.length)], 0.5);
-        const glow = c.race==='hollow' || c.race==='homunculus' || c.immortal === 'divine';
+        const glow = FACE ? FACE.glow : (c.race==='hollow' || c.race==='homunculus' || c.immortal === 'divine');
+        /* A black eye on a pale face is the one case the shadow band works against: the
+           socket and the iris are the same darkness and the whole eye line closes up. Lift
+           the band instead, so the eyes read as two holes punched in something white. */
+        if(FACE && !FACE.glow)
+          e.boxBody.push(obox(0.235, 0.055, 0.021, lighten(FACE.skin, 0.35), 0, 0.265, 0.153, e.headG));
         for(const ex of [-0.066, 0.066]){
           const m = glow
             ? mk(BOXG, ownGlow(eyeCol), 0.052, 0.042, 0.02, ex, 0.266, 0.158, e.headG)
@@ -13867,6 +14332,89 @@ function buildCharMesh(c){
     }
     if(c.race==='homunculus' && !c.undead)
       obox(0.32, 0.1, 0.32, '#efeae0', 0, 0.42, -0.02, e.headG);
+    else if(FACE){
+      /* ---------- NAMED HAIR ----------
+         The first version of this was one wide slab sitting on top of the skull, and it read
+         as a hat, because that is exactly what it was: a flat lid with a hard level edge
+         running all the way round at the same height. Three things separate hair from a cap
+         at this size, and the geometry has to do all three —
+
+           1. it comes DOWN OVER the skull rather than resting on it, so the sides drop past
+              the temples and the bottom edge is below the eye line at the sides and above it
+              at the front. A cap's edge is one height; hair's never is.
+           2. the crown has volume and is not level — it is several masses at slightly
+              different heights, none of them agreeing with the one beside it.
+           3. the outline is broken by clumps that end at different lengths, so there is no
+              continuous silhouette line anywhere on it.
+
+         Deterministic, not rolled: named hair is authored, and `h1..h3` come off the id, so
+         a probe that spawns a fresh body would render a different head every run. */
+      const hc = FACE.hair;
+      const dkh = '#' + new THREE.Color(hc).multiplyScalar(0.72).getHexString();   /* the underside */
+      /* the shell: hair follows the skull down the sides and the back, in four masses at
+         four heights, and it is proud of the head everywhere so no skin shows through */
+      const shell = (yTop, drop) => {
+        obox(0.335, 0.115, 0.335, hc, 0, yTop, -0.015, e.headG);              /* the crown */
+        obox(0.325, 0.085, 0.305, hc, 0.012, yTop - 0.085, -0.030, e.headG);  /* under it, offset */
+        for(const sx of [-1, 1])                                               /* down the temples */
+          obox(0.042, drop, 0.285, hc, sx * 0.162, yTop - 0.075 - drop * 0.42, -0.020, e.headG);
+        obox(0.31, drop * 0.9, 0.06, hc, 0, yTop - 0.075 - drop * 0.40, -0.163, e.headG);  /* the back */
+      };
+      /* a clump: a box hung off the crown at an angle, so the outline is never a straight
+         line twice in a row */
+      const clump = (ax, ay, az, w, len, d, rz, rx, col) => {
+        const m2 = obox(w, len, d, col || hc, ax, ay, az, e.headG);
+        m2.rotation.z = rz; m2.rotation.x = rx;
+        return m2;
+      };
+      if(c.face === 'lyonart'){
+        /* LONG AND WHITE, and kept — he has not cut it since he got here but he has not let
+           it become a nest either. The read at range is a white fall on a black coat. */
+        shell(0.428, 0.30);
+        /* a centre part: two masses meeting at the brow instead of one flat front edge */
+        for(const sx of [-1, 1]){
+          const fr = clump(sx * 0.088, 0.392, 0.128, 0.155, 0.20, 0.115, sx * 0.16, 0.24);
+          fr.rotation.z += sx * 0.06;
+        }
+        /* the fall down the back, in three tapering lengths so it does not end square */
+        obox(0.30, 0.34, 0.085, hc, 0, 0.235, -0.178, e.headG);
+        obox(0.235, 0.24, 0.075, hc, -0.018, 0.020, -0.186, e.headG);
+        obox(0.135, 0.20, 0.065, dkh, 0.045, -0.075, -0.190, e.headG);
+        /* The locks that frame the jaw. These were 0.20 deep and stacked on top of the
+           temple drop, which turned the whole head into one wide slab — they want to be thin
+           plates hanging in FRONT of the ear, not a second skull. Each is two lengths so it
+           tapers to a point instead of ending square. */
+        clump(-0.166, 0.175, 0.048, 0.048, 0.38, 0.115, 0.050, 0);
+        clump(-0.150, -0.045, 0.062, 0.036, 0.17, 0.090, 0.115, 0, dkh);
+        clump( 0.166, 0.205, 0.048, 0.045, 0.31, 0.110, -0.070, 0);
+        clump( 0.148, 0.010, 0.058, 0.032, 0.15, 0.085, -0.130, 0, dkh);
+        /* the hairline, and a dark line down each lock. White hair on a pale face is a single
+           featureless block without them — the two values are far too close for colour alone. */
+        e.boxBody.push(obox(0.30, 0.026, 0.025, '#3d342c', 0, 0.322, 0.150, e.headG));
+        for(const sx of [-0.143, 0.143])
+          e.boxBody.push(obox(0.020, 0.26, 0.024, '#3d342c', sx, 0.230, 0.150, e.headG));
+      } else {
+        /* MESSY BLONDE. Mess is asymmetry, not texture: nine clumps at nine angles, a crown
+           that is higher on one side than the other, and a fringe cut into three lengths so
+           the front edge is jagged rather than level. */
+        shell(0.420, 0.19);
+        obox(0.22, 0.10, 0.24, hc, -0.055, 0.480, -0.040, e.headG);   /* the crown, off to one side */
+        /* the fringe: three separate lengths over the brow, none of them ending together */
+        clump(-0.098, 0.372, 0.132, 0.135, 0.155, 0.105, 0.13, 0.30);
+        clump( 0.020, 0.386, 0.136, 0.120, 0.120, 0.105, -0.09, 0.24);
+        clump( 0.120, 0.366, 0.128, 0.115, 0.175, 0.100, 0.22, 0.34);
+        /* and what is standing up: every one at a different angle and a different length */
+        clump(-0.085, 0.520, 0.010, 0.115, 0.145, 0.140, 0.62, -0.30);
+        clump( 0.090, 0.512, -0.055, 0.100, 0.125, 0.150, -0.72, 0.18);
+        clump( 0.005, 0.535, 0.055, 0.085, 0.130, 0.100, 0.20, -0.55);
+        clump(-0.140, 0.470, -0.090, 0.090, 0.135, 0.110, 0.95, 0.35);
+        clump( 0.145, 0.455, 0.060, 0.080, 0.120, 0.095, -1.05, -0.22);
+        /* over the ears and down the neck, uneven on purpose */
+        clump(-0.165, 0.235, -0.045, 0.070, 0.185, 0.175, 0.20, 0, dkh);
+        clump( 0.163, 0.265, -0.060, 0.065, 0.140, 0.170, -0.14, 0, dkh);
+        obox(0.26, 0.145, 0.075, dkh, 0.015, 0.215, -0.175, e.headG);   /* the nape */
+      }
+    }
     else if(!c.undead && c.race!=='scaleborn' && (fem ? h2 > 0.04 : h2 > 0.18)){
       const hc = HAIRS[Math.floor(h3*HAIRS.length)];
       obox(0.33, 0.11, 0.33, hc, 0, 0.42, -0.02, e.headG);
@@ -14026,6 +14574,115 @@ function buildCharMesh(c){
           e.boxBody.push(obox(0.58 - i*0.06, 0.26, 0.04, i % 2 ? red : shade(red, 0.86), 0, -0.13, 0, seg));
           e.cape.push(seg); par = seg;
         }
+      }
+    }
+    /* ---------- WHAT THE NAMED ARE WEARING ----------
+       Same rule as the two above: readable at thirty tiles, which means one long garment
+       that moves and one thing on it that is not on anybody else. Both of these hang off
+       `e.cape`, which the animator already drags a beat behind the body. */
+    if(FACE){
+      const shade2 = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
+      e.cape = e.cape || [];
+      /* ---------- A COAT SKIRT IS NOT A CLOAK ----------
+         The first version of both of these was copied off the Baroness, and it inherited her
+         cloak's anchor: hung from the SHOULDERS, at z -0.15, entirely behind the body. On her
+         that is right. On a coat it produced a stiff plank sticking out of the back — a tail.
+
+         A coat skirt hangs from the WAIST and wraps: it goes round the sides and closes most
+         of the way across the front, leaving a vent at the centre so the legs still read and
+         still show through when they swing. So each segment is four plates in a U rather than
+         one plate behind, anchored at spine-local -0.02 (the waist; the spine sits at 0.92 in
+         body space and the knee is at -0.46) and deep enough front-to-back to have somebody
+         inside it. Only the segments go on `e.cape`, so it still swings — gently, because the
+         animator compounds rotation down the chain and four links of that is what made the
+         plank stand out horizontally in the first place. */
+      const coatSkirt = (col, hemCol, n, per) => {
+        e.capeLift = 0.18;          /* it swings; it does not stream */
+        let par = e.spine;
+        for(let i = 0; i < n; i++){
+          const seg = new THREE.Group();
+          seg.position.set(0, i === 0 ? -0.02 : -0.215, 0);
+          par.add(seg);
+          const w = 0.46 - i*0.035, c2 = shade2(col, 1 + i*0.09), h = 0.225;
+          e.boxBody.push(obox(w, h, 0.055, c2, 0, -0.11, -0.135, seg));              /* the back */
+          for(const sx of [-1, 1]){
+            e.boxBody.push(obox(0.06, h, 0.29, c2, sx*(w/2 - 0.03), -0.11, 0, seg)); /* the sides */
+            e.boxBody.push(obox(w*0.36, h, 0.05, c2, sx*(w*0.28), -0.11, 0.135, seg)); /* front, vented at the centre */
+          }
+          if(hemCol) e.boxBody.push(obox(w, 0.028, 0.062, shade2(hemCol, 0.75 + i*0.12), 0, -0.226, -0.135, seg));
+          if(per) per(seg, i, w, c2);
+          e.cape.push(seg); par = seg;
+        }
+      };
+      if(c.face === 'lyonart'){
+        /* FINE BLACK AND GOLD, AGED AND DUSTED. The dust is the whole point of him — the
+           clothes are still good and he has been walking in them for eleven years, so the
+           grey sits on the up-facing surfaces (shoulders, the top of every hem) and the
+           gold is only on the edges, where a tailor would have put it. */
+        const black = '#0a0908', gold = '#c49a2f', dust = '#8c8375';
+        e.boxBody.push(obox(0.53, 0.20, 0.30, black, 0, 0.50, 0, e.spine));       /* the coat over the yoke */
+        e.boxBody.push(obox(0.54, 0.045, 0.31, dust, 0, 0.615, 0, e.spine));      /* eleven years of it, settled on top */
+        e.boxBody.push(obox(0.26, 0.22, 0.10, black, 0, 0.56, 0.13, e.spine));    /* a standing collar */
+        e.boxBody.push(obox(0.28, 0.035, 0.035, gold, 0, 0.665, 0.150, e.spine)); /* its gold edge */
+        e.boxBody.push(obox(0.055, 0.52, 0.03, gold, 0, 0.24, 0.182, e.spine));   /* the placket, down the front */
+        for(let i = 0; i < 4; i++)                                                 /* frogging */
+          e.boxBody.push(obox(0.17, 0.028, 0.03, gold, 0, 0.44 - i*0.145, 0.184, e.spine));
+        e.boxBody.push(obox(0.44, 0.055, 0.29, gold, 0, 0.075, 0, e.spine));      /* a sash at the waist */
+        /* the coat's skirt: long, and dustier the further down it goes */
+        /* three segments to just below the knee, with the dust of eleven years lying along
+           every hem and a thread of gold down the two front vents */
+        coatSkirt(black, dust, 3, (seg, i, w) => {
+          /* gold only where the skirt meets the waist. Running it the whole length turned the
+             front into two continuous rails and, with the frogging above, read as a ladder. */
+          if(i === 0) for(const sx of [-1, 1])
+            e.boxBody.push(obox(0.022, 0.135, 0.055, shade2(gold, 0.85), sx*(w*0.115), -0.075, 0.152, seg));
+          e.boxBody.push(obox(w*0.36, 0.026, 0.058, shade2(dust, 0.8 + i*0.10), -w*0.28, -0.226, 0.135, seg));
+          e.boxBody.push(obox(w*0.36, 0.026, 0.058, shade2(dust, 0.8 + i*0.10),  w*0.28, -0.226, 0.135, seg));
+        });
+      } else {
+        /* RAGGED MILITARY GREEN, AND ONE SUNFLOWER. The coat is army issue nine generations
+           out of date and the hem has gone to strips; the flower is the only thing on him
+           that anybody chose. It is wilting, so it hangs off its stem rather than facing
+           out, and it is the single brightest thing in his silhouette. */
+        const green = '#414c39', worn = '#59634b', strap = '#2e281f';
+        const petal = '#d8ae2c', wilt = '#9a7c22', heart = '#3b2a14', stem = '#4d5c2e';
+        e.boxBody.push(obox(0.55, 0.22, 0.31, green, 0, 0.49, 0, e.spine));       /* the coat over the yoke */
+        e.boxBody.push(obox(0.56, 0.05, 0.32, worn, 0, 0.625, 0, e.spine));       /* sun-bleached shoulders */
+        e.boxBody.push(obox(0.24, 0.16, 0.12, worn, 0, 0.60, 0.12, e.spine));     /* a turned-down collar */
+        e.boxBody.push(obox(0.05, 0.46, 0.03, shade2(green, 0.7), 0, 0.28, 0.185, e.spine));  /* the front seam */
+        e.boxBody.push(obox(0.40, 0.055, 0.12, strap, 0, 0.185, 0.16, e.spine));  /* a belt across the chest */
+        /* THE POCKET, and the flower wilting out of it */
+        e.boxBody.push(obox(0.16, 0.14, 0.03, shade2(green, 0.82), -0.145, 0.30, 0.186, e.spine));
+        const sun = new THREE.Group();
+        sun.position.set(-0.155, 0.395, 0.215); sun.rotation.z = 0.62; sun.rotation.x = 0.30;
+        e.spine.add(sun);
+        e.boxBody.push(obox(0.024, 0.17, 0.024, stem, 0, -0.07, 0, sun));
+        for(let i = 0; i < 8; i++){
+          const a2 = (i / 8) * Math.PI * 2;
+          /* the lower petals have given up; the upper ones have not, quite */
+          const dead = Math.sin(a2) < -0.2;
+          const pt = obox(0.042, 0.105, 0.020, dead ? wilt : petal,
+                          Math.cos(a2) * 0.072, 0.070 + Math.sin(a2) * 0.072, 0.004, sun);
+          pt.rotation.z = -a2 + Math.PI / 2;
+          if(dead) pt.rotation.x = 0.6;
+          e.boxBody.push(pt);
+        }
+        e.boxBody.push(obox(0.070, 0.070, 0.030, heart, 0, 0.070, 0.014, sun));
+        /* the hem, gone to strips: four segments, and the strips get thinner and more
+           ragged the further down they hang */
+        /* the same coat, gone to strips at the bottom: the last segment ends in torn tags
+           rather than a hem, at four lengths and four angles, front and back */
+        coatSkirt(green, null, 3, (seg, i, w, c2) => {
+          if(i < 2) return;
+          for(const [rx, rz, len] of [[-0.155, 0.30, 0.15], [-0.055, -0.16, 0.10],
+                                      [0.060, 0.22, 0.17], [0.150, -0.34, 0.12]]){
+            for(const rzz of [-0.135, 0.135]){
+              const rag = obox(0.062, len, 0.05, shade2(worn, 0.86), rx, -0.225 - len/2, rzz, seg);
+              rag.rotation.z = rz;
+              e.boxBody.push(rag);
+            }
+          }
+        });
       }
     }
     /* arms: shoulder pivot -> upper arm -> elbow pivot -> forearm (+ fist) */
@@ -14515,9 +15172,15 @@ function syncChars(dt){
       /* a cloak drags a beat behind the body — the same trick as the tail, and the reason
          either boss reads as moving rather than sliding */
       if(e.cape){
+        /* A cloak wants to stream out behind; a coat skirt wants to swing about the legs.
+           `capeLift` is how far the chain kicks backward — the Baroness and Ash keep the
+           streaming version, a coat gets almost none of it, because the animator COMPOUNDS
+           rotation link by link and four links of 0.20 is what stood the skirt out
+           horizontally and made it read as a tail. */
+        const lift = e.capeLift === undefined ? 1 : e.capeLift;
         for(let i = 0; i < e.cape.length; i++){
           const sway = Math.sin(e.phase * 0.6 - i * 0.5) * (moving ? 0.13 : 0.035);
-          P(e.cape[i], 'x', (moving ? 0.20 : 0.06) + sway * 0.5 + i * 0.04, 7);
+          P(e.cape[i], 'x', ((moving ? 0.20 : 0.06) + i * 0.04) * lift + sway * 0.5, 7);
           P(e.cape[i], 'z', sway, 7);
         }
       }
@@ -15579,6 +16242,50 @@ function refreshCharPanel(){
   };
   jr.appendChild(jb);
   jr.appendChild(mkJobButton(2));   /* the fallback trade sits beside the first */
+  /* ---------- COMMAND ----------
+     A job is what one hand does. An order is what a band does, and the band is whoever is
+     selected with the captain — so the button only appears with two or more picked, and the
+     one whose panel this is takes the band. On somebody already out, it is the recall. */
+  {
+    const cb = document.createElement('button');
+    const picked = () => selected.filter(u => u.faction === 'player' && u.state !== 'dead');
+    const out = !!c.cmd;
+    cb.textContent = out ? `ORDER: ${CMD[c.cmd.order].label}` : 'COMMAND…';
+    cb.style.cssText = 'padding:2px 6px;font-size:10px;' +
+      (out ? 'border-color:var(--gold);color:var(--gold)' : '');
+    cb.disabled = !out && (picked().length < 2 || !!c.under);
+    cb.title = c.under ? 'Already under somebody else\'s command.'
+      : picked().length < 2 ? 'Select the captain and the band together.' : '';
+    cb.onclick = () => {
+      const r3 = cb.getBoundingClientRect();
+      if(out){
+        showCtxMenu(r3.left, r3.bottom + 4, [
+          {label: `${c.cmd.phase === 'home' ? 'COMING IN' : 'IN THE FIELD'} — ${bandOf(c).length} with ${c.sex === 'f' ? 'her' : 'him'}`, fn: () => {}},
+          {label: 'RECALL — come home now', fn: () => {
+            c.cmd.phase = 'home'; cmdSay(c, 'Recalled. On our way in.', ''); refreshCharPanel(); }},
+          {label: 'STAND DOWN — here, now', fn: () => { standDown(c); refreshCharPanel(); }},
+        ]);
+        return;
+      }
+      const band = picked();
+      showCtxMenu(r3.left, r3.bottom + 4, Object.entries(CMD).map(([k, o]) => ({
+        label: o.label + ' — ' + o.blurb,
+        fn: () => {
+          /* the order is anchored where they are standing when it is given, which is what
+             makes "patrol this" mean the ground under your feet rather than a global radius */
+          const at = {x: c.x, y: c.y};
+          if(k === 'escort'){
+            const ward = band.find(u => u !== c && u.mule) || band.find(u => u !== c) || null;
+            if(!ward){ log('Nobody to escort.', 'bad'); return; }
+            at.ward = ward;
+          }
+          giveCommand(c, band, k, at, k === 'hold' ? 10 : 26);
+          refreshCharPanel(); refreshSquadBar();
+        },
+      })));
+    };
+    jr.appendChild(cb);
+  }
 }
 $('btn-salt').onclick = () => {
   const c = selected[0]; if(!c) return;
@@ -16716,6 +17423,7 @@ addEventListener('keydown', e => {
   if(e.key==='c' || e.key==='C'){ const c = selected[0]; if(c && c.gift){ const sp = spellsFor(c)[0]; if(sp) beginCast(c, sp[0]); } }
   if(e.key==='v' || e.key==='V'){ const c = selected[0]; if(c && c.gift){ const sp = spellsFor(c)[1]; if(sp) beginCast(c, sp[0]); } }
   if(e.key==='x' || e.key==='X'){ toggleConcentrationOff(); }
+  if(e.key==='q' || e.key==='Q'){ listenForMother(); }
   if(e.key==='Escape'){
     /* Esc backs out of anything modal, including the build menu (which used to need B again) */
     if(buildMode){ buildMode = null; refreshBuildBar && refreshBuildBar(); }
@@ -17658,6 +18366,23 @@ function openAudience(px, py, lc){
   if(t.rep < -30){ talkTo(lc); return; }   /* they won't hear you */
   const items = [{label:'TALK', fn:()=>talkTo(lc)},
                  {label:'TRIBUTE (300)', fn:()=>payTribute(t, L)}];
+  if(search.on && !search.found && !search.asked[t.def.key])
+    items.push({label:'ASK AFTER ILSABET', fn:()=>askAfterIlsabet(t, L)});
+  /* SETTLE THE BOOKS. A bounty you can never pay is a wall; one you can always pay is a
+     toll. So the price is the bounty and a half, and it is only on offer to somebody who
+     walked in and asked — which means walking into the town that wants you. */
+  if(t.bounty > 0){
+    const price = Math.round(t.bounty * 1.5);
+    items.push({label:`SETTLE THE BOUNTY (${price})`, fn:()=>{
+      if(cats < price){ refuse ? refuse('Not enough coin.') : log('Not enough coin.', 'bad'); return; }
+      cats -= price;
+      t.bounty = 0; t.wanted = false;
+      for(const g of chars) if(g.arrestTarget && g.homeTown === t) g.arrestTarget = null;
+      dropRep(t, -10);
+      log(`${L ? L.name : t.name} takes the coin and the ledger closes. ${t.name} has no further business with you.`, 'good');
+      refreshTop(); refreshInv();
+    }});
+  }
   if(t.warWith) items.push({label:`BROKER PEACE W/ ${t.warWith.name} (800)`, fn:()=>brokerPeace(t, L)});
   else {
     const rivals = towns.filter(o => o !== t && !o.warWith);
@@ -17670,6 +18395,29 @@ function openAudience(px, py, lc){
 }
 function talkTo(t){
   let line;
+  /* SHE HAS BEEN WATCHING THE NEWS COME IN. What she says is not about the crown, it is
+     about what her brother did with the time. There is nothing to accept here and no marker
+     to tick: the origin's payoff is finding out that the person you crossed a dead world for
+     has spent it doing the opposite of what you came to do. */
+  if(t.bossKey === 'ilsabet'){
+    /* There is no global deed ledger — deed() writes straight into each companion's regard
+       and keeps no tally. So read the world instead, which is more honest anyway: she is
+       judging what she can see and what the roads are saying, not consulting a scoreboard. */
+    const lich = player().some(c => c.lich);
+    const raised = player().filter(c => c.undead).length;
+    const worstRep = towns.reduce((m2, t2) => Math.min(m2, t2.rep ?? 0), 0);
+    const wanted = towns.some(t2 => (t2.bounty || 0) > 300);
+    const loud = noticeTier;
+    if(lich) line = "You did it, then. I felt it from here. Eleven years closing what our father opened, and you spent them becoming the thing he was afraid of.";
+    else if(wanted || worstRep <= -50) line = "I hear what follows you. I have been out here sealing tears with my hands, and there are towns that will not say your name indoors. Tell me you brought something other than the crown.";
+    else if(loud >= 2) line = "Something is paying attention to you. I can feel it standing behind you from here. Whatever you have been working, it has been heard.";
+    else if(raised > 6) line = "Six of the household came through with you. There are more now. You always did think the answer was more hands.";
+    else line = "Eleven years. I assumed they had killed you at home. Do not tell me why you came — I can see the crown from here.";
+    say(t, line);
+    t.questDone = true;
+    if(!t._greeted){ t._greeted = true; deed('found_sister', 1); log('You have found her.', 'good'); }
+    return;
+  }
   if(t.isLeader >= 0){
     const town = towns[t.isLeader];
     const L = town && town.leader;
@@ -17803,7 +18551,9 @@ function snapshot(){
     beast:!!c.beast, loot:c.loot||0, deadAt:c.deadAt||0, looted:!!c.looted, robbed:!!c.robbed, swag: c.swag ? {gold: c.swag.gold, items: {...c.swag.items}} : null,
     mobileVendor:!!c.mobileVendor, caravanDestI: c.caravan ? towns.indexOf(c.caravan.dest) : -1,
     followId: c.follow ? c.follow.id : null,
-    job:c.job, job2:c.job2||null, grp:c.grp||null, heldAt:c.heldAt||null, heldT:c.heldT||0, midden:c.midden||null, caveId:c.caveId||null, roomId:(c.roomId??null), caveDweller:!!c.caveDweller, floor: c.floor||0, captured:!!c.captured, dragId: c.drag ? c.drag.id : null,
+    job:c.job, job2:c.job2||null, grp:c.grp||null,
+    cmd: c.cmd ? {...c.cmd, home:{...c.cmd.home}} : null, under: c.under ?? null,
+    wasJob: c.wasJob ? [...c.wasJob] : null, heldAt:c.heldAt||null, heldT:c.heldT||0, midden:c.midden||null, caveId:c.caveId||null, roomId:(c.roomId??null), caveDweller:!!c.caveDweller, floor: c.floor||0, captured:!!c.captured, dragId: c.drag ? c.drag.id : null,
     clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
     servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null,
@@ -17815,7 +18565,7 @@ function snapshot(){
     immortal:c.immortal||null, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
     carryId: c.carry ? c.carry.id : null,
     carryIds: c.carryList ? c.carryList.map(b => b.id) : null,
-    lich: !!c.lich, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
+    lich: !!c.lich, face: c.face||null, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
     guardTargetId: c.guardTarget ? c.guardTarget.id : null,
     npcNecro: !!c.npcNecro, lieutenant: !!c.lieutenant, civ: !!c.civ, merc: !!c.merc,
     inv: {...c.inv}, pack: c.pack, mule: !!c.mule, fleeOnHit: !!c.fleeOnHit,
@@ -17844,6 +18594,7 @@ function snapshot(){
       feastCd: t.feastCd||0, rebelDay: t.rebelDay||0, promise: t.promise ? {...t.promise} : null,
       project: t.project ? {...t.project} : null, projectsDone: {...(t.projectsDone||{})}, lastTribute: t.lastTribute||0,
       dread: t.dread||0, dreadWoke: !!t.dreadWoke, shown: {...(t.shown||{})}, witnessCd: t.witnessCd||0,
+      bounty: t.bounty||0, wanted: !!t.wanted,   /* what they still want you for */
       compactWilling: !!t.compactWilling,
       caravanOut: t.caravanOut ? {...t.caravanOut, dest: {...t.caravanOut.dest}} : null})),
     explored: packExplored(),
@@ -17862,6 +18613,11 @@ function snapshot(){
     chars: chars.filter(c => !c.phantom).map(sChar),
     corpseIds: corpses.map(c=>c.id),
     cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
+    search: {on: search.on, asked: {...search.asked}, found: search.found,
+             siteId: search.siteId, leads: search.leads, met: search.met},
+    mother: {on: mother.on, caveId: mother.caveId, found: mother.found,
+             spoken: mother.spoken, reads: mother.reads, toldPrice: mother.toldPrice},
+    shrines: shrines.map(sh => ({broken: !!sh.broken, hp: Math.round(sh.hp), reT: sh.reT || 0})),
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       store: b.store ? {...b.store} : undefined,
       stored: b.stored ? b.stored.map(sChar) : undefined})),
@@ -17882,6 +18638,23 @@ function restore(d){
      in the world would wake up in somebody else's cell. */
   for(let i = cells.length - 1; i >= 0; i--) if(cells[i].kind === 'player') cells.splice(i, 1);
   for(const cl of cells){ cl.holds = 0; cl.hp = CELL_HP; }
+  if(d.search){
+    search.on = !!d.search.on; search.asked = {...(d.search.asked || {})};
+    search.found = !!d.search.found; search.siteId = d.search.siteId ?? -1;
+    search.leads = d.search.leads || 0; search.met = !!d.search.met;
+  }
+  if(d.mother){
+    mother.on = !!d.mother.on; mother.caveId = d.mother.caveId ?? -1;
+    mother.found = !!d.mother.found; mother.spoken = !!d.mother.spoken;
+    mother.reads = d.mother.reads || 0; mother.toldPrice = !!d.mother.toldPrice;
+  }
+  /* a shrine you broke stays broken, and the clock on it keeps running */
+  if(d.shrines) for(let i = 0; i < shrines.length && i < d.shrines.length; i++){
+    const sv = d.shrines[i];
+    shrines[i].broken = !!sv.broken;
+    shrines[i].hp = typeof sv.hp === 'number' ? sv.hp : shrines[i].maxHp;
+    shrines[i].reT = sv.reT || 0;
+  }
   window._cellHp = d.cellHp || null;   /* applied once the player cells are back below */
   for(const b of d.pBuilds){
     const pb = placeStructure(b.type, b.x, b.y);
@@ -18008,6 +18781,14 @@ function restore(d){
     c.mobileVendor = !!s.mobileVendor;
     if(s.caravanDestI >= 0) c.caravan = {dest: towns[s.caravanDestI], waitT: 0};
     c.job = s.job || null; c.job2 = s.job2 || null; c.grp = s.grp || null;
+    /* An order and the band it was given to are two halves of one thing: the captain carries
+       the order, every soldier carries the captain's id. Ids are preserved across a load, so
+       the band re-forms on its own — but `guardTarget` is an object reference and does NOT
+       survive, which is why commandTick re-points it every tick rather than only on the
+       order. Without that a loaded band stands in the field and never follows anybody. */
+    c.cmd = s.cmd ? {...s.cmd, home: s.cmd.home ? {...s.cmd.home} : {x: c.x, y: c.y}} : null;
+    c.under = s.under ?? null;
+    c.wasJob = s.wasJob ? [...s.wasJob] : null;   /* the trade they go back to when it is over */
     c.heldAt = s.heldAt || null; c.heldT = s.heldT || 0; c.midden = s.midden || null;
     if(c.heldAt){ const mm = middens.find(x => x.id === c.heldAt); if(mm && !mm.held.includes(c)) mm.held.push(c); }
     c.caveId = s.caveId || null; c.caveDweller = !!s.caveDweller;
@@ -18042,7 +18823,7 @@ function restore(d){
       const rd = redoubts.find(x => x.id === c.redoubtDeep);
       if(rd && rd.rooms) c.homeRoom = rd.rooms.find(rm => rm.id === c.roomId) || null;
     }
-    c.lich = !!s.lich; c.hollowTier = s.hollowTier||0; c.nascent = !!s.nascent; c.xpDebt = s.xpDebt||null; c.settler = !!s.settler; c.chain = s.chain||null; c.coil = !!s.coil; c.pCaravan = s.pCaravan||0;
+    c.lich = !!s.lich; c.face = s.face||null; c.hollowTier = s.hollowTier||0; c.nascent = !!s.nascent; c.xpDebt = s.xpDebt||null; c.settler = !!s.settler; c.chain = s.chain||null; c.coil = !!s.coil; c.pCaravan = s.pCaravan||0;
     c.att = s.att || {divine:0, destruction:0, dark:0, dust:0, ...((s.gift && s.race!=='chimera') ? {[s.gift]: 2} : {})};
     c.attXp = s.attXp || {divine:0, destruction:0, dark:0, dust:0};
     c.npcNecro = !!s.npcNecro; c.lieutenant = !!s.lieutenant; c.civ = !!s.civ; c.merc = !!s.merc;
@@ -18101,6 +18882,7 @@ function restore(d){
     t.playerRuled = !!ts.playerRuled; t.settlerT = ts.settlerT || 0;
     t.order = ts.order ?? 55; t.pacts = {...(ts.pacts||{})}; t.petitions = (ts.petitions||[]).map(p=>({...p}));
     t.dread = ts.dread || 0; t.dreadWoke = !!ts.dreadWoke;
+    t.bounty = ts.bounty || 0; t.wanted = !!ts.wanted;
     t.shown = {...(ts.shown||{})}; t.witnessCd = ts.witnessCd || 0;
     t.compactWilling = !!ts.compactWilling;
     t.feastCd = ts.feastCd || 0; t.rebelDay = ts.rebelDay || 0; t.promise = ts.promise ? {...ts.promise} : null;
@@ -18187,6 +18969,212 @@ $('loadfile').addEventListener('change', e => {
 })();
 
 /* ============================================================ CHARACTER CREATION */
+/* ---------- THE SEARCH FOR ILSABET ----------
+   She was sent through first, and for the opposite reason: he was exiled for what he was
+   willing to do, she for what she tried to stop. The search is deliberately not a marker on
+   a map. It is three places that might know something, in a world where information already
+   moves by rumour and by asking people — so the quest is made of the systems that exist
+   rather than bolted on beside them.
+
+   Where she actually is, is decided at worldgen and not revealed. She is alive. What she has
+   become in the meantime is the part he is not ready for. */
+const search = {on: false, asked: {}, found: false, siteId: 0, leads: 0, met: false};
+function startTheSearch(me){
+  search.on = true; search.asked = {}; search.found = false; search.leads = 0; search.met = false;
+  /* she is somewhere out past the last of the towns — the corpse sites are the places the
+     exiled ended up, which is exactly where somebody sent here to die would have gone */
+  const sites = (typeof corpseSites !== 'undefined' && corpseSites.length) ? corpseSites : null;
+  search.siteId = sites ? ri(0, sites.length - 1) : -1;
+  worldEvent('ilsabet', me.x, me.y,
+    'A man came through at the edge of the world wearing a crown, with six dead walking behind him. He is asking after a woman. He does not ask politely.');
+  log("ILSABET. She came through before you, and they did not give her a retinue. Ask in the halls — somebody saw where she was sent.", 'good');
+}
+/* asking after her: any town leader, once each, and the third one puts it together */
+function askAfterIlsabet(t, L){
+  if(!search.on || search.found) return;
+  const key = t.def.key;
+  if(search.asked[key]){ log(`${L ? L.name : t.name} has told you what they know.`, ''); return; }
+  search.asked[key] = 1; search.leads++;
+  const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+  if(search.leads >= 3 && sites.length && search.siteId >= 0){
+    search.found = true;
+    const site = sites[search.siteId];
+    log(`${L ? L.name : t.name}: "A woman, alone, no kit, walked out past the last fence and did not come back. That was a long time ago." They mark the place.`, 'good');
+    worldEvent('ilsabet', site.x, site.y,
+      'Three tellings agree. A woman was put out past the last fence years ago, and walked toward the corpse-fields on purpose.');
+    say(L || t.leader || {name:t.name}, 'Nobody walks out that way to live.');
+  } else {
+    const said = [
+      '"There was a woman. Southern accent, no kit, would not say who sent her. She did not stay."',
+      '"I remember her. She asked which way the tears were, not which way the water was. That stays with you."',
+      '"She had your face on her, now you stand there. She went out past the fence and nobody stopped her."',
+    ][Math.min(search.leads - 1, 2)];
+    log(`${L ? L.name : t.name}: ${said}`, '');
+  }
+}
+/* She is not a marker that turns green. She is a person standing in a corpse-field who has
+   been doing the opposite of what her brother came here to do, and the meeting is the whole
+   point of the origin — so it waits until somebody actually walks out there. */
+let _ilsT = 0;
+function ilsabetTick(dt){
+  if(!search.on || !search.found || search.met) return;
+  if((_ilsT -= dt) > 0) return;
+  _ilsT = 3;
+  const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+  const site = sites[search.siteId];
+  if(!site) return;
+  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 14);
+  if(!near) return;
+  search.met = true;
+  const p2 = findOpenNear(site.x + ri(-3, 3), site.y + ri(-3, 3), 6) || {x: site.x, y: site.y};
+  const her = makeChar('Ilsabet d\'Alagadda', 'exile', p2.x, p2.y,
+    {atk:22, def:26, tough:20, ath:8, medic:40, magic:52, gift:'divine', armr:20,
+     weapon:'w_kat', armor:'a_lea'});
+  her.neutral = true; her.bossKey = 'ilsabet'; her.questGive = 'ilsabet';
+  her.holdsFire = true;   /* she does not shoot her brother's household on sight — see pierceNeutral */
+  her.blood = 150; her.maxBlood = 150;
+  her.conviction = 'compassion';
+  chars.push(her);
+  worldEvent('ilsabet', p2.x, p2.y,
+    'She is alive. She has been out here a long time, and she has not been idle: the tears in this stretch of waste are closed, one after another, by hand.');
+  log('ILSABET. She is standing in the middle of a corpse-field, alive, and the tears around her have all been sealed. She has been doing this for years.', 'good');
+  log('She has seen the crown. Talk to her.', 'good');
+}
+/* ---------- THE DESCENT: LOOKING FOR MOTHER ----------
+   The world already says who she is; nobody has put the two halves together. The Scholars
+   ask "what it was we were TAKING" and never answer it. Malathuun is out in the waste in
+   pieces, and every reagent hunter in the world is living off the marrow. And at the bottom
+   of every cave in this map is "a sealed Golden-Age bunker and what it was built to keep."
+
+   The answer is that the golden age found two of them. It sundered one and it KEPT the
+   other, because a corpse is a windfall and a prisoner is an income. What they drew off her
+   is the alchemy. The Fracture is the bill.
+
+   A Hollow is a rider in a borrowed body that "takes a cut of everything the host learns"
+   and is "saving up for something" — that is the race blurb, written long before this. The
+   riders are pieces of her. Ascension is a piece growing back toward the whole. So Saga is
+   not looking for a god; he is looking for the rest of himself, and Mother is not a title.
+
+   Finding her is deliberately NOT Lyonart's quest in a different hat. His is social — ask in
+   halls, three tellings, information moving by rumour. This one is spatial and bodily: he
+   can feel her, the sense sharpens as he grows, and the only way to use it is to walk. */
+const mother = {on:false, caveId:-1, found:false, spoken:false, reads:0, toldPrice:false};
+function startTheDescent(me){
+  mother.on = true; mother.found = false; mother.spoken = false; mother.reads = 0; mother.toldPrice = false;
+  /* one cave's bottom bunker is her cell. Which one is decided now and never shown. */
+  mother.caveId = (typeof caves !== 'undefined' && caves.length) ? caves[ri(0, caves.length - 1)].id : -1;
+  worldEvent('mother', me.x, me.y,
+    'Something walked out of a sealed redoubt in the waste, alone, wearing what the people inside it were wearing. It did not close the door behind it.');
+  log('MOTHER. You were cut off something and fitted to a body, and the something is still alive and still held. She is under a mountain. Press Q to be quiet and listen.', 'good');
+}
+function motherCave(){ return (typeof caves !== 'undefined') ? caves.find(v => v.id === mother.caveId) : null; }
+/* Which hole somebody is standing in. `caveId` is stamped on the things that LIVE down there,
+   never on anyone who walked in, so membership has to be read off the geometry: a negative
+   floor, inside one of that cave's carved rooms. Small numbers — a handful of caves, a dozen
+   rooms each — and it is only asked on a keypress or a two-second tick. */
+function caveContaining(c){
+  if((c.floor || 0) >= 0 || typeof caves === 'undefined') return null;
+  const f = c.floor || 0;
+  for(const cv of caves) for(const rm of cv.rooms){
+    if(rm.f !== f) continue;
+    if(c.x >= rm.x0 - 1 && c.x <= rm.x1 + 1 && c.y >= rm.y0 - 1 && c.y <= rm.y1 + 1) return cv;
+  }
+  return null;
+}
+/* How well this body hears her. A rider hears more than a host; dust is the art they took
+   off her, so an adept of it is listening on her own frequency. */
+function acuityOf(c){
+  return (c.race === 'hollow' ? 1 : 0) + (c.hollowTier || 0) + attOf(c, 'dust') + (c.gift === 'dust' ? 1 : 0);
+}
+const COMPASS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+function bearingFrom(c, tx, ty){
+  /* screen-north is -y. Eight points, and only the well-attuned get to hear it. */
+  const a = Math.atan2(tx - c.x, -(ty - c.y));
+  return COMPASS[((Math.round(a / (Math.PI / 4)) % 8) + 8) % 8];
+}
+/* A reading, taken deliberately. Vague at the surface and unmistakable in the right hole —
+   which is the whole point: the sense does not solve the problem, it rewards descending. */
+function listenForMother(){
+  if(!mother.on){ return; }
+  const c = selected.find(o => o.faction === 'player' && o.state === 'ok') || player().find(o => o.state === 'ok');
+  if(!c){ log('There is nobody standing to listen with.', ''); return; }
+  const cv = motherCave();
+  const acu = acuityOf(c);
+  if(acu <= 0){ say(c, 'I can hear the wind. That is all I have ever been able to hear.'); return; }
+  mother.reads++;
+  if(!cv){ say(c, 'Nothing. She is not under this world.'); return; }
+  const below = (c.floor || 0) < 0;
+  const d = dist(c.x, c.y, cv.mouth.x, cv.mouth.y);
+  /* underground, in the right hole: the reading stops being a guess */
+  if(below && caveContaining(c) === cv){
+    const bottom = -cv.depth;
+    if((c.floor || 0) <= bottom) say(c, 'She is through this wall. She has stopped pretending to breathe.');
+    else say(c, `Down. ${Math.abs(bottom - (c.floor || 0))} more floors of down.`);
+    return;
+  }
+  if(below){ say(c, 'Rock, and water moving in it, and nothing that knows my name. Wrong hole.'); return; }
+  const band = d < 18 ? 'close' : d < 45 ? 'near' : d < 90 ? 'far' : 'distant';
+  const dir = acu >= 3 ? bearingFrom(c, cv.mouth.x, cv.mouth.y) : null;
+  const lines = {
+    close:   'Under my feet. Not under this ground — under the ROCK. There is a way in and it is very near.',
+    near:    'Closer. It is like standing near a struck bell an hour after.',
+    far:     'She is out there. A long walk, and then a long way down.',
+    distant: 'Almost nothing. A pull, the way a tooth pulls before it goes.',
+  };
+  say(c, lines[band] + (dir ? ` It comes from the ${dir}.` : ''));
+  if(!dir && acu < 3 && mother.reads === 2)
+    log('The reading is blunt. A better ear for the dust art would give it a direction.', '');
+}
+/* She is not a boss and there is nothing here to kill. She is a voice behind a seal that was
+   built by people who knew exactly what they had. Reaching her is the leg; opening her is
+   the price, and the price is named out loud the moment she speaks. */
+let _mthT = 0;
+function motherTick(dt){
+  if(!mother.on || mother.spoken) return;
+  if((_mthT -= dt) > 0) return;
+  _mthT = 2;
+  const cv = motherCave();
+  if(!cv || !cv.vault) return;
+  const v = cv.vault;
+  const near = player().find(c => c.state === 'ok' && (c.floor || 0) === v.f && dist(c.x, c.y, v.x, v.y) < 9);
+  if(!near) return;
+  mother.found = true; mother.spoken = true;
+  sawPlace('mother');
+  worldEvent('mother', cv.mouth.x, cv.mouth.y,
+    'At the bottom of a cave under the mountains there is a door the golden age welded shut from the outside, and something behind it is awake and has been the whole time.');
+  motherSpeaks(near);
+}
+function motherSpeaks(c){
+  /* What she says is read off the world, not off a quest step. She has been listening to it
+     through him for as long as he has been walking around in it. */
+  const me = player().find(o => o.race === 'hollow') || c;
+  const tier = me.hollowTier || 0;
+  const kin = Object.keys(bossSlain).length;
+  const dustMastery = attOf(me, 'dust');
+  log('THE SEAL. A slab of golden-age alloy, welded from the outside, with eleven signatures cut into it. It is warm.', 'good');
+  const open = tier >= 2 ?
+    'You came back finished. Then put your hand on it — the weld only ever held against a rider.' :
+    'You came back as a piece. A piece cannot lift the lid it was cut through.';
+  say(c, open);
+  const lines = [];
+  lines.push(tier >= 2 ? 'CHILD. You are the whole of yourself and you still came. I did not expect that.' :
+             tier >= 1 ? 'CHILD. Awake, but still wearing somebody. I can hear the host under you, still frightened.' :
+                         'CHILD. Still riding. Still asleep. You found me with the part of me you kept — you will not open me with it.');
+  if(dustMastery >= 3) lines.push('You have mastered the art they took off me. Do you understand that when you work it, you are working ME?');
+  else if(dustMastery >= 2) lines.push('You use the art. Adequately. It was mine before it was a technique.');
+  if(kin >= 3) lines.push('Things have been dying out there in a pattern. That was you. Good. They made you for that and it is the one honest thing they did.');
+  if(noticeTier >= 2) lines.push('Something has been watching you come down. Not me. I have been watched for nine hundred years and I know the difference.');
+  if(bossSlain.sixfold) lines.push('You put down the sixfold thing. It came through the same hole I am behind. It did not come through whole. Neither did you.');
+  if(placesSeen.corpse) lines.push('You have stood on my brother. They cut him apart and sold the pieces by weight. They kept me because a corpse is a windfall and a prisoner is an income.');
+  lines.push(tier >= 2 ? 'The weld is eleven names deep. You will find that you outweigh all of them.' :
+    'The way through is not a key and it is not a blade. Give the rider the whole of what you are — the gift, and everything you were saving it for. Come back as a thing and not a passenger.');
+  for(const l of lines) log('SHE SAYS: "' + l + '"', tier >= 2 ? 'good' : '');
+  if(tier < 2 && !mother.toldPrice){
+    mother.toldPrice = true;
+    log('THE PRICE IS NAMED: the Nascent Rite, at your circle. It burns the gift — the dust art you found her WITH — and gives the rider the whole body. That is what the seal weighs.', 'good');
+  }
+  deed('found_mother', 1);
+}
 const ORIGINS = {
   gravekeeper: {label:'Gravekeeper',
     blurb:'You kept the graves; the graves kept you. Three of you, near Greenrest, with tools and a little coin.',
@@ -18203,6 +19191,26 @@ const ORIGINS = {
   testbed: {label:'TEST: Deathless Court',
     blurb:'FOR TESTING. A lich in good standing at Hollowmere: every formula recovered, a full compound already raised, a stocked yard, ten armed dead and two living adepts.',
     intro:'You wake already deathless, in a court you do not remember building. All tech unlocked. 20,000 gold. The yard is full.'},
+  /* ---------- THE FIRST NAMED ORIGIN ----------
+     Every other start is a role: a gravekeeper, an exile, somebody's freed property. This
+     one is a person, with a name he did not choose and a sister he intends to find. The
+     mechanical shape is deliberately front-loaded and hollow: he begins with the Sunken
+     Crown, which is the single hardest object in the game to obtain, and a retinue that
+     came out of the ground with him — and almost nothing else. No coin, no camp, no
+     standing anywhere, and a road that starts at the far edge of the map. */
+  lyonart: {label:"Lyonart d'Alagadda", named:true,
+    blurb:'Exiled Prince. He came through with the Sunken Crown on him and six of his household still following. He is looking for his sister, who was sent here first, for trying to stop what happened.',
+    intro:'You wake at the world\'s edge with a crown nobody living should own and six of the dead who still answer to your name. Ilsabet came through before you. Find her.'},
+  /* ---------- THE SECOND NAMED ORIGIN ----------
+     Lyonart is a man with a title and a thing he cannot use. This one is not a man at all:
+     he is a weapon somebody grew, walking around inside the person they grew him in, and
+     the mechanical shape is the mirror image. Lyonart begins holding the endgame and
+     unable to reach it. Saga begins already one rung UP the endgame ladder — awakened,
+     the thirty percent already paid out of him — and the next rung costs him the art that
+     makes him himself. He does not need to find power. He needs to decide what to spend. */
+  saga: {label:'Saga Wordsworth', named:true, fixes:'He is a Hollow and a duster — the only start in the game that is. RACE and GIFT above do not apply to him.',
+    blurb:'A Hollow, and not an accident: the Scholars grew godkillers in the redoubts and he is one that walked out. Already awakened, high combat, a natural of the dust art. He is looking for Mother, who is a Great One, and who is still where the golden age left her.',
+    intro:'You wake in somebody else\'s body, on a floor of a redoubt where the people who made you are nine generations dead. The rider in you is awake and it has been awake a long time. It knows what it was cut from, and it knows she is still alive.'},
   soldier: {label:'Old Soldier',
     blurb:'Forty years of wars nobody won. One of you, hard as nails, with less road ahead than behind.',
     intro:'You wake alone, old bones aching: 300 gold, good plate, and habits that die harder than you will.'},
@@ -18212,18 +19220,28 @@ function buildCCreate(){
   const el = $('ccreate');
   const giftBlurbs = {dark:'Necromancy. The dead answer.', destruction:'Fire. Most problems burn.',
     divine:'Mending and smiting. The dust needs both.', none:'No gift. Just hands and spite.'};
-  const row = (label, key, opts) => `<div class="ccrow"><div class="cclabel">${label}</div>` +
-    opts.map(o => `<button class="ccopt ${ccPick[key]===o[0]?'on':''}" data-cck="${key}" data-ccv="${o[0]}">${o[1]}</button>`).join('') + '</div>';
+  const row = (label, key, opts, cls) => `<div class="ccrow"><div class="cclabel">${label}</div>` +
+    opts.map(o => `<button class="ccopt ${cls||''} ${ccPick[key]===o[0]?'on':''}" data-cck="${key}" data-ccv="${o[0]}">${o[1]}</button>`).join('') + '</div>';
+  /* Paths are roles anybody could have had; the named are particular people who came through
+     with a name, a history and something they are already trying to do. Both write the same
+     field — the split is so the list says which kind of start you are looking at. */
+  const oks = Object.keys(ORIGINS);
+  const paths = oks.filter(k => !ORIGINS[k].named), named = oks.filter(k => ORIGINS[k].named);
   el.innerHTML =
     row('RACE', 'race', Object.keys(RACES).map(k => [k, RACES[k].label])) +
     row('GIFT', 'gift', [['dark','DARK'],['destruction','DESTRUCTION'],['divine','DIVINE'],['none','NONE']]) +
-    row('ORIGIN', 'origin', Object.keys(ORIGINS).map(k => [k, ORIGINS[k].label])) +
+    row('PATH', 'origin', paths.map(k => [k, ORIGINS[k].label])) +
+    (named.length ? row('OR SOMEBODY IN PARTICULAR', 'origin', named.map(k => [k, ORIGINS[k].label]), 'named') : '') +
     `<div id="ccblurb"></div>`;
   el.querySelectorAll('.ccopt').forEach(b => b.onclick = () => {
     ccPick[b.dataset.cck] = b.dataset.ccv;
     buildCCreate();
   });
-  $('ccblurb').textContent = RACES[ccPick.race].blurb + ' — ' + giftBlurbs[ccPick.gift] + ' — ' + ORIGINS[ccPick.origin].blurb;
+  /* A named origin can be somebody so particular that race and gift are not the player's to
+     pick. Saying nothing and quietly overriding the choice reads as a bug; say it instead. */
+  const og = ORIGINS[ccPick.origin];
+  $('ccblurb').textContent = og.fixes ? og.blurb + ' ' + og.fixes
+    : RACES[ccPick.race].blurb + ' — ' + giftBlurbs[ccPick.gift] + ' — ' + og.blurb;
 }
 buildCCreate();
 function applyCreation(race, gift, origin){
@@ -18232,6 +19250,11 @@ function applyCreation(race, gift, origin){
   selected = [];
   stash.mats = 0; stash.w_rkat = 0;
   const mk = (p, o) => { const c = makeChar(pickName(), 'player', p.x, p.y, o); chars.push(c); return c; };
+  /* Companions used to be dropped at a raw offset from the leader — p.x+1, p.y+0.5 — which is
+     fine until the leader's open tile happens to have a town wall or a building on one side of
+     it. Then somebody starts the run inside solid geometry. Ask for the offset, take open
+     ground if it isn't. */
+  const beside = (p, dx, dy) => isBlocked(p.x + dx, p.y + dy) ? findOpenNear(p.x, p.y, 3) : {x: p.x + dx, y: p.y + dy};
   const g = gift === 'none' ? null : gift;
   let me;
   if(origin === 'exile'){
@@ -18243,20 +19266,78 @@ function applyCreation(race, gift, origin){
     const base = slaverCamp ? slaverCamp : {x: startTown.x, y: startTown.y + 14};
     const p = findOpenNear(base.x + 6, base.y + 6, 4);
     me = mk(p, {atk:5, def:5, tough:12, ath:8, labor:14, medic:3, magic:4, gift:g, race});
-    mk({x:p.x+1, y:p.y+0.5}, {atk:6, def:4, tough:11, ath:8, labor:12, medic:5, magic:2});
+    mk(beside(p, 1, 0.5), {atk:6, def:4, tough:11, ath:8, labor:12, medic:5, magic:2});
     cats = 0; stash.mats = 6;
     for(const c of chars) if(c.faction==='slaver') c.provoked = true;
   } else if(origin === 'merchant'){
     const dp = towns.find(t=>t.def.key==='dustport') || startTown;
     const p = findOpenNear(dp.x, dp.y + 10, 4);
     me = mk(p, {atk:3, def:3, tough:4, ath:4, medic:4, magic:5, labor:4, gift:g, race});
-    mk({x:p.x+1, y:p.y+0.5}, {atk:3, def:4, tough:4, ath:4, medic:6, magic:3, gift: g==='divine' ? null : 'divine'});
-    mk({x:p.x-1, y:p.y+0.5}, {atk:4, def:3, tough:4, ath:4, medic:3, magic:3});
+    mk(beside(p, 1, 0.5), {atk:3, def:4, tough:4, ath:4, medic:6, magic:3, gift: g==='divine' ? null : 'divine'});
+    mk(beside(p, -1, 0.5), {atk:4, def:3, tough:4, ath:4, medic:3, magic:3});
     muleN++;
-    const m = makeChar('Mule '+muleN, 'player', p.x, p.y+1, {atk:2, def:4, tough:14, ath:5, labor:20});
+    const mp = beside(p, 0, 1);
+    const m = makeChar('Mule '+muleN, 'player', mp.x, mp.y, {atk:2, def:4, tough:14, ath:5, labor:20});
     m.beast = true; m.mule = true; m.fleeOnHit = true; m.blood = 120; m.maxBlood = 120;
     chars.push(m);
     cats = 3200; stash.mats = 40; stash.pack_s = 1;
+  } else if(origin === 'lyonart'){
+    /* the far edge, as far from anyone who might know the name as the map allows */
+    const spot = bossSpot(52, 68);
+    const p = findOpenNear(spot.x, spot.y, 5);
+    /* MAG 19, deliberately under the rite's 25. He owns the key and cannot turn it: the
+       crown is decades early and the craft is not. Starting him at 34 handed him the gate
+       as well as the key, which is the one thing this origin should not do. */
+    me = mk(p, {atk:14, def:13, tough:11, ath:6, medic:5, magic:19, gift:'dark', race,
+                weapon:'w_kat', armor:'a_lea', blades:22, labor:2, crafting:6});
+    me.name = "Lyonart d'Alagadda";
+    me.face = 'lyonart';        /* long white hair, black eyes, black-and-gold gone grey */
+    me.conviction = 'ambitious';
+    /* a prince's hands have not done a day's work, and it shows in everything but the Art */
+    cats = 180; stash.mats = 8; stash.bandage = 3; stash.remains = 4;
+    /* THE CROWN. He did not earn it and he cannot use it yet — the rite still wants MAG 25,
+       ten remains, and somebody he is willing to spend. What he has is the key, decades
+       early, and every reason not to be seen carrying it. */
+    storeItem('crown', 1, me);
+    /* six of the household, still following */
+    const HOUSE = ['Sworn Umbrel', 'Sworn Vayne', 'Sworn Cassock', 'Sworn Mirelle', 'Sworn Hask', 'Sworn Dorn'];
+    for(let i = 0; i < HOUSE.length; i++){
+      risenN++;
+      const q = findOpenNear(p.x + ri(-3, 3), p.y + ri(-3, 3), 5);
+      const u = makeChar(HOUSE[i], 'player', q.x, q.y,
+        {atk: 13 + ri(0, 5), def: 11 + ri(0, 4), tough: 13 + ri(0, 4), ath: 5,
+         weapon: i < 4 ? 'w_rkat' : 'w_bow', armor: 'a_rag'});
+      u.undead = true; u.master = me; u.guardTarget = me;
+      u.hunger = 100; u.bindWeight = 1; u.shortTag = 'H' + (i + 1);
+      u.blood = 75; u.maxBlood = 75;
+      chars.push(u);
+    }
+    startTheSearch(me);
+  } else if(origin === 'saga'){
+    /* He starts where he was made. The deep redoubt is a three-storey golden-age complex
+       with a Last Warden on the top floor — walking out of it is the first thing he ever
+       did, so he begins outside its door with it still open behind him. */
+    const home = (typeof redoubts !== 'undefined' && redoubts.length) ? redoubts[0] : null;
+    const at = home ? {x: home.x, y: home.y + (home.deep ? 12 : 10)} : bossSpot(44, 58);
+    const p = findOpenNear(at.x, at.y, 5);
+    /* HIGH COMBAT, and it should read as built rather than earned: no medic, no craft, no
+       labour, nothing a person picks up by living. They grew the parts they wanted, and
+       `hollowTier: 1` means the thirty percent came out of him on a table years ago — the
+       numbers here are what was left. Tier I is a fact about him, not a purchase: ceiling
+       125, and the things beyond take 35% more from him than from anybody else.
+       The dust gift carries att.dust 2 on its own (every gift starts adept in its own
+       branch) and dust is the only branch he can ever master, because mastery is reserved
+       for the born specialty and dust is what he is made of. */
+    me = mk(p, {atk:24, def:21, tough:17, ath:11, medic:2, magic:26, gift:'dust', race:'hollow',
+                hollowTier:1, weapon:'w_kat', armor:'a_pla', blades:34, armr:26,
+                labor:1, crafting:1, farming:0});
+    me.name = 'Saga Wordsworth';
+    me.face = 'saga';           /* messy blonde, amber and lit, and the sunflower */
+    me.conviction = 'scholar';
+    /* what a weapon owns: the kit it was issued, and four cells off a redoubt shelf that he
+       has nothing to fire — worth 220 apiece to anybody who does */
+    cats = 90; stash.bandage = 2; stash.aether_cell = 4;
+    startTheDescent(me);
   } else if(origin === 'testbed'){
     /* the court boots clean; the map reveal lives in OPTIONS (or F9) when wanted */
     const hm = towns.find(t => t.def.undeadFriendly) || startTown;
@@ -18324,7 +19405,7 @@ function applyCreation(race, gift, origin){
 
     cats = 20000;
     log('THE DEATHLESS COURT — all formulae recovered, the court assembled, the yard full.', 'good');
-  } else if(origin === 'soldier'){  } else if(origin === 'soldier'){
+  } else if(origin === 'soldier'){
     const p = findOpenNear(startTown.x, startTown.y + 9, 3);
     me = mk(p, {atk:24, def:22, tough:18, ath:5, medic:8, magic:3, gift:g, race, age:46,
       weapon:'w_kat', armor:'a_pla', armr:40, blades:20});
@@ -18332,8 +19413,8 @@ function applyCreation(race, gift, origin){
   } else {
     const p = findOpenNear(startTown.x, startTown.y + 9, 3);
     me = mk(p, {atk:4, def:4, tough:4, ath:4, medic:3, magic:4, gift:g, race});
-    mk({x:p.x+1, y:p.y+0.6}, {atk:5, def:3, tough:4, ath:4, medic:2, magic:3, gift:'destruction'});
-    mk({x:p.x-1, y:p.y+0.6}, {atk:3, def:4, tough:3, ath:4, medic:6, magic:3, gift:'divine'});
+    mk(beside(p, 1, 0.6), {atk:5, def:3, tough:4, ath:4, medic:2, magic:3, gift:'destruction'});
+    mk(beside(p, -1, 0.6), {atk:3, def:4, tough:3, ath:4, medic:6, magic:3, gift:'divine'});
     cats = 2000; stash.mats = 80; stash.w_rkat = 1;
   }
   camX = me.x; camY = me.y;

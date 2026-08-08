@@ -211,6 +211,95 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     R.escapeeHostile = runner.provoked ? 'hostile and running' : 'NOT HOSTILE';
     R.cellRelocked = pcell.holds === 0 && pcell.hp === pcell.maxHp ? 'cell reset' : 'CELL LEFT BROKEN';
 
+    /* --- 11b. THE WATCH TURNS OUT. The escape mechanic was well built and almost never
+       seen, because nothing ever put a guard at the gaol. A town holding somebody must
+       send exactly one, and that one must hold the cell. --- */
+    const tc = cells.find(c => c.kind === 'town' && c.town && c.town.gaolPost);
+    const tt = tc.town;
+    R.gaolPostExists = !!tt.gaolPost;
+    for (const o of chars) if (o.homeTown === tt && o.guard) { o.x = tt.x - 12; o.y = tt.y - 12; o.moveTarget = null; }
+    const lag = makeChar('Lag', 'bandit', tc.x, tc.y, { atk: 30, tough: 40 });
+    lag.state = 'ok'; chars.push(lag);
+    jail(lag, tc, 9);
+    let atPost = 0;
+    /* ai() decides where to go, physics() walks there. Driving only physics leaves a guard
+       with intent it never formed — the post logic lives in ai. */
+    for (let i = 0; i < 60 * 40; i++) {
+      rebuildCharGrid();
+      for (const o of chars) if (o.faction === 'town' && o.guard && o.homeTown === tt) { ai(o, 1 / 30); physics(o, 1 / 30); }
+    }
+    for (const o of chars) if (o.faction === 'town' && o.guard && o.homeTown === tt &&
+      dist(o.x, o.y, tt.gaolPost.x, tt.gaolPost.y) < 2.5) atPost++;
+    R.wardenTookPost = atPost >= 1 ? atPost + ' on the gaol' : 'NOBODY CAME';
+    R.notTheWholeWatch = atPost <= 2 ? 'rest stayed on their own posts' : 'WHOLE GARRISON ABANDONED THE WALLS';
+
+    /* and with a warden there, the bars hold */
+    tc.hp = 30;
+    for (let i = 0; i < 60 * 40; i++) {
+      rebuildCharGrid();
+      for (const o of chars) if (o.faction === 'town' && o.guard && o.homeTown === tt) { ai(o, 1 / 30); physics(o, 1 / 30); }
+      physics(lag, 1 / 30);
+    }
+    R.wardenHolds = lag.jailedAt ? 'held (hp ' + Math.round(tc.hp) + ')' : 'ESCAPED PAST THE WARDEN';
+
+    /* cell quality varies with how well the town is run */
+    const hps = [...new Set(cells.filter(c => c.kind === 'town').map(c => c.maxHp))];
+    R.cellQuality = hps.length > 1 ? hps.length + ' grades: ' + Math.min(...hps) + '-' + Math.max(...hps) : 'ALL IDENTICAL';
+
+    /* --- 11c. CONSECRATED GROUND, and what breaking it buys --- */
+    const sh = shrines.find(x => x.town);
+    const st2 = sh.town;
+    R.shrinesExist = shrines.length + ' shrines';
+    R.holyBlocksRaise = consecratedAt(sh.x + 2, sh.y) ? 'ground is hallowed' : 'NOT HALLOWED';
+    /* a body on holy ground must refuse the call */
+    const stiff = makeChar('Stiff', 'town', sh.x + 2, sh.y, {});
+    stiff.state = 'dead'; chars.push(stiff); corpses.push(stiff);
+    const necro = makeChar('Necro', 'player', sh.x + 2, sh.y, { magic: 60 });
+    necro.state = 'ok'; necro.gift = 'dark'; necro.mana = 999; chars.push(necro);
+    const before2 = chars.length;
+    castRaise(necro, stiff);
+    R.raiseRefused = chars.length === before2 && stiff.state === 'dead' ? 'refused on holy ground' : 'RAISED ANYWAY';
+    /* the dead are diminished on it */
+    const zed = makeChar('Risen', 'player', sh.x + 2, sh.y, { tough: 0 });
+    zed.state = 'ok'; zed.undead = true; chars.push(zed);
+    const onHoly = mitigate(zed, 100, 'cut', 0, null);
+    zed.x = sh.x + 200; zed.y = sh.y + 200;
+    const offHoly = mitigate(zed, 100, 'cut', 0, null);
+    R.deadSufferOnHoly = onHoly > offHoly * 1.2 ? 'take ' + Math.round(100 * (onHoly / offHoly - 1)) + '% more' : 'NO PENALTY';
+
+    /* break it: ash, and the ground goes quiet */
+    const ashBefore = stash.s_ash || 0;
+    const strut = structAt(sh.bx + 1, sh.by + 1);
+    R.shrineStrikeable = strut && strut.kind === 'shrine' ? 'can be struck' : 'NOT STRIKEABLE';
+    if (strut) { strut.hp = 1; destroyStructure(strut); }
+    R.ashGained = (stash.s_ash || 0) > ashBefore ? '+' + ((stash.s_ash || 0) - ashBefore) + ' sanctified ash' : 'NO ASH';
+    R.groundUnhallowed = !consecratedAt(sh.x + 2, sh.y) ? 'ground opened' : 'STILL HALLOWED';
+
+    /* --- 11d. WANTED: recognised on sight, settled for coin, and it decays --- */
+    st2.bounty = 500; st2.wanted = true;
+    const face = makeChar('Face', 'player', st2.x, st2.y, { atk: 20 });
+    face.state = 'ok'; chars.push(face);
+    for (const g of chars) if (g.faction === 'town' && !g.civ && g.homeTown === st2) { g.x = st2.x + 2; g.y = st2.y; g.arrestTarget = null; }
+    rebuildCharGrid();
+    for (let i = 0; i < 40; i++) wantedCheck(3);
+    R.recognised = chars.some(g => g.arrestTarget === face) ? 'the watch knows the face' : 'IGNORED DESPITE BOUNTY';
+    const b0 = st2.bounty;
+    bountyDecay();
+    R.bountyDecays = st2.bounty < b0 ? b0 + ' -> ' + st2.bounty : 'NEVER DECAYS';
+
+    /* --- 11e. they come for their own --- */
+    const pc2 = cells.find(c => c.kind === 'player');
+    if (pc2.holds) { const old = chars.find(c => c.id === pc2.holds); if (old) { old.jailedAt = null; pc2.holds = 0; } }
+    const kept = makeChar('Kept', 'bandit', pc2.x, pc2.y, { atk: 20 });
+    kept.state = 'ok'; chars.push(kept); jail(kept, pc2, 0); kept.prisoner = true;
+    const mate = makeChar('Mate', 'bandit', pc2.x + 5, pc2.y, { atk: 25, ath: 40 });
+    mate.state = 'ok'; chars.push(mate);
+    let called = 0;
+    for (let i = 0; i < 400 && !mate.rescueOf; i++) { rescueTick(30); called++; }
+    R.kinCalled = mate.rescueOf ? 'his people were told' : 'NOBODY CAME FOR HIM';
+    for (let i = 0; i < 60 * 60 && kept.jailedAt; i++) { rebuildCharGrid(); physics(mate, 1 / 30); }
+    R.cutOut = !kept.jailedAt ? 'cut out of the cells' : 'NEVER GOT HIM OUT';
+
     /* --- 12. bar progress survives a save --- */
     const runner2 = makeChar('Runner2', 'bandit', pcell.x, pcell.y, { atk: 30, tough: 40 });
     runner2.state = 'ok'; chars.push(runner2);
