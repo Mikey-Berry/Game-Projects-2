@@ -5544,11 +5544,17 @@ function patrolCentre(){
    corpse-field and dies quietly is worse than no feature, so a commander watches its own
    band and turns for home, and where that line sits is a fact about the commander. */
 const CMD = {
-  patrol: {label:'PATROL',  blurb:'Walk a circuit of the ground around a point and fight what they find on it.'},
-  forage: {label:'FORAGE',  blurb:'Sweep the ground for chests and bodies, take what is there, bring it home.'},
-  escort: {label:'ESCORT',  blurb:'Keep station on somebody and put down what comes at them.'},
-  hold:   {label:'HOLD',    blurb:'Stand on a spot and refuse to be moved off it.'},
+  /* `standing` is whether the order is a DUTY or an ERRAND. A patrol is a duty: it comes
+     home, rests, and goes out again tomorrow without being asked, which is the difference
+     between a garrison and a fetch quest. A forage is an errand — it finishes. Either can be
+     switched over from the order menu once they are out. */
+  patrol: {label:'PATROL',  standing:true,  blurb:'Walk a circuit of the ground around a point, day after day.'},
+  forage: {label:'FORAGE',  standing:false, blurb:'Sweep the ground for chests and bodies, take what is there, bring it home.'},
+  escort: {label:'ESCORT',  standing:false, blurb:'Keep station on somebody and put down what comes at them.'},
+  hold:   {label:'HOLD',    standing:true,  blurb:'Stand on a spot and refuse to be moved off it.'},
 };
+const CMD_REST_H = 3;          /* game-hours at home between tours */
+const CMD_HAUL_BASE = 3;       /* how much a band carries before it has to come in */
 const CMD_R_MAX = 60;          /* how wide an order may be, in tiles */
 const CMD_LEASH = 130;         /* and how far from the anchor a band may ever get */
 let cmdN = 0;
@@ -5566,8 +5572,26 @@ function grit(cdr){
   else if(conv === 'cold') g -= 0.04;
   else if(conv === 'loyal') g += 0.08;
   else if(conv === 'compassion') g += 0.16;   /* will not */
+  /* a captain with somebody who can stop a bleed presses further, and is right to */
+  if(medicOf(cdr)) g -= 0.12;
   return clamp(g, 0.15, 0.80);
 }
+/* ---------- WHAT IS IN THE BAND ----------
+   A band is not a number of bodies, it is a set of trades, and the difference should be felt
+   rather than listed. A surgeon means the band patches up in the field between fights instead
+   of everybody limping home at half strength — so a surgeon also lets the captain push
+   further, because he can afford to. A mule means they can carry more before the sweep has to
+   end. Neither is a bonus stapled on: both change how long the band can stay out. */
+function medicOf(cdr){
+  let best = null;
+  for(const o of [cdr, ...bandOf(cdr)]){
+    if(o.state !== 'ok' || o.undead || o.mule || o.stats.medic < 8) continue;
+    if(!best || o.stats.medic > best.stats.medic) best = o;
+  }
+  return best;
+}
+function mulesIn(cdr){ return bandOf(cdr).filter(o => o.mule && o.state !== 'dead').length; }
+function haulCap(cdr){ return CMD_HAUL_BASE + mulesIn(cdr) * 3; }
 function bandStanding(cdr){
   const b = bandOf(cdr);
   if(!b.length) return cdr.state === 'ok' ? 1 : 0;
@@ -5581,6 +5605,41 @@ function cmdSay(cdr, text, kind){
   if(visAt(Math.floor(cdr.x), Math.floor(cdr.y)) !== 2 || dist(cdr.x, cdr.y, camX, camY) > 30)
     log(`${cdr.name}: ${text}`, kind || '');
 }
+/* ---------- WHAT THEY SEE, NOT ONLY WHAT THEY DID ----------
+   A band that only speaks when it gets home is a delivery service. What makes one worth
+   having posted out there is that it tells you what is moving before it reaches you. The
+   report is a count, a name for them, and a bearing off the nearest thing you would
+   recognise — a town if there is one near, otherwise your own buildings, otherwise the
+   ground the order was given on. It goes into the world news, so it lands on the map and in
+   the chronicle rather than only scrolling past in the log. */
+function landmarkNear(x, y){
+  let best = null, bd = 1e9;
+  for(const t of towns){ const d = dist(t.x, t.y, x, y); if(d < bd){ bd = d; best = {name: t.name, x: t.x, y: t.y}; } }
+  for(const b2 of pBuilds){ const d = dist(b2.x, b2.y, x, y) * 1.4; if(d < bd){ bd = d; best = {name: 'the camp', x: b2.x, y: b2.y}; } }
+  return bd < 70 ? best : null;
+}
+const CMD_FOE_NAME = {bandit:'Bandits', slaver:'Slavers', cannibal:'Cannibals', purge:'The Purge',
+                      gaunt:'Watchers', wild:'Beasts', warband:'A warband', town:'Townsfolk', redoubt:'A garrison'};
+function contactCall(cdr){
+  const m = cdr.cmd;
+  m.repT = (m.repT || 0) - 1;
+  const seen = charsNear(cdr.x, cdr.y, 16).filter(o => o.state === 'ok' && hostile(cdr, o));
+  if(seen.length < 2){ if(!seen.length) m.sawFac = null; return; }
+  /* the biggest body of them decides what this contact is called */
+  const tally = {};
+  for(const o of seen) tally[o.faction] = (tally[o.faction] || 0) + 1;
+  let fac = null, n = 0;
+  for(const k in tally) if(tally[k] > n){ n = tally[k]; fac = k; }
+  /* one call per contact: the same lot still standing there is not news twice */
+  if(m.sawFac === fac && m.repT > 0) return;
+  m.sawFac = fac; m.repT = 12;                 /* ~11 seconds of tick before it may call again */
+  const lm = landmarkNear(cdr.x, cdr.y);
+  const where = lm ? `${compassFrom(lm.x, lm.y, cdr.x, cdr.y)} of ${lm.name}` : 'out in the waste';
+  const what = CMD_FOE_NAME[fac] || 'Something';
+  const line = `${what} — ${seen.length} of them — ${where}.`;
+  log(`${cdr.name} sends word: ${line}`, seen.length >= 6 ? 'bad' : '');
+  worldEvent('contact', cdr.x, cdr.y, `${cdr.name}'s band has eyes on ${what.toLowerCase()} ${where} — ${seen.length} counted.`);
+}
 function giveCommand(cdr, band, order, at, r){
   if(!CMD[order]) return null;
   standDown(cdr, true);
@@ -5588,6 +5647,7 @@ function giveCommand(cdr, band, order, at, r){
   cdr.cmd = {
     order, ax: at.x, ay: at.y, r: clamp(r || 26, 8, CMD_R_MAX),
     phase: 'out', leg: 0, t: 0, took: 0, fights: 0, id: cmdN,
+    standing: !!CMD[order].standing, tours: 0, restUntil: 0, nightIn: true,
     wardId: (order === 'escort' && at.ward) ? at.ward.id : null,
     home: {x: cdr.x, y: cdr.y}, report: '',
   };
@@ -5620,9 +5680,10 @@ function standDown(cdr, quiet){
 }
 /* the ring of ground an order covers, walked as a circuit rather than orbited: a marching
    band that follows a perfect circle reads as a clock hand and walks through walls */
+const CMD_LEGS = 5;            /* waypoints in one circuit — a tour is all of them */
 function cmdLeg(cdr){
-  const m = cdr.cmd, legs = 5;
-  const a = (m.leg / legs) * Math.PI * 2 + m.id * 0.7;
+  const m = cdr.cmd, legs = CMD_LEGS;
+  const a = ((m.leg % legs) / legs) * Math.PI * 2 + m.id * 0.7;
   const rr = m.r * (0.55 + ((m.leg * 7 + m.id) % 5) * 0.09);
   return {x: clamp(m.ax + Math.cos(a) * rr, 3, W - 4), y: clamp(m.ay + Math.sin(a) * rr, 3, H - 4)};
 }
@@ -5646,13 +5707,47 @@ function forageFind(cdr){
   }
   return best;
 }
+/* The band's own surgeon, working between fights. Everything here already exists per unit —
+   `treatable` says whether there is anything to do, `healTarget` does it — so this only picks
+   who works on whom, and only when nobody is swinging at them. Returns true when somebody is
+   busy, so the tick leaves the band standing rather than marching off mid-stitch. */
+function fieldSurgeon(cdr){
+  const doc = medicOf(cdr);
+  if(!doc) return false;
+  if(doc.healTarget) return true;                       /* already at it */
+  if(nearestEnemy(doc, 10)) return false;               /* not with a blade at their back */
+  let worst = null, wv = 1;
+  for(const o of [cdr, ...bandOf(cdr)]){
+    if(o.state === 'dead' || o.undead || !treatable(o)) continue;
+    const v = o.blood / Math.max(1, o.maxBlood);
+    if(v < wv){ wv = v; worst = o; }
+  }
+  if(!worst) return false;
+  doc.healTarget = worst;
+  doc.attackMove = null;
+  if(!cdr.cmd.docSaid){
+    cdr.cmd.docSaid = 1;
+    cmdSay(cdr, `${doc.name} is working. Holding here.`, '');
+  }
+  return true;
+}
 let _cmdT = 0;
 function commandTick(dt){
   if((_cmdT -= dt) > 0) return;
   _cmdT = 0.9;
   for(const cdr of chars){
     if(!cdr.cmd) continue;
-    if(cdr.faction !== 'player' || cdr.state === 'dead'){ standDown(cdr, true); continue; }
+    if(cdr.faction !== 'player' || cdr.state === 'dead'){
+      /* A duty you posted and stopped thinking about must not disappear without a word. It
+         is the whole bargain of a standing order — you stop having to remember them, so the
+         game has to be the one that remembers to tell you. */
+      const left = bandOf(cdr).filter(o => o.state !== 'dead').length;
+      log(`${cdr.name} has fallen. The ${CMD[cdr.cmd.order].label.toLowerCase()} is off the books` +
+          (left ? ` — ${left} of the band are still out there.` : ', and nobody came back.'), 'bad');
+      worldEvent('contact', cdr.x, cdr.y, `${cdr.name}'s band went out and did not come back whole.`);
+      standDown(cdr, true);
+      continue;
+    }
     const m = cdr.cmd;
     const band = bandOf(cdr);
     /* the band follows the captain and fights what comes at him — the bodyguard path, which
@@ -5684,16 +5779,45 @@ function commandTick(dt){
     }
     if(m.phase === 'home'){
       if(dist(cdr.x, cdr.y, m.home.x, m.home.y) < 4){
-        cmdSay(cdr, m.took ? `Back, with ${m.took} taken and ${m.fights} fought.` : 'Back. Nothing out there.', 'good');
-        standDown(cdr, true);
+        m.tours++;
+        const tally = m.took ? `with ${m.took} taken and ${m.fights} fought` : `nothing taken, ${m.fights} fought`;
+        if(m.standing){
+          /* A DUTY, not an errand. They come in, put their wounded back together, and go out
+             again — which is the whole point of posting somebody: you stop having to
+             remember them. */
+          m.phase = 'rest'; m.restUntil = day * 24 + hour + CMD_REST_H;
+          m.took = 0; m.fights = 0; m.leg = 0;
+          cmdSay(cdr, `Tour ${m.tours} done, ${tally}. Standing to at ${CMD_REST_H} hours.`, 'good');
+        } else {
+          cmdSay(cdr, `Back, ${tally}.`, 'good');
+          standDown(cdr, true);
+        }
       } else if(!cdr.moveTarget){
         cdr.attackMove = null;
         cdr.moveTarget = {x: m.home.x, y: m.home.y};
       }
       continue;
     }
+    /* --- resting between tours: patch up, wait out the clock, and do not march into the
+           dark unless the order says to --- */
+    if(m.phase === 'rest'){
+      fieldSurgeon(cdr);
+      const now = day * 24 + hour;
+      const nightHold = m.nightIn && isNight();
+      if(now >= m.restUntil && !nightHold && bandStanding(cdr) > grit(cdr) + 0.15){
+        m.phase = 'out'; m.docSaid = 0;
+        cmdSay(cdr, `Tour ${m.tours + 1}. Moving out.`, '');
+      } else if(dist(cdr.x, cdr.y, m.home.x, m.home.y) > 4 && !cdr.moveTarget){
+        cdr.moveTarget = {x: m.home.x, y: m.home.y};
+      }
+      continue;
+    }
+    /* what they can see, before what they are doing about it */
+    contactCall(cdr);
     if(nearestEnemy(cdr, 9)){ m.fights += (m.fightSeen ? 0 : 1); m.fightSeen = true; continue; }
     m.fightSeen = false;
+    /* nobody in reach: the surgeon works between fights rather than at the end of the day */
+    if(fieldSurgeon(cdr)) continue;
     /* --- the order itself --- */
     if(m.order === 'hold'){
       if(dist(cdr.x, cdr.y, m.ax, m.ay) > 3 && !cdr.moveTarget) cdr.moveTarget = {x: m.ax, y: m.ay};
@@ -5711,6 +5835,13 @@ function commandTick(dt){
       if(cdr.chestTarget && !cdr.chestTarget.opened) continue;
       if(cdr.lootTarget && !cdr.lootTarget.looted) continue;
       if(cdr.chestTarget || cdr.lootTarget){ m.took++; cdr.chestTarget = null; cdr.lootTarget = null; }
+      /* hands are hands: a band with no mule fills up fast, and a mule is the difference
+         between one sweep and three */
+      if(m.took >= haulCap(cdr)){
+        m.phase = 'home';
+        cmdSay(cdr, `Loaded — ${m.took}. Bringing it in.`, 'good');
+        continue;
+      }
       const find = forageFind(cdr);
       if(!find){
         m.phase = 'home';
@@ -5723,10 +5854,20 @@ function commandTick(dt){
       if(find.kind === 'chest') cdr.chestTarget = find.at; else cdr.lootTarget = find.at;
       continue;
     }
-    /* patrol: walk the circuit, taking whatever is on it */
+    /* Patrol: walk the circuit, taking whatever is on it — and a CIRCUIT ENDS. The first
+       version walked legs forever and the only way home was breaking off, which meant a band
+       that met nothing simply never came back and a "standing duty" had no tour to stand
+       between. Five waypoints is one tour; then they come in, stand to, and go again. */
     const leg = cmdLeg(cdr);
     if(!cdr.attackMove || dist(cdr.x, cdr.y, leg.x, leg.y) < 3){
-      if(dist(cdr.x, cdr.y, leg.x, leg.y) < 3){ m.leg++; m.rounds = (m.rounds || 0) + (m.leg % 5 === 0 ? 1 : 0); }
+      if(dist(cdr.x, cdr.y, leg.x, leg.y) < 3){
+        m.leg++;
+        if(m.leg >= CMD_LEGS){
+          m.phase = 'home';
+          cdr.attackMove = null;
+          continue;
+        }
+      }
       const nx = cmdLeg(cdr);
       cdr.attackMove = {x: nx.x, y: nx.y};
     }
@@ -16250,7 +16391,7 @@ function refreshCharPanel(){
     const cb = document.createElement('button');
     const picked = () => selected.filter(u => u.faction === 'player' && u.state !== 'dead');
     const out = !!c.cmd;
-    cb.textContent = out ? `ORDER: ${CMD[c.cmd.order].label}` : 'COMMAND…';
+    cb.textContent = out ? `ORDER: ${CMD[c.cmd.order].label}${c.cmd.tours ? ' ×' + c.cmd.tours : ''}` : 'COMMAND…';
     cb.style.cssText = 'padding:2px 6px;font-size:10px;' +
       (out ? 'border-color:var(--gold);color:var(--gold)' : '');
     cb.disabled = !out && (picked().length < 2 || !!c.under);
@@ -16259,10 +16400,20 @@ function refreshCharPanel(){
     cb.onclick = () => {
       const r3 = cb.getBoundingClientRect();
       if(out){
+        const m = c.cmd;
+        const where = m.phase === 'home' ? 'COMING IN' : m.phase === 'rest' ? 'STOOD TO' :
+                      m.phase === 'down' ? 'CAPTAIN DOWN' : 'IN THE FIELD';
+        const doc = medicOf(c), mules = mulesIn(c);
         showCtxMenu(r3.left, r3.bottom + 4, [
-          {label: `${c.cmd.phase === 'home' ? 'COMING IN' : 'IN THE FIELD'} — ${bandOf(c).length} with ${c.sex === 'f' ? 'her' : 'him'}`, fn: () => {}},
+          {label: `${where} — ${bandOf(c).length} with ${c.sex === 'f' ? 'her' : 'him'}, tour ${m.tours + 1}`, fn: () => {}},
+          {label: `   ${doc ? doc.name + ' can work in the field' : 'no surgeon with them'}` +
+                  `${mules ? ` · ${mules} mule${mules > 1 ? 's' : ''}, carries ${haulCap(c)}` : ''}`, fn: () => {}},
+          {label: (m.standing ? '● ' : '   ') + 'STANDING DUTY — go out again after each tour',
+           fn: () => { m.standing = !m.standing; log(`${c.name}: ${m.standing ? 'standing duty' : 'this tour only'}.`); refreshCharPanel(); }},
+          {label: (m.nightIn ? '● ' : '   ') + 'IN BY DARK — do not begin a tour at night',
+           fn: () => { m.nightIn = !m.nightIn; refreshCharPanel(); }},
           {label: 'RECALL — come home now', fn: () => {
-            c.cmd.phase = 'home'; cmdSay(c, 'Recalled. On our way in.', ''); refreshCharPanel(); }},
+            m.phase = 'home'; m.standing = false; cmdSay(c, 'Recalled. On our way in.', ''); refreshCharPanel(); }},
           {label: 'STAND DOWN — here, now', fn: () => { standDown(c); refreshCharPanel(); }},
         ]);
         return;
