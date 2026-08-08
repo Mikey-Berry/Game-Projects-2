@@ -14369,6 +14369,37 @@ function buildCharMesh(c){
     if(FACE){
       const shade2 = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
       e.cape = e.cape || [];
+      /* ---------- A COAT SKIRT IS NOT A CLOAK ----------
+         The first version of both of these was copied off the Baroness, and it inherited her
+         cloak's anchor: hung from the SHOULDERS, at z -0.15, entirely behind the body. On her
+         that is right. On a coat it produced a stiff plank sticking out of the back — a tail.
+
+         A coat skirt hangs from the WAIST and wraps: it goes round the sides and closes most
+         of the way across the front, leaving a vent at the centre so the legs still read and
+         still show through when they swing. So each segment is four plates in a U rather than
+         one plate behind, anchored at spine-local -0.02 (the waist; the spine sits at 0.92 in
+         body space and the knee is at -0.46) and deep enough front-to-back to have somebody
+         inside it. Only the segments go on `e.cape`, so it still swings — gently, because the
+         animator compounds rotation down the chain and four links of that is what made the
+         plank stand out horizontally in the first place. */
+      const coatSkirt = (col, hemCol, n, per) => {
+        e.capeLift = 0.18;          /* it swings; it does not stream */
+        let par = e.spine;
+        for(let i = 0; i < n; i++){
+          const seg = new THREE.Group();
+          seg.position.set(0, i === 0 ? -0.02 : -0.215, 0);
+          par.add(seg);
+          const w = 0.46 - i*0.035, c2 = shade2(col, 1 + i*0.09), h = 0.225;
+          e.boxBody.push(obox(w, h, 0.055, c2, 0, -0.11, -0.135, seg));              /* the back */
+          for(const sx of [-1, 1]){
+            e.boxBody.push(obox(0.06, h, 0.29, c2, sx*(w/2 - 0.03), -0.11, 0, seg)); /* the sides */
+            e.boxBody.push(obox(w*0.36, h, 0.05, c2, sx*(w*0.28), -0.11, 0.135, seg)); /* front, vented at the centre */
+          }
+          if(hemCol) e.boxBody.push(obox(w, 0.028, 0.062, shade2(hemCol, 0.75 + i*0.12), 0, -0.226, -0.135, seg));
+          if(per) per(seg, i, w, c2);
+          e.cape.push(seg); par = seg;
+        }
+      };
       if(c.face === 'lyonart'){
         /* FINE BLACK AND GOLD, AGED AND DUSTED. The dust is the whole point of him — the
            clothes are still good and he has been walking in them for eleven years, so the
@@ -14384,15 +14415,16 @@ function buildCharMesh(c){
           e.boxBody.push(obox(0.17, 0.028, 0.03, gold, 0, 0.44 - i*0.145, 0.184, e.spine));
         e.boxBody.push(obox(0.44, 0.055, 0.29, gold, 0, 0.075, 0, e.spine));      /* a sash at the waist */
         /* the coat's skirt: long, and dustier the further down it goes */
-        let par = e.spine, py = 0.44;
-        for(let i = 0; i < 4; i++){
-          const seg = new THREE.Group();
-          seg.position.set(0, i === 0 ? py : -0.23, i === 0 ? -0.15 : 0);
-          par.add(seg);
-          e.boxBody.push(obox(0.50 - i*0.04, 0.25, 0.04, shade2(black, 1 + i*0.10), 0, -0.125, 0, seg));
-          e.boxBody.push(obox(0.50 - i*0.04, 0.03, 0.045, shade2(dust, 0.75 + i*0.10), 0, -0.245, 0, seg));
-          e.cape.push(seg); par = seg;
-        }
+        /* three segments to just below the knee, with the dust of eleven years lying along
+           every hem and a thread of gold down the two front vents */
+        coatSkirt(black, dust, 3, (seg, i, w) => {
+          /* gold only where the skirt meets the waist. Running it the whole length turned the
+             front into two continuous rails and, with the frogging above, read as a ladder. */
+          if(i === 0) for(const sx of [-1, 1])
+            e.boxBody.push(obox(0.022, 0.135, 0.055, shade2(gold, 0.85), sx*(w*0.115), -0.075, 0.152, seg));
+          e.boxBody.push(obox(w*0.36, 0.026, 0.058, shade2(dust, 0.8 + i*0.10), -w*0.28, -0.226, 0.135, seg));
+          e.boxBody.push(obox(w*0.36, 0.026, 0.058, shade2(dust, 0.8 + i*0.10),  w*0.28, -0.226, 0.135, seg));
+        });
       } else {
         /* RAGGED MILITARY GREEN, AND ONE SUNFLOWER. The coat is army issue nine generations
            out of date and the hem has gone to strips; the flower is the only thing on him
@@ -14424,19 +14456,19 @@ function buildCharMesh(c){
         e.boxBody.push(obox(0.070, 0.070, 0.030, heart, 0, 0.070, 0.014, sun));
         /* the hem, gone to strips: four segments, and the strips get thinner and more
            ragged the further down they hang */
-        let par = e.spine, py = 0.40;
-        for(let i = 0; i < 4; i++){
-          const seg = new THREE.Group();
-          seg.position.set(0, i === 0 ? py : -0.22, i === 0 ? -0.14 : 0);
-          par.add(seg);
-          e.boxBody.push(obox(0.48 - i*0.05, 0.24, 0.04, shade2(green, 1 + i*0.10), 0, -0.12, 0, seg));
-          if(i >= 2) for(const rx of [-0.14, 0.02, 0.15]){    /* torn strips below the hem */
-            const rag = obox(0.07, 0.13 + (rx > 0 ? 0.06 : 0), 0.035, shade2(worn, 0.9), rx, -0.29, 0, seg);
-            rag.rotation.z = rx * 0.9;
-            e.boxBody.push(rag);
+        /* the same coat, gone to strips at the bottom: the last segment ends in torn tags
+           rather than a hem, at four lengths and four angles, front and back */
+        coatSkirt(green, null, 3, (seg, i, w, c2) => {
+          if(i < 2) return;
+          for(const [rx, rz, len] of [[-0.155, 0.30, 0.15], [-0.055, -0.16, 0.10],
+                                      [0.060, 0.22, 0.17], [0.150, -0.34, 0.12]]){
+            for(const rzz of [-0.135, 0.135]){
+              const rag = obox(0.062, len, 0.05, shade2(worn, 0.86), rx, -0.225 - len/2, rzz, seg);
+              rag.rotation.z = rz;
+              e.boxBody.push(rag);
+            }
           }
-          e.cape.push(seg); par = seg;
-        }
+        });
       }
     }
     /* arms: shoulder pivot -> upper arm -> elbow pivot -> forearm (+ fist) */
@@ -14926,9 +14958,15 @@ function syncChars(dt){
       /* a cloak drags a beat behind the body — the same trick as the tail, and the reason
          either boss reads as moving rather than sliding */
       if(e.cape){
+        /* A cloak wants to stream out behind; a coat skirt wants to swing about the legs.
+           `capeLift` is how far the chain kicks backward — the Baroness and Ash keep the
+           streaming version, a coat gets almost none of it, because the animator COMPOUNDS
+           rotation link by link and four links of 0.20 is what stood the skirt out
+           horizontally and made it read as a tail. */
+        const lift = e.capeLift === undefined ? 1 : e.capeLift;
         for(let i = 0; i < e.cape.length; i++){
           const sway = Math.sin(e.phase * 0.6 - i * 0.5) * (moving ? 0.13 : 0.035);
-          P(e.cape[i], 'x', (moving ? 0.20 : 0.06) + sway * 0.5 + i * 0.04, 7);
+          P(e.cape[i], 'x', ((moving ? 0.20 : 0.06) + i * 0.04) * lift + sway * 0.5, 7);
           P(e.cape[i], 'z', sway, 7);
         }
       }
