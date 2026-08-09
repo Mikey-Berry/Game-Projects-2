@@ -162,14 +162,27 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     dead2.state = 'dead'; dead2.homeTown = t; dead2.weapon = 'w_kat'; chars.push(dead2);
     R.theft = wanted(() => lootCorpse(dead2)) > 0 ? 'wanted' : 'NOT A CRIME';
 
-    /* contraband: a guard, close, and something in the pack the gate forbids */
+    /* CONTRABAND. This used to assert that a search raised a bounty, because that is what a
+       search did: it went straight from "you are carrying a book" to a price on your head, and
+       often to a corpse. A stop is a conversation now, so what has to be true is different —
+       the search still finds you, and the finding still OPENS rather than convicts. */
     const grd = chars.find(o => o.faction === 'town' && !o.civ && o.state === 'ok' && o.homeTown === t);
     if (grd) { grd.x = seenAt.x + 1; grd.y = seenAt.y; }
     hand.inv = { remains: 2 };
     rebuildCharGrid();
     t.bounty = 0; t.wanted = false;
-    for (let i = 0; i < 200 && !t.bounty; i++) contrabandCheck();
-    R.contraband = t.bounty > 0 ? 'found on a search' : 'NEVER SEARCHED';
+    hand.stoppedDay = -9; hand.stoppedAt = null;
+    let stopped = false;
+    for (let i = 0; i < 800 && !stopped; i++) {
+      hand.stoppedDay = -9;
+      contrabandCheck();
+      if (modalOpen) stopped = true;
+    }
+    R.contraband = stopped ? 'found on a search' : 'NEVER SEARCHED';
+    R.contrabandAsks = (stopped && !t.bounty) ? 'and it asks before it convicts'
+      : stopped ? 'A SEARCH STILL CONVICTS ON SIGHT' : 'NEVER SEARCHED';
+    document.getElementById('modal').style.display = 'none'; modalOpen = false;
+    if (typeof _stopOpen !== 'undefined') _stopOpen = false;
     hand.inv = {};
 
     /* and none of them stick when nobody is looking */

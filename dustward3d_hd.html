@@ -732,7 +732,15 @@ function placeBuilding(bx, by, w, h, label, town){
   const doorX = bx + Math.floor(w/2) - 1;
   const b = {x:bx, y:by, w, h, label, town, door:{x:doorX, y:by+h-1}};
   buildings.push(b);
-  if(label === 'SHRINE'){
+  /* A town of necromancers does not consecrate its own ground against itself. Hollowmere had
+     a shrine like everywhere else, and it hallowed the whole place — which stopped the one
+     thing Hollowmere exists for, inside its own walls.
+
+     The BUILDING stays: it is a stone hall on the plaza and the town plan is laid out around
+     it, and an early return here would skip the wall-raising below and hand the planner an
+     undefined instead of a footprint. What it no longer does is consecrate. */
+  const hallows = label === 'SHRINE' && !(town && town.def && town.def.undeadFriendly);
+  if(hallows){
     shrines.push({x: bx + w/2, y: by + h/2, town, hp: SHRINE_HP, maxHp: SHRINE_HP,
                   broken: false, reT: 0, bx, by, w, h});
   }
@@ -1217,9 +1225,38 @@ function depositInv(c, bin){
   return n;
 }
 /* ---------- phylacteries: undeath is a parlour trick, and so is coming back ---------- */
+/* Everything holding a pointer at this body lets go of it. Anything pulled out of `chars`
+   without this leaves its attackers swinging at the spot where it stood, forever, because a
+   target is an object reference and removal from the array is not a signal. */
+function releaseTargets(c){
+  for(const o of chars){
+    if(o.target === c){ o.target = null; o.targetManual = false; }
+    if(o.guardTarget === c) o.guardTarget = null;
+    if(o.healTarget === c) o.healTarget = null;
+    if(o.lootTarget === c) o.lootTarget = null;
+    if(o.rescueTarget === c) o.rescueTarget = null;
+    if(o.carryTarget === c) o.carryTarget = null;
+    if(o.execTarget === c) o.execTarget = null;
+    if(o.master === c) o.master = null;
+    if(o.under === c.id) o.under = null;
+  }
+}
 const REBUILD_COST = {vflesh:18, remains:15, iron:8, mats:25};
 let phylN = 0;
 function shedPhylactery(c){
+  /* ONE JAR, ONE SPARK. `updateState` runs at the end of every `applyDamage`, so a lich that
+     goes down under six blows in the same frame ran this six times — the body was pulled out
+     of `chars` on the first pass but `state` was never touched, so every later blow still saw
+     a living lich with its vitals gone and shed another phylactery. Six phylacteries, six
+     rebuilds, a lich army. Marking the body spent closes it.
+
+     The same omission is why enemies stood swinging at empty ground afterwards: a target is
+     an object REFERENCE, and nothing cleared the dozen attackers still pointing at a body
+     that was no longer in the world but was still sitting at the phylactery's coordinates. */
+  if(c._shed) return;
+  c._shed = true;
+  c.state = 'dead';
+  releaseTargets(c);
   const soul = {
     name: c.name, race: c.race, gift: c.gift, omni: !!c.omni,
     stats: {...c.stats}, age: c.age, goal: c.goal || null,
@@ -1262,6 +1299,10 @@ function ascendTransmute(c){
 }
 /* the armor fails; the etching holds. A husk is a phylactery you re-etch at a forge. */
 function shedHusk(c){
+  if(c._shed) return;
+  c._shed = true;
+  c.state = 'dead';
+  releaseTargets(c);
   const soul = {
     name: c.name, race: c.race, gift: c.gift, omni: !!c.omni,
     stats: {...c.stats}, age: c.age, goal: c.goal || null,
@@ -4020,27 +4061,139 @@ const CONTRABAND = {remains: 'grave-goods', tome: 'a forbidden book', doctrine: 
                     sunder: 'a piece of the Fracture itself', formula_p: 'a proscribed formula'};
 /* A search is not a scan of the whole world: it takes a guard, standing close, in daylight
    enough to see. Slow-ticked with the walking-dead check for the same reason. */
+/* ---------- THE STOP ----------
+   The first version of this was a scanner with a hair trigger and no conversation: it read
+   the SHARED STASH, so anybody walking into any town was carrying whatever the whole company
+   owned; it fired on a fifth of passes with no cooldown, so a walk down a street was a
+   gauntlet; and it went straight to `crime()`, which raised a bounty, which brought the watch,
+   which quite often ended with somebody dead over a book.
+
+   Three things wrong with that, in order of severity. A stop should be about what is ON YOU.
+   It should be rare — a gate is a bottleneck, not a body scanner. And being stopped is the
+   start of a conversation, not a verdict: the whole texture of getting caught is the moment
+   where you might still talk your way out, and if you cannot, you still choose between the
+   cell and the blade. */
+let _stopOpen = false;
+function contrabandOn(c){
+  return Object.keys(CONTRABAND).filter(k => c.inv && c.inv[k] > 0);
+}
+/* What a guard makes of you before they look in the bag. There is no silver-tongue stat in
+   this game and inventing one for a single scene would be worse than using what is already
+   true about the character: how this town feels about you, whether there is already a price
+   on your head, how loud your workings have been, and what you happen to be carrying. */
+function talkOdds(c, t, found){
+  let p = 0.52;
+  p += clamp((t.rep || 0), -60, 60) * 0.004;          /* they know you here, for good or ill */
+  p -= Math.min(0.35, (t.bounty || 0) / 900);          /* a face with a price is not given the benefit */
+  p -= noticeTier * 0.07;                              /* something has been paying attention to you */
+  p += clamp(((c.stats.research || 0) + (c.stats.crafting || 0)) * 0.004, 0, 0.12);  /* you can talk like a lettered person */
+  if(found.includes('sunder') || found.includes('doctrine')) p -= 0.22;   /* some things explain themselves */
+  if(c.veilT > 0) p += 0.15;
+  return clamp(p, 0.05, 0.92);
+}
 function contrabandCheck(){
+  if(_stopOpen || modalOpen) return;
   for(const c of player()){
     if(c.state !== 'ok' || c.undead) continue;
     const t = townAt(c.x, c.y);
     if(!t || t.playerRuled || t.def.undeadFriendly) continue;
     const r = (t.def.wall ? t.def.wall.r : 20);
     if(Math.abs(c.x - t.x) > r || Math.abs(c.y - t.y) > r) continue;
-    /* the shared pool is `stash`; there is no global `inv` — a name I assumed and boot.js
-       rejected on the first load, which is the whole reason it runs first now */
-    const carried2 = Object.keys(CONTRABAND).filter(k => (c.inv && c.inv[k] > 0) || (stash[k] || 0) > 0);
-    if(!carried2.length) continue;
-    /* one guard, near, and not every pass — a gate is a bottleneck, not a scanner */
+    /* ON THE PERSON. The shared pool is everybody's; a guard cannot search a stash that is
+       not there, and reading it meant one proscribed formula put the whole company at risk
+       every time any of them walked through a gate. */
+    const found = contrabandOn(c);
+    if(!found.length) continue;
+    /* and not twice in a day by the same town — you were searched at the gate already */
+    if((c.stoppedDay || -9) >= day && c.stoppedAt === t.def.key) continue;
     const g = charsNear(c.x, c.y, 6).find(o => o.faction === 'town' && !o.civ && o.state === 'ok' &&
       o.homeTown === t && dist(o.x, o.y, c.x, c.y) < 6);
-    if(!g || rnd() > 0.20) continue;
-    say(g, 'Open the pack.');
-    if(crime('contraband', c.x, c.y, c)){
-      log(`${g.name} finds ${CONTRABAND[carried2[0]]} on ${c.name}.`, 'bad');
-      return;
-    }
+    if(!g || rnd() > 0.05) continue;
+    c.stoppedDay = day; c.stoppedAt = t.def.key;
+    theStop(c, g, t, found);
+    return;
   }
+}
+function theStop(c, g, t, found){
+  _stopOpen = true;
+  const key = found[0], what = CONTRABAND[key];
+  say(g, 'Open the pack.');
+  AU.open && AU.open();
+  const odds = talkOdds(c, t, found);
+  const bribe = Math.round((60 + CRIMES.contraband.bounty * 1.4) * (1 + Math.max(0, -(t.rep || 0)) * 0.01));
+  const close = () => { $('modal').style.display = 'none'; modalOpen = false; _stopOpen = false; };
+  openModal('THE STOP — ' + t.name,
+    `${g.name} has a hand on ${c.name}'s pack and is not moving it. Inside: ${what}. ` +
+    `The street has gone quiet in the way streets do.`);
+  const body = $('modalbody'); body.innerHTML = '';
+  const mk = (label, note, fn) => {
+    const b = document.createElement('button');
+    b.innerHTML = label + (note ? `<span style="color:var(--dust);font-size:10px"> — ${note}</span>` : '');
+    b.style.cssText = 'display:block;margin:6px 0;text-align:left;width:100%';
+    b.onclick = () => { close(); fn(); };
+    body.appendChild(b);
+  };
+  mk('TALK', `${Math.round(odds * 100)}% — reputation, your bounty, and what they are holding`, () => {
+    if(rnd() < odds){
+      say(g, pick(['Hn. On your way.', 'I have not seen this.', 'Not today. Move.']));
+      log(`${g.name} looks at it for a long moment, and then somewhere else. ${c.name} walks on.`, 'good');
+    } else {
+      say(g, 'Do not insult me.');
+      log(`${g.name} is not having it.`, 'bad');
+      theReckoning(c, g, t, what);
+    }
+  });
+  mk(`BRIBE — ${bribe}g`, cats >= bribe ? 'coin, quietly' : 'you do not have it', () => {
+    if(cats < bribe){ log('You do not have it, and counting it out in front of them made that plain.', 'bad'); theReckoning(c, g, t, what); return; }
+    cats -= bribe;
+    say(g, '...');
+    log(`${bribe} gold changes hands and the pack is not opened any further.`, '');
+    t.rep = clamp((t.rep || 0) - 2, -100, 100);
+    refreshTop();
+  });
+  mk('HAND IT OVER', 'lose it, and walk away clean', () => {
+    const n = c.inv[key];
+    delete c.inv[key];
+    log(`${c.name} gives up ${n > 1 ? n + ' of ' + what : what}. ${g.name} takes it without a word.`, '');
+    t.rep = clamp((t.rep || 0) - 1, -100, 100);
+    refreshInv(); refreshCharPanel();
+  });
+  mk('FIGHT', 'here, now, in their town', () => {
+    log(`${c.name} does not open the pack.`, 'bad');
+    crime('contraband', c.x, c.y, c);
+    g.provoked = true; g.target = c;
+    for(const o of chars) if(o.faction === 'town' && o.homeTown === t && !o.civ && dist(o.x, o.y, c.x, c.y) < 22) o.provoked = true;
+  });
+}
+/* Talking failed. This is the fork the player actually wanted: the cell or the blade, chosen
+   rather than arrived at. */
+function theReckoning(c, g, t, what){
+  _stopOpen = true;
+  const days = CRIMES.contraband.days;
+  const close = () => { $('modal').style.display = 'none'; modalOpen = false; _stopOpen = false; };
+  openModal('HANDS WHERE THEY ARE',
+    `"${what.charAt(0).toUpperCase() + what.slice(1)}. You will come with me." ` +
+    `${g.name} has not drawn yet. Two of the watch are already walking over.`);
+  const body = $('modalbody'); body.innerHTML = '';
+  const mk = (label, note, fn) => {
+    const b = document.createElement('button');
+    b.innerHTML = label + (note ? `<span style="color:var(--dust);font-size:10px"> — ${note}</span>` : '');
+    b.style.cssText = 'display:block;margin:6px 0;text-align:left;width:100%';
+    b.onclick = () => { close(); fn(); };
+    body.appendChild(b);
+  };
+  mk('GO PEACEFULLY', `${days} days, and they keep your kit`, () => {
+    crime('contraband', c.x, c.y, c);
+    const cell = freeCell(t);
+    if(cell){ stripKit(c); jail(c, cell, days); log(`${c.name} is taken in without a fight. ${days} days.`, 'bad'); }
+    else { log(`${c.name} submits — and ${t.name} has nowhere to put ${c.sex === 'f' ? 'her' : 'them'}. A fine, and a warning.`, 'bad'); cats = Math.max(0, cats - 150); }
+  });
+  mk('FIGHT', 'here, now, in their town', () => {
+    crime('contraband', c.x, c.y, c);
+    g.provoked = true; g.target = c;
+    for(const o of chars) if(o.faction === 'town' && o.homeTown === t && !o.civ && dist(o.x, o.y, c.x, c.y) < 22) o.provoked = true;
+    log(`${c.name} runs. The watch of ${t.name} comes after ${c.sex === 'f' ? 'her' : 'them'}.`, 'bad');
+  });
 }
 /* ---------- WANTED ----------
    `arrestTarget` was only ever set at the instant of the crime. Walk out, come back the
@@ -9193,14 +9346,27 @@ function castRaise(c, body){
      somebody's walls until the stone is down. */
   const holy = consecratedAt(body ? body.x : c.x, body ? body.y : c.y);
   if(holy){
-    log(holy.town ? `The ground here is ${holy.town.name}'s, and it is holding. Break the shrine stone first.`
-                  : 'The ground here is hallowed. Nothing will answer.', 'bad');
+    /* Said ONCE per shrine, not once per attempt. A hand with the RAISE job standing on
+       consecrated ground retried every second and painted the log red, which taught the
+       player nothing after the first line and buried everything else. The float still fires
+       — it is where you are looking and it goes away on its own. */
+    if(!holy.told){
+      holy.told = true;
+      log(holy.town ? `The ground here is ${holy.town.name}'s, and it is holding. Break the shrine stone first.`
+                    : 'The ground here is hallowed. Nothing will answer.', 'bad');
+    }
     addFloat(c.x, c.y - 1.2, 'HALLOWED', '#e8dcc4');
     return false;
   }
   /* the thing they hang people for, done where somebody can see it */
   crime('raising', c.x, c.y, c);
-  const isUnique = !!body.bossKey && !body.beast;   /* named humanoids become lieutenants; monstrous bosses do not */
+  /* WHO COMES BACK. It used to be bosses only, so a companion you had walked three hundred
+     days with stood up as "Risen 14" with a stranger's stats — the one death in this game
+     where identity should obviously survive, and the one place it did not. Anybody who kept
+     a mind and stood with you comes back as themselves. Monstrous bosses still do not: a
+     Carrion Maw has no name to keep. */
+  const wasYours = body.faction === 'player';
+  const isUnique = !body.beast && !body.construct && (!!body.bossKey || (wasYours && !body.undead && !body.mule && !body.settler));
   if(isUnique){
     const lieuCap = (c.lich ? 2 : 1) + (research.done.necromancy ? 1 : 0);
     if(lieutenantsOf(c) >= lieuCap){ log(`${c.name} cannot bind another lieutenant (${lieutenantsOf(c)}/${lieuCap}).`, 'bad'); return false; }
@@ -9219,7 +9385,18 @@ function castRaise(c, body){
     r.lieutenant = true;
     r.shortTag = 'LT';
     r.big = body.big || 1;
-    log(`${c.name} bound ${body.name} into undeath — a lieutenant rises.`, 'good');
+    /* the whole point of a lieutenant is that it is still them: the face, the conviction they
+       held about you, who they were married to, and every skill they ever earned */
+    r.face = body.face || null;
+    r.sex = body.sex; r.race = body.race;
+    r.conviction = body.conviction || null;
+    r.regard = body.regard || 0;
+    r.spouse = body.spouse || 0; r.partner = body.partner || 0;
+    r.stats = {...body.stats, magic: Math.max(1, body.stats.magic * 0.5)};
+    if(body.inv) r.inv = {...body.inv};
+    r.pack = body.pack || null;
+    log(body.bossKey ? `${c.name} bound ${body.name} into undeath — a lieutenant rises.`
+      : `${body.name} stands up again, and knows ${c === body ? 'their own' : c.name + "'s"} name. Death did not take the whole of them.`, 'good');
   } else {
     /* A corpse is never stronger dead than it was in life; the necromancer's skill only
        closes the gap — and what the rot has already taken, it does not give back. */
@@ -14960,6 +15137,15 @@ function syncChars(dt){
     /* facing */
     const mvx = c.x - e.lastX, mvz = c.y - e.lastY;
     const moving = Math.abs(mvx) + Math.abs(mvz) > 0.002;
+    /* HOW FAST THE LEGS GO. Every walk cycle in here advanced at a flat `dt * 10` no matter
+       how fast the body was actually travelling, so a shambling thing at a third of walking
+       pace worked its legs exactly as briskly as a courier and looked like it was running on
+       ice. The cycle is a function of GROUND COVERED, which is what a stride is: `gait` is
+       the body's real speed against a normal walk, and a big frame takes longer strides for
+       the same distance, so it swings slower still and further. */
+    const realSpd = Math.hypot(mvx, mvz) / Math.max(dt, 1e-4);
+    const gait = clamp(realSpd / (3.0 * ((c.big || 1) > 1.25 ? 1.25 : 1)), 0.18, 1.6);
+    const stride = 1 + Math.max(0, (1 / Math.max(gait, 0.2)) - 1) * 0.22;   /* slow = longer paces */
     let want = e.rotY;
     if(c.target && c.target.state==='ok') want = Math.atan2(c.target.x - c.x, c.target.y - c.y);
     else if(moving) want = Math.atan2(mvx, mvz);
@@ -15004,7 +15190,7 @@ function syncChars(dt){
       e.g.rotation.set(0, e.rotY, 0);
       e.sigil.visible = true;
       const now = Date.now();
-      e.phase += dt * (moving ? 2.4 : 1.1);
+      e.phase += dt * (moving ? 2.4 * gait : 1.1);
       e.float.position.y = 1.15 + Math.sin(e.phase) * 0.07;
       e.float.rotation.z = Math.sin(now * 0.0007) * 0.06;
       e.float.rotation.x = (moving ? 0.10 : 0) + Math.sin(now * 0.0009) * 0.03;
@@ -15018,7 +15204,7 @@ function syncChars(dt){
       e.g.rotation.set(0, e.rotY, 0);
       if(e.limbs){
         /* the Sixfold: six limbs, three joints each, moving like slow weather */
-        if(moving) e.phase += dt * 4.5;
+        if(moving) e.phase += dt * 4.5 * gait;
         const breathe = Math.sin(Date.now()*0.0011) * 0.05;
         for(let li = 0; li < e.limbs.length; li++){
           const L = e.limbs[li];
@@ -15029,15 +15215,16 @@ function syncChars(dt){
           L.wr.rotation.x =  0.55 + step * 0.5;          /* planting */
         }
       } else {
-        if(moving) e.phase += dt * 11;
+        if(moving) e.phase += dt * 11 * gait;
         const sw = moving ? Math.sin(e.phase) * 0.55 : 0;
         e.legL.rotation.x = sw; e.legR.rotation.x = -sw;
         if(e.legL2){ e.legL2.rotation.x = sw; e.legR2.rotation.x = -sw; }
       }
     } else {
       e.g.rotation.set(0, e.rotY, 0);
-      if(moving) e.phase += dt * 10;
-      const sw = moving ? Math.sin(e.phase) * 0.6 : 0;
+      if(moving) e.phase += dt * 10 * gait;
+      /* and a ponderous thing does not mince: fewer paces, but each one bigger */
+      const sw = moving ? Math.sin(e.phase) * 0.6 * Math.min(1.5, stride) : 0;
       const idle = Math.sin(Date.now()*0.0018 + e.phase) * 0.02;
       const inFight = !!c.target || !!c.windup || c.blocking;
       /* base layer: locomotion */
@@ -17088,7 +17275,13 @@ function openModal(title, sub){
   $('modal').style.display = 'flex'; modalOpen = true; paused = true; syncPauseBtn();
   AU.open();
 }
-$('modalclose').onclick = () => { $('modal').style.display='none'; modalOpen = false; };
+$('modalclose').onclick = () => {
+  $('modal').style.display='none'; modalOpen = false;
+  /* Backing out of a contraband stop with the X is walking away from the guard, which is a
+     choice — but the flag that says "a stop is open" has to come down either way, or no
+     search ever happens again for the rest of the run. */
+  if(_stopOpen) _stopOpen = false;
+};
 /* every button in the game clicks, without every button having to remember to. Delegated in
    the capture phase so it still fires for handlers that stop propagation on their way out. */
 document.addEventListener('click', e => {
