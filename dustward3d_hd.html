@@ -121,7 +121,11 @@
    against a viewport a third the width they assume. */
 #touchbar{display:none}
 body.touch #touchbar{display:flex; gap:8px; position:fixed; left:8px; bottom:8px; z-index:40}
-body.touch #touchbar button{width:52px; height:52px; font-size:17px; line-height:1; padding:0}
+body.touch #touchbar button{width:52px; height:52px; font-size:15px; line-height:1; padding:0}
+/* An armed mode has to be unmistakable from across a phone screen, so the attack and map
+   buttons take the plain `button.on` rust fill the rest of the game uses. The gold outline
+   the marquee toggle wears is subtler on purpose — it changes what a DRAG does, not what the
+   next tap does, and it is not a loaded gun. */
 body.touch #tb-marquee.on{border-color:var(--gold); color:var(--gold)}
 body.touch{ -webkit-text-size-adjust:100%; }
 /* the canvas must own its gestures: without this the browser pans and zooms the PAGE and the
@@ -154,6 +158,23 @@ body.touch.sheet-log  #log{display:block !important; top:auto !important; bottom
 body.touch #squadbar{position:fixed; left:0; right:0; bottom:0; z-index:35; padding:2px 4px}
 body.touch #touchbar{bottom:auto; top:auto; bottom:64px !important; right:6px; left:auto; flex-direction:column}
 body.touch #minimap{top:auto !important; bottom:64px !important; right:6px !important; display:none}
+/* THE MAP, AS A SHEET. It was hidden on touch and reachable only through the gear menu, which
+   is two taps and a guess. It is a sheet like the others — mutually exclusive with the log,
+   the character panel and the stash, because the whole reason the sheet system exists is that
+   two panels over a phone screen leaves no game visible between them. Sized off the viewport
+   and centred: 104px of map in the corner is a decoration, not a map. */
+body.touch.sheet-map #minimap{
+  display:block !important; position:fixed !important;
+  /* square, and sized to the room LEFT OF THE BAR rather than to the viewport — centring it
+     on the screen put its right edge under the button column, which is where the eye goes
+     first and exactly the corner of the map you are about to tap on. 76px is the 52px column
+     plus its margins. */
+  width:min(calc(100vw - 76px), 320px) !important;
+  height:min(calc(100vw - 76px), 320px) !important;
+  left:8px !important; right:auto !important; transform:none;
+  top:auto !important; bottom:64px !important; z-index:36;
+  image-rendering:pixelated;   /* a 128px canvas blown up past 300 — keep the pixels honest */
+}
 
 /* THE TOPBAR. Seven full-width labelled buttons wrapped to three rows and took a third of the
    screen. On a phone the readouts and the speed controls are the only things wanted in
@@ -252,7 +273,9 @@ body.touch #hint{display:none}
 <!-- TOUCH CONTROLS. Present in the markup always, shown only when the input mode is touch, so
      there is one document rather than a mobile build and a desktop build that drift apart. -->
 <div class="hud" id="touchbar">
-  <button id="tb-panels" title="Map / log / character / stash">&#9776;</button>
+  <button id="tb-panels" title="Log / character / stash">&#9776;</button>
+  <button id="tb-attack" title="Attack: tap an enemy to strike it, or open ground to advance and fight">ATK</button>
+  <button id="tb-map" title="The map">MAP</button>
   <button id="tb-marquee" title="Drag to select instead of panning">SEL</button>
   <button id="tb-menu" title="Build, squad, chronicles, save, options">&#9881;</button>
 </div>
@@ -18705,6 +18728,16 @@ $('btn-help').onclick = () => {
 function selectAll(){ selected = player().filter(c=>c.state==='ok'); refreshSquadBar(); refreshCharPanel(); }
 
 let attackMoveMode = false, camFollow = true;
+/* Arming the attack order, in one place. The mode is set from four (the A key, the touch
+   button, ESC, and the click that consumes it) and the touch button has a lit state that has
+   to follow it — a mode indicator that only updates on one of the four paths is worse than
+   none, because it lies. */
+function attackArmed(on){
+  attackMoveMode = on;
+  if(on){ castMode = null; guardMode = false; if(typeof marqueeSet === 'function') marqueeSet(false); }
+  const ab2 = document.getElementById('tb-attack');
+  if(ab2) ab2.classList.toggle('on', !!on);
+}
 let guardMode = false;
 const groups = {};
 let altHeld = false;
@@ -18741,7 +18774,7 @@ addEventListener('keydown', e => {
     if(selected.some(c=>c.faction==='player' && c.state==='ok')){ guardMode = true; log('GUARD: click an ally to protect. ESC cancels.'); }
   }
   if(e.key==='a' || e.key==='A'){
-    if(selected.some(c=>c.state==='ok')){ attackMoveMode = true; log('Attack-move: left-click a destination.'); }
+    if(selected.some(c=>c.state==='ok')){ attackArmed(true); log('Attack-move: left-click a destination.'); }
   }
   if(e.key==='b' || e.key==='B') toggleBuild();
   if(e.key==='l' || e.key==='L'){ if(modalOpen){ $('modal').style.display='none'; modalOpen=false; } else openChronicles(); }
@@ -18753,7 +18786,7 @@ addEventListener('keydown', e => {
   if(e.key==='Escape'){
     /* Esc backs out of anything modal, including the build menu (which used to need B again) */
     if(buildMode){ buildMode = null; refreshBuildBar && refreshBuildBar(); }
-    castMode = null; attackMoveMode = false; guardMode = false;
+    castMode = null; attackArmed(false); guardMode = false;
     hideCtxMenu(); $('modal').style.display='none'; modalOpen=false;
   }
 });
@@ -18936,11 +18969,17 @@ function marqueeSet(on){
 {
   const mb = document.getElementById('tb-marquee');
   if(mb) mb.onclick = () => { marqueeSet(!marqueeMode); log(marqueeMode ? 'Drag to select.' : 'Drag to pan.', ''); };
-  const SHEETS = ['', 'sheet-log', 'sheet-char', 'sheet-stash'];
+  const SHEETS = ['', 'sheet-log', 'sheet-char', 'sheet-stash'];   /* what ☰ cycles through */
+  /* The map is a sheet too, but not part of the cycle — it has its own button, because
+     hunting for it three taps into a rotation is the thing being fixed. It still has to be
+     in the mutual-exclusion list or it will sit on top of the stash. */
+  const SHEET_CLASSES = ['sheet-log', 'sheet-char', 'sheet-stash', 'sheet-map'];
   function showSheet(next){
     const b2 = document.body;
-    for(const k of SHEETS) if(k) b2.classList.remove(k);
+    for(const k of SHEET_CLASSES) b2.classList.remove(k);
     if(next) b2.classList.add(next);
+    const mpb = document.getElementById('tb-map');
+    if(mpb) mpb.classList.toggle('on', next === 'sheet-map');
     /* Words, not symbols. The page is set in Courier New and half the box-drawing block is
        missing from it — the first version of this button rendered as a tofu box, and three
        more were about to. The two glyphs kept (hamburger and gear) were checked on screen. */
@@ -18955,6 +18994,24 @@ function marqueeSet(on){
        state again, so the button could never leave it. */
     const at = SHEETS.findIndex(k => k && b2.classList.contains(k));
     showSheet(SHEETS[((at < 0 ? 0 : at) + 1) % SHEETS.length]);
+  };
+  /* ---------- THE MAP ---------- */
+  const mapb = document.getElementById('tb-map');
+  if(mapb) mapb.onclick = () => {
+    showSheet(document.body.classList.contains('sheet-map') ? '' : 'sheet-map');
+  };
+  /* ---------- THE ATTACK ORDER ----------
+     On a keyboard this is two separate things: right-click a man to go and kill him, and A
+     to advance into ground and take what comes. Neither survives the translation — a hold
+     has to land on a body the hit test resolves against the GROUND plane, so aiming at
+     anybody is a coin toss, and there is no A. One button covers both: arm it, then tap.
+     Tap a body and that is the order; tap open ground and they advance and fight on the way. */
+  const ab = document.getElementById('tb-attack');
+  if(ab) ab.onclick = () => {
+    if(attackMoveMode){ attackArmed(false); return; }
+    if(!selected.some(c => c.state === 'ok')){ log('Nobody selected to send.', 'bad'); return; }
+    attackArmed(true);
+    log('ATTACK: tap an enemy to strike it, or open ground to advance and fight.', '');
   };
   /* ---------- THE GEAR ----------
      Everything the desktop keeps as a permanent labelled button, one tap away and costing no
@@ -18972,10 +19029,8 @@ function marqueeSet(on){
       {label: 'LOAD', fn: hit('btn-load')},
       {label: 'OPTIONS', fn: hit('btn-options')},
       {label: 'HELP', fn: hit('btn-help')},
-      {label: 'MAP ' + (document.getElementById('minimap') &&
-        getComputedStyle(document.getElementById('minimap')).display !== 'none' ? 'OFF' : 'ON'),
-       fn: () => { const mm = document.getElementById('minimap');
-                   mm.style.display = getComputedStyle(mm).display === 'none' ? 'block' : 'none'; }},
+      /* MAP has left the gear: it is a button now. Toggling `style.display` from in here
+         also fought the sheet rule's !important and would have half-worked at best. */
     ]);
   };
 }
@@ -19009,8 +19064,23 @@ cv.addEventListener('mousedown', e => {
       return;
     }
     if(attackMoveMode){
-      attackMoveMode = false;
-      for(const m of selected.filter(c=>c.state==='ok')){ clearOrders(m); m.attackMove = {x:wx, y:wy}; }
+      attackArmed(false);
+      const crew = selected.filter(c => c.state === 'ok');
+      /* A BODY UNDER THE MARKER IS THE ORDER. Planting an attack-move marker on the exact
+         tile somebody is standing on and then waiting for the auto-acquire to notice them is
+         a longer way round to the same fight — and on touch it is the difference between the
+         button working and the button seeming not to. Generous radius: a fingertip is wider
+         than a mouse cursor and the hit test resolves against the ground plane, so a tap
+         aimed at a head lands somewhere behind the feet. */
+      const foe = chars.filter(c => c.state === 'ok' && c.faction !== 'player' &&
+          visAt(c.x, c.y) === 2 && dist(c.x, c.y, wx, wy) < (TOUCH ? 1.5 : 1.0))
+        .sort((a, b) => dist(a.x,a.y,wx,wy) - dist(b.x,b.y,wx,wy))[0];
+      if(foe){
+        for(const m of crew){ clearOrders(m); m.target = foe; m.targetManual = true; m.orderTarget = foe; }
+        log(`${crew.length === 1 ? crew[0].name : crew.length + ' of yours'} go for ${foe.name}.`, '');
+        return;
+      }
+      for(const m of crew){ clearOrders(m); m.attackMove = {x:wx, y:wy}; }
       return;
     }
     if(buildMode){ tryBuild(buildMode, Math.floor(wx), Math.floor(wy)); refreshInv(); return; }
@@ -19019,7 +19089,7 @@ cv.addEventListener('mousedown', e => {
   }
   if(e.button === 2){
     if(castMode){ castMode = null; return; }
-    if(attackMoveMode){ attackMoveMode = false; return; }
+    if(attackMoveMode){ attackArmed(false); return; }
     if(guardMode){ guardMode = false; return; }
     const movers = selected.filter(c => c.state==='ok');
     if(!movers.length) return;
@@ -20528,7 +20598,7 @@ function restore(d){
     }
   }
   towns.forEach((t,i) => t.recruits = (d.recruits && d.recruits[i]) || []);
-  selected = []; castMode = null; buildMode = null; attackMoveMode = false;
+  selected = []; castMode = null; buildMode = null; attackArmed(false);
   const f = player()[0]; if(f){ camX = f.x; camY = f.y; }
   refreshTop(); refreshInv(); refreshSquadBar(); refreshCharPanel();
   computeVision();   /* a loaded squad stands somewhere new; light it before the first frame */
