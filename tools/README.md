@@ -95,6 +95,7 @@ the truth was 45%.
 
 | harness | what it measures |
 |---|---|
+| `mobile.js` | What a frame costs and whether a phone could hold it: triangles submitted and **which mesh they belong to**, draw calls, save size against a mobile storage budget, how many touch targets are under 44px, and what falls off a 393px screen. **The frame rate it can report at a phone viewport is not a phone prediction** — everything here is SwiftShader, software rasterisation with no GPU, orders of magnitude slower than any handset. Quote the triangle and call counts, which are device-independent; never the fps. It overturned the plan it was written for on its first run: the obvious suspect for a two-million-triangle frame was six hundred characters, and characters turned out to be **0.6% of it** — 367 triangles a body — while half the frame was the fog overlay, a single sheet with a vertex every two tiles across the whole world. It then found the opposite is true of draw calls: characters are 1.2% of the triangles and **91% of the calls**, at 28 separate meshes a body. |
 | `simcost.js` | Isolated `update()` cost plus a 20-second soak. The primary perf number. |
 | `bench.js` | Fuller picture: draw calls, scene objects, shadow casters, micro-costs for the hot paths, autosave size, and a dyn-group leak check. Writes a JSON file per label. |
 

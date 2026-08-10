@@ -12206,7 +12206,16 @@ for(let i=0; i<HV.length; i++) if(HV[i] > _terrMaxY) _terrMaxY = HV[i];
      Normals are derived from the heightfield rather than from each chunk's own triangles —
      computeVertexNormals() only sees one chunk, so shared edges would get two different
      normals and every seam would light up as a crease. */
-  const GC = 8, CW = W / GC, CH = H / GC;
+  /* CHUNK SIZE IS A CULLING DECISION. At GC 8 a chunk is 180 tiles across with a bounding
+     sphere 127 tiles in radius, so any chunk that so much as clips the frustum submits all
+     64,800 of its triangles. Measured at maximum zoom-IN, where the camera sees perhaps
+     twenty tiles of ground, the renderer was still drawing geometry 201 TILES AWAY and
+     928,000 triangles a frame — almost none of it on screen.
+
+     GC 16 makes a chunk 90 tiles with a 64-tile sphere and 16,200 triangles, so frustum
+     culling actually bites. It costs more potential meshes (256 rather than 64) but only the
+     ones in view become draw calls, and far fewer are in view. */
+  const GC = 16, CW = W / GC, CH = H / GC;
   const hAt = (vx, vz) => HV[clamp(vz,0,H)*(W+1)+clamp(vx,0,W)];
   const chunkGeo = (gx, gz) => {
     const geo = new THREE.PlaneGeometry(CW, CH, CW, CH);
@@ -12430,12 +12439,32 @@ const fogTex = new THREE.CanvasTexture(fogCanvas);
 fogTex.magFilter = THREE.LinearFilter;
 fogTex.minFilter = THREE.LinearFilter;
 /* the dark lies ON the land, not in a sheet above your head — otherwise it fouls the camera */
-const fogGeo = new THREE.PlaneGeometry(W, H, Math.floor(W/2), Math.floor(H/2));
+/* ---------- THE FOG SHEET ----------
+   This was a vertex every TWO tiles across the whole 1440x1440 world: 1,036,800 triangles,
+   drawn every frame, never frustum-culled because it is a single mesh covering everything —
+   half of a two-million-triangle frame, on the one object in the scene whose detail does not
+   come from its geometry at all. The darkness is a TEXTURE. The mesh exists only to lay that
+   texture along the ground, so it needs exactly enough tessellation to follow the hills.
+
+   Six tiles a quad, measured: 115,200 triangles, a saving of 921,600 — 44% of the frame.
+
+   And the sampling changed with it. Reading the height AT each vertex draws a chord across
+   every rise, so hilltops poke through the dark: measured at 0.67% of quads even at the old
+   fine resolution, and 3.2% at this one — a bright spot of unexplored ground, which is a bug
+   rather than a look. Each vertex now takes the HIGHEST ground within half a quad, so the
+   sheet is a hull OVER the terrain rather than a chord through it. Poke-through measured at
+   zero, at every tessellation tried, including the one this replaces. */
+const FOG_Q = 6;                                  /* tiles per quad */
+const fogGeo = new THREE.PlaneGeometry(W, H, Math.floor(W/FOG_Q), Math.floor(H/FOG_Q));
 {
   const pos = fogGeo.attributes.position;
+  const half = FOG_Q / 2;
   for(let i = 0; i < pos.count; i++){
     const px = pos.getX(i) + W/2, py = -pos.getY(i) + H/2;
-    pos.setZ(i, groundY(clamp(px, 0, W-1), clamp(py, 0, H-1)) + 0.18);
+    let hi = -1e9;
+    for(let dy = -half; dy <= half; dy += half) for(let dx = -half; dx <= half; dx += half)
+      hi = Math.max(hi, groundY(clamp(px + dx, 0, W-1), clamp(py + dy, 0, H-1)));
+    pos.setZ(i, hi + 0.18);
   }
   pos.needsUpdate = true;
   fogGeo.computeVertexNormals();
@@ -12658,7 +12687,11 @@ function vscaleOf(c){
   /* Chunk size is a trade: finer culls better but submits more objects. Swept at 1440 —
      224 saves 2.6M triangles a frame for 38 extra draw calls, about 69k triangles per call
      added, which was the best ratio of anything tested. */
-  const DECOR_CH = 224;                             /* tiles across a decor chunk */
+  /* Same culling decision as the ground, and for the same reason: at 224 tiles a decor chunk
+     carries a 173-tile bounding sphere, which is why the renderer was still submitting rocks
+     and trees two hundred tiles past anything on screen. 112 halves the radius. The key packs
+     each axis into 8 bits, so anything down to about 6 tiles a chunk still fits. */
+  const DECOR_CH = 112;                             /* tiles across a decor chunk */
   const CH_R = DECOR_CH * 0.71 + 14;                /* half-diagonal + headroom for hills */
   const _chunkGeo = new Map();
   const chunkGeoFor = (geo) => {
