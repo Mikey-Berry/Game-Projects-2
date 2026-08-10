@@ -360,6 +360,99 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
     await ctx.close();
   }
 
+  /* ---------------- THE PHONE ON ITS SIDE ----------------
+     Landscape is not a tweak of portrait; every assumption inverts. The portrait layout
+     spends horizontal space freely (full-width sheets) and hoards vertical (a button column
+     up the edge) — turned sideways, 292px of column does not fit above the squadbar on a
+     393px-tall screen, and a map sized off `100vw` is taller than the screen it is on. So
+     this checks the arrangement, not the styling: does anything hang off, is anything still
+     tappable, is there any game left to see. */
+  {
+    const ctx = await b.newContext({
+      ...devices['Pixel 5'],
+      viewport: { width: 851, height: 393 },   /* the same phone, turned */
+      screen: { width: 851, height: 393 },
+      isLandscape: true,
+    });
+    const p = await ctx.newPage();
+    p.on('pageerror', e => errs.push('LANDSCAPE: ' + e.message.slice(0, 160)));
+    await p.goto(url, { waitUntil: 'load' });
+    await p.waitForTimeout(3000);
+    await p.evaluate(() => document.getElementById('btn-start').click());
+    await p.waitForTimeout(4000);
+
+    R.landTouch = await p.evaluate(() => (TOUCH && document.body.classList.contains('touch'))
+      ? 'still touch mode turned sideways' : '!! TOUCH MODE LOST IN LANDSCAPE');
+    R.landRenderer = await p.evaluate(() => {
+      const w = document.documentElement.clientWidth, h = document.documentElement.clientHeight;
+      /* the canvas must be the shape the phone IS, not the shape it was — this is the whole
+         reason fit3d is re-run on orientationchange */
+      return (Math.abs(camera.aspect - w / h) < 0.05 && w > h)
+        ? `renderer follows the turn (${w}x${h})`
+        : `!! THE RENDERER IS STILL THE OTHER SHAPE (aspect ${camera.aspect.toFixed(2)} vs ${(w/h).toFixed(2)})`;
+    });
+    /* Nothing chrome-level may hang off. Deliberately excludes anything inside a scrolling
+       panel: a stat row below the fold of the character sheet is scrolled, not clipped, and
+       an earlier version of this counted six of those and called the layout broken. */
+    R.landClipping = await p.evaluate(() => {
+      const W2 = document.documentElement.clientWidth, H2 = document.documentElement.clientHeight;
+      const bad = [];
+      for(const el of document.querySelectorAll('#topbar, #touchbar, #squadbar, #minimap, #touchbar button, #topbar button')){
+        const cs = getComputedStyle(el);
+        if(cs.display === 'none' || cs.visibility === 'hidden') continue;
+        const r = el.getBoundingClientRect();
+        if(!r.width || !r.height) continue;
+        if(r.left < -1 || r.right > W2 + 1 || r.top < -1 || r.bottom > H2 + 1)
+          bad.push((el.id || el.textContent.trim().slice(0, 8)) + ' ' + Math.round(r.left) + ',' + Math.round(r.top));
+      }
+      return bad.length ? '!! HANGING OFF THE SCREEN: ' + bad.slice(0, 4).join(' · ')
+        : 'the controls and readouts all fit';
+    });
+    R.landTargets = await p.evaluate(() => {
+      let n = 0, tiny = 0, min = 999;
+      for(const el of document.querySelectorAll('button')){
+        const cs = getComputedStyle(el);
+        if(cs.display === 'none' || cs.visibility === 'hidden') continue;
+        const r = el.getBoundingClientRect();
+        if(!r.width || !r.height) continue;
+        n++; const s = Math.min(r.width, r.height); min = Math.min(min, s); if(s < 44) tiny++;
+      }
+      return tiny === 0 ? `all ${n} targets still 44px or better (smallest ${Math.round(min)})`
+        : `!! ${tiny} OF ${n} TARGETS UNDER 44px IN LANDSCAPE (smallest ${Math.round(min)})`;
+    });
+    /* the point of turning the phone is MORE MAP, so a sheet must not eat the screen */
+    R.landSheetRoom = await p.evaluate(() => {
+      const W2 = document.documentElement.clientWidth, H2 = document.documentElement.clientHeight;
+      document.getElementById('tb-panels').click();
+      document.getElementById('tb-panels').click();          /* character sheet up */
+      const r = document.getElementById('charpanel').getBoundingClientRect();
+      const share = (r.width * r.height) / (W2 * H2);
+      document.body.classList.remove('sheet-char');
+      return share < 0.5 ? `an open sheet covers ${Math.round(share * 100)}% of the screen`
+        : `!! A SHEET COVERS ${Math.round(share * 100)}% OF A LANDSCAPE SCREEN`;
+    });
+    R.landMap = await p.evaluate(() => {
+      const W2 = document.documentElement.clientWidth, H2 = document.documentElement.clientHeight;
+      document.body.classList.remove('sheet-map');
+      document.getElementById('tb-map').click();
+      const mm = document.getElementById('minimap'), r = mm.getBoundingClientRect();
+      if(getComputedStyle(mm).display === 'none') return '!! NO MAP IN LANDSCAPE';
+      if(r.bottom > H2 + 1 || r.right > W2 + 1 || r.top < -1) return '!! THE MAP HANGS OFF A SHORT SCREEN';
+      if(r.height < 140) return '!! THE MAP IS ONLY ' + Math.round(r.height) + 'px TALL';
+      if(Math.abs(r.width - r.height) > 2) return '!! THE MAP IS NOT SQUARE (' + Math.round(r.width) + 'x' + Math.round(r.height) + ')';
+      document.body.classList.remove('sheet-map');
+      return `a ${Math.round(r.height)}px square map, sized off the short side`;
+    });
+    /* and the controls still work, which is the only thing that actually matters */
+    R.landAttack = await p.evaluate(() => {
+      const me = player()[0]; selected = [me]; clearOrders(me);
+      document.getElementById('tb-attack').click();
+      return attackMoveMode ? 'the attack button still arms turned sideways'
+        : '!! THE ATTACK BUTTON DOES NOTHING IN LANDSCAPE';
+    });
+    await ctx.close();
+  }
+
   /* ---------------- the desktop, which is the priority ---------------- */
   {
     const ctx = await b.newContext({ viewport: { width: 1280, height: 800 } });
