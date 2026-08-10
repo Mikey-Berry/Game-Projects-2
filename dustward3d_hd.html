@@ -220,7 +220,7 @@ body.touch #hint{display:none}
   <button id="btn-chron" data-tip="chron">CHRONICLES [L]</button>
   <button id="btn-save" data-tip="save">SAVE</button>
   <button id="btn-load">LOAD</button>
-  <input type="file" id="loadfile" accept=".json" style="display:none">
+  <input type="file" id="loadfile" accept=".json,.gz,application/json,application/gzip" style="display:none">
   <button id="btn-options">OPTIONS</button>
   <button id="btn-help">?</button>
 </div>
@@ -10966,13 +10966,17 @@ function update(dt){
     }
     /* autosave. A grown world runs to megabytes and browser storage is finite, so a failure
        here is a real thing that happens — and used to happen in complete silence. */
-    try { localStorage.setItem('dustward_save', JSON.stringify(snapshot())); autosaveWarned = false; log('Autosaved.'); }
-    catch(e){
-      if(!autosaveWarned){
-        autosaveWarned = true;
-        log('AUTOSAVE FAILED — browser storage is full or unavailable. Use SAVE to write a file.', 'bad');
+    /* Packing is asynchronous, so the snapshot is taken NOW and written when it is ready —
+       the world must not be allowed to move between reading it and storing it. */
+    packSaveText(snapshot()).then(text => {
+      try { localStorage.setItem('dustward_save', text); autosaveWarned = false; log('Autosaved.'); }
+      catch(e){
+        if(!autosaveWarned){
+          autosaveWarned = true;
+          log('AUTOSAVE FAILED — browser storage is full or unavailable. Use SAVE to write a file.', 'bad');
+        }
       }
-    }
+    }).catch(() => {});
     /* ---- time takes its toll on everything that still breathes ---- */
     for(const c of [...chars]){
       if(c.undead || c.beast || c.bossKey || c.state==='dead' || c.mobileVendor || c.isLeader >= 0 || c.immortal) continue;
@@ -19716,25 +19720,96 @@ function restore(d){
   if(typeof syncDecorFog === 'function') syncDecorFog();
   log('Game loaded.', 'good');
 }
-$('btn-save').onclick = () => {
-  const data = JSON.stringify(snapshot());
-  /* quicksave in the browser when available (blocked in some sandboxed previews) */
+/* ============================================================ PACKING A SAVE
+   A save of a grown world is about 1.9 MB of JSON, against a browser-storage budget of
+   roughly 5 MB — close enough to the edge that an autosave failing was a real event this
+   code already had a warning for, and every system added since pushed it nearer.
+
+   It also compresses about thirty-six times, because it is JSON: mostly repeated key names.
+   Measured on a fresh world: 1,907 KB raw, 52 KB gzip, 31 KB brotli. `CompressionStream` is
+   native in every current browser, needs no library and adds nothing to the file.
+
+   Two things this must not break, and they are why there is more code here than one call.
+   OLD SAVES STILL LOAD — anything that starts with `{` is plain JSON from before this, and is
+   read exactly as it always was. And a browser WITHOUT CompressionStream (Safari before 16.4)
+   silently falls back to writing plain JSON rather than failing to save at all. */
+const SAVE_TAG = 'DWZ1:';                       /* marks a base64 gzip payload in storage */
+const HAS_ZIP = typeof CompressionStream === 'function' && typeof DecompressionStream === 'function';
+async function gzipBytes(u8){
+  const st = new Blob([u8]).stream().pipeThrough(new CompressionStream('gzip'));
+  return new Uint8Array(await new Response(st).arrayBuffer());
+}
+async function gunzipBytes(u8){
+  const st = new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return new Uint8Array(await new Response(st).arrayBuffer());
+}
+/* base64 in chunks: String.fromCharCode(...u8) on a 52 KB array blows the argument limit */
+function b64From(u8){
+  let s2 = '';
+  for(let i = 0; i < u8.length; i += 0x8000) s2 += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s2);
+}
+function b64To(str){
+  const bin = atob(str), u8 = new Uint8Array(bin.length);
+  for(let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return u8;
+}
+/* what goes into localStorage: tagged base64 gzip, or plain JSON if the browser cannot */
+async function packSaveText(obj){
+  /* THIS LINE MUST STAY ABOVE THE FIRST `await`. An async function body runs synchronously
+     until it hits one, so stringifying here captures the world in the same tick the snapshot
+     was taken in. That matters because a snapshot is not a deep copy — it shares nested
+     arrays with the live world, so anything that lets the sim run between taking one and
+     serialising it writes a save that is half of one moment and half of another. Put an
+     await above this and autosaves start tearing, silently, once in a while. */
+  const json = JSON.stringify(obj);
+  if(!HAS_ZIP) return json;
+  try { return SAVE_TAG + b64From(await gzipBytes(new TextEncoder().encode(json))); }
+  catch(e){ return json; }
+}
+async function unpackSaveText(str){
+  if(!str) return null;
+  if(str.startsWith(SAVE_TAG)) return JSON.parse(new TextDecoder().decode(await gunzipBytes(b64To(str.slice(SAVE_TAG.length)))));
+  return JSON.parse(str);                        /* a save from before any of this */
+}
+/* and what goes into a FILE: raw gzip bytes, recognised on the way back in by their magic
+   number rather than by the extension, so a renamed file still loads */
+async function unpackSaveFile(buf){
+  const u8 = new Uint8Array(buf);
+  if(u8.length > 2 && u8[0] === 0x1f && u8[1] === 0x8b)
+    return JSON.parse(new TextDecoder().decode(await gunzipBytes(u8)));
+  return JSON.parse(new TextDecoder().decode(u8));
+}
+$('btn-save').onclick = async () => {
+  const snap = snapshot();
+  const text = await packSaveText(snap);
   let stored = false;
-  try { localStorage.setItem('dustward_save', data); stored = true; } catch(e){}
+  try { localStorage.setItem('dustward_save', text); stored = true; } catch(e){}
   /* always offer a file too — portable, survives cleared storage */
-  const blob = new Blob([data], {type:'application/json'});
+  let blob, name;
+  if(HAS_ZIP){
+    try {
+      blob = new Blob([await gzipBytes(new TextEncoder().encode(JSON.stringify(snap)))], {type:'application/gzip'});
+      name = `dustward-day${day}.json.gz`;
+    } catch(e){ blob = null; }
+  }
+  if(!blob){ blob = new Blob([JSON.stringify(snap)], {type:'application/json'}); name = `dustward-day${day}.json`; }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `dustward-day${day}.json`;
+  a.download = name;
   a.click(); URL.revokeObjectURL(a.href);
-  log(stored ? 'Saved (browser + file).' : 'Save file downloaded (browser storage unavailable here).', 'good');
+  const kb = Math.round(blob.size / 1024);
+  log(stored ? `Saved (browser + file, ${kb} KB).` : `Save file downloaded, ${kb} KB (browser storage unavailable here).`, 'good');
 };
 $('btn-load').onclick = () => $('loadfile').click();
 $('loadfile').addEventListener('change', e => {
   const f = e.target.files[0]; if(!f) return;
   const r = new FileReader();
-  r.onload = () => { try { restore(JSON.parse(r.result)); } catch(err){ log('Could not read that save file.', 'bad'); } };
-  r.readAsText(f);
+  r.onload = async () => {
+    try { restore(await unpackSaveFile(r.result)); }
+    catch(err){ log('Could not read that save file.', 'bad'); }
+  };
+  r.readAsArrayBuffer(f);                        /* bytes, not text: it may be gzip */
   e.target.value = '';
 });
 (function offerContinue(){
@@ -19744,8 +19819,11 @@ $('loadfile').addEventListener('change', e => {
   const btn = document.createElement('button');
   btn.textContent = 'CONTINUE';
   btn.style.marginTop = '10px';
-  btn.onclick = () => {
-    try { restore(JSON.parse(data)); } catch(err){ log('Quicksave was corrupted.', 'bad'); return; }
+  btn.onclick = async () => {
+    let snap = null;
+    try { snap = await unpackSaveText(data); } catch(err){ log('Quicksave was corrupted.', 'bad'); return; }
+    if(!snap){ log('Quicksave was corrupted.', 'bad'); return; }
+    restore(snap);
     started = true;
     $('startoverlay').style.display = 'none';
     paused = false; syncPauseBtn();
