@@ -268,7 +268,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* ---------- 7. AND IT ALL SURVIVES A SAVE ---------- */
     {
       refreshBoard(t, true);
-      const j = t.board.jobs.find(x => x.kind === 'supply') || t.board.jobs[0];
+      /* an untaken job — earlier blocks have already taken, paid and botched several, and
+         re-taking one of those measures the harness rather than the save */
+      const j = t.board.jobs.find(x => !x.taken && x.kind === 'supply')
+             || t.board.jobs.find(x => !x.taken);
+      R.freshJob = j ? `taking "${j.title}" for the save test` : '!! NOTHING UNTAKEN LEFT ON THE BOARD';
       takeContract(t, j);
       const wasId = j.id, wasN = contracts.length;
       restore(JSON.parse(JSON.stringify(snapshot())));

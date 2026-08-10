@@ -1314,6 +1314,7 @@ function depositInv(c, bin){
 function releaseTargets(c){
   for(const o of chars){
     if(o.target === c){ o.target = null; o.targetManual = false; }
+    if(o.orderTarget === c) o.orderTarget = null;   /* a standing order on a body that is gone */
     if(o.guardTarget === c) o.guardTarget = null;
     if(o.healTarget === c) o.healTarget = null;
     if(o.lootTarget === c) o.lootTarget = null;
@@ -6277,6 +6278,11 @@ function failContract(j, why){
   const t = contractTown(j);
   j.failed = true;
   const i = contracts.indexOf(j); if(i >= 0) contracts.splice(i, 1);
+  /* AND OFF THE BOARD. `refreshBoard` keeps anything `taken` so a job in progress is not
+     torn down under you — which meant a FAILED job, still flagged taken, stayed nailed up
+     forever showing "They did not make it." and could be accepted a second time. A paid job
+     comes down; so does a botched one. */
+  if(t && t.board){ const bi = t.board.jobs.indexOf(j); if(bi >= 0) t.board.jobs.splice(bi, 1); }
   if(t){
     dropRep(t, 10);
     log(`${t.name}: ${why} The post is not going to forget that.`, 'bad');
@@ -6925,7 +6931,7 @@ function clearOrders(c){
   c.target = null; c.moveTarget = null; c.healTarget = null;
   c.lootTarget = null; c.tradeTarget = null; c.bedTarget = null; c.pickupTarget = null; c.phylTarget = null; c.sealTarget = null; c.doorWork = false;
   c.gather = null; c.attackMove = null; c.healProg = 0; c.gatherT = 0;
-  c.chestTarget = null; c.targetManual = false; c.fleeT = 0;
+  c.chestTarget = null; c.targetManual = false; c.orderTarget = null; c.fleeT = 0;
   c.structTarget = null; c.repairTarget = null; c.stuckT = 0;
   c.carryTarget = null; c.rescueTarget = null; c.seizeTarget = null;
   c.guardTarget = null; c.haulTarget = null;
@@ -7436,7 +7442,17 @@ function physics(c, dt){
   if(c.target){
     if(carried(c)){ log(`${c.name} dropped what they were carrying to fight.`, ''); dropBodies(c); }
     const t = c.target;
-    if(t.state !== 'ok'){ c.target = null; c.path = null; return; }
+    if(t.state !== 'ok'){
+      c.target = null; c.path = null;
+      /* AN ORDER DEFERRED, NOT AN ORDER LOST. Something got in the way and had to be dealt
+         with first; now that it is down, go back to the man you were sent for. Without this
+         the interruption silently eats the order and the unit re-acquires whatever happens
+         to be nearest, which reads as the order having been ignored. */
+      if(c.orderTarget && c.orderTarget !== t && c.orderTarget.state === 'ok' && chars.includes(c.orderTarget)){
+        c.target = c.orderTarget; c.targetManual = true;
+      } else c.orderTarget = null;
+      return;
+    }
     /* a bodyguard never chases beyond reach of the ward */
     if(c.guardTarget && !c.targetManual && dist(c.x,c.y,c.guardTarget.x,c.guardTarget.y) > 13){
       c.target = null; c.path = null;
@@ -7444,6 +7460,32 @@ function physics(c, dt){
       return;
     }
     const d = dist(c.x,c.y,t.x,t.y);
+    /* ---- WHAT IS IN THE WAY ----
+       Retaliation above answers "somebody hit me". This answers the other half: a body
+       shouldering through a line to reach a man at the back is not being brave, it is not
+       seeing anybody. If the quarry is a walk away and there is a hostile close enough to
+       put a blade in you, that one is the fight — you can go back to the other when this
+       is off you.
+
+       Deliberately narrow. It needs real distance to the quarry (nothing is stolen out of a
+       melee already joined), the interloper must be genuinely on top of you rather than
+       merely nearer, and a player's own explicit order is never overridden: right-clicking
+       a particular man means that man, and the passing cuts are the price you chose. */
+    if(d > 4.5 && !(c.targetManual && c.faction === 'player') && !c.attackMove){
+      c._blockT = (c._blockT || 0) - dt;
+      if(c._blockT <= 0){
+        c._blockT = 0.4;                 /* four times a second is plenty for a decision like this */
+        let best = null, bd = 1.75;
+        for(const o of charsNear(c.x, c.y, 1.9)){
+          if(o === c || o === t || o.state !== 'ok') continue;
+          if((o.floor || 0) !== (c.floor || 0)) continue;
+          if(!hostile(c, o)) continue;
+          const od = dist(c.x, c.y, o.x, o.y);
+          if(od < bd){ bd = od; best = o; }
+        }
+        if(best){ c.target = best; c.path = null; return; }
+      }
+    }
     /* leash for guards */
     if(c.guard && dist(c.x,c.y,c.guard.x,c.guard.y) > 22){ c.target=null; c.moveTarget={x:c.guard.x,y:c.guard.y}; return; }
     /* lair-bound squads don't chase to the horizon */
@@ -9427,8 +9469,22 @@ function retaliate(t, attacker){
   if(attacker && attacker.faction === t.faction) return; /* friendly fire never starts a feud */
   /* a runner under orders keeps running — and pays the toll in passing cuts */
   if(t.moveTarget && dist(t.x, t.y, t.moveTarget.x, t.moveTarget.y) > 3 && !t.targetManual) return;
-  /* already locked onto a living, reachable quarry — don't thrash between targets */
-  if(t.target && t.target.state==='ok' && dist(t.x,t.y,t.target.x,t.target.y) < 12) return;
+  /* ---- WHO IS ACTUALLY THE PROBLEM ----
+     This used to read `dist(t, t.target) < 12` — a body with any living quarry inside twelve
+     tiles ignored being hit, by anybody, entirely. Twelve tiles is not "engaged", it is a
+     third of the way across a battle: it is why a unit would sprint through a crowd, take a
+     passing cut from every one of them, and never once look sideways. The intent was right —
+     do not thrash between targets — but the measure of it is not a fixed radius.
+
+     Two things keep you on your quarry. Being in reach of it, because turning away mid-swing
+     is worse than eating one jab. And the quarry being no further off than whoever just hit
+     you, because then it is still the nearer problem. Anything else and the knife in your
+     ribs outranks the man across the field. */
+  if(t.target && t.target.state === 'ok'){
+    const dq = dist(t.x, t.y, t.target.x, t.target.y);
+    const da = attacker ? dist(t.x, t.y, attacker.x, attacker.y) : 1e9;
+    if(dq <= 2.2 || dq <= da + 0.5) return;
+  }
   if(t.civ){ t.fleeT = 2.5; say(t, pick(['GUARDS!','Help!','Murder!'])); return; }
   if(t.fleeOnHit){ t.fleeT = 3; return; }
   if(t.resting){ t.resting.user = null; t.resting = null; }
@@ -16234,14 +16290,17 @@ function syncChars(dt){
             spineY = -0.60 + e2*0.78; headY = 0.52 - e2*0.46;
           }
           if(mvK === 'thrust'){
-            /* the point comes back beside the ribs and is PUT somewhere. Barely any torso
-               rotation — a thrust is a step and an arm, and it is the fastest thing here. */
+            /* The point comes back beside the RIBS and is put somewhere. The shoulder barely
+               moves: the old version folded the elbow to -2.10 while the arm sat at -0.83,
+               and folding a raised arm swings the blade up over the shoulder — on the contact
+               sheet it read as a third overhead wind rather than a thrust. The arm stays down
+               near the body now, and the chamber is all elbow. */
             if(winding){
-              armR = -0.55 - e1*0.28; elbR = -0.85 - e1*1.25; armRz = -0.22 - e1*0.16;
-              spineY = -0.34 - e1*0.20; spineX = 0.16 - e1*0.06;
+              armR = -0.18 - e1*0.14; elbR = -0.70 - e1*1.35; armRz = -0.16 - e1*0.34;
+              spineY = -0.34 - e1*0.26; spineX = 0.16 - e1*0.06;
             } else {
-              armR = -0.83 + -0.62*e2; elbR = -2.10 + e2*2.02; armRz = -0.38 + e2*0.30;
-              spineY = -0.54 + e2*0.50; spineX = 0.10 + e2*0.16;
+              armR = -0.32 - e2*0.56; elbR = -2.05 + e2*1.98; armRz = -0.50 + e2*0.42;
+              spineY = -0.60 + e2*0.56; spineX = 0.10 + e2*0.16;
               swingYaw = (-0.06 + e2*0.10) * hv;
             }
           } else if(mvK === 'cleave' || mvK === 'spin'){
@@ -16283,13 +16342,24 @@ function syncChars(dt){
               armL = 0.69 - e2*0.56; elbL = -0.70 + e2*0.35;
             }
           } else {
-            /* the slash: a diagonal off the shoulder, the plain honest stroke */
+            /* THE SLASH: a diagonal off the shoulder, the plain honest stroke — and the one
+               that was doing the most damage to the variety. It wound the shoulder to -1.80,
+               which is well past horizontal and reads on screen as the blade going straight
+               up; against `overhead` at -2.65 the two were the same picture, and between them
+               they are half of every swing anybody throws. The travel is out of the pitch and
+               into the LATERAL now: the blade cocks back over the right shoulder and comes
+               down across the body, which is what makes a diagonal a diagonal. */
             if(winding){
-              armR = -0.5 - e1*1.30; elbR = -0.88 - e1*0.30; armRz = -0.22 - e1*0.50;
+              armR = -0.5 - e1*0.40; elbR = -0.88 - e1*0.34; armRz = -0.22 - e1*1.06;
               armL = 0.35 + e1*0.30; elbL = -0.5 - e1*0.18;
+              /* the torso coils further than the shared wind does. At this camera the shoulder
+                 going back is the clearest read there is that a stroke is coming from the
+                 SIDE rather than from over the head. */
+              spineY = -0.34 - e1*0.52; headY = 0.30 + e1*0.34;
             } else {
-              armR = -1.80 + e2*1.15; elbR = -1.18 + e2*0.95; armRz = -0.72 + e2*1.35;
+              armR = -0.90 + e2*0.52; elbR = -1.22 + e2*1.00; armRz = -1.28 + e2*2.00;
               armL = 0.65 - e2*0.52; elbL = -0.68 + e2*0.33;
+              spineY = -0.86 + e2*1.04; headY = 0.64 - e2*0.58;
             }
           }
         }
@@ -19184,7 +19254,10 @@ cv.addEventListener('mousedown', e => {
           {label:'LEAVE THEM', fn:()=>{}}]);
         return;
       }
-      for(const m of movers){ clearOrders(m); m.target = foe; m.targetManual = true; }
+      /* `orderTarget` is the standing intent behind the click. `target` is who they are
+         swinging at right now, and anything close enough to be a problem can take that over
+         — but the order survives the interruption and resumes when the way is clear. */
+      for(const m of movers){ clearOrders(m); m.target = foe; m.targetManual = true; m.orderTarget = foe; }
       return;
     }
     /* someone of yours in a town's cells, and no watch standing over them */
