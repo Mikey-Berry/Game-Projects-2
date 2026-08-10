@@ -834,6 +834,19 @@ const LEADER_TRAITS = {
   cunning:    'a patient schemer',
 };
 let hour = 6, day = 1, speed = 1, paused = true;
+/* WHAT HAPPENED LATELY, in world hours. The squad talks about the last few hours of their
+   lives, so something has to write down when those hours were. Declared beside the clock and
+   not beside the talk tables further down: worldgen kills things and raises things, and a
+   `const` declared later in the file would be in its temporal dead zone when it did. */
+const mood = {fight: -999, raise: -999, gaunt: -999, lost: -999};
+function nowH(){ return day * 24 + hour; }
+/* Posted work you have taken on, across every town. Declared here rather than beside the
+   rest of the post code a few thousand lines down for the same reason `mood` is: `kill()`
+   reads this list to count a headcount bounty, worldgen kills things, and a `const` declared
+   later in the file is in its temporal dead zone when it does — which throws, from a line
+   that has nothing to do with either. */
+const contracts = [];
+let contractN = 0;
 function makeLeader(t){
   const trait = pick(Object.keys(LEADER_TRAITS));
   const lsex = rnd() < 0.5 ? 'f' : 'm';
@@ -2046,7 +2059,150 @@ const CONV_TALK = {
   },
 };
 function convBand(v){ return v >= 25 ? 'warm' : v >= -10 ? 'ok' : v >= -45 ? 'bad' : 'awful'; }
+/* ---------- WHAT IS ACTUALLY HAPPENING ----------
+   The lines above are what somebody thinks of YOU. These are about the last few hours: the
+   larder, the wounded, the fight that just ended, how many dead are walking beside them.
+   A squad that answers its own situation reads as people paying attention; the same six
+   opinions on a loop reads as a soundboard, and a loop is what it was.
+
+   Each situation carries a generic pool, plus an override for the convictions that would
+   genuinely see it differently. Not everybody has a view on everything — six entries per
+   situation would be six times the words and five-sixths filler. */
+const SITU_TALK = {
+  starving: {
+    any: ['I cannot remember the last thing I ate. That is not a figure of speech.',
+          'My hands are shaking and it is not the cold.',
+          'Anything. A boot. I am not being funny.'],
+    compassion: ['Feed the others first. I mean it. I will keep.'],
+    cruel: ['There is meat walking about out there. I am only saying it out loud.'],
+    devout: ['Fasting is holy. This is not fasting. This is neglect.'],
+    ambitious: ['Nobody takes anything from anybody on an empty stomach.'],
+  },
+  someoneStarving: {
+    any: ['Somebody is going hungry back there and it is not being talked about.',
+          'Look at their hands next time they hold a cup. Go on. Look.'],
+    compassion: ['Give them mine. No — give them mine.'],
+    cold: ['One of them will drop before the week is out. Just so it is said aloud.'],
+    loyal: ['I will not say it twice: they need feeding before I do.'],
+  },
+  nofood: {
+    any: ['Larder\'s bare. Not low. Bare.',
+          'We are out of food. I have checked twice and it did not improve.',
+          'Whatever we are doing next, it had better be near something that grows.'],
+    ambitious: ['An army marches on its stomach and we are not even a company.'],
+    scholar: ['I can tell you the caloric arithmetic of this. You will not enjoy it.'],
+    cruel: ['I have eaten worse than what is in front of us. You do not want the details.'],
+  },
+  hurt: {
+    any: ['I need this looked at. Soon would be good.',
+          'It has stopped bleeding. That is not the same as stopped.',
+          'I can still hold a blade. I did not say I could swing it.'],
+    devout: ['I have said the words over it. The words are not sutures.'],
+    cruel: ['It hurts. Good. Means I can still feel where the next one goes.'],
+    haunted: ['Pain is fine. Pain is proof I am still on this side of it.'],
+  },
+  down: {
+    any: ['Somebody is in the dirt and nobody is going to them.',
+          'They are down. DOWN. Is anyone else seeing this?'],
+    compassion: ['If nobody else moves I am moving. Say the word or do not.'],
+    loyal: ['We do not leave people in the dust. That is not one of the rules I bend.'],
+    cold: ['Either they get up or they do not. Standing over them changes neither.'],
+  },
+  lost: {
+    any: ['We are one short and I keep counting anyway.',
+          'I keep turning round to say something to them.'],
+    loyal: ['I want the name written somewhere. Anywhere. Just written.'],
+    haunted: ['That is how it starts. It always starts with one.'],
+    cold: ['Redistribute their kit before it walks off. Somebody has to say it.'],
+    ambitious: ['Replace them. That sounds hard. It is not meant to.'],
+  },
+  fought: {
+    any: ['Ears are still ringing.',
+          'That could have gone very differently and we all know which way.',
+          'Check your edges. Everyone. Now, while we are stood still.'],
+    cruel: ['More of that. Sooner.'],
+    compassion: ['I did not like doing that. I want it on the record that I did not like it.'],
+    scholar: ['I want a look at what they were carrying before it goes in the pile.'],
+    devout: ['I said the words over what we made back there. Quietly. Do not laugh.'],
+  },
+  raised: {
+    any: ['It got up. I watched it get up and I am still deciding how I feel.',
+          'That is somebody\'s son carrying our spare rope.'],
+    devout: ['You put a soul out of its rest to carry a sack. Think about that sentence.'],
+    haunted: ['We are making more of the thing I came out here to end. I know. I KNOW.'],
+    scholar: ['The reanimation holds far longer than the literature says it should. Fascinating. Horrible.'],
+    cruel: ['Cheaper than hiring, and they never argue. I approve.'],
+    cold: ['It works. That is the beginning and end of my opinion.'],
+  },
+  manyRisen: {
+    any: ['There are more of them in this camp than there are of us.',
+          'I sleep with one eye on the yard these days.',
+          'Do they LOOK at things, or do they just face them?'],
+    devout: ['Count the living. Now count the other lot. That is a graveyard we sleep in.'],
+    loyal: ['They answer to you. So do I. I try not to dwell on the overlap.'],
+    ambitious: ['A host that does not eat and does not desert. Say what you like — it is an army.'],
+  },
+  gaunt: {
+    any: ['That thing out there had too many joints and not enough face.',
+          'It did not chase. It followed. There is a difference and I hate it.',
+          'Do not work a formula tonight. Not tonight.'],
+    haunted: ['That is what took my brother. Not that one. That KIND.'],
+    scholar: ['I counted the limbs twice and got two different answers.'],
+    devout: ['Nothing in scripture has that many elbows.'],
+    cold: ['Aim for where the joints bend the wrong way. It works. Mostly.'],
+  },
+};
+const SITU_ORDER = ['down', 'starving', 'gaunt', 'nofood', 'lost', 'someoneStarving', 'hurt', 'fought', 'raised', 'manyRisen'];
+function situationsFor(c){
+  const out = [];
+  const h = nowH();
+  const larder = campHas('meat') + campHas('fruit') + campHas('fish');
+  let livingHungry = 0, starving = 0, downed = 0, risen = 0, gauntNear = 0, mine = 0;
+  for(const o of chars){
+    if(o.faction === 'gaunt' || o.gauntKind){
+      if(o.state === 'ok' && dist(o.x, o.y, c.x, c.y) < 15) gauntNear++;
+      continue;
+    }
+    if(o.faction !== 'player' || o.state === 'dead') continue;
+    mine++;
+    if(o.undead) risen++;
+    else {
+      if(o.hunger < 55) livingHungry++;
+      if(o.hunger <= 12) starving++;
+    }
+    if(o.state === 'down') downed++;
+  }
+  if(!c.undead && c.hunger <= 12) out.push('starving');
+  else if(starving > 0) out.push('someoneStarving');
+  if(!larder && livingHungry > 0) out.push('nofood');
+  if(PARTS.some(k => c.parts[k].hp < c.parts[k].max * 0.45)) out.push('hurt');
+  if(downed > 0) out.push('down');
+  if(h - mood.lost < 10) out.push('lost');
+  if(h - mood.fight < 4) out.push('fought');
+  if(h - mood.raise < 6) out.push('raised');
+  if(gauntNear > 0 || h - mood.gaunt < 8) out.push('gaunt');
+  if(risen >= 5 && risen > mine - risen) out.push('manyRisen');
+  return out;
+}
+function situationBark(c){
+  const hits = situationsFor(c);
+  if(!hits.length) return null;
+  /* the most pressing first, but not deterministically — a squad that always says the same
+     thing in the same order is a status readout with a portrait on it */
+  hits.sort((a, b) => SITU_ORDER.indexOf(a) - SITU_ORDER.indexOf(b));
+  const top = hits.slice(0, 2).filter(k => k !== c.lastSitu);
+  const key = (top.length ? pick(top) : hits[0]);
+  const tab = SITU_TALK[key]; if(!tab) return null;
+  const own = tab[c.conviction];
+  const pool = (own && own.length && rnd() < 0.6) ? own : tab.any;
+  if(!pool || !pool.length) return null;
+  c.lastSitu = key;
+  return pick(pool);
+}
 function squadBark(c){
+  /* the situation gets first refusal, but not every time: a squad that only ever narrates
+     the larder never tells you what it thinks of you, and that was the whole point of them */
+  if(rnd() < 0.7){ const s = situationBark(c); if(s) return s; }
   const tab = CONV_TALK[c.conviction]; if(!tab) return null;
   const pool = tab[convBand(c.regard || 0)] || tab.ok;
   return pool && pool.length ? pick(pool) : null;
@@ -2858,6 +3014,36 @@ const SCHOLAR_ON_NOTICED = [
 ];
 const SCHOLAR_NAMES = ['Adept','Reader','Lector','Cartographer','Measurer','Annotator'];
 const QUEST_KINDS = ['fetch', 'bounty', 'seal', 'graves'];
+/* ---------- A DIRECTION, NOT A MARKER ----------
+   'There is a camp of them out past the flats' is flavour text wearing the coat of a
+   direction, and a player cannot tell which it is — so they either wander or assume it is
+   nothing and never go. The fix is not a quest arrow. It is what somebody who has actually
+   been there would say: a bearing, a landmark if there is one worth naming, and an honest
+   sense of how far. Everything after that is still the player's problem, which is the point.
+
+   Both halves are deliberately coarse. The bearing is one of eight. The distance is a phrase,
+   not a number of tiles. Two different jobs in the same quarter of the map will read the
+   same, and you will still have to go and look. */
+/* The bands are in world units on a 1440-wide map where neighbouring towns sit two to five
+   hundred apart, not in the tens — an earlier version used 20/45/80 and described every job
+   in the game, including one in the next field, as "the far side of the waste". */
+function farWord(d){
+  return d < 40  ? 'close by'
+       : d < 110 ? 'a fair walk'
+       : d < 260 ? 'a long way out'
+       : d < 550 ? 'days of walking'
+       : 'the far side of the waste';
+}
+function placeHint(fx, fy, x, y){
+  const bearing = compassFrom(fx, fy, x, y);
+  const d = dist(fx, fy, x, y);
+  const lm = landmarkNear(x, y);
+  /* a landmark is only worth naming if it is near the thing and not near you as well */
+  if(lm && dist(lm.x, lm.y, x, y) > 12 && dist(lm.x, lm.y, fx, fy) > 30)
+    return `${bearing} of here — ${compassFrom(lm.x, lm.y, x, y)} of ${lm.name}, ${farWord(d)}`;
+  if(lm && dist(lm.x, lm.y, x, y) <= 12) return `${bearing} of here, hard by ${lm.name}`;
+  return `${bearing} of here, ${farWord(d)}`;
+}
 function rollQuest(sc){
   const kind = pick(QUEST_KINDS.filter(k => k !== 'seal' || rifts.length));
   if(kind === 'fetch'){
@@ -2872,14 +3058,16 @@ function rollQuest(sc){
     const camps2 = camps.filter(c => campAlive(c) > 0);
     if(!camps2.length) return rollQuestFallback(sc);
     const t = pick(camps2);
-    return {kind, campId: t.id, x: t.x, y: t.y,
-      ask: `There is a camp of them out past the flats. They took my notes — three years of readings. Burn it out. Keep whatever you find; I want the ledger back and nothing else.`,
+    const where = placeHint(sc.x, sc.y, t.x, t.y);
+    return {kind, campId: t.id, x: t.x, y: t.y, where,
+      ask: `There is a camp of them — ${where}. They took my notes, three years of readings. Burn it out. Keep whatever you find; I want the ledger back and nothing else.`,
       gold: ri(900, 1600)};
   }
   if(kind === 'seal'){
     const r = pick(rifts);
-    return {kind, riftId: r.id, x: r.x, y: r.y,
-      ask: `A tear has opened and I want it CLOSED, and I want to be standing near enough to take readings while you do it. Do not worry. I have made my peace with dying stupidly.`,
+    const where = placeHint(sc.x, sc.y, r.x, r.y);
+    return {kind, riftId: r.id, x: r.x, y: r.y, where,
+      ask: `A tear has opened ${where}, and I want it CLOSED — and I want to be standing near enough to take readings while you do it. Do not worry. I have made my peace with dying stupidly.`,
       gold: ri(1400, 2400)};
   }
   /* graves */
@@ -2922,11 +3110,20 @@ function questProgress(q){
   if(q.kind === 'seal') return !rifts.some(r => r.id === q.riftId);
   return false;
 }
+/* Where the thing is FROM WHERE YOU ARE NOW, not from where the scholar was standing when
+   they said it. A bearing taken at the counter is worthless three days east of the counter,
+   and it is the row a player re-reads, not the sentence. */
+function liveHint(q){
+  if(q.x === undefined) return '';
+  const me0 = player()[0];
+  if(!me0) return q.where ? ' — ' + q.where : '';
+  return ' — ' + placeHint(me0.x, me0.y, q.x, q.y);
+}
 function questLabel(q){
   if(q.kind === 'fetch' || q.kind === 'graves') return `${ITEMS[q.item].name} ${campHas(q.item)}/${q.n}`;
   if(q.kind === 'bounty'){ const c = camps.find(x => x.id === q.campId);
-    return c ? `${campAlive(c)} still standing at the camp` : 'The camp is ash.'; }
-  if(q.kind === 'seal') return rifts.some(r => r.id === q.riftId) ? 'The tear is still open.' : 'The tear is closed.';
+    return c ? `${campAlive(c)} still standing at the camp${liveHint(q)}` : 'The camp is ash.'; }
+  if(q.kind === 'seal') return rifts.some(r => r.id === q.riftId) ? `The tear is still open${liveHint(q)}` : 'The tear is closed.';
   return '';
 }
 function openScholar(sc, who){
@@ -2957,7 +3154,13 @@ function openScholar(sc, who){
       const row = document.createElement('div'); row.className = 'trow';
       row.innerHTML = `<span class="tn" style="color:var(--dust)">They are looking for hands. They pay in gold and, occasionally, in truth.</span>`;
       const b2 = document.createElement('button'); b2.textContent = 'ASK FOR WORK';
-      b2.onclick = () => { sc.quest = rollQuest(sc); draw(); };
+      b2.onclick = () => {
+        sc.quest = rollQuest(sc);
+        /* into the log as well: the modal closes, and a direction you cannot re-read is
+           the same as no direction */
+        log(`${sc.name} has work: ${sc.quest.ask}`, '');
+        draw();
+      };
       row.appendChild(b2); body.appendChild(row);
       return;
     }
@@ -4444,11 +4647,105 @@ function addFloat(x, y, text, color){
 function addSpecks(x, y, color, n=4){
   for(let i=0;i<n;i++) particles.push({x, y, vx:(rnd()-0.5)*2.5, vy:(rnd()-0.5)*2.5, h:1.0, vh:rnd()*2.5, t:0, life:0.5, color, size:3});
 }
+/* ---------- A BODYGUARD IS SOMEBODY WHO TAKES THE BLOW ----------
+   The job existed and did almost nothing you could see: it made a unit follow somebody and
+   pick fights near them, which is what an idle unit does anyway. Standing in the way is the
+   one thing a bodyguard is FOR, so that is what it does now.
+
+   Two deliberate bounds. It only reads the blow's geometry — a guard behind the ward cannot
+   block a blow coming at the ward's face — so positioning is the skill, not the order. And
+   the scan is gated to defenders that plausibly have a guard at all (your own people, and
+   quest wards) rather than run on every swing in the world; NPC bands fight tens of times a
+   second between them and none of them have retinues. */
+const GUARD_STEP = 2.2;          /* how far a bodyguard can be and still get in the way */
+let shieldDepth = 0;             /* A guards B, B guards A: the cycle terminates here */
+function interposer(a, d){
+  if(shieldDepth > 0) return null;
+  if(!(d.faction === 'player' || d.vip)) return null;
+  if(a && a.guardTarget === d) return null;         /* no guarding somebody from yourself */
+  let best = null, bs = -1;
+  for(const g of chars){
+    if(g === d || g === a || g.guardTarget !== d) continue;
+    /* AN ORDER, NOT A HABIT. `guardTarget` is doing two jobs in this codebase: it is the
+       bodyguard order, and it is also how a risen follows its master and how a band follows
+       its captain. Letting all three interpose would quietly turn every necromancer's wall
+       of dead into damage reduction for the necromancer — a large balance change smuggled in
+       under a small feature. The job is what makes it deliberate. */
+    if(g.job !== 'guard') continue;
+    if(g.state !== 'ok' || g.faction !== d.faction) continue;
+    if(g.staggerT > 0 || g.heldAt || g.jailedAt || g.captured || carried(g)) continue;
+    if(dist(g.x, g.y, d.x, d.y) > GUARD_STEP) continue;
+    /* on the right side of the ward: 1 is standing squarely in the line, 0 is off the flank,
+       below 0 is behind them and no use to anyone */
+    const ax = a.x - d.x, ay = a.y - d.y, gx = g.x - d.x, gy = g.y - d.y;
+    const la = Math.hypot(ax, ay) || 1, lg = Math.hypot(gx, gy) || 1;
+    const face = (ax * gx + ay * gy) / (la * lg);
+    if(face < 0.05) continue;
+    const s = face + g.stats.def * 0.01;
+    if(s > bs){ bs = s; best = g; }
+  }
+  if(!best) return null;
+  const odds = clamp(0.20 + best.stats.def * 0.006 + best.stats.ath * 0.004, 0, 0.55) * (bs > 0.6 ? 1 : 0.6);
+  return rnd() < odds ? best : null;
+}
+/* Naming a ward. Setting the job used to reach silently for "whoever else happens to be
+   selected", so BODYGUARD on a single picked unit set nothing, said nothing, and did
+   nothing — which is the whole of why the job looked broken. */
+function wardFor(u, picked){
+  const cur = u.guardTarget;
+  if(cur && cur !== u && cur.state !== 'dead' && chars.includes(cur)) return cur;
+  const from = (picked || []).find(o => o !== u && o.state !== 'dead');
+  if(from) return from;
+  let best = null, bd = 1e9;
+  for(const o of chars){
+    if(o === u || o.faction !== 'player' || o.state === 'dead') continue;
+    if(o.settler || o.mule || o.beast) continue;
+    const d = dist(o.x, o.y, u.x, u.y);
+    if(d < bd){ bd = d; best = o; }
+  }
+  return best;
+}
+function setWard(g, w){
+  if(!g || !w || g === w) return false;
+  clearOrders(g);
+  g.job = 'guard';
+  g.guardTarget = w;
+  return true;
+}
+/* Say who is shadowing whom. An order whose whole effect is invisible is an order the
+   player has to take on faith, and this one was taken on faith and found wanting. */
+function announceWards(units){
+  const named = units.filter(u => u.job === 'guard' && u.guardTarget);
+  const lost  = units.filter(u => u.job === 'guard' && !u.guardTarget);
+  for(const u of lost) log(`${u.name} has nobody to guard — right-click an ally (or press G) to name one.`, 'bad');
+  if(!named.length) return;
+  if(named.length === 1) log(`${named[0].name} shadows ${named[0].guardTarget.name}.`, 'good');
+  else {
+    const wards = [...new Set(named.map(u => u.guardTarget.name))];
+    log(`${named.length} shadow ${wards.length === 1 ? wards[0] : wards.join(', ')}.`, 'good');
+  }
+}
 function attack(a, d){
   if(d.state==='dead') return;
   if(a.phantom) return;             /* an illusion's blade cuts nothing */
+  {
+    const shield = interposer(a, d);
+    if(shield){
+      addFloat(d.x, d.y - 1.0, 'shielded', '#8fb5d4');
+      if(!shield.target){ shield.target = a; shield.targetManual = false; }
+      if(rnd() < 0.12) say(shield, pick(['Behind me.', 'Not while I stand.', 'Get back.']));
+      shieldDepth++;
+      try { attack(a, shield); } finally { shieldDepth--; }
+      return;
+    }
+  }
   breakVeil(a, 'strikes');
   const isPlayerFight = a.faction==='player' || d.faction==='player';
+  /* the squad talks about the last few hours; this is where "we just had a fight" is written */
+  if(isPlayerFight){
+    mood.fight = nowH();
+    if(a.faction === 'gaunt' || d.faction === 'gaunt' || a.gauntKind || d.gauntKind) mood.gaunt = nowH();
+  }
   const hf = heftOf(a);
   a.lungeT = a.lungeDur = 0.18 * hf;   /* a heavy swing drives the whole body after it */
   a.lungeK = 0.35 * hf;
@@ -4729,6 +5026,9 @@ function kill(c, by){
     else if(c.faction === 'purge') deed('purge_killed', 0.5);
     if(c.faction === 'player' && c !== by) deed('squadmate_lost', 1);
   }
+  /* one short, and they keep counting anyway */
+  if(c.faction === 'player' && (!c.undead || c.lich) && !c.settler) mood.lost = nowH();
+  tallyKill(c, by);              /* and a posted bounty is counted where the body falls */
   AU.death(c.x, c.y);
   /* anything still on its feet when it dies has one more thing left to do */
   if(c.state === 'ok') AU.bodyfall(c.x, c.y, (c.big || 1) > 1.3);
@@ -4910,12 +5210,39 @@ function bodyTick(c, dh){
   if(c.construct){ for(const k of PARTS) c.parts[k].bleed = 0; }   /* there is nothing in it to run out */
   if(c.state==='dead') return;
   const inBed = !!c.resting;
-  /* bleeding */
+  /* ---------- BLEEDING, AND WHY CLOTTING NEVER WORKED ----------
+     A wound closed at a flat 0.35 an hour whatever its size. A real exchange leaves a body
+     bleeding around 36 across all its parts, so a downed casualty lost 66 blood an hour
+     against wounds that needed the better part of a day to shut, and died in about one.
+     At eight real seconds to the game hour that is NINE SECONDS between "X is down" and
+     "X is dead" — measured, not guessed, at 49 out of 49 casualties of an even fight dying
+     where they fell, and 42 of 49 dying even with a bandage on the worst of it. That is not
+     a fight you can lose and recover from. It is a fight you win or bury people after.
+
+     Bodies do not clot at a fixed rate; they clot in proportion to what is open, which is an
+     exponential. The flat term is what finally shuts the last of it. The proportional part
+     applies only to the STILL — a body on the ground with its heart rate down and the wound
+     underneath it — because that is the only time it is true. Anyone on their feet and
+     swinging keeps tearing it open, and their rate is untouched: nothing about the lethality
+     of a fight in progress changes here, and the weapon and armour numbers are not involved. */
+  /* The share of an open wound still open an hour later, lying on the ground. 0.30 is chosen,
+     not felt: it puts an even fight's untended casualties at roughly a third dead and a
+     quarter back on their feet, and — the part that actually matters — takes a single
+     bandage from saving 7 of 49 to saving 45 of 52. Lower it and losing a fight stops
+     costing anybody; raise it and the bandage goes back to being decoration. */
+  const CLOT_DOWN = 0.30;
+  const CLOT_BED  = 0.05;   /* and under somebody who knows what they are doing */
   const b = totalBleed(c);
   if(b > 0){
     c.blood -= b * dh * 1.8;                       /* a fight downs you — but the waste still collects its due */
     const clot = inBed ? 1.0 : c.state === 'down' ? 0.35 : 0.15;   /* untreated wounds barely close; the downed body curls around its own */
-    for(const k of PARTS){ const p=c.parts[k]; if(p.bleed>0){ p.bleed = Math.max(0, p.bleed - dh*clot); } }
+    const settle = inBed ? CLOT_BED : c.state === 'down' ? CLOT_DOWN : 1;
+    const shrink = settle < 1 ? Math.pow(settle, dh) : 1;
+    for(const k of PARTS){ const p=c.parts[k]; if(p.bleed>0){ p.bleed = Math.max(0, p.bleed * shrink - dh*clot); } }
+    /* A nearly-closed wound leaks and mends at the same time, because that is what nearly
+       closed means. Recovery used to require bleed at EXACTLY zero, so a body with a scratch
+       still weeping could never climb back off the floor however long it lay there. */
+    if(b < 0.5 && (c.hunger > 20 || c.undead)) c.blood = Math.min(c.maxBlood, c.blood + dh * (inBed ? 14 : 4) * 0.5);
   } else if(c.hunger > 20 || c.undead){
     c.blood = Math.min(c.maxBlood, c.blood + dh * (inBed ? 14 : 4));
   }
@@ -5766,6 +6093,272 @@ function patrolCentre(){
    What is genuinely new is the JUDGEMENT: when to break off. A party that marches into a
    corpse-field and dies quietly is worse than no feature, so a commander watches its own
    band and turns for home, and where that line sits is a fact about the commander. */
+/* ============================================================ THE POST
+   ---------- WORK, FROM A TOWN THAT IS NOT A SCHOLAR ----------
+   Every job in the game came from a wandering scholar or an immortal, which meant towns had
+   nothing to offer but a shop and a recruitment line, and the recruitment line is the bar.
+   So the work goes on a POST — a board at the plaza, one per town, refreshed every few days.
+
+   Three kinds, and the split is deliberate. SUPPLY is the town's economy asking for help and
+   pays in coin and standing; you can fill it out of the wagon without drawing a blade. CULL
+   is combat with a bearing on it. ESCORT is somebody's life in your hands, which is the only
+   job that makes BODYGUARD an order rather than a curiosity — and the reason `vip` exists.
+
+   The board is not a quest log. It does not track you, and it does not point at anything: it
+   tells you what, roughly where, and what it pays, and then it is your problem. */
+const CONTRACT_DAYS = 12;        /* how long a posted job stays worth doing */
+const BOARD_REFRESH = 4;         /* days between the board being rewritten */
+/* `contracts` and `contractN` live up beside the clock — see the note there. */
+function townBoardPos(t){
+  /* the plaza's reserved square — the town plan keeps +2.5,+2.5 clear of every building,
+     every wall and every guard post, which is exactly why it is the plaza */
+  return {x: t.x + 2.5, y: t.y + 2.5};
+}
+function boardOpen(t){
+  return !t.necroHostile && (t.rep || 0) > -25 && !t.sacked;
+}
+const CULL_FOES = {bandit:'bandits', slaver:'slavers', cannibal:'cannibals', wild:'beasts', gaunt:'watchers'};
+function rollBoardJob(t, kind){
+  const id = ++contractN;
+  const base = {id, town: towns.indexOf(t), day, expires: day + CONTRACT_DAYS, kind, taken: false};
+  if(kind === 'supply'){
+    /* what the town is short of, priced off what it would cost you to buy it there */
+    const wants = ['meat','fruit','fish','wood','stone','mats','hide','fabric','bandage','iron','copper']
+      .map(k => ({k, have: (t.stock && t.stock[k]) || 0}))
+      .sort((a, b) => a.have - b.have).slice(0, 4);
+    const w = pick(wants);
+    const n = ri(6, 16);
+    return {...base, item: w.k, n,
+      title: `WANTED: ${n} ${ITEMS[w.k].name}`,
+      body: `The ${t.name} stores are short. ${n} ${ITEMS[w.k].name} to the post, and no questions about where you got it.`,
+      gold: Math.round(50 + n * ITEMS[w.k].base * 0.75), rep: 6};
+  }
+  if(kind === 'cull'){
+    /* A NEST, IF THERE IS ONE. Dens accrue over the first days of a run, so on day one there
+       are none at all — and a board that can only post combat work once the world has grown
+       some is a board that has nothing to offer exactly when a new player is reading it.
+       So the fallback is a HEAD COUNT: the same job, without a fixed address. */
+    /* A town posts a bounty on the nest on ITS roads. Dens sit 45 to 420 from whichever town
+       is nearest them, but the map is 1440 across and seven towns share it — so a flat
+       radius measured from this town alone excluded dens that are nobody else's problem
+       either. The rule is: close enough to be our business, or nearer to us than to anyone. */
+    const near = camps.filter(c => campAlive(c) > 0)
+      .map(c => ({c, d: dist(c.x, c.y, t.x, t.y)}))
+      .filter(o => o.d < 400 || towns.every(t2 => t2 === t || dist(t2.x, t2.y, o.c.x, o.c.y) >= o.d))
+      .sort((a, b) => a.d - b.d);
+    if(near.length){
+      const c0 = pick(near.slice(0, 3)).c;
+      const fac = CULL_FOES[c0.fac] || 'them';
+      const where = placeHint(t.x, t.y, c0.x, c0.y);
+      return {...base, campId: c0.id, x: c0.x, y: c0.y, where, foe: fac,
+        title: `BOUNTY: THE ${fac.toUpperCase()} NEST`,
+        body: `They have been taking people off the road. A nest of ${fac} ${where}. Clear it and the purse is yours.`,
+        gold: ri(700, 1500), rep: 12};
+    }
+    const facKey = pick(['bandit', 'bandit', 'wild', 'slaver']);
+    const n = ri(4, 9);
+    return {...base, foeFac: facKey, foe: CULL_FOES[facKey] || 'them', n, killed: 0,
+      title: `BOUNTY: ${n} OF THE ${(CULL_FOES[facKey] || 'them').toUpperCase()}`,
+      body: `${n} of the ${CULL_FOES[facKey]} on the roads out of ${t.name}, and the watch is too thin to go looking. Bring the count in and the purse is yours.`,
+      gold: 140 * n, rep: 10};
+  }
+  /* escort: somebody with a reason to travel and no way to survive it */
+  const others = towns.filter(o => o !== t && !o.sacked);
+  if(!others.length) return null;
+  const to = pick(others);
+  const where = placeHint(t.x, t.y, to.x, to.y);
+  return {...base, toTown: towns.indexOf(to), where,
+    title: `ESCORT TO ${to.name.toUpperCase()}`,
+    body: `Somebody has to reach ${to.name} and would rather not do it alone. ${where[0].toUpperCase() + where.slice(1)}. Paid on their arrival, not on yours.`,
+    gold: Math.round(300 + dist(t.x, t.y, to.x, to.y) * 14), rep: 14};
+}
+function refreshBoard(t, force){
+  if(!t.board) t.board = {day: -99, jobs: []};
+  if(!force && day - t.board.day < BOARD_REFRESH) return;
+  t.board.day = day;
+  /* anything you already took stays up; the rest is torn down and rewritten */
+  t.board.jobs = t.board.jobs.filter(j => j.taken && day <= j.expires);
+  const kinds = ['supply', 'supply', 'cull', 'escort'];
+  let guard = 0;
+  while(t.board.jobs.length < 3 && guard++ < 12){
+    const j = rollBoardJob(t, pick(kinds));
+    if(j) t.board.jobs.push(j);
+  }
+}
+function contractTown(j){ return towns[j.town] || null; }
+function contractProgress(j){
+  if(j.kind === 'supply') return Math.min(j.n, campHas(j.item));
+  if(j.kind === 'cull'){
+    if(j.foeFac) return (j.killed || 0) >= j.n ? 1 : 0;
+    const c = camps.find(x => x.id === j.campId); return (!c || campAlive(c) === 0) ? 1 : 0;
+  }
+  if(j.kind === 'escort') return j.arrived ? 1 : 0;
+  return 0;
+}
+function contractDone(j){
+  if(j.kind === 'supply') return campHas(j.item) >= j.n;
+  return contractProgress(j) >= 1;
+}
+/* THE COUNT. A headcount bounty needs somebody to notice a body falling, and the one place
+   that knows both who died and who killed them is `kill`. */
+function tallyKill(victim, by){
+  if(!by || by.faction !== 'player') return;
+  for(const j of contracts){
+    if(j.kind !== 'cull' || !j.foeFac || !j.taken) continue;
+    if(victim.faction !== j.foeFac) continue;
+    if((j.killed || 0) >= j.n) continue;
+    j.killed = (j.killed || 0) + 1;
+    if(j.killed === j.n){
+      const t = contractTown(j);
+      log(`That is ${j.n}. The ${t ? t.name : 'town'} post owes you ${j.gold}.`, 'good');
+    }
+  }
+}
+function contractStatus(j){
+  if(j.kind === 'supply') return `${campHas(j.item)}/${j.n} ${ITEMS[j.item].name}`;
+  if(j.kind === 'cull'){
+    if(j.foeFac) return `${j.killed || 0}/${j.n} ${j.foe} accounted for`;
+    const c = camps.find(x => x.id === j.campId);
+    return c ? `${campAlive(c)} still standing — ${placeHint((player()[0] || c).x, (player()[0] || c).y, j.x, j.y)}` : 'The nest is cleared.';
+  }
+  if(j.kind === 'escort'){
+    if(j.failed) return 'They did not make it.';
+    if(j.arrived) return 'Delivered.';
+    const w = j.wardId ? chars.find(c => c.id === j.wardId) : null;
+    if(!w) return 'Waiting at the post.';
+    const to = towns[j.toTown];
+    return `${w.name} is on the road — ${placeHint(w.x, w.y, to.x, to.y)}`;
+  }
+  return '';
+}
+/* TAKING A JOB. Escort is the only one that changes the world at the moment of accepting:
+   somebody has to actually step out of the gate, and they have to be somebody the bandits
+   on that road will happily kill. */
+function takeContract(t, j){
+  j.taken = true;
+  if(!contracts.includes(j)) contracts.push(j);
+  if(j.kind === 'escort'){
+    const to = towns[j.toTown];
+    const home = chars.filter(c => c.civ && c.homeTown === t && c.state === 'ok' && c.age >= 16);
+    let w = home.length ? pick(home) : null;
+    if(!w){
+      const p = findOpenNear(t.x + 2, t.y + 3, 4);
+      w = makeChar(pickName(), 'town', p.x, p.y, {atk:3, def:4, tough:6, ath:6});
+      w.civ = true; w.homeTown = t;
+      chars.push(w);
+    }
+    w.vip = true; w.neutral = true; w.civT = 999;
+    w.escortTo = j.toTown; w.escortId = j.id;
+    j.wardId = w.id;
+    const rt = routeFor(t, to);
+    j.wps = rt ? rt.wps.map(p => ({x: p.x, y: p.y})) : null;
+    j.wi = 0;
+    log(`${w.name} shoulders a bag and starts for ${to.name}. Keep them breathing — right-click them to set a bodyguard.`, 'good');
+    say(w, 'I am ready when you are. I would rather not be.');
+  } else {
+    log(`Taken from the ${t.name} post: ${j.title}.`, '');
+  }
+  refreshCharPanel();
+}
+function payContract(t, j){
+  if(j.kind === 'supply' && !campSpend({[j.item]: j.n})) return;
+  cats += j.gold;
+  t.rep = clamp((t.rep || 0) + j.rep, -300, 100);
+  j.paid = true;
+  const i = contracts.indexOf(j); if(i >= 0) contracts.splice(i, 1);
+  const bi = t.board ? t.board.jobs.indexOf(j) : -1; if(bi >= 0) t.board.jobs.splice(bi, 1);
+  /* the squad has views about working for people, and about being paid */
+  deed('gold', clamp(j.gold / 900, 0.2, 1.4));
+  if(j.kind !== 'supply') deed('town_saved', 0.5);
+  log(`${t.name} pays out ${j.gold} gold, and thinks better of you for it.`, 'good');
+  refreshTop(); refreshInv();
+}
+function failContract(j, why){
+  const t = contractTown(j);
+  j.failed = true;
+  const i = contracts.indexOf(j); if(i >= 0) contracts.splice(i, 1);
+  if(t){
+    dropRep(t, 10);
+    log(`${t.name}: ${why} The post is not going to forget that.`, 'bad');
+  }
+}
+/* The escort walks. It is a townsperson on a trade road, which is a thing the world already
+   knows how to be dangerous to — no new hazard is written here, and none is needed. */
+function contractTick(dt){
+  for(let i = contracts.length - 1; i >= 0; i--){
+    const j = contracts[i];
+    if(day > j.expires && !j.arrived){ failContract(j, 'The job went stale.'); continue; }
+    if(j.kind !== 'escort' || j.arrived) continue;
+    const w = chars.find(c => c.id === j.wardId);
+    if(!w || w.state === 'dead'){ failContract(j, 'The one you were paid to protect is dead.'); continue; }
+    if(w.state !== 'ok') continue;               /* down in the road; somebody had better come */
+    const to = towns[j.toTown];
+    if(dist(w.x, w.y, to.x, to.y) < (to.def.wall ? to.def.wall.r : 8)){
+      j.arrived = true;
+      w.vip = false; w.escortTo = null; w.civT = 0; w.homeTown = to;
+      for(const g of chars) if(g.guardTarget === w) g.guardTarget = null;
+      log(`${w.name} is inside the gates of ${to.name}. The post at ${contractTown(j) ? contractTown(j).name : 'home'} owes you ${j.gold}.`, 'good');
+      say(w, 'That is the wall. That is the wall right there.');
+      continue;
+    }
+    /* THEY DO NOT WALK IT ALONE. The whole job is that somebody is with them; a ward who
+       sets off regardless would either arrive without you and pay out for nothing, or die
+       on a road you were never asked to be on. So they wait at the gate until one of yours
+       is in sight, and they stop the moment you fall behind. */
+    const near = chars.some(c => c.faction === 'player' && c.state === 'ok' && dist(c.x, c.y, w.x, w.y) < 18);
+    if(!near){
+      w.moveTarget = null;
+      if(rnd() < dt * 0.02) say(w, pick(['I am not going out there on my own.', 'Whenever you are ready.', 'I will wait. I am good at waiting.']));
+      continue;
+    }
+    /* walk the trade road if there is one; strike out overland if there is not */
+    if(!w.moveTarget && !w.target && w.fleeT <= 0){
+      if(j.wps && j.wi < j.wps.length){
+        const wp = j.wps[j.wi];
+        if(dist(w.x, w.y, wp.x, wp.y) < 3) j.wi++;
+        else w.moveTarget = {x: wp.x, y: wp.y};
+      } else w.moveTarget = {x: to.x, y: to.y};
+    }
+  }
+}
+function openBoard(t){
+  refreshBoard(t);
+  openModal(`THE POST — ${t.name.toUpperCase()}`,
+    'Work, nailed to a board. Nobody here is going to explain it twice.');
+  const body = $('modalbody');
+  const draw = () => {
+    body.innerHTML = '';
+    const head = document.createElement('div');
+    head.style.cssText = 'color:var(--dust);font-style:italic;line-height:1.5;margin-bottom:10px';
+    head.textContent = `Rewritten every few days. Standing here: ${Math.round(t.rep || 0) >= 0 ? '+' : ''}${Math.round(t.rep || 0)}.`;
+    body.appendChild(head);
+    if(!t.board.jobs.length){
+      const e2 = document.createElement('div');
+      e2.style.cssText = 'color:var(--dust)';
+      e2.textContent = 'Nothing but old nails and a weather notice.';
+      body.appendChild(e2);
+      return;
+    }
+    for(const j of t.board.jobs){
+      const row = document.createElement('div'); row.className = 'trow';
+      row.style.cssText = 'display:block;padding:8px 0';
+      const done = j.taken && contractDone(j);
+      row.innerHTML =
+        `<div style="color:${done ? 'var(--ok)' : 'var(--warn)'};font-weight:bold">${j.title}</div>` +
+        `<div style="color:var(--bone);line-height:1.45;margin:3px 0">${j.body}</div>` +
+        `<div style="color:var(--dust);font-size:11px">${j.gold} gold · standing +${j.rep} · ` +
+        `${j.taken ? contractStatus(j) : 'expires day ' + j.expires}</div>`;
+      const b2 = document.createElement('button');
+      b2.style.cssText = 'margin-top:5px';
+      b2.textContent = !j.taken ? 'TAKE IT' : done ? `COLLECT ${j.gold}g` : 'NOT DONE';
+      b2.disabled = j.taken && !done;
+      b2.onclick = () => { if(!j.taken) takeContract(t, j); else payContract(t, j); draw(); };
+      row.appendChild(b2);
+      body.appendChild(row);
+    }
+  };
+  draw();
+}
 const CMD = {
   /* `standing` is whether the order is a DUTY or an ERRAND. A patrol is a duty: it comes
      home, rests, and goes out again tomorrow without being asked, which is the difference
@@ -7112,15 +7705,31 @@ function physics(c, dt){
       if(foe){ c.target = foe; c.targetManual = false; }
     }
   }
-  /* bodyguard: shadow the ward, pounce on whoever threatens them */
+  /* BODYGUARD: stand between, and leave the ward only to end what is already on them.
+     The old version walked at the ward and picked fights like any idle unit, which is most
+     of why the job read as doing nothing. A guard now holds a spot on the THREAT'S side of
+     the ward — the position `interposer` needs to be able to catch the blow at all — and
+     closes only once the threat is within a stride of the person they are keeping alive. */
   if(c.guardTarget){
     const w = c.guardTarget;
     if(w.state==='dead' || !chars.includes(w)){ c.guardTarget = null; }
-    else {
+    else if(!c.targetManual){
       const threat = chars.find(o => o.state==='ok' && o.target === w && hostile(c, o) && dist(o.x,o.y,w.x,w.y) < 9)
                   || chars.find(o => o.state==='ok' && hostile(c, o) && dist(o.x,o.y,w.x,w.y) < 5);
-      if(threat && !c.target && dist(c.x,c.y,w.x,w.y) < 12){ c.target = threat; c.targetManual = false; }
-      if(!c.target && !c.moveTarget && dist(c.x,c.y,w.x,w.y) > 2.5) c.moveTarget = {x:w.x, y:w.y};
+      const dw = dist(c.x, c.y, w.x, w.y);
+      if(threat && dw < 12){
+        const dtw = dist(threat.x, threat.y, w.x, w.y) || 0.01;
+        /* hysteresis on the engage line, or a guard sitting at exactly the boundary spends
+           the whole fight alternating between charging and stepping back */
+        if(dtw < 2.6 || (c.target === threat && dtw < 4)){ c.target = threat; c.targetManual = false; }
+        else {
+          const ux = (threat.x - w.x) / dtw, uy = (threat.y - w.y) / dtw;
+          c.target = null;
+          c.moveTarget = {x: w.x + ux * 1.2, y: w.y + uy * 1.2};
+        }
+      } else if(!c.target && dw > 2.2){
+        c.moveTarget = {x: w.x, y: w.y};
+      }
     }
   }
   if(c.moveTarget){
@@ -9491,6 +10100,7 @@ function castRaise(c, body){
   }
   bumpNotice(isUnique ? 2.8 : 1.15);   /* undeath is a parlour trick of the Old Ones. They hear it performed. */
   deed('raise', isUnique ? 1.6 : 1);
+  if(c.faction === 'player') mood.raise = nowH();   /* the living have views about this */
   /* what the world took, it does not give back just because you asked it to stand up */
   for(const k of PARTS){
     const bp = body.parts && body.parts[k];
@@ -10742,6 +11352,7 @@ function update(dt){
   ilsabetTick(dt);            /* and whether anyone has walked out far enough to find her */
   motherTick(dt);             /* and whether anyone has gone far enough DOWN to find her */
   commandTick(dt);            /* and what the bands you sent out are doing about it */
+  contractTick(dt);           /* and whoever is on a road because you said you would see them across it */
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
   if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
   gauntTick(dt / HOUR_SEC);   /* the dark is never empty for long */
@@ -12484,6 +13095,29 @@ for(const t of towns){
   cloth.scale.set(0.9, 0.55, 0.06); cloth.position.set(f.x + 0.5, gy2 + 3.0, f.y);
   scene.add(cloth);
   townFlags.push({t, cloth});
+}
+/* THE POST. Two posts and a plank at the plaza — the one piece of town furniture that has
+   anything to say to a stranger. Built the same way as the flags above, from boxes, because
+   a prop that needs a model is a prop that does not get built. */
+for(const t of towns){
+  const bp = townBoardPos(t);
+  const gy3 = groundY(bp.x, bp.y);
+  const wood = new THREE.MeshLambertMaterial({color:0x5e4b34});
+  const plank = new THREE.MeshLambertMaterial({color:0x8b7550});
+  for(const dx of [-0.42, 0.42]){
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), wood);
+    leg.scale.set(0.11, 1.6, 0.11); leg.position.set(bp.x + dx, gy3 + 0.8, bp.y);
+    scene.add(leg);
+  }
+  const face = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), plank);
+  face.scale.set(1.15, 0.85, 0.09); face.position.set(bp.x, gy3 + 1.5, bp.y);
+  face.castShadow = true;
+  scene.add(face);
+  /* the paper on it: pale, small, and the only reason you would walk over */
+  const notes = new THREE.Mesh(new THREE.BoxGeometry(1,1,1),
+    new THREE.MeshLambertMaterial({color:0xcfc4ad}));
+  notes.scale.set(0.30, 0.36, 0.02); notes.position.set(bp.x - 0.22, gy3 + 1.58, bp.y - 0.06);
+  scene.add(notes);
 }
 /* warm windows after dark: one shared material, flicked by the hour */
 {
@@ -16779,9 +17413,10 @@ function refreshCharPanel(){
             if((jk === 'research' || jk === 'craft') && !mindedDead(u)) continue;
             if(which === 2){ u.job2 = jk; }
             else { u.job = jk; if(!jk){ u.gather = null; u.gatherT = 0; } u.jobNodeT = 0; u.patrolPost = null;
-                   if(jk === 'guard') u.guardTarget = targets.find(o => o !== u) || null; }
+                   if(jk === 'guard') u.guardTarget = wardFor(u, targets); }
           }
           assignPatrolPosts();
+          if(which !== 2 && jk === 'guard') announceWards(targets);
           log(`${targets.length > 1 ? targets.length + ' hands' : targets[0].name}: ${which===2?'fallback ':''}${jk ? jk.toUpperCase() : 'none'}.`);
           refreshCharPanel();
         }
@@ -16810,9 +17445,10 @@ function refreshCharPanel(){
           u.job = jk;
           if(!jk){ u.gather = null; u.gatherT = 0; }
           u.jobNodeT = 0; u.patrolPost = null;
-          if(jk === 'guard') u.guardTarget = targets.find(o => o !== u) || null;
+          if(jk === 'guard') u.guardTarget = wardFor(u, targets);
         }
         assignPatrolPosts();
+        if(jk === 'guard') announceWards(targets);
         log(targets.length > 1
           ? `${targets.length} set to ${jk ? jk.toUpperCase() : 'no job'}.`
           : `${targets[0].name}: ${jk ? jk.toUpperCase() : 'no job'}.`);
@@ -16823,6 +17459,24 @@ function refreshCharPanel(){
   };
   jr.appendChild(jb);
   jr.appendChild(mkJobButton(2));   /* the fallback trade sits beside the first */
+  /* WHO THEY ARE STANDING OVER. `guardTarget` can be set by the job, by G, or by right-click,
+     and until now none of the three showed anywhere — so the one field that decides whether
+     BODYGUARD does anything at all was invisible in the panel that sets it. */
+  if(c.guardTarget && c.guardTarget.state !== 'dead'){
+    const gw = document.createElement('button');
+    gw.textContent = '🛡 ' + c.guardTarget.name + ' ✕';
+    gw.title = 'Guarding them. Click to stop.';
+    gw.style.cssText = 'padding:2px 6px;font-size:10px;border-color:var(--gold);color:var(--gold)';
+    gw.onclick = () => {
+      /* the ward can die between the panel drawing and the button being pressed */
+      const w = c.guardTarget;
+      c.guardTarget = null;
+      if(c.job === 'guard') c.job = null;
+      log(`${c.name} stops guarding ${w ? w.name : 'them'}.`, '');
+      refreshCharPanel();
+    };
+    jr.appendChild(gw);
+  }
   /* ---------- COMMAND ----------
      A job is what one hand does. An order is what a band does, and the band is whoever is
      selected with the captain — so the button only appears with two or more picked, and the
@@ -18273,11 +18927,15 @@ cv.addEventListener('mousedown', e => {
     if(castMode){ resolveCast(wx, wy); return; }
     if(guardMode){
       guardMode = false;
-      const ward = chars.find(o => o.faction==='player' && o.state!=='dead' && dist(o.x,o.y,wx,wy) < 0.9);
+      /* a ward need not be one of yours — a VIP you have contracted to keep alive counts,
+         which is what makes an escort job an order rather than an errand */
+      const ward = chars.find(o => (o.faction === 'player' || o.vip) && o.state !== 'dead' &&
+        dist(o.x, o.y, wx, wy) < 0.9);
       if(!ward){ log('No ally there.', 'bad'); return; }
       const guards = selected.filter(c => c.faction==='player' && c.state==='ok' && c !== ward);
-      for(const g of guards){ clearOrders(g); g.guardTarget = ward; }
-      if(guards.length) log(`${guards.length===1 ? guards[0].name : guards.length+' units'} now guarding ${ward.name}.`, 'good');
+      const set = guards.filter(g => setWard(g, ward));
+      announceWards(set);
+      refreshCharPanel();
       return;
     }
     if(attackMoveMode){
@@ -18334,6 +18992,23 @@ cv.addEventListener('mousedown', e => {
     if(!e.ctrlKey && !corpseFirst){
       const local = chars.find(c => c.state==='ok' && (c.faction==='drifter' || (c.faction==='town' && !hostile(movers[0], c))) &&
         !c.mobileVendor && visAt(c.x,c.y)===2 && dist(c.x,c.y,wx,wy) < 0.9);
+      /* THE POST. Checked before the flag and before anyone standing near it: it is a fixed
+         point on the plaza, and a board you cannot click because a townsman wandered in
+         front of it is not a board. */
+      {
+        const bt = towns.find(t2 => { const bp = townBoardPos(t2); return dist(bp.x, bp.y, wx, wy) < 1.5; });
+        if(bt && movers.length){
+          const m0 = movers[0];
+          if(!boardOpen(bt)){ log(`${bt.name} has nothing for you. You know why.`, 'bad'); return; }
+          if(dist(m0.x, m0.y, wx, wy) > 6){
+            clearOrders(m0); m0.moveTarget = {x: wx, y: wy - 1.4};
+            log(`${m0.name} goes to read the post at ${bt.name}.`);
+            return;
+          }
+          openBoard(bt);
+          return;
+        }
+      }
       /* the flag: stand in a broken hall and take the town */
       {
         const ftR = towns.find(t => t.playerRuled && dist(townFlagPos(t).x, townFlagPos(t).y, wx, wy) < 1.6);
@@ -18373,6 +19048,20 @@ cv.addEventListener('mousedown', e => {
         {
           const m0 = movers.length === 1 ? movers[0] : null;
           const items = [{label:'TALK', fn:()=>talkTo(local)}];
+          /* somebody you took money to keep alive: the bodyguard order, on the person it is
+             actually for. This is the whole reason `vip` exists. */
+          if(local.vip){
+            const crew2 = movers.filter(m => m.faction === 'player' && m.state === 'ok');
+            const on = crew2.filter(m => m.guardTarget === local);
+            const off = crew2.filter(m => m.guardTarget !== local);
+            if(off.length) items.push({label:`GUARD ${local.name.toUpperCase()}${off.length > 1 ? ' (' + off.length + ')' : ''}`,
+              fn:()=>{ announceWards(off.filter(m => setWard(m, local))); refreshCharPanel(); }});
+            if(on.length) items.push({label:'STOP GUARDING THEM', fn:()=>{
+              for(const m of on){ m.guardTarget = null; if(m.job === 'guard') m.job = null; }
+              log(`${on.length === 1 ? on[0].name + ' stands' : on.length + ' stand'} down from guarding ${local.name}.`, '');
+              refreshCharPanel();
+            }});
+          }
           /* Sister Ash: an inquisitor the Church threw away, and what it takes to catch her */
           if(local.bossKey === 'ash' && local.chain && local.state === 'ok'){
             const ch = local.chain;
@@ -18560,6 +19249,43 @@ cv.addEventListener('mousedown', e => {
       if(necro){
         if(nearestEnemy(necro, 9)){ log('No time for rites — enemies near.', 'bad'); return; }
         clearOrders(necro); necro.healTarget = risen; return;
+      }
+    }
+    /* ONE OF YOUR OWN, ON THEIR FEET. The wounded fast-paths above already fired, so this is
+       a healthy squadmate — and the only thing right-clicking one used to do was order the
+       selection to walk onto the tile they are standing on, which is not an order anybody
+       wants. It is the natural place to say "you, look after them". Requires somebody else
+       picked: with only the clicked unit selected the move order is still what you meant. */
+    {
+      const mate = chars.find(o => o.faction === 'player' && o.state === 'ok' &&
+        dist(o.x, o.y, wx, wy) < 0.9);
+      const crew = mate ? movers.filter(m => m !== mate && m.faction === 'player' && !m.under) : [];
+      if(mate && crew.length){
+        const items = [];
+        const already = crew.filter(m => m.guardTarget === mate);
+        const free = crew.filter(m => m.guardTarget !== mate);
+        if(free.length) items.push({
+          label: `GUARD ${mate.name.toUpperCase()}${free.length > 1 ? ' (' + free.length + ')' : ''}`,
+          fn: () => {
+            const set = free.filter(m => setWard(m, mate));
+            announceWards(set);
+            refreshCharPanel(); refreshSquadBar();
+          }});
+        if(already.length) items.push({
+          label: `STOP GUARDING THEM${already.length > 1 ? ' (' + already.length + ')' : ''}`,
+          fn: () => {
+            for(const m of already){ m.guardTarget = null; if(m.job === 'guard') m.job = null; }
+            log(`${already.length === 1 ? already[0].name + ' stands' : already.length + ' stand'} down from guarding ${mate.name}.`, '');
+            refreshCharPanel(); refreshSquadBar();
+          }});
+        if(mate.guardTarget) items.push({
+          label: `(THEY GUARD ${mate.guardTarget.name.toUpperCase()})`, fn: () => {}});
+        items.push({label:'EXAMINE THEM', fn: () => examine(mate)});
+        items.push({label:'MOVE HERE INSTEAD', fn: () => {
+          for(const m of movers){ clearOrders(m); m.moveTarget = {x: wx, y: wy}; }
+        }});
+        showCtxMenu(e.clientX, e.clientY, items);
+        return;
       }
     }
     /* corpse? -> menu of options */
@@ -19356,6 +20082,8 @@ function snapshot(){
     carryIds: c.carryList ? c.carryList.map(b => b.id) : null,
     lich: !!c.lich, face: c.face||null, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
     guardTargetId: c.guardTarget ? c.guardTarget.id : null,
+    /* somebody you were paid to keep alive, and who they were walking to */
+    vip: !!c.vip, escortTo: c.escortTo ?? null, escortId: c.escortId || 0, attendant: !!c.attendant,
     npcNecro: !!c.npcNecro, lieutenant: !!c.lieutenant, civ: !!c.civ, merc: !!c.merc,
     inv: {...c.inv}, pack: c.pack, mule: !!c.mule, fleeOnHit: !!c.fleeOnHit,
     eater: !!c.eater, warF: c.warF, warT: c.warT, campId: c.campId, rebelOf: c.rebelOf,
@@ -19385,7 +20113,11 @@ function snapshot(){
       dread: t.dread||0, dreadWoke: !!t.dreadWoke, shown: {...(t.shown||{})}, witnessCd: t.witnessCd||0,
       bounty: t.bounty||0, wanted: !!t.wanted,   /* what they still want you for */
       compactWilling: !!t.compactWilling,
+      /* the post. Jobs are plain data by construction — no object references — so the board
+         and the contracts both survive a save without any reviving. */
+      board: t.board ? {day: t.board.day, jobs: t.board.jobs.map(j => ({...j}))} : null,
       caravanOut: t.caravanOut ? {...t.caravanOut, dest: {...t.caravanOut.dest}} : null})),
+    contractN,
     explored: packExplored(),
     nodeUses: [...nodeUses.entries()],
     townWalls: towns.map(t => t.walls.map(w => ({x:w.x, y:w.y, hp:w.hp}))),
@@ -19616,6 +20348,7 @@ function restore(d){
     c.att = s.att || {divine:0, destruction:0, dark:0, dust:0, ...((s.gift && s.race!=='chimera') ? {[s.gift]: 2} : {})};
     c.attXp = s.attXp || {divine:0, destruction:0, dark:0, dust:0};
     c.npcNecro = !!s.npcNecro; c.lieutenant = !!s.lieutenant; c.civ = !!s.civ; c.merc = !!s.merc;
+    c.vip = !!s.vip; c.escortTo = s.escortTo ?? null; c.escortId = s.escortId || 0; c.attendant = !!s.attendant;
     c.inv = s.inv || {}; c.pack = s.pack || null; c.mule = !!s.mule; c.fleeOnHit = !!s.fleeOnHit;
     c.eater = !!s.eater; c.warF = s.warF ?? -1; c.warT = s.warT ?? -1;
     c.campId = s.campId ?? -1; c.rebelOf = s.rebelOf ?? -1;
@@ -19674,10 +20407,19 @@ function restore(d){
     t.bounty = ts.bounty || 0; t.wanted = !!ts.wanted;
     t.shown = {...(ts.shown||{})}; t.witnessCd = ts.witnessCd || 0;
     t.compactWilling = !!ts.compactWilling;
+    /* The board comes back as the SAME objects the contract list holds, not copies of them.
+       Restoring them separately gives you a board whose "COLLECT" button pays out against a
+       job the world is no longer watching — the two lists must alias, exactly as they do in
+       a running game. */
+    t.board = ts.board ? {day: ts.board.day, jobs: ts.board.jobs.map(j => ({...j}))} : null;
     t.feastCd = ts.feastCd || 0; t.rebelDay = ts.rebelDay || 0; t.promise = ts.promise ? {...ts.promise} : null;
     t.project = ts.project ? {...ts.project} : null; t.projectsDone = {...(ts.projectsDone||{})}; t.lastTribute = ts.lastTribute || 0;
     t.caravanOut = ts.caravanOut ? {...ts.caravanOut, dest: {...ts.caravanOut.dest}} : null;
   });
+  /* and the contract list is rebuilt FROM the boards, so the two hold the same objects */
+  contracts.length = 0;
+  for(const t of towns) if(t.board) for(const j of t.board.jobs) if(j.taken && !j.paid && !j.failed) contracts.push(j);
+  contractN = Math.max(d.contractN || 0, contracts.reduce((m, j) => Math.max(m, j.id || 0), 0));
   computeVision();
   nodeUses.clear();
   if(d.nodeUses) for(const [k,v] of d.nodeUses){ nodeUses.set(k, v); if(nodeDepleted(...k.split(',').map(Number))) hideNodeInstance(k); }
@@ -20062,8 +20804,8 @@ const ORIGINS = {
      came out of the ground with him — and almost nothing else. No coin, no camp, no
      standing anywhere, and a road that starts at the far edge of the map. */
   lyonart: {label:"Lyonart d'Alagadda", named:true,
-    blurb:'Exiled Prince. He came through with the Sunken Crown on him and six of his household still following. He is looking for his sister, who was sent here first, for trying to stop what happened.',
-    intro:'You wake at the world\'s edge with a crown nobody living should own and six of the dead who still answer to your name. Ilsabet came through before you. Find her.'},
+    blurb:'Exiled Prince. He came through with the Sunken Crown on him, six of his household still following, and one sworn man who is still breathing. He is looking for his sister, who was sent here first, for trying to stop what happened.',
+    intro:'You wake at the world\'s edge with a crown nobody living should own, six of the dead who still answer to your name, and Ossian Reyne, who has not left your shoulder since you were nine. Ilsabet came through before you. Find her.'},
   /* ---------- THE SECOND NAMED ORIGIN ----------
      Lyonart is a man with a title and a thing he cannot use. This one is not a man at all:
      he is a weapon somebody grew, walking around inside the person they grew him in, and
@@ -20174,6 +20916,26 @@ function applyCreation(race, gift, origin){
       u.hunger = 100; u.bindWeight = 1; u.shortTag = 'H' + (i + 1);
       u.blood = 75; u.maxBlood = 75;
       chars.push(u);
+    }
+    /* THE ONE WHO IS STILL BREATHING. Six of the household came through dead and the seventh
+       did not, and that is the whole of the difference between him and them. Mechanically he
+       is the origin's only living hand: the dead cannot bandage, cannot study, cannot craft,
+       cannot be talked to by a town, and cannot eat — so without him Lyonart starts unable to
+       do half of what the game asks of a squad, with nobody to stand between him and a spear.
+       He is set to BODYGUARD on the prince from the first frame, which is also the clearest
+       demonstration of the job that exists. */
+    {
+      const q = findOpenNear(p.x + 1, p.y + 1, 4);
+      const att = makeChar('Ossian Reyne', 'player', q.x, q.y,
+        {atk:16, def:15, tough:14, ath:8, medic:11, magic:3, race:'human', sex:'m',
+         weapon:'w_rkat', armor:'a_lea', blades:20, armr:14, labor:6, crafting:4});
+      att.conviction = 'loyal';
+      att.regard = 45;              /* he already decided about the boy a long time ago */
+      att.shortTag = 'OR';
+      att.job = 'guard';
+      att.guardTarget = me;
+      att.attendant = true;
+      chars.push(att);
     }
     startTheSearch(me);
   } else if(origin === 'saga'){
