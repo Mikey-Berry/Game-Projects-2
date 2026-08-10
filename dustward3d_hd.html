@@ -110,6 +110,53 @@
 .ccopt.named{border-style:dashed; letter-spacing:1px;}
 .ccopt.named.on{border-style:solid;}
 #ccblurb{color:var(--dust); font-size:11px; min-height:28px; max-width:640px; margin:4px auto; text-align:left;}
+/* ============================================================ TOUCH LAYOUT
+   Desktop is the priority and none of this exists for it: every rule below is behind
+   `body.touch`, which is set once at boot from the input mode and never otherwise. One
+   document, one codebase — a separate mobile build would drift within a week.
+
+   The three things that make the desktop layout unusable on a phone, measured rather than
+   guessed: every one of 26 buttons is under the 44px minimum (smallest 15px), the stash
+   panel renders off the right edge at 393px, and panels are positioned in fixed pixels
+   against a viewport a third the width they assume. */
+#touchbar{display:none}
+body.touch #touchbar{display:flex; gap:8px; position:fixed; left:8px; bottom:8px; z-index:40}
+body.touch #touchbar button{width:52px; height:52px; font-size:20px; line-height:1}
+body.touch #tb-marquee.on{border-color:var(--gold); color:var(--gold)}
+body.touch{ -webkit-text-size-adjust:100%; }
+/* the canvas must own its gestures: without this the browser pans and zooms the PAGE and the
+   game never sees the second finger */
+body.touch canvas{touch-action:none}
+body.touch button{min-height:44px; min-width:44px; padding:8px 12px; font-size:13px}
+body.touch .hud{font-size:13px}
+/* panels become sheets: full width, stacked at the bottom, one at a time */
+body.touch #charpanel, body.touch #invpanel{
+  left:0 !important; right:0 !important; top:auto !important; bottom:68px !important;
+  width:auto !important; max-width:none !important; max-height:46vh; overflow-y:auto;
+}
+body.touch #invpanel{bottom:auto !important; top:64px !important; max-height:38vh}
+body.touch #log{left:0 !important; right:0 !important; bottom:auto !important; top:0 !important;
+  width:auto !important; max-height:22vh; font-size:12px}
+body.touch #minimap{width:104px !important; height:104px !important}
+body.touch #squadbar{max-width:100vw; overflow-x:auto; flex-wrap:nowrap}
+body.touch #topbar{flex-wrap:wrap; gap:4px}
+body.touch #modal{padding:10px}
+body.touch #modalbody button{width:100%; text-align:left}
+/* ONE SHEET AT A TIME. Stacking them the way the desktop does left a 40-pixel strip of map
+   between the stash and the character sheet — technically laid out, unplayable. The ☰ button
+   cycles map / character / stash, which is the only thing that fits on a phone. */
+body.touch #invpanel{display:none !important}
+body.touch #charpanel{display:none !important}
+body.touch.sheet-char #charpanel{display:block !important}
+body.touch.sheet-stash #invpanel{display:block !important; top:auto !important; bottom:68px !important; max-height:52vh}
+body.touch #log{max-height:14vh !important; top:auto !important; bottom:68px !important}
+body.touch.sheet-char #log, body.touch.sheet-stash #log{display:none !important}
+body.touch #squadbar{position:fixed; left:0; right:0; bottom:0; z-index:35}
+body.touch #touchbar{bottom:auto; top:8px; right:8px; left:auto}
+/* a narrow window on a desktop gets the reflow too, without the gesture layer */
+@media (max-width: 820px){
+  #charpanel, #invpanel{max-width:46vw}
+}
 .overlay .help{width:480px;max-height:40vh;overflow-y:auto;text-align:left;font-size:12px;line-height:1.9;
     color:var(--dust);border:1px solid var(--edge);padding:16px 20px;margin-bottom:26px;background:var(--panel)}
   .overlay .help b{color:var(--bone)}
@@ -186,6 +233,13 @@
 </div>
 
 <div class="hud" id="buildbar"></div>
+
+<!-- TOUCH CONTROLS. Present in the markup always, shown only when the input mode is touch, so
+     there is one document rather than a mobile build and a desktop build that drift apart. -->
+<div class="hud" id="touchbar">
+  <button id="tb-marquee" title="Drag to select instead of panning">&#9647;</button>
+  <button id="tb-panels" title="Show or hide the panels">&#9776;</button>
+</div>
 
 <div id="tip"></div>
 <div id="ctxmenu"></div>
@@ -10600,14 +10654,44 @@ let wldT = 0;
 let simAcc = 0;
 const SIM_DT = 1 / 30;
 /* options: small dials, kept outside the save so they survive new worlds */
-const opts = {fps: false, seeAll: false, dpr: 'auto', shadows: 'high', sound: true, vol: 0.6, amb: 1.0};
+const opts = {fps: false, seeAll: false, dpr: 'auto', shadows: 'high', sound: true, vol: 0.6, amb: 1.0,
+  /* 'auto' asks the device, 'touch'/'mouse' overrule it. Detection is right most of the time
+     and wrong often enough to need an escape hatch: a touchscreen laptop, a tablet with a
+     keyboard, a phone asking for the desktop site. */
+  input: 'auto'};
 try { Object.assign(opts, JSON.parse(localStorage.getItem('dustward_opts') || '{}')); } catch(e){}
 function saveOpts(){ try { localStorage.setItem('dustward_opts', JSON.stringify(opts)); } catch(e){} }
+/* ============================================================ INPUT MODE
+   The question is not "is this a phone". User agents lie, and the thing that actually matters
+   is whether the primary pointer can hit a 15px button — a touchscreen laptop with a mouse
+   should get the desktop layout, and a tablet with no mouse should not. `(pointer: coarse)`
+   asks exactly that and nothing else. */
+let TOUCH = false;
+function coarsePointer(){
+  try { return matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches; }
+  catch(e){ return 'ontouchstart' in window && !matchMedia('(hover: hover)').matches; }
+}
+function applyInputMode(){
+  const was = TOUCH;
+  TOUCH = opts.input === 'touch' ? true : opts.input === 'mouse' ? false : coarsePointer();
+  document.body.classList.toggle('touch', TOUCH);
+  if(TOUCH !== was && typeof log === 'function' && started)
+    log(TOUCH ? 'Touch controls on. Tap to select, tap again to order, hold for the menu.'
+              : 'Mouse and keyboard controls on.', '');
+  /* the first time a touch device is seen, and only then, take the quality dials down. It is
+     a DEFAULT, not a lock — anything the player has already chosen is left alone. */
+  if(TOUCH && !opts._touchTuned){
+    opts._touchTuned = true;
+    if(opts.dpr === 'auto') opts.dpr = '1.0';
+    if(opts.shadows === 'high') opts.shadows = 'low';
+  }
+}
 function applyOpts(){
+  applyInputMode();
   /* pixel ratio: high-DPI screens quietly quadruple the fragments — the cap is free smoothness */
   const cap = opts.dpr === '1.0' ? 1.0 : opts.dpr === '1.5' ? 1.5 : 2;
   renderer.setPixelRatio(Math.min(devicePixelRatio, cap));
-  renderer.setSize(innerWidth, innerHeight);
+  renderer.setSize(viewW(), viewH());
   /* shadows: the single most expensive light in the scene */
   renderer.shadowMap.enabled = opts.shadows !== 'off';
   sun.castShadow = opts.shadows !== 'off';
@@ -11801,7 +11885,22 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.80;   /* the master dial — no clean light gets through the dust */
 renderer.outputEncoding = THREE.sRGBEncoding;
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.5, 400);
+/* ---------- HOW BIG IS THE WINDOW, ACTUALLY ----------
+   `innerWidth` is not the layout width on a phone. Measured under real mobile emulation:
+   documentElement.clientWidth 393, visualViewport 393, and innerWidth reporting 1572 — four
+   times too wide. Every one of those numbers is "correct" for a different question; the one
+   the renderer and all the screen-space maths want is the LAYOUT viewport.
+
+   Sizing off innerWidth put a 1572x2908 canvas on a 393-wide screen, and at pixel ratio 2
+   that is an eighteen-megapixel framebuffer for a display with two. It also silently broke
+   every screen<->world conversion, because `w2s` and `screenToWorld` divided by a width the
+   page was not laid out at, so a tap landed nowhere near where it was aimed.
+
+   documentElement.clientWidth is the right answer and agrees with innerWidth on desktop, so
+   nothing changes there. */
+function viewW(){ return document.documentElement.clientWidth || innerWidth; }
+function viewH(){ return document.documentElement.clientHeight || innerHeight; }
+const camera = new THREE.PerspectiveCamera(50, viewW()/viewH(), 0.5, 400);
 let camDist = 28, camDistTarget = 28;
 let camYaw = 0, camYawT = 0;
 let camPitch = 0.95, camPitchT = 0.95;
@@ -11831,17 +11930,17 @@ function tickBubbles(rdt){
   for(const v of vendors) if(v.bubble && (v.bubble.t -= rdt) <= 0) v.bubble = null;
 }
 function fit3d(){
-  renderer.setSize(innerWidth, innerHeight);
+  renderer.setSize(viewW(), viewH());
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  camera.aspect = innerWidth/innerHeight;
+  camera.aspect = viewW()/viewH();
   camera.updateProjectionMatrix();
   /* without this the canvas is upscaled by the browser and glyphs land on subpixel
      boundaries — the last letter of a word blinks in and out as the camera moves */
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  ov.width = Math.round(innerWidth * dpr);
-  ov.height = Math.round(innerHeight * dpr);
-  ov.style.width = innerWidth + 'px';
-  ov.style.height = innerHeight + 'px';
+  ov.width = Math.round(viewW() * dpr);
+  ov.height = Math.round(viewH() * dpr);
+  ov.style.width = viewW() + 'px';
+  ov.style.height = viewH() + 'px';
   cx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 addEventListener('resize', fit3d); fit3d();
@@ -15662,7 +15761,7 @@ function w2s(wx, wy, h){
   _v3.set(wx, (h !== undefined ? h : groundY(wx,wy) + 1.9), wy);
   _v3.project(camera);
   if(_v3.z > 1) return null;
-  return {x: (_v3.x+1)/2*innerWidth, y: (1-(_v3.y+1)/2)*innerHeight};
+  return {x: (_v3.x+1)/2*viewW(), y: (1-(_v3.y+1)/2)*viewH()};
 }
 const _ray = new THREE.Raycaster();
 const _plane = new THREE.Plane(new THREE.Vector3(0,1,0), 0);
@@ -15672,7 +15771,7 @@ const _hitUp = new THREE.Vector3();
 /* does this click land on an upper deck? Ray the storey plane and check for boards underfoot.
    Neighbors count too — ground undulates and fingers are not scalpels. */
 function elevatedHit(px, py){
-  _ray.setFromCamera({x: px/innerWidth*2-1, y: -(py/innerHeight*2-1)}, camera);
+  _ray.setFromCamera({x: px/viewW()*2-1, y: -(py/viewH()*2-1)}, camera);
   _planeUp.constant = -FLOOR_H;      /* plane y = FLOOR_H (plane eq: n·p + c = 0) */
   const pt = _ray.ray.intersectPlane(_planeUp, _hitUp);
   if(!pt) return null;
@@ -15721,7 +15820,7 @@ function routeTo(c, x, y, tf){
    surface analytically. Sphere-trace it: step by the current height above the terrain, so
    open sky is crossed in a few strides and the last stretch converges tightly. */
 function screenToWorld(px, py){
-  _ray.setFromCamera({x: px/innerWidth*2-1, y: -(py/innerHeight*2-1)}, camera);
+  _ray.setFromCamera({x: px/viewW()*2-1, y: -(py/viewH()*2-1)}, camera);
   const o = _ray.ray.origin, d = _ray.ray.direction;
   /* trim the march to the slab of world the ray actually crosses */
   let t0 = 0, t1 = 4000;
@@ -15799,7 +15898,7 @@ let _cxFont = '';
 function setFont(f){ if(_cxFont !== f){ cx.font = f; _cxFont = f; } }
 function renderOverlay(){
   _cxFont = '';   /* the fps readout writes cx.font directly after us; never trust it across frames */
-  cx.clearRect(0, 0, innerWidth, innerHeight);
+  cx.clearRect(0, 0, viewW(), viewH());
   cx.textAlign = 'center';
   cx.textBaseline = 'alphabetic';
   /* place labels */
@@ -16247,8 +16346,8 @@ const TIPS = {
     const pad = 14;
     let x = ev.clientX + pad, y = ev.clientY + pad;
     const r = t.getBoundingClientRect();
-    if(x + r.width > innerWidth - 6) x = ev.clientX - r.width - pad;
-    if(y + r.height > innerHeight - 6) y = ev.clientY - r.height - pad;
+    if(x + r.width > viewW() - 6) x = ev.clientX - r.width - pad;
+    if(y + r.height > viewH() - 6) y = ev.clientY - r.height - pad;
     t.style.left = Math.max(4, x) + 'px';
     t.style.top = Math.max(4, y) + 'px';
   };
@@ -17673,6 +17772,10 @@ function openOptions(){
     r2.appendChild(b2);
     body.appendChild(r2);
   };
+  row('CONTROLS', opts.input === 'auto' ? `AUTO (${coarsePointer() ? 'touch' : 'mouse'})`
+      : opts.input === 'touch' ? 'TOUCH' : 'MOUSE & KEYBOARD', () => {
+    opts.input = opts.input === 'auto' ? 'touch' : opts.input === 'touch' ? 'mouse' : 'auto';
+  });
   row('SHOW FPS & FRAME TIMES', opts.fps ? 'ON' : 'OFF', () => opts.fps = !opts.fps);
   row('REVEAL MAP — playtesting only', opts.seeAll ? 'ON (the fog is a lie)' : 'OFF', () => opts.seeAll = !opts.seeAll);
   row('PIXEL RATIO', opts.dpr === 'auto' ? 'AUTO (native)' : 'CAP ' + opts.dpr, () => {
@@ -17696,7 +17799,8 @@ function openOptions(){
   });
   const note = document.createElement('div');
   note.style.cssText = 'color:var(--dust);font-size:11px;margin-top:8px;line-height:1.5';
-  note.textContent = 'On high-DPI screens, PIXEL RATIO CAP 1.5 is the single biggest smoothness win. SHADOWS LOW halves the shadow work with little visible cost. F9 also toggles the map reveal; F10 the FPS readout.';
+  note.textContent = 'On high-DPI screens, PIXEL RATIO CAP 1.5 is the single biggest smoothness win. SHADOWS LOW halves the shadow work with little visible cost. F9 also toggles the map reveal; F10 the FPS readout. ' +
+    'CONTROLS asks the device whether its pointer is coarse; set it by hand if it guesses wrong. On touch: tap your own to select, tap elsewhere to order, hold for the menu, one finger pans, two pinch and orbit, and the square button turns the next drag into a selection box.';
   body.appendChild(note);
 }
 function syncPauseBtn(){ $('btn-pause').textContent = paused ? 'RESUME' : 'PAUSE'; $('btn-pause').classList.toggle('on', paused); }
@@ -17825,7 +17929,7 @@ cv.addEventListener('mousemove', e => {
       camYawT = panDrag.yaw - dx * 0.0062;
       camPitchT = clamp(panDrag.pitch + dy * 0.0045, 0.42, 1.38);
     } else {
-      const k = camDist / innerHeight * 1.6;
+      const k = camDist / viewH() * 1.6;
       const [rx, ry] = camRight(), [fx, fy] = camFwd();
       camX = clamp(panDrag.cx - (dx*rx - dy*fx*1.5) * k, 4, W-4);
       camY = clamp(panDrag.cy - (dx*ry - dy*fy*1.5) * k, 4, H-4);
@@ -17843,6 +17947,161 @@ cv.addEventListener('mousemove', e => {
   }
 });
 cv.addEventListener('contextmenu', e => e.preventDefault());
+/* ============================================================ THE GESTURE LAYER
+   Everything a touch does is turned into the MOUSE EVENT the desktop path already handles,
+   and dispatched at the same element. Nothing about orders, selection, casting, building or
+   the context menu is reimplemented here — there is one implementation of each and touch is
+   a second way to reach it. A port that forked that logic would have two of everything and
+   only one of them would get the next bug fix.
+
+   THE MAPPING, and why:
+     tap on one of your own      select               — an unambiguous target
+     tap anywhere else, with
+       something selected        ORDER (right-click)  — the verb you use a hundred times an hour
+     tap with nothing selected   look (left-click)
+     long press                  right-click WITH the menu it opens
+     one finger dragging         pan the camera       — the only thing one finger can mean
+     two fingers pinching        zoom
+     two fingers dragging        orbit
+     the ⬚ button                the next drag is a selection box instead of a pan
+
+   The one real conflict is drag: on desktop a left-drag is a marquee and the middle button
+   pans, and touch has neither a second button nor a modifier key. Panning wins by default
+   because you do it constantly and select-by-box rarely; the button is the escape hatch.
+
+   preventDefault is not optional. Without it the browser synthesises its own mouse events
+   from every tap and each gesture fires twice. */
+let marqueeMode = false;
+const TOUCH_TAP_MS = 260, TOUCH_HOLD_MS = 460, TOUCH_SLOP = 12;
+let tg = null;                                  /* the gesture in flight */
+function fakeMouse(el, type, x, y, button, alt){
+  el.dispatchEvent(new MouseEvent(type, {
+    clientX: x, clientY: y, button, buttons: button === 2 ? 2 : 1,
+    altKey: !!alt, bubbles: true, cancelable: true,
+  }));
+}
+function touchXY(t){ return {x: t.clientX, y: t.clientY}; }
+function touchSpread(e){
+  const a = e.touches[0], b = e.touches[1];
+  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+}
+function touchMid(e){
+  const a = e.touches[0], b = e.touches[1];
+  return {x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2};
+}
+cv.addEventListener('touchstart', e => {
+  if(!TOUCH) return;
+  e.preventDefault();
+  if(!started || modalOpen) return;
+  hideCtxMenu();
+  if(e.touches.length === 1){
+    const p0 = touchXY(e.touches[0]);
+    tg = {mode: 'pending', sx: p0.x, sy: p0.y, x: p0.x, y: p0.y, t0: performance.now(),
+          cx: camX, cy: camY, held: false};
+    /* the long press is a timer, not a distance: it has to fire while the finger is still
+       down or it is indistinguishable from a slow tap */
+    tg.hold = setTimeout(() => {
+      if(!tg || tg.mode !== 'pending') return;
+      tg.held = true; tg.mode = 'done';
+      AU.ui && AU.ui();
+      fakeMouse(cv, 'mousedown', tg.sx, tg.sy, 2, false);
+    }, TOUCH_HOLD_MS);
+  } else if(e.touches.length === 2){
+    if(tg && tg.hold) clearTimeout(tg.hold);
+    tg = {mode: 'two', spread: touchSpread(e), mid: touchMid(e),
+          dist: camDistTarget, yaw: camYawT, pitch: camPitchT};
+  }
+}, {passive: false});
+cv.addEventListener('touchmove', e => {
+  if(!TOUCH || !tg) return;
+  e.preventDefault();
+  if(tg.mode === 'two' && e.touches.length === 2){
+    const sp = touchSpread(e), mid = touchMid(e);
+    if(tg.spread > 8) camDistTarget = clamp(tg.dist * (tg.spread / sp), 9, 85);
+    /* the midpoint sliding is an orbit — the same thing a middle-drag does with a mouse */
+    camYawT = tg.yaw - (mid.x - tg.mid.x) * 0.0062;
+    camPitchT = clamp(tg.pitch + (mid.y - tg.mid.y) * 0.0045, 0.12, 1.35);
+    return;
+  }
+  if(e.touches.length !== 1) return;
+  const p0 = touchXY(e.touches[0]);
+  const moved = Math.hypot(p0.x - tg.sx, p0.y - tg.sy);
+  /* A HOLD THAT TURNS INTO A DRAG. The long press fires on a timer, so a finger that rests a
+     moment before moving gets the menu it did not ask for — and, worse, the gesture used to
+     stay locked in that state for as long as the finger was down, so the drag after it did
+     nothing at all. Moving past the slop takes it back and pans. */
+  if(tg.mode === 'done' && moved > TOUCH_SLOP * 2){
+    hideCtxMenu();
+    tg.mode = 'pan';
+    tg.x = p0.x; tg.y = p0.y;
+    camFollow = false;
+    return;
+  }
+  if(tg.mode === 'pending' && moved > TOUCH_SLOP){
+    clearTimeout(tg.hold);
+    if(marqueeMode){
+      tg.mode = 'marquee';
+      fakeMouse(cv, 'mousedown', tg.sx, tg.sy, 0, false);
+    } else {
+      tg.mode = 'pan';
+      camFollow = false;
+    }
+  }
+  if(tg.mode === 'pan'){
+    /* drag the WORLD under the finger rather than the camera with it — anything else feels
+       inverted on a touchscreen. The scale follows the zoom so it tracks at any distance. */
+    const k = camDist * 0.0022;
+    const sy = Math.sin(camYaw), cy2 = Math.cos(camYaw);
+    const dx = -(p0.x - tg.x) * k, dy = -(p0.y - tg.y) * k;
+    camX = clamp(camX + dx * cy2 - dy * sy, 0, W);
+    camY = clamp(camY + dx * sy + dy * cy2, 0, H);
+    camSX = camX; camSY = camY;
+  } else if(tg.mode === 'marquee'){
+    fakeMouse(cv, 'mousemove', p0.x, p0.y, 0, false);
+  }
+  tg.x = p0.x; tg.y = p0.y;
+}, {passive: false});
+cv.addEventListener('touchend', e => {
+  if(!TOUCH || !tg) return;
+  e.preventDefault();
+  clearTimeout(tg.hold);
+  const g = tg;
+  if(e.touches.length === 0) tg = null;
+  if(g.mode === 'marquee'){ fakeMouse(window, 'mouseup', g.x, g.y, 0, false); marqueeSet(false); return; }
+  if(g.mode !== 'pending') return;                       /* a pan, an orbit, or a long press */
+  if(performance.now() - g.t0 > TOUCH_HOLD_MS) return;   /* it already fired as a hold */
+  /* A TAP. Which button it counts as depends on what is under it, not on how it was made. */
+  const mp = screenToWorld(g.sx, g.sy);
+  const mine = chars.find(c => c.faction === 'player' && c.state !== 'dead' &&
+    dist(c.x, c.y, mp.x, mp.y) < 1.1);
+  const busy = castMode || buildMode || attackMoveMode || guardMode;
+  if(mine || busy || !selected.length){
+    fakeMouse(cv, 'mousedown', g.sx, g.sy, 0, false);
+    fakeMouse(window, 'mouseup', g.sx, g.sy, 0, false);
+  } else {
+    fakeMouse(cv, 'mousedown', g.sx, g.sy, 2, false);
+  }
+}, {passive: false});
+cv.addEventListener('touchcancel', () => { if(tg){ clearTimeout(tg.hold); tg = null; } }, {passive: false});
+function marqueeSet(on){
+  marqueeMode = on;
+  const b = document.getElementById('tb-marquee');
+  if(b) b.classList.toggle('on', on);
+}
+{
+  const mb = document.getElementById('tb-marquee');
+  if(mb) mb.onclick = () => { marqueeSet(!marqueeMode); log(marqueeMode ? 'Drag to select.' : 'Drag to pan.', ''); };
+  const pb = document.getElementById('tb-panels');
+  if(pb) pb.onclick = () => {
+    const b2 = document.body, order = ['', 'sheet-char', 'sheet-stash'];
+    /* findIndex returns -1 when no sheet is open, and (-1 + 1) % 3 is 0 — which is the "no
+       sheet" state again, so the button could never leave it. */
+    const at = order.findIndex(k => k && b2.classList.contains(k));
+    const next = order[((at < 0 ? 0 : at) + 1) % order.length];
+    b2.classList.remove('sheet-char', 'sheet-stash');
+    if(next) b2.classList.add(next);
+  };
+}
 let dragStart = null, dragRect = null;
 let panDrag = null;
 cv.addEventListener('mousedown', e => {
@@ -18837,8 +19096,8 @@ function showCtxMenu(px, py, items){
     b.onclick = () => { hideCtxMenu(); it.fn(); };
     ctxEl.appendChild(b);
   }
-  ctxEl.style.left = Math.min(px, innerWidth-150) + 'px';
-  ctxEl.style.top = Math.min(py, innerHeight - items.length*30 - 10) + 'px';
+  ctxEl.style.left = Math.min(px, viewW()-150) + 'px';
+  ctxEl.style.top = Math.min(py, viewH() - items.length*30 - 10) + 'px';
   ctxEl.style.display = 'flex';
 }
 function hideCtxMenu(){ ctxEl.style.display = 'none'; }
@@ -19850,9 +20109,9 @@ function frame(now){
   if(opts.fps){
     cx.font = '11px monospace'; cx.textAlign = 'right';
     cx.fillStyle = fpsEMA < 30 ? '#c4543a' : fpsEMA < 50 ? '#c8a860' : '#8aa870';
-    cx.fillText(Math.round(fpsEMA) + ' fps', innerWidth - 10, 46);
+    cx.fillText(Math.round(fpsEMA) + ' fps', viewW() - 10, 46);
     cx.fillStyle = '#9a927e';
-    cx.fillText('sim ' + simMs.toFixed(1) + 'ms  draw ' + renderMs.toFixed(1) + 'ms', innerWidth - 10, 60);
+    cx.fillText('sim ' + simMs.toFixed(1) + 'ms  draw ' + renderMs.toFixed(1) + 'ms', viewW() - 10, 60);
     cx.textAlign = 'start';
   }
   uiT -= dt;
