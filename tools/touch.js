@@ -118,6 +118,51 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
       : `!! ${fit.tiny}/${fit.n} STILL UNDER 44px (smallest ${fit.min})`;
     R.clipping = fit.off.length === 0 ? 'nothing runs off the screen' : '!! STILL CLIPPED: ' + fit.off.join(',');
 
+    /* THE TOPBAR was three wrapped rows of labelled buttons eating a third of the screen */
+    R.topbarSlim = await p.evaluate(() => {
+      const tb = document.getElementById('topbar');
+      const h = tb.getBoundingClientRect().height, vh = document.documentElement.clientHeight;
+      const gear = document.getElementById('tb-menu');
+      const hasGear = gear && getComputedStyle(gear).display !== 'none';
+      return (h < vh * 0.16 && hasGear)
+        ? `topbar is ${Math.round(h / vh * 100)}% of the screen, the rest behind the gear`
+        : `!! TOPBAR STILL ${Math.round(h / vh * 100)}% OF THE SCREEN` + (hasGear ? '' : ' AND NO GEAR');
+    });
+    /* Every glyph on a control has to exist in the font the page is set in. Courier New is
+       missing most of the box-drawing block, and a missing glyph renders as a tofu box that
+       tells the player nothing — measure the rendered width against a known-good character
+       rather than trusting that a code point looks fine in an editor. */
+    R.glyphsRender = await p.evaluate(() => {
+      /* Compare PIXELS, not advance width. The first version of this measured a glyph's width
+         against 'M' and flagged the hamburger — which renders perfectly well, it just falls
+         back to a font with a different advance. What actually identifies a missing glyph is
+         that it draws the same notdef box as a code point nothing has, so draw one of those
+         and compare against it. */
+      const draw = (txt) => {
+        const cN = document.createElement('canvas'); cN.width = cN.height = 48;
+        const x = cN.getContext('2d');
+        x.font = '36px "Courier New", monospace'; x.textBaseline = 'middle'; x.textAlign = 'center';
+        x.fillText(txt, 24, 24);
+        return x.getImageData(0, 0, 48, 48).data;
+      };
+      const same = (a2, b2) => { for(let i = 3; i < a2.length; i += 4) if((a2[i] > 8) !== (b2[i] > 8)) return false; return true; };
+      const tofu = draw('\uE123');                 /* private use — nothing has this */
+      const blank = draw(' ');
+      const bad = [...document.querySelectorAll('#touchbar button')]
+        .map(b2 => b2.textContent.trim())
+        .filter(t => t.length === 1)
+        .filter(t => { const d = draw(t); return same(d, tofu) || same(d, blank); });
+      return bad.length ? '!! TOFU GLYPH ON A CONTROL: ' + bad.join(' ')
+        : 'every control glyph draws';
+    });
+    R.gearOpens = await p.evaluate(() => {
+      document.getElementById('tb-menu').click();
+      const m = document.getElementById('ctxmenu');
+      const n = m && getComputedStyle(m).display !== 'none' ? m.children.length : 0;
+      hideCtxMenu();
+      return n >= 7 ? `the gear offers ${n} actions` : '!! GEAR MENU EMPTY (' + n + ')';
+    });
+
     /* quality dials should come down on their own, once, as a default */
     R.autoQuality = await p.evaluate(() => (opts.dpr === '1.0' && opts.shadows === 'low')
       ? 'quality defaults taken down for touch' : `!! DIALS NOT TUNED (dpr ${opts.dpr}, shadows ${opts.shadows})`);
@@ -146,14 +191,17 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
          reason there is a panels toggle. Use it; tapping a body hidden under the stash panel
          tests nothing except that HTML stacks. */
       R.panelsCycle = await p.evaluate(() => {
-        const b2 = document.body, btn = document.getElementById('tb-panels');
-        const shown = () => [...['charpanel', 'invpanel']].filter(id =>
-          getComputedStyle(document.getElementById(id)).display !== 'none');
-        const seen = [shown().length];
-        for(let i = 0; i < 3; i++){ btn.click(); seen.push(shown().length); }
-        /* map, character, stash, back to map — and never two sheets at once */
-        return (seen.every(n => n <= 1) && seen[0] === 0 && seen[1] === 1 && seen[2] === 1 && seen[3] === 0)
-          ? 'map / character / stash, one at a time' : '!! PANEL CYCLE WRONG (' + seen.join(',') + ')';
+        const btn = document.getElementById('tb-panels');
+        /* the log is a sheet too now — counting only the two panels made a four-state cycle
+           read as [0,0,1,1] and look broken when it was working */
+        const sheets = ['log', 'charpanel', 'invpanel'];
+        const shown = () => sheets.filter(id =>
+          getComputedStyle(document.getElementById(id)).display !== 'none').length;
+        const seen = [shown()];
+        for(let i = 0; i < 4; i++){ btn.click(); seen.push(shown()); }
+        /* map, log, character, stash, back to map — never two at once */
+        return (seen.every(n => n <= 1) && seen.join(',') === '0,1,1,1,0')
+          ? 'map / log / character / stash, one at a time' : '!! PANEL CYCLE WRONG (' + seen.join(',') + ')';
       });
       await tap(p, at.x, at.y);
       await p.waitForTimeout(400);

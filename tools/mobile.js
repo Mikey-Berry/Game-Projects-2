@@ -44,8 +44,8 @@ const PROBE = () => {
   }
   const heavy = Object.values(folded).sort((a, b) => b.tris - a.tris).slice(0, 6);
 
-  let charTris = 0, built = 0;
-  charMeshes.forEach(e => { built++; e.g.traverse(o => { if (o.isMesh) charTris += triOf(o); }); });
+  let charTris = 0, built = 0, charMeshCount = 0;
+  charMeshes.forEach(e => { built++; e.g.traverse(o => { if (o.isMesh) { charTris += triOf(o); charMeshCount++; } }); });
 
   const info = renderer.info;
   let saveKB = -1;
@@ -63,6 +63,7 @@ const PROBE = () => {
     sceneTris: rows.reduce((a, r) => a + r.tris, 0),
     heavy,
     bodies: built, charTris: Math.round(charTris),
+    meshPerBody: built ? Math.round(charMeshCount / built) : 0, charMeshes: charMeshCount,
     perBody: built ? Math.round(charTris / built) : 0,
     charShare: info.render.triangles ? +(charTris / info.render.triangles * 100).toFixed(1) : 0,
     geoms: info.memory.geometries, textures: info.memory.textures,
@@ -106,6 +107,7 @@ const PROBE = () => {
       console.log(`    ${h.name.padEnd(16)} ${String(h.tris).padStart(9)} tris` +
         (h.meshes > 1 ? `  (${h.meshes} meshes, ${h.vis} visible)` : ''));
     console.log(`  characters       ${r.bodies} bodies, ${r.charTris.toLocaleString()} tris (${r.perBody}/body) — ${r.charShare}% of the frame`);
+    console.log(`                   ${r.charMeshes} meshes (${r.meshPerBody}/body) — ${r.calls ? Math.round(r.charMeshes / r.calls * 100) : 0}% of the draw calls`);
     console.log(`  memory           ${r.geoms} geometries, ${r.textures} textures`);
     console.log(`  save             ${r.saveKB} KB` + (r.saveKB > 4096 ? '   *** OVER A 4MB MOBILE BUDGET ***' : r.saveKB > 2048 ? '   (mobile localStorage is ~5MB)' : ''));
     if (label.startsWith('PHONE')) {
@@ -133,7 +135,8 @@ const PROBE = () => {
   if (ph.saveKB > 4096) hold.push(`SAVE IS ${ph.saveKB}KB — past a mobile storage budget`);
   if (ph.tinyTargets > ph.targets * 0.5) open.push(`${ph.tinyTargets}/${ph.targets} touch targets under 44px (mobile UI not started)`);
   if (ph.offscreen.length) open.push(`${ph.offscreen.join('/')} renders off-screen at 393px (mobile UI not started)`);
-  if (desk.r.calls > 400) open.push(`${desk.r.calls} draw calls, ~${Math.round(desk.r.bodies * 28)} of them character bodies at 28 meshes each — the next thing to fix`);
+  /* read the real per-body mesh count rather than a number typed in when it was 28 */
+  if (desk.r.calls > 400) open.push(`${desk.r.calls} draw calls (bodies are ${desk.r.meshPerBody} meshes each now)`);
   for (const o of open) console.log('    (open) ' + o);
   console.log(hold.length ? '*** REGRESSED: ' + hold.join('\n*** ') : 'WITHIN THE BUDGET THAT HAS BEEN TAKEN');
   await b.close();
