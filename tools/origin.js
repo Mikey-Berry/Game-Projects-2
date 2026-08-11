@@ -140,6 +140,16 @@ const KEY = process.argv[3] || 'lyonart';
     R.squad = mine.length + ' of them';
     R.household = mine.filter(c => c.undead).length + ' dead following';
     R.allBound = mine.filter(c => c.undead).every(c => c.master === him) ? 'all sworn to him' : 'SOME ANSWER TO NOBODY';
+    /* THE LIVING ONE. Six dead cannot bandage, study, craft, eat or be spoken to by a town,
+       so an all-undead retinue leaves this origin unable to do half of what the game asks. */
+    {
+      const alive = mine.filter(c => !c.undead && c !== him);
+      const att = alive.find(c => c.attendant);
+      R.attendant = att ? `${att.name}, alive, ${Math.floor(att.stats.medic)} medic` : '!! NO LIVING COMPANION';
+      R.attendantGuards = att && att.guardTarget === him && att.job === 'guard'
+        ? 'set to guard the prince from the first frame' : '!! THE ATTENDANT GUARDS NOBODY';
+      R.attendantStands = att && !isBlocked(att.x, att.y) ? 'on open ground' : '!! SPAWNED IN GEOMETRY';
+    }
     R.crown = (campHas('crown') >= 1) ? 'has the Sunken Crown' : 'NO CROWN';
     R.cats = cats;
     R.gift = him && him.gift === 'dark' ? 'dark' : 'WRONG GIFT';

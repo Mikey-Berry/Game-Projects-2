@@ -199,9 +199,10 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
           getComputedStyle(document.getElementById(id)).display !== 'none').length;
         const seen = [shown()];
         for(let i = 0; i < 4; i++){ btn.click(); seen.push(shown()); }
-        /* map, log, character, stash, back to map — never two at once */
+        /* nothing, log, character, stash, back to nothing — never two at once. The map left
+           this cycle when it got its own button; hunting for it three taps in was the note. */
         return (seen.every(n => n <= 1) && seen.join(',') === '0,1,1,1,0')
-          ? 'map / log / character / stash, one at a time' : '!! PANEL CYCLE WRONG (' + seen.join(',') + ')';
+          ? 'log / character / stash, one at a time' : '!! PANEL CYCLE WRONG (' + seen.join(',') + ')';
       });
       await tap(p, at.x, at.y);
       await p.waitForTimeout(400);
@@ -229,6 +230,84 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
       const me = chars.find(c => c.id === window.__me);
       return (me.moveTarget || me.gather || me.chestTarget || me.lootTarget || me.target)
         ? 'a tap elsewhere is an order' : '!! TAP GAVE NO ORDER';
+    });
+
+    /* --- THE MAP BUTTON ---
+       It was hidden on touch and buried in the gear menu. It has to be one tap, big enough to
+       read, on the screen, and mutually exclusive with the other sheets — two panels over a
+       phone screen is the exact problem the sheet system exists to prevent. */
+    R.mapButton = await p.evaluate(() => {
+      const b = document.getElementById('tb-map'), mm = document.getElementById('minimap');
+      if(!b) return '!! NO MAP BUTTON';
+      document.body.classList.remove('sheet-map');
+      const was = getComputedStyle(mm).display;
+      b.click();
+      const now = getComputedStyle(mm), r = mm.getBoundingClientRect();
+      const W2 = document.documentElement.clientWidth, H2 = document.documentElement.clientHeight;
+      if(now.display === 'none') return '!! THE MAP BUTTON DOES NOT SHOW THE MAP (was ' + was + ')';
+      if(r.width < 140) return '!! THE MAP IS ' + Math.round(r.width) + 'px — a decoration, not a map';
+      if(r.left < -1 || r.right > W2 + 1 || r.top < -1 || r.bottom > H2 + 1)
+        return '!! THE MAP HANGS OFF THE SCREEN (' + Math.round(r.left) + '..' + Math.round(r.right) + ')';
+      return `one tap, ${Math.round(r.width)}px square, on screen`;
+    });
+    R.mapIsASheet = await p.evaluate(() => {
+      const mm = document.getElementById('minimap');
+      document.body.classList.remove('sheet-map');
+      document.getElementById('tb-map').click();          /* map up */
+      const others = ['log', 'charpanel', 'invpanel'];
+      const withMap = others.filter(id => getComputedStyle(document.getElementById(id)).display !== 'none');
+      document.getElementById('tb-panels').click();       /* now a panel */
+      const mapAfter = getComputedStyle(mm).display;
+      const shut = (document.getElementById('tb-map').click(), document.getElementById('tb-map').click(),
+                    getComputedStyle(mm).display);
+      document.body.classList.remove('sheet-map');
+      if(withMap.length) return '!! THE MAP OPENS ON TOP OF ' + withMap.join(', ');
+      if(mapAfter !== 'none') return '!! OPENING A PANEL LEAVES THE MAP UP';
+      if(shut !== 'none') return '!! THE MAP BUTTON DOES NOT CLOSE THE MAP';
+      return 'and it closes the other sheets, and they close it';
+    });
+
+    /* --- THE ATTACK BUTTON ---
+       A hold has to land on a body whose hit test resolves against the ground plane, so
+       aiming at anybody with a fingertip is a coin toss, and there is no A key on a phone.
+       Arm the button, tap a body: that is the order. Tap open ground: advance and fight. */
+    /* There is no worldToScreen in the game, so go the other way: convert a known-open SCREEN
+       point to the world and stand the target on it. That also means the tap below is a real
+       TouchEvent through the real gesture layer rather than a synthesised mouse event. */
+    const armed = await p.evaluate((pt) => {
+      const me = chars.find(c => c.id === window.__me);
+      selected = [me]; clearOrders(me);
+      const w = screenToWorld(pt.x, pt.y);
+      const foe = makeChar('Mark', 'bandit', w.x, w.y, {tough: 20});
+      foe.state = 'ok'; chars.push(foe); window.__foe = foe;
+      rebuildCharGrid(); computeVision();
+      document.getElementById('tb-attack').click();
+      return attackMoveMode ? '' : '!! THE ATTACK BUTTON DID NOT ARM';
+    }, openPt);
+    await tap(p, openPt.x, openPt.y);
+    await p.waitForTimeout(400);
+    R.attackAtSomebody = armed || await p.evaluate(() => {
+      const me = chars.find(c => c.id === window.__me), foe = window.__foe;
+      if(!(me.target === foe && me.targetManual)) return '!! ARMED, TAPPED A BODY, AND NO ATTACK ORDER CAME OF IT';
+      if(attackMoveMode || document.getElementById('tb-attack').classList.contains('on'))
+        return '!! THE MODE STAYED ARMED AFTER BEING USED';
+      return 'armed, tapped a body, and they went for it';
+    });
+    const armed2 = await p.evaluate(() => {
+      const me = chars.find(c => c.id === window.__me);
+      selected = [me]; clearOrders(me);
+      const foe = window.__foe, fi = chars.indexOf(foe);
+      if(fi >= 0) chars.splice(fi, 1);                 /* clear the ground and try again */
+      rebuildCharGrid();
+      document.getElementById('tb-attack').click();
+      return attackMoveMode ? '' : '!! THE ATTACK BUTTON DID NOT RE-ARM';
+    });
+    await tap(p, openPt.x, openPt.y);
+    await p.waitForTimeout(400);
+    R.attackAtGround = armed2 || await p.evaluate(() => {
+      const me = chars.find(c => c.id === window.__me);
+      return me.attackMove ? 'and tapping open ground is an advance-and-fight'
+        : '!! TAPPING OPEN GROUND WHILE ARMED GAVE NO ATTACK-MOVE';
     });
 
     /* --- LONG PRESS: the context menu --- */
@@ -277,6 +356,99 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
       opts.input = 'auto'; applyInputMode();
       return off && TOUCH ? 'forcing mouse mode works, and auto comes back'
         : '!! THE OVERRIDE DOES NOT TAKE';
+    });
+    await ctx.close();
+  }
+
+  /* ---------------- THE PHONE ON ITS SIDE ----------------
+     Landscape is not a tweak of portrait; every assumption inverts. The portrait layout
+     spends horizontal space freely (full-width sheets) and hoards vertical (a button column
+     up the edge) — turned sideways, 292px of column does not fit above the squadbar on a
+     393px-tall screen, and a map sized off `100vw` is taller than the screen it is on. So
+     this checks the arrangement, not the styling: does anything hang off, is anything still
+     tappable, is there any game left to see. */
+  {
+    const ctx = await b.newContext({
+      ...devices['Pixel 5'],
+      viewport: { width: 851, height: 393 },   /* the same phone, turned */
+      screen: { width: 851, height: 393 },
+      isLandscape: true,
+    });
+    const p = await ctx.newPage();
+    p.on('pageerror', e => errs.push('LANDSCAPE: ' + e.message.slice(0, 160)));
+    await p.goto(url, { waitUntil: 'load' });
+    await p.waitForTimeout(3000);
+    await p.evaluate(() => document.getElementById('btn-start').click());
+    await p.waitForTimeout(4000);
+
+    R.landTouch = await p.evaluate(() => (TOUCH && document.body.classList.contains('touch'))
+      ? 'still touch mode turned sideways' : '!! TOUCH MODE LOST IN LANDSCAPE');
+    R.landRenderer = await p.evaluate(() => {
+      const w = document.documentElement.clientWidth, h = document.documentElement.clientHeight;
+      /* the canvas must be the shape the phone IS, not the shape it was — this is the whole
+         reason fit3d is re-run on orientationchange */
+      return (Math.abs(camera.aspect - w / h) < 0.05 && w > h)
+        ? `renderer follows the turn (${w}x${h})`
+        : `!! THE RENDERER IS STILL THE OTHER SHAPE (aspect ${camera.aspect.toFixed(2)} vs ${(w/h).toFixed(2)})`;
+    });
+    /* Nothing chrome-level may hang off. Deliberately excludes anything inside a scrolling
+       panel: a stat row below the fold of the character sheet is scrolled, not clipped, and
+       an earlier version of this counted six of those and called the layout broken. */
+    R.landClipping = await p.evaluate(() => {
+      const W2 = document.documentElement.clientWidth, H2 = document.documentElement.clientHeight;
+      const bad = [];
+      for(const el of document.querySelectorAll('#topbar, #touchbar, #squadbar, #minimap, #touchbar button, #topbar button')){
+        const cs = getComputedStyle(el);
+        if(cs.display === 'none' || cs.visibility === 'hidden') continue;
+        const r = el.getBoundingClientRect();
+        if(!r.width || !r.height) continue;
+        if(r.left < -1 || r.right > W2 + 1 || r.top < -1 || r.bottom > H2 + 1)
+          bad.push((el.id || el.textContent.trim().slice(0, 8)) + ' ' + Math.round(r.left) + ',' + Math.round(r.top));
+      }
+      return bad.length ? '!! HANGING OFF THE SCREEN: ' + bad.slice(0, 4).join(' · ')
+        : 'the controls and readouts all fit';
+    });
+    R.landTargets = await p.evaluate(() => {
+      let n = 0, tiny = 0, min = 999;
+      for(const el of document.querySelectorAll('button')){
+        const cs = getComputedStyle(el);
+        if(cs.display === 'none' || cs.visibility === 'hidden') continue;
+        const r = el.getBoundingClientRect();
+        if(!r.width || !r.height) continue;
+        n++; const s = Math.min(r.width, r.height); min = Math.min(min, s); if(s < 44) tiny++;
+      }
+      return tiny === 0 ? `all ${n} targets still 44px or better (smallest ${Math.round(min)})`
+        : `!! ${tiny} OF ${n} TARGETS UNDER 44px IN LANDSCAPE (smallest ${Math.round(min)})`;
+    });
+    /* the point of turning the phone is MORE MAP, so a sheet must not eat the screen */
+    R.landSheetRoom = await p.evaluate(() => {
+      const W2 = document.documentElement.clientWidth, H2 = document.documentElement.clientHeight;
+      document.getElementById('tb-panels').click();
+      document.getElementById('tb-panels').click();          /* character sheet up */
+      const r = document.getElementById('charpanel').getBoundingClientRect();
+      const share = (r.width * r.height) / (W2 * H2);
+      document.body.classList.remove('sheet-char');
+      return share < 0.5 ? `an open sheet covers ${Math.round(share * 100)}% of the screen`
+        : `!! A SHEET COVERS ${Math.round(share * 100)}% OF A LANDSCAPE SCREEN`;
+    });
+    R.landMap = await p.evaluate(() => {
+      const W2 = document.documentElement.clientWidth, H2 = document.documentElement.clientHeight;
+      document.body.classList.remove('sheet-map');
+      document.getElementById('tb-map').click();
+      const mm = document.getElementById('minimap'), r = mm.getBoundingClientRect();
+      if(getComputedStyle(mm).display === 'none') return '!! NO MAP IN LANDSCAPE';
+      if(r.bottom > H2 + 1 || r.right > W2 + 1 || r.top < -1) return '!! THE MAP HANGS OFF A SHORT SCREEN';
+      if(r.height < 140) return '!! THE MAP IS ONLY ' + Math.round(r.height) + 'px TALL';
+      if(Math.abs(r.width - r.height) > 2) return '!! THE MAP IS NOT SQUARE (' + Math.round(r.width) + 'x' + Math.round(r.height) + ')';
+      document.body.classList.remove('sheet-map');
+      return `a ${Math.round(r.height)}px square map, sized off the short side`;
+    });
+    /* and the controls still work, which is the only thing that actually matters */
+    R.landAttack = await p.evaluate(() => {
+      const me = player()[0]; selected = [me]; clearOrders(me);
+      document.getElementById('tb-attack').click();
+      return attackMoveMode ? 'the attack button still arms turned sideways'
+        : '!! THE ATTACK BUTTON DOES NOTHING IN LANDSCAPE';
     });
     await ctx.close();
   }
