@@ -192,6 +192,90 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.subSurvives = kept || (back && back.sub) ? 'and a line survives a save' : '!! THE LINE IS LOST ON LOAD';
       clean();
     }
+
+    /* ---------- 8. AND EVERY LINE IS A DIFFERENT BODY ----------
+       A subrace can be given a skin colour in one line of a table and look, in that table,
+       like a finished piece of work — and this is exactly what had happened. Four golems
+       stood side by side as one man in one blue shirt, because the line's colour only ever
+       reached the head and hands while the torso took the FACTION colour, and the geometry
+       was the same rig every time. So: build one of each and compare the bodies, not the
+       table. Two lines of a race that come out with the same triangle count and the same
+       bounding box are the same character with two names. */
+    {
+      const sig = (o) => {
+        const c = makeChar('X', 'player', 600, 600, Object.assign({ sex: 'm' }, o));
+        c.state = 'ok'; c.dir = 0; chars.push(c); born.push(c);
+        syncChars(0.05); syncChars(0.05);
+        const e = charMeshes.get(c.id);
+        if (!e) return null;
+        e.g.updateWorldMatrix(true, true);
+        let tris = 0, lo = 1e9, hi = -1e9, wide = 0, col = 0;
+        e.g.traverse(m => {
+          if (!m.isMesh) return;
+          let v = m.visible, q = m.parent; while (q && v) { v = q.visible; q = q.parent; }
+          if (!v) return;
+          const g2 = m.geometry;
+          tris += g2.index ? g2.index.count / 3 : g2.attributes.position.count / 3;
+          const bb = new THREE.Box3().setFromObject(m);
+          lo = Math.min(lo, bb.min.y); hi = Math.max(hi, bb.max.y);
+          wide = Math.max(wide, bb.max.x - bb.min.x);
+          /* colour matters as much as shape: this is what caught the blue shirts */
+          const ca = g2.attributes.color;
+          if (ca) for (let i = 0; i < ca.count; i += 7) col += ca.getX(i) * 3 + ca.getY(i) * 5 + ca.getZ(i) * 11;
+        });
+        return { tris: Math.round(tris), h: +(hi - lo).toFixed(2), w: +wide.toFixed(2), col: Math.round(col) };
+      };
+      const clash = [], sameShape = [];
+      const shapes = {};
+      for (const race of ['golem', 'chimera']) {
+        const seen = {}, byTris = {};
+        for (const key of Object.keys(SUBRACES[race])) {
+          const s = sig({ race, sub: key });
+          if (!s) { clash.push(race + '/' + key + ' BUILT NO BODY'); continue; }
+          const stamp = `${s.tris}|${s.h}|${s.w}|${s.col}`;
+          if (seen[stamp]) clash.push(`${race}: ${seen[stamp]} and ${key} are the same body`);
+          seen[stamp] = key;
+          /* SHAPE ON ITS OWN, because colour hides the very bug this is here for. The first
+             version of this check stamped shape AND colour together and passed cheerfully on
+             four golems built from one identical rig — their per-line SKIN differed, so the
+             stamps differed, while the silhouettes were the same man four times. At the
+             distance the camera sits at, a tint is not a character. */
+          if (byTris[s.tris]) sameShape.push(`${race}: ${byTris[s.tris]} and ${key}`);
+          byTris[s.tris] = key;
+          shapes[race + '/' + key] = s;
+        }
+      }
+      R.everyLineDiffers = clash.length ? '!! ' + clash.join('; ')
+        : 'each line of golem and chimera builds a body of its own';
+      R.everyLineHasAShape = sameShape.length
+        ? '!! THESE LINES ARE THE SAME SILHOUETTE IN DIFFERENT PAINT: ' + sameShape.join('; ')
+        : 'and its own silhouette, not the same rig in a different colour';
+      /* and specifically: a golem is not wearing the faction's shirt. Two golems of the same
+         line in different companies must come out the same colour, because the material is
+         the line's, not the banner's. */
+      {
+        const a = sig({ race: 'golem', sub: 'rock', fac: 'player' });
+        const b2 = makeChar('X', 'raider', 600, 600, { race: 'golem', sub: 'rock', sex: 'm' });
+        b2.state = 'ok'; b2.dir = 0; chars.push(b2); born.push(b2);
+        syncChars(0.05); syncChars(0.05);
+        const e2 = charMeshes.get(b2.id);
+        let col2 = 0;
+        if (e2) e2.g.traverse(m => {
+          if (!m.isMesh) return;
+          let v = m.visible, q = m.parent; while (q && v) { v = q.visible; q = q.parent; }
+          if (!v) return;
+          const ca = m.geometry.attributes.color;
+          if (ca) for (let i = 0; i < ca.count; i += 7) col2 += ca.getX(i) * 3 + ca.getY(i) * 5 + ca.getZ(i) * 11;
+        });
+        R.golemWearsItsOwn = (a && Math.abs(col2 - a.col) < Math.max(6, Math.abs(a.col) * 0.02))
+          ? 'a golem is the colour of what it is made of, not of whoever it marches for'
+          : `!! A GOLEM IS STILL WEARING ITS FACTION'S COLOUR (${a && a.col} against ${Math.round(col2)})`;
+      }
+      /* the shapes, for the record — a regression here is easier to read than to re-derive */
+      R.lineShapes = Object.entries(shapes)
+        .map(([k, s]) => `${k.split('/')[1]} ${s.tris}t`).join(' ');
+      clean();
+    }
     return R;
   });
 
