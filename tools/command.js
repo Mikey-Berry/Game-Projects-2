@@ -117,17 +117,31 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const cdr = band[0];
       /* two chests inside the order's ground and one well outside it, so "inside the ground"
          is doing work rather than being a coincidence */
-      const c1 = { x: at.x + 9, y: at.y + 5, opened: false, loot: { cats: 100, items: {} } };
-      const c2 = { x: at.x - 7, y: at.y - 9, opened: false, loot: { cats: 100, items: {} } };
-      const far = { x: at.x + 90, y: at.y, opened: false, loot: { cats: 100, items: {} } };
+      /* ON OPEN GROUND, like everything else this harness places. The chests used to go down
+         at raw offsets from the band's spot, and a raw offset in this world lands inside a
+         boulder often enough to matter: the band would sweep its ground, fail to reach the
+         one chest standing in a rock, decide the ground was clear and come home. Three runs
+         of an identical build reported "missed a chest" twice and "opened both" once, and
+         nothing was wrong with the forage order at all. The same mistake put companions
+         inside walls at character creation earlier in this project. */
+      const cp = (dx, dy) => { const q = openNear(at.x + dx, at.y + dy, 4); return { x: q.x, y: q.y, opened: false, loot: { cats: 100, items: {} } }; };
+      const c1 = cp(9, 5), c2 = cp(-7, -9), far = cp(90, 0);
       chests.push(c1, c2, far);
       giveCommand(cdr, band, 'forage', { x: cdr.x, y: cdr.y }, 22);
-      for (let i = 0; i < 60 && !(c1.opened && c2.opened); i++) step(6);
+      /* GENEROUS, ON PURPOSE. This block was flaky at 60 steps and the flake was not in the
+         feature: worldgen is seeded, but the harness starts the world and then waits in REAL
+         time before touching it, so a loaded machine has burned a different number of `rnd()`
+         calls before the band is even made. The band then walks a different route to the same
+         two chests. Two runs of the identical build gave "opened both" and "missed one". The
+         question is whether a forage order sweeps its ground, not whether it does so within a
+         step budget that happens to suit an unloaded machine — so it gets four times the room
+         and the assertion means what it says again. */
+      for (let i = 0; i < 240 && !(c1.opened && c2.opened); i++) step(6);
       R.foundTheChests = (c1.opened && c2.opened) ? 'opened both inside the ground'
         : `MISSED A CHEST (${c1.opened ? 1 : 0}/${c2.opened ? 1 : 0})`;
       R.leftTheFarOne = !far.opened ? 'left the one outside the order' : 'WANDERED TO THE FAR CHEST';
       /* and having cleared it, they come home rather than standing in the field */
-      for (let i = 0; i < 60 && cdr.cmd; i++) step(6);
+      for (let i = 0; i < 200 && cdr.cmd; i++) step(6);
       R.cameHome = !cdr.cmd ? 'ground cleared, order closed out' : 'STILL OUT THERE (' + cdr.cmd.phase + ')';
       [c1, c2, far].forEach(ch => chests.splice(chests.indexOf(ch), 1));
       disband(band);

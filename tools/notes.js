@@ -147,14 +147,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       chars.push(necro);
       const friend = makeChar('Wren Ashmouth', 'player', q.x + 1, q.y, { atk: 22, def: 19, tough: 15, ath: 9 });
       friend.conviction = 'loyal'; friend.regard = 44; friend.face = null; friend.sex = 'f';
+      const wasAtk = friend.stats.atk;
       friend.state = 'dead'; friend.deadAt = day;
       chars.push(friend); corpses.push(friend);
       const risen = castRaise(necro, friend) !== false ?
         chars.find(o => o.lieutenant && o.name === 'Wren Ashmouth') : null;
       R.theyComeBack = risen ? 'a companion rises as a lieutenant' : '!! A COMPANION ROSE AS A NUMBER';
       R.keptTheirName = risen && risen.name === 'Wren Ashmouth' ? 'with their own name' : '!! NAME LOST';
+      /* Compare against what the BODY actually had, not against the 22 that was asked for.
+         A character's line adds to its starting stats, so `atk: 22` is a request and not a
+         result, and an assertion against the literal was testing the character creator
+         rather than the raise. What this block is about is whether a lieutenant comes back
+         as itself. */
       R.keptThemself = risen && risen.conviction === 'loyal' && risen.regard === 44 &&
-        Math.abs(risen.stats.atk - 22) < 0.01 ? 'conviction, regard and prowess intact' :
+        Math.abs(risen.stats.atk - wasAtk) < 0.01 ? 'conviction, regard and prowess intact' :
         '!! CAME BACK A STRANGER';
       /* a beast still does not get a name */
       const gq = findOpenNear(HOME.x + 30, HOME.y - 24, 5);

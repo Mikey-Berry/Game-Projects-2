@@ -1095,21 +1095,184 @@ function makeParts(){
   return p;
 }
 
+/* ============================================================ WHAT SOMEBODY IS
+   ---------- RACE, AND THEN THE PART OF IT THAT MATTERS ----------
+   A race used to be five numbers — how fast you learn, how fast you walk, how long you live,
+   whether you breed, and where your skills stop. That is enough to tell a homunculus from a
+   human and nothing like enough to tell two humans apart, and nine generations after the
+   Fracture the seven towns have been breeding in near-isolation for longer than anyone's
+   records go back. So every race can carry SUBRACES, and a subrace is where the character
+   actually lives: what it starts good at, and — the part that decides who somebody becomes
+   over a hundred days — what it LEARNS quickly and what it never quite gets the hang of.
+
+   Kenshi's insight, which this is stolen from: a global learn rate makes races feel like
+   difficulty settings. A per-skill one makes them feel like people with a past.
+
+   Declared here, above `makeChar`, rather than beside the other tables nine thousand lines
+   down. Worldgen builds several hundred bodies before that point and a `const` in its
+   temporal dead zone takes the whole script with it. */
+const RACES = {
+  human:      {label:'Human',      xp:1.0,  speed:1.0,  deathAge:62,  fertile:true,  cap:100,
+    blurb:'The stubborn default. Learns, breeds, dies on schedule.'},
+  homunculus: {label:'Homunculus', xp:1.35, speed:1.0,  deathAge:34,  fertile:false, cap:75,
+    blurb:'Vat-grown. Learns frighteningly fast; the clock runs frighteningly fast too. Cannot have children.'},
+  /* Scaleborn used to be a race of its own. It is a chimera — everything about it (built to
+     order, does not breed true, was somebody's project) was already the chimera story told
+     twice, so it is a LINE of chimera now, and the others are the rest of the catalogue. */
+  chimera:    {label:'Chimera',    xp:1.0,  speed:1.25, deathAge:90,  fertile:false, cap:140, noGift:true,
+    blurb:'Engineered by people who thought they had time, and there is no such thing as a chimera in general — there are the lines they kept. Faster and harder than anything born, and mostly stone-deaf to alchemy: the arts that made them cannot pass back through them.'},
+  /* THE MADE THAT WOKE UP. Nobody built a golem to think; they built one to carry, or to
+     copy, or to stand in a doorway. Enough centuries of doing one thing and something in
+     there started having opinions about it. */
+  golem:      {label:'Golem',      xp:0.62, speed:0.88, deathAge:900, fertile:false, cap:115, construct:true,
+    blurb:'A servant that was left running until it began to want things. Does not bleed, does not age, does not sleep, and does not learn easily — it was made for one task and it is very good at that one. What is left of the trade it was built for is most of what it is.'},
+  hollow:     {label:'Hollow',     xp:0.85, speed:1.0,  deathAge:62,  fertile:false, cap:100,
+    blurb:'A rider in a borrowed body. Pushes the host past its limits — and takes a cut of everything the host learns. It is saving up for something.'},
+};
+/* A subrace record. Everything is optional; `learn` is the one that matters.
+     stats  flat additions at creation, before anything else is rolled
+     learn  per-skill multiplier on every point of experience, forever
+     vuln   damage-type multipliers, applied in `mitigate` with everything else
+     gift   true to override a race that cannot hold one
+     skin   so two lines of the same race do not read as the same body       */
+const SUBRACES = {
+  human: {
+    dustborn:   {label:'Dustborn',   w:34, skin:null,
+      blurb:'Nine generations of getting on with it. No talent for anything and no gap either.'},
+    harborborn: {label:'Harborborn', w:12, skin:'#a8845c',
+      blurb:'Dustport stock. Everything washes up there and somebody has to know what it is worth.',
+      stats:{ranged:3, crafting:2, gunnery:2, tough:-1},
+      learn:{ranged:1.30, gunnery:1.30, crafting:1.15, labor:0.80, tough:0.85}},
+    pitborn:    {label:'Pitborn',    w:12, skin:'#8a6a48',
+      blurb:'Copperhold owes everyone and everyone owes Copperhold. Bred to the shaft, in the dark, for three lifetimes.',
+      stats:{tough:4, labor:4, smithing:2, ath:-1, medic:-1},
+      learn:{labor:1.40, tough:1.25, smithing:1.25, magic:0.60, medic:0.70}},
+    orchardbred:{label:'Orchard-bred', w:11, skin:'#c8a074',
+      blurb:'Greenrest is the last place anything grows on purpose, and it shows in the hands.',
+      stats:{farming:5, medic:3, brewing:3, atk:-1},
+      learn:{farming:1.50, medic:1.30, brewing:1.35, atk:0.70, blades:0.75}},
+    ironscar:   {label:'Ironscar-bred', w:11, skin:'#9c7450',
+      blurb:'Nobody leaves Ironscar paid up. What they take instead is usually a fight.',
+      stats:{atk:3, blades:3, blunt:2, def:-1},
+      learn:{atk:1.30, blades:1.30, blunt:1.25, farming:0.60, brewing:0.65}},
+    saltcured:  {label:'Salt-cured',  w:10, skin:'#b6a288', sickResist:true,
+      blurb:'Saltmere brines everything it means to keep, and after enough generations that includes the people. Hard to kill and hard to change.',
+      stats:{tough:3, armr:3},
+      learn:{tough:1.30, armr:1.25, atk:0.85, magic:0.85, crafting:0.85, ath:0.85}},
+    gravebred:  {label:'Grave-bred',  w:10, skin:'#b09a86',
+      blurb:'Raised in Hollowmere, where the dead do the heavy lifting and nobody finds it strange. Easy around a corpse. Less easy around a crowd.',
+      stats:{magic:3, medic:2, labor:-1},
+      learn:{magic:1.35, medic:1.15, farming:0.75, brewing:0.75}},
+  },
+  chimera: {
+    /* the line everyone has heard of, and the reason the word chimera frightens a town */
+    scaleborn:  {label:'Scaleborn',  w:30, skin:null, gift:true, speed:0.92, deathAge:140, cap:125,
+      blurb:'Dragon-blooded, and the only line that kept the art it was made with. Long-lived, slow to learn, and the vestigial wings carry just enough of the weight to matter. Not welcome everywhere.',
+      stats:{tough:3, armr:2},
+      learn:{tough:1.15, armr:1.15, atk:0.85, blades:0.85, martial:0.85}},
+    houndkin:   {label:'Houndkin',   w:26, skin:'#8f7a58', speed:1.18, deathAge:55,
+      blurb:'Grafted for pursuit and nothing else. Nothing on this map runs it down. It cannot be taught to sit still either.',
+      stats:{ath:6, martial:3, crafting:-2, smithing:-2},
+      learn:{ath:1.45, martial:1.30, atk:1.15, crafting:0.55, smithing:0.55, farming:0.60}},
+    oxbound:    {label:'Ox-bound',   w:24, skin:'#a08256', speed:0.80, big:1.16,
+      blurb:'Mass instead of speed, because somebody costed out the alternative. It carries what a mule carries and argues less.',
+      stats:{tough:8, labor:6, blunt:3, ath:-3},
+      learn:{tough:1.35, labor:1.40, blunt:1.25, ath:0.55, ranged:0.65, medic:0.70}},
+    thinblood:  {label:'Thinblood',  w:20, skin:'#cbb9a0', deathAge:48, bloodMul:0.78,
+      blurb:'The elegant failure: everything the line was reaching for, in a body that does not hold together. Learns anything. Survives very little.',
+      stats:{magic:3, medic:3, tough:-4},
+      learn:{magic:1.40, medic:1.35, crafting:1.25, ranged:1.20, tough:0.55},
+      vuln:{cut:1.20, pierce:1.20}},
+  },
+  golem: {
+    clay:  {label:'Clay',   w:34, skin:'#8a6d55',
+      blurb:'The house servant. Fetched, carried, mended itself when it cracked, and did it for so long that one day it declined to.',
+      stats:{labor:5, tough:4, crafting:2},
+      learn:{labor:1.25, crafting:1.15, tough:1.10}},
+    rock:  {label:'Rock',   w:26, skin:'#7d7a72', speed:0.66, big:1.22, cap:130,
+      blurb:'A quarry-hand, and the quarry has been gone nine hundred years. Nothing moves it and nothing much marks it. It has never understood a single word of the Art and does not expect to start.',
+      stats:{tough:14, labor:8, armr:5, ath:-4, magic:-1},
+      learn:{tough:1.40, labor:1.35, armr:1.30, ath:0.40, magic:0.10, medic:0.35},
+      vuln:{blunt:1.25, cut:0.72, pierce:0.70}},
+    paper: {label:'Paper',  w:20, skin:'#cfc2a2', speed:1.05, bloodMul:0.55, cap:135,
+      blurb:'A scriptorium clerk of bound pages and standing ink. It remembers every formula it ever copied, which is all of them, and a strong wind is a genuine problem.',
+      stats:{magic:10, crafting:5, medic:3, tough:-8, atk:-2},
+      learn:{magic:1.55, crafting:1.35, medic:1.20, tough:0.45, atk:0.55, labor:0.55},
+      vuln:{burn:2.20, cut:1.35, blunt:0.72}},
+    glass: {label:'Glass',  w:20, skin:'#9fb2b0', speed:1.02,
+      blurb:'A signal-lantern that walked off its tower. Made to see a long way and to be seen from further, and it has spent centuries being careful.',
+      stats:{ranged:7, gunnery:5, tough:-4},
+      learn:{ranged:1.45, gunnery:1.40, tough:0.60, blades:0.70, labor:0.75},
+      vuln:{blunt:1.65, pierce:0.72}},
+  },
+};
+const SUB_NONE = {label:'', blurb:'', w:1};
+function raceOf(c){ return RACES[c.race] || RACES.human; }
+function subsFor(race){ return SUBRACES[race] || null; }
+function subOf(c){
+  const t = c && SUBRACES[c.race];
+  return (t && c.sub && t[c.sub]) || SUB_NONE;
+}
+function subIs(c, key){ return !!c && c.sub === key; }
+function subLabel(c){ const s = subOf(c); return s.label || (RACES[c.race] || RACES.human).label; }
+/* a number that a subrace may override, then the race, then a default */
+function traitOf(c, key, dflt){
+  const s = subOf(c), r = RACES[c.race] || RACES.human;
+  return s[key] !== undefined ? s[key] : (r[key] !== undefined ? r[key] : dflt);
+}
+function canHoldGift(race, sub){
+  const r = RACES[race] || RACES.human;
+  if(!r.noGift) return true;
+  const s = (SUBRACES[race] || {})[sub];
+  return !!(s && s.gift);          /* a line that kept the art it was made with */
+}
+function rollSub(race){
+  const t = SUBRACES[race]; if(!t) return null;
+  const keys = Object.keys(t);
+  let tot = 0; for(const k of keys) tot += (t[k].w || 1);
+  let r = rnd() * tot;
+  for(const k of keys){ r -= (t[k].w || 1); if(r <= 0) return k; }
+  return keys[0];
+}
+/* SCALEBORN WAS A RACE AND IS NOW A LINE. Every save in existence has bodies with
+   `race:'scaleborn'` in it, and there is no version of this where those are allowed to become
+   humans on load. One function, called everywhere a race arrives from outside. */
+function fixRace(o){
+  if(o && o.race === 'scaleborn'){ o.race = 'chimera'; if(!o.sub) o.sub = 'scaleborn'; }
+  return o;
+}
 function makeChar(name, faction, x, y, o={}){
+  fixRace(o);
+  /* NORMALISE THE RACE BEFORE ROLLING THE LINE. Almost nothing in this world is created with
+     an explicit race — townsfolk, guards, bandits, drifters, children all call through here
+     with no `race` at all and become humans by the default two lines down. Rolling the line
+     off the raw `o.race` therefore gave a line to the handful of bodies somebody had named a
+     race for and to nobody else, which is a feature that exists in the character creator and
+     nowhere in the game. */
+  if(!o.race) o.race = 'human';
+  if(SUBRACES[o.race] && !o.sub) o.sub = rollSub(o.race);
+  const _sb = (SUBRACES[o.race] || {})[o.sub] || SUB_NONE;
+  /* the subrace's flat gifts land BEFORE anything else, so a caller that asked for a specific
+     number still gets that number plus what the line is worth, not instead of it */
+  const st = (k, base) => Math.max(k === 'magic' || k === 'armr' ? 0 : 1,
+    Math.round(((o[k] ?? base) + ((_sb.stats && _sb.stats[k]) || 0)) * 10) / 10);
+  const _bl = Math.round((o.race === 'chimera' ? 125 : 100) * (_sb.bloodMul || 1));
+  const _gift = canHoldGift(o.race, o.sub) ? (o.gift || null) : null;
   return {
     id: uid++, name, faction, x, y,
-    stats: {atk:o.atk??2, def:o.def??2, tough:o.tough??2, ath:o.ath??2, medic:o.medic??2, magic:o.magic??1, labor:o.labor??2, armr:o.armr??1,
-      blades:o.blades??1, blunt:o.blunt??1, ranged:o.ranged??1, martial:o.martial??1,
-      smithing:o.smithing??1, crafting:o.crafting??1, farming:o.farming??1, brewing:o.brewing??1,
-      gunnery:o.gunnery??1},
+    stats: {atk:st('atk',2), def:st('def',2), tough:st('tough',2), ath:st('ath',2), medic:st('medic',2),
+      magic:st('magic',1), labor:st('labor',2), armr:st('armr',1),
+      blades:st('blades',1), blunt:st('blunt',1), ranged:st('ranged',1), martial:st('martial',1),
+      smithing:st('smithing',1), crafting:st('crafting',1), farming:st('farming',1), brewing:st('brewing',1),
+      gunnery:st('gunnery',1)},
     conviction: o.conviction || rollConviction(), regard: o.regard || 0,
-    gift: (o.race==='chimera' ? null : (o.gift||null)), hollowTier: o.hollowTier??0, nascent: false, xpDebt: null, mana: 15 + Math.floor(o.magic??1), castCd: 0,
+    gift: _gift, hollowTier: o.hollowTier??0, nascent: false, xpDebt: null, mana: 15 + Math.floor(o.magic??1), castCd: 0,
     concentrating: null,   /* {key, lock, exclusive} while sustaining a concentration spell */
-    att: {divine:0, destruction:0, dark:0, dust:0, ...((o.gift && o.race!=='chimera') ? {[o.gift]: 2} : {})},
+    att: {divine:0, destruction:0, dark:0, dust:0, ...(_gift ? {[_gift]: 2} : {})},
     attXp: {divine:0, destruction:0, dark:0, dust:0},
     stance: 'melee',   /* melee | ranged | medic | tank */
     parts: makeParts(),
-    blood: o.race==='chimera' ? 125 : 100, maxBlood: o.race==='chimera' ? 125 : 100, hunger: 100,
+    blood: _bl, maxBlood: _bl, hunger: 100,
     weapon: o.weapon||null, armor: o.armor||null,
     state: 'ok',                 // ok | down | dead
     moveTarget: null, target: null, healTarget: null, lootTarget: null, tradeTarget: null, pickupTarget: null,
@@ -1121,8 +1284,11 @@ function makeChar(name, faction, x, y, o={}){
     eater: false, warF: -1, warT: -1, campId: -1, rebelOf: -1, sick: 0, isLeader: -1,
     windup: null, staggerT: 0, flinchT: 0, castT: 0, oppCd: 0, recoverT: 0, recoverDur: 0,
     age: o.age ?? ri(18, 38), goal: null, wasChild: false, legacyTrade: null,
-    race: o.race || 'human', sex: o.sex || (rnd() < 0.5 ? 'f' : 'm'), spouse: 0, partner: 0, grief: 0, pregnant: 0, omni: !!o.omni,
-    clawDmg: 0, big: 1, taunt: false, structMult: 1, bindWeight: 1, shortTag: '',
+    race: o.race || 'human', sub: o.sub || null,
+    sex: o.sex || (rnd() < 0.5 ? 'f' : 'm'), spouse: 0, partner: 0, grief: 0, pregnant: 0, omni: !!o.omni,
+    /* a golem does not bleed and has no limbs to take; a line that was built big is big */
+    construct: !!(RACES[o.race] || {}).construct,
+    clawDmg: 0, big: _sb.big || 1, taunt: false, structMult: 1, bindWeight: 1, shortTag: '',
     neutral: false, provoked: false, bossKey: null, dropItems: null, barkCd: 0,
     carry: null, carryTarget: null, phyl: null, phylTarget: null, lich: false, guardTarget: null,
     floor: 0,
@@ -1208,7 +1374,7 @@ function moveSpeed(c){
   if(c.frayed) s *= 1 - 0.35 * (c.frayT || 0);
   if(c.phyl) s *= 0.92;   /* it is heavier than it looks */
   if(weather.storm > 0) s *= 0.85;
-  s *= raceOf(c).speed;
+  s *= traitOf(c, 'speed', 1);        /* the line overrides the race: an ox-bound chimera is not a houndkin */
   if(c.race==='hollow' && c.blood < 60) s *= 1.1;   /* the rider spurs the host */
   const ld = invWeight(c) / Math.max(1, invCap(c));
   if(ld > 1) s *= 0.55;
@@ -2296,12 +2462,12 @@ function rollConviction(){
 }
 function makeRecruit(t){
   const lvl = ri(2,9);
-  const rrace = rollNpcRace();
+  const {race: rrace, sub: rsub} = rollNpcRaceSub();
   const dustW = t.def.key==='dustport' ? 0.30 : 0.12;   /* dusters wash up in Dustport */
-  const gift = rrace==='chimera' ? null : (rnd() < (t.def.giftChance || .35) ? (rnd() < dustW ? 'dust' : GIFTS[ri(0,2)]) : null);
+  const gift = !canHoldGift(rrace, rsub) ? null : (rnd() < (t.def.giftChance || .35) ? (rnd() < dustW ? 'dust' : GIFTS[ri(0,2)]) : null);
   const rsex = rnd() < 0.5 ? 'f' : 'm';
   return {
-    name: pickNameFor(rsex, true), sex: rsex, race: rrace, conviction: rollConviction(), cost: Math.round((250 + lvl*140 + ri(0,200) + (gift ? (gift==='dust' ? 150 : 400) : 0) + (rrace==='chimera' ? 450 : 0)) * (t.def.key==='ironscar' ? 0.7 : 1)),
+    name: pickNameFor(rsex, true), sex: rsex, race: rrace, sub: rsub, conviction: rollConviction(), cost: Math.round((250 + lvl*140 + ri(0,200) + (gift ? (gift==='dust' ? 150 : 400) : 0) + (rrace==='chimera' ? 450 : rrace==='golem' ? 700 : 0)) * (t.def.key==='ironscar' ? 0.7 : 1)),
     stats:{atk:lvl+ri(-1,2), def:lvl+ri(-1,2), tough:lvl+ri(-1,2), ath:ri(2,7), medic:ri(1,6),
       magic: gift ? (t.def.undeadFriendly ? ri(5,11) : ri(2,7)) : 1, labor:ri(1,6), armr:ri(1,8)},
     gift,
@@ -3588,13 +3754,22 @@ for(let i=0;i<6;i++) spawnDrifter();
   }
 })();
 /* ---------- camps: new dens take root and grow ---------- */
+/* WHO IS OUT THERE. Chimera absorbed the scaleborn share along with the name, and golems are
+   deliberately the rarest thing that walks: there is no factory, nobody has made one in nine
+   hundred years, and every one still standing is a survivor of a household that is not. */
 function rollNpcRace(){
   const r = rnd();
-  if(r < 0.10) return 'scaleborn';
-  if(r < 0.18) return 'homunculus';
-  if(r < 0.24) return 'hollow';
+  if(r < 0.08) return 'homunculus';
+  if(r < 0.14) return 'hollow';
   if(r < 0.28) return 'chimera';
+  if(r < 0.295) return 'golem';
   return 'human';
+}
+/* the recruiting line and the wilds both roll a LINE with the race, so two Ironscar bruisers
+   in the same bar are two Ironscar bruisers rather than two identical humans */
+function rollNpcRaceSub(){
+  const race = rollNpcRace();
+  return {race, sub: rollSub(race)};
 }
 function campMember(camp){
   const p = findOpenNear(camp.x + ri(-3,3), camp.y + ri(-3,3), 4);
@@ -4683,12 +4858,17 @@ function recruitPrisoner(v){
   refreshSquadBar();
 }
 /* ============================================================ DAMAGE & MEDICINE */
-function skillCap(c){ return c.lich ? 150 : (c.race==='hollow' && c.hollowTier >= 1 ? 125 : (raceOf(c).cap || 100)); }
+function skillCap(c){ return c.lich ? 150 : (c.race==='hollow' && c.hollowTier >= 1 ? 125 : traitOf(c, 'cap', 100)); }
 function xpGain(c, stat, amt){
   if(stat === 'tough' && c.immortal === 'divine') return;   /* perfected means finished */
   amt *= raceOf(c).xp;
+  /* AND THE PART OF THE RACE THAT MATTERS. A single global rate makes a race a difficulty
+     setting; a per-skill one makes it a past. An orchard-bred human picks up medicine half
+     again as fast as anybody and will never be much with a blade, and after a hundred days
+     of play that is the whole difference between two people who started identical. */
+  { const L = subOf(c).learn; if(L && L[stat] !== undefined) amt *= L[stat]; }
   if(c.age < 16) amt *= 1.6;
-  else if(c.age > raceOf(c).deathAge - 7) amt *= 0.6;
+  else if(c.age > traitOf(c, 'deathAge', 62) - 7) amt *= 0.6;
   if(c.goal === stat) amt *= 1.25;
   if(c.grief > 0) amt *= 0.5;
   const cap = skillCap(c);
@@ -4918,6 +5098,10 @@ function mitigate(d, dmg, wt, ap, a){
     const def = Math.min(0.85, (ITEMS[d.armor].def || 0) * m * (1 - (ap || 0)));
     dmg *= (1 - def);
   }
+  /* WHAT A THING IS MADE OF. Paper burns, glass shatters, stone shrugs off an edge and
+     minds a hammer — the lines that are not flesh answer to the damage matrix in their own
+     right, on top of whatever they are wearing. */
+  { const V = subOf(d).vuln; if(V && V[wt] !== undefined) dmg *= V[wt]; }
   dmg *= (1 - Math.min(0.45, d.stats.tough * 0.006));
   /* the dead take more where the ground is hallowed — the same relation a hallowed blade
      already had to them, made a property of the PLACE instead of the weapon */
@@ -5340,8 +5524,10 @@ function bodyTick(c, dh){
   /* hunger — the dead don't eat, and NPCs forage off-screen; only the player must manage food */
   if(!c.undead){
     if(c.faction==='player'){
-      if(c.immortal === 'transmute'){
-        /* maintenance, not appetite: the vessel wants metal */
+      if(c.immortal === 'transmute' || c.race === 'golem'){
+        /* MAINTENANCE, NOT APPETITE: the vessel wants metal. A golem in the squad is a
+           logistics decision rather than another mouth — it will never touch the larder and
+           it will quietly eat the ingots you were saving for a wall. */
         c.hunger -= dh * 1.2;
         if(c.hunger < 45){
           if(campTake('c_ingot', 1)) { c.hunger = Math.min(100, c.hunger + 40); }
@@ -9767,14 +9953,14 @@ const BRANCHES = ['divine', 'destruction', 'dark', 'dust'];
 const ATT_THRESH = [100, 300, 700];   /* to initiate, to adept, to master */
 function attOf(c, b){ return (c.att && c.att[b]) || 0; }
 function attCap(c, b){
-  if(c.race === 'chimera') return 0;
+  if(!canHoldGift(c.race, c.sub)) return 0;
   /* some things were bound around a single formula. There is no room in them for a second. */
   if(c.onlyArt) return b === c.onlyArt ? 3 : 0;
   return c.gift === b ? 3 : 2;
 }
 /* progress toward the next tier; a better-attuned squadmate teaches by example */
 function attGain(c, branch, pts){
-  if(c.race === 'chimera' || c.nascent) return;
+  if(!canHoldGift(c.race, c.sub) || c.nascent) return;
   /* a risen labourer has hands and no mind, and cannot be taught anything */
   if(!mindedDead(c)) return;
   c.att = c.att || {divine:0, destruction:0, dark:0, dust:0};
@@ -9799,19 +9985,8 @@ let castMode = null; /* {caster, spell} */
 let muleN = 0;
 const AGE_YEAR_DAYS = 7;   /* a year passes in a week. Lives here are short and everyone knows it. */
 /* the peoples of the dust */
-const RACES = {
-  human:      {label:'Human',      xp:1.0,  speed:1.0,  deathAge:62,  fertile:true,  cap:100,
-    blurb:'The stubborn default. Learns, breeds, dies on schedule.'},
-  homunculus: {label:'Homunculus', xp:1.35, speed:1.0,  deathAge:34,  fertile:false, cap:75,
-    blurb:'Vat-grown. Learns frighteningly fast; the clock runs frighteningly fast too. Cannot have children.'},
-  scaleborn:  {label:'Scaleborn',  xp:0.8,  speed:1.15, deathAge:140, fertile:true,  cap:125,
-    blurb:'Dragon-blooded. Long-lived, slow to learn, quick on the road — vestigial wings carry some of the weight. Not welcome everywhere.'},
-  chimera:    {label:'Chimera',    xp:1.0,  speed:1.25, deathAge:90,  fertile:false, cap:140,
-    blurb:'Engineered for perfection by people who thought they had time. Faster, harder, tougher than anything born — and stone-deaf to alchemy. The arts that made them cannot pass through them.'},
-  hollow:     {label:'Hollow',     xp:0.85, speed:1.0,  deathAge:62,  fertile:false, cap:100,
-    blurb:'A rider in a borrowed body. Pushes the host past its limits — and takes a cut of everything the host learns. It is saving up for something.'},
-};
-function raceOf(c){ return RACES[c.race] || RACES.human; }
+/* RACES, SUBRACES and their helpers now live above `makeChar` — worldgen builds bodies
+   long before this point and a table in its temporal dead zone takes the script with it. */
 /* ---------- what grows between people who share the road ---------- */
 const bonds = new Map();
 function bondKey(a, b){ return Math.min(a.id,b.id) + '|' + Math.max(a.id,b.id); }
@@ -10197,7 +10372,7 @@ function castRaise(c, body){
     /* the whole point of a lieutenant is that it is still them: the face, the conviction they
        held about you, who they were married to, and every skill they ever earned */
     r.face = body.face || null;
-    r.sex = body.sex; r.race = body.race;
+    r.sex = body.sex; r.race = body.race; r.sub = body.sub || null;
     r.conviction = body.conviction || null;
     r.regard = body.regard || 0;
     r.spouse = body.spouse || 0; r.partner = body.partner || 0;
@@ -11728,7 +11903,7 @@ function update(dt){
         c.stats.tough = Math.max(1, c.stats.tough - 0.05);
       }
       /* and eventually it stops */
-      const dAge = raceOf(c).deathAge;
+      const dAge = traitOf(c, 'deathAge', 62);
       if(c.age > dAge && rnd() < (c.age - dAge) * 0.004){
         if(c.faction==='player'){
           log(`${c.name} passed in the night, aged ${Math.floor(c.age)}. The dust takes everyone. Almost everyone.`, 'bad');
@@ -12304,7 +12479,7 @@ function update(dt){
         if(civAlive > 2) applyDamage(null, c, pickPart(), 3, 'blunt', false, false, true);  /* starving: raw. never wipe the last of a town */
       }
       if(c.faction==='player' && !c.undead && !c.sick && rnd() < wdt*0.01){
-        c.sick = 3;
+        if(!subOf(c).sickResist) c.sick = 3;   /* brine keeps more than fish */
         say(c, '*coughs*');
       }
     }
@@ -14905,7 +15080,7 @@ function factionColor(c){
 }
 function colorKeyOf(c){
   /* sex is part of the silhouette, so it belongs in the rebuild key */
-  return factionColor(c) + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + '|' + (c.rot||'') + '|' + (c.face||'');
+  return factionColor(c) + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + '|' + (c.rot||'') + '|' + (c.face||'');
 }
 const SKINS = ['#8a5c34', '#6e4426', '#a06c40', '#5a3820', '#96683a'];
 const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0'];
@@ -15209,9 +15384,14 @@ function buildCharMesh(c){
     : (c.undead && !c.lich && c.rot && ROT_SKIN[c.rot]) ? ROT_SKIN[c.rot]
     : c.undead ? '#e0dcc8'
     : c.immortal==='divine' ? '#f2ead8'
+    /* THE LINE PICKS THE COLOUR FIRST. Golems are all `construct`, and a construct used to
+       be one grey — which would have made paper, rock, clay and glass the same body wearing
+       four different names. A subrace that names a skin gets it, and everything without one
+       falls through to the old ladder. */
+    : subOf(c).skin ? subOf(c).skin
     : c.construct ? '#8a9098'
     : c.race==='homunculus' ? PALE[Math.floor(h1*PALE.length)]
-    : c.race==='scaleborn' ? SCALES[Math.floor(h1*SCALES.length)]
+    : subIs(c, 'scaleborn') ? SCALES[Math.floor(h1*SCALES.length)]
     : c.race==='hollow' ? '#7a6a78'
     : c.race==='chimera' ? '#c2955e'
     : SKINS[Math.floor(h1*SKINS.length)];
@@ -15486,8 +15666,13 @@ function buildCharMesh(c){
       };
       e.legL  = mkMLeg( 0.34,  0.10); e.legR  = mkMLeg(-0.34,  0.10);
       e.legL2 = mkMLeg(-0.34, -0.55); e.legR2 = mkMLeg( 0.34, -0.55);
-    } else if(c.construct){
-      /* a WAR AUTOMATON: not fauna. A heavy bipedal frame of poured alchemical iron —
+    } else if(c.construct && c.race !== 'golem'){
+      /* A WAR AUTOMATON, and only that. `c.construct` used to be enough to land here, which
+         was true while the only constructs in the world were the Warden and the Sigil-Bound.
+         A golem is a HOUSEHOLD servant — it was built to carry a tray or copy a ledger, it is
+         person-shaped because the doorways were, and it takes the ordinary humanoid rig with
+         its line's own colour on it. */
+      /* not fauna. A heavy bipedal frame of poured alchemical iron —
          hunched, faceless, a single burning optic. The Warden is the same, built bigger. */
       const iron = '#4a4640', dark = '#2c2924', hot = c.name && c.name.indexOf('Warden')>=0 ? '#ff5a2a' : '#ff8a3a';
       const S = 1;
@@ -15699,11 +15884,12 @@ function buildCharMesh(c){
         /* the risen keep their sockets and lose what was in them */
         const eyeCol = FACE ? FACE.eye
                      : c.race==='hollow' ? '#f2d016'
+                     : c.race==='golem' ? '#e8c46a'      /* the lamp somebody lit in it, still burning */
                      : c.race==='homunculus' ? '#f0ece4'
                      : c.immortal === 'divine' ? '#f6efd6'
-                     : c.race==='scaleborn' ? '#d8a832'
+                     : subIs(c, 'scaleborn') ? '#d8a832'
                      : lighten(EYES[Math.floor(h2*EYES.length)], 0.5);
-        const glow = FACE ? FACE.glow : (c.race==='hollow' || c.race==='homunculus' || c.immortal === 'divine');
+        const glow = FACE ? FACE.glow : (c.race==='hollow' || c.race==='homunculus' || c.race==='golem' || c.immortal === 'divine');
         /* A black eye on a pale face is the one case the shadow band works against: the
            socket and the iris are the same darkness and the whole eye line closes up. Lift
            the band instead, so the eyes read as two holes punched in something white. */
@@ -15833,7 +16019,7 @@ function buildCharMesh(c){
 
        Everything hangs off the existing joints, so armour, damage tinting and the animation
        layers all keep working untouched. */
-    if(c.race==='scaleborn' && !c.undead){
+    if(subIs(c, 'scaleborn') && !c.undead){
       const scale = skinCol;
       /* `dk` further up is block-scoped to the face builder and not visible from here —
          reaching for it threw a ReferenceError out of buildCharMesh every time a scaleborn
@@ -16227,7 +16413,7 @@ function buildCharMesh(c){
         obox(0.062, 0.13, 0.062, bone2,  0, -0.385, 0.01, elb);  /* wrist */
         obox(0.088, 0.045, 0.078, bone2, 0, -0.452, 0.02, elb);  /* and the hand */
       }
-      lichPart('hood', e.headG, mats, false);   /* the one authored part worth keeping */
+      e.hood = lichPart('hood', e.headG, mats, false);   /* the one authored part worth keeping */
     }
     if(c.pack==='pack_s') obox(0.32, 0.4, 0.22, '#6b5a40', 0, 0.24, -0.28, e.spine);
     if(c.pack==='pack_l'){ obox(0.46, 0.64, 0.3, '#4a3b2c', 0, 0.26, -0.34, e.spine); obox(0.4, 0.11, 0.26, '#8a7048', 0, 0.62, -0.34, e.spine); }
@@ -17700,7 +17886,10 @@ function refreshCharPanel(){
   }
   if(c.pregnant) relTxt += ' · expecting';
   if(c.grief) relTxt += ' · grieving';
-  const raceTxt = c.race && c.race !== 'human' ? ' · ' + RACES[c.race].label : '';
+  /* the LINE is the thing worth reading on a panel — 'Human' says nothing, 'Pitborn' says
+     where the toughness came from and why the medicine is not coming */
+  const raceTxt = subOf(c).label ? ' · ' + subOf(c).label
+    : (c.race && c.race !== 'human' ? ' · ' + RACES[c.race].label : '');
   const ageTxt = (c.undead ? (c.lich ? 'ageless' : '—') : Math.floor(c.age) + 'y') + raceTxt + relTxt;
   const ldNow = invWeight(c).toFixed(0), ldCap = invCap(c).toFixed(0);
   $('equip').innerHTML = `<b>${ageTxt}</b>${c.goal ? ' · goal: '+c.goal : ''} · WPN <b>${(wepOf(c)||{}).name || 'Fists'}</b> · ARM <b>${(c.armor&&ITEMS[c.armor]?ITEMS[c.armor].name:'None')}</b>` +
@@ -18614,7 +18803,7 @@ function openVendor(v){
       return VENDOR_STOCK[v.vt].includes(base);
     };
     const prejudiced = ['greenrest','copperhold'].includes(town.def.key) &&
-      player().some(c => c.race==='scaleborn' && dist(c.x, c.y, v.x, v.y) < 8);
+      player().some(c => subIs(c, 'scaleborn') && dist(c.x, c.y, v.x, v.y) < 8);
     if(prejudiced) log(`The ${v.name.toLowerCase()} eyes the scaleborn and adjusts the prices upward.`, 'bad');
     const prejMult = prejudiced ? 1.15 : 1;
     const keys = Object.keys(town.stock || {}).filter(k => cares(k) && town.stock[k] > 0);
@@ -18733,7 +18922,7 @@ function openBar(v){
     town.recruits.forEach((r, i) => {
       const row = document.createElement('div'); row.className='trow';
       const g = r.gift ? ` <span style="color:#a98ad4">✦ ${r.gift}</span>` : '';
-      const raceLbl = (RACES[r.race] ? RACES[r.race].label : 'Human');
+      const raceLbl = ((SUBRACES[r.race] || {})[r.sub] || {}).label || (RACES[r.race] ? RACES[r.race].label : 'Human');
       const cv = CONVICTIONS[r.conviction] || CONVICTIONS.cold;
       row.innerHTML = `<span class="tn">${r.name}${g} <span style="color:#c8a86a">${cv.label}</span> <span style="color:var(--dust)">${raceLbl} · atk ${r.stats.atk} · def ${r.stats.def} · tough ${r.stats.tough} · med ${r.stats.medic}${r.gift?' · mag '+r.stats.magic:''}</span>` +
         `<br><span style="color:var(--dust);font-size:11px">${cv.blurb}</span></span>
@@ -18797,7 +18986,7 @@ function openBar(v){
       cats -= r.cost;
       town.recruits.splice(i,1);
       const p = findOpenNear(v.x, v.y+1, 2);
-      const c = makeChar(r.name, 'player', p.x, p.y, {...r.stats, gift:r.gift, race: r.race || 'human', sex: r.sex || 'm'});
+      const c = makeChar(r.name, 'player', p.x, p.y, {...r.stats, gift:r.gift, race: r.race || 'human', sub: r.sub || null, sex: r.sex || 'm'});
       chars.push(c);
       log(`${r.name} joined the squad.`, 'good');
       refreshTop(); refreshSquadBar(); render();
@@ -20474,7 +20663,7 @@ function snapshot(){
     isLeader: c.isLeader ?? -1, captain: !!c.captain, omni: !!c.omni,
     npcNecro: !!c.npcNecro, roamNecro: !!c.roamNecro, rebel: !!c.rebel,
     age: c.age, goal: c.goal, wasChild: !!c.wasChild, legacyTrade: c.legacyTrade||null,
-    race: c.race||'human', sex: c.sex||'m', spouse: c.spouse||0, partner: c.partner||0, grief: c.grief||0, pregnant: c.pregnant||0,
+    race: c.race||'human', sub: c.sub||null, construct: !!c.construct, sex: c.sex||'m', spouse: c.spouse||0, partner: c.partner||0, grief: c.grief||0, pregnant: c.pregnant||0,
     pilgrimDestI: c.pilgrimage ? towns.indexOf(c.pilgrimage.dest) : -1,
   });
   return {
@@ -20741,7 +20930,11 @@ function restore(d){
     c.npcNecro = !!s.npcNecro; c.roamNecro = !!s.roamNecro; c.rebel = !!s.rebel;
     c.age = s.age ?? ri(18,38); c.goal = s.goal || null;
     c.wasChild = !!s.wasChild; c.legacyTrade = s.legacyTrade || null;
-    c.race = s.race || 'human'; c.spouse = s.spouse || 0;
+    /* SCALEBORN WAS A RACE. Every save made before the rework has bodies carrying
+       `race:'scaleborn'`, and there is no version of this where those load as humans. */
+    fixRace(s);
+    c.race = s.race || 'human'; c.sub = s.sub || null; c.spouse = s.spouse || 0;
+    c.construct = s.construct !== undefined ? !!s.construct : !!(RACES[c.race] || {}).construct;
     c.sex = s.sex || 'm'; c.partner = s.partner || 0; c.grief = s.grief || 0; c.pregnant = s.pregnant || 0;
     if(c.civ) c.civT = rnd()*10;
     if(s.pilgrimDestI >= 0) c.pilgrimage = {dest: towns[s.pilgrimDestI], waitT: 0};
@@ -21204,7 +21397,7 @@ const ORIGINS = {
     blurb:'Forty years of wars nobody won. One of you, hard as nails, with less road ahead than behind.',
     intro:'You wake alone, old bones aching: 300 gold, good plate, and habits that die harder than you will.'},
 };
-const ccPick = {race:'human', gift:'dark', origin:'gravekeeper'};
+const ccPick = {race:'human', sub:'dustborn', gift:'dark', origin:'gravekeeper'};
 function buildCCreate(){
   const el = $('ccreate');
   const giftBlurbs = {dark:'Necromancy. The dead answer.', destruction:'Fire. Most problems burn.',
@@ -21216,9 +21409,16 @@ function buildCCreate(){
      field — the split is so the list says which kind of start you are looking at. */
   const oks = Object.keys(ORIGINS);
   const paths = oks.filter(k => !ORIGINS[k].named), named = oks.filter(k => ORIGINS[k].named);
+  /* THE LINE, not just the race. Switching race has to re-pick a valid line or the picker
+     shows a Golem holding a human's subrace and the stats come out of nowhere. */
+  const subs = subsFor(ccPick.race);
+  if(subs && !subs[ccPick.sub]) ccPick.sub = Object.keys(subs)[0];
+  if(!subs) ccPick.sub = null;
+  const giftOK = canHoldGift(ccPick.race, ccPick.sub);
   el.innerHTML =
     row('RACE', 'race', Object.keys(RACES).map(k => [k, RACES[k].label])) +
-    row('GIFT', 'gift', [['dark','DARK'],['destruction','DESTRUCTION'],['divine','DIVINE'],['none','NONE']]) +
+    (subs ? row('LINE', 'sub', Object.keys(subs).map(k => [k, subs[k].label])) : '') +
+    (giftOK ? row('GIFT', 'gift', [['dark','DARK'],['destruction','DESTRUCTION'],['divine','DIVINE'],['none','NONE']]) : '') +
     row('PATH', 'origin', paths.map(k => [k, ORIGINS[k].label])) +
     (named.length ? row('OR SOMEBODY IN PARTICULAR', 'origin', named.map(k => [k, ORIGINS[k].label]), 'named') : '') +
     `<div id="ccblurb"></div>`;
@@ -21229,16 +21429,35 @@ function buildCCreate(){
   /* A named origin can be somebody so particular that race and gift are not the player's to
      pick. Saying nothing and quietly overriding the choice reads as a bug; say it instead. */
   const og = ORIGINS[ccPick.origin];
+  const sub = subs && subs[ccPick.sub];
+  /* what the line is actually worth, stated rather than hidden in a table: the three skills
+     it learns fastest and the three it never gets the hang of */
+  let learnTxt = '';
+  if(sub && sub.learn){
+    const ent = Object.entries(sub.learn);
+    const up = ent.filter(([,v]) => v > 1).sort((a,b) => b[1]-a[1]).slice(0, 3);
+    const dn = ent.filter(([,v]) => v < 1).sort((a,b) => a[1]-b[1]).slice(0, 3);
+    const fmt = l => l.map(([k,v]) => `${k} ${v > 1 ? '+' : ''}${Math.round((v-1)*100)}%`).join(', ');
+    learnTxt = (up.length ? ' LEARNS: ' + fmt(up) + '.' : '') + (dn.length ? ' SLOW AT: ' + fmt(dn) + '.' : '');
+  }
   $('ccblurb').textContent = og.fixes ? og.blurb + ' ' + og.fixes
-    : RACES[ccPick.race].blurb + ' — ' + giftBlurbs[ccPick.gift] + ' — ' + og.blurb;
+    : RACES[ccPick.race].blurb
+      + (sub ? ' — ' + sub.label.toUpperCase() + ': ' + sub.blurb + learnTxt : '')
+      + (giftOK ? ' — ' + giftBlurbs[ccPick.gift] : ' — No gift: the arts that made this one cannot pass back through it.')
+      + ' — ' + og.blurb;
 }
 buildCCreate();
-function applyCreation(race, gift, origin){
+function applyCreation(race, gift, origin, sub){
   /* clear the default squad and build the chosen life */
   for(const c of [...chars]) if(c.faction==='player') chars.splice(chars.indexOf(c), 1);
   selected = [];
   stash.mats = 0; stash.w_rkat = 0;
-  const mk = (p, o) => { const c = makeChar(pickName(), 'player', p.x, p.y, o); chars.push(c); return c; };
+  /* the chosen line rides along with the race on every body this start makes, unless the
+     origin names one of its own (Saga is a Hollow whatever the picker said) */
+  const mk = (p, o) => {
+    if(o && o.race === race && !o.sub && sub) o.sub = sub;
+    const c = makeChar(pickName(), 'player', p.x, p.y, o); chars.push(c); return c;
+  };
   /* Companions used to be dropped at a raw offset from the leader — p.x+1, p.y+0.5 — which is
      fine until the leader's open tile happens to have a town wall or a building on one side of
      it. Then somebody starts the run inside solid geometry. Ask for the offset, take open
@@ -21426,6 +21645,20 @@ function applyCreation(race, gift, origin){
     mk(beside(p, -1, 0.6), {atk:3, def:4, tough:3, ath:4, medic:6, magic:3, gift:'divine'});
     cats = 2000; stash.mats = 80; stash.w_rkat = 1;
   }
+  /* NOBODY STARTS INSIDE GEOMETRY. Every origin picks open ground for the bodies it places —
+     and then some of them go on to BUILD, and a wall does not check what is standing where it
+     is going. The testbed raises a whole compound around the spot it just put the player on.
+     One sweep at the end, after everything an origin does, is worth more than six careful
+     placements: this is the third time in this project that somebody has started in a rock,
+     and the RNG stream shifting under worldgen (which a new roll in `makeChar` will do) is
+     enough to surface it whether or not anything else changed. */
+  for(const c of chars){
+    if(c.faction !== 'player' || c.state === 'dead') continue;
+    if(!isBlocked(c.x, c.y)) continue;
+    const q = findOpenNear(c.x, c.y, 4);
+    c.x = q.x; c.y = q.y;
+  }
+  if(isBlocked(me.x, me.y)){ const q = findOpenNear(me.x, me.y, 4); me.x = q.x; me.y = q.y; }
   camX = me.x; camY = me.y;
   computeVision();
   return me;
@@ -21436,7 +21669,7 @@ $('btn-start').onclick = () => {
   $('startoverlay').style.display = 'none';
   if(!started){
     started = true;
-    const me = applyCreation(ccPick.race, ccPick.gift, ccPick.origin);
+    const me = applyCreation(ccPick.race, ccPick.gift, ccPick.origin, ccPick.sub);
     log(ORIGINS[ccPick.origin].intro, 'good');
     if(ccPick.gift !== 'none') log('Select someone and press C to use their gift.');
     selected = [me];

@@ -140,7 +140,16 @@ const OUT = path.resolve(process.argv[2] || path.join(__dirname, 'lich.png'));
     out.meshes = `${vis} visible meshes, ${lo.toFixed(2)} to ${hi.toFixed(2)}`;
     out.reachesGround = lo < 0.06 ? 'the hem reaches the ground'
       : `!! THE ROBE STOPS ${lo.toFixed(2)} ABOVE THE GROUND — there is a gap where the legs were`;
-    out.headKept = hi > 1.85 ? 'and the authored head is still on it' : '!! THE HEAD IS MISSING';
+    /* THE HOOD IS THE TOPMOST THING ON IT — asserted against the body it is actually on,
+       not against an absolute height. Bodies vary in height by a per-character roll, so a
+       fixed 1.85 was calibrated to one individual and failed by a centimetre the moment
+       anything upstream consumed a different number of random values. */
+    {
+      const hb = e.hood ? new THREE.Box3().setFromObject(e.hood) : null;
+      out.headKept = (hb && Math.abs(hb.max.y - hi) < 0.02 && hb.min.y > lo + 0.9)
+        ? `the authored head is still the top of it (${hb.max.y.toFixed(2)})`
+        : '!! THE AUTHORED HEAD IS NOT ON TOP OF THE BODY';
+    }
     /* the legs must be frozen whatever the animator is doing */
     out.legsFrozen = (Math.abs(e.legL.rotation.x) < 0.02 && Math.abs(e.legR.rotation.x) < 0.02)
       ? 'the legs do not swing' : `!! THE LEGS ARE STILL WALKING (${e.legL.rotation.x.toFixed(2)})`;
