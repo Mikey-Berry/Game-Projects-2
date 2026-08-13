@@ -1248,6 +1248,12 @@ function fixRace(o){
   if(o && o.race === 'scaleborn'){ o.race = 'chimera'; if(!o.sub) o.sub = 'scaleborn'; }
   return o;
 }
+/* Weighted: most people are ordinary, extremes are rarer. DECLARED HERE, above `makeChar`,
+   and not beside `rollConviction` where it reads better — worldgen calls `makeChar` while the
+   module is still executing, so a `const` further down the file is in its temporal dead zone
+   when the first villager is rolled, and the whole script dies before the world exists. */
+const CONV_ROLL = [['compassion',0.20], ['cold',0.18], ['loyal',0.14], ['devout',0.12],
+                   ['ambitious',0.12], ['scholar',0.10], ['haunted',0.08], ['cruel',0.06]];
 function makeChar(name, faction, x, y, o={}){
   fixRace(o);
   /* NORMALISE THE RACE BEFORE ROLLING THE LINE. Almost nothing in this world is created with
@@ -1272,7 +1278,7 @@ function makeChar(name, faction, x, y, o={}){
       blades:st('blades',1), blunt:st('blunt',1), ranged:st('ranged',1), martial:st('martial',1),
       smithing:st('smithing',1), crafting:st('crafting',1), farming:st('farming',1), brewing:st('brewing',1),
       gunnery:st('gunnery',1)},
-    conviction: o.conviction || rollConviction(), regard: o.regard || 0,
+    conviction: o.conviction || rollConviction(_gift), regard: o.regard || 0,
     gift: _gift, hollowTier: o.hollowTier??0, nascent: false, xpDebt: null, mana: 15 + Math.floor(o.magic??1), castCd: 0,
     concentrating: null,   /* {key, lock, exclusive} while sustaining a concentration spell */
     att: {divine:0, destruction:0, dark:0, dust:0, ...(_gift ? {[_gift]: 2} : {})},
@@ -1332,6 +1338,17 @@ function player(){ return chars.filter(c => c.faction==='player' && c.state!=='d
    with, and a servitor was bound around a mind on purpose. Everything that asks "can this one
    think?" — study, craft, tuition, attunement — asks here, so there is one answer to change. */
 function mindedDead(c){ return !c.undead || c.lich || c.lieutenant || c.minded; }
+/* ---------- HOW HIGH A BOUND SKULL RIDES ----------
+   It hung at 1.15 in its own local space, which sounds like head height and is not: the whole
+   rig is scaled by `c.big`, and a servitor's is 0.55, so the skull actually floated with its
+   centre 0.49 above the ground — knee height on a person, and it read as a skull rolling
+   along the dirt rather than a thing held up by a binding. A living head sits at 1.65.
+   So the number is stated in WORLD units and divided back out through the scale, which also
+   means it stays right if a servitor is ever built to a different size. It is set so the
+   skull's CENTRE lands on a living head's centre rather than its base — the skull is 0.60
+   tall against a head's 0.48, so matching bases would have left it looking sunk. */
+const SKULL_EYELINE = 1.79;
+function skullRide(c){ return SKULL_EYELINE / ((c && c.big) || 1); }
 
 /* speed accounting for legs + athletics + blood */
 function armorPen(c){
@@ -2455,17 +2472,21 @@ function squadBark(c){
   const pool = tab[convBand(c.regard || 0)] || tab.ok;
   return pool && pool.length ? pick(pool) : null;
 }
-function rollConviction(){
-  /* weighted: most people are ordinary, extremes are rarer */
-  const r = rnd();
-  if(r < 0.20) return 'compassion';
-  if(r < 0.38) return 'cold';
-  if(r < 0.52) return 'loyal';
-  if(r < 0.64) return 'devout';
-  if(r < 0.76) return 'ambitious';
-  if(r < 0.86) return 'scholar';
-  if(r < 0.94) return 'haunted';
-  return 'cruel';
+/* ---------- WHAT A GIFT RULES OUT ----------
+   The devout are the ones who object to all of this. Their lines are written that way — "you
+   put a soul out of its rest to carry a sack", "I have said the words over it" — and handing
+   that conviction to somebody whose whole art is raising the dead produced a body that
+   complained, in its own voice, about the thing it does for a living. A dark alchemist is not
+   devout. It is the one conviction the gift forecloses; every other one survives it, because
+   cold, ambitious, haunted and even compassionate necromancers all make sense. */
+function convictionOpen(k, gift){ return !(k === 'devout' && gift === 'dark'); }
+function rollConviction(gift){
+  /* The weight of anything ruled out is spread across what is left, in proportion — dropping
+     `devout` must not quietly make whatever follows it in the list twice as common. */
+  const pool = CONV_ROLL.filter(([k]) => convictionOpen(k, gift));
+  let r = rnd() * pool.reduce((a, [, w]) => a + w, 0);
+  for(const [k, w] of pool) if((r -= w) < 0) return k;
+  return pool[pool.length - 1][0];
 }
 function makeRecruit(t){
   const lvl = ri(2,9);
@@ -2474,7 +2495,7 @@ function makeRecruit(t){
   const gift = !canHoldGift(rrace, rsub) ? null : (rnd() < (t.def.giftChance || .35) ? (rnd() < dustW ? 'dust' : GIFTS[ri(0,2)]) : null);
   const rsex = rnd() < 0.5 ? 'f' : 'm';
   return {
-    name: pickNameFor(rsex, true), sex: rsex, race: rrace, sub: rsub, conviction: rollConviction(), cost: Math.round((250 + lvl*140 + ri(0,200) + (gift ? (gift==='dust' ? 150 : 400) : 0) + (rrace==='chimera' ? 450 : rrace==='golem' ? 700 : 0)) * (t.def.key==='ironscar' ? 0.7 : 1)),
+    name: pickNameFor(rsex, true), sex: rsex, race: rrace, sub: rsub, conviction: rollConviction(gift), cost: Math.round((250 + lvl*140 + ri(0,200) + (gift ? (gift==='dust' ? 150 : 400) : 0) + (rrace==='chimera' ? 450 : rrace==='golem' ? 700 : 0)) * (t.def.key==='ironscar' ? 0.7 : 1)),
     stats:{atk:lvl+ri(-1,2), def:lvl+ri(-1,2), tough:lvl+ri(-1,2), ath:ri(2,7), medic:ri(1,6),
       magic: gift ? (t.def.undeadFriendly ? ri(5,11) : ri(2,7)) : 1, labor:ri(1,6), armr:ri(1,8)},
     gift,
@@ -10370,7 +10391,13 @@ function castRaise(c, body){
      a mind and stood with you comes back as themselves. Monstrous bosses still do not: a
      Carrion Maw has no name to keep. */
   const wasYours = body.faction === 'player';
-  const isUnique = !body.beast && !body.construct && (!!body.bossKey || (wasYours && !body.undead && !body.mule && !body.settler));
+  /* `grown` is the exclusion that was missing. A cadaver out of the Ossuary is made under
+     player faction — it has to be, it is yours — and every other test here read that as "this
+     was a companion", so meat grown in a house came back as a LIEUTENANT: name kept, face
+     kept, conviction kept, and a slot off a cap of two or three. It never had a name to keep.
+     A lieutenant is somebody who lived beside you and died; a grown cadaver is a crop. */
+  const isUnique = !body.beast && !body.construct && !body.grown &&
+    (!!body.bossKey || (wasYours && !body.undead && !body.mule && !body.settler));
   if(isUnique){
     const lieuCap = (c.lich ? 2 : 1) + (research.done.necromancy ? 1 : 0);
     if(lieutenantsOf(c) >= lieuCap){ log(`${c.name} cannot bind another lieutenant (${lieutenantsOf(c)}/${lieuCap}).`, 'bad'); return false; }
@@ -10736,6 +10763,7 @@ function craftUndead(kind, caster, circle, shape){
     u = makeChar('Skeleton Mage '+risenN, caster.faction, p.x, p.y,
       {atk:4+m*0.2, def:4+m*0.3, tough:5+m*0.3, ath:5, labor:2, magic: 6 + m*0.4});
     u.minded = true; u.autoFight = true;
+    u.kin = 'mage';                 /* it gets a body of its own, not the generic risen rig */
     u.gift = 'destruction'; u.onlyArt = 'destruction';
     u.att = {divine:0, destruction:2, dark:0, dust:0};
     u.attXp = {divine:0, destruction:0, dark:0, dust:0};
@@ -15446,6 +15474,10 @@ function buildCharMesh(c){
   const ROT_SKIN = {fresh:'#b8a894', cooling:'#a09580', spoiled:'#7d8268', bones:'#e6dfc8'};
   const FACE = _face0;
   const skinCol = FACE ? FACE.skin
+    /* A crafted body has no rot to read — nothing about it ever lay in the ground — so it
+       fell through to plain new bone with everything else off the circle. A mage is the one
+       that should not: the art it was steeped in has been burning in it since the binding. */
+    : (c.undead && c.kin === 'mage') ? '#a3907c'
     : (c.undead && !c.lich && c.rot && ROT_SKIN[c.rot]) ? ROT_SKIN[c.rot]
     : c.undead ? '#e0dcc8'
     : c.immortal==='divine' ? '#f2ead8'
@@ -15581,7 +15613,8 @@ function buildCharMesh(c){
   const CH = fem ? 0.90 : 1;        /* chest breadth */
   /* what a risen was bound FOR shows in the frame: a brute is built thick, an archer lean */
   const kin = risen ? (c.kin || null) : null;
-  const kinLimb = kin === 'brute' ? 1.55 : kin === 'colossus' ? 1.9 : kin === 'archer' ? 0.82 : 1;
+  const kinLimb = kin === 'brute' ? 1.55 : kin === 'colossus' ? 1.9
+    : kin === 'archer' ? 0.82 : kin === 'mage' ? 0.78 : 1;
   /* Rot reads in the build as well as the colour: something raised fresh still has meat on
      it, something scraped off a month-old field is a frame with a rag hung on it. */
   const ROT_LIMB = {fresh:1.22, cooling:1.06, spoiled:0.92, bones:0.78};
@@ -15594,7 +15627,7 @@ function buildCharMesh(c){
          trail beneath where a neck used to be. Everything sits on a floatG the pose machine
          bobs; the group itself never touches the ground. */
       const bone = '#ded6c0', dark = '#3a352c', lamp = '#7fd8e8';
-      e.float = new THREE.Group(); e.float.position.set(0, 1.15, 0); g.add(e.float);
+      e.float = new THREE.Group(); e.float.position.set(0, skullRide(c), 0); g.add(e.float);
       e.head = e.float;                                    /* the skull IS the character */
       mk(SPHG, ownBone(bone), 0.46, 0.44, 0.50, 0, 0, 0, e.float);           /* cranium */
       mk(BOXG, ownBone(bone), 0.30, 0.16, 0.22, 0, -0.13, 0.20, e.float);    /* the face plate */
@@ -15858,7 +15891,8 @@ function buildCharMesh(c){
          different jobs and pay different prices, so you should be able to pick your archers
          out of a melee without reading the labels. */
       const bone = skinCol;
-      const rw = kin === 'brute' ? 0.74 : kin === 'colossus' ? 0.62 : kin === 'archer' ? 0.33 : 0.40;
+      const rw = kin === 'brute' ? 0.74 : kin === 'colossus' ? 0.62
+        : kin === 'archer' ? 0.33 : kin === 'mage' ? 0.31 : 0.40;
       const rn = kin === 'colossus' ? 5 : 4;
       e.torso = obox(kin === 'colossus' ? 0.17 : 0.10, 0.46, 0.13, bone, 0, 0.34, -0.06, e.spine);
       for(let i = 0; i < rn; i++){
@@ -15883,6 +15917,40 @@ function buildCharMesh(c){
           e.boxBody.push(obox(0.70, 0.05, 0.28, '#4a443e', 0, yy, 0.01, e.spine));
         for(const sx of [-1, 1])
           e.boxBody.push(obox(0.06, 0.62, 0.06, '#4a443e', sx*0.30, 0.28, 0, e.spine));
+      }
+      if(kin === 'mage'){
+        /* ---------- THE SKELETON MAGE ----------
+           It shared the plain risen rig with everything else off the circle, so the one unit
+           in the roster that stands at the back and throws fire was indistinguishable, at
+           playing distance, from a labourer carrying a sack. The read has to be: burnt, and
+           lit from inside.
+           `ownGlow` is the same emissive path the glass golem's lamp and the lich's soul
+           lantern use, so the ember reads at night without a light in the scene. */
+        const char = '#4a3a30', ash = '#6a5a4c', ember = '#ff8a3a';
+        /* the bone is scorched from the inside out, worst at the ribs where it is kept */
+        for(const [yy, ww, dd] of [[0.50, 0.36, 0.22], [0.36, 0.33, 0.21], [0.22, 0.30, 0.20]])
+          e.boxBody.push(obox(ww, 0.045, dd, char, 0, yy, 0.015, e.spine));
+        /* a mantle of burnt cloth across the shoulders — the silhouette that says "not a
+           labourer" from the back of a field */
+        e.boxBody.push(obox(0.52*SH, 0.15, 0.26, char, 0, 0.545, -0.01, e.spine));
+        e.boxBody.push(obox(0.46*SH, 0.09, 0.23, ash, 0, 0.635, -0.01, e.spine));
+        for(const sx of [-1, 1]){
+          const drape = obox(0.13, 0.34, 0.055, char, sx*0.24, 0.40, -0.13, e.spine);
+          drape.rotation.z = sx * 0.12;
+          e.boxBody.push(drape);
+        }
+        /* THE FIRE IT WAS STEEPED IN, held where the ribs were. A crafted body has no organs
+           to draw; this is what it has instead, and it is the whole identity of the unit. */
+        {
+          const core = new THREE.Mesh(BOXG, ownGlow(ember));
+          core.scale.set(0.13, 0.17, 0.10);
+          core.position.set(0, 0.36, 0.10);
+          core.rotation.z = Math.PI / 4;
+          e.spine.add(core); mats.push(core.material); e.soulLamp = core;
+        }
+        /* and a cage of ribs in front of it, so the light comes through bars */
+        for(let i = 0; i < 3; i++)
+          e.boxBody.push(obox(0.026, 0.20, 0.02, ash, (i-1)*0.055, 0.36, 0.145, e.spine));
       }
       if(kin === 'archer'){
         /* A quiver worn high, with the shafts standing well clear of the shoulder — slung
@@ -15915,7 +15983,8 @@ function buildCharMesh(c){
     e.headG = new THREE.Group();
     e.headG.position.set(0, kin === 'brute' ? 0.545 : 0.62, 0); e.spine.add(e.headG);
     e.boxBody.push(obox(0.1, 0.1, 0.1, skinCol, 0, 0.02, 0, e.headG));                /* neck */
-    const skullK = kin === 'brute' ? 1.22 : kin === 'colossus' ? 1.1 : kin === 'archer' ? 0.92 : 1;
+    const skullK = kin === 'brute' ? 1.22 : kin === 'colossus' ? 1.1
+      : kin === 'archer' ? 0.92 : kin === 'mage' ? 0.94 : 1;
     e.head = obox((risen ? 0.265 : fem ? 0.285 : 0.30) * skullK, (risen ? 0.285 : 0.32) * skullK,
                   (risen ? 0.28 : 0.30) * skullK, skinCol, 0, 0.24, 0.01, e.headG);
     /* ---------- the face ----------
@@ -16792,7 +16861,7 @@ function syncChars(dt){
       e.sigil.visible = true;
       const now = Date.now();
       e.phase += dt * (moving ? 2.4 * gait : 1.1);
-      e.float.position.y = 1.15 + Math.sin(e.phase) * 0.07;
+      e.float.position.y = skullRide(c) + Math.sin(e.phase) * 0.07;
       e.float.rotation.z = Math.sin(now * 0.0007) * 0.06;
       e.float.rotation.x = (moving ? 0.10 : 0) + Math.sin(now * 0.0009) * 0.03;
       /* the jaw works when it has something to say, and hangs slack when it does not */
@@ -18209,7 +18278,14 @@ function refreshCharPanel(){
     `${giftTxt}${convTxt}<br><span style="color:${+ldNow > +ldCap ? 'var(--rust)' : 'var(--dust)'}">LOAD ${ldNow}/${ldCap}kg${invTxt}</span>`;
   const sr = $('stancerow');
   sr.innerHTML = '';
-  if(c.undead && !c.lich){
+  /* `mindedDead`, not "is it a lich". This row is the ONLY place in the panel that still
+     asked the old question, and the answer it gave was wrong for three kinds of body: a
+     lieutenant that kept the mind it died with, a servitor bound around a mind on purpose,
+     and a skeleton mage — which is issued in the RANGED stance and could not be seen in it,
+     let alone moved out of it, because the row that shows stances refused to draw for it and
+     called it mindless instead. The job row beside it has been asking the right question all
+     along, which is why STUDY worked and the stance did not. */
+  if(!mindedDead(c)){
     sr.innerHTML = '<span style="color:var(--dust)">☠ mindless — always aggressive</span>';
   } else {
     for(const [st, icon] of Object.entries(STANCE_ICONS)){
@@ -21251,7 +21327,10 @@ function restore(d){
     if(s.natArmor) c.natArmor = {...s.natArmor};
     if(s.noise != null) c.noise = s.noise;
     if(s.leash != null) c.leash = s.leash;
-    c.conviction = s.conviction || c.conviction || rollConviction(); c.regard = s.regard || 0;
+    c.conviction = s.conviction || c.conviction || rollConviction(c.gift); c.regard = s.regard || 0;
+    /* and a save written before the gift ruled it out gets the reroll on the way in, or the
+       devout necromancers already walking around stay devout necromancers forever */
+    if(!convictionOpen(c.conviction, c.gift)) c.conviction = rollConviction(c.gift);
     c.devoted = !!s.devoted; c.leaving = s.leaving || null;
     c.doorborn = !!s.doorborn; c.doorWork = !!s.doorWork;
     c.neutral = !!s.neutral; c.provoked = !!s.provoked; c.bossKey = s.bossKey || null; c.dropItems = s.dropItems || null;
