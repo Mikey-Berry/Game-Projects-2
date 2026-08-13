@@ -72,6 +72,7 @@ const WHO = [
          and the first run of this photographed three torsos. There is no look-at-height dial,
          so the body is dropped instead: sink it until the head is where the camera is
          already pointing. It is a portrait rig, not a change to the game. */
+      window.__spot = spot;
       camX = camSX = spot.x; camY = camSY = spot.y;
       camDist = camDistTarget = 1.55; camPitch = camPitchT = 0.02;
       camYaw = camYawT = 0; camFollow = false; selected = [];
@@ -121,7 +122,54 @@ const WHO = [
         else boxes++;
       }
       const bb = e.sculptHead ? new THREE.Box3().setFromObject(e.sculptHead) : null;
-      return { ok: !!e.sculptHead, sculpt, boxes, top: bb ? +bb.max.y.toFixed(2) : 0, bot: bb ? +bb.min.y.toFixed(2) : 0,
+      /* ---------- AND IT HAS TO BE THE SIZE OF A HEAD ----------
+         This harness reported the sculpt's dimensions from the first day and never once
+         compared them to anything, so three heads at sixty per cent of the size of everybody
+         else's passed it cleanly for as long as they were wrong. A number nothing is measured
+         AGAINST is not a check.
+         The reference is a plain box head on a plain body, built here rather than remembered,
+         because the thing being matched is whatever the rig currently produces. The first fit
+         was sized against the head CUBE alone — but a box head is a cube with a hair slab on
+         top and usually a beard below, and it is the whole assembly a player sees. */
+      let ref = null;
+      {
+        const keep = chars.slice();
+        chars.length = 0;
+        const pm = makeChar('Ref', 'player', window.__spot.x, window.__spot.y, { sex: 'm' });
+        pm.state = 'ok'; chars.push(pm);
+        syncChars(0.05); syncChars(0.05);
+        const pe = charMeshes.get(pm.id);
+        if (pe) {
+          const pb = new THREE.Box3();
+          pe.headG.updateWorldMatrix(true, true);
+          pe.headG.traverse(o => {
+            if (!o.isMesh) return;
+            let v = o.visible, q = o.parent; while (q && v) { v = q.visible; q = q.parent; }
+            if (v) pb.expandByObject(o);
+          });
+          const pbb = new THREE.Box3().setFromObject(pe.g);
+          ref = { h: pb.max.y - pb.min.y, body: pbb.max.y - pbb.min.y };
+        }
+        const pe2 = charMeshes.get(pm.id);
+        if (pe2 && pe2.g && pe2.g.parent) pe2.g.parent.remove(pe2.g);
+        charMeshes.delete(pm.id);
+        chars.length = 0; for (const k of keep) chars.push(k);
+      }
+      let sized = 'no reference body';
+      if (bb && ref) {
+        const bodyBB = new THREE.Box3().setFromObject(e.g);
+        const mine = (bb.max.y - bb.min.y) / (bodyBB.max.y - bodyBB.min.y);
+        const theirs = ref.h / ref.body;
+        const r = mine / theirs;
+        /* Band, not a target: these are sculpted heads on a blocky rig and they will never
+           match to the centimetre. A box head carries a beard the sculpts do not, so the
+           honest range runs a little short of parity. The fit this was written against sits
+           at 0.76-0.84; the fit it was written to catch sat at 0.60. */
+        sized = r >= 0.70 && r <= 1.15
+          ? `head is ${(mine * 100).toFixed(1)}% of body against a box head's ${(theirs * 100).toFixed(1)}%`
+          : `!! THE HEAD IS THE WRONG SIZE — ${(mine * 100).toFixed(1)}% of body against a box head's ${(theirs * 100).toFixed(1)}% (${r.toFixed(2)}x)`;
+      }
+      return { ok: !!e.sculptHead, sculpt, boxes, sized, top: bb ? +bb.max.y.toFixed(2) : 0, bot: bb ? +bb.min.y.toFixed(2) : 0,
                wide: bb ? +(bb.max.x - bb.min.x).toFixed(2) : 0 };
     });
     rows.push({ w, shots, state });
@@ -156,7 +204,8 @@ const WHO = [
   }, payload);
   fs.writeFileSync(OUT, Buffer.from(sheet, 'base64'));
 
-  const bad = rows.filter(r => !r.state.ok || r.state.boxes);
+  for (const r of rows) console.log(`  ${String(r.w.face).padEnd(9)} ${r.state.sized}`);
+  const bad = rows.filter(r => !r.state.ok || r.state.boxes || String(r.state.sized).startsWith('!!'));
   console.log(`\n${path.basename(OUT)} — ` + (bad.length ? '*** ' + bad.map(r => r.w.face).join(', ') + ' WRONG'
     : 'THREE HEADS, AND NOTHING LEFT OF THE BOXES'));
   if (errs.length) { console.log('errs:', errs.length); errs.slice(0, 3).forEach(e => console.log('  ' + e)); }

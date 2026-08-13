@@ -173,6 +173,48 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         'a maw is still just a maw' : '!! A BEAST BECAME A LIEUTENANT';
     } catch (e) { R.riseBlock = '!! THREW: ' + e.message; }
 
+    /* ---------- WHAT IS UNDER THE MOUNTAIN STAYS UNDER THE MOUNTAIN ----------
+       The 2D overlay paints over the finished frame with no depth test, so every marker it
+       drew for a body in the caves — the name, the health bar, the intent line — hung in the
+       air above the rock, and the whole warren advertised its contents from the surface. The
+       minimap did the same thing, because a cave is stored at the coordinates of the hill on
+       top of it. The 3D pass had answered this question for walls all along: a storey is open
+       only while one of your own is standing on it. This checks the overlay agrees.
+
+       Asserted through the same expression the renderer uses rather than by counting pixels,
+       because what is being pinned is the RULE. A pixel test here would pass just as happily
+       on a camera that happened to be pointing the other way. */
+    {
+      const openFloors = () => {
+        const o = { 0: true };
+        for (const c of chars) if (c.faction === 'player' && c.state !== 'dead') o[c.floor || 0] = true;
+        return o;
+      };
+      const elsewhere = chars.filter(c => (c.floor || 0) !== 0 && c.state !== 'dead');
+      R.thereIsSomethingDownThere = elsewhere.length > 4
+        ? `${elsewhere.length} bodies are on a floor of their own`
+        : `!! NOTHING IS UNDERGROUND TO TEST WITH (${elsewhere.length})`;
+      const mine = player()[0];
+      const wasF = mine.floor;
+      mine.floor = 0;
+      const shownFromAbove = elsewhere.filter(c => openFloors()[c.floor || 0]).length;
+      R.nothingShowsThroughRock = shownFromAbove === 0
+        ? 'standing on the surface, not one of them is drawn'
+        : `!! ${shownFromAbove} MARKERS PAINT STRAIGHT THROUGH THE MOUNTAIN`;
+      /* and it is hiding, not deleting: go down and the floor you are on fills in */
+      const deep = elsewhere.slice().sort((a, b) => (a.floor || 0) - (b.floor || 0))[0];
+      if (deep) {
+        mine.floor = deep.floor;
+        const o = openFloors();
+        const shown = elsewhere.filter(c => o[c.floor || 0]).length;
+        const onThatFloor = elsewhere.filter(c => (c.floor || 0) === deep.floor).length;
+        R.goDownAndYouSeeIt = shown === onThatFloor && shown > 0
+          ? `put one of yours on floor ${deep.floor} and its ${shown} show, and nothing from the other floors`
+          : `!! WENT DOWN AND SAW ${shown} OF ${onThatFloor} ON THAT FLOOR`;
+      }
+      mine.floor = wasF;
+    }
+
     return R;
   });
 

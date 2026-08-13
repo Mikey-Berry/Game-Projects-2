@@ -283,8 +283,113 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? 'and the job you took is still the job on the board'
         : '!! THE CONTRACT LIST AND THE BOARD CAME BACK AS DIFFERENT OBJECTS';
     }
+    /* ---------- 6. AND THE TOWN SELLS YOU ITS COUNTRY ----------
+       "Maps as a purchasable item would be handy since the world is so big now." The world is
+       1440 tiles across and the only way to learn any of it was to walk it. The thing that
+       must not happen is the chart quietly handing over LIVE sight: `vis` has three states,
+       and 2 means a body of yours is standing there looking at it right now. A chart is paper.
+       It gives you the shape of the ground and nothing about who is on it. */
+    {
+      const t2 = towns[1] || towns[0];
+      const count = (want) => { let n = 0; for (let i = 0; i < vis.length; i++) if (want(vis[i])) n++; return n; };
+      const known0 = count(v => v > 0), live0 = count(v => v === 2);
+      cats = 5000;
+      const gold0 = cats;
+      const opened = revealMap(t2.x, t2.y, MAP_R);
+      t2.mapSold = true; cats -= MAP_PRICE;
+      R.chartOpens = opened > 400 ? `the ${t2.name} chart opens ${opened} tiles`
+        : `!! THE CHART OPENED ${opened} TILES`;
+      R.chartExact = count(v => v > 0) - known0 === opened
+        ? 'and the known world grew by exactly that much' : '!! THE CHART OPENED GROUND IT DID NOT COUNT';
+      R.chartIsPaper = count(v => v === 2) === live0
+        ? 'without granting one tile of live sight' : '!! A CHART HANDED OUT LIVE SIGHT';
+      /* which means the people standing on the charted ground are still nobody's business */
+      {
+        const onIt = chars.filter(c => c.faction !== 'player' && dist(c.x, c.y, t2.x, t2.y) < MAP_R - 2);
+        R.chartHidesPeople = !onIt.length ? 'nobody out there to check'
+          : onIt.every(c => visAt(c.x, c.y) !== 2) ? `${onIt.length} bodies on it, and the chart shows you none of them`
+          : '!! THE CHART SHOWED YOU WHO WAS THERE';
+      }
+      R.chartCosts = gold0 - cats === MAP_PRICE ? `it costs ${MAP_PRICE}` : `!! WRONG PRICE (${gold0 - cats})`;
+      R.chartIsOnce = revealMap(t2.x, t2.y, MAP_R) === 0
+        ? 'and a second copy of the same chart opens nothing' : '!! THE SAME CHART OPENED MORE GROUND';
+      /* it has to survive the road home. `packExplored` stores vis>0, so charted ground rides
+         in the same bitmap as walked ground — and restoring re-stamps live vision around the
+         squad, so the count can only ever go UP. Asserting equality here reported a loss of
+         -7 tiles, which was seven tiles gained. */
+      {
+        const k2 = count(v => v > 0);
+        const snap = JSON.parse(JSON.stringify(snapshot()));
+        restore(snap);
+        const k3 = count(v => v > 0);
+        R.chartSaved = k3 >= k2 ? 'the charted country survives a save'
+          : `!! ${k2 - k3} TILES OF CHART WERE LOST ON LOAD`;
+        R.chartSoldOnce = (towns[1] || towns[0]).mapSold
+          ? 'and the town remembers selling it' : '!! THE TOWN WILL SELL THE SAME CHART AGAIN';
+      }
+    }
+
     return R;
   });
+
+  /* ---------- AND YOU CAN SEE WHERE IT IS ----------
+     Reported from play: "I cannot find where to get jobs in a town. Seems impossible to find
+     right now." Every assertion above passed throughout, because all of them are about the
+     board's STATE and none of them about whether a player can locate two posts and a plank
+     among two hundred boxes.
+     This has to be a pixel test. Nothing else works: the first mark written for it was a '✎',
+     which is a perfectly good character that this canvas renders as EMPTY SPACE, because the
+     overlay is set to bare `monospace` and takes whatever font the machine happens to have.
+     Every state check in the file passed while the mark was invisible. So: point the camera
+     at the plaza, read the pixels where the mark should be, and require them to differ from
+     the same pixels with the mark suppressed. */
+  const seen = await p.evaluate(async () => {
+    /* PAUSE, or the control is measuring pedestrians. Townspeople keep walking between the
+       two grabs, and a plaza full of them moving one pixel each was 78 pixels of difference
+       with nothing drawn at all — noise the size of a small mark. */
+    hour = 11; debugSeeAll = true; paused = true; if(typeof syncPauseBtn === 'function') syncPauseBtn();
+    if (typeof fogPlane !== 'undefined') fogPlane.visible = false;
+    const t = towns[0];
+    refreshBoard(t, true);
+    const bp = townBoardPos(t);
+    camX = camSX = bp.x; camY = camSY = bp.y;
+    camDist = camDistTarget = 13; camPitch = camPitchT = 0.62; camYaw = camYawT = 0.4;
+    camFollow = false; selected = [];
+    const frame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await frame(); await frame(); await frame();
+    const q = w2s(bp.x, bp.y, groundY(bp.x, bp.y) + 2.05);
+    if (!q) return { fail: 'the board does not project to the screen at all' };
+    const dpr = cx.canvas.width / cx.canvas.clientWidth || 1;
+    const grab = () => Array.from(cx.getImageData((q.x - 10) * dpr, (q.y - 20) * dpr, 20 * dpr, 24 * dpr).data);
+    const withMark = grab();
+    /* Suppress THE MARK AND NOTHING ELSE, by making the one projection call it depends on
+       come back null. Emptying `towns` was the first attempt and it was not a control: it
+       also takes away the town's name, which is drawn from a different call at a different
+       height, and left 78 pixels of difference with the mark already invisible — enough to
+       pass a test of its own. This narrows the control to exactly the pixels in question. */
+    const realW2S = window.w2s;
+    window.w2s = function(x, y, z){
+      if (Math.abs(x - bp.x) < 1e-6 && Math.abs(y - bp.y) < 1e-6) return null;
+      return realW2S.apply(this, arguments);
+    };
+    await frame(); await frame();
+    const without = grab();
+    window.w2s = realW2S;
+    await frame();
+    let diff = 0;
+    for (let i = 3; i < withMark.length; i += 4) if (withMark[i] !== without[i]) diff++;
+    for (let i = 0; i < withMark.length; i += 4) if (Math.abs(withMark[i] - without[i]) > 24) diff++;
+    return { diff, px: Math.round(20 * dpr * 24 * dpr) };
+  });
+  /* 250 out of a 480-pixel box, and both ends of that are measured. Frame-to-frame noise with
+     the sim paused is exactly 0, so the floor is not jitter — it is that a MISSING GLYPH IS
+     NOT NOTHING. The '✎' this started as draws a tofu placeholder worth 78 pixels: invisible
+     to a player at any honest zoom, and enough to satisfy any threshold set just above zero.
+     The drawn mark is 476. The bar goes between them, nearer the top, because the property is
+     "a player can see it" and not "some ink reached the canvas". */
+  out.markIsOnScreen = seen.fail ? '!! ' + seen.fail
+    : seen.diff >= 250 ? `the post wears a mark you can see — ${seen.diff} pixels of one`
+    : `!! THE MARK ON THE POST IS NOT LEGIBLE (${seen.diff} pixels of ${seen.px} — a tofu box is 78)`;
 
   console.log('=== THE POST ===\n');
   for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(16) + v);

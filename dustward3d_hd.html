@@ -5491,12 +5491,14 @@ function bodyTick(c, dh){
      underneath it — because that is the only time it is true. Anyone on their feet and
      swinging keeps tearing it open, and their rate is untouched: nothing about the lethality
      of a fight in progress changes here, and the weapon and armour numbers are not involved. */
-  /* The share of an open wound still open an hour later, lying on the ground. 0.30 is chosen,
-     not felt: it puts an even fight's untended casualties at roughly a third dead and a
-     quarter back on their feet, and — the part that actually matters — takes a single
-     bandage from saving 7 of 49 to saving 45 of 52. Lower it and losing a fight stops
-     costing anybody; raise it and the bandage goes back to being decoration. */
-  const CLOT_DOWN = 0.30;
+  /* The share of an open wound still open an hour later, lying on the ground. Chosen, not
+     felt, and moved once since: 0.30 put an even fight's untended casualties at 20 of 58 dead
+     with 66% still alive half a minute after they dropped, which played as too forgiving. At
+     0.40 it is 25 of 58 and 57%, and one bandage still gets 40 of 58 back on their feet — the
+     number the whole change exists to protect. Going further is a cliff rather than a slope:
+     at 0.46 the untended dead barely move (26) while the bandaged dead jump from 13 to 20,
+     which is the bandage going back to being decoration. */
+  const CLOT_DOWN = 0.40;
   const CLOT_BED  = 0.05;   /* and under somebody who knows what they are doing */
   const b = totalBleed(c);
   if(b > 0){
@@ -7710,7 +7712,18 @@ function physics(c, dt){
     if(carried(c)){ log(`${c.name} dropped what they were carrying to fight.`, ''); dropBodies(c); }
     const t = c.target;
     if(t.state !== 'ok'){
+      const wasOrdered = c.targetManual;
       c.target = null; c.path = null;
+      /* A HUNT DOES NOT END WHEN THE ANIMAL FALLS OVER. Wounds used to keep opening until the
+         body on the ground ran out of blood, so a downed beast died on its own and letting go
+         of it was the same as killing it. Now that a still body clots, it lies there and mends
+         instead — so a squad sent after a silt strider knocked it down, dropped it, and stood
+         around while it got its blood back. That is the whole of "impossible to kill".
+         An ordered kill therefore carries through to the finish, for BEASTS only. A downed
+         person stays a choice — execute, seize, or leave them — because that choice is one of
+         the things this game is about, and quietly cutting every throat on the field would be
+         a different game than the one the clotting change was for. */
+      if(wasOrdered && t.beast && t.state === 'down' && !c.execTarget && chars.includes(t)) c.execTarget = t;
       /* AN ORDER DEFERRED, NOT AN ORDER LOST. Something got in the way and had to be dealt
          with first; now that it is down, go back to the man you were sent for. Without this
          the interruption silently eats the order and the unit re-acquires whatever happens
@@ -12769,6 +12782,31 @@ function visAt(wx, wy){
   if(debugSeeAll) return 2;
   return vis[y*W+x];
 }
+/* ---------- A CHART IS NOT A PAIR OF EYES ----------
+   The world is 1440 tiles across and the only way to learn any of it was to walk it, which
+   is fine for the country you meant to cross and miserable for the country between you and
+   it. A chart sold in a town opens the ground around that town — but to level ONE, the dim
+   "somebody told me what is there" state, never level 2. Level 2 is live sight: it means a
+   body of yours is standing there right now looking at it, and paper cannot do that. So a
+   bought map shows you the shape of the land and the roads, and every person on it stays
+   invisible until somebody of yours goes and looks. */
+const MAP_R = 46, MAP_PRICE = 260;
+function revealMap(cx0, cy0, r){
+  const x0 = Math.max(0, Math.floor(cx0-r)), x1 = Math.min(W-1, Math.ceil(cx0+r));
+  const y0 = Math.max(0, Math.floor(cy0-r)), y1 = Math.min(H-1, Math.ceil(cy0+r));
+  const r2 = r*r;
+  let n = 0;
+  for(let y=y0; y<=y1; y++) for(let x=x0; x<=x1; x++){
+    const dx = x+0.5-cx0, dy = y+0.5-cy0;
+    if(dx*dx + dy*dy > r2) continue;
+    const ix = y*W+x;
+    if(vis[ix] !== 0) continue;                   /* already known, by chart or by boot */
+    vis[ix] = 1; n++;
+    decorDirty.add(dchKey(x, y));                 /* ground you have heard of stands its decor up */
+  }
+  if(n){ fogMark(x0, y0, x1, y1); fogDirty = true; }
+  return n;
+}
 let visChanged = false;
 function stampVision(cx0, cy0, r){
   const x0 = Math.max(0, Math.floor(cx0-r)), x1 = Math.min(W-1, Math.ceil(cx0+r));
@@ -13678,14 +13716,23 @@ const LICHFIT = {
    faces +Z — the eyes on a box head sit at z +0.15, which is the convention everything else
    in the file was built against. */
 const HEADFIT = {
-  /* Measured, not guessed. A box head is 0.310 x 0.304 x 0.312 and sits centred on the head
-     bone; a named one wears hair boxes out to 0.335. So a sculpt that reads as the same head
-     wants its longest axis a little over a third of a rig unit, centred on the bone with a
-     few centimetres of lift — and because the baker centres each model on its own bounding
-     box, `y` here is where the CENTRE of the head goes, not its base. */
-  lyonart: {s:0.325, x:0, y:0.150, z:0.012, rx:0, ry:0, rz:0},
-  saga:    {s:0.325, x:0, y:0.150, z:0.012, rx:0, ry:0, rz:0},
-  ilsabet: {s:0.315, x:0, y:0.148, z:0.012, rx:0, ry:0, rz:0},
+  /* MEASURED AGAINST THE HEAD YOU ACTUALLY SEE, which is the correction here. The first pass
+     sized these against the bare head CUBE — 0.310 x 0.304 x 0.312 — and that cube is only
+     the middle of a box head: there is a hair slab above it and, on most men, a beard below,
+     and the whole assembly runs from y -0.030 to y 0.475 in head-bone space. So a sculpt cut
+     to the cube came out a shade over 0.31 tall against a real 0.505, which is why all three
+     of them read as small heads on full-size bodies. The gap was entirely at the CROWN — the
+     widths were already within a centimetre of each other.
+
+     These are set so the chin stays where the neck is (about y 0) and the crown rises to meet
+     the hairline of a box head, which puts a sculpted head at 0.20-0.22 of body height
+     against a box head's 0.253. Saga is scaled a touch less than the other two: his model
+     carries a wide mop of hair, and matching him to Lyonart on height made him read broad.
+     `y` is where the CENTRE goes, not the base, because the baker centres each model on its
+     own bounding box — so growing `s` without raising `y` buries the chin in the chest. */
+  lyonart: {s:0.455, x:0, y:0.211, z:0.012, rx:0, ry:0, rz:0},
+  saga:    {s:0.429, x:0, y:0.203, z:0.012, rx:0, ry:0, rz:0},
+  ilsabet: {s:0.441, x:0, y:0.211, z:0.012, rx:0, ry:0, rz:0},
 };
 const D2R = Math.PI/180;
 function headPart(k, parent, mats){
@@ -15113,6 +15160,12 @@ const FACES = {
      dark line is laid along the hairline so the head has an edge in it. */
   lyonart: {skin:'#c8b79c', eye:'#0b0810', hair:'#fbf9f5', glow:false, body:'#151312'},
   saga:    {skin:'#c6a179', eye:'#e8951e', hair:'#d4b747', glow:true,  body:'#3c4634'},
+  /* The other one who walked out. Same amber lit from behind the eyes, because that is what a
+     Hollow is and it should be the first thing you notice about the pair of them — and every
+     other value pulled the opposite way from Saga's, so that at the distance the camera sits
+     at they are never each other: her hair is near-black where his is brass, her coat is
+     oxblood where his is field green. */
+  czarina: {skin:'#b08a68', eye:'#e8951e', hair:'#1c1720', glow:true,  body:'#3a1f22'},
 };
 function faceOf(c){ return (c && c.face && FACES[c.face]) || null; }
 /* ---------- WEAPONS ----------
@@ -17391,6 +17444,57 @@ function renderOverlay(){
       b._rect = {x:bx3, y:by3, w, h:bh};
     }
   } else for(const b of pBuilds) b._rect = null;
+  /* ---------- THE POST, FINDABLE ----------
+     Every job a town has is nailed to two posts and a plank in the plaza, and from the camera
+     height that is four boxes among two hundred — reported from play as "I cannot find where
+     to get jobs in a town. Seems impossible to find right now." A board nobody can find is a
+     feature that does not exist.
+     So it wears a mark of its own whenever the town is in view, and holding ALT names it and
+     says what is on it, the same way ALT names every other building. The mark is drawn at the
+     plank's height rather than the ground so it sits ON the board instead of in the dirt in
+     front of it. Towns that have closed their book to you say so, because "no jobs" and "no
+     jobs FOR YOU" are different things and the second one is information. */
+  for(const t of towns){
+    if(visAt(t.x, t.y) !== 2) continue;
+    const bp = townBoardPos(t);
+    const q = w2s(bp.x, bp.y, groundY(bp.x, bp.y) + 2.05);
+    if(!q) continue;
+    const open = boardOpen(t);
+    cx.textAlign = 'center';
+    /* DRAWN, NOT TYPED. The first version of this mark was a '✎' and it rendered as nothing
+       at all: this canvas is set to `monospace` and takes whatever the browser gives it, which
+       on a bare Linux box has no pencil in it. The glyphs already in use here — ◆ ▲ ▼ † ⛓ —
+       are ones that happened to be there. A notice is four strokes; drawing it is cheaper than
+       depending on somebody else's font, and it cannot be confused with the ◆ of a dropped
+       item or the ▼ of a stair. */
+    {
+      const w2 = 13, h2 = 16, x0 = q.x - w2/2, y0 = q.y - h2;
+      cx.fillStyle = open ? 'rgba(238,228,200,0.95)' : 'rgba(150,140,124,0.55)';
+      cx.fillRect(x0, y0, w2, h2);
+      cx.strokeStyle = open ? 'rgba(90,70,36,0.95)' : 'rgba(70,66,58,0.7)';
+      cx.lineWidth = 1;
+      cx.strokeRect(x0 + 0.5, y0 + 0.5, w2 - 1, h2 - 1);
+      cx.fillStyle = open ? 'rgba(90,70,36,0.85)' : 'rgba(70,66,58,0.6)';
+      for(let i = 0; i < 3; i++) cx.fillRect(x0 + 3, y0 + 4 + i*3.5, w2 - 6, 1.5);   /* writing on it */
+    }
+    if(altHeld){
+      /* The count is only honest for a board that has been read: `refreshBoard` runs when the
+         post is opened, so an untouched town has no `t.board` at all and reporting "nothing
+         up" for it would be a lie told every frame. Rolling one here to find out would also
+         mean the world quietly writing itself as the camera passes over. */
+      const jobs = open && t.board ? t.board.jobs.filter(j => !j.taken).length : -1;
+      const label = !open ? `${t.name.toUpperCase()} — THE POST · CLOSED TO YOU`
+        : `${t.name.toUpperCase()} — THE POST` + (jobs < 0 ? '' : jobs ? ` · ${jobs} up` : ' · nothing up');
+      setFont('11px monospace');
+      const w = cx.measureText(label).width + 16;
+      const bx = q.x - w/2, by = q.y - 26, bh = 16;
+      cx.fillStyle = 'rgba(20,17,14,0.88)'; cx.fillRect(bx, by, w, bh);
+      cx.strokeStyle = open ? '#e8c86a' : '#8a8478'; cx.lineWidth = 1; cx.strokeRect(bx, by, w, bh);
+      cx.fillStyle = open ? '#f0ead8' : '#b0a894';
+      cx.fillText(label, q.x, by + 12);
+    }
+    setFont('bold 12px monospace');
+  }
   /* stairs: the way up, marked, because a black tower is confusing enough */
   for(const st of stairs){
     if(visAt(st.x, st.y) !== 2) continue;
@@ -17483,9 +17587,23 @@ function renderOverlay(){
   }
   if(slaverCamp && visAt(slaverCamp.x, slaverCamp.y)){ const p = w2s(slaverCamp.x, slaverCamp.y-6, 3); if(p){ cx.fillStyle='#c98a7a'; cx.fillText('SLAVER CAMP', p.x, p.y); } }
   if(bastion && visAt(bastion.x, bastion.y)){ const p = w2s(bastion.x, bastion.y-7, 4); if(p){ cx.fillStyle='#f0ead8'; cx.fillText('PALADIN BASTION', p.x, p.y); } }
+  /* ---------- WHAT FLOOR ARE YOU ON ----------
+     The 2D overlay is painted over the finished frame with no depth test, so a marker drawn
+     for a body three storeys down goes straight through the mountain sitting on top of it —
+     and the whole warren advertises itself from the surface: an orange name and a health bar
+     for every gaunt in the deep, hanging in the air over the rock. Nothing about the caves was
+     ever meant to be legible from above.
+
+     The 3D pass already answers this question for walls and floor plates: a storey is OPEN
+     only while one of your own is standing on it. The overlay uses the same rule, so the two
+     agree — go down the stairs and the dark fills in around you; climb out and it closes. */
+  const floorsOpen = {0: true};
+  for(const c of chars) if(c.faction === 'player' && c.state !== 'dead') floorsOpen[c.floor || 0] = true;
+  const onShownFloor = (c) => !!floorsOpen[c.floor || 0];
+
   /* attack intent lines */
   for(const c of selected){
-    if(c.target && c.target.state==='ok'){
+    if(c.target && c.target.state==='ok' && onShownFloor(c.target)){
       const a = w2s(c.x, c.y, groundY(c.x,c.y)+floorY(c.floor)+0.8), b = w2s(c.target.x, c.target.y, groundY(c.target.x,c.target.y)+floorY(c.target.floor)+0.8);
       if(a && b){ cx.strokeStyle='rgba(196,84,58,0.5)'; cx.lineWidth=1; cx.beginPath(); cx.moveTo(a.x,a.y); cx.lineTo(b.x,b.y); cx.stroke(); }
     }
@@ -17493,6 +17611,7 @@ function renderOverlay(){
   /* per-character overlays */
   for(const c of chars){
     if(c.faction!=='player' && visAt(c.x, c.y) !== 2) continue;
+    if(!onShownFloor(c)) continue;                 /* it is under a mountain; leave it there */
     const hh = (groundY(c.x,c.y) + floorY(c.floor) + 1.9*(c.big||1));
     const top = w2s(c.x, c.y, hh);
     if(!top) continue;
@@ -17750,9 +17869,16 @@ function renderMinimap(){
       mmcx.beginPath(); mmcx.arc(bastion.x*128/W, bastion.y*128/H, BASTION_R*128/W, 0, Math.PI*2); mmcx.stroke();
     }
   }
+  /* The map is a map of the surface. A cave is drawn at the coordinates of the rock above it,
+     so a blip for something in the deep is indistinguishable from one standing on the hill —
+     and reading the warren off the minimap is the same giveaway as seeing it through the
+     mountain. Your own people underground stay on it, because that is where you left them. */
+  const mmOpen = {0: true};
+  for(const c of chars) if(c.faction === 'player' && c.state !== 'dead') mmOpen[c.floor || 0] = true;
   for(const c of chars){
     if(c.state==='dead') continue;
     if(c.faction!=='player' && visAt(c.x, c.y) !== 2) continue;
+    if(!mmOpen[c.floor || 0]) continue;
     mmcx.fillStyle = factionColor(c);
     mmcx.fillRect(c.x*128/W-1, c.y*128/H-1, 2, 2);
   }
@@ -18992,6 +19118,18 @@ function openVendor(v){
       player().some(c => subIs(c, 'scaleborn') && dist(c.x, c.y, v.x, v.y) < 8);
     if(prejudiced) log(`The ${v.name.toLowerCase()} eyes the scaleborn and adjusts the prices upward.`, 'bad');
     const prejMult = prejudiced ? 1.15 : 1;
+    /* THE CHART. Sold by the general trade and nobody else — a weaponsmith does not survey.
+       It is not stock: a town has exactly one map of its own country and sells you a copy of
+       it, so this is a row of its own above the shelves rather than an ITEMS key with a count.
+       Priced flat, because what it is worth does not depend on how empty the shelf is. */
+    if(v.vt === 'general'){
+      const row = document.createElement('div'); row.className = 'trow';
+      const sold = !!town.mapSold;
+      row.innerHTML = `<span class="tn">Chart of the ${town.name} country <span style="color:var(--dust)">${sold ? 'you already have this one' : 'the land within ' + MAP_R + ' tiles, as the town knows it'}</span></span>
+        <span class="tc">${sold ? 'copied' : 'one copy'}</span>
+        <button data-chart="1" ${sold ? 'disabled' : ''}>BUY ${MAP_PRICE}</button>`;
+      body.appendChild(row);
+    }
     const keys = Object.keys(town.stock || {}).filter(k => cares(k) && town.stock[k] > 0);
     /* things you own that this vendor would buy, even if out of stock here — stash + squad packs */
     const ownedKeys = new Set(Object.keys(stash));
@@ -19010,6 +19148,17 @@ function openVendor(v){
         <button data-sell="${k}" ${have?'':'disabled'}>SELL ${sp}</button>`;
       body.appendChild(row);
     }
+    body.querySelectorAll('[data-chart]').forEach(b => b.onclick = () => {
+      if(town.mapSold) return;
+      if(cats < MAP_PRICE){ refuse('Not enough gold.'); return; }
+      cats -= MAP_PRICE;
+      town.mapSold = true;
+      const n = revealMap(town.x, town.y, MAP_R);
+      redrawMinimapFog();
+      log(n ? `You buy the ${town.name} chart. ${n} tiles of country you had never walked, drawn by somebody who had.`
+            : `You buy the ${town.name} chart and find you had already walked all of it.`, n ? 'good' : '');
+      refreshTop(); render();
+    });
     body.querySelectorAll('[data-buy]').forEach(b => b.onclick = (e) => {
       const k = b.dataset.buy;
       const want = Math.min(e.shiftKey ? 10 : 1, stockOf(town, k));
@@ -19922,8 +20071,14 @@ cv.addEventListener('mousedown', e => {
         return;
       }
     }
-    /* enemy? (ctrl+right-click force-attacks anyone — guards, bosses, caravans) */
-    const foe = corpseFirst ? null : chars.find(c => c.state==='ok' && c.faction!=='player' && visAt(c.x,c.y)===2 && dist(c.x,c.y,wx,wy) < 0.9 &&
+    /* enemy? (ctrl+right-click force-attacks anyone — guards, bosses, caravans)
+       `state !== 'dead'` rather than `state === 'ok'`, and that one word is the whole reason
+       a silt strider could not be killed. The EXECUTE/SEIZE branch a dozen lines down asks
+       whether the foe is DOWN — and could never once have been true, because this line had
+       already thrown every downed body away. So the sequence in play was: knock it down, and
+       then right-clicking it does nothing at all. No menu, no order, no attack. It reads as
+       an invulnerable animal, and it was really a branch guarded against itself. */
+    const foe = corpseFirst ? null : chars.find(c => c.state!=='dead' && c.faction!=='player' && visAt(c.x,c.y)===2 && dist(c.x,c.y,wx,wy) < 0.9 &&
       (e.ctrlKey || c.faction==='bandit' || c.faction==='wild' || c.faction==='slaver' ||
        hostile(movers[0], c) || c.neutral));
     if(foe){
@@ -19933,10 +20088,11 @@ cv.addEventListener('mousedown', e => {
         return;
       }
       if(foe.state === 'down'){
+        /* an animal on the ground is game, not a prisoner, and the words matter that much */
         showCtxMenu(e.clientX, e.clientY, [
-          {label:'EXECUTE', fn:()=>{ const m = movers[0]; clearOrders(m); m.execTarget = foe; }},
-          {label:'SEIZE', fn:()=>{ const m = movers[0]; clearOrders(m); m.seizeTarget = foe; }},
-          {label:'LEAVE THEM', fn:()=>{}}]);
+          {label: foe.beast ? 'FINISH IT' : 'EXECUTE', fn:()=>{ const m = movers[0]; clearOrders(m); m.execTarget = foe; }},
+          {label: foe.beast ? 'TAKE IT ALIVE' : 'SEIZE', fn:()=>{ const m = movers[0]; clearOrders(m); m.seizeTarget = foe; }},
+          {label: foe.beast ? 'LEAVE IT' : 'LEAVE THEM', fn:()=>{}}]);
         return;
       }
       /* `orderTarget` is the standing intent behind the click. `target` is who they are
@@ -20877,6 +21033,9 @@ function snapshot(){
       dread: t.dread||0, dreadWoke: !!t.dreadWoke, shown: {...(t.shown||{})}, witnessCd: t.witnessCd||0,
       bounty: t.bounty||0, wanted: !!t.wanted,   /* what they still want you for */
       compactWilling: !!t.compactWilling,
+      /* the ground a bought chart opened rides home inside `explored`, which stores vis>0 —
+         this only remembers that the town has no second copy to sell you */
+      mapSold: !!t.mapSold,
       /* the post. Jobs are plain data by construction — no object references — so the board
          and the contracts both survive a save without any reviving. */
       board: t.board ? {day: t.board.day, jobs: t.board.jobs.map(j => ({...j}))} : null,
@@ -21179,6 +21338,7 @@ function restore(d){
        Restoring them separately gives you a board whose "COLLECT" button pays out against a
        job the world is no longer watching — the two lists must alias, exactly as they do in
        a running game. */
+    t.mapSold = !!ts.mapSold;
     t.board = ts.board ? {day: ts.board.day, jobs: ts.board.jobs.map(j => ({...j}))} : null;
     t.feastCd = ts.feastCd || 0; t.rebelDay = ts.rebelDay || 0; t.promise = ts.promise ? {...ts.promise} : null;
     t.project = ts.project ? {...ts.project} : null; t.projectsDone = {...(ts.projectsDone||{})}; t.lastTribute = ts.lastTribute || 0;
@@ -21583,8 +21743,8 @@ const ORIGINS = {
      the thirty percent already paid out of him — and the next rung costs him the art that
      makes him himself. He does not need to find power. He needs to decide what to spend. */
   saga: {label:'Saga Wordsworth', named:true, fixes:'He is a Hollow and a duster — the only start in the game that is. RACE and GIFT above do not apply to him.',
-    blurb:'A Hollow, and not an accident: the Scholars grew godkillers in the redoubts and he is one that walked out. Already awakened, high combat, a natural of the dust art. He is looking for Mother, who is a Great One, and who is still where the golden age left her.',
-    intro:'You wake in somebody else\'s body, on a floor of a redoubt where the people who made you are nine generations dead. The rider in you is awake and it has been awake a long time. It knows what it was cut from, and it knows she is still alive.'},
+    blurb:'A Hollow, and not an accident: the Scholars grew godkillers in the redoubts and he is one that walked out. Already awakened, high combat, a natural of the dust art, and Czarina at his shoulder — the other one who walked out. He is looking for Mother, who is a Great One, and who is still where the golden age left her.',
+    intro:'You wake in somebody else\'s body, on a floor of a redoubt where the people who made you are nine generations dead. The rider in you is awake and it has been awake a long time. It knows what it was cut from, and it knows she is still alive. Czarina was already standing at the door when you got there.'},
   soldier: {label:'Old Soldier',
     blurb:'Forty years of wars nobody won. One of you, hard as nails, with less road ahead than behind.',
     intro:'You wake alone, old bones aching: 300 gold, good plate, and habits that die harder than you will.'},
@@ -21748,12 +21908,40 @@ function applyCreation(race, gift, origin, sub){
        The dust gift carries att.dust 2 on its own (every gift starts adept in its own
        branch) and dust is the only branch he can ever master, because mastery is reserved
        for the born specialty and dust is what he is made of. */
-    me = mk(p, {atk:24, def:21, tough:17, ath:11, medic:2, magic:26, gift:'dust', race:'hollow',
-                hollowTier:1, weapon:'w_kat', armor:'a_pla', blades:34, armr:26,
+    me = mk(p, {atk:26, def:23, tough:18, ath:11, medic:2, magic:26, gift:'dust', race:'hollow',
+                hollowTier:1, weapon:'w_kat', armor:'a_pla', blades:37, armr:28,
                 labor:1, crafting:1, farming:0});
     me.name = 'Saga Wordsworth';
     me.face = 'saga';           /* messy blonde, amber and lit, and the sunflower */
     me.conviction = 'scholar';
+    /* ---------- THE OTHER ONE THEY MADE ----------
+       Reported from play: he starts "obviously stronger than a basic starter, but not really
+       worth it for the disadvantages of not taking another path." The disadvantages are real
+       and they are the point — no medic, no craft, no labour, a ceiling of 125 and everything
+       eldritch hitting 35% harder — but they were being paid for with a single body, and one
+       body is a run that ends the first time that body goes down. Lyonart has seven. Saga had
+       himself.
+       So there are two of them, and Czarina is the answer to the specific failure: she is the
+       second chance to still be standing. Built the other way round from him — his numbers are
+       a weapon's, hers are a bodyguard's, more def and tough than attack — and she carries the
+       living hands he does not have, because a Hollow cannot be talked to by a town any more
+       than the dead can, and somebody has to be able to bandage. No gift: dust is his, and
+       giving her one would make her a second protagonist instead of the person beside him. */
+    {
+      const q = findOpenNear(p.x + 1, p.y + 1, 4);
+      const cz = makeChar('Czarina', 'player', q.x, q.y,
+        {atk:22, def:25, tough:21, ath:10, medic:9, magic:6, race:'hollow', sex:'f',
+         hollowTier:1, weapon:'w_rkat', armor:'a_pla', blades:31, armr:30, martial:14,
+         labor:3, crafting:3, farming:0});
+      cz.face = 'czarina';
+      cz.conviction = 'loyal';
+      cz.regard = 40;             /* they came off the same table; that counts for something */
+      cz.shortTag = 'CZ';
+      cz.job = 'guard';
+      cz.guardTarget = me;
+      cz.attendant = true;
+      chars.push(cz);
+    }
     /* what a weapon owns: the kit it was issued, and four cells off a redoubt shelf that he
        has nothing to fire — worth 220 apiece to anybody who does */
     cats = 90; stash.bandage = 2; stash.aether_cell = 4;

@@ -50,6 +50,41 @@ const KEY = process.argv[3] || 'lyonart';
       R.cats = cats;
       const him = me;
       R.he = him && him.name === 'Saga Wordsworth' ? him.name : 'THE GODKILLER IS MISSING';
+      /* ---------- HE DOES NOT START ALONE ----------
+         Reported from play: the start reads "obviously stronger than a basic starter, but not
+         really worth it for the disadvantages of not taking another path." The disadvantages
+         are deliberate; paying for them with a single body was not. One body is a run that
+         ends the first time it goes down, and Lyonart's start has seven.
+         Everything asserted about Czarina here is a thing that would silently stop being true
+         and leave the origin still booting: she can be alive but not standing next to him, or
+         standing next to him with no medicine, or a Hollow who cannot do the one thing Hollows
+         are here to make up for. */
+      {
+        const cz = chars.find(c => c.name === 'Czarina');
+        R.czarina = cz ? 'Czarina walked out with him' : '!! CZARINA IS NOT THERE';
+        if (cz) {
+          R.czLiving = (!cz.undead && cz.state === 'ok') ? 'living, and on her feet' : '!! CZARINA IS NOT A LIVING BODY';
+          R.czHollow = cz.race === 'hollow' ? 'a Hollow, like him' : `!! CZARINA IS A ${String(cz.race).toUpperCase()}`;
+          R.czFights = (cz.stats.atk >= 18 && cz.stats.def >= 20 && cz.stats.blades >= 25)
+            ? `skilled in combat — atk ${cz.stats.atk}, def ${cz.stats.def}, blades ${Math.round(cz.stats.blades)}`
+            : `!! CZARINA CANNOT FIGHT (atk ${cz.stats.atk}, def ${cz.stats.def})`;
+          /* she is the hands he does not have: a Hollow with no medic is two of the same
+             problem rather than a squad */
+          R.czTends = cz.stats.medic >= 8 ? `and she can bandage (medic ${cz.stats.medic})`
+            : `!! NOBODY IN THIS START CAN BANDAGE (${cz.stats.medic})`;
+          R.czGuards = (cz.job === 'guard' && cz.guardTarget === him)
+            ? 'set to stand between him and whatever comes' : '!! CZARINA IS NOT GUARDING HIM';
+          R.czStands = !isBlocked(cz.x, cz.y, cz.floor || 0) && dist(cz.x, cz.y, him.x, him.y) < 6
+            ? 'and she starts beside him, on open ground'
+            : `!! CZARINA STARTS ${isBlocked(cz.x, cz.y, cz.floor || 0) ? 'INSIDE GEOMETRY' : Math.round(dist(cz.x, cz.y, him.x, him.y)) + ' TILES AWAY'}`;
+          /* a face nobody wrote is a hash-rolled stranger wearing her name */
+          R.czLooks = (cz.face === 'czarina' && FACES.czarina && FACES.czarina.hair)
+            ? 'dark-haired, and lit behind the eyes like him' : '!! CZARINA HAS NO FACE OF HER OWN';
+        }
+        R.twoOfThem = mine.filter(c => !c.undead && c.state !== 'dead').length >= 2
+          ? 'two living bodies, so one of them going down is not the end of the run'
+          : '!! THE GODKILLER STILL STARTS ALONE';
+      }
       /* he is a Hollow whatever the picker said — the race is not a choice on this one */
       R.race = him && him.race === 'hollow' ? 'hollow (overrode the picker)' : 'NOT A HOLLOW';
       /* already one rung up: the thirty percent is spent, the ceiling is raised, and the
