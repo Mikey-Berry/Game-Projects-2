@@ -22,7 +22,7 @@ const OUT = process.argv[2] || path.join(__dirname, 'faces.png');
     executablePath: process.env.DUSTWARD_CHROME || undefined,
     args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--disable-gpu-sandbox', '--no-sandbox'],
   });
-  const p = await b.newPage({ viewport: { width: 1180, height: 460 }, deviceScaleFactor: 2 });
+  const p = await b.newPage({ viewport: { width: 1500, height: 470 }, deviceScaleFactor: 2 });
   const errs = [];
   p.on('pageerror', e => errs.push(e.message.slice(0, 200)));
   await p.goto('file://' + gamePath(process.argv[3]), { waitUntil: 'load' });
@@ -65,20 +65,21 @@ const OUT = process.argv[2] || path.join(__dirname, 'faces.png');
     const rows = [
       { face: 'lyonart', name: "Lyonart d'Alagadda", weapon: 'w_kat', armor: 'a_lea', race: 'human' },
       { face: 'saga', name: 'Saga Wordsworth', weapon: 'w_kat', armor: 'a_pla', race: 'hollow' },
+      { face: 'ilsabet', name: "Ilsabet d'Alagadda", weapon: 'w_kat', armor: 'a_lea', race: 'human', sex: 'f' },
     ];
     rows.forEach((r, i) => {
       for (const back of [0, 1]) {
         /* one row, all four at the same depth, so none of them is judged from further away */
-        const c = makeChar(r.name, 'player', spot.x + (i * 2 + back - 1.5) * 1.35, spot.y,
+        const c = makeChar(r.name, 'player', spot.x + (i * 2 + back - 2.5) * 1.35, spot.y,
           { atk: 14, def: 12, tough: 12, ath: 6, weapon: r.weapon, armor: r.armor, race: r.race });
-        c.face = r.face; c.sex = 'm'; c.dir = 0;
+        c.face = r.face; c.sex = r.sex || 'm'; c.dir = 0;
         if (r.face === 'saga') c.hollowTier = 1;
         chars.push(c); built.push(c.id);
       }
     });
     window.__ids = built;
     camX = camSX = spot.x; camY = camSY = spot.y;
-    camDist = camDistTarget = 5.0; camPitch = camPitchT = 0.02;
+    camDist = camDistTarget = 8.6; camPitch = camPitchT = 0.05;
     camYaw = camYawT = 0.0; camFollow = false; selected = [];
     return { at: spot, n: built.length };
   });
