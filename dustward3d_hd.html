@@ -144,7 +144,13 @@ body.touch #log{left:0 !important; right:0 !important; bottom:auto !important; t
 body.touch #minimap{width:104px !important; height:104px !important}
 body.touch #squadbar{max-width:100vw; overflow-x:auto; flex-wrap:nowrap}
 body.touch #topbar{flex-wrap:wrap; gap:4px}
-body.touch #modal{padding:10px}
+/* THE MODAL IS 560px WIDE and a phone is 393. It has been overflowing off both edges on
+   every touch device since the day the mobile pass landed — every shop, every recruit list,
+   every quest board — and nothing caught it because the sheets got the attention and the
+   modal is a desktop panel that happens to also open on a phone. `min()` keeps the desktop
+   width exactly as it was and clamps it to the viewport below that. */
+body.touch #modal{padding:10px; width:min(560px, calc(100vw - 16px)); max-height:82vh}
+body.touch.modal-up #touchbar, body.touch.modal-up #squadbar{display:none !important}
 body.touch #modalbody button{width:100%; text-align:left}
 /* ONE SHEET AT A TIME. Stacking them the way the desktop does left a forty-pixel strip of map
    between the stash and the character sheet — technically laid out, unplayable. ☰ cycles
@@ -181,7 +187,7 @@ body.touch.sheet-map #minimap{
    permanent view — everything else goes behind the gear, where it costs one tap and no
    pixels. `[B]`-style key hints are meaningless without a keyboard, so they are trimmed. */
 body.touch #btn-build, body.touch #btn-all, body.touch #btn-chron,
-body.touch #btn-save, body.touch #btn-load, body.touch #btn-options,
+body.touch #btn-save, body.touch #btn-load, body.touch #btn-move, body.touch #btn-options,
 body.touch #btn-help{display:none !important}
 body.touch #topbar{gap:3px; padding:3px 4px; align-items:center}
 body.touch #topbar .chip{font-size:11px; padding:2px 6px}
@@ -292,7 +298,14 @@ body.touch #hint{display:none}
   <button id="btn-chron" data-tip="chron">CHRONICLES [L]</button>
   <button id="btn-save" data-tip="save">SAVE</button>
   <button id="btn-load">LOAD</button>
-  <input type="file" id="loadfile" accept=".json,.gz,application/json,application/gzip" style="display:none">
+  <button id="btn-move" data-tip="move">MOVE</button>
+  <!-- NO `accept` FILTER. It read `.json,.gz,application/json,application/gzip`, which is
+       correct and which iOS Files and several Android pickers use to grey the save out
+       entirely: a `.json.gz` handed over by Drive or Mail often arrives with no MIME type at
+       all, or with `application/octet-stream`, and then the one file you came for is the one
+       file you cannot tap. The loader identifies a save by its gzip magic number rather than
+       its name, so it was never relying on this to tell it what it had. -->
+  <input type="file" id="loadfile" style="display:none">
   <button id="btn-options">OPTIONS</button>
   <button id="btn-help">?</button>
 </div>
@@ -18131,7 +18144,8 @@ const TIPS = {
   chron:'<b>CHRONICLES [L]</b>Everything you have been told, and everything you have seen — including news of the wider world and who carried it to you.',
   build:'<b>BUILD [B]</b>Place structures. Blueprints need materials hauled to them before anyone can raise them.',
   squad:'<b>SQUAD [S]</b>Select everyone you have. Shift+1-5 stores a group, 1-5 recalls it.',
-  save: '<b>SAVE</b>Writes to browser storage and downloads a file. The world autosaves once a day.',
+  save: '<b>SAVE</b>Writes to browser storage and downloads a file. The world autosaves once a day.<i>Browser storage never leaves this device. The file is the copy that travels.</i>',
+  move: '<b>MOVE</b>Carry this world to another device. There is no server behind this game, so a save crosses by hand — as a code you paste, or as a file.<i>Copy the code on the desktop, paste it into a note or an email to yourself, and paste it back on the phone.</i>',
   stance:'<b>STANCE</b>How this one picks fights on their own: melee closes, ranged holds off, medic hangs back and patches, tank draws blows, hold stands still.',
   job:  '<b>JOB</b>Standing work they return to when nobody is giving orders.',
 };
@@ -19706,6 +19720,7 @@ $('btn-help').onclick = () => {
     Places you've been stay on the map, dimmed — but who's there now, you can't know. The world keeps moving in the dark.<br>
     Prices differ by town; shift-click trades 10. Hire in bars. Gather, research, craft. JOB buttons keep idle units working.
     Saves: daily autosave + SAVE downloads a file.
+    The autosave is browser storage and stays on this device — use MOVE to carry a world to another one.
   </div>`;
 };
 function selectAll(){ selected = player().filter(c=>c.state==='ok'); refreshSquadBar(); refreshCharPanel(); }
@@ -20010,6 +20025,7 @@ function marqueeSet(on){
       {label: 'CHRONICLES', fn: hit('btn-chron')},
       {label: 'SAVE', fn: hit('btn-save')},
       {label: 'LOAD', fn: hit('btn-load')},
+      {label: 'MOVE TO ANOTHER DEVICE', fn: hit('btn-move')},
       {label: 'OPTIONS', fn: hit('btn-options')},
       {label: 'HELP', fn: hit('btn-help')},
       /* MAP has left the gear: it is a button now. Toggling `style.display` from in here
@@ -21704,6 +21720,140 @@ $('loadfile').addEventListener('change', e => {
   r.readAsArrayBuffer(f);                        /* bytes, not text: it may be gzip */
   e.target.value = '';
 });
+/* ============================================================ MOVING A WORLD
+   A save lives in two places and neither of them travels: `localStorage` is per-browser and
+   per-device, and the downloaded file is only as portable as your willingness to go looking
+   in a Downloads folder on a phone. There is no server behind this game and there is not
+   going to be one, so a world crosses between devices the way anything else does — by hand.
+   This makes the hand part short.
+
+   THE CODE IS THE SAVE. `packSaveText` already produces exactly what goes into browser
+   storage: `DWZ1:` and then base64 of the gzipped snapshot, about 74 KB for a grown world.
+   That is small enough to paste into a note, an email to yourself, or a message, and it needs
+   no new format, no second code path and no separate round-trip test — it is the same string
+   the game has been writing and reading since the day it was compressed.
+
+   Three ways out, because devices disagree about which one they will allow:
+     COPY   — the clipboard, which is the whole feature on a desktop. `file://` is a secure
+              context in Chromium so `navigator.clipboard` is there, but it is not everywhere,
+              hence the `execCommand` fallback underneath it.
+     SHARE  — `navigator.share` with a file, which on a phone is one tap to AirDrop, Drive,
+              Messages or anything else installed. Undefined on desktop Linux, so it is
+              feature-detected and simply absent when it is not real.
+     FILE   — what SAVE already did.
+   And one way in: paste, which accepts anything the trip may have done to the text. */
+function saveCodeClean(t){
+  /* Mail wraps lines, notes apps add spaces, and a code pasted out of a chat can arrive with
+     quotes around it. None of that is corruption and none of it should be treated as such —
+     base64 has no whitespace in it, so anything that is not base64 or the tag comes out. */
+  return String(t || '').trim().replace(/^["'`\s]+|["'`\s]+$/g, '').replace(/\s+/g, '');
+}
+async function openMoveDialog(){
+  openModal('MOVE THIS WORLD', 'A save does not follow you between devices on its own. Carry it across as a code, or as a file.');
+  const body = $('modalbody');
+  body.innerHTML = '';
+  const note = (t) => { const d = document.createElement('div');
+    d.style.cssText = 'color:var(--dust);line-height:1.5;margin:6px 0'; d.textContent = t; return d; };
+  const row = () => { const d = document.createElement('div');
+    d.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin:6px 0'; return d; };
+  const head = (t) => { const d = document.createElement('div');
+    d.style.cssText = 'color:#e8dcc4;font-weight:bold;margin:14px 0 2px'; d.textContent = t; return d; };
+
+  /* ---------- OUT ---------- */
+  body.appendChild(head('TAKE IT WITH YOU'));
+  body.appendChild(note(`Day ${day}. Packing…`));
+  const outBox = document.createElement('textarea');
+  outBox.readOnly = true;
+  outBox.style.cssText = 'width:100%;height:82px;background:#14110e;color:#8a8478;border:1px solid #3a342a;' +
+    'font-family:monospace;font-size:10px;padding:6px;resize:vertical;word-break:break-all';
+  outBox.value = 'packing…';
+  body.appendChild(outBox);
+  const outRow = row(); body.appendChild(outRow);
+
+  const mk = (label, fn) => { const b2 = document.createElement('button'); b2.textContent = label; b2.onclick = fn; outRow.appendChild(b2); return b2; };
+
+  let code = null, snapForFile = null;
+  {
+    const snap = snapshot();
+    snapForFile = snap;
+    code = await packSaveText(snap);
+    outBox.value = code;
+    body.replaceChild(note(`Day ${day} · ${Math.round(code.length / 1024)} KB of text. Paste it into a note, an email to yourself, or a message — then open this game on the other device and paste it back.`), body.children[1]);
+  }
+
+  const copyBtn = mk('COPY CODE', async () => {
+    let ok = false;
+    try { await navigator.clipboard.writeText(code); ok = true; } catch(e){}
+    if(!ok){
+      /* older browsers, and any context where the clipboard API is not handed out */
+      try { outBox.select(); outBox.setSelectionRange(0, code.length); ok = document.execCommand('copy'); } catch(e){}
+    }
+    copyBtn.textContent = ok ? 'COPIED' : 'SELECT IT AND COPY';
+    if(!ok){ outBox.focus(); outBox.select(); }
+    setTimeout(() => { copyBtn.textContent = 'COPY CODE'; }, 2200);
+  });
+
+  /* a phone can hand the file straight to another app; a desktop Linux browser cannot, and
+     saying so with a dead button is worse than not offering it */
+  let canShare = false;
+  try {
+    canShare = !!(navigator.canShare && navigator.share &&
+      navigator.canShare({ files: [new File(['x'], 'x.json.gz', { type: 'application/gzip' })] }));
+  } catch(e){ canShare = false; }
+  if(canShare) mk('SHARE FILE', async () => {
+    try {
+      const bytes = HAS_ZIP ? await gzipBytes(new TextEncoder().encode(JSON.stringify(snapForFile)))
+                            : new TextEncoder().encode(JSON.stringify(snapForFile));
+      const f = new File([bytes], `dustward-day${day}.json${HAS_ZIP ? '.gz' : ''}`,
+                         { type: HAS_ZIP ? 'application/gzip' : 'application/json' });
+      await navigator.share({ files: [f], title: `Dustward — day ${day}` });
+    } catch(e){ log('Sharing was cancelled or refused.', ''); }
+  });
+  mk('DOWNLOAD FILE', () => $('btn-save').click());
+
+  /* ---------- IN ---------- */
+  body.appendChild(head('BRING ONE IN'));
+  body.appendChild(note('Paste a code from your other device here. This replaces the world you are in now.'));
+  const inBox = document.createElement('textarea');
+  inBox.placeholder = 'DWZ1:…';
+  inBox.style.cssText = outBox.style.cssText.replace('height:82px', 'height:64px') + ';color:#e8dcc4';
+  inBox.readOnly = false;
+  body.appendChild(inBox);
+  const inRow = row(); body.appendChild(inRow);
+  const status = note('');
+  body.appendChild(status);
+
+  const takeIt = async (text) => {
+    const t = saveCodeClean(text);
+    if(!t){ status.textContent = 'Nothing pasted.'; return; }
+    let snap = null;
+    try { snap = await unpackSaveText(t); } catch(e){ snap = null; }
+    if(!snap || !snap.chars){ status.textContent = 'That is not a Dustward save. Copy the whole code, starting at DWZ1:'; return; }
+    $('modal').style.display = 'none'; modalOpen = false;
+    restore(snap);
+    started = true;
+    const so = $('startoverlay'); if(so) so.style.display = 'none';
+    paused = false; syncPauseBtn();
+    log(`World carried over — day ${Math.round(snap.day || 1)}.`, 'good');
+  };
+  const pasteBtn = document.createElement('button');
+  pasteBtn.textContent = 'PASTE AND LOAD';
+  pasteBtn.onclick = async () => {
+    let t = inBox.value;
+    /* if the box is empty, try the clipboard directly — on a phone that saves a long press */
+    if(!saveCodeClean(t)){
+      try { t = await navigator.clipboard.readText(); } catch(e){ t = ''; }
+    }
+    takeIt(t);
+  };
+  inRow.appendChild(pasteBtn);
+  const fileBtn = document.createElement('button');
+  fileBtn.textContent = 'OR OPEN A FILE';
+  fileBtn.onclick = () => $('btn-load').click();
+  inRow.appendChild(fileBtn);
+}
+$('btn-move').onclick = () => { openMoveDialog(); };
+
 (function offerContinue(){
   let data = null;
   try { data = localStorage.getItem('dustward_save'); } catch(e){}
@@ -22288,6 +22438,14 @@ let frameErrs = 0;
 function frame(now){
  try {
   let dt = Math.min(0.05, (now - last)/1000); last = now;
+  /* THE TOUCH CONTROLS GET OUT OF THE WAY OF A MODAL. The action column is z-index 40 and the
+     modal is 10, so on a phone every shop, recruit list and quest board has had ☰ ATK MAP SEL
+     sitting on top of its right-hand edge since the mobile pass landed — including, half
+     covered, the button that closes it. Driven off `modalOpen` here rather than toggled at
+     the eleven places that close a modal, because the twelfth would have been forgotten.
+     `classList.toggle` with an explicit force is a no-op when the token is already in the
+     desired state, so this costs nothing on the frames where nothing changed. */
+  document.body.classList.toggle('modal-up', !!modalOpen);
   const pan = (10 + camDist * 0.45) * dt;
   {
     const [rx, ry] = camRight(), [fx, fy] = camFwd();
