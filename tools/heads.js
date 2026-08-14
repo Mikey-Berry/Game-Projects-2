@@ -19,7 +19,7 @@ const OUT = path.resolve(process.argv[2] || path.join(__dirname, 'heads.png'));
 const WHO = [
   { face: 'lyonart', label: "Lyonart d'Alagadda", race: 'human', sex: 'm', armor: 'a_lea' },
   { face: 'saga', label: 'Saga Wordsworth', race: 'hollow', sex: 'm', armor: 'a_pla' },
-  { face: 'ilsabet', label: "Ilsabet d'Alagadda", race: 'human', sex: 'f', armor: 'a_lea' },
+  { face: 'lyre', label: "Lyre d'Alagadda", race: 'human', sex: 'f', armor: 'a_lea' },
   { face: 'czarina', label: 'Czarina', race: 'hollow', sex: 'f', armor: 'a_pla' },
 ];
 

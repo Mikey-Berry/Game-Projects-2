@@ -5,7 +5,7 @@
  * next to it — it has to become bytes inside it, the way `LICHP` already is: quantised
  * positions, colours and indices, base64'd, decoded once at load into a shared geometry.
  *
- *   node tools/bakehead.js lyonart=Lyonarthead.glb saga=... ilsabet=...
+ *   node tools/bakehead.js lyonart=Lyonarthead.glb saga=... lyre=...
  *
  * ---------- WHY THE FIRST VERSION MELTED THE FACES ----------
  * It simplified by VERTEX CLUSTERING: quantise every vertex to a grid, replace each cell

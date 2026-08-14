@@ -77,7 +77,18 @@ const GAME = 'file://' + gamePath(process.argv[2]);
     const btns=[...document.querySelectorAll('#modalbody button')];
     btns.find(x=>x.textContent.indexOf('PASTE')===0).click();
   });
-  await q.waitForTimeout(3000);
+  /* WAIT FOR THE OUTCOME, not for three seconds. Taking a code in is asynchronous — it
+     gunzips 56 KB and parses 1.7 MB of JSON — and under a full suite run, with several
+     browsers competing for one CPU and no GPU at all, that is sometimes slower than the sleep
+     this used to have. The failure looked exactly like a broken feature: the world had not
+     arrived, because it had not finished arriving. Poll for the modal closing, which is the
+     thing that means it worked, and give the refusal path a way to end the wait too. */
+  await q.waitForFunction(() => {
+    if (document.getElementById('modal').style.display === 'none') return true;
+    const d = [...document.querySelectorAll('#modalbody div')].map(x => x.textContent).join(' ');
+    return /not a Dustward save|Nothing pasted/i.test(d);
+  }, null, { timeout: 60000 }).catch(() => {});
+  await q.waitForTimeout(400);
   const after = await q.evaluate(()=>{
     const me = chars.find(c=>c.name==='Marker Of The Run');
     return { day, chars: chars.length, cats,

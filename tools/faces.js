@@ -65,7 +65,7 @@ const OUT = process.argv[2] || path.join(__dirname, 'faces.png');
     const rows = [
       { face: 'lyonart', name: "Lyonart d'Alagadda", weapon: 'w_kat', armor: 'a_lea', race: 'human' },
       { face: 'saga', name: 'Saga Wordsworth', weapon: 'w_kat', armor: 'a_pla', race: 'hollow' },
-      { face: 'ilsabet', name: "Ilsabet d'Alagadda", weapon: 'w_kat', armor: 'a_lea', race: 'human', sex: 'f' },
+      { face: 'lyre', name: "Lyre d'Alagadda", weapon: 'w_kat', armor: 'a_lea', race: 'human', sex: 'f' },
       { face: 'czarina', name: 'Czarina', weapon: 'w_rkat', armor: 'a_pla', race: 'hollow', sex: 'f' },
     ];
     rows.forEach((r, i) => {

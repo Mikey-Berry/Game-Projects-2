@@ -196,11 +196,11 @@ const KEY = process.argv[3] || 'lyonart';
     /* --- the search --- */
     R.searchOpen = search.on ? 'open' : 'NOT STARTED';
     const ts = towns.slice(0, 4);
-    for (const t of ts) askAfterIlsabet(t, t.leader);
+    for (const t of ts) askAfterLyre(t, t.leader);
     R.afterThree = search.found ? 'they placed her after ' + search.leads : 'NO LEAD AFTER ' + search.leads;
     /* asking the same hall twice must not count */
     const l0 = search.leads;
-    askAfterIlsabet(ts[0], ts[0].leader);
+    askAfterLyre(ts[0], ts[0].leader);
     R.noDoubleDipping = search.leads === l0 ? 'a hall tells you once' : 'ASKED TWICE FOR CREDIT';
 
     /* --- finding her --- */
@@ -208,9 +208,9 @@ const KEY = process.argv[3] || 'lyonart';
     R.siteChosen = site ? 'a corpse-field' : 'NO SITE';
     if (site && him) {
       him.x = site.x; him.y = site.y;
-      for (let i = 0; i < 40 && !search.met; i++) ilsabetTick(4);
+      for (let i = 0; i < 40 && !search.met; i++) lyreTick(4);
     }
-    const her = chars.find(c => c.bossKey === 'ilsabet');
+    const her = chars.find(c => c.bossKey === 'lyre');
     R.sheIsThere = her ? her.name + ', alive' : 'SHE NEVER APPEARED';
     /* Not `her.neutral` — that flag was set and she was still going to shoot. She is faction
        'exile', which carries Sister Ash's standing order to hunt any dead in sight, and he
