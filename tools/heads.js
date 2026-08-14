@@ -14,10 +14,13 @@ const path = require('path');
 const fs = require('fs');
 const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__dirname, a)) : path.join(__dirname, 'game.html'));
 const OUT = path.resolve(process.argv[2] || path.join(__dirname, 'heads.png'));
+/* Czarina joined these when her model arrived; the count is read off the list now
+   rather than written into the summary line, which said THREE for a while after it was four. */
 const WHO = [
   { face: 'lyonart', label: "Lyonart d'Alagadda", race: 'human', sex: 'm', armor: 'a_lea' },
   { face: 'saga', label: 'Saga Wordsworth', race: 'hollow', sex: 'm', armor: 'a_pla' },
   { face: 'ilsabet', label: "Ilsabet d'Alagadda", race: 'human', sex: 'f', armor: 'a_lea' },
+  { face: 'czarina', label: 'Czarina', race: 'hollow', sex: 'f', armor: 'a_pla' },
 ];
 
 (async () => {
@@ -54,6 +57,8 @@ const WHO = [
     return null;
   });
   if (!spot) { console.log('*** NO OPEN GROUND'); await b.close(); process.exitCode = 1; return; }
+  /* counted before a single portrait is staged, because staging one empties the world */
+  await p.evaluate(() => { window.__helmedAtBoot = chars.filter(c => helmOf(c)).length; });
 
   const rows = [];
   for (const w of WHO) {
@@ -65,7 +70,7 @@ const WHO = [
       const c = makeChar(w.label, 'player', spot.x, spot.y,
         { atk: 14, def: 12, tough: 12, ath: 6, weapon: 'w_kat', armor: w.armor, race: w.race });
       c.face = w.face; c.sex = w.sex; c.dir = 0;
-      if (w.face === 'saga') c.hollowTier = 1;
+      if (w.face === 'saga' || w.face === 'czarina') c.hollowTier = 1;
       chars.push(c); window.__id = c.id;
       /* THE EYE GOES ON THE HEAD, NOT THE FEET. The camera always looks at ground level plus
          0.8 (`focusY`), and a head sits at about 1.95 — so a close camera framed the belt
@@ -205,9 +210,77 @@ const WHO = [
   fs.writeFileSync(OUT, Buffer.from(sheet, 'base64'));
 
   for (const r of rows) console.log(`  ${String(r.w.face).padEnd(9)} ${r.state.sized}`);
+
+  /* ---------- AND THE HELMETS ----------
+     A helm goes on the same bone as an authored face and hides the same things, so it has the
+     same four ways to be wrong — and one more: it is chosen by WHO SOMEBODY IS rather than by
+     a field they carry, so the rule that picks it can quietly stop matching anybody and leave
+     a feature that renders perfectly for nobody. */
+  const helm = await p.evaluate(() => {
+    const R = {};
+    const at = player()[0];
+    const mk = (setup) => {
+      chars.length = 0;
+      charMeshes.forEach(e => { if (e.g && e.g.parent) e.g.parent.remove(e.g); });
+      charMeshes.clear();
+      const c = makeChar('H', 'player', window.__spot.x, window.__spot.y, { atk: 10, def: 10, tough: 10 });
+      setup(c); c.state = 'ok'; chars.push(c);
+      for (let i = 0; i < 40; i++) syncChars(0.05);
+      return { c, e: charMeshes.get(c.id) };
+    };
+    /* the rule itself, before any geometry */
+    R.whoWearsOne = (helmOf({ bossKey: 'sigil' }) === 'runic'
+                  && helmOf({ faction: 'redoubt', race: 'homunculus' }) === 'alch'
+                  && !helmOf({ faction: 'town' })
+                  && !helmOf({ faction: 'redoubt', race: 'homunculus', undead: true }))
+      ? 'the Sigil-Bound and the redoubt soldiers, and nobody else'
+      : '!! THE HELMET RULE PICKS THE WRONG PEOPLE';
+    /* AND THE RULE STILL MATCHES SOMEBODY THE WORLD SPAWNS, counted at boot and carried here
+       — the rows above empty `chars` for each portrait, so asking the live array at this point
+       is asking about a world this harness has already deleted. The first version of this
+       reported that nobody in the world wore a helmet, from a world containing nobody at all. */
+    R.someoneOutThere = window.__helmedAtBoot > 0
+      ? `${window.__helmedAtBoot} bodies in a fresh world are wearing one`
+      : '!! NOBODY IN A FRESH WORLD MATCHES THE HELMET RULE';
+    const bad = [];
+    for (const [lbl, setup] of [['runic', c => { c.bossKey = 'sigil'; c.big = 1.35; c.construct = true; }],
+                                ['alch',  c => { c.faction = 'redoubt'; c.race = 'homunculus'; }]]) {
+      const { c, e } = mk(setup);
+      if (!e || !e.helm) { bad.push(lbl + ' HAS NO HELMET MESH'); continue; }
+      const left = [...e.headG.children].filter(ch => ch.visible && ch !== e.helm).length;
+      if (left) bad.push(`${left} BOX HEAD PARTS SHOW THROUGH THE ${lbl.toUpperCase()} HELM`);
+      /* head-sized, measured against a box head on the same rig rather than against a number */
+      e.g.updateWorldMatrix(true, true);
+      const hb = new THREE.Box3().setFromObject(e.helm);
+      const bb = new THREE.Box3().setFromObject(e.g);
+      const ratio = (hb.max.y - hb.min.y) / (bb.max.y - bb.min.y);
+      if (!(ratio > 0.13 && ratio < 0.42)) bad.push(`${lbl} IS ${(ratio * 100).toFixed(0)}% OF THE BODY`);
+    }
+    R.helmetsFit = bad.length ? '!! ' + bad.join('; ') : 'both helms replace the whole box head and are head-sized';
+    /* ONE GEOMETRY FOR EVERY WEARER — a redoubt garrison is a dozen of them */
+    {
+      chars.length = 0;
+      charMeshes.forEach(e => { if (e.g && e.g.parent) e.g.parent.remove(e.g); });
+      charMeshes.clear();
+      const born = [];
+      for (let i = 0; i < 3; i++) {
+        const c = makeChar('S' + i, 'redoubt', window.__spot.x + i * 0.6, window.__spot.y, { atk: 10, def: 10, tough: 10 });
+        c.race = 'homunculus'; c.state = 'ok'; chars.push(c); born.push(c);
+      }
+      for (let i = 0; i < 40; i++) syncChars(0.05);
+      const geos = new Set();
+      for (const c of born) { const e = charMeshes.get(c.id); if (e && e.helm) geos.add(e.helm.geometry); }
+      R.oneHelmet = geos.size === 1 ? 'and a garrison of them shares one geometry'
+        : `!! ${geos.size} SEPARATE HELMET GEOMETRIES FOR ${born.length} SOLDIERS`;
+    }
+    return R;
+  }).catch(e => ({ helmBlock: '!! THREW: ' + String(e).slice(0, 140) }));
+  for (const [k, v] of Object.entries(helm)) console.log('  ' + k.padEnd(16) + v);
+  const helmBad = Object.values(helm).map(String).filter(v => v.startsWith('!!'));
   const bad = rows.filter(r => !r.state.ok || r.state.boxes || String(r.state.sized).startsWith('!!'));
+  if (helmBad.length) { console.log('\n*** ' + helmBad.join('\n*** ')); process.exitCode = 1; }
   console.log(`\n${path.basename(OUT)} — ` + (bad.length ? '*** ' + bad.map(r => r.w.face).join(', ') + ' WRONG'
-    : 'THREE HEADS, AND NOTHING LEFT OF THE BOXES'));
+    : WHO.length + ' SCULPTED HEADS AND TWO HELMS, AND NOTHING LEFT OF THE BOXES'));
   if (errs.length) { console.log('errs:', errs.length); errs.slice(0, 3).forEach(e => console.log('  ' + e)); }
   await b.close();
   if (bad.length) process.exitCode = 1;
