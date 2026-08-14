@@ -167,10 +167,12 @@ const WHO = [
         const theirs = ref.h / ref.body;
         const r = mine / theirs;
         /* Band, not a target: these are sculpted heads on a blocky rig and they will never
-           match to the centimetre. A box head carries a beard the sculpts do not, so the
-           honest range runs a little short of parity. The fit this was written against sits
-           at 0.76-0.84; the fit it was written to catch sat at 0.60. */
-        sized = r >= 0.70 && r <= 1.15
+           match to the centimetre. The band has been TIGHTENED once. It first ran 0.70-1.15,
+           written around a fit that deliberately sat short of parity — and it duly passed a
+           set of heads that were reported from play as undersized twice. The fit is parity
+           now and measures 0.95-1.04, so the floor comes up to where it can actually catch
+           the thing that kept being wrong. */
+        sized = r >= 0.88 && r <= 1.15
           ? `head is ${(mine * 100).toFixed(1)}% of body against a box head's ${(theirs * 100).toFixed(1)}%`
           : `!! THE HEAD IS THE WRONG SIZE — ${(mine * 100).toFixed(1)}% of body against a box head's ${(theirs * 100).toFixed(1)}% (${r.toFixed(2)}x)`;
       }

@@ -347,11 +347,36 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* PAUSE, or the control is measuring pedestrians. Townspeople keep walking between the
        two grabs, and a plaza full of them moving one pixel each was 78 pixels of difference
        with nothing drawn at all — noise the size of a small mark. */
-    hour = 11; debugSeeAll = true; paused = true; if(typeof syncPauseBtn === 'function') syncPauseBtn();
+    /* DEBUG VISION OFF. `visAt` returns 2 for everything while `debugSeeAll` is set, which is
+       the exact value the mark used to be gated on — so this probe was answering the question
+       with the answer switched on, and passed just as happily against the build where the
+       mark was invisible from anywhere but the plaza itself. The squad walks in and back out
+       below; that is what makes the ground known, and it has to be the only thing that does. */
+    /* NIGHT, and that is the whole point of the number. Sight is `17 + dayness*13` tiles, so
+       at noon a body at the gate sees 29 tiles and the plaza 17.7 away is lit — the old rule
+       worked, at midday, from the one spot this probe happened to stand. At dawn, at dusk,
+       after dark, or from anywhere off the town's centre line, the radius is 17 and the mark
+       simply was not there. Testing it at noon is testing the half of the day that worked. */
+    hour = 2; debugSeeAll = false; paused = true; if(typeof syncPauseBtn === 'function') syncPauseBtn();
     if (typeof fogPlane !== 'undefined') fogPlane.visible = false;
     const t = towns[0];
     refreshBoard(t, true);
     const bp = townBoardPos(t);
+    /* STAND WHERE A PLAYER STANDS. This put the squad and the camera ON the plaza, which
+       proved the mark renders and never once asked whether it could be FOUND — and the mark
+       was gated on live vision at the town centre, so for the whole life of that check it was
+       invisible from anywhere in the town except the two tiles it was nailed to. A second
+       note came back saying the board still could not be found in a city.
+       So: walk the squad in once, so the ground is known the way it would be in play, then
+       put them back at the town's south gate. 17.7 tiles, which is where you actually arrive. */
+    for(const c of player()){ c.x = bp.x; c.y = bp.y; }
+    computeVision();
+    let gy2 = t.y;
+    for(const bd of buildings) if(bd.town === t) gy2 = Math.max(gy2, bd.y + bd.h);
+    const gate = { x: t.x, y: gy2 + 2 };
+    for(const c of player()){ c.x = gate.x; c.y = gate.y; }
+    computeVision(); computeVision();
+    window.__gateDist = Math.hypot(bp.x - gate.x, bp.y - gate.y);
     camX = camSX = bp.x; camY = camSY = bp.y;
     camDist = camDistTarget = 13; camPitch = camPitchT = 0.62; camYaw = camYawT = 0.4;
     camFollow = false; selected = [];
@@ -379,7 +404,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     let diff = 0;
     for (let i = 3; i < withMark.length; i += 4) if (withMark[i] !== without[i]) diff++;
     for (let i = 0; i < withMark.length; i += 4) if (Math.abs(withMark[i] - without[i]) > 24) diff++;
-    return { diff, px: Math.round(20 * dpr * 24 * dpr) };
+    return { diff, px: Math.round(20 * dpr * 24 * dpr), gate: window.__gateDist,
+             dbg: debugSeeAll, rawCentre: vis[Math.floor(t.y)*W+Math.floor(t.x)],
+             visCentre: visAt(t.x, t.y), visBoard: visAt(bp.x, bp.y),
+             whoIsNear: chars.filter(c => c.faction === 'player' && c.state !== 'dead'
+                          && Math.hypot(c.x - bp.x, c.y - bp.y) < 12).map(c => c.name).slice(0, 6) };
   });
   /* 250 out of a 480-pixel box, and both ends of that are measured. Frame-to-frame noise with
      the sim paused is exactly 0, so the floor is not jitter — it is that a MISSING GLYPH IS
@@ -387,6 +416,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
      to a player at any honest zoom, and enough to satisfy any threshold set just above zero.
      The drawn mark is 476. The bar goes between them, nearer the top, because the property is
      "a player can see it" and not "some ink reached the canvas". */
+  /* and the number that says it was a fair test */
+  out.visionState = `debugSeeAll=${seen.dbg}, raw ${seen.rawCentre}, centre ${seen.visCentre}, board ${seen.visBoard}` +
+    (seen.whoIsNear && seen.whoIsNear.length ? ` — still near the plaza: ${seen.whoIsNear.join(', ')}` : ' — nobody left near the plaza');
+  out.markFromTheGate = seen.gate
+    ? `read from the gate, ${seen.gate.toFixed(0)} tiles out, on ground the squad had walked`
+    : '!! COULD NOT WORK OUT WHERE THE GATE WAS';
   out.markIsOnScreen = seen.fail ? '!! ' + seen.fail
     : seen.diff >= 250 ? `the post wears a mark you can see — ${seen.diff} pixels of one`
     : `!! THE MARK ON THE POST IS NOT LEGIBLE (${seen.diff} pixels of ${seen.px} — a tofu box is 78)`;
