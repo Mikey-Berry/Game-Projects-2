@@ -128,6 +128,12 @@ the truth was 45%.
 - Worldgen is seeded from a constant, so repeat runs are identical. That proves determinism,
   not robustness — vary the seed to test that.
 - `camX`/`camY` are the look-at point, not the camera position.
+- **Assert against the code under test, not against something that resembles it.** The skeleton
+  mage could not be given a stance because the panel's stance row asked `c.undead && !c.lich`
+  while every other row beside it asked `mindedDead`. The first check written for that asserted
+  `mindedDead(mage)` — which was true the whole time, on the broken build as well — and passed.
+  The only version that catches it opens the panel on a real mage and counts the buttons in the
+  DOM. A proxy for the expression you are fixing is how the bug got there.
 - **A signature that mixes shape and colour will pass on the same body in four tints.** The
   first uniqueness check in `races.js` stamped each line as triangles + bounding box + a hash
   of its vertex colours, and reported all four golems distinct while they were provably the

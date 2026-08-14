@@ -65,7 +65,8 @@ const OUT = process.argv[2] || path.join(__dirname, 'faces.png');
     const rows = [
       { face: 'lyonart', name: "Lyonart d'Alagadda", weapon: 'w_kat', armor: 'a_lea', race: 'human' },
       { face: 'saga', name: 'Saga Wordsworth', weapon: 'w_kat', armor: 'a_pla', race: 'hollow' },
-      { face: 'ilsabet', name: "Ilsabet d'Alagadda", weapon: 'w_kat', armor: 'a_lea', race: 'human', sex: 'f' },
+      { face: 'lyre', name: "Lyre d'Alagadda", weapon: 'w_kat', armor: 'a_lea', race: 'human', sex: 'f' },
+      { face: 'czarina', name: 'Czarina', weapon: 'w_rkat', armor: 'a_pla', race: 'hollow', sex: 'f' },
     ];
     rows.forEach((r, i) => {
       for (const back of [0, 1]) {
@@ -73,7 +74,7 @@ const OUT = process.argv[2] || path.join(__dirname, 'faces.png');
         const c = makeChar(r.name, 'player', spot.x + (i * 2 + back - 2.5) * 1.35, spot.y,
           { atk: 14, def: 12, tough: 12, ath: 6, weapon: r.weapon, armor: r.armor, race: r.race });
         c.face = r.face; c.sex = r.sex || 'm'; c.dir = 0;
-        if (r.face === 'saga') c.hollowTier = 1;
+        if (r.face === 'saga' || r.face === 'czarina') c.hollowTier = 1;
         chars.push(c); built.push(c.id);
       }
     });

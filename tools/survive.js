@@ -190,6 +190,57 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     R.stillDangerous = (fell >= sk.total * 0.25 && ratio > 0.6 && ratio < 1.7)
       ? 'an even fight is still an even fight'
       : `!! THE FIGHT IS NO LONGER EVEN — ${fell} against ${sk.theirFallen}`;
+
+    /* ---------- 5. AND A HUNT ENDS WITH A DEAD ANIMAL ----------
+       Everything above measures what happens to a body AFTER it goes down, which was the
+       whole point of the clotting change — and every one of those numbers stayed healthy
+       while the game shipped an animal that could not be killed at all. Two things had to be
+       true at once for that, and neither was visible from here:
+
+       The clotting change made a downed body mend instead of bleed out, so letting go of one
+       stopped being the same as killing it. And the right-click handler searched for a foe
+       with `state === 'ok'` before asking, twelve lines later, whether that foe was DOWN —
+       a branch guarded against itself, so the EXECUTE menu could never open. Knock a silt
+       strider over and there was no order in the game that would finish it.
+
+       So this drives the real loop, with the clock running, and requires the animal to end
+       up dead. `ttk.js` cannot see any of this: it forces `atkCd` to zero and swings in a
+       tight loop, so no game time passes and `bodyTick` — the function the whole change is
+       in — never runs once. */
+    {
+      const at = { x: player()[0].x + 14, y: player()[0].y + 14 };
+      const secs = [];
+      for (let t = 0; t < 6; t++) {
+        clean();
+        const keep = chars.slice();
+        chars.length = 0;
+        const beast = mk('fauna', { atk: 12, def: 8, tough: 34, ath: 9 }, at.x, at.y);
+        beast.beast = true;
+        const pack = [];
+        for (let i = 0; i < 3; i++) {
+          const h = mk('player', { atk: 14, def: 12, tough: 12, ath: 7, blades: 12 }, at.x + 1.2 + i * 0.4, at.y);
+          h.weapon = 'w_kat'; h.armor = 'a_lea';
+          pack.push(h);
+        }
+        let s = 0;
+        while (beast.state !== 'dead' && s < 4800) {
+          for (const h of pack)
+            if (h.state === 'ok' && !h.target && !h.execTarget && beast.state === 'ok') { h.target = beast; h.targetManual = true; }
+          update(0.05); s++;
+        }
+        secs.push(beast.state === 'dead' ? +(s * 0.05).toFixed(1) : null);
+        chars.length = 0; for (const k of keep) chars.push(k);
+        clean();
+      }
+      const killed = secs.filter(x => x !== null);
+      const med = killed.length ? killed.slice().sort((a, b) => a - b)[Math.floor(killed.length / 2)] : null;
+      R.theHuntEnds = killed.length === secs.length
+        ? `an ordered pack finishes a silt strider every time, median ${med}s`
+        : `!! THE ANIMAL SURVIVED ${secs.length - killed.length}/${secs.length} HUNTS — a downed beast cannot be finished`;
+      R.huntIsWork = (med !== null && med >= 5 && med <= 90)
+        ? 'and it is a fight, not a formality'
+        : `!! A HUNT TAKES ${med === null ? 'forever' : med + 's'}`;
+    }
     return R;
   });
 

@@ -209,13 +209,24 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const e = charMeshes.get(c.id);
         if (!e) return null;
         e.g.updateWorldMatrix(true, true);
-        let tris = 0, lo = 1e9, hi = -1e9, wide = 0, col = 0;
+        let tris = 0, lo = 1e9, hi = -1e9, wide = 0, col = 0, shape = 0;
         e.g.traverse(m => {
           if (!m.isMesh) return;
           let v = m.visible, q = m.parent; while (q && v) { v = q.visible; q = q.parent; }
           if (!v) return;
           const g2 = m.geometry;
           tris += g2.index ? g2.index.count / 3 : g2.attributes.position.count / 3;
+          /* A HASH OF WHERE THE GEOMETRY ACTUALLY IS. The first version of this rule compared
+             TRIANGLE COUNTS, which worked by luck on golems and chimeras and is not the
+             property being tested: an apron, a set of crossed webbing and a shoulder satchel
+             are three obviously different bodies made of the same number of boxes, and the
+             rule would have called them identical. Positions in the body's own space, rounded
+             to a centimetre so floating-point noise does not make everything unique. */
+          const pa = g2.attributes.position;
+          for (let i = 0; i < pa.count; i += 3)
+            shape = (shape * 31 + Math.round(pa.getX(i) * 100) * 7
+                                + Math.round(pa.getY(i) * 100) * 13
+                                + Math.round(pa.getZ(i) * 100) * 17) % 1000000007;
           const bb = new THREE.Box3().setFromObject(m);
           lo = Math.min(lo, bb.min.y); hi = Math.max(hi, bb.max.y);
           wide = Math.max(wide, bb.max.x - bb.min.x);
@@ -223,11 +234,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           const ca = g2.attributes.color;
           if (ca) for (let i = 0; i < ca.count; i += 7) col += ca.getX(i) * 3 + ca.getY(i) * 5 + ca.getZ(i) * 11;
         });
-        return { tris: Math.round(tris), h: +(hi - lo).toFixed(2), w: +wide.toFixed(2), col: Math.round(col) };
+        return { tris: Math.round(tris), h: +(hi - lo).toFixed(2), w: +wide.toFixed(2),
+                 col: Math.round(col), shape };
       };
       const clash = [], sameShape = [];
       const shapes = {};
-      for (const race of ['golem', 'chimera']) {
+      /* HUMANS ARE EXEMT ON PURPOSE. A pitborn and an orchard-bred are the same animal and
+         differ by weathering; giving them silhouettes would say otherwise. The made races are
+         the ones whose lines were built to a purpose, and a purpose shows. */
+      for (const race of ['golem', 'chimera', 'homunculus']) {
         const seen = {}, byTris = {};
         for (const key of Object.keys(SUBRACES[race])) {
           const s = sig({ race, sub: key });
@@ -240,13 +255,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
              four golems built from one identical rig — their per-line SKIN differed, so the
              stamps differed, while the silhouettes were the same man four times. At the
              distance the camera sits at, a tint is not a character. */
-          if (byTris[s.tris]) sameShape.push(`${race}: ${byTris[s.tris]} and ${key}`);
-          byTris[s.tris] = key;
+          if (byTris[s.shape]) sameShape.push(`${race}: ${byTris[s.shape]} and ${key}`);
+          byTris[s.shape] = key;
           shapes[race + '/' + key] = s;
         }
       }
       R.everyLineDiffers = clash.length ? '!! ' + clash.join('; ')
-        : 'each line of golem and chimera builds a body of its own';
+        : 'each line of the made races builds a body of its own';
       R.everyLineHasAShape = sameShape.length
         ? '!! THESE LINES ARE THE SAME SILHOUETTE IN DIFFERENT PAINT: ' + sameShape.join('; ')
         : 'and its own silhouette, not the same rig in a different colour';
@@ -270,6 +285,43 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         R.golemWearsItsOwn = (a && Math.abs(col2 - a.col) < Math.max(6, Math.abs(a.col) * 0.02))
           ? 'a golem is the colour of what it is made of, not of whoever it marches for'
           : `!! A GOLEM IS STILL WEARING ITS FACTION'S COLOUR (${a && a.col} against ${Math.round(col2)})`;
+      }
+      /* ---------- WHAT THE VAT LINES WERE ADDED FOR ----------
+         Both of these are the reason the homunculus lines exist at all, and both are the kind
+         of thing that can be written in a table and never reach the sim. */
+      {
+        /* `def` was the ONE skill of seventeen that no line in the game was built around.
+           Driven through the real `xpGain` rather than read off the table. */
+        /* FROM THE SAME PLACE ON THE CURVE. Skill growth has diminishing returns, and the
+           Wardline starts eight points of `def` up — so measuring raw gain compares a body
+           high on the curve against one low on it and reports 1.20x for a line whose learning
+           rate is 1.45. Level the starting stat by hand first; the rate is what is under test,
+           and the head start is asserted separately above. */
+        const runDef = (race, sub) => {
+          const c = mk({ race, sub, age: 25 });
+          /* AND SHORT OF THE CEILING. A homunculus caps at 75 — the lowest in the game — so
+             400 ticks of experience walked the Wardline into the roof and stopped it there,
+             and the measurement came back 1.20x for a rate of 1.45 because the last third of
+             it was thrown away. Start low, stop early, measure the slope and not the wall. */
+          c.stats.def = 5;
+          for (let i = 0; i < 120; i++) xpGain(c, 'def', 0.1);
+          return c.stats.def - 5;
+        };
+        const ward = runDef('homunculus', 'wardline'), plainH = runDef('homunculus', 'vatborn');
+        R.somebodyLearnsDef = ward > plainH * 1.25
+          ? `the Wardline learns to hold a line ${(ward / plainH).toFixed(2)}x what a plain vat-born does`
+          : `!! NOTHING IN THE GAME IS BUILT AROUND def (${ward.toFixed(1)} vs ${plainH.toFixed(1)})`;
+        /* and the Nullborn's deafness, which is a cost with one thing bought by it */
+        const nb = mk({ race: 'homunculus', sub: 'nullborn', gift: 'dark' });
+        const vb = mk({ race: 'homunculus', sub: 'vatborn', gift: 'dark' });
+        R.nullbornIsDeaf = (!nb.gift && attCap(nb, 'dark') === 0 && vb.gift === 'dark')
+          ? 'a Nullborn cannot hold an art, and its own line-mates still can'
+          : `!! THE DEAFNESS DID NOT TAKE (nullborn ${nb.gift}, vatborn ${vb.gift})`;
+        /* the lance is `nullOnly`; that deafness has to be what buys it */
+        R.nullbornTakesTheLance = (!nb.gift && ITEMS.w_lance && ITEMS.w_lance.nullOnly)
+          ? 'and the one thing a gifted hand can never pick up is open to it'
+          : '!! THE LANCE IS NOT GATED ON DEAFNESS ANY MORE';
+        clean();
       }
       /* the shapes, for the record — a regression here is easier to read than to re-derive */
       R.lineShapes = Object.entries(shapes)

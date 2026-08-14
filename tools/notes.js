@@ -173,6 +173,198 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         'a maw is still just a maw' : '!! A BEAST BECAME A LIEUTENANT';
     } catch (e) { R.riseBlock = '!! THREW: ' + e.message; }
 
+    /* ---------- WHAT IS UNDER THE MOUNTAIN STAYS UNDER THE MOUNTAIN ----------
+       The 2D overlay paints over the finished frame with no depth test, so every marker it
+       drew for a body in the caves — the name, the health bar, the intent line — hung in the
+       air above the rock, and the whole warren advertised its contents from the surface. The
+       minimap did the same thing, because a cave is stored at the coordinates of the hill on
+       top of it. The 3D pass had answered this question for walls all along: a storey is open
+       only while one of your own is standing on it. This checks the overlay agrees.
+
+       Asserted through the same expression the renderer uses rather than by counting pixels,
+       because what is being pinned is the RULE. A pixel test here would pass just as happily
+       on a camera that happened to be pointing the other way. */
+    {
+      const openFloors = () => {
+        const o = { 0: true };
+        for (const c of chars) if (c.faction === 'player' && c.state !== 'dead') o[c.floor || 0] = true;
+        return o;
+      };
+      const elsewhere = chars.filter(c => (c.floor || 0) !== 0 && c.state !== 'dead');
+      R.thereIsSomethingDownThere = elsewhere.length > 4
+        ? `${elsewhere.length} bodies are on a floor of their own`
+        : `!! NOTHING IS UNDERGROUND TO TEST WITH (${elsewhere.length})`;
+      const mine = player()[0];
+      const wasF = mine.floor;
+      mine.floor = 0;
+      const shownFromAbove = elsewhere.filter(c => openFloors()[c.floor || 0]).length;
+      R.nothingShowsThroughRock = shownFromAbove === 0
+        ? 'standing on the surface, not one of them is drawn'
+        : `!! ${shownFromAbove} MARKERS PAINT STRAIGHT THROUGH THE MOUNTAIN`;
+      /* and it is hiding, not deleting: go down and the floor you are on fills in */
+      const deep = elsewhere.slice().sort((a, b) => (a.floor || 0) - (b.floor || 0))[0];
+      if (deep) {
+        mine.floor = deep.floor;
+        const o = openFloors();
+        const shown = elsewhere.filter(c => o[c.floor || 0]).length;
+        const onThatFloor = elsewhere.filter(c => (c.floor || 0) === deep.floor).length;
+        R.goDownAndYouSeeIt = shown === onThatFloor && shown > 0
+          ? `put one of yours on floor ${deep.floor} and its ${shown} show, and nothing from the other floors`
+          : `!! WENT DOWN AND SAW ${shown} OF ${onThatFloor} ON THAT FLOOR`;
+      }
+      mine.floor = wasF;
+    }
+
+    /* ---------- A CROP IS NOT A COMPANION ----------
+       A cadaver grown in the Ossuary is made under the player's faction, because it is yours —
+       and every other test in the raise path read that as "this was somebody who stood with
+       you". So meat grown in a house came back as a LIEUTENANT: name kept, face kept,
+       conviction kept, and one of the two or three slots a necromancer ever gets. */
+    try {
+      const necro = player().find(c => c.gift === 'dark' && !c.undead && c.state === 'ok');
+      if (!necro) { R.grownCrop = '!! NO NECROMANCER TO TEST WITH'; }
+      else {
+        necro.stats.magic = 60; necro.mana = 999;
+        research.done.necromancy = true;
+        const q = findOpenNear(necro.x + 4, necro.y + 4, 6);
+        const crop = makeChar('Grown Cadaver', 'player', q.x, q.y, { atk: 12, def: 11, tough: 12 });
+        crop.state = 'dead'; crop.grown = true; crop.deadAt = day;
+        chars.push(crop); corpses.push(crop);
+        const before = chars.filter(o => o.lieutenant).length;
+        castRaise(necro, crop);
+        const after = chars.filter(o => o.lieutenant).length;
+        R.grownCrop = after === before
+          ? 'a grown cadaver rises as one of the risen, not a lieutenant'
+          : '!! MEAT GROWN IN A HOUSE CAME BACK AS A LIEUTENANT';
+        /* and the thing it must not break: somebody who actually lived beside you still does */
+        const q2 = findOpenNear(necro.x + 6, necro.y + 6, 6);
+        const friend = makeChar('Someone Who Stood With You', 'player', q2.x, q2.y, { atk: 12, def: 11, tough: 12 });
+        friend.state = 'dead'; friend.deadAt = day;
+        chars.push(friend); corpses.push(friend);
+        const b2 = chars.filter(o => o.lieutenant).length;
+        castRaise(necro, friend);
+        R.companionsStillRise = chars.filter(o => o.lieutenant).length > b2
+          ? 'and a companion still comes back as themselves'
+          : '!! THE FIX ATE THE LIEUTENANTS TOO';
+      }
+    } catch (e) { R.grownCrop = '!! THREW: ' + e.message; }
+
+    /* ---------- THE MAGE IS NOT MINDLESS ----------
+       It is issued in the RANGED stance, and the panel row that shows stances asked
+       `c.undead && !c.lich` — so it drew "☠ mindless — always aggressive" instead, for the
+       mage, the servitor and every lieutenant. The job row beside it had been asking
+       `mindedDead` all along, which is why STUDY worked and the stance did not. */
+    try {
+      for (const k of Object.keys(TECHS)) research.done[k] = true;
+      for (const k of ['remains', 'copper', 'fabric', 'hide', 'stone', 'wood', 'w_bow']) stash[k] = 999;
+      const nec = player().find(c => c.gift === 'dark' && !c.undead && c.state === 'ok');
+      const circ = { x: nec.x + 3, y: nec.y + 3 };
+      const born = (kind) => { const b0 = chars.slice(); nec.mana = 999; craftUndead(kind, nec, circ, null); return chars.find(c => !b0.includes(c)); };
+      const mage = born('mage'), brute = born('brute');
+      R.mageHasAMind = mage && mindedDead(mage) ? 'a skeleton mage counts as minded' : '!! THE MAGE IS STILL MINDLESS';
+      R.mageStance = mage && mage.stance === 'ranged' ? 'and it stands in the ranged band' : `!! THE MAGE IS IN ${mage && mage.stance}`;
+      /* THE PANEL ITSELF, NOT AN EXPRESSION THAT RESEMBLES IT. The first version of this
+         asserted `mindedDead(mage)` and passed on the broken build, because `mindedDead` was
+         never the thing that was wrong — the stance ROW asked its own question. Checking a
+         proxy for the code under test is how this bug survived in the first place. So: open
+         the panel on a real mage and count the buttons that are actually in the DOM. */
+      if(mage){
+        selected = [mage];
+        refreshCharPanel();
+        const row = document.getElementById('stancerow');
+        const btns = row ? row.querySelectorAll('button').length : 0;
+        const saysMindless = !!row && /mindless/i.test(row.textContent);
+        R.stanceRowOpens = (btns >= 3 && !saysMindless)
+          ? `the panel offers the mage ${btns} stances`
+          : `!! THE PANEL GIVES THE MAGE ${btns} STANCE BUTTONS${saysMindless ? ' AND CALLS IT MINDLESS' : ''}`;
+        /* and the brute must still be told it is mindless, or this went too far */
+        selected = [brute];
+        refreshCharPanel();
+        const row2 = document.getElementById('stancerow');
+        R.bruteRowClosed = row2 && /mindless/i.test(row2.textContent) && row2.querySelectorAll('button').length === 0
+          ? 'and still tells you a hollow brute has no mind'
+          : '!! THE PANEL NOW OFFERS STANCES TO A MINDLESS BRUTE';
+        selected = [];
+      }
+      /* the real predicate, not a proxy: `jobHasWork` is what decides whether a body with the
+         STUDY job actually has study to do, and it wants a bench in the world to say yes. */
+      {
+        pBuilds.push({ type: 'r_bench', x: nec.x, y: nec.y, w: 2, h: 2 });
+        const magePasses = jobHasWork(mage, 'research'), brutePasses = jobHasWork(brute, 'research');
+        pBuilds.pop();
+        R.mageCanStudy = (magePasses && !brutePasses)
+          ? 'and with a bench in the world it has study to do, where a brute does not'
+          : `!! STUDY GATE IS WRONG (mage ${magePasses}, brute ${brutePasses})`;
+      }
+      /* the brute must stay mindless, or this became "everything off the circle thinks" */
+      R.bruteStaysDumb = brute && !mindedDead(brute)
+        ? 'a hollow brute is still mindless' : '!! THE BRUTE STARTED THINKING';
+      /* and it has a body of its own rather than the generic risen rig */
+      R.mageLooksLikeOne = mage && mage.kin === 'mage' ? 'and a shape of its own off the circle'
+        : '!! THE MAGE WEARS THE PLAIN RISEN BODY';
+    } catch (e) { R.mageHasAMind = '!! THREW: ' + e.message; }
+
+    /* ---------- NOBODY CUTS UP THE DEAD FOR A LIVING AND KEEPS THE FAITH ----------
+       The devout lines are written as objections to exactly this — "you put a soul out of its
+       rest to carry a sack" — so a dark-gifted devout complained, in its own voice, about the
+       thing it does all day. */
+    {
+      const N = 4000;
+      let darkDevout = 0, plainDevout = 0;
+      const seen = {};
+      for (let i = 0; i < N; i++) {
+        if (rollConviction('dark') === 'devout') darkDevout++;
+        const k = rollConviction(null);
+        if (k === 'devout') plainDevout++;
+        seen[k] = 1;
+      }
+      R.noDevoutNecros = darkDevout === 0
+        ? `not one devout dark alchemist in ${N} rolls` : `!! ${darkDevout} DEVOUT NECROMANCERS IN ${N} ROLLS`;
+      R.devoutStillExists = plainDevout > N * 0.05
+        ? `and the devout are still ${(100 * plainDevout / N).toFixed(0)}% of everybody else`
+        : '!! THE FIX DELETED THE DEVOUT ENTIRELY';
+      R.convictionsIntact = Object.keys(seen).length >= 7
+        ? `${Object.keys(seen).length} convictions still roll` : `!! ONLY ${Object.keys(seen).length} CONVICTIONS ROLL`;
+      /* and a body actually built with the gift never carries it */
+      let bad = 0;
+      for (let i = 0; i < 600; i++) {
+        const c = makeChar('X', 'player', 600, 600, { gift: 'dark' });
+        if (c.conviction === 'devout') bad++;
+      }
+      R.builtNecrosAgree = bad === 0 ? 'and no body built dark-gifted comes out devout'
+        : `!! ${bad} OF 600 DARK-GIFTED BODIES CAME OUT DEVOUT`;
+    }
+
+    /* ---------- THE SKULL RIDES AT HEAD HEIGHT ----------
+       It hung at 1.15 in its OWN local space, and the whole rig is scaled by `c.big` — 0.55
+       for a servitor — so the skull actually floated with its centre 0.49 above the ground.
+       Knee height. It read as a skull rolling along the dirt. */
+    try {
+      const nec2 = player().find(c => c.gift === 'dark' && !c.undead && c.state === 'ok');
+      const b0 = chars.slice(); nec2.mana = 999;
+      craftUndead('servitor', nec2, { x: nec2.x + 3, y: nec2.y + 3 }, null);
+      const sv = chars.find(c => !b0.includes(c));
+      sv.state = 'ok';
+      for (let i = 0; i < 40; i++) syncChars(0.05);
+      const es = charMeshes.get(sv.id), me2 = player().find(c => !c.undead && c.state === 'ok');
+      const em = charMeshes.get(me2.id);
+      const spanOf = (root) => {
+        const bb = new THREE.Box3();
+        root.updateWorldMatrix(true, true);
+        root.traverse(o => { if (!o.isMesh) return; let v = o.visible, q = o.parent; while (q && v) { v = q.visible; q = q.parent; } if (v) bb.expandByObject(o); });
+        return bb;
+      };
+      if (!es || !es.float || !em) { R.skullRides = '!! COULD NOT BUILD BOTH BODIES'; }
+      else {
+        const sb = spanOf(es.float), hb = spanOf(em.headG);
+        const skullMid = (sb.min.y + sb.max.y) / 2 - groundY(sv.x, sv.y);
+        const headMid = (hb.min.y + hb.max.y) / 2 - groundY(me2.x, me2.y);
+        R.skullRides = Math.abs(skullMid - headMid) < 0.22
+          ? `the bound skull floats at ${skullMid.toFixed(2)} against a living head at ${headMid.toFixed(2)}`
+          : `!! THE SKULL FLOATS AT ${skullMid.toFixed(2)} AND A HEAD IS AT ${headMid.toFixed(2)}`;
+      }
+    } catch (e) { R.skullRides = '!! THREW: ' + e.message; }
+
     return R;
   });
 
