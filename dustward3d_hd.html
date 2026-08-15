@@ -7551,6 +7551,7 @@ function clearOrders(c){
   c.lootTarget = null; c.tradeTarget = null; c.bedTarget = null; c.pickupTarget = null; c.phylTarget = null; c.sealTarget = null; c.doorWork = false;
   c.gather = null; c.attackMove = null; c.healProg = 0; c.gatherT = 0;
   c.chestTarget = null; c.targetManual = false; c.orderTarget = null; c.fleeT = 0;
+  c.talkTarget = null;
   c.structTarget = null; c.repairTarget = null; c.stuckT = 0;
   c.carryTarget = null; c.rescueTarget = null; c.seizeTarget = null;
   c.guardTarget = null; c.haulTarget = null;
@@ -7945,6 +7946,19 @@ function physics(c, dt){
     if(t.opened){ c.chestTarget = null; }
     else if(travel(c, t.x, t.y, dt, 1.1)){ lootChest(t); c.chestTarget = null; }
     else return;
+  }
+  /* GOING OVER TO TALK. Same shape as the trade order below it, and for the same reason: the
+     walk has to remember what it was for. Without this a right-click on somebody across the
+     square walked you there and then did nothing, and you clicked again. */
+  if(c.talkTarget){
+    const o = c.talkTarget;
+    if(o.state !== 'ok' || o.faction === 'player'){ c.talkTarget = null; }
+    else {
+      c.talkGiveUp = (c.talkGiveUp || 30) - dt;
+      if(c.talkGiveUp <= 0){ c.talkTarget = null; log(`${c.name} cannot get to ${o.name}.`, ''); }
+      else if(travel(c, o.x, o.y, dt, TALK_REACH)){ openTalk(o, c); c.talkTarget = null; }
+      else return;
+    }
   }
   /* trade order (vendors stand still; caravaneers wander) */
   if(c.tradeTarget){
@@ -21878,13 +21892,37 @@ cv.addEventListener('mousedown', e => {
     const liveNear = chars.filter(c => c.state!=='dead' && dist(c.x,c.y,wx,wy) < 0.8)
       .sort((a,b) => dist(a.x,a.y,wx,wy) - dist(b.x,b.y,wx,wy))[0];
     const corpseFirst = corpseNear && (!liveNear || dist(corpseNear.x,corpseNear.y,wx,wy) < dist(liveNear.x,liveNear.y,wx,wy));
+    /* ---------- SOMEBODY WITH SOMETHING TO SAY, CHECKED FIRST ----------
+       This used to sit three hundred lines below, and two separate branches above it ate the
+       click before it ever got here. The generic townsperson check found scholars (they are
+       faction 'drifter') within 0.9 and gave you its TALK menu; excluding them from that one
+       only handed the click to the NEXT thing down, which is the `foe` check — every neutral
+       within 0.9 matches it, so a dead-centre click on a scholar answered "they are not
+       hostile" and did nothing at all.
+
+       There is no ordering of those two that works, because both of them are *correct* about
+       what they match. The fix is that a person you can hold a conversation with is a more
+       specific thing than either, so it is asked first. Ctrl still forces an attack, and a
+       body underfoot still wins — those are the two deliberate overrides. */
+    if(!e.ctrlKey && !corpseFirst){
+      const chat = chars.find(o => o.state === 'ok' && o.faction !== 'player' &&
+        (o.scholar || (o.wanderKey && o.faction !== 'player') || o.immortal) &&
+        visAt(o.x, o.y) === 2 && dist(o.x, o.y, wx, wy) < TALK_R);
+      if(chat && !hostile(movers[0], chat)){ approachAndTalk(movers, chat); return; }
+    }
     /* a friendly local? stop and talk */
     if(!e.ctrlKey && !corpseFirst){
-      /* NEAREST, not first-in-the-array. A leader shares the hall doorway with whoever
+      /* TWO CORRECTIONS TO ONE LINE, and they compose.
+         NEAREST, not first-in-the-array: a leader shares the hall doorway with whoever
          wandered in, and `find` handed the click to whichever of them the spawn order
-         happened to put first. */
+         happened to put first.
+         AND NOT SOMEBODY WITH A CONVERSATION: a scholar is faction 'drifter' and so is every
+         wanderer. The talk check above now catches those first, so this exclusion is the
+         belt to that braces — it keeps this branch from claiming them on any path where the
+         one above was skipped. */
       const local = chars.filter(c => c.state==='ok' && (c.faction==='drifter' || (c.faction==='town' && !hostile(movers[0], c))) &&
-        !c.mobileVendor && visAt(c.x,c.y)===2 && dist(c.x,c.y,wx,wy) < 0.9)
+        !c.mobileVendor && !c.scholar && !c.wanderKey && !c.immortal &&
+        visAt(c.x,c.y)===2 && dist(c.x,c.y,wx,wy) < 0.9)
         .sort((a,b) => dist(a.x,a.y,wx,wy) - dist(b.x,b.y,wx,wy))[0];
       /* THE POST. Checked before the flag and before anyone standing near it: it is a fixed
          point on the plaza, and a board you cannot click because a townsman wandered in
@@ -22286,49 +22324,6 @@ cv.addEventListener('mousedown', e => {
     const bin = pBuilds.find(b => b.type==='bin' && dist(b.x+0.5, b.y+0.5, wx, wy) < 1.2);
     if(bin){
       for(const m of movers){ if(invWeight(m) > 0){ clearOrders(m); m.haulTarget = bin; } }
-      return;
-    }
-    /* right-click a scholar: they are always willing to be interrupted */
-    const sch = chars.find(o => o.scholar && o.state === 'ok' && dist(o.x, o.y, wx, wy) < 1.6);
-    if(sch && !hostile(movers[0], sch)){
-      if(!movers.some(m => dist(m.x, m.y, sch.x, sch.y) < 4)){
-        const m0 = movers[0];
-        clearOrders(m0); m0.moveTarget = {x: sch.x, y: sch.y};
-        log(`${m0.name} goes to speak with ${sch.name}.`);
-        return;
-      }
-      /* THE LEDGER COMES OUT BEFORE THE SHOP DOES. A scholar who is told a corpse-field has
-         stopped producing has something to say about it, and it is the only lead on the second
-         leg of the search — it should not be buried behind a trade window. */
-      if(tellScholarOfTheCairn(sch)) return;
-      if(tellScholarOfTheClosing(sch)) return;
-      openScholar(sch, movers[0]);
-      return;
-    }
-    /* right-click one of the six. They are approached exactly the way a scholar is: walk over
-       first if nobody is standing close, because turning up is half of what they want. */
-    const wd = chars.find(o => o.wanderKey && o.faction !== 'player' && o.state !== 'dead' &&
-      dist(o.x, o.y, wx, wy) < 1.6);
-    if(wd && !hostile(movers[0], wd)){
-      if(!movers.some(m => dist(m.x, m.y, wd.x, wd.y) < 4)){
-        const m0 = movers[0];
-        clearOrders(m0); m0.moveTarget = {x: wd.x, y: wd.y};
-        log(`${m0.name} goes to speak with ${wd.name}.`);
-        return;
-      }
-      openWanderer(wd);
-      return;
-    }
-    /* right-click an immortal: they will talk. They are not in a hurry. */
-    const im = chars.find(o => o.immortal && o.state === 'ok' && dist(o.x, o.y, wx, wy) < 1.6);
-    if(im && !hostile(movers[0], im)){
-      if(!movers.some(m => dist(m.x, m.y, im.x, im.y) < 4)){
-        const m0 = movers[0];
-        clearOrders(m0); m0.moveTarget = {x: im.x, y: im.y};
-        log(`${m0.name} goes to speak with ${im.name}.`);
-        return;
-      }
-      openImmortal(im);
       return;
     }
     /* right-click the door: send everyone who can hold a formula. It takes all of them. */
@@ -22883,6 +22878,48 @@ function openAudience(px, py, lc){
     }
   }
   showCtxMenu(px, py, items);
+}
+/* ============================================================ GOING OVER TO TALK
+   Every conversation in this game used to be two right-clicks and a guess. The first one
+   walked somebody over and returned; the walk was an ordinary `moveTarget` and carried no
+   memory of why it had been ordered, so on arrival nothing happened and you had to click the
+   same person again — and clicking them again from a stride away often found a DIFFERENT
+   branch, because the generic townsperson check sits three hundred lines above the ones that
+   know what a scholar is.
+
+   One radius, one intent, and the intent survives the walk. `talkTarget` is the same shape as
+   `tradeTarget`, which has always worked exactly this way: go there, and when you arrive, open
+   the thing you were going there for. */
+const TALK_R = 1.6;      /* how close the CLICK has to be to count as clicking on them */
+const TALK_REACH = 2.2;  /* how close the WALKER has to get before the conversation opens */
+function openTalk(o, who){
+  if(!o || o.state !== 'ok') return;
+  if(o.wanderKey && o.faction !== 'player'){ openWanderer(o); return; }
+  if(o.scholar){
+    /* THE LEDGER COMES OUT BEFORE THE SHOP DOES. A scholar told that a corpse-field has
+       stopped producing has something to say about it, and it is the only lead on the second
+       leg of the search — it should not be buried behind a trade window. Here rather than at
+       the click, so it fires whether you were standing there or walked over. */
+    if(tellScholarOfTheCairn(o)) return;
+    if(tellScholarOfTheClosing(o)) return;
+    openScholar(o, who);
+    return;
+  }
+  if(o.immortal){ openImmortal(o); return; }
+  talkTo(o);
+}
+function approachAndTalk(movers, o){
+  if(!o) return;
+  const crew = (movers || []).filter(m => m.faction === 'player' && m.state === 'ok');
+  if(!crew.length) return;
+  /* whoever is already nearest does the talking — sending the first-selected across a plaza
+     while somebody else is standing beside them is its own kind of jank */
+  const m0 = crew.slice().sort((a, b) => dist(a.x, a.y, o.x, o.y) - dist(b.x, b.y, o.x, o.y))[0];
+  if(dist(m0.x, m0.y, o.x, o.y) < TALK_REACH){ openTalk(o, m0); return; }
+  clearOrders(m0);
+  m0.talkTarget = o;
+  m0.talkGiveUp = 30;      /* seconds; a person on the far side of a river is not a conversation */
+  log(`${m0.name} goes to speak with ${o.name}.`, '');
 }
 function talkTo(t){
   let line;

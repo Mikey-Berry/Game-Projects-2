@@ -226,6 +226,105 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     return R;
   });
 
+  /* ============================================================ GOING OVER TO TALK
+     Reported from play: "scholars give generic dialogue at a distance and require you to be
+     close up to give their actual conversational dialogue." Two separate faults, and neither
+     is visible from anything except THE REAL CLICK HANDLER — one was branch ordering (the
+     generic townsperson check sits three hundred lines above the one that knows what a scholar
+     is, and a scholar is faction 'drifter') and the other was that walking over dropped the
+     intent. So this drives actual right-click events at actual screen coordinates. */
+  const talk = await p.evaluate(async () => {
+    const T = {};
+    const frame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const modal = document.getElementById('modal');
+    const shut = () => { modal.style.display = 'none'; modalOpen = false; hideCtxMenu(); };
+    const title = () => (document.getElementById('modaltitle') || {}).textContent || '';
+    const rclick = async (o) => {
+      camX = camSX = o.x; camY = camSY = o.y;
+      camDist = camDistTarget = 16; camPitch = camPitchT = 0.62; camYaw = camYawT = 0.4;
+      camFollow = false;
+      await frame(); await frame(); await frame();
+      /* AIM AT THEIR FEET, which is what a player aims at. The first version projected at
+         +0.9 — head height — and the screen point maps back to ground 0.91 tiles PAST them,
+         which happens to be just outside the two 0.9-tile traps that were eating the click.
+         The probe passed on a build where a dead-centre click did nothing at all. */
+      const q = w2s(o.x, o.y, groundY(o.x, o.y) + 0.05);
+      if (!q) return false;
+      const mp = screenToWorld(q.x, q.y);
+      window.__aim = dist(mp.x, mp.y, o.x, o.y);
+      document.getElementById('game').dispatchEvent(new MouseEvent('mousedown', {
+        clientX: q.x, clientY: q.y, button: 2, buttons: 2, bubbles: true, cancelable: true,
+      }));
+      return true;
+    };
+
+    const sc = chars.find(c => c.scholar && c.state === 'ok');
+    const me = player().find(c => c.state === 'ok' && !c.undead) || player()[0];
+    T.subject = sc ? `${sc.name} is standing somewhere` : '!! NO SCHOLAR IN THE WORLD';
+    if (!sc) return T;
+
+    /* ---- ON TOP OF THEM: the click must find the SCHOLAR, not the generic townsperson ---- */
+    shut();
+    me.x = sc.x + 1; me.y = sc.y; me.floor = sc.floor || 0;
+    selected = [me]; clearOrders(me);
+    rebuildCharGrid(); computeVision();
+    await rclick(sc);
+    await frame();
+    T.aimedAtThem = window.__aim < 0.5
+      ? `the probe clicks ${window.__aim.toFixed(2)} tiles from them — dead centre, the way a player aims`
+      : `!! THE PROBE IS AIMING ${window.__aim.toFixed(2)} TILES OFF AND MISSING THE BRANCHES UNDER TEST`;
+    T.closeOpens = (modal.style.display !== 'none' && title().includes(sc.name.toUpperCase().split(' ')[0]))
+      ? `clicking a scholar you are standing beside opens ${title()}`
+      : `!! A CLICK ON A SCHOLAR OPENED "${title()}" (modal ${modal.style.display})`;
+    T.notAMenu = document.getElementById('ctxmenu').style.display === 'none'
+      ? 'and not the generic TALK menu the townsperson branch would have given'
+      : '!! IT FELL THROUGH TO THE GENERIC TOWNSPERSON MENU';
+
+    /* ---- AND FROM ACROSS THE SQUARE: walk over, and REMEMBER WHY ---- */
+    shut();
+    /* ACROSS THE SQUARE, NOT OVER THE HORIZON. Sight is 17 tiles at night and the talk branch
+       quite rightly will not resolve a click on somebody nobody can see — so a probe staged
+       eighteen tiles out is measuring the fog rule, not the walk. Ten is a plaza. */
+    const far = findOpenNear(Math.round(sc.x) + 10, Math.round(sc.y), 4);
+    me.x = far.x; me.y = far.y;
+    selected = [me]; clearOrders(me);
+    rebuildCharGrid(); computeVision();
+    await rclick(sc);
+    await frame();
+    T.farInSight = (dist(far.x, far.y, sc.x, sc.y) < 16 && visAt(sc.x, sc.y) === 2)
+      ? `staged ${dist(far.x, far.y, sc.x, sc.y).toFixed(0)} tiles off, with the scholar still in sight`
+      : `!! THE PROBE CANNOT SEE WHO IT IS CLICKING (${dist(far.x, far.y, sc.x, sc.y).toFixed(1)} tiles, vis ${visAt(sc.x, sc.y)})`;
+    T.farNoModal = modal.style.display === 'none'
+      ? 'clicking one across the square does not open anything yet'
+      : '!! A DISTANT CLICK OPENED THE PANEL FROM FOURTEEN TILES AWAY';
+    T.farRemembers = me.talkTarget === sc
+      ? `${me.name} sets off to speak with them, and the walk knows why`
+      : `!! THE WALK FORGOT WHY IT WAS ORDERED (talkTarget ${me.talkTarget && me.talkTarget.name})`;
+    /* now run the real sim until they arrive */
+    for (let i = 0; i < 3000 && me.talkTarget; i++) { me.state = 'ok'; physics(me, 1 / 30); }
+    T.arrives = !me.talkTarget && dist(me.x, me.y, sc.x, sc.y) < 3.2
+      ? `and they walk the ${Math.round(dist(far.x, far.y, sc.x, sc.y))} tiles`
+      : `!! THEY NEVER GOT THERE (${dist(me.x, me.y, sc.x, sc.y).toFixed(1)} tiles out)`;
+    T.opensOnArrival = (modal.style.display !== 'none' && title().includes(sc.name.toUpperCase().split(' ')[0]))
+      ? 'and the conversation opens when they arrive, with no second click'
+      : `!! ARRIVING OPENED NOTHING — THE SECOND CLICK IS STILL REQUIRED ("${title()}")`;
+
+    /* ---- and it gives up rather than walking at a wall forever ---- */
+    shut();
+    me.x = far.x; me.y = far.y; clearOrders(me);
+    me.talkTarget = sc; me.talkGiveUp = 30;
+    const realTravel = window.travel;
+    window.travel = () => false;                     /* never arrives */
+    for (let i = 0; i < 2000 && me.talkTarget; i++) { me.state = 'ok'; physics(me, 1 / 30); }
+    window.travel = realTravel;
+    T.givesUp = !me.talkTarget
+      ? 'somebody they cannot reach is dropped rather than walked at forever'
+      : '!! AN UNREACHABLE CONVERSATION IS AN INFINITE WALK';
+    shut();
+    return T;
+  });
+  Object.assign(out, talk);
+
   /* ============================================================ AND ACROSS SEEDS */
   const spots = [];
   for (let run = 0; run < 2; run++) {

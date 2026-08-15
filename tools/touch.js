@@ -298,14 +298,16 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
       selected = [me]; clearOrders(me);
       const foe = window.__foe, fi = chars.indexOf(foe);
       if(fi >= 0) chars.splice(fi, 1);                 /* clear the ground and try again */
-      /* STAND WELL BACK FROM THE SPOT BEING TAPPED. The previous block already walked this
-         unit at that exact point, so re-tapping it can be an order they complete before the
-         assertion reads it — `attackMove` clears on arrival, and the probe reports that as
-         "tapping open ground gave no attack-move". It passed alone and failed under a loaded
-         machine, which is the signature. Eighteen tiles is further than anyone walks in 400ms. */
-      const w = screenToWorld(pt.x, pt.y);
-      const q = findOpenNear(Math.round(w.x) + 18, Math.round(w.y) + 18, 6);
-      me.x = q.x; me.y = q.y;
+      /* STOP THE CLOCK. The previous block already walked this unit at that exact point, so
+         re-tapping it can be an order they complete before the assertion reads it —
+         `attackMove` clears on arrival, and the probe reports that as "tapping open ground
+         gave no attack-move". It passed alone and failed under a loaded machine, which is the
+         signature every time.
+         Pausing is the right lever and moving the unit is not: the first attempt at this
+         staged them eighteen tiles away, which fixed this assertion and broke the NEXT one,
+         because the long-press test that follows shares this same screen point and wants
+         somebody standing near it. */
+      paused = true; if(typeof syncPauseBtn === 'function') syncPauseBtn();
       rebuildCharGrid();
       document.getElementById('tb-attack').click();
       return attackMoveMode ? '' : '!! THE ATTACK BUTTON DID NOT RE-ARM';
@@ -314,8 +316,10 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
     await p.waitForTimeout(400);
     R.attackAtGround = armed2 || await p.evaluate(() => {
       const me = chars.find(c => c.id === window.__me);
-      return me.attackMove ? 'and tapping open ground is an advance-and-fight'
+      const r = me.attackMove ? 'and tapping open ground is an advance-and-fight'
         : '!! TAPPING OPEN GROUND WHILE ARMED GAVE NO ATTACK-MOVE';
+      paused = false; if(typeof syncPauseBtn === 'function') syncPauseBtn();
+      return r;
     });
 
     /* --- LONG PRESS: the context menu --- */
