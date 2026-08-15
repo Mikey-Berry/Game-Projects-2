@@ -2867,14 +2867,19 @@ function spawnInquest(){
   const anchor = pick(player().filter(c => c.state !== 'dead'));
   if(!anchor) return;
   const sq = {id: squadN, anchor: {x: anchor.x, y: anchor.y}, kind: 'inquest'};
+  /* AND A SHADE LESS THAN A BOSS. The other half of the note was that an Inquisitor is
+     stronger than the host that summons one — the trigger is a dozen risen and the answer to
+     it was a 40/44/30 in masterwork plate with two paladins. Pulled back to something a
+     prepared squad of the size that provokes it can actually fight, rather than something
+     that has to be cheesed or run from. */
   const iq = makeChar('Inquisitor', 'purge', x, y,
-    {atk:40, def:44, tough:30, ath:7, magic:14, gift:'divine', armr:50, squad:sq, weapon:'w_kat', armor:'a_marshal'});
+    {atk:31, def:33, tough:24, ath:7, magic:12, gift:'divine', armr:38, squad:sq, weapon:'w_kat', armor:'a_pla'});
   iq.inquisitor = true; iq.neutral = true;
   chars.push(iq);
   for(let i = 0; i < 2; i++){
     const p = findOpenNear(x, y, 3);
     const c = makeChar('Paladin', 'purge', p.x, p.y,
-      {atk:28, def:28, tough:24, ath:7, armr:40, squad:sq, weapon:'w_kat', armor:'a_pla'});
+      {atk:22, def:22, tough:19, ath:7, armr:30, squad:sq, weapon:'w_kat', armor:'a_pla'});
     c.neutral = true; c.inquestGuard = true;
     chars.push(c);
   }
@@ -4833,6 +4838,31 @@ function wantedCheck(dt){
     }
   }
 }
+/* ---------- SETTLING UP ----------
+   A bounty used to be payable at exactly one desk: the town Leader's, which sits in the
+   middle of the town whose watch is walking towards you with irons out. So in practice a
+   price on your head could not be paid off at all — you waited out the five-percent-a-day
+   decay, or you never went back. There are three doors now, and the price is the difference:
+   the Leader (1.5x, if you can reach the desk), the bar in the same town (1.8x, a fixer's
+   cut, and the bar is a door you can actually get to), and the bar in ANY other town (2.5x,
+   which buys a courier and his silence). There is always a way to pay. It is only ever a
+   question of how much. */
+function settleBounty(t, price, who){
+  if(!t || !t.bounty) return false;
+  if(cats < price){ refuse('Not enough coin.'); return false; }
+  cats -= price;
+  t.bounty = 0; t.wanted = false;
+  /* the watch is called off mid-arrest — including anybody already being walked to a cell */
+  for(const g of chars){
+    if(g.homeTown !== t) continue;
+    if(g.arrestTarget){ g.arrestTarget = null; g.provoked = false; g.target = null; }
+    if(g.drag && g.drag.faction === 'player'){ g.drag.captured = false; g.drag = null; }
+  }
+  dropRep(t, -10);
+  log(`${who} takes the coin and ${t.name}'s ledger closes. No further business with you.`, 'good');
+  refreshTop(); refreshInv();
+  return true;
+}
 /* Old debts get quieter. Not forgiven — a murder is still on the books for a long while —
    but a town has other things to think about, and a bounty that never moves is a wall. */
 function bountyDecay(){
@@ -5432,7 +5462,7 @@ function kill(c, by){
   if(c.bossKey && by && by.faction==='player') log(`${c.name} has fallen.`, 'good');
   if(by && by.faction==='player' && c.faction==='purge'){
     purgeWrath++;
-    if(purgeWrath >= 4 && !purgeHuntActive()){ purgeWrath = 0; spawnPurge(true); }
+    if(purgeWrath >= 9 && !purgeHuntActive()){ purgeWrath = 0; spawnPurge(true); }
   }
   if(c.phantom){ dispelPhantom(c); return; }   /* struck true: the figure comes apart into dust */
   if(c.swag && (c.swag.gold > 0 || Object.keys(c.swag.items).length)){
@@ -5665,7 +5695,8 @@ function nearShack(c){
 /* ============================================================ PLAYER BUILDINGS */
 const pBuilds = [];
 const BUILD_TYPES = {
-  wall:    {name:'Wall',      mats:3,  w:1, h:1, desc:'Blocks movement — and its top is a rampart your own people can stand on'},
+  wall:    {name:'Wall',      mats:3,  w:1, h:1, line:true,
+    desc:'Blocks movement — and its top is a rampart your own people can stand on. Click once to set the corner, again to run the whole length'},
   rampart: {name:'Rampart Stair', cost:{wood:8, mats:4}, w:1, h:1,
     desc:'A stair to the wall-tops. Without one, the rampart is a shelf nobody can reach'},
   shack:   {name:'Shack',     mats:25, w:3, h:3, desc:'Free bed inside — 8x healing'},
@@ -5889,8 +5920,44 @@ function canAfford(cost){
   for(const k of Object.keys(cost)) if(campHas(k) < cost[k]) return false;
   return true;
 }
-function tryBuild(type, tx, ty){
+/* A WALL IS ONE TILE, and it always was — eleven other pieces of logic (decks, emplacement
+   mounts, siege damage, the upkeep tally) look up a wall by its exact tile, so widening the
+   footprint would break every one of them. What was actually wrong is that a fortification is
+   twenty clicks. So: stake out a straight RUN of one-tile walls in a single gesture. Each tile
+   that lands is still an ordinary 1x1 wall, and the ones that can't land are quietly skipped
+   rather than shouting 'Blocked ground.' nineteen times. */
+const RUN_CAP = 32;
+/* aliases so tryBuild can shadow its own `refuse`/`log` without losing the real ones */
+const outerRefuse = m => refuse(m), outerLog = (m, k) => log(m, k);
+function runTiles(ax, ay, bx2, by2){
+  const dx = bx2 - ax, dy = by2 - ay;
+  const out = [];
+  /* axis-locked: the longer of the two deltas wins, so a rough drag still gives a clean line */
+  if(Math.abs(dx) >= Math.abs(dy)){
+    const n = Math.min(Math.abs(dx), RUN_CAP - 1), s = dx < 0 ? -1 : 1;
+    for(let i = 0; i <= n; i++) out.push([ax + i*s, ay]);
+  } else {
+    const n = Math.min(Math.abs(dy), RUN_CAP - 1), s = dy < 0 ? -1 : 1;
+    for(let i = 0; i <= n; i++) out.push([ax, ay + i*s]);
+  }
+  return out;
+}
+function buildRun(type, ax, ay, bx2, by2){
+  const tiles = runTiles(ax, ay, bx2, by2);
+  let laid = 0;
+  for(const [x, y] of tiles) if(tryBuild(type, x, y, true)) laid++;
   const bt = BUILD_TYPES[type];
+  if(!laid){ refuse(`Nowhere along that line will take a ${bt.name.toLowerCase()}.`); return 0; }
+  const cost = buildCost(type);
+  const total = {};
+  for(const k of Object.keys(cost)) total[k] = cost[k] * laid;
+  log(`${laid} ${bt.name.toLowerCase()}${laid===1?'':'s'} staked out. The run needs ${costText(total)} and hands on the BUILD job.`, 'good');
+  return laid;
+}
+function tryBuild(type, tx, ty, quiet){
+  const bt = BUILD_TYPES[type];
+  const refuse = quiet ? (() => {}) : outerRefuse;
+  const log = quiet ? (() => {}) : outerLog;
   /* AN EMPLACEMENT MAY STAND ON A WALL, which is the entire point of one, so it is the one
      thing allowed to be staked out on ground the collision map calls solid. Anywhere else it
      wants clear dirt or an existing deck like everything else does. */
@@ -7293,6 +7360,7 @@ function jobHasWork(c, j){
   switch(j){
     case 'build':  return blueprints.length > 0;
     case 'raise':  return corpses.some(b => b.state === 'dead' && !b.raised) && risenLoad(c) < risenCap(c);
+    case 'carrion': return corpses.some(carrionFodder);
     case 'flesh':  return pBuilds.some(b => (FLESH[b.type] || b.type === 'vat'));
     case 'farm':   return pBuilds.some(b => b.type === 'farm');
     case 'craft':  return pBuilds.some(b => b.type === 'workbench' || b.type === 'forge');
@@ -8208,6 +8276,53 @@ function physics(c, dt){
           }
         }
       }
+    } else if(ej==='carrion'){
+      /* THE HARVEST ROUNDS. Walk to the nearest body nobody has a claim on, turn out its
+         pockets, then render it down. Two beats per corpse — the looting is the first pass,
+         the harvest the second — so a hand on this job clears a field the same way you would
+         by hand, just without the clicking. */
+      const now = day + hour / 24;
+      c.carrScanT = (c.carrScanT || 0) - dt;
+      if(c.carrScanT <= 0){
+        c.carrScanT = 2.0;
+        let body = null, bd = 1e9;
+        for(const b of corpses){
+          if(!carrionFodder(b) || b._harvSkip > now) continue;
+          const d2 = dist(b.x, b.y, c.x, c.y);
+          if(d2 < 34 && d2 < bd){ bd = d2; body = b; }
+        }
+        if(body !== c.carrBody) c.carrGiveUp = 40;   /* seconds to reach it before we call it unreachable */
+        c.carrBody = body;
+      }
+      const body = c.carrBody && corpses.includes(c.carrBody) && carrionFodder(c.carrBody) ? c.carrBody : null;
+      if(!body){ c.carrBody = null; return; }
+      if(dist(c.x, c.y, body.x, body.y) > 1.1){
+        /* A BODY ACROSS A RIVER IS NOT WORK. Without this the nearest corpse is re-picked
+           every scan, and a hand set to HARVEST spends the rest of the run walking at a
+           cliff — which in play reads as the job simply not doing anything. */
+        c.carrGiveUp = (c.carrGiveUp || 40) - dt;
+        if(c.carrGiveUp <= 0){ body._harvSkip = now + 0.1; c.carrBody = null; c.carrScanT = 0; return; }
+        travel(c, body.x, body.y, dt, 0.6);
+        return;
+      }
+      c._working = 0.5;
+      c.carrT = (c.carrT || 0) - dt;
+      if(c.carrT > 0) return;
+      c.carrT = 1.6;
+      if(rnd() < 0.7) addSpecks(c.x, c.y - 0.4, '#8a5a4a', 2);
+      if(!body.looted){
+        const got = lootCorpse(body, true) || [];
+        if(got.length) log(`${c.name} turns out a body: ${got.join(', ')}.`, 'good');
+        refreshTop(); refreshInv();
+      } else {
+        const dk = decayStage(body);
+        const n = harvestCorpse(body, true);
+        log(`${c.name} renders down a ${dk.label} body — ${n} Mortal Remains.`, 'good');
+        c.carrBody = null; c.carrScanT = 0;
+        xpGain(c, 'labor', 0.4);
+        AU.build && AU.build(c.x, c.y);
+      }
+      return;
     } else if(ej==='build'){
       const bp = blueprints
         .sort((a,b2) => dist(a.x,a.y,c.x,c.y) - dist(b2.x,b2.y,c.x,c.y))[0];
@@ -8426,9 +8541,26 @@ function fractureStageOf(v){
   for(let k = 0; k < FRACTURE_STAGES.length; k++) if(v >= FRACTURE_STAGES[k].at) i = k;
   return i;
 }
-/* the accelerant: what your own work adds on top of the calendar, per day */
+/* ---------- THE TIDE COMES IN ON A CLOCK ----------
+   The eldritch pressure used to be read off `noticeTier`, which is a score you raise by
+   working the formulae — so the more necromancy you did, the more gaunts came, the faster the
+   sky opened, and the more inquisitors arrived, all at once and all from the same cause. That
+   is being punished three times for playing the game the game is about, and the note that
+   came back was the obvious one: an increasing number of gaunts AND inquisitors AND bandits
+   is not a difficulty curve, it is a wall.
+
+   So the tide is the CALENDAR now. It rises as the second Fracture approaches and it does not
+   care what you have been doing — which is also the better story, because the thing behind
+   the dust was never coming for you personally. Notice still counts for something, capped
+   small, so a host of forty is not free; it just cannot be the whole of it any more. */
+function eldritchTide(){
+  return Math.min(3, fractureStage * 0.7 + Math.min(0.6, noticeTier * 0.2));
+}
+/* the accelerant: what your own work adds on top of the calendar, per day. Cut hard for the
+   same reason — it was the loop that made a loud player's clock run out early on top of
+   everything else the loudness was already buying them. */
 function fractureAccel(){
-  return noticeTier >= 3 ? 0.85 : noticeTier >= 2 ? 0.35 : 0;
+  return noticeTier >= 3 ? 0.25 : 0;
 }
 function advanceFracture(days){
   if(fracture >= 100) return;
@@ -8782,7 +8914,7 @@ function compactBeacon(r){
     log(`The beacons have it: a tear at ${Math.round(r.x)}, ${Math.round(r.y)}. Every signed seat knows already.`, 'bad');
   }
 }
-function riftCap(){ return Math.max(1, noticeTier) + fractureStage; }   /* the sky never fully closed */
+function riftCap(){ return Math.max(1, Math.round(eldritchTide())) + fractureStage; }   /* the sky never fully closed */
 /* ============================================================ THE SECOND FRACTURE ITSELF
    The ladder ends here. This is not a harder difficulty band — it is a different game, and
    it is one you can lose without the run ending, because a game-over screen would throw away
@@ -8942,7 +9074,7 @@ function enterRuin(){
 }
 function riftTick(dh){
   /* the world is thin now. It was never whole to begin with — and it gets thinner when you work the formulae. */
-  if(rifts.length < riftCap() && rnd() < (0.004 + noticeTier * 0.0016) * dh){
+  if(rifts.length < riftCap() && rnd() < (0.004 + eldritchTide() * 0.0016) * dh){
     const anchor = pick(player().filter(c => c.state !== 'dead')) || {x: W/2, y: H/2};
     const a = rnd() * Math.PI * 2, d = 22 + rnd() * 30;
     const x = clamp(Math.round(anchor.x + Math.cos(a) * d), 6, W-7);
@@ -9337,7 +9469,7 @@ function bloodMoonRoll(){
     return;
   }
   /* rare. It should be a thing people remember, not a weekly chore. */
-  if(day > 12 && rnd() < 0.022 + noticeTier * 0.006){
+  if(day > 12 && rnd() < 0.022 + eldritchTide() * 0.006){
     bloodMoon = 1;
     log('THE MOON IS COMING UP RED. Get behind something. Tonight the door is wide open.', 'bad');
     /* on a red moon, the door is not a figure of speech */
@@ -9370,10 +9502,10 @@ function gauntTick(dh){
   }
   if(!isNight() && !rifts.length) return;   /* a tear makes its own night */
   const living = chars.filter(c => c.faction === 'gaunt' && c.state !== 'dead');
-  const tier = noticeTier;
+  const tier = eldritchTide();
   const cap = (3 + tier * 2 + Math.floor(purgeWrath / 60)) * (bloodMoon && isNight() ? 6 : 1);
   if(living.length >= cap) return;
-  /* the more you have worked the formulae, the more of them are looking */
+  /* the nearer the sky is to opening, the more of them are already through */
   const draw = (0.30 + tier * 0.32) * (bloodMoon && isNight() ? 14 : 1);
   if(rnd() > draw * dh) return;
   const anchor = pick(player().filter(c => c.state !== 'dead')) || {x: W/2, y: H/2};
@@ -9864,10 +9996,26 @@ function retaliate(t, attacker){
   t.target = attacker; t.targetManual = false;
   t.moveTarget = null; t.path = null; t.pathGoal = null;
 }
-function lootCorpse(t){
+/* ---------- what a HARVEST hand is allowed to render down ----------
+   The job exists to clear a field, not to decide who counts as a person. So it takes only
+   what nobody would argue about: nameless dead, on your ground, that no one else has a claim
+   on. Townsfolk are excluded outright — auto-looting a neighbour's body would quietly earn
+   you a bounty you never chose, and you would find out about it from the guards. */
+function carrionFodder(b){
+  if(!b || b.state !== 'dead' || b.raised) return false;
+  if(b.bossKey || b.vip || b.phyl) return false;              /* names, not material */
+  if(b.faction === 'town' || b.homeTown) return false;        /* that is a theft, not a chore */
+  if(chars.some(o => o.carry === b || o.raiseBody === b)) return false;   /* already spoken for */
+  /* your own fallen are not stock. A grown cadaver was never a person, and a risen thing put
+     down a second time is already yours to render. */
+  if(b.faction === 'player' && !b.grown && !b.undead) return false;
+  return true;
+}
+function lootCorpse(t, quiet){
+  const log = quiet ? (() => {}) : outerLog;
   /* going through the pockets of somebody's neighbour, in front of the neighbours */
   if(t && (t.faction === 'town' || t.homeTown)) crime('theft', t.x, t.y, player()[0] || null);
-  if(t.looted){ return harvestCorpse(t); }
+  if(t.looted){ return harvestCorpse(t, quiet); }
   t.looted = true;
   let got = [];
   if(t.loot){ cats += t.loot; got.push(`${t.loot} gold`); }
@@ -9884,8 +10032,10 @@ function lootCorpse(t){
   log((got.length ? `Looted: ${got.join(', ')}.` : 'Nothing worth taking.') +
       ` The body is ${dstate.label}${t.salted ? ', and cured' : ''}. (Right-click again to harvest remains.)`, got.length?'good':'');
   refreshTop(); refreshInv();
+  return got;
 }
-function harvestCorpse(t){
+function harvestCorpse(t, quiet){
+  const log = quiet ? (() => {}) : outerLog;
   /* a fresh body gives up more than a picked-over one */
   const dk = decayStage(t);
   const n = Math.max(1, dk.remains - (rnd() < 0.4 ? 0 : 1));
@@ -9895,6 +10045,7 @@ function harvestCorpse(t){
   const xi = chars.indexOf(t); if(xi>=0) chars.splice(xi,1);
   log(`Harvested ${n} Mortal Remains from a ${dk.label} body.`, 'good');
   refreshInv();
+  return n;
 }
 
 /* ============================================================ MAGIC
@@ -10774,6 +10925,12 @@ function craftUndead(kind, caster, circle, shape){
   if(risenLoad(caster) + ut.weight > risenCap(caster)){
     log(`Binding full: ${risenLoad(caster)}/${risenCap(caster)} — ${ut.name} needs ${ut.weight}.`, 'bad'); return false;
   }
+  /* AND THE CEILING IS ENFORCED HERE, not only in the panel that draws the sliders. The
+     panel is one way in; nothing should be able to bind a shape the rules do not allow. */
+  if(shape && shapeSpent(shape) > shapeCeiling(caster)){
+    log(`That shape is beyond ${caster.name} — ${shapeSpent(shape)} points against a ceiling of ${shapeCeiling(caster)}.`, 'bad');
+    return false;
+  }
   /* shaping past the free budget is paid for in material, on top of the recipe */
   const extra = shape ? shapeCost(shape, caster) : {};
   const bill = {...ut.cost};
@@ -11383,8 +11540,20 @@ function shapeNameFor(sh){
   if(m <= 1 && f <= 1 && h <= 1) return 'Shoddy';
   return null;
 }
+/* ---------- THERE IS A CEILING, AND MATERIALS DO NOT BUY PAST IT ----------
+   The budget only ever charged EXTRA MATERIALS for spending over it, which is not a limit —
+   it is a price, and a player with a full store can pay it on every axis at once. Reported
+   from play: four colossal, chitin-plated, seamless Ashen Colossi solo'd the second Fracture,
+   one-shotting everything and unable to die. They were not exploiting a bug; they were buying
+   all seven axes because nothing said they could not.
+   So the budget is now a real ceiling with a few points of headroom over it. Four past your
+   skill is still a genuinely fearsome thing and still worth paying for — it is just no longer
+   possible to be the heaviest, the hardest, the best put together and the best armoured at
+   the same time. Mass and plating and knit have to be bought out of one another. */
+function shapeCeiling(caster){ return shapeBudget(caster) + 4; }
+function shapeSpent(shape){ return SHAPE_AXES.reduce((n, ax) => n + (shape[ax.k] || 0), 0); }
 function shapeCost(shape, caster){
-  const spent = SHAPE_AXES.reduce((n, ax) => n + (shape[ax.k] || 0), 0);
+  const spent = shapeSpent(shape);
   const over = Math.max(0, spent - shapeBudget(caster));
   if(!over) return {};
   const out = {};
@@ -11472,7 +11641,8 @@ function openBinding(circle){
       const note = document.createElement('div');
       note.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:6px';
       const preview = shapeNameFor(sh);
-      note.innerHTML = `${spent}/${budget} points` +
+      const ceil = shapeCeiling(ritualist);
+      note.innerHTML = `${spent}/${budget} points <span style="color:var(--dust)">(ceiling ${ceil})</span>` +
         (over ? ` · <span style="color:#c07a3a">${over} over — pays ${costText(extra)} on top</span>` : ' · within the binding') +
         (preview ? ` · it will come out <span style="color:var(--bone)">${preview}</span>` : '');
       body.appendChild(note);
@@ -11488,7 +11658,9 @@ function openBinding(circle){
         minus.onclick = () => { sh[ax.k] = Math.max(0, v - 1); rndr(); };
         const plus = document.createElement('button');
         plus.textContent = '+'; plus.style.cssText = 'padding:1px 7px;font-size:11px;margin-left:3px';
-        plus.disabled = v >= SHAPE_MAX;
+        /* the ceiling is a wall in the panel too, so the slider simply stops rather than
+           offering a shape the binding will refuse a moment later */
+        plus.disabled = v >= SHAPE_MAX || spent >= shapeCeiling(ritualist);
         plus.onclick = () => { sh[ax.k] = Math.min(SHAPE_MAX, v + 1); rndr(); };
         row.appendChild(minus); row.appendChild(plus);
         body.appendChild(row);
@@ -11684,6 +11856,7 @@ function updateParticles(dt){
 let selected = [];
 let camX = startTown.x, camY = startTown.y;
 let buildMode = null, mouseTX = 0, mouseTY = 0;
+let buildAnchor = null;   /* first corner of a wall run, waiting on the second click */
 let spawnT = 20, hourAcc = 0, necroT = 0, bastionWarned = false, autosaveWarned = false;
 let started = false;
 
@@ -11905,10 +12078,19 @@ function update(dt){
       const deadArmy = chars.filter(c => c.faction==='player' && c.undead && c.state!=='dead').length;
       const patrolCap = 2 + Math.floor(Math.max(0, hostSize - 5) / 5);
       if(menaceFlag && purgePatrolCount() < patrolCap && rnd() < clamp(0.45 + hostSize*0.012, 0.45, 0.85)) spawnPurge(false);
-      if(hostSize >= 8) purgeWrath += 1 + Math.floor(Math.max(0, hostSize - 12) / 8);
-      else purgeWrath = Math.max(0, purgeWrath - 1);
-      if(purgeWrath >= 2 && purgeWrath < 4 && day - lastInquestDay > 6 && !chars.some(c => c.inquisitor)) spawnInquest();
-      if(purgeWrath >= 4 && !purgeHuntActive()){ purgeWrath = 0; spawnPurge(true); }
+      /* ---------- HOW OFTEN THE WHITE BANNER COMES ----------
+         Reported from play: "they come WAY too often — I barely have time to prepare for
+         anything." The arithmetic said the same. Eight risen is a modest host and it used to
+         push wrath up a point EVERY DAY, so two days of ordinary play bought an Inquisitor
+         and six more bought a purge hunt, on a six-day cooldown, forever. The Bastion should
+         notice an army; it should not be standing in your yard the week you raise a squad.
+         Fourteen before they care, half the accrual, a fortnight between banners, and the
+         hunt at nine rather than four — and wrath now falls twice as fast as it climbs when
+         the host is small, so disbanding is a real answer instead of a slow one. */
+      if(hostSize >= 14) purgeWrath += (hostSize >= 26 ? 2 : 1);
+      else purgeWrath = Math.max(0, purgeWrath - 2);
+      if(purgeWrath >= 4 && purgeWrath < 9 && day - lastInquestDay > 15 && !chars.some(c => c.inquisitor)) spawnInquest();
+      if(purgeWrath >= 9 && !purgeHuntActive()){ purgeWrath = 0; spawnPurge(true); }
     }
     spreadNews();    /* the roads carry yesterday's news one town further */
     /* ---------- the ruler's desk, attended daily ---------- */
@@ -13856,18 +14038,21 @@ const HEADFIT = {
      over: it is the wrong comparison — what a player sees is head against shoulders, not
      head against a beard — and it left the named origins visibly smaller-headed than every
      nameless townsperson beside them, which is the opposite of what a named origin should be.
-     These land at 0.24-0.26 against 0.252. Solved rather than guessed: `s` from the ratio
+     Then back down 7%, on the report that parity was a shade heavy — "quite good now, but
+     just a TAD too big". These land at 0.23 against 0.252, which is the honest middle: bigger
+     than the townsfolk would make them cartoons, smaller was the thing that got reported
+     twice. Solved rather than guessed: `s` from the ratio
      each head currently measures, and `y` from the model's own normalised half-height so the
      chin stays at the neck while the crown rises. Lyre needs the least because she is on a
      shorter body and was already at 0.232. */
-  lyonart: {s:0.572, x:0, y:0.266, z:0.012, rx:0, ry:0, rz:0},
-  saga:    {s:0.553, x:0, y:0.265, z:0.012, rx:0, ry:0, rz:0},
+  lyonart: {s:0.532, x:0, y:0.248, z:0.012, rx:0, ry:0, rz:0},
+  saga:    {s:0.514, x:0, y:0.246, z:0.012, rx:0, ry:0, rz:0},
   /* HERS MOVED WHEN SHE GOT A COAT. The share is measured against the body's whole bounding
      box, and a coat skirt reaches below the hip — so giving her the house black lengthened
      the denominator and her head's share fell from 23.1% to 21.4% without the head changing
      at all. Solved against the DRESSED body, which is the one anybody looks at. */
-  lyre:    {s:0.552, x:0, y:0.267, z:0.012, rx:0, ry:0, rz:0},
-  czarina: {s:0.561, x:0, y:0.264, z:0.012, rx:0, ry:0, rz:0},
+  lyre:    {s:0.513, x:0, y:0.248, z:0.012, rx:0, ry:0, rz:0},
+  czarina: {s:0.522, x:0, y:0.245, z:0.012, rx:0, ry:0, rz:0},
 };
 /* ---------- AND THE HELMETS ----------
    Same numbers, same meaning, and hung on the same bone — a helm replaces the whole built
@@ -17835,18 +18020,14 @@ function renderOverlay(){
      closed their book to you say so, because "no jobs" and "no jobs FOR YOU" are different
      things and the second one is information.
 
-     SEEN, NOT IN SIGHT. This asked for `visAt === 2`, which is live vision — a body of yours
-     standing there looking at it — and a town is 36 tiles across with the post in the middle
-     of it. Measured from a town's own gate: 17.7 tiles to the board, and `visAt` there comes
-     back 0 or 1 every time, never 2. So the mark did not appear until you were close enough
-     to the plaza to be standing on it, which is precisely when you no longer need it, and the
-     note that came back was that the board still could not be found in a city.
-     Ground you have WALKED is enough. This is a notice post nailed up in a public square; a
-     town you have been inside is a town whose square you know. It is the same rule the town's
-     own name is drawn under, ten lines above. */
+     IN SIGHT, NOT MERELY SEEN — and this went the other way once and came back. Drawing the
+     mark on ground the squad had merely WALKED made it visible from anywhere on the map, and
+     seven notice posts pinned across the whole world read as clutter rather than as help. The
+     mark is worth having; a permanent map of every town's plaza is not. So it is live vision
+     again: the post is marked while somebody of yours can actually see the square. */
   for(const t of towns){
+    if(visAt(t.x, t.y) !== 2) continue;
     const bp = townBoardPos(t);
-    if(!visAt(bp.x, bp.y)) continue;
     const q = w2s(bp.x, bp.y, groundY(bp.x, bp.y) + 2.05);
     if(!q) continue;
     const open = boardOpen(t);
@@ -18098,15 +18279,30 @@ function renderOverlay(){
   if(buildMode){
     const bt = BUILD_TYPES[buildMode];
     cx.strokeStyle = '#d4a040'; cx.fillStyle = 'rgba(212,160,64,0.3)';
-    cx.beginPath();
-    const cs = [[0,0],[bt.w,0],[bt.w,bt.h],[0,bt.h]];
-    let ok = true;
-    cs.forEach(([dx,dy], i) => {
-      const p = w2s(mouseTX+dx, mouseTY+dy, groundY(mouseTX+dx, mouseTY+dy)+0.05);
-      if(!p){ ok = false; return; }
-      i===0 ? cx.moveTo(p.x,p.y) : cx.lineTo(p.x,p.y);
-    });
-    if(ok){ cx.closePath(); cx.fill(); cx.stroke(); }
+    /* a pending run paints every tile it would take, so you can see the length before you pay */
+    const cells = (buildAnchor && buildAnchor.type === buildMode)
+      ? runTiles(buildAnchor.x, buildAnchor.y, mouseTX, mouseTY)
+      : [[mouseTX, mouseTY]];
+    for(const [gx, gy] of cells){
+      cx.beginPath();
+      const cs = [[0,0],[bt.w,0],[bt.w,bt.h],[0,bt.h]];
+      let ok = true;
+      cs.forEach(([dx,dy], i) => {
+        const p = w2s(gx+dx, gy+dy, groundY(gx+dx, gy+dy)+0.05);
+        if(!p){ ok = false; return; }
+        i===0 ? cx.moveTo(p.x,p.y) : cx.lineTo(p.x,p.y);
+      });
+      if(ok){ cx.closePath(); cx.fill(); cx.stroke(); }
+    }
+    if(cells.length > 1){
+      const mid = w2s(buildAnchor.x + 0.5, buildAnchor.y + 0.5, groundY(buildAnchor.x, buildAnchor.y) + 1.6);
+      if(mid){
+        /* setFont, not cx.font — the overlay caches the last value it set and writing the
+           property behind its back leaves the cache lying about what the canvas is using */
+        cx.fillStyle = '#f0d090'; setFont('12px monospace'); cx.textAlign = 'center';
+        cx.fillText(`${cells.length} x ${costText(buildCost(buildMode))}`, mid.x, mid.y);
+      }
+    }
   }
   /* cast range */
   if(castMode && castMode.caster.state==='ok'){
@@ -18304,8 +18500,8 @@ const TIPS = {
   day:  '<b>THE CALENDAR</b>Eight real seconds to the game hour. Bodies age, fields yield and the world turns on the day.',
   rep:  '<b>STANDING</b>What the nearest town thinks of you. Spill blood inside the walls and watch it fall.',
   conviction:'<b>CONVICTION</b>The thing this one cannot get past. Every deed you do is weighed against it, and the weighing is different for each of them \u2014 a sack that costs you a compassionate medic dearly costs a cold one almost nothing.<i>Push somebody far enough and they walk. Push the wrong somebody far enough and they do not walk.</i>',
-  fracture:'<b>THE SKY</b>How far the Second Fracture has come. It does not go back down. The calendar moves it on its own; working the formulae where you can be heard moves it faster.<i>You cannot stop this. You can be ready for it, or you can be somewhere else when it lands.</i>',
-  notice:'<b>NOTICE</b>How much attention your work with the dead has drawn. It forgets a quiet camp quickly — but once it has actually turned its head it does not look away fast.<i>Every formula you work is heard.</i>',
+  fracture:'<b>THE SKY</b>How far the Second Fracture has come. It does not go back down, and it is the clock that everything else out there keeps: how many gaunts walk, how many tears open, how often the moon comes up red. The calendar moves it on its own; being SEEN moves it a little faster.<i>You cannot stop this. You can be ready for it, or you can be somewhere else when it lands.</i>',
+  notice:'<b>NOTICE</b>How much attention your work with the dead has drawn. It forgets a quiet camp quickly — but once it has actually turned its head it does not look away fast. It is no longer what decides how bad the nights get; that is the calendar. What it buys you is a share on top, and how the living speak to you.<i>Every formula you work is heard.</i>',
   chron:'<b>CHRONICLES [L]</b>Everything you have been told, and everything you have seen — including news of the wider world and who carried it to you.',
   build:'<b>BUILD [B]</b>Place structures. Blueprints need materials hauled to them before anyone can raise them.',
   squad:'<b>SQUAD [S]</b>Select everyone you have. Shift+1-5 stores a group, 1-5 recalls it.',
@@ -18623,7 +18819,7 @@ function refreshCharPanel(){
   jr.innerHTML = '<span style="color:var(--dust);font-size:10px">JOB</span>';
   const JOBS = [
     [null,'NONE'], ['wood','WOOD'], ['stone','STONE'], ['fish','FISH'], ['farm','TEND'],
-    ['build','BUILD'], ['flesh','FLESH'], ['raise','RAISE'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
+    ['build','BUILD'], ['flesh','FLESH'], ['raise','RAISE'], ['carrion','HARVEST'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
   ];
   /* the fallback trade: shown beside the primary, set the same way */
   const mkJobButton = (which) => {
@@ -19639,6 +19835,29 @@ function openBar(v){
         refreshTop(); render();
       };
     }
+    /* THE LEDGER. Standing was always mendable here; the price on your head was not, and it
+       was the one that actually stopped you walking through the gate. A barkeep will take
+       that money too — for his own town at a cut, and for anybody else's by courier. */
+    const wantedTowns = towns.filter(o => (o.bounty || 0) > 0 && !o.playerRuled);
+    wantedTowns.sort((a, b) => (a === town ? -1 : b === town ? 1 : b.bounty - a.bounty));
+    if(wantedTowns.length){
+      const bh = document.createElement('div');
+      bh.style.cssText = 'margin:10px 0 4px;color:var(--warn);letter-spacing:2px';
+      bh.textContent = 'THE LEDGER'; body.appendChild(bh);
+      const priceOf = o => Math.round(o.bounty * (o === town ? 1.8 : 2.5));
+      wantedTowns.forEach((o, i) => {
+        const here = o === town;
+        const row = document.createElement('div'); row.className = 'trow';
+        row.innerHTML = `<span class="tn">${here ? `Settle what ${o.name} wants you for` : `Send the coin on to ${o.name}`}` +
+          ` <span style="color:var(--dust)">bounty ${Math.round(o.bounty)} · ${here ? 'and his cut' : 'a courier, and his silence'}</span></span>` +
+          `<button data-bounty="${i}">PAY ${priceOf(o)}</button>`;
+        body.appendChild(row);
+      });
+      body.querySelectorAll('[data-bounty]').forEach(b => b.onclick = () => {
+        const o = wantedTowns[+b.dataset.bounty]; if(!o) return;
+        if(settleBounty(o, priceOf(o), v.name)) render();
+      });
+    }
     const h = document.createElement('div');
     h.style.cssText = 'margin:10px 0 4px;color:var(--warn);letter-spacing:2px';
     h.textContent = 'FOR HIRE'; body.appendChild(h);
@@ -19772,7 +19991,7 @@ function refreshBuildBar(){
       btn.innerHTML = `<span class="bn">${bt.name.toUpperCase()}</span>`
         + `<span class="bc">${lock ? 'needs ' + lock : costText(cost)}</span>`;
       btn.title = bt.desc;
-      btn.onclick = () => { buildMode = (buildMode === key ? null : key); refreshBuildBar(); };
+      btn.onclick = () => { buildMode = (buildMode === key ? null : key); buildAnchor = null; refreshBuildBar(); };
       grid.appendChild(btn);
     }
     bb.appendChild(grid);
@@ -19780,13 +19999,13 @@ function refreshBuildBar(){
 }
 refreshBuildBar();
 const bx = document.createElement('button'); bx.textContent = '✕';
-bx.onclick = () => { buildMode = null; bb.style.display = 'none'; };
+bx.onclick = () => { buildMode = null; buildAnchor = null; bb.style.display = 'none'; };
 bb.appendChild(bx);
 function toggleBuild(){
   const show = bb.style.display !== 'flex';
   bb.style.display = show ? 'flex' : 'none';
   if(show) refreshBuildBar();   /* costs and locks move while you play */
-  else buildMode = null;
+  else { buildMode = null; buildAnchor = null; }
 }
 
 /* ============================================================ INPUT */
@@ -19948,7 +20167,7 @@ addEventListener('keydown', e => {
   if(e.key==='q' || e.key==='Q'){ listenForMother(); }
   if(e.key==='Escape'){
     /* Esc backs out of anything modal, including the build menu (which used to need B again) */
-    if(buildMode){ buildMode = null; refreshBuildBar && refreshBuildBar(); }
+    if(buildMode){ buildMode = null; buildAnchor = null; refreshBuildBar && refreshBuildBar(); }
     castMode = null; attackArmed(false); guardMode = false;
     hideCtxMenu(); $('modal').style.display='none'; modalOpen=false;
   }
@@ -20099,6 +20318,8 @@ cv.addEventListener('touchmove', e => {
     camSX = camX; camSY = camY;
   } else if(tg.mode === 'marquee'){
     fakeMouse(cv, 'mousemove', p0.x, p0.y, 0, false);
+  } else if(buildMode && tg.mode === 'pending'){
+    fakeMouse(cv, 'mousemove', p0.x, p0.y, 0, false);   /* the ghost follows the finger */
   }
   tg.x = p0.x; tg.y = p0.y;
 }, {passive: false});
@@ -20117,6 +20338,12 @@ cv.addEventListener('touchend', e => {
     dist(c.x, c.y, mp.x, mp.y) < 1.1);
   const busy = castMode || buildMode || attackMoveMode || guardMode;
   if(mine || busy || !selected.length){
+    /* A TAP CARRIES NO POINTER HISTORY. The desktop build ghost is drawn at `mouseTX/mouseTY`,
+       which only ever move on a real mousemove — so on a touchscreen the ghost sat wherever
+       the last mouse had been, and a wall run (which shows its own length and price on that
+       ghost) would have quoted the wrong line. Send the move the desktop path is waiting for
+       before the press, the same way every other gesture here is translated. */
+    fakeMouse(cv, 'mousemove', g.sx, g.sy, 0, false);
     fakeMouse(cv, 'mousedown', g.sx, g.sy, 0, false);
     fakeMouse(window, 'mouseup', g.sx, g.sy, 0, false);
   } else {
@@ -20247,11 +20474,24 @@ cv.addEventListener('mousedown', e => {
       for(const m of crew){ clearOrders(m); m.attackMove = {x:wx, y:wy}; }
       return;
     }
-    if(buildMode){ tryBuild(buildMode, Math.floor(wx), Math.floor(wy)); refreshInv(); return; }
+    if(buildMode){
+      const tx = Math.floor(wx), ty = Math.floor(wy);
+      if(BUILD_TYPES[buildMode] && BUILD_TYPES[buildMode].line){
+        if(!buildAnchor){
+          buildAnchor = {type: buildMode, x: tx, y: ty};
+          log('Corner set. Click again to run the wall out to there — Esc or right-click to drop it.', '');
+        } else {
+          buildRun(buildAnchor.type, buildAnchor.x, buildAnchor.y, tx, ty);
+          buildAnchor = null;
+        }
+      } else tryBuild(buildMode, tx, ty);
+      refreshInv(); return;
+    }
     dragStart = {sx:e.clientX, sy:e.clientY, shift:e.shiftKey};
     return;
   }
   if(e.button === 2){
+    if(buildAnchor){ buildAnchor = null; log('Run dropped.', ''); return; }
     if(castMode){ castMode = null; return; }
     if(attackMoveMode){ attackArmed(false); return; }
     if(guardMode){ guardMode = false; return; }
@@ -21202,15 +21442,7 @@ function openAudience(px, py, lc){
      walked in and asked — which means walking into the town that wants you. */
   if(t.bounty > 0){
     const price = Math.round(t.bounty * 1.5);
-    items.push({label:`SETTLE THE BOUNTY (${price})`, fn:()=>{
-      if(cats < price){ refuse ? refuse('Not enough coin.') : log('Not enough coin.', 'bad'); return; }
-      cats -= price;
-      t.bounty = 0; t.wanted = false;
-      for(const g of chars) if(g.arrestTarget && g.homeTown === t) g.arrestTarget = null;
-      dropRep(t, -10);
-      log(`${L ? L.name : t.name} takes the coin and the ledger closes. ${t.name} has no further business with you.`, 'good');
-      refreshTop(); refreshInv();
-    }});
+    items.push({label:`SETTLE THE BOUNTY (${price})`, fn:()=> settleBounty(t, price, L ? L.name : t.name)});
   }
   if(t.warWith) items.push({label:`BROKER PEACE W/ ${t.warWith.name} (800)`, fn:()=>brokerPeace(t, L)});
   else {
@@ -21793,7 +22025,7 @@ function restore(d){
     }
   }
   towns.forEach((t,i) => t.recruits = (d.recruits && d.recruits[i]) || []);
-  selected = []; castMode = null; buildMode = null; attackArmed(false);
+  selected = []; castMode = null; buildMode = null; buildAnchor = null; attackArmed(false);
   const f = player()[0]; if(f){ camX = f.x; camY = f.y; }
   refreshTop(); refreshInv(); refreshSquadBar(); refreshCharPanel();
   computeVision();   /* a loaded squad stands somewhere new; light it before the first frame */
