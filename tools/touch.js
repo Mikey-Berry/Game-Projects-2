@@ -293,15 +293,23 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
         return '!! THE MODE STAYED ARMED AFTER BEING USED';
       return 'armed, tapped a body, and they went for it';
     });
-    const armed2 = await p.evaluate(() => {
+    const armed2 = await p.evaluate((pt) => {
       const me = chars.find(c => c.id === window.__me);
       selected = [me]; clearOrders(me);
       const foe = window.__foe, fi = chars.indexOf(foe);
       if(fi >= 0) chars.splice(fi, 1);                 /* clear the ground and try again */
+      /* STAND WELL BACK FROM THE SPOT BEING TAPPED. The previous block already walked this
+         unit at that exact point, so re-tapping it can be an order they complete before the
+         assertion reads it — `attackMove` clears on arrival, and the probe reports that as
+         "tapping open ground gave no attack-move". It passed alone and failed under a loaded
+         machine, which is the signature. Eighteen tiles is further than anyone walks in 400ms. */
+      const w = screenToWorld(pt.x, pt.y);
+      const q = findOpenNear(Math.round(w.x) + 18, Math.round(w.y) + 18, 6);
+      me.x = q.x; me.y = q.y;
       rebuildCharGrid();
       document.getElementById('tb-attack').click();
       return attackMoveMode ? '' : '!! THE ATTACK BUTTON DID NOT RE-ARM';
-    });
+    }, openPt);
     await tap(p, openPt.x, openPt.y);
     await p.waitForTimeout(400);
     R.attackAtGround = armed2 || await p.evaluate(() => {

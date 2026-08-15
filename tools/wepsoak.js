@@ -124,10 +124,16 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
        R.pointsDown = below > above*1.5
          ? `the blade hangs ${below.toFixed(2)} below the fist and ${above.toFixed(2)} above it`
          : `!! THE SUNDERING EDGE IS HELD THE WRONG WAY UP (${below.toFixed(2)} below, ${above.toFixed(2)} above)`;
+       /* DIVIDE OUT THE WIELDER. The box is world-space and the weapon is a child of the rig,
+          so this length is the blade TIMES whatever body `makeChar` happened to roll — and a
+          chimera or a scaleborn is a good few percent larger than a human. The bound held for
+          months and then read 1.49 against a 1.45 ceiling because an unrelated spawn upstream
+          moved the race roll along. What is being checked is the fit, not the wielder. */
+       const scl=new THREE.Vector3(); e.g.getWorldScale(scl);
        const sz=wb.getSize(new THREE.Vector3());
-       const len=Math.max(sz.x,sz.y,sz.z);
+       const len=Math.max(sz.x/scl.x, sz.y/scl.y, sz.z/scl.z);
        R.rightLength = (len>0.85 && len<1.45)
-         ? `and runs ${len.toFixed(2)} in world units, inside a nodachi's reach`
+         ? `and runs ${len.toFixed(2)} on a body of its own size, inside a nodachi's reach`
          : `!! THE SUNDERING EDGE IS ${len.toFixed(2)} LONG`;
      }
      const i0=chars.indexOf(u); if(i0>=0) chars.splice(i0,1);

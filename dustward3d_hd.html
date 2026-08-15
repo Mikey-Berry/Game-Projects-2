@@ -380,7 +380,15 @@ const W = 1440, H = 1440, TS = 26;   /* v22 scale — four times the waste betwe
 const cv = document.getElementById('game');
 const mmcv = document.getElementById('minimap'), mmcx = mmcv.getContext('2d');
 
+/* ONE CONSTANT, so every run is the same world and a bug is reproducible — and an override
+   off the query string, because determinism is only half the question. The fixed seed proves
+   the world is repeatable; it proves nothing at all about whether a thing that must exist in
+   EVERY world exists in a different one. `?seed=7` is how a probe asks that. */
 let seed = 90210;
+try {
+  const q = new URLSearchParams(location.search).get('seed');
+  if(q !== null && q !== '' && !isNaN(+q)) seed = (+q) >>> 0;
+} catch(e){ /* no location to read: leave the constant alone */ }
 function rnd(){
   seed = (seed + 0x6D2B79F5) | 0;
   let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
@@ -2061,6 +2069,21 @@ function atkPower(c){
 }
 
 /* ============================================================ SPAWNING */
+/* THE NEAREST OPEN TILE, and no randomness in it. `findOpenNear` throws sixty random darts
+   inside a box of radius r, which is right for scattering a camp and wrong for "stand beside
+   this person" — where it can hand back a spot most of r away and does so differently every
+   time anything upstream consumes a different number of random values. Anywhere the placement
+   is a PROMISE (Czarina is at his shoulder from the first frame), ask for the nearest one. */
+function findAdjacent(x, y, maxR = 6){
+  for(let ring = 1; ring <= maxR; ring++){
+    for(let a = 0; a < 12; a++){
+      const ax = x + Math.cos(a / 12 * Math.PI * 2) * ring;
+      const ay = y + Math.sin(a / 12 * Math.PI * 2) * ring;
+      if(ax > 1 && ay > 1 && ax < W - 1 && ay < H - 1 && !isBlocked(ax, ay)) return {x: ax, y: ay};
+    }
+  }
+  return findOpenNear(x, y, maxR);
+}
 function findOpenNear(x,y,r=6){
   for(let i=0;i<60;i++){
     const ax = x + (rnd()*2-1)*r, ay = y + (rnd()*2-1)*r;
@@ -2664,6 +2687,7 @@ const NEWS_TONE = {
   fracture:'bad', dread:'', compact:'good', door:'bad', fallen:'bad', ruin:'bad',
   rite:'bad', lieutenant:'good', departure:'bad', betrayal:'bad',
   peace:'good', pact:'good', sealed:'good', razed:'good',
+  wanderer:'', cairn:'bad',
 };
 function newsAge(e){
   const late = day - e.day;
@@ -4680,6 +4704,11 @@ function watchersOn(cell, prisoner){
 }
 /* returns true if they got out this tick */
 function workTheBars(c, dt){
+  /* HE IS NOT WORKING ON IT. The Ninth Man has been in there long enough to have a cup of his
+     own; a man who was going to dig his way out would have done it. Without this he files
+     through the bars on his own and the one thing you were promised — that he is in a gaol
+     somewhere, every world — quietly stops being true a fortnight in. */
+  if(c.wanderKey) return;
   const cell = c.jailedAt;
   if(!cell) return false;
   if(cell.hp === undefined){ cell.hp = CELL_HP; cell.maxHp = CELL_HP; }
@@ -9966,6 +9995,222 @@ function corpseSiteTick(wdt){
    Something that came through whole, or grew here from what fell. Six limbs, each with
    too many joints, arched over a body that hangs beneath them like a lantern. It does
    not hunt at night because it does not need the dark. */
+/* ============================================================ THE WANDERERS
+   Six people who are out there in every world, in the same KIND of place every time and never
+   the same place twice. That is the whole design: you learn over a few runs that somebody is
+   being held in a gaol somewhere, that a surgeon is living in a ruin, that a redoubt woke
+   something up — and then you go and find out WHICH gaol, which ruin, which redoubt. A roster
+   you can plan around without a map that hands it to you.
+
+   Every one of them costs something different, and only one of them costs money. A person is
+   not a bar recruit with a name on it: they are somewhere, for a reason, and the way in is the
+   reason. Nothing here is a new subsystem — they are placed in the gaols, the slaver camp, the
+   ruins, the redoubts and the roads that already exist, and every recruit condition reads
+   state the game was already keeping. */
+const WANDERERS = [
+  {key:'hob', name:'Hob Sedge', sex:'m', where:'gaol', tag:'the Ninth Man',
+   stats:{atk:26, def:22, tough:36, ath:6, labor:28, medic:2, crafting:14},
+   weapon:'w_club', armor:'a_rag', conviction:'loyal',
+   want:'fine', fine:1400,
+   news:'A man is being held in one of the town gaols for something nobody will say out loud. He has been in there long enough that the guards bring him his own cup.',
+   pitch:'"Nine men went into that cellar and I am the one who walked out. They have never once asked me about the other eight."',
+   ask:'"Pay what they say I owe and I will carry anything you like, as far as you like."',
+   join:'"Right." He picks up the cup, looks at it, and puts it back down. "Right."'},
+
+  {key:'ottoline', name:'Ottoline Rill', sex:'f', where:'ruin', tag:'the Ruin Surgeon',
+   stats:{atk:8, def:16, tough:18, ath:8, medic:52, crafting:20, labor:8},
+   weapon:null, armor:'a_lea', conviction:'compassion',
+   want:'wounded',
+   news:'Somebody has set up in one of the ruins and is treating whoever walks in — bandits, drovers, anyone. She does not ask which.',
+   pitch:'"I do not care who you are. I care whether anybody with you is bleeding. They usually are."',
+   ask:'"Bring me somebody who needs me and I will come with you. That is the whole arrangement."',
+   join:'"Then I am coming. Somebody has to be there when it happens, and it is going to happen."'},
+
+  {key:'nine', name:'Nine', sex:'m', where:'redoubt', tag:'the one that woke up',
+   stats:{atk:34, def:30, tough:30, ath:9, labor:10, gunnery:18},
+   weapon:'w_kat', armor:'a_pla', conviction:'cold', race:'homunculus', sub:'sleepless',
+   want:'doctrine',
+   news:'One of the sealed redoubts has something standing in the doorway of it. It is wearing what the people inside were wearing, and it has been standing there a long time.',
+   pitch:'"There were forty of us. The order was hold. I have held." A pause. "The order has not been rescinded."',
+   ask:'"Show me a written doctrine and I will read whose seal is on it. If nobody is left to give the order, the order is over."',
+   join:'"No seal. No hand. No order." It steps out of the doorway for the first time in nine generations. "Then I am not holding."'},
+
+  {key:'cressa', name:'Cressa Orrick', sex:'f', where:'slaver', tag:'stock, allegedly',
+   stats:{atk:30, def:34, tough:16, ath:18, medic:6, labor:6},
+   weapon:'w_rkat', armor:'a_rag', conviction:'cruel',
+   want:'free',
+   news:'The slavers out in the waste are holding somebody who has cost them two guards and a tent. They are having trouble selling her.',
+   pitch:'"Cut this off me and I will show you what they paid for."',
+   ask:'"You are not going to talk them out of it. Kill them."',
+   join:'"Good." She takes a blade off the nearest body without being offered one. "I am not going back."'},
+
+  {key:'bram', name:'Bram Quarrow', sex:'m', where:'tower', tag:'the man on the roof',
+   stats:{atk:18, def:20, tough:20, ath:10, gunnery:44, crafting:22, labor:6},
+   weapon:'w_xbow', armor:'a_lea', conviction:'scholar',
+   want:'coin', coin:2600,
+   news:'There is a man living on top of a ruined tower out in the waste who shoots at the ground near anybody who comes close. He has not hit one of them yet, which people have started to notice.',
+   pitch:'"That was a warning. I have never missed a warning in my life, and I have never once shot the thing I was warning."',
+   ask:'"I do not work for causes and I do not work for free. I work for coin, in advance, and I am expensive because I am the best shot in this country."',
+   join:'"Right then." He is already coming down the stairs. "Somebody build me something to sit on."'},
+
+  {key:'hesper', name:'Hesper Lund', sex:'f', where:'road', tag:'the one you keep meeting',
+   stats:{atk:14, def:24, tough:18, ath:14, magic:38, medic:12},
+   weapon:null, armor:'a_shroud', conviction:'haunted', gift:'dust',
+   want:'met', meets:3,
+   news:'A dust-gifted woman walks the trade roads between the seats and does not appear to be going anywhere. Drovers say she is on the road again every time, whichever road it is.',
+   pitch:'"You again." She does not look surprised, which is somehow worse.',
+   ask:'"Three roads is a road. Cross mine in a third place and I will tell you what I am doing out here."',
+   join:'"Three." She falls in beside you without being asked. "I am not following you. We are going the same way, and we have been for a while."'},
+];
+function wandererDef(k){ return WANDERERS.find(w => w.key === k) || null; }
+function spawnWanderers(){
+  for(const w of WANDERERS){
+    let p = null, cell = null;
+    if(w.where === 'gaol'){
+      /* a real empty cell in somebody else's town, so freeing him runs through the gaol the
+         game already has rather than a special case bolted beside it */
+      const opts = cells.filter(cl => cl.kind === 'town' && !cl.holds);
+      if(opts.length){ cell = pick(opts); p = {x: cell.x, y: cell.y}; }
+    } else if(w.where === 'ruin' || w.where === 'tower'){
+      const r = ruins.length ? pick(ruins) : null;
+      if(r) p = findOpenNear(r.x + ri(-3, 3), r.y + ri(-3, 3), 6);
+    } else if(w.where === 'redoubt'){
+      const r = redoubts.length ? pick(redoubts) : null;
+      if(r) p = findOpenNear(r.x + ri(-3, 3), r.y + (r.r || 6) + 1, 6);
+    } else if(w.where === 'slaver'){
+      if(slaverCamp) p = findOpenNear(slaverCamp.x + ri(-3, 3), slaverCamp.y + ri(-3, 3), 5);
+    }
+    /* 'road' and every failed placement fall back to open waste. A wanderer who did not get
+       placed is a wanderer who does not exist, and the promise is that they always do. */
+    if(!p) p = bossSpot(24, 30);
+    const c = makeChar(w.name, 'drifter', p.x, p.y,
+      {...w.stats, sex: w.sex, weapon: w.weapon || undefined, armor: w.armor || undefined});
+    c.wanderKey = w.key;
+    c.neutral = true;
+    c.conviction = w.conviction;
+    if(w.gift){ c.gift = w.gift; c.att = {divine:0, destruction:0, dark:0, dust:0}; c.att[w.gift] = 2; c.mana = rawMaxMana(c); }
+    if(w.race){ c.race = w.race; if(w.sub) c.sub = w.sub; }
+    c.blood = c.maxBlood = Math.max(c.maxBlood, 120);
+    c.wanderMet = 0;
+    chars.push(c);
+    if(cell) jail(c, cell, 9999);
+    if(w.where === 'slaver') c.captured = true;
+    /* and each one is a dated rumour in the world news, so the roster is learnable without
+       ever being handed to you as a list of pins */
+    worldEvent('wanderer', p.x, p.y, w.news);
+  }
+}
+/* CAN THEY BE TAKEN ON, and if not, exactly what is missing. One function, so the menu and
+   the act cannot drift apart: the reason shown is the reason enforced. */
+function wandererGate(c){
+  const w = wandererDef(c.wanderKey); if(!w) return {ok:false, why:'nothing to say'};
+  if(player().filter(u => (!u.undead || u.lich) && !u.settler).length >= SQUAD_CAP)
+    return {ok:false, why:`the banner is full (${SQUAD_CAP})`};
+  if(w.want === 'fine')
+    return cats >= w.fine ? {ok:true, label:`PAY WHAT HE OWES (${w.fine}g)`}
+                          : {ok:false, why:`his fine is ${w.fine} gold and you have ${Math.floor(cats)}`};
+  if(w.want === 'coin')
+    return cats >= w.coin ? {ok:true, label:`PAY THE RETAINER (${w.coin}g)`}
+                          : {ok:false, why:`he wants ${w.coin} in advance and you have ${Math.floor(cats)}`};
+  if(w.want === 'wounded'){
+    const hurt = player().some(u => (!u.undead || u.lich) && u.state !== 'dead' && (u.state === 'down' || treatable(u)));
+    return hurt ? {ok:true, label:'ASK HER TO COME'} : {ok:false, why:'nobody with you needs her yet'};
+  }
+  if(w.want === 'doctrine')
+    return campHas('doctrine') > 0 ? {ok:true, label:'SHOW IT THE DOCTRINE'}
+                                   : {ok:false, why:'it wants a written doctrine, and there is not one in the stores'};
+  if(w.want === 'free'){
+    const kept = chars.some(o => o.faction === 'slaver' && o.state === 'ok' && dist(o.x, o.y, c.x, c.y) < 14);
+    return kept ? {ok:false, why:'her keepers are still standing'} : {ok:true, label:'CUT HER LOOSE'};
+  }
+  if(w.want === 'met')
+    return (c.wanderMet || 0) >= w.meets ? {ok:true, label:'WALK WITH HER'}
+                                         : {ok:false, why:`you have crossed her road ${c.wanderMet || 0} of ${w.meets} times, in ${c.wanderMet || 0} different places`};
+  return {ok:false, why:'nothing to say'};
+}
+function recruitWanderer(c){
+  const w = wandererDef(c.wanderKey); if(!w) return false;
+  const g = wandererGate(c);
+  if(!g.ok){ refuse(g.why[0].toUpperCase() + g.why.slice(1) + '.'); return false; }
+  if(w.want === 'fine') cats -= w.fine;
+  if(w.want === 'coin') cats -= w.coin;
+  if(w.want === 'doctrine') campSpend({doctrine: 1});
+  /* out of the cell, off the rope, down off the roof */
+  if(c.jailedAt){ const cl = c.jailedAt; cl.holds = 0; c.jailedAt = null; c.jailT = 0; returnKit(c); }
+  c.captured = false;
+  for(const o of chars) if(o.drag === c) o.drag = null;
+  c.faction = 'player'; c.neutral = false; c.wanderJoined = true;
+  clearOrders(c);
+  say(c, w.join);
+  log(`${c.name} — ${w.tag} — is with you now.`, 'good');
+  worldEvent('wanderer', c.x, c.y, `${c.name} has taken up with somebody. People who know the name have opinions about it.`);
+  refreshTop(); refreshSquadBar(); refreshCharPanel();
+  return true;
+}
+/* The one recruited by turning up. Counted per PLACE rather than per conversation, so standing
+   in front of her pressing the button three times is one meeting, not three. */
+function wandererMet(c){
+  const w = wandererDef(c.wanderKey);
+  if(!w || w.want !== 'met' || c.faction === 'player') return;
+  let near = null, nd = 1e9;
+  for(const t of towns){ const d = dist(t.x, t.y, c.x, c.y); if(d < nd){ nd = d; near = t; } }
+  const where = (near && nd < 40) ? near.def.key : 'road';
+  c.wanderSeen = c.wanderSeen || {};
+  if(c.wanderSeen[where]) return;
+  c.wanderSeen[where] = 1;
+  c.wanderMet = (c.wanderMet || 0) + 1;
+  if(c.wanderMet < w.meets)
+    log(`${c.name} has crossed your road ${c.wanderMet} time${c.wanderMet === 1 ? '' : 's'} now, in ${c.wanderMet} different places.`, '');
+}
+/* SHE WALKS. Every day she is somewhere else — which is the entire reason meeting her three
+   times means anything. A drifter who stood in one field would just be a person in a field. */
+function wandererDayTick(){
+  for(const c of chars){
+    if(!c.wanderKey || c.faction === 'player' || c.state === 'dead' || c.jailedAt) continue;
+    const w = wandererDef(c.wanderKey);
+    if(!w || w.where !== 'road') continue;
+    const t = pick(towns); if(!t) continue;
+    const a = rnd() * Math.PI * 2, r = 14 + rnd() * 12;
+    const q = findOpenNear(Math.round(t.x + Math.cos(a) * r), Math.round(t.y + Math.sin(a) * r), 8);
+    c.x = q.x; c.y = q.y; c.floor = 0;
+    clearOrders(c);
+  }
+}
+function openWanderer(c){
+  const w = wandererDef(c.wanderKey); if(!w) return;
+  wandererMet(c);
+  say(c, w.pitch);
+  const g = wandererGate(c);
+  openModal(`${c.name.toUpperCase()} — ${w.tag}`,
+    'Somebody who is out here in every world, and never twice in the same place.');
+  const body = $('modalbody'); body.innerHTML = '';
+  const line = document.createElement('div');
+  line.style.cssText = 'color:var(--bone);font-size:13px;margin-bottom:10px;font-style:italic';
+  line.textContent = w.pitch;
+  body.appendChild(line);
+  const ask = document.createElement('div');
+  ask.style.cssText = 'color:var(--dust);font-size:12px;margin-bottom:12px';
+  ask.textContent = w.ask;
+  body.appendChild(ask);
+  const row = document.createElement('div'); row.className = 'trow';
+  const skills = ['atk','def','tough','medic','gunnery','crafting','labor','magic']
+    .filter(k => (w.stats[k] || 0) >= 12)
+    .map(k => `${k} ${Math.floor(c.stats[k])}`).join(' · ');
+  row.innerHTML = `<span class="tn">${c.name}<br><span style="color:var(--dust);font-size:11px">${skills}${w.gift ? ' · ✦ ' + w.gift : ''}</span></span>`;
+  const btn = document.createElement('button');
+  btn.textContent = g.ok ? g.label : 'NOT YET';
+  btn.disabled = !g.ok;
+  btn.title = g.ok ? '' : g.why;
+  btn.onclick = () => { if(recruitWanderer(c)){ $('modal').style.display = 'none'; modalOpen = false; } };
+  row.appendChild(btn);
+  body.appendChild(row);
+  if(!g.ok){
+    const why = document.createElement('div');
+    why.style.cssText = 'color:var(--warn);font-size:11px;margin-top:8px';
+    why.textContent = g.why[0].toUpperCase() + g.why.slice(1) + '.';
+    body.appendChild(why);
+  }
+}
 function spawnSixfold(atX, atY){
   const home = corpseSites.length ? pick(corpseSites) : null;
   const sp = (atX !== undefined) ? findOpenNear(atX, atY, 6) : (home ? findOpenNear(home.x + 3, home.y + 3, 6) : bossSpot(55, 75));
@@ -9988,6 +10233,9 @@ spawnSixfold();
 /* and one Cairn Beast, standing in a corpse-field from the first day, growing on whatever
    the world kills whether or not you ever go near it */
 spawnCairnBeast();
+/* and the six who are out there every time — in the gaols, the ruins, the redoubts, the
+   slaver camp and on the roads, all of which already exist by the time this runs */
+spawnWanderers();
 /* they surface in the deep waste, far from lamps and walls, and only after dark */
 /* ---------- the blood moon ----------
    Once in a long while the moon comes up wrong, and everything on the other side
@@ -12729,6 +12977,7 @@ function update(dt){
   if(hour >= 24){
     hour -= 24; day++;
     bountyDecay();
+    wandererDayTick();       /* she is on a different road today, which is the point of her */
     /* a broken shrine is not broken forever. They come back and set the stone, unless
        somebody is standing on the ground to stop them — so desecration buys a window, not
        a permanent unmaking. */
@@ -19264,11 +19513,16 @@ function renderOverlay(){
       cx.fillStyle = '#141008'; cx.fillText(c.name, top.x+1, top.y-13);
       cx.fillStyle = '#d4c8a0'; cx.fillText(c.name, top.x, top.y-14);
     }
-    if(c.bossKey || (c.lieutenant && c.faction === 'player')){
+    /* THE SIX WEAR THEIR NAMES. You are meant to be able to spot one across a plaza or on a
+       road — that is the whole promise of a fixed roster — so they are labelled like a boss
+       rather than like the two hundred townspeople they are standing among. Still only in
+       live sight: knowing they exist is the point, being handed their coordinates is not. */
+    if(c.bossKey || (c.lieutenant && c.faction === 'player') || (c.wanderKey && c.faction !== 'player')){
       setFont('bold 11px monospace');
       const ly = c.lieutenant && !c.bossKey ? top.y - 19 : top.y - 14;
       cx.fillStyle = '#141008'; cx.fillText(c.name, top.x+1, ly+1);
       cx.fillStyle = c.lieutenant && !c.bossKey ? '#e8c86a'
+        : c.wanderKey && !c.bossKey ? '#8fd4c0'
         : (c.provoked || c.faction==='bandit' ? '#e07a5f' : '#d4c8a0');
       cx.fillText(c.name, top.x, ly);
     }
@@ -22051,6 +22305,20 @@ cv.addEventListener('mousedown', e => {
       openScholar(sch, movers[0]);
       return;
     }
+    /* right-click one of the six. They are approached exactly the way a scholar is: walk over
+       first if nobody is standing close, because turning up is half of what they want. */
+    const wd = chars.find(o => o.wanderKey && o.faction !== 'player' && o.state !== 'dead' &&
+      dist(o.x, o.y, wx, wy) < 1.6);
+    if(wd && !hostile(movers[0], wd)){
+      if(!movers.some(m => dist(m.x, m.y, wd.x, wd.y) < 4)){
+        const m0 = movers[0];
+        clearOrders(m0); m0.moveTarget = {x: wd.x, y: wd.y};
+        log(`${m0.name} goes to speak with ${wd.name}.`);
+        return;
+      }
+      openWanderer(wd);
+      return;
+    }
     /* right-click an immortal: they will talk. They are not in a hurry. */
     const im = chars.find(o => o.immortal && o.state === 'ok' && dist(o.x, o.y, wx, wy) < 1.6);
     if(im && !hostile(movers[0], im)){
@@ -22793,7 +23061,7 @@ function snapshot(){
     bindWeight:c.bindWeight, shortTag:c.shortTag,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
-    immortal:c.immortal||null, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
+    immortal:c.immortal||null, wanderKey:c.wanderKey||null, wanderMet:c.wanderMet||0, wanderSeen:c.wanderSeen?{...c.wanderSeen}:null, wanderJoined:!!c.wanderJoined, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
     carryId: c.carry ? c.carry.id : null,
     carryIds: c.carryList ? c.carryList.map(b => b.id) : null,
     lich: !!c.lich, face: c.face||null, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
@@ -23095,6 +23363,8 @@ function restore(d){
     c.neutral = !!s.neutral; c.provoked = !!s.provoked; c.bossKey = s.bossKey || null; c.dropItems = s.dropItems || null;
     c.scholar = !!s.scholar; c.quest = s.quest || null; c.questsDone = s.questsDone || 0; c.offered = !!s.offered;
     c.immortal = s.immortal || null; c.questGive = s.questGive || null; c.questDone = !!s.questDone; c.questStage = s.questStage || 0;
+    c.wanderKey = s.wanderKey || null; c.wanderMet = s.wanderMet || 0;
+    c.wanderSeen = s.wanderSeen ? {...s.wanderSeen} : null; c.wanderJoined = !!s.wanderJoined;
     /* saves from before the questlines: a finished single-step quest counts as the road walked */
     if(c.questDone && c.questGive && IMMORTAL_LINES[c.questGive]){
       c.questStage = IMMORTAL_LINES[c.questGive].stages.length;
@@ -23990,7 +24260,10 @@ function applyCreation(race, gift, origin, sub){
        than the dead can, and somebody has to be able to bandage. No gift: dust is his, and
        giving her one would make her a second protagonist instead of the person beside him. */
     {
-      const q = findOpenNear(p.x + 1, p.y + 1, 4);
+      /* AT HIS SHOULDER, not somewhere in the same field. She was standing at the door when
+         he got there, and a random dart inside a four-tile box does not say that — it put her
+         six tiles off the moment an unrelated spawn upstream moved the RNG along. */
+      const q = findAdjacent(p.x, p.y, 4);
       const cz = makeChar('Czarina', 'player', q.x, q.y,
         {atk:22, def:25, tough:21, ath:10, medic:9, magic:6, race:'hollow', sex:'f',
          hollowTier:1, weapon:'w_rkat', armor:'a_pla', blades:31, armr:30, martial:14,
