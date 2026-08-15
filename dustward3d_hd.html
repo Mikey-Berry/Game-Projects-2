@@ -4004,6 +4004,44 @@ function spawnHostileSquad(kind){
 /* ============================================================ LOG / TIME */
 const logEl = document.getElementById('log');
 const chronicle = [];   /* the full, timestamped record — the transient feed forgets, this does not */
+/* ============================================================ THREADS
+   WHAT YOU ARE IN THE MIDDLE OF.
+
+   Every quest in this game was already made of the systems around it — ask in halls, walk out
+   and look, listen in the right hole — which is the right way to build them and completely
+   invisible if the only place the first step is ever stated is one line of a log that keeps
+   seven lines. Two notes came back saying the same thing in different words: the search for
+   Lyre "gives absolutely zero leads whatsoever", and reaching the second Fracture creates
+   urgency with "zero clarity on how to actually stop what's happening". Both were false. Both
+   were also true, because a mechanic nobody can find does not exist.
+
+   A THREAD is one line of standing text: what you are doing and what the next move is. It
+   is not a marker, it does not draw an arrow on the world, and it never tells you an answer
+   the world has not already told you — it is the note you would have written down yourself.
+   `threadSet` both records it and says it out loud once, so the step arrives in the feed
+   where you are looking AND stays somewhere you can go back to. */
+const threads = [];
+function threadOf(key){ return threads.find(t => t.key === key) || null; }
+function threadSet(key, title, step, opts){
+  const o = opts || {};
+  let t = threadOf(key);
+  if(!t){ t = {key, title, step:'', done:false, at:day, hint:''}; threads.push(t); }
+  t.title = title;
+  t.hint = o.hint || '';
+  if(t.step === step) return t;         /* the same step restated is not news */
+  t.step = step; t.at = day;
+  /* WORDS, NOT SYMBOLS. The page is set in Courier New and this file has already shipped two
+     tofu boxes by assuming a glyph was there — a pencil on the canvas and a box-drawing arrow
+     on a button. There is nothing here a plain word cannot say. */
+  if(!o.quiet) log(`${title.toUpperCase()} — ${step}`, 'good');
+  return t;
+}
+function threadDone(key, step){
+  const t = threadOf(key); if(!t || t.done) return;
+  t.done = true; t.step = step || t.step; t.at = day;
+  log(`${t.title.toUpperCase()}, DONE — ${t.step}`, 'good');
+}
+function threadsOpen(){ return threads.filter(t => !t.done).length; }
 function log(msg, cls=''){
   const d = document.createElement('div'); d.className = 'm '+cls; d.textContent = msg;
   logEl.appendChild(d);
@@ -4084,18 +4122,56 @@ function renderWorldNews(body){
 function openChronicles(){
   openModal('CHRONICLES', 'Everything the log has said, kept and dated. The newest is at the top.');
   const body = $('modalbody');
-  let filter = 'all';
+  /* OPEN ON THE THING YOU ARE DOING. A player with a live thread came here to find out what
+     the next move was; a player with none came to read back over what happened. */
+  let filter = threadsOpen() ? 'threads' : 'all';
   const rndr = () => {
     body.innerHTML = '';
     const bar = document.createElement('div');
     bar.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap';
-    for(const [key, label] of [['all','All'],['good','Results'],['bad','Trouble'],['world','The World']]){
+    for(const [key, label] of [['threads','Doing' + (threadsOpen() ? ` (${threadsOpen()})` : '')],
+                               ['all','All'],['good','Results'],['bad','Trouble'],['world','The World']]){
       const b = document.createElement('button');
       b.textContent = label; b.className = 'bbtn' + (filter===key ? ' on' : '');
       b.onclick = () => { filter = key; rndr(); };
       bar.appendChild(b);
     }
     body.appendChild(bar);
+    if(filter === 'threads'){
+      const sub = document.createElement('div');
+      sub.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:8px';
+      sub.textContent = 'What you are in the middle of, and what the next move is. Nothing here is a marker on the map.';
+      body.appendChild(sub);
+      const open = threads.filter(t => !t.done), shut = threads.filter(t => t.done);
+      if(!threads.length){
+        const n = document.createElement('div'); n.style.cssText = 'color:var(--dust)';
+        n.textContent = 'Nothing yet. Take a life with something in front of it, or wait for the sky to say something.';
+        body.appendChild(n);
+      }
+      for(const t of open.concat(shut)){
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:6px 0;border-bottom:1px solid rgba(120,100,80,.12)';
+        const h = document.createElement('div');
+        h.style.cssText = `font-size:12px;letter-spacing:1px;color:${t.done ? 'var(--dust)' : 'var(--gold)'}`;
+        h.textContent = t.title.toUpperCase() + (t.done ? ' — DONE' : '');
+        const m = document.createElement('div');
+        m.style.cssText = `font-size:12px;color:${t.done ? 'var(--dust)' : 'var(--bone)'};margin-top:2px`;
+        m.textContent = t.step;
+        row.appendChild(h); row.appendChild(m);
+        if(t.hint && !t.done){
+          const q = document.createElement('div');
+          q.style.cssText = 'font-size:11px;color:var(--dust);margin-top:2px';
+          q.textContent = t.hint;
+          row.appendChild(q);
+        }
+        const d = document.createElement('div');
+        d.style.cssText = 'font-size:10px;color:var(--dust);margin-top:2px';
+        d.textContent = `day ${t.at}`;
+        row.appendChild(d);
+        body.appendChild(row);
+      }
+      return;
+    }
     if(filter === 'world'){
       const sub = document.createElement('div');
       sub.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:8px';
@@ -4983,6 +5059,10 @@ function xpGain(c, stat, amt){
      again as fast as anybody and will never be much with a blade, and after a hundred days
      of play that is the whole difference between two people who started identical. */
   { const L = subOf(c).learn; if(L && L[stat] !== undefined) amt *= L[stat]; }
+  /* AND HOW MUCH OF A MIND IT WAS GIVEN. A shaped body's MIND axis is the difference between
+     a hand that will be exactly as good in a hundred days as it is now and one that is
+     genuinely learning its trade. Living people have no `learnMult` and are unaffected. */
+  if(c.learnMult) amt *= c.learnMult;
   if(c.age < 16) amt *= 1.6;
   else if(c.age > traitOf(c, 'deathAge', 62) - 7) amt *= 0.6;
   if(c.goal === stat) amt *= 1.25;
@@ -7950,7 +8030,16 @@ function physics(c, dt){
       /* --- the old bolts --- */
       if(c.stance==='ranged'){
         if((c.gift==='destruction' || c.omni) && c.mana >= SPELLS.firebolt.cost && d <= SPELLS.firebolt.range){ castFirebolt(c, t); return; }
-        if((c.gift==='dark' || c.omni) && c.mana >= SPELLS.darkbolt.cost && d <= SPELLS.darkbolt.range){ castDarkbolt(c, t); return; }
+        /* A DARKBOLT IS A MARKER, NOT A GUN. Its damage was pulled back to a token on purpose;
+           what it buys is the mark, and the mark does not stack with itself. So a dark caster
+           on RANGED used to empty a full pool re-marking a target that was already marked,
+           and end the fight with nothing left for the thing the pool is actually for.
+           Three rules now: don't re-mark, prefer somebody unmarked who is standing in range,
+           and keep a raise in the bank. */
+        if((c.gift==='dark' || c.omni) && c.mana >= SPELLS.darkbolt.cost + darkReserve(c) && d <= SPELLS.darkbolt.range){
+          const want = (t.markT || 0) > 1.5 ? nearestUnmarked(c) : t;
+          if(want) { castDarkbolt(c, want); return; }
+        }
       }
     }
     const w = c.weapon ? ITEMS[c.weapon] : null;
@@ -8521,10 +8610,16 @@ function reapPhylacteries(){
    The accelerant deliberately does not engage below ATTENDED. Ordinary casting has to stay
    free, or the whole magic system reads as a penalty and the correct play becomes never
    touching it. */
-const FRACTURE_DAYS = 120;        /* calendar-only days to land it; the one number to tune */
+/* 120 was too short, and the note that came back said exactly why: "especially if you spend a
+   lot of time wandering and figuring out how the game works." That is the correct way to play
+   a world like this one, and a clock that punishes it is a clock that wants you to already
+   know the game. 180 leaves room for a run that is mostly walking around, and the escalation
+   is on this number now — the tide, the gaunt draw, the rift cap and the blood moons all read
+   the stage rather than your notice — so lengthening it lengthens the whole curve at once. */
+const FRACTURE_DAYS = 180;        /* calendar-only days to land it; the one number to tune */
 const FRACTURE_STAGES = [
   {at:0,   name:'THE DUST FALLS',      tell:null},
-  {at:20,  name:'A STILLNESS',
+  {at:20,  name:'A STILLNESS', opens:true,
    tell:'The dust stopped falling. For eleven seconds, across the whole of the waste, it simply stopped — and then it went on as if nothing had happened.'},
   {at:40,  name:'THE THINNING',
    tell:'The tears are not closing on their own any more. Caravans go out on the north road and the road gives some of them back.'},
@@ -8577,6 +8672,7 @@ function advanceFracture(days){
       const anchor = player().find(c => c.state !== 'dead') || {x: W/2, y: H/2};
       worldEvent('fracture', anchor.x, anchor.y, st.tell);
       AU.news();
+      if(st.opens) openTheClosing();
     }
   }
 }
@@ -8952,6 +9048,81 @@ function openTheDoor(){
   worldEvent('door', x, y, 'The sky has opened out past the fences. Not a tear this time. A door, and it is standing wide.');
   AU.news();
   return theDoor;
+}
+/* ============================================================ THE CLOSING RITE
+   The door can be shut. It has always been able to be shut: somebody with a gift stands in it
+   for four minutes of held formula and pays a pile of flesh, iron and remains at the end, and
+   the sky closes. Every piece of that was in the game and none of it was anywhere a player
+   could find out about before the sky was already open — which is the worst possible moment to
+   start looking. The note that came back was fair: the last stage "creates a sense of urgency,
+   but zero clarity on how to actually stop what's happening."
+
+   So the answer is learnable, early, and from the world rather than from a menu. It starts the
+   day the dust stops falling, it is carried by the scholars — who are the only people in this
+   setting who write anything down — and it is finished by reading a Golden-Age codex, which is
+   an item that already drops out of the deep and already sells for six thousand.
+
+   It reveals information and nothing else. No shortcut, no discount, no marker: what you get
+   is the cost and the requirement, in advance, while there is still time to lay one in. */
+/* NAMED `closing` AND NOT `rite`, and its tick is `closingTick` and not `riteTick`, because
+   THE LAST RITE ALREADY OWNS THOSE NAMES. A second top-level `function riteTick` in the same
+   classic script does not collide loudly — the later declaration silently wins, so the first
+   version of this shipped a dead closing-rite tick AND an ascension rite being advanced twice
+   a frame. Nothing threw. One name, one meaning, in a file this size especially. */
+const closing = {on:false, told:false, known:false};
+function openTheClosing(){
+  if(closing.on) return;
+  closing.on = true;
+  threadSet('rite', 'What the stillness was',
+    'The dust stopped, and it has done that before. Ask a scholar — they are the only people out here who write anything down.',
+    {hint: 'Right-click any wandering scholar. Every town has news of where one is.'});
+}
+/* a scholar, asked about the stillness, knows what it was and what was done about it */
+function tellScholarOfTheClosing(sc){
+  if(!closing.on || closing.told) return false;
+  closing.told = true;
+  log(`${sc.name}: "The stillness. Yes. It is in the record twice — once nine generations ago, and once eleven seconds ago, and you were standing in the second one."`, 'good');
+  log(`${sc.name}: "The first Fracture did not close itself. Somebody shut it. By hand, standing in it, holding a formula until it gave. The working is written down — it is in a Golden-Age codex, and I have never held one."`, 'good');
+  worldEvent('rite', sc.x, sc.y,
+    'A scholar has been saying, to anyone who will stand still, that the first Fracture was closed by hand and that the working was written down.');
+  threadSet('rite', 'What the stillness was',
+    'The first Fracture was closed by hand, and the working was written down in a Golden-Age codex. Get one and read it.',
+    {hint: 'A Codex comes out of the deep — sealed redoubts, the old vaults, the things reagent hunters dig up. Bring it into your stores and somebody will read it.'});
+  return true;
+}
+/* Reading it. Held in the common stores is enough — somebody in the camp who can hold a
+   formula will get to it, and the codex is not consumed: it is a book, not a reagent. */
+let _closeT = 0;
+function closingTick(dt){
+  if(!closing.on) return;
+  if((_closeT -= dt) > 0) return;
+  _closeT = 4;
+  /* on the same slow beat, because it rebuilds a cost string and there is no reason at all
+     for that to happen sixty times a second */
+  if(theDoor) closingDoorThread();
+  if(closing.known || !closing.told || campHas('codex') < 1) return;
+  const reader = player().find(c => c.state === 'ok' && c.gift && (!c.undead || c.lich));
+  if(!reader) return;
+  closing.known = true;
+  log(`${reader.name} reads the codex through twice and then a third time, slowly. "It is not a spell. It is a HOLD. You stand in the thing and you do not let go of it, and you pay it at the end."`, 'good');
+  log(`THE CLOSING RITE. When the sky opens: send everyone with a gift to the door and they hold it. It will want ${costText(DOOR_SEAL_COST)} at the moment it gives, plus more for every seat that has fallen by then.`, 'good');
+  worldEvent('rite', reader.x, reader.y,
+    'Somebody out in the waste has read a Golden-Age codex and knows how the first Fracture was closed.');
+  threadSet('rite', 'The closing rite',
+    `Known. When the door opens, right-click it with every gifted body you have and they will hold it. Lay in ${costText(DOOR_SEAL_COST)} before then — the price rises for every seat that falls.`,
+    {hint: 'The rite is a long hold, not a cast. A caster driven off it loses the progress; more casters make it shorter.'});
+}
+/* and once it is standing, the thread becomes a progress readout rather than a lesson */
+function closingDoorThread(){
+  if(!theDoor) return;
+  const pct = Math.round(theDoor.work / DOOR_WORK * 100);
+  const cost = costText(doorSealCost());
+  threadSet('rite', 'The closing rite',
+    closing.known
+      ? `The door is open. The hold is ${pct}% of the way through, and it will want ${cost} when it gives.`
+      : `The door is open and you do not know what to do about it. A scholar knows; a Golden-Age codex knows better.`,
+    {hint: closing.known ? 'Right-click the door with every gifted body you have. They have to stay on it.'
+                      : 'Ask a scholar about the stillness, then find a codex.', quiet: true});
 }
 function doorSealCost(){
   /* every seat that falls makes the closing dearer — the door is wider for it */
@@ -10455,6 +10626,28 @@ function dispelPhantom(c){
    target up to the dead. The bonus is deliberately slight: it is multiplied by every risen
    swinging at that target, and a host of twenty would run away with anything larger. */
 const MARK_TIME = 9;
+/* WHAT A DARK CASTER KEEPS BACK. A necromancer's pool is for raising and for the things that
+   actually turn a fight; bolts are what they do with the change. Somebody who can raise holds
+   a raise in reserve, and everyone else holds a little anyway so they are not empty the moment
+   something worth spending on walks in. */
+function darkReserve(c){
+  if(!c) return 0;
+  const canRaise = attOf(c, 'dark') >= 2 && (!c.undead || c.lich);
+  return canRaise ? SPELLS.raise.cost : Math.round(maxMana(c) * 0.2);
+}
+/* somebody in range who does not already carry a mark. Null if everyone worth hitting has one,
+   which is the case where the right move is to stand there and get the mana back. */
+function nearestUnmarked(c){
+  let best = null, bd = SPELLS.darkbolt.range;
+  for(const o of charsNear(c.x, c.y, SPELLS.darkbolt.range)){
+    if(o === c || o.state !== 'ok' || (o.markT || 0) > 1.5) continue;
+    if(!hostile(c, o) && !(o.neutral && o.provoked)) continue;
+    if((o.floor || 0) !== (c.floor || 0)) continue;
+    const d = dist(c.x, c.y, o.x, o.y);
+    if(d < bd){ bd = d; best = o; }
+  }
+  return best;
+}
 function castDarkbolt(c, foe){
   const dmg = 5 + Math.min(9, c.stats.magic * 0.22);
   projectiles.push({x:c.x, y:c.y-0.5, target:foe, speed:11, floor:c.floor||0,
@@ -11455,12 +11648,20 @@ const SHAPE_AXES = [
    desc:'How well it is put together. Badly, and limbs come off in a cut fight; well, and there is no seam for a blade to find.'},
   {k:'plate', label:'PLATING',lo:'bare',      hi:'chitinous',
    desc:'What is grafted over it. Bone sheds a cut and folds under a hammer; chitin turns a point and cracks. Both are dead weight.'},
-  {k:'quiet', label:'QUIET',  lo:'clamorous', hi:'silent',
-   desc:'How loud the thing is by existing. A host of loud ones is heard, and what hears it has been getting closer for nine generations.'},
-  {k:'will',  label:'WILL',   lo:'leashed',   hi:'unbound',
-   desc:'How far from its master it still works. Leashed is cheap and must be kept close; unbound operates alone.'},
+  /* ---- MIND ----
+     This was WILL, and WILL was one number: how far from its master the thing kept working.
+     That is a real cost, but a thin one, and it left the interesting question — how much of a
+     person is in there — as something that only ever happened TO a corpse that arrived already
+     named. QUIET sat beside it charging shaping points for a noise budget that stopped
+     mattering the day the Fracture clock moved onto the calendar.
+     So the two are gone and one axis stands where they were. MIND is the leash AND what the
+     thing can become: a hand at the bottom that must be kept close and will never be more than
+     a hand, and at the top something that walks its own errands, learns half again as fast,
+     can be set to work that needs a mind, and is most of the way to a lieutenant already. */
+  {k:'mind',  label:'MIND',   lo:'hollow',    hi:'awake',
+   desc:'How much is left in there. Hollow works only near its master and can never be raised up. Awake keeps its own leash, learns faster, can be set to work that wants a mind, and needs fewer lives to earn a name.'},
 ];
-const SHAPE_BUDGET_BASE = 14;         /* seven axes at neutral — an even body is free */
+const SHAPE_BUDGET_BASE = 12;         /* six axes at neutral — an even body is free */
 const SHAPE_MAX = 5;                  /* per axis */
 /* what a point costs, above the free allocation */
 const SHAPE_EXTRA = {vflesh:4, remains:3, iron:2};
@@ -11507,12 +11708,23 @@ function applyShape(u, shape){
   else if(pl === 3) u.natArmor = {def: 0.18, cls: 'plate'};
   else             u.natArmor = null;    /* two is neutral, and neutral is bare */
   if(pl >= 3) u.speedMult = (u.speedMult || 1) * (1 - (pl - 2) * 0.07);
-  /* ---- QUIET: how loud it is by existing ----
-     The one axis that reaches outside the fight. Notice feeds the Fracture clock, so a host
-     of loud bodies is a host that brings the sky down sooner. */
-  u.noise = Math.max(0.05, 1.5 - (shape.quiet ?? 2) * 0.30);
-  /* ---- WILL: how far it works from the hand that made it ---- */
-  u.leash = 10 + (shape.will ?? 2) * 14;        /* tiles before the binding starts to fray */
+  /* ---- NOISE, which is no longer a slider ----
+     A host is still heard, and notice still buys the dark's attention and the living's
+     opinion of you. It is just not something anybody should be spending shaping points to buy
+     down: how loud a thing is by existing follows from how big it is, which is a decision
+     already made one axis up. */
+  u.noise = clamp(0.75 + m * 0.28, 0.1, 2.0);
+  /* ---- MIND: how much is in there, and therefore how far it can be trusted to go ----
+     One number sets three things — the leash, how fast it learns, and whether it can ever be
+     raised up. The bottom of the scale is the cheap hand the old WILL:0 was, and it is now
+     honest about the trade: it is cheap because it is a tool, and it will never be anything
+     else however many fights it lives through. */
+  const mi = shape.mind ?? 2;
+  u.mindTier = mi;
+  u.leash = mi >= 5 ? 1e9 : ([8, 14, 24, 40, 70][mi] ?? 24);
+  u.learnMult = [0.5, 0.7, 1.0, 1.25, 1.5, 1.8][mi] ?? 1;
+  u.noMind = mi <= 1;                  /* nothing in there to raise up: promotion is closed */
+  if(mi >= 4) u.minded = true;         /* and it can be set to work that wants a mind */
   /* A colossal thing is a wall whether you meant it to be or not — and a wiry one is not,
      even when the recipe it came off was. A Skittering Brute that draws blades toward it is
      a contradiction; the whole reason to build one is that it does not. */
@@ -11523,13 +11735,13 @@ function applyShape(u, shape){
 /* the thing earns its own description, so the roster reads as bodies rather than recipes */
 function shapeNameFor(sh){
   const m = sh.mass || 0, f = sh.force || 0, h = sh.haste || 0;
-  const kn = sh.knit ?? 2, pl = sh.plate ?? 2, q = sh.quiet ?? 2, w = sh.will ?? 2;
+  const kn = sh.knit ?? 2, pl = sh.plate ?? 2, mi = sh.mind ?? 2;
   if(pl >= 4 && m >= 4) return 'Carapace-Wrought';
   if(pl >= 4)           return 'Chitin-Grafted';
   if(kn >= 5)           return 'Seamless';
   if(kn <= 0)           return 'Shambles';
-  if(q >= 5 && m <= 1)  return 'Silent';
-  if(w >= 5)            return 'Unbound';
+  if(mi >= 5)           return 'Awakened';
+  if(mi <= 0)           return 'Hollowed';
   if(m >= 4 && h <= 1) return 'Bone Golem';
   if(m >= 4)           return 'Colossus-Wrought';
   if(h >= 4 && m <= 1) return 'Skittering';
@@ -11565,11 +11777,20 @@ function shapeCost(shape, caster){
    arrived. There was no way to look at a risen that had been through nine fights with you
    and decide it had earned a name. */
 const PROMOTE_COST = {vflesh:12, remains:10, iron:6, tome:1};
+function promoteKills(u){
+  /* An awakened body is most of the way there already; a hollow one never gets there at all. */
+  return (u && (u.mindTier || 2) >= 5) ? 4 : 6;
+}
 function canPromote(u, caster){
   if(!u || u.lieutenant || u.lich) return {ok:false, why:'already stands apart'};
   if(!u.undead || !u.crafted) return {ok:false, why:'not yours to raise up'};
   if(u.master !== caster) return {ok:false, why:'bound to another will'};
-  if((u.kills || 0) < 6) return {ok:false, why:`has taken ${u.kills||0} of the 6 lives it needs`};
+  /* THE HOLLOW END OF THE MIND AXIS IS A CLOSED DOOR, and that is what makes it cheap.
+     Shaping a thing with nothing in it buys you points back precisely because you have given
+     up on it ever being anybody. */
+  if(u.noMind) return {ok:false, why:'shaped hollow — there is nothing in there to raise up'};
+  const need = promoteKills(u);
+  if((u.kills || 0) < need) return {ok:false, why:`has taken ${u.kills||0} of the ${need} lives it needs`};
   if(!canAfford(PROMOTE_COST)) return {ok:false, why:`needs ${costText(PROMOTE_COST)}`};
   return {ok:true};
 }
@@ -11696,13 +11917,17 @@ function openBinding(circle){
         h.textContent = 'RAISE ONE UP'; body.appendChild(h);
         const note = document.createElement('div');
         note.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:4px';
-        note.textContent = `A lieutenant keeps a mind, holds a name, and stops weighing against your binding. ${costText(PROMOTE_COST)}, and six lives taken.`;
+        note.textContent = `A lieutenant keeps a mind, holds a name, and stops weighing against your binding. ${costText(PROMOTE_COST)}, and the lives it needs — six, or four for one shaped awake. Nothing shaped hollow can be raised up at all.`;
         body.appendChild(note);
         for(const u of mine.slice(0, 12)){
           const chk = canPromote(u, ritualist);
           const row = document.createElement('div'); row.className = 'trow';
           const shTxt = u.shape ? ` · m${u.shape.mass}/f${u.shape.force}/h${u.shape.haste}` : '';
-          row.innerHTML = `<span class="tn">${u.name} <span style="color:var(--dust)">${u.kills||0} taken${shTxt}</span></span>`;
+          /* say the MIND out loud here, because it is the field that decides whether this row
+             can ever do anything, and it is not visible anywhere else on the body */
+          const mindTxt = u.noMind ? ' · <span style="color:#c98a7a">hollow — cannot be raised up</span>'
+            : (u.mindTier || 2) >= 4 ? ` · <span style="color:#a3c47a">awake</span>` : '';
+          row.innerHTML = `<span class="tn">${u.name} <span style="color:var(--dust)">${u.kills||0}/${promoteKills(u)} taken${shTxt}</span>${mindTxt}</span>`;
           const btn = document.createElement('button');
           btn.textContent = 'RAISE UP';
           btn.disabled = !chk.ok;
@@ -11935,6 +12160,7 @@ function update(dt){
   rescueTick(dt);             /* and whether anyone is coming for what you took */
   lyreTick(dt);            /* and whether anyone has walked out far enough to find her */
   motherTick(dt);             /* and whether anyone has gone far enough DOWN to find her */
+  closingTick(dt);            /* and whether anybody has read the codex sitting in the stores */
   commandTick(dt);            /* and what the bands you sent out are doing about it */
   contractTick(dt);           /* and whoever is on a road because you said you would see them across it */
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
@@ -18179,9 +18405,59 @@ function renderOverlay(){
       if(a && b){ cx.strokeStyle='rgba(196,84,58,0.5)'; cx.lineWidth=1; cx.beginPath(); cx.moveTo(a.x,a.y); cx.lineTo(b.x,b.y); cx.stroke(); }
     }
   }
+  /* ---------- THE ONE YOU WERE PAID TO KEEP ALIVE ----------
+     An escort job hands you a name and nothing else, and a name in a town of eighty people is
+     a game of clicking strangers — worse when they have wandered out of sight, which is when
+     you most need to find them. A ward is not a stranger: you agreed to walk them somewhere.
+     So they carry a standing mark and their name, out of vision like a compass needle, and an
+     arrow at the screen edge when they are off it. */
+  const wards = chars.filter(c => c.vip && c.escortId && c.state !== 'dead');
+  for(const w of wards){
+    const hh = groundY(w.x, w.y) + floorY(w.floor) + 1.9 * (w.big || 1);
+    const p = w2s(w.x, w.y, hh);
+    const onScreen = p && p.x > 4 && p.x < viewW() - 4 && p.y > 4 && p.y < viewH() - 4;
+    const hurt = w.state !== 'ok';
+    const col = hurt ? '#e07a5f' : '#e8c86a';
+    if(onScreen && onShownFloor(w)){
+      /* a ring above the head, not a triangle — the triangles already mean "one of mine" */
+      cx.strokeStyle = col; cx.lineWidth = 2;
+      cx.beginPath(); cx.arc(p.x, p.y - 14, 5, 0, Math.PI * 2); cx.stroke();
+      cx.beginPath(); cx.moveTo(p.x, p.y - 9); cx.lineTo(p.x, p.y - 3); cx.stroke();
+      setFont('bold 11px monospace');
+      const label = hurt ? `${w.name} — DOWN` : w.name;
+      cx.fillStyle = '#141008'; cx.fillText(label, p.x + 1, p.y - 21);
+      cx.fillStyle = col;      cx.fillText(label, p.x, p.y - 22);
+    } else {
+      /* off the screen, or under a mountain: an arrow on the rim pointing the way */
+      const cxm = viewW() / 2, cym = viewH() / 2, pad = 40;
+      let ax, ay;
+      if(p){ ax = p.x; ay = p.y; }
+      else { const q = w2s(w.x, w.y, groundY(w.x, w.y)); ax = q ? q.x : cxm; ay = q ? q.y : cym; }
+      let vx = ax - cxm, vy = ay - cym;
+      const len = Math.hypot(vx, vy);
+      /* dead centre and unprojectable at once means there is no direction to point in */
+      if(len < 1){ setFont('bold 12px monospace'); continue; }
+      /* project onto the viewport rim, keeping the direction */
+      const k = Math.min((cxm - pad) / Math.abs(vx || 1e-6), (cym - pad) / Math.abs(vy || 1e-6));
+      const ex = cxm + vx * k, ey = cym + vy * k;
+      const a = Math.atan2(vy, vx);
+      cx.save();
+      cx.translate(ex, ey); cx.rotate(a);
+      cx.fillStyle = col;
+      cx.beginPath(); cx.moveTo(11, 0); cx.lineTo(-7, -7); cx.lineTo(-7, 7); cx.fill();
+      cx.restore();
+      setFont('bold 11px monospace');
+      const d0 = player()[0] ? Math.round(dist(player()[0].x, player()[0].y, w.x, w.y)) : 0;
+      const label = `${w.name}${d0 ? ' ' + d0 : ''}`;
+      const tx = clamp(ex - vx / len * 26, 46, viewW() - 46), ty = clamp(ey - vy / len * 20, 20, viewH() - 12);
+      cx.fillStyle = '#141008'; cx.fillText(label, tx + 1, ty + 1);
+      cx.fillStyle = col;      cx.fillText(label, tx, ty);
+    }
+    setFont('bold 12px monospace');
+  }
   /* per-character overlays */
   for(const c of chars){
-    if(c.faction!=='player' && visAt(c.x, c.y) !== 2) continue;
+    if(c.faction!=='player' && visAt(c.x, c.y) !== 2 && !(c.vip && c.escortId)) continue;
     if(!onShownFloor(c)) continue;                 /* it is under a mountain; leave it there */
     const hh = (groundY(c.x,c.y) + floorY(c.floor) + 1.9*(c.big||1));
     const top = w2s(c.x, c.y, hh);
@@ -18469,6 +18745,16 @@ function renderMinimap(){
     mmcx.fillRect(c.x*128/W-1, c.y*128/H-1, 2, 2);
   }
   mmcx.drawImage(mmFog, 0, 0);
+  /* THE WARD GOES ON AFTER THE FOG. Everything else on this map is drawn under it and is
+     therefore invisible on ground you have not walked — which is exactly the ground an escort
+     wanders off onto. You agreed to walk this person somewhere; you know where they are. */
+  for(const w of chars){
+    if(!w.vip || !w.escortId || w.state === 'dead') continue;
+    mmcx.fillStyle = w.state === 'ok' ? '#e8c86a' : '#e07a5f';
+    mmcx.fillRect(w.x*128/W - 2, w.y*128/H - 2, 4, 4);
+    mmcx.strokeStyle = '#141008'; mmcx.lineWidth = 1;
+    mmcx.strokeRect(w.x*128/W - 2.5, w.y*128/H - 2.5, 5, 5);
+  }
   /* camera viewport frame stays on top of the fog */
   const span = camDist * 1.3;
   mmcx.strokeStyle = 'rgba(232,220,196,0.6)';
@@ -20911,6 +21197,11 @@ cv.addEventListener('mousedown', e => {
         log(`${m0.name} goes to speak with ${sch.name}.`);
         return;
       }
+      /* THE LEDGER COMES OUT BEFORE THE SHOP DOES. A scholar who is told a corpse-field has
+         stopped producing has something to say about it, and it is the only lead on the second
+         leg of the search — it should not be buried behind a trade window. */
+      if(tellScholarOfTheCairn(sch)) return;
+      if(tellScholarOfTheClosing(sch)) return;
       openScholar(sch, movers[0]);
       return;
     }
@@ -21622,7 +21913,7 @@ function snapshot(){
     cmd: c.cmd ? {...c.cmd, home:{...c.cmd.home}} : null, under: c.under ?? null,
     wasJob: c.wasJob ? [...c.wasJob] : null, heldAt:c.heldAt||null, heldT:c.heldT||0, midden:c.midden||null, caveId:c.caveId||null, roomId:(c.roomId??null), caveDweller:!!c.caveDweller, floor: c.floor||0, captured:!!c.captured, dragId: c.drag ? c.drag.id : null,
     clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
-    servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0,
+    servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null,
     salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
@@ -21689,8 +21980,11 @@ function snapshot(){
     chars: chars.filter(c => !c.phantom).map(sChar),
     corpseIds: corpses.map(c=>c.id),
     cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
+    threads: threads.map(t => ({key:t.key, title:t.title, step:t.step, hint:t.hint, done:t.done, at:t.at})),
+    closing: {on: closing.on, told: closing.told, known: closing.known},
     search: {on: search.on, asked: {...search.asked}, found: search.found,
-             siteId: search.siteId, leads: search.leads, met: search.met},
+             siteId: search.siteId, leads: search.leads, met: search.met,
+             cairn: !!search.cairn, told: !!search.told, siteId2: search.siteId2 ?? -1},
     mother: {on: mother.on, caveId: mother.caveId, found: mother.found,
              spoken: mother.spoken, reads: mother.reads, toldPrice: mother.toldPrice},
     shrines: shrines.map(sh => ({broken: !!sh.broken, hp: Math.round(sh.hp), reT: sh.reT || 0})),
@@ -21714,10 +22008,28 @@ function restore(d){
      in the world would wake up in somebody else's cell. */
   for(let i = cells.length - 1; i >= 0; i--) if(cells[i].kind === 'player') cells.splice(i, 1);
   for(const cl of cells){ cl.holds = 0; cl.hp = CELL_HP; }
+  /* A THREAD IS THE PLAYER'S NOTE TO THEMSELVES and has to come back exactly, or reloading a
+     save is how you lose track of what you were doing. Restored wholesale, not rebuilt from
+     the quest flags — a thread's wording is written at the moment it is set. */
+  threads.length = 0;
+  if(d.threads) for(const t of d.threads) threads.push({key:t.key, title:t.title, step:t.step, hint:t.hint || '', done:!!t.done, at:t.at || 1});
+  if(d.closing){ closing.on = !!d.closing.on; closing.told = !!d.closing.told; closing.known = !!d.closing.known; }
+  else { closing.on = fractureStage >= 1; closing.told = false; closing.known = false; }
   if(d.search){
     search.on = !!d.search.on; search.asked = {...(d.search.asked || {})};
     search.found = !!d.search.found; search.siteId = d.search.siteId ?? -1;
     search.leads = d.search.leads || 0; search.met = !!d.search.met;
+    search.cairn = !!d.search.cairn; search.told = !!d.search.told;
+    search.siteId2 = d.search.siteId2 ?? -1;
+    /* A SAVE FROM BEFORE THE SECOND LEG. It has `found` set and no second site at all, and
+       without this the trail ends at a corpse-field with nobody standing in it. Roll the leg
+       it never had, and treat the first field as already walked. */
+    if(search.found && search.siteId2 < 0 && !search.met){
+      const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+      if(sites.length > 1){
+        do { search.siteId2 = ri(0, sites.length - 1); } while(search.siteId2 === search.siteId);
+      } else search.siteId2 = search.siteId;
+    }
   }
   if(d.mother){
     mother.on = !!d.mother.on; mother.caveId = d.mother.caveId ?? -1;
@@ -21883,6 +22195,14 @@ function restore(d){
     if(s.natArmor) c.natArmor = {...s.natArmor};
     if(s.noise != null) c.noise = s.noise;
     if(s.leash != null) c.leash = s.leash;
+    /* MIND, AND WHAT A SAVE WRITTEN BEFORE IT LOOKS LIKE. An old body carries `shape.will`
+       and `shape.quiet` and no `mind`, so it comes back with no `mindTier`, no `learnMult`
+       and `noMind` false: it keeps the leash it was built with, learns at the ordinary rate,
+       and can still be raised up. Nothing already standing in somebody's world gets worse. */
+    if(s.mindTier != null) c.mindTier = s.mindTier;
+    if(s.learnMult != null) c.learnMult = s.learnMult;
+    c.noMind = !!s.noMind;
+    if(c.shape && c.shape.mind === undefined && c.shape.will !== undefined) c.shape.mind = c.shape.will;
     c.conviction = s.conviction || c.conviction || rollConviction(c.gift); c.regard = s.regard || 0;
     /* and a save written before the gift ruled it out gets the reroll on the way in, or the
        devout necromancers already walking around stay devout necromancers forever */
@@ -22287,16 +22607,25 @@ $('btn-move').onclick = () => { openMoveDialog(); };
 
    Where she actually is, is decided at worldgen and not revealed. She is alive. What she has
    become in the meantime is the part he is not ready for. */
-const search = {on: false, asked: {}, found: false, siteId: 0, leads: 0, met: false};
+const search = {on: false, asked: {}, found: false, siteId: 0, siteId2: -1, leads: 0,
+                met: false, cairn: false, told: false};
 function startTheSearch(me){
   search.on = true; search.asked = {}; search.found = false; search.leads = 0; search.met = false;
+  search.cairn = false; search.told = false;
   /* she is somewhere out past the last of the towns — the corpse sites are the places the
      exiled ended up, which is exactly where somebody sent here to die would have gone */
   const sites = (typeof corpseSites !== 'undefined' && corpseSites.length) ? corpseSites : null;
   search.siteId = sites ? ri(0, sites.length - 1) : -1;
+  /* AND SHE DID NOT STAY THERE. The second field is where she is now; the first is only where
+     she was put. Rolled here so the whole trail exists from the first day of the run. */
+  search.siteId2 = search.siteId;
+  if(sites && sites.length > 1) do { search.siteId2 = ri(0, sites.length - 1); } while(search.siteId2 === search.siteId);
   worldEvent('lyre', me.x, me.y,
     'A man came through at the edge of the world wearing a crown, with six dead walking behind him. He is asking after a woman. He does not ask politely.');
-  log("LYRE. She came through before you, and they did not give her a retinue. Ask in the halls — somebody saw where she was sent.", 'good');
+  log("LYRE. She came through before you, and they did not give her a retinue.", 'good');
+  threadSet('lyre', 'The search for Lyre',
+    'Ask after her at a hall. Any town Leader will do — three tellings will put it together.',
+    {hint: 'A Leader stands in the big house at the middle of a town. Talk to them and pick ASK AFTER LYRE.'});
 }
 /* asking after her: any town leader, once each, and the third one puts it together */
 function askAfterLyre(t, L){
@@ -22312,6 +22641,10 @@ function askAfterLyre(t, L){
     worldEvent('lyre', site.x, site.y,
       'Three tellings agree. A woman was put out past the last fence years ago, and walked toward the corpse-fields on purpose.');
     say(L || t.leader || {name:t.name}, 'Nobody walks out that way to live.');
+    const from = player()[0] || {x: t.x, y: t.y};
+    threadSet('lyre', 'The search for Lyre',
+      `Three halls agree on where she was put out. Walk to the corpse-field — ${placeHint(from.x, from.y, site.x, site.y)}.`,
+      {hint: 'It is a long way past the last fence. Take water and somebody who can fight.'});
   } else {
     const said = [
       '"There was a woman. Southern accent, no kit, would not say who sent her. She did not stay."',
@@ -22319,7 +22652,48 @@ function askAfterLyre(t, L){
       '"She had your face on her, now you stand there. She went out past the fence and nobody stopped her."',
     ][Math.min(search.leads - 1, 2)];
     log(`${L ? L.name : t.name}: ${said}`, '');
+    threadSet('lyre', 'The search for Lyre',
+      `${search.leads} of three halls have told you what they know. Ask at ${3 - search.leads} more.`,
+      {hint: 'A Leader stands in the big house at the middle of a town. Each town knows a different piece.'});
   }
+}
+/* ---------- THE SECOND LEG: SHE WAS NOT WHERE THEY PUT HER ----------
+   Three tellings and a walk was a quest with one verb in it. What is out at the first field is
+   the evidence that she LIVED — a cairn, and a ring of tears closed by hand, which is the one
+   thing in this world nobody does. That is a fact about the map, and there is exactly one kind
+   of person who tracks facts about the map: the scholars, who have been buying marrow off this
+   stretch of waste for years and know precisely which fields have stopped producing it. */
+function lyreCairn(){
+  if(!search.on || !search.found || search.cairn || search.met) return;
+  const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+  const site = sites[search.siteId]; if(!site) return;
+  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 12);
+  if(!near) return;
+  search.cairn = true;
+  log('There is a cairn here, built by somebody who had nothing to build it with but what was lying about. It is not a grave — it is a marker, and it has been added to.', 'good');
+  log('And every tear in this field has been SEALED. By hand, one at a time, badly at first and then well. Whoever did this stood here for years and then moved on.', 'good');
+  worldEvent('lyre', site.x, site.y,
+    'The corpse-field past the last fence has stopped giving up marrow. Every tear in it is shut, and somebody stacked a cairn in the middle of it.');
+  say(near, 'She was here. She was here a long time, and she left on her own feet.');
+  threadSet('lyre', 'The search for Lyre',
+    'She lived here for years and moved on. Find somebody who tracks where the marrow stops coming from — a wandering scholar buys it by the sackful and knows every field in the waste.',
+    {hint: 'Right-click any scholar out in the world. They will be interested in a field that has gone quiet.'});
+}
+/* the scholar names the field she is in now. It costs nothing but finding one. */
+function tellScholarOfTheCairn(sc){
+  if(!search.on || !search.found || !search.cairn || search.told || search.met) return false;
+  const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+  const site2 = sites[search.siteId2]; if(!site2) return false;
+  search.told = true;
+  const from = player()[0] || sc;
+  log(`${sc.name}: "A field that has stopped producing. Yes. I keep a ledger of those, and there are four, and they went quiet in ORDER — one after another, walking outward." They turn the page around so you can see it.`, 'good');
+  log(`${sc.name}: "Whatever is doing it is working through them. This is the one that went quiet last." They tap the page.`, 'good');
+  worldEvent('lyre', site2.x, site2.y,
+    'A scholar has been keeping a ledger of the fields that stopped giving up marrow. They go quiet in order, outward, as if something is walking.');
+  threadSet('lyre', 'The search for Lyre',
+    `The scholar's ledger says the fields go quiet in order, and names the newest — ${placeHint(from.x, from.y, site2.x, site2.y)}. She is still working. Go and stand in it.`,
+    {hint: 'She is not a marker that turns green. She is a person, and she is busy.'});
+  return true;
 }
 /* She is not a marker that turns green. She is a person standing in a corpse-field who has
    been doing the opposite of what her brother came here to do, and the meeting is the whole
@@ -22329,8 +22703,11 @@ function lyreTick(dt){
   if(!search.on || !search.found || search.met) return;
   if((_ilsT -= dt) > 0) return;
   _ilsT = 3;
+  /* the first field is the cairn; she is standing in the last one the scholar's ledger names */
+  if(!search.cairn){ lyreCairn(); return; }
+  if(!search.told) return;
   const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
-  const site = sites[search.siteId];
+  const site = sites[search.siteId2 >= 0 ? search.siteId2 : search.siteId];
   if(!site) return;
   const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 14);
   if(!near) return;
@@ -22349,6 +22726,7 @@ function lyreTick(dt){
     'She is alive. She has been out here a long time, and she has not been idle: the tears in this stretch of waste are closed, one after another, by hand.');
   log('LYRE. She is standing in the middle of a corpse-field, alive, and the tears around her have all been sealed. She has been doing this for years.', 'good');
   log('She has seen the crown. Talk to her.', 'good');
+  threadDone('lyre', 'Found. She is alive, she is not sorry, and she is still working. Talk to her.');
 }
 /* ---------- THE DESCENT: LOOKING FOR MOTHER ----------
    The world already says who she is; nobody has put the two halves together. The Scholars
@@ -22375,7 +22753,10 @@ function startTheDescent(me){
   mother.caveId = (typeof caves !== 'undefined' && caves.length) ? caves[ri(0, caves.length - 1)].id : -1;
   worldEvent('mother', me.x, me.y,
     'Something walked out of a sealed redoubt in the waste, alone, wearing what the people inside it were wearing. It did not close the door behind it.');
-  log('MOTHER. You were cut off something and fitted to a body, and the something is still alive and still held. She is under a mountain. Press Q to be quiet and listen.', 'good');
+  log('MOTHER. You were cut off something and fitted to a body, and the something is still alive and still held.', 'good');
+  threadSet('mother', 'Looking for Mother',
+    'She is under a mountain, and you can hear her. Press Q anywhere to stop and listen — the reading is vague at the surface and sharpens as you go down.',
+    {hint: 'A Hollow hears more than a host, and the dust art is her own frequency. Find a cave mouth and descend; Q again on every floor.'});
 }
 function motherCave(){ return (typeof caves !== 'undefined') ? caves.find(v => v.id === mother.caveId) : null; }
 /* Which hole somebody is standing in. `caveId` is stamped on the things that LIVE down there,
@@ -22418,11 +22799,26 @@ function listenForMother(){
   /* underground, in the right hole: the reading stops being a guess */
   if(below && caveContaining(c) === cv){
     const bottom = -cv.depth;
-    if((c.floor || 0) <= bottom) say(c, 'She is through this wall. She has stopped pretending to breathe.');
-    else say(c, `Down. ${Math.abs(bottom - (c.floor || 0))} more floors of down.`);
+    if((c.floor || 0) <= bottom){
+      say(c, 'She is through this wall. She has stopped pretending to breathe.');
+      threadSet('mother', 'Looking for Mother', 'The right hole, the bottom floor. She is through this wall.',
+        {hint: 'Find the vault door on this floor and stand at it.'});
+    } else {
+      say(c, `Down. ${Math.abs(bottom - (c.floor || 0))} more floors of down.`);
+      /* THE READING IS THE QUEST, so it is what the journal keeps. Anything he last heard is
+         worth more than a step written months ago at the start of the run. */
+      threadSet('mother', 'Looking for Mother',
+        `The right hole. ${Math.abs(bottom - (c.floor || 0))} more floors down from where you are standing.`,
+        {hint: 'Take the stairs down. Press Q on each floor to check you are still on her.'});
+    }
     return;
   }
-  if(below){ say(c, 'Rock, and water moving in it, and nothing that knows my name. Wrong hole.'); return; }
+  if(below){
+    say(c, 'Rock, and water moving in it, and nothing that knows my name. Wrong hole.');
+    threadSet('mother', 'Looking for Mother', 'Wrong hole. She is not under this one — come up and try another cave mouth.',
+      {hint: 'Press Q on the surface for a bearing before you commit to a descent.'});
+    return;
+  }
   const band = d < 18 ? 'close' : d < 45 ? 'near' : d < 90 ? 'far' : 'distant';
   const dir = acu >= 3 ? bearingFrom(c, cv.mouth.x, cv.mouth.y) : null;
   const lines = {
@@ -22432,6 +22828,11 @@ function listenForMother(){
     distant: 'Almost nothing. A pull, the way a tooth pulls before it goes.',
   };
   say(c, lines[band] + (dir ? ` It comes from the ${dir}.` : ''));
+  threadSet('mother', 'Looking for Mother',
+    dir ? `She reads ${band} to the ${dir} of where you last listened. Walk that way and listen again; find a cave mouth and go down.`
+        : `She reads ${band} from where you last listened, with no direction to it yet.`,
+    {hint: dir ? 'The reading sharpens as you close, and stops guessing entirely once you are in the right hole.'
+               : 'A better ear for the dust art would give the reading a bearing. Train dust, or listen with a Hollow.'});
   if(!dir && acu < 3 && mother.reads === 2)
     log('The reading is blunt. A better ear for the dust art would give it a direction.', '');
 }
