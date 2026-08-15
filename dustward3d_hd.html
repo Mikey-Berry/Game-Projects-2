@@ -1414,10 +1414,11 @@ function armorPen(c){
   if(!it || !it.pen) return 0;
   return it.pen * (1 - clamp(c.stats.armr, 0, 100)/125);
 }
-/* A Bone Mule was a beast of burden with nothing in the world to carry. It hauls the dead
-   now — three at a time, which is the difference between a battlefield you can strip and one
-   you can only pick at. Everything else manages one body over a shoulder. */
-function carryCap(c){ return c.mule ? 3 : 1; }
+/* A Bone Mule was a beast of burden with nothing in the world to carry. It hauled the dead —
+   three at a time, which is the difference between a battlefield you can strip and one you
+   can only pick at — and the Gravecart has taken the job outright at six. Everything else
+   manages one body over a shoulder. */
+function carryCap(c){ return c.cart ? 6 : c.mule ? 3 : 1; }
 function carried(c){ return (c.carry ? 1 : 0) + (c.carryList ? c.carryList.length : 0); }
 function takeBody(c, body){
   if(!body || body.state !== 'dead') return false;
@@ -5448,6 +5449,9 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
     if(loud) log(`${d.name}'s ${pk} was CUT OFF!`, 'bad');
   }
   if(VITAL.has(pk) && part.hp <= -50){ kill(d, a); return; }
+  /* THE CAIRN BEAST SHEDS. A heavy enough blow knocks a piece off, and the piece lands as an
+     ordinary corpse — which it will pick straight back up if you leave it lying there. */
+  if(d.bossKey === 'cairn') cairnShed(d, dmg);
   updateState(d, loud);
 }
 function updateState(c, loud){
@@ -5609,6 +5613,13 @@ function kill(c, by){
   if(c.drag){ c.drag.captured = false; c.drag = null; }
   if(c.gnaw) c.gnaw = null;
   c.state = 'dead'; clearOrders(c);
+  /* A WHISP DOES NOT DIE, IT GOES OUT — and it takes the reaction it was holding with it.
+     AFTER the state is written, deliberately. The burst damages everything nearby, which can
+     put another whisp out, whose `kill` runs inside this one — and the guard at the top of
+     this function is the only thing standing between a line of them and infinite recursion.
+     Fired here rather than in `applyDamage` so it happens exactly once however it was put
+     down: a blade, a bolt, the dust reclaiming it, or the whisp two strides away. */
+  if(c.whisp) whispBurst(c);
   if(c.campId >= 0){
     const camp = camps.find(k => k.id === c.campId);
     if(camp && !chars.some(o => o !== c && o.campId === camp.id && o.state !== 'dead')){
@@ -5864,14 +5875,30 @@ const BUILD_TYPES = {
 const UNDEAD_TYPES = {
   gravehound: {name:'Gravehound',    tech:'rites_binding', mana:10, weight:1, tag:'GH',
     cost:{remains:1, hide:2},           desc:'Fast bone hound — runs down stragglers'},
-  brute:      {name:'Hollow Brute',  tech:'rites_binding', mana:16, weight:2, tag:'BR',
-    cost:{remains:2, hide:3, fabric:2}, desc:'Stitched hulk — draws every blade toward it'},
+  /* Renamed from HOLLOW BRUTE, and paid for in stone rather than hide. Hide comes off beasts
+     and beasts are scarce in the first fortnight, so the one binding a new necromancer most
+     wants was gated behind hunting trips. Stone is under your feet everywhere. */
+  brute:      {name:'Bone Knight',   tech:'rites_binding', mana:16, weight:2, tag:'BK',
+    cost:{remains:2, stone:4, fabric:2}, desc:'A hulk in grafted bone plate — draws every blade toward it'},
   archer:     {name:'Marrow Archer', tech:'rites_deep',    mana:14, weight:2, tag:'MA',
     cost:{remains:1, w_bow:1, wood:2},  desc:'Dead hands, steady bow'},
   colossus:   {name:'Ashen Colossus',tech:'rites_deep',    mana:25, weight:3, tag:'CO',
     cost:{remains:3, stone:6, copper:4},desc:'A wall that walks — barely. Enormously hard to put down, and slow enough that it should be waiting where the fight comes to it'},
-  bonemule:   {name:'Bone Mule',     tech:'rites_binding', mana:12, weight:1, tag:'BM',
-    cost:{remains:2, stone:2, hide:2},  desc:'A beast of burden that never tires, eats, or complains'},
+  /* THE BONE MULE IS GONE and the Gravecart has its job. A mule that hauls goods was a
+     solution to a problem the stores never actually had; what the dark tree runs on is
+     BODIES, and nothing in the roster fetched one. This carries six, and carrying is all it
+     does — it does not render them down, because a corpse you rendered is a corpse you
+     cannot raise, and that should stay your decision rather than a chore's. */
+  gravecart:  {name:'Gravecart',     tech:'rites_binding', mana:12, weight:1, tag:'GC',
+    cost:{remains:2, wood:4, stone:2},
+    desc:'Four legs and a flatbed of ribs. Fetches the dead home, six at a time, and does nothing else at all'},
+  /* The one thing in the world that can put a limb back on. */
+  stitch:     {name:'Stitch-Hand',   tech:'rites_binding', mana:12, weight:1, tag:'SH',
+    cost:{remains:1, fabric:3, copper:2},
+    desc:'A surgeon with its hands still in the trade. It cannot fight. It walks the line mending what you bound, and every mending is paid for in Mortal Remains'},
+  whisp:      {name:'Whisp',         tech:'rites_deep',    mana:16, weight:1, tag:'WP',
+    cost:{remains:1, copper:5, fabric:2},
+    desc:'A held ball of alchemical fire, bound and given just enough of a mind to follow. It lights the country and the dark will not come near it — and everything within a few strides of it dies when it goes out'},
   servitor:   {name:'Bound Servitor',tech:'rites_binding', mana:8,  weight:1, tag:'SV',
     cost:{remains:1, copper:3, fabric:2},
     desc:'A skull bound around a mind instead of a pair of hands. It reads, it files, it keeps a hall\'s ledgers — and a stiff breeze would end it'},
@@ -6475,8 +6502,14 @@ function ai(c, dt){
   }
   /* find target */
   if(c.target && c.target.state !== 'ok') c.target = null;   /* dead quarry drops instantly */
+  /* SOME BOUND THINGS DO NOT FIGHT AT ALL. A Stitch-Hand and a Whisp are both built with the
+     one instinct that keeps them useful, and it is not aggression — a surgeon that wandered
+     off to brawl would be a surgeon nowhere near the wounded, and a lamp that charged the
+     line would be a bomb going off in the middle of your own people. They never acquire, and
+     they drop anything a stray blow gave them. */
+  if(c.noFight){ c.target = null; c.targetManual = false; }
   c.scanT = (c.scanT || 0) - dt;
-  if(!c.target && c.scanT <= 0){
+  if(!c.noFight && !c.target && c.scanT <= 0){
     c.scanT = 0.22 + rnd() * 0.12;             /* eyes sweep at human speed, not framerate */
     c.target = nearestEnemy(c, c.faction==='town' ? 10 : 9);
     if(c.target && !c.saidAggro){
@@ -8391,6 +8424,16 @@ function physics(c, dt){
     if(travel(c, c.moveTarget.x, c.moveTarget.y, dt, 0.2)) c.moveTarget = null;
     return;
   }
+  /* ---------- THE GRAVECART'S ROUNDS ----------
+     Six bodies, fetched and set down, and nothing else. It deliberately does NOT render them
+     — a corpse you rendered is a corpse you cannot raise, and which of those it is should stay
+     your decision rather than a chore's. It also will not touch a townsman, because `takeBody`
+     books that as grave-robbery and a cart earning bounties on its own is a trap. */
+  if(c.cart && c.faction === 'player' && c.state === 'ok'){ if(cartTick(c, dt)) return; }
+  /* ---------- THE STITCH-HAND'S ROUNDS ----------
+     The only repair in this world. It mends what you bound — limbs included — and charges
+     Mortal Remains for the material, which is the same stuff the bodies were made of. */
+  if(c.stitcher && c.faction === 'player' && c.state === 'ok'){ if(stitchTick(c, dt)) return; }
   /* standing job: pick work back up when idle.
      A hand may carry a SECOND trade. The first always takes priority; when it has nothing
      to offer — no frame to raise, no corpse to lift, no field to tend — they fall through
@@ -9144,7 +9187,78 @@ function openTheDoor(){
   log('THE SKY HAS OPENED. Not a tear — a door, and it is standing wide. Whatever has been watching the fences is not watching any more.', 'bad');
   worldEvent('door', x, y, 'The sky has opened out past the fences. Not a tear this time. A door, and it is standing wide.');
   AU.news();
+  spawnBrood();
   return theDoor;
+}
+/* ============================================================ BROOD-OF-THE-DOOR
+   Not something that came through. The thing HOLDING IT OPEN, with its shoulders through and
+   the rest of it still on the far side. It has no interest in the world and never enters it.
+
+   One rule carries the whole design: while it stands, the rite cannot finish. The hold climbs
+   to a hundred percent and sits there. That turns the closing rite from a stamina check into
+   two problems — keep the ground, and kill the thing standing in it — and it does it with a
+   single condition inside a function that already existed.
+
+   It is a SIEGE and not an ambush: it never leaves the door's radius, so the fight is at a
+   fixed, known place, which is the first thing in this game that makes walls, rampart stairs
+   and mounted lances the correct answer rather than a hobby. */
+const BROOD_LIMBS = ['l.arm', 'r.arm', 'l.leg', 'r.leg'];
+function broodAlive(){
+  return chars.find(g => g.brood && g.state !== 'dead') || null;
+}
+function spawnBrood(){
+  const d = theDoor; if(!d || broodAlive()) return null;
+  const q = findOpenNear(Math.round(d.x), Math.round(d.y), 6);
+  const b = makeChar('Brood-of-the-Door', 'gaunt', q.x, q.y,
+    {atk:44, def:26, tough:60, ath:4, armr:20});
+  b.gauntKind = 'brood'; b.brood = true; b.bossKey = 'brood';
+  b.big = 3.2; b.clawDmg = 34; b.taunt = true;
+  b.blood = 1400; b.maxBlood = 1400;
+  b.doorborn = true;                  /* shutting the door unmakes it, same as everything else out of it */
+  b.guard = {x: d.x, y: d.y};
+  b.loot = 0;
+  b.dropItems = {sunder: 6, codex: 1, formula_p: 2, remains: 8};
+  chars.push(b);
+  log('SOMETHING IS IN THE DOOR. Not through it — IN it, shoulders in this world and the rest of it somewhere else. It is what the door is standing on.', 'bad');
+  worldEvent('door', q.x, q.y, 'There is something standing in the open sky out past the fences, and the shape of it is the reason the sky is open.');
+  return b;
+}
+/* how much of the rite the door will still cost, given what has been taken off it. Every limb
+   severed narrows the door — which promotes the severance system from a flavour detail into
+   the boss mechanic, and gives a long fight a running reward. */
+function broodLimbsOff(b){
+  if(!b) return 0;
+  let n = 0;
+  for(const k of BROOD_LIMBS) if(b.parts[k] && b.parts[k].severed) n++;
+  return n;
+}
+let _broodT = 0;
+function broodTick(dt){
+  const b = broodAlive();
+  if(!b) return;
+  const d = theDoor;
+  if(!d){ return; }
+  /* ---- IT DOES NOT LEAVE ---- */
+  const away = dist(b.x, b.y, d.x, d.y);
+  if(away > d.r + 4){
+    b.target = null; b.targetManual = false;
+    b.moveTarget = {x: d.x, y: d.y};
+  }
+  if((_broodT -= dt) > 0) return;
+  _broodT = 2.0;
+  /* ---- AND THERE IS A CLOCK INSIDE THE CLOCK ----
+     `fed` already counts the hours the sky has stood open. It heals on that, so arriving late
+     is arriving at a different fight, and waiting is never the safe move. */
+  if(b.state === 'ok' && b.blood < b.maxBlood){
+    const regen = 0.6 + Math.min(6, (d.fed || 0) * 0.03);
+    b.blood = Math.min(b.maxBlood, b.blood + regen);
+    for(const k in b.parts){
+      const p2 = b.parts[k];
+      if(p2.severed) continue;                 /* what is off stays off — that is the whole reward */
+      p2.hp = Math.min(p2.max, p2.hp + regen * 0.5);
+    }
+    if(rnd() < 0.3) addSpecks(b.x, b.y + 1.2, '#6a4a7a', 3);
+  }
 }
 /* ============================================================ THE CLOSING RITE
    The door can be shut. It has always been able to be shut: somebody with a gift stands in it
@@ -9214,19 +9328,25 @@ function closingDoorThread(){
   if(!theDoor) return;
   const pct = Math.round(theDoor.work / DOOR_WORK * 100);
   const cost = costText(doorSealCost());
+  const br = broodAlive();
+  const off = broodLimbsOff(br);
   threadSet('rite', 'The closing rite',
-    closing.known
-      ? `The door is open. The hold is ${pct}% of the way through, and it will want ${cost} when it gives.`
-      : `The door is open and you do not know what to do about it. A scholar knows; a Golden-Age codex knows better.`,
+    !closing.known
+      ? `The door is open and you do not know what to do about it. A scholar knows; a Golden-Age codex knows better.`
+      : br
+      ? `The door is open and Brood-of-the-Door is standing in it — the rite cannot land while it does. The hold is ${pct}%, ${off} of 4 limbs are off it, and the seal is down to ${cost}.`
+      : `The door is open. The hold is ${pct}% of the way through, and it will want ${cost} when it gives.`,
     {hint: closing.known ? 'Right-click the door with every gifted body you have. They have to stay on it.'
                       : 'Ask a scholar about the stillness, then find a codex.', quiet: true});
 }
 function doorSealCost(){
-  /* every seat that falls makes the closing dearer — the door is wider for it */
+  /* every seat that falls makes the closing dearer — the door is wider for it. And every limb
+     taken off the Brood narrows it again: twelve percent a limb, four limbs to take. That is
+     what promotes the severance system from a flavour detail to the boss mechanic. */
   const lost = towns.filter(t => t.sacked > 0).length;
-  const k = 1 + lost * 0.22;
+  const k = (1 + lost * 0.22) * (1 - broodLimbsOff(broodAlive()) * 0.12);
   const out = {};
-  for(const key in DOOR_SEAL_COST) out[key] = Math.ceil(DOOR_SEAL_COST[key] * k);
+  for(const key in DOOR_SEAL_COST) out[key] = Math.max(1, Math.ceil(DOOR_SEAL_COST[key] * k));
   return out;
 }
 /* the rite at the door: long, expensive, and it has to be paid for at the end */
@@ -9239,6 +9359,23 @@ function workTheDoor(c, dt){
   d.work += dt * (1 + c.stats.magic * 0.04);
   if(rnd() < dt * 4) addSpecks(d.x + (rnd()-0.5)*6, d.y + (rnd()-0.5)*6, '#d8c8ff', 3);
   if(d.work >= DOOR_WORK){
+    /* ---- THE ONE RULE ----
+       The hold is finished and the door will not take it, because the thing the door is
+       standing on is still standing. Said ONCE — a deadlock with no explanation is exactly
+       the failure the closing-rite thread was written to prevent — and the journal carries
+       the live version, so a player who missed the line can still find out why. */
+    const br = broodAlive();
+    if(br){
+      d.work = DOOR_WORK;
+      if(!d._broodTold){
+        d._broodTold = true;
+        log('The rite is finished and the sky will not close. It cannot: there is something standing IN the door, and it is what the door is resting on.', 'bad');
+      }
+      threadSet('rite', 'The closing rite',
+        'The hold is done and the door will not take it. Brood-of-the-Door is standing in it — put that down and the rite lands.',
+        {hint: 'It never leaves the door. Every limb you take off it narrows the door and cheapens the seal.'});
+      return true;
+    }
     const cost = doorSealCost();
     const paid = sealStock(cost);
     if(!paid && !canAfford(cost)){
@@ -9274,8 +9411,14 @@ function doorTick(dh){
   d.fed += dh;
   /* the door does not birth and it does not drift shut. It just keeps sending things. */
   const pop = chars.filter(g => g.doorborn && g.state !== 'dead').length;
-  if(pop < 10 + towns.filter(t => t.sacked > 0).length * 3 && rnd() < dh * 0.5){
-    const q = findOpenNear(d.x + ri(-8, 8), d.y + ri(-8, 8), 6);
+  /* THEY COME OUT OF THE BROOD, not out of the door — so putting it down cuts the
+     reinforcements as well as unblocking the rite, and the fight has a turning point in it
+     instead of being a war of attrition against an opening in the sky. */
+  const br = broodAlive();
+  const rate = br ? 0.5 : 0.18;
+  if(pop < 10 + towns.filter(t => t.sacked > 0).length * 3 && rnd() < dh * rate){
+    const from = br || d;
+    const q = findOpenNear(from.x + ri(-8, 8), from.y + ri(-8, 8), 6);
     const g = spawnGaunt(pick(['maw','stalker','shrike','maw']), q.x, q.y);
     if(g){ g.doorborn = true; g.nightborn = false;
       /* they go for the seats, not for the waste */
@@ -9684,6 +9827,126 @@ let coilStruck = false;
     }
   }
 })();
+/* ============================================================ THE CAIRN BEAST
+   Nine generations of dust and nobody buries anything properly. What the waste failed to bury
+   has found each other, and it has worked out how to walk.
+
+   It is the first thing in this world that GROWS. Everything else — the Grazer at 2.2, the
+   Sixfold at 2.4 — is the same size on day one hundred and eighty as it was on day one, and
+   the only thing that ever scaled was how many of them arrived. This one reads the `corpses`
+   array and eats it: every body is mass, blood and reach, and a little less pace. Forty
+   bodies puts it past anything else alive. A hundred and seven and it is triple the Sixfold.
+
+   It does not hunt you. It hunts your battlefield, which means the counter is not a weapon,
+   it is HOUSEKEEPING — clear your dead, or feed the thing walking toward them. That is the
+   whole reason the HARVEST job and the Gravecart exist, stated as a creature. */
+const CAIRN_CAP = 8.0;               /* nothing in the renderer has ever been past 2.4 */
+const CAIRN_PER = 0.06;              /* big, per body */
+let cairn = null;
+function spawnCairnBeast(){
+  if(cairn && cairn.state !== 'dead') return cairn;
+  /* it forms where the dead already are: a corpse-field, well out past the last fence */
+  const site = (typeof corpseSites !== 'undefined' && corpseSites.length) ? pick(corpseSites) : null;
+  const q = site ? findOpenNear(site.x + ri(-6, 6), site.y + ri(-6, 6), 8)
+                 : findOpenNear(ri(60, W-60), ri(60, H-60), 10);
+  const c = makeChar('The Cairn Beast', 'fauna', q.x, q.y, {atk:24, def:6, tough:44, ath:3});
+  c.beast = true; c.neutral = true; c.bossKey = 'cairn'; c.kin = 'cairn';
+  c.big = 1.6; c.clawDmg = 18; c.taunt = true;
+  c.blood = 420; c.maxBlood = 420;
+  c.noise = 2.4;
+  c.ate = 0;                          /* the whole stat line is a function of this */
+  c.dropItems = {remains: 4};
+  chars.push(c);
+  cairn = c;
+  worldEvent('cairn', q.x, q.y,
+    'Something has stood up in one of the corpse-fields. Drovers say it is not a creature — that it is the field itself, and that it has started walking.');
+  return c;
+}
+/* what it will swallow. Looser than a harvest hand's rules — it is not deciding anything is
+   worthless, it is eating — but it leaves named dead alone, because a thing with a name is a
+   thing the player has a claim on and finding it inside the beast is not a story. */
+function cairnFood(b){
+  return !!b && b.state === 'dead' && !b.raised && !b.bossKey && !b.vip && !b.phyl
+      && !chars.some(o => o.carry === b || (o.carryList && o.carryList.includes(b)));
+}
+/* Everything the stat line is made of, recomputed from one number. Kept in one place so the
+   body cannot drift out of step with the count — and so a save only has to store `ate`. */
+function cairnGrow(c){
+  const n = c.ate || 0;
+  c.big = Math.min(CAIRN_CAP, 1.6 + n * CAIRN_PER);
+  const full = c.big >= CAIRN_CAP;
+  c.maxBlood = 420 + n * 14;
+  c.clawDmg = 18 + n * 0.5;
+  c.stats.tough = 44 + n * 0.9;
+  c.stats.atk = 24 + n * 0.35;
+  /* a floor on the pace, or a fully grown one is a statue you can walk away from and ignore.
+     A third of a walking person is still coming. */
+  c.speedMult = Math.max(0.35, 1 - n * 0.012);
+  c.noise = Math.min(6, 2.4 + n * 0.05);
+  if(full && !c._cairnFull){
+    c._cairnFull = true;
+    worldEvent('cairn', c.x, c.y, 'The thing out in the fields has stopped getting bigger. Nobody is sure whether that is good news.');
+  }
+}
+let _cairnT = 0;
+function cairnTick(dt){
+  const c = cairn;
+  if(!c || c.state === 'dead') return;
+  if((_cairnT -= dt) > 0) return;
+  _cairnT = 1.0;
+  /* ---- IT EATS ---- */
+  let ate = 0;
+  for(let i = corpses.length - 1; i >= 0 && ate < 3; i--){
+    const b = corpses[i];
+    if(!cairnFood(b)) continue;
+    if(dist(b.x, b.y, c.x, c.y) > 1.4 + c.big * 0.9) continue;
+    /* everything it ever ate comes back out of it when it goes down */
+    c.dropItems = c.dropItems || {};
+    c.dropItems.remains = (c.dropItems.remains || 0) + 1;
+    if(b.loot) c.loot = (c.loot || 0) + b.loot;
+    if(b.weapon) c.dropItems[b.weapon] = (c.dropItems[b.weapon] || 0) + 1;
+    if(b.armor) c.dropItems[b.armor] = (c.dropItems[b.armor] || 0) + 1;
+    corpses.splice(i, 1);
+    const xi = chars.indexOf(b); if(xi >= 0) chars.splice(xi, 1);
+    c.ate = (c.ate || 0) + 1;
+    ate++;
+    addSpecks(c.x, c.y - 0.4, '#6a5a4a', 4);
+  }
+  if(ate){
+    cairnGrow(c);
+    c.blood = Math.min(c.maxBlood, c.blood + ate * 14);
+    if(player().some(o => o.state !== 'dead' && dist(o.x, o.y, c.x, c.y) < 26))
+      log(`The Cairn Beast takes ${ate === 1 ? 'a body' : ate + ' bodies'} into itself. It is bigger than it was.`, 'bad');
+  }
+  /* ---- AND IT WALKS TOWARD THE NEXT ONE ----
+     It does not seek the living. Left alone with nothing dead within reach it simply stands,
+     which is why the fights it picks are always the ones you walked into. */
+  if(c.state !== 'ok' || c.target) return;
+  let want = null, wd = 1e9;
+  for(const b of corpses){
+    if(!cairnFood(b)) continue;
+    const d = dist(b.x, b.y, c.x, c.y);
+    if(d < 80 && d < wd){ wd = d; want = b; }
+  }
+  if(want && wd > 1.4 + c.big * 0.9) c.moveTarget = {x: want.x, y: want.y};
+  else if(!want) c.moveTarget = null;
+}
+/* IT SHEDS. A heavy enough blow knocks a piece loose, and the piece lands as an ordinary
+   corpse — which it will pick straight back up if you leave it lying there. That is the
+   rhythm of the fight and the rhythm is housekeeping. Called from applyDamage. */
+function cairnShed(c, dmg){
+  if(!c || c.bossKey !== 'cairn' || (c.ate || 0) < 1) return;
+  if(dmg < 22 || rnd() > 0.35) return;
+  c.ate = Math.max(0, c.ate - 1);
+  cairnGrow(c);
+  const q = findOpenNear(Math.round(c.x + ri(-2, 2)), Math.round(c.y + ri(-2, 2)), 3);
+  const b = makeChar('Shed Mass', 'fauna', q.x, q.y, {atk:1, def:1, tough:1});
+  b.beast = true; b.state = 'dead'; b.deadAt = day + hour/24;
+  b.looted = true;                      /* it has been through something; there is nothing in its pockets */
+  chars.push(b); corpses.push(b);
+  addSpecks(q.x, q.y, '#6a5a4a', 8);
+  if(rnd() < 0.5) log('A piece comes off the Cairn Beast and lands in the dirt. It has not forgotten where.', '');
+}
 /* the corpse-ground notices being picked at */
 function choirTick(wdt){
   for(const g of chars){
@@ -9722,6 +9985,9 @@ function spawnSixfold(atX, atY){
   return c;
 }
 spawnSixfold();
+/* and one Cairn Beast, standing in a corpse-field from the first day, growing on whatever
+   the world kills whether or not you ever go near it */
+spawnCairnBeast();
 /* they surface in the deep waste, far from lamps and walls, and only after dark */
 /* ---------- the blood moon ----------
    Once in a long while the moon comes up wrong, and everything on the other side
@@ -9758,6 +10024,8 @@ function gauntTick(dh){
   coilTick();
   corpseSiteTick(dh);
   choirTick(dh);
+  cairnTick(dh * HOUR_SEC);   /* it eats on real seconds, not game hours */
+  broodTick(dh * HOUR_SEC);   /* and the thing in the door heals on the hours the door has stood */
   /* the sundered ground restocks itself, day or night */
   for(const s of corpseSites){
     const pop = chars.filter(c => c.siteId === s.id && c.state !== 'dead' && c.gauntKind).length;
@@ -9797,6 +10065,13 @@ function gauntTick(dh){
     if(!bloodMoon && nearestTownDist(x, y) < 14) return;   /* walls and lamps keep them off — except tonight */
   }
   if(tileAt(x, y) === 3) return;
+  /* A WHISP IS THE SAME ARGUMENT A WARDING LAMP MAKES, carried. Nothing comes up out of the
+     dark within reach of one — which is what makes walking a fragile, slow, extremely obvious
+     lamp out ahead of your people a decision rather than a decoration. It is not a shield: a
+     blood moon opens the door wide and the light stops mattering, exactly as it does for the
+     towns that bought the lamps. */
+  if(!bloodMoon && chars.some(o => o.whisp && o.state === 'ok' && o.faction === 'player' &&
+      dist(o.x, o.y, x, y) < WHISP_WARD)) return;
   const roll = rnd();
   /* corpse-eaters are the commonest thing out here. The dead are the whole reason they came. */
   /* the Larder-Kin only comes once something out there has taken an interest in you —
@@ -10263,6 +10538,161 @@ function retaliate(t, attacker){
   /* a struck combatant turns on whoever hit it, dropping any stalled retreat */
   t.target = attacker; t.targetManual = false;
   t.moveTarget = null; t.path = null; t.pathGoal = null;
+}
+/* ============================================================ THE GRAVECART
+   A body it may fetch. Deliberately looser than `carrionFodder` — the cart is not deciding
+   anything is worthless, it is only carrying — but it stops at the same two walls: nothing
+   that belongs to a town (that is grave-robbery, and `takeBody` will book it), and nothing
+   somebody else already has hold of. */
+function cartFodder(b){
+  if(!b || b.state !== 'dead' || b.raised) return false;
+  if(b.faction === 'town' || b.homeTown) return false;
+  /* SOMEBODY ELSE'S town, not any town. `crime` already exempts a seat you rule — your own
+     city is yours to work in — and without the same exemption here a Gravecart bound in your
+     own capital stands in the square refusing to pick anything up. */
+  if(towns.some(t => !t.playerRuled && dist(t.x, t.y, b.x, b.y) < (t.def.wall ? t.def.wall.r + 6 : 20))) return false;
+  if(chars.some(o => o.carry === b || (o.carryList && o.carryList.includes(b)) || o.raiseBody === b)) return false;
+  return true;
+}
+/* where it takes them. A circle first — that is what they are for — then any of the carrion
+   houses, then whoever bound it, so a cart never has nowhere to put anything down. */
+function cartDrop(c){
+  const want = ['circle', 'crypt', 'ossuary', 'charnel'];
+  let best = null, bd = 1e9;
+  for(const b of pBuilds){
+    if(!want.includes(b.type)) continue;
+    const d = dist(c.x, c.y, b.x + 1, b.y + 1);
+    if(d < bd){ bd = d; best = {x: b.x + 1, y: b.y + 2.4}; }
+  }
+  if(best) return best;
+  const m = c.master;
+  return (m && m.state !== 'dead') ? {x: m.x, y: m.y} : null;
+}
+function cartTick(c, dt){
+  const cap = carryCap(c);
+  const load = carried(c);
+  /* full, or holding something with nothing left to pick up: take it home */
+  c.cartScanT = (c.cartScanT || 0) - dt;
+  if(c.cartScanT <= 0){
+    c.cartScanT = 2.0;
+    let body = null, bd = 1e9;
+    if(load < cap) for(const b of corpses){
+      if(!cartFodder(b) || b._cartSkip > day + hour/24) continue;
+      const d = dist(b.x, b.y, c.x, c.y);
+      if(d < 46 && d < bd){ bd = d; body = b; }
+    }
+    if(body !== c.cartBody) c.cartGiveUp = 45;
+    c.cartBody = body;
+  }
+  const body = c.cartBody && corpses.includes(c.cartBody) && cartFodder(c.cartBody) ? c.cartBody : null;
+  if(body && load < cap){
+    if(dist(c.x, c.y, body.x, body.y) > 1.2){
+      /* a body across a river is not work — the same trap the harvest job fell into */
+      c.cartGiveUp = (c.cartGiveUp || 45) - dt;
+      if(c.cartGiveUp <= 0){ body._cartSkip = day + hour/24 + 0.1; c.cartBody = null; c.cartScanT = 0; return true; }
+      travel(c, body.x, body.y, dt, 0.7);
+      return true;
+    }
+    takeBody(c, body);
+    c.cartBody = null; c.cartScanT = 0;
+    return true;
+  }
+  if(load > 0){
+    const home = cartDrop(c);
+    if(!home) return false;
+    if(dist(c.x, c.y, home.x, home.y) > 2.2){ travel(c, home.x, home.y, dt, 1.6); return true; }
+    dropBodies(c);
+    return true;
+  }
+  return false;
+}
+/* ============================================================ THE STITCH-HAND
+   What counts as needing mending, and in what order. A severed limb first — nothing else in
+   the world puts one back on — then whatever is closest to falling off. */
+function stitchNeed(u){
+  if(!u || u.state === 'dead' || !u.undead || u.servitor) return 0;
+  let n = 0;
+  for(const k in u.parts){
+    const p2 = u.parts[k];
+    if(p2.severed) n += 100;
+    else if(p2.hp < p2.max) n += (p2.max - p2.hp) / Math.max(1, p2.max) * 20;
+  }
+  if(u.blood < u.maxBlood) n += (u.maxBlood - u.blood) / Math.max(1, u.maxBlood) * 30;
+  return n;
+}
+const STITCH_COST = 1;          /* Mortal Remains per mending */
+function stitchTick(c, dt){
+  c.stitchScanT = (c.stitchScanT || 0) - dt;
+  if(c.stitchScanT <= 0){
+    c.stitchScanT = 2.0;
+    let best = null, bn = 6;    /* a scratch is not worth a body's worth of remains */
+    for(const u of chars){
+      if(u === c || u.faction !== c.faction || !u.undead) continue;
+      if(dist(u.x, u.y, c.x, c.y) > 30) continue;
+      const n = stitchNeed(u);
+      if(n > bn){ bn = n; best = u; }
+    }
+    c.stitchTarget = best;
+  }
+  const u = c.stitchTarget;
+  if(!u || u.state === 'dead' || stitchNeed(u) <= 0){ c.stitchTarget = null; return false; }
+  if(dist(c.x, c.y, u.x, u.y) > 1.3){ travel(c, u.x, u.y, dt, 0.8); return true; }
+  c._working = 0.5;
+  c.stitchT = (c.stitchT || 0) - dt;
+  if(c.stitchT > 0) return true;
+  c.stitchT = 2.2;
+  if(campHas('remains') < STITCH_COST){
+    if(rnd() < 0.05) log(`${c.name} has nothing to mend with — the stores are out of Mortal Remains.`, 'bad');
+    return true;
+  }
+  /* a severed limb is the expensive one, and the one nothing else can do */
+  let putBack = null;
+  for(const k in u.parts) if(u.parts[k].severed){ putBack = k; break; }
+  campSpend({remains: STITCH_COST});
+  if(putBack){
+    const p2 = u.parts[putBack];
+    p2.severed = false; p2.pros = false; p2.bleed = 0;
+    p2.hp = Math.max(p2.hp, Math.round(p2.max * 0.5));
+    log(`${c.name} puts ${u.name}'s ${putBack} back on. It will hold.`, 'good');
+  } else {
+    const heal = 14 + c.stats.medic * 0.5;
+    for(const k in u.parts){
+      const p2 = u.parts[k];
+      if(p2.severed) continue;
+      p2.hp = Math.min(p2.max, p2.hp + heal);
+      p2.bleed = 0;
+    }
+    u.blood = Math.min(u.maxBlood, u.blood + heal * 1.2);
+    if(rnd() < 0.35) addSpecks(u.x, u.y - 0.3, '#c8b48a', 2);
+  }
+  updateState(u, false);
+  xpGain(c, 'medic', 0.4);
+  refreshInv();
+  return true;
+}
+/* ============================================================ THE WHISP
+   It goes out badly. Everything within a few strides takes the whole held reaction at once,
+   friend and otherwise — which is the price of walking your light into a crowd. */
+const WHISP_R = 4.2, WHISP_DMG = 46;
+const WHISP_WARD = 16;   /* tiles of dark it holds off — a warding lamp is 22, and bolted down */
+function whispBurst(c){
+  addSpecks(c.x, c.y, '#9fe8ff', 40);
+  addSpecks(c.x, c.y, '#ffffff', 24);
+  AU.rite && AU.rite(c.x, c.y);
+  log(`${c.name} goes out — and it does not go out quietly.`, 'bad');
+  /* SLICE IT. `charsNear` hands back `_nearOut`, one module-level scratch array reused by
+     every caller — and `applyDamage` below calls it again, which CLEARS the list this loop is
+     walking. Measured: the bystander one tile from the burst took nothing at all, because the
+     array emptied itself on the first inner call. Anything that damages inside a charsNear
+     loop has to copy first. */
+  for(const o of charsNear(c.x, c.y, WHISP_R).slice()){
+    if(o === c || o.state === 'dead') continue;
+    if((o.floor || 0) !== (c.floor || 0)) continue;
+    const d = dist(o.x, o.y, c.x, c.y);
+    const falloff = clamp(1 - d / WHISP_R, 0, 1);
+    if(falloff <= 0) continue;
+    applyDamage(c, o, pickPart(), WHISP_DMG * falloff, 'burn', false);
+  }
 }
 /* ---------- what a HARVEST hand is allowed to render down ----------
    The job exists to clear a field, not to decide who counts as a person. So it takes only
@@ -11235,15 +11665,40 @@ function craftUndead(kind, caster, circle, shape){
     u = makeChar('Gravehound '+risenN, caster.faction, p.x, p.y, {atk:6+m*0.8, def:4+m*0.5, tough:3+m*0.3, ath:16, labor:4});
     u.beast = true; u.kin = 'hound'; u.clawDmg = 7 + m*0.4; u.blood = 60; u.maxBlood = 60;
   } else if(kind==='brute'){
-    u = makeChar('Hollow Brute '+risenN, caster.faction, p.x, p.y, {atk:6+m*0.6, def:3+m*0.3, tough:10+m, ath:2, labor:8});
+    /* `kin` stays 'brute' though the name is Bone Knight now — every saved body and the whole
+       mesh builder key off it, and a rename that reaches into somebody's world is not a rename */
+    u = makeChar('Bone Knight '+risenN, caster.faction, p.x, p.y, {atk:6+m*0.6, def:3+m*0.3, tough:10+m, ath:2, labor:8});
     u.kin = 'brute'; u.clawDmg = 12 + m*0.6; u.blood = 140; u.maxBlood = 140; u.big = 1.4; u.taunt = true;
   } else if(kind==='archer'){
     u = makeChar('Marrow Archer '+risenN, caster.faction, p.x, p.y, {atk:8+m*0.9, def:4+m*0.4, tough:4+m*0.3, ath:7, labor:4});
     u.kin = 'archer'; u.weapon = 'w_bow'; u.blood = 70; u.maxBlood = 70;
-  } else if(kind==='bonemule'){
-    u = makeChar('Bone Mule '+risenN, caster.faction, p.x, p.y, {atk:2, def:5, tough:8+m*0.4, ath:5, labor:22});
-    u.beast = true; u.mule = true; u.fleeOnHit = true;
-    u.blood = 100; u.maxBlood = 100;
+  } else if(kind==='gravecart'){
+    /* It fetches. It does not fight, it does not render anything down, and it does not stop.
+       `mule` is kept alongside `cart` because a dozen places already know what a mule is —
+       the flatbed is a mule that carries the dead instead of the shopping. */
+    u = makeChar('Gravecart '+risenN, caster.faction, p.x, p.y, {atk:2, def:5, tough:10+m*0.4, ath:6, labor:18});
+    u.beast = true; u.mule = true; u.cart = true; u.fleeOnHit = true;
+    u.kin = 'cart';
+    u.blood = 120; u.maxBlood = 120;
+  } else if(kind==='stitch'){
+    /* A STITCH-HAND cannot hurt anything. What it does is the one repair in the game: it puts
+       your bound dead back together, limbs included, and it charges Mortal Remains for the
+       material because the material is where the material comes from. */
+    u = makeChar('Stitch-Hand '+risenN, caster.faction, p.x, p.y,
+      {atk:1, def:6, tough:6+m*0.3, ath:8, medic: 20 + m*0.5, labor:4});
+    u.kin = 'stitch'; u.minded = true; u.stitcher = true;
+    u.noFight = true; u.fleeOnHit = true;
+    u.blood = 80; u.maxBlood = 80;
+  } else if(kind==='whisp'){
+    /* Not a body at all. A held reaction in a shell, bound the way a servitor's skull is
+       bound, with just enough mind on it to follow somebody. It is a lamp with a temper. */
+    u = makeChar('Whisp '+risenN, caster.faction, p.x, p.y,
+      {atk:1, def:14, tough:2, ath:4, labor:0, magic: 8 + m*0.3});
+    u.beast = true; u.whisp = true; u.minded = true;
+    u.noFight = true; u.fleeOnHit = true;
+    u.big = 0.5; u.speedMult = 0.62;
+    u.blood = 45; u.maxBlood = 45;
+    for(const k of VITAL){ u.parts[k].hp = 35; u.parts[k].max = 35; }
   } else if(kind==='servitor'){
     /* A SERVITOR is a mind with no body to speak of: it cannot lift, cannot fight, and cannot
        be repaired. What it can do is read, and keep a hall's paperwork moving. */
@@ -11289,7 +11744,7 @@ function craftUndead(kind, caster, circle, shape){
   u.bindWeight = ut.weight; u.shortTag = ut.tag + risenN;
   /* the shaping goes on before it stands up, and renames it if it came out extreme */
   applyShape(u, shape);
-  if(u.shapeName) u.name = u.shapeName + ' ' + u.name.replace(/^(Risen|Colossus|Gravehound|Hollow Brute|Marrow Archer|Bone Mule|Servitor|Skeleton Mage) /, '');
+  if(u.shapeName) u.name = u.shapeName + ' ' + u.name.replace(/^(Risen|Colossus|Gravehound|Hollow Brute|Bone Knight|Marrow Archer|Bone Mule|Gravecart|Stitch-Hand|Whisp|Servitor|Skeleton Mage) /, '');
   chars.push(u);
   caster.mana -= ut.mana; caster.castCd = 1.4;
   xpGain(caster, 'magic', 0.8);
@@ -13461,6 +13916,10 @@ function computeVision(){
     let r = base;
     const h = heightAt(c.x, c.y);
     if(h > 1.2) r += Math.min(18, (h - 1.2) * 1.9);   /* the view from up there */
+    /* A WHISP IS A LAMP. It sees no better than anything else does — it makes the ground
+       around it visible, which is a different thing and the whole reason to walk one out
+       ahead of the column. The storm still swallows it like everything else. */
+    if(c.whisp) r += 13;
     stampVision(c.x, c.y, r * stormK);
   }
   for(const b of pBuilds) stampVision(b.x + b.w/2, b.y + b.h/2, 11);
@@ -15874,7 +16333,7 @@ function factionColor(c){
 }
 function colorKeyOf(c){
   /* sex is part of the silhouette, so it belongs in the rebuild key */
-  return factionColor(c) + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + '|' + (c.rot||'') + '|' + (c.face||'');
+  return factionColor(c) + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.whisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.face||'');
 }
 const SKINS = ['#8a5c34', '#6e4426', '#a06c40', '#5a3820', '#96683a'];
 const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0'];
@@ -16354,14 +16813,43 @@ function buildCharMesh(c){
   /* what a risen was bound FOR shows in the frame: a brute is built thick, an archer lean */
   const kin = risen ? (c.kin || null) : null;
   const kinLimb = kin === 'brute' ? 1.55 : kin === 'colossus' ? 1.9
-    : kin === 'archer' ? 0.82 : kin === 'mage' ? 0.78 : 1;
+    : kin === 'archer' ? 0.82 : kin === 'mage' ? 0.78 : kin === 'stitch' ? 0.74 : 1;
   /* Rot reads in the build as well as the colour: something raised fresh still has meat on
      it, something scraped off a month-old field is a frame with a rag hung on it. */
   const ROT_LIMB = {fresh:1.22, cooling:1.06, spoiled:0.92, bones:0.78};
   const rotLimb = (risen && c.rot && ROT_LIMB[c.rot]) ? ROT_LIMB[c.rot] : 1;
   const LIMB = (fem ? 0.88 : 1) * (risen ? 0.66 * kinLimb * rotLimb : 1);   /* limb thickness — bone is thin */
   if(c.beast){
-    if(c.servitor){
+    if(c.whisp){
+      /* A WHISP: a held reaction in a shell. No skull, no frame, nothing that was ever alive
+         — a lantern-glass sphere with the light sitting inside it and three bone splinters
+         orbiting where a binding was struck. It rides the same `float` group the servitor's
+         skull does, so the pose machine bobs it for free. */
+      const glass = '#5c6a6e', lamp = '#7fe0ff', core = '#eaf9ff';
+      e.float = new THREE.Group(); e.float.position.set(0, 1.25, 0); g.add(e.float);
+      e.head = e.float;
+      mk(SPHG, ownGlow(core), 0.30, 0.30, 0.30, 0, 0, 0, e.float);        /* the reaction itself */
+      mk(SPHG, ownBone(glass), 0.46, 0.46, 0.46, 0, 0, 0, e.float);       /* the shell around it */
+      /* four ribs of bone over the glass — the binding, which is the only part of this that
+         was ever a person */
+      for(const a2 of [0, Math.PI/2]){
+        const rib = new THREE.Group(); rib.rotation.y = a2; e.float.add(rib);
+        mk(BOXG, ownBone('#ded6c0'), 0.05, 0.50, 0.05, 0.23, 0, 0, rib);
+        mk(BOXG, ownBone('#ded6c0'), 0.05, 0.50, 0.05, -0.23, 0, 0, rib);
+      }
+      mk(BOXG, ownBone('#ded6c0'), 0.52, 0.05, 0.52, 0, 0.22, 0, e.float);
+      /* splinters turning under it, and the sigil it was struck on */
+      e.spineBits = [];
+      for(let i = 0; i < 3; i++){
+        const b2 = new THREE.Group();
+        b2.position.set(Math.cos(i*2.1)*0.34, -0.30 - i*0.09, Math.sin(i*2.1)*0.34);
+        e.float.add(b2);
+        mk(BOXG, ownBone('#ded6c0'), 0.05, 0.16, 0.05, 0, 0, 0, b2);
+        e.spineBits.push(b2);
+      }
+      e.sigil = mk(CYLG, ownGlow(lamp), 0.44, 0.012, 0.44, 0, -0.66, 0, e.float);
+      e.servitor = true;                 /* it floats and bobs by the same rules */
+    } else if(c.servitor){
       /* A BOUND SERVITOR: a skull and nothing under it. The jaw hangs a finger's width free of
          the cranium — there is no hinge, only the binding — and three splinters of vertebra
          trail beneath where a neck used to be. Everything sits on a floatG the pose machine
@@ -16391,6 +16879,107 @@ function buildCharMesh(c){
       /* the sigil it was bound with, still turning under it */
       e.sigil = mk(CYLG, ownGlow(lamp), 0.30, 0.012, 0.30, 0, -0.86, 0, e.float);
       e.servitor = true;
+    } else if(c.brood){
+      /* ---------- BROOD-OF-THE-DOOR ----------
+         The design is the pose, not the creature: this is a thing with its SHOULDERS in the
+         world and the rest of it still on the far side, so it is built as an upper body
+         wedged into the air with nothing under it. It has no legs and it is not standing —
+         it is jammed. Four arms drive down into the ground and take its weight, and those
+         four are the limbs you take off it: `l.arm`, `r.arm`, `l.leg`, `r.leg` are all arms
+         here, which is why the limb count in the rite reads four and not six. */
+      const hide = '#241b2c', vein = '#6a4a7a', bone = '#c9bfa8', lit = '#b98ade';
+      e.torso = obox(1.30, 1.15, 0.95, hide, 0, 2.05, 0);               /* the shoulders, through */
+      obox(1.55, 0.35, 1.10, hide, 0, 2.62, -0.05);                     /* the yoke of them */
+      obox(0.95, 0.70, 0.75, hide, 0, 1.45, 0.05);                      /* the part still arriving */
+      /* the seam it is coming through, hung around it and going nowhere */
+      for(let i = 0; i < 8; i++){
+        const a2 = (i / 8) * Math.PI * 2;
+        mk(BOXG, ownGlow(lit), 0.10, 0.10, 0.10, Math.cos(a2) * 1.15, 2.30 + Math.sin(a2) * 0.55, -0.55, g);
+      }
+      /* no face. A band of light where one would be, and a jaw under it that does not close. */
+      e.head = obox(0.52, 0.44, 0.48, hide, 0, 3.00, 0.10);
+      mk(BOXG, ownGlow(lit), 0.42, 0.05, 0.04, 0, 3.02, 0.36, g);
+      obox(0.40, 0.16, 0.34, vein, 0, 2.80, 0.22);
+      for(const sx of [-1, 1]) obox(0.10, 0.34, 0.10, bone, sx * 0.30, 3.28, 0.02);   /* the horns */
+      /* FOUR ARMS DRIVEN INTO THE GROUND. Named to the four limb slots the damage model
+         already has, so a severed one is a real severance and the rite reads it directly. */
+      const mkArm = (sx, sz, spread) => {
+        const sh = new THREE.Group(); sh.position.set(sx * 0.72, 2.20, sz * 0.45); g.add(sh);
+        sh.rotation.z = sx * spread; sh.rotation.x = sz * 0.35;
+        obox(0.26, 1.30, 0.26, hide, 0, -0.65, 0, sh);
+        const el = new THREE.Group(); el.position.set(0, -1.30, 0); sh.add(el);
+        el.rotation.z = -sx * spread * 0.7;
+        obox(0.22, 1.15, 0.22, hide, 0, -0.58, 0, el);
+        obox(0.30, 0.20, 0.42, bone, 0, -1.16, 0.08, el);                /* the hand, taking weight */
+        for(let i = 0; i < 3; i++) obox(0.07, 0.30, 0.07, bone, (i-1)*0.09, -1.38, 0.16, el);
+        return {sh, el};
+      };
+      const a1 = mkArm(-1,  1, 0.42), a2b = mkArm(1,  1, 0.42);
+      const a3 = mkArm(-1, -1, 0.66), a4 = mkArm(1, -1, 0.66);
+      e.armL = a1.sh; e.elbL = a1.el; e.armR = a2b.sh; e.elbR = a2b.el;
+      /* the back pair hang on the LEG slots so severing them is a real severance too */
+      e.legL = a3.sh; e.kneeL = a3.el; e.legR = a4.sh; e.kneeR = a4.el;
+      e.legL2 = null; e.legR2 = null;
+      e.spine = e.torso;
+      e.noGait = true;                 /* it does not walk. It shifts its grip. */
+    } else if(c.bossKey === 'cairn'){
+      /* ---------- THE CAIRN BEAST ----------
+         Not an animal. A slope of fused dead with a gait, and the read has to be that it is
+         made of PEOPLE — so the silhouette is a heap and the detail is limbs, ribs and skulls
+         set into it at wrong angles, all of it deterministic off the character id so the same
+         beast does not reshuffle itself every time its mesh is rebuilt.
+         Everything here is authored at big = 1; `c.big` scales the whole group, and at eight
+         that is a hill that walks. */
+      const heap = '#4c4238', bone = '#cdc2a8', dark = '#2b241d';
+      let seed = (c.id * 2654435761) >>> 0;
+      const rr = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+      e.torso = obox(1.30, 0.95, 1.55, heap, 0, 0.62, 0);            /* the mass */
+      obox(1.05, 0.70, 1.10, heap, 0, 1.22, -0.20);                  /* the shoulder of it */
+      obox(0.72, 0.50, 0.80, heap, 0, 1.70, -0.34);                  /* and the cairn on top */
+      /* what is in it. Ribs first — the read at distance is a fence of them down both flanks */
+      for(let i = 0; i < 9; i++){
+        const sx = i % 2 ? 1 : -1, t = (i / 9);
+        mk(CYLG, ownBone(bone), 0.07, 0.46 + rr()*0.26, 0.07,
+           sx * (0.60 + rr()*0.14), 0.75 + rr()*0.55, 0.62 - t*1.35, g, rr()*1.2 - 0.6);
+      }
+      /* arms and legs, sticking out of it at angles nothing living could hold */
+      for(let i = 0; i < 7; i++){
+        const a2 = rr() * Math.PI * 2, r2 = 0.55 + rr()*0.30;
+        const lm = new THREE.Group();
+        lm.position.set(Math.cos(a2)*r2, 0.45 + rr()*1.05, Math.sin(a2)*r2*1.15);
+        lm.rotation.set(rr()*2 - 1, a2, rr()*2 - 1);
+        g.add(lm);
+        obox(0.11, 0.44, 0.11, bone, 0, -0.20, 0, lm);
+        obox(0.13, 0.13, 0.13, bone, 0, -0.44, 0, lm);               /* the hand, or the foot */
+      }
+      /* and the faces. Six skulls set into the mass, looking in six directions. */
+      e.skulls = [];
+      for(let i = 0; i < 6; i++){
+        const a2 = rr() * Math.PI * 2, r2 = 0.50 + rr()*0.34;
+        const sk = new THREE.Group();
+        sk.position.set(Math.cos(a2)*r2, 0.60 + rr()*1.25, Math.sin(a2)*r2*1.1);
+        sk.rotation.y = a2 + rr()*0.6 - 0.3;
+        g.add(sk);
+        mk(SPHG, ownBone(bone), 0.26, 0.26, 0.28, 0, 0, 0, sk);
+        mk(BOXG, ownBone(dark), 0.07, 0.07, 0.05, -0.06, 0.02, 0.13, sk);
+        mk(BOXG, ownBone(dark), 0.07, 0.07, 0.05,  0.06, 0.02, 0.13, sk);
+        e.skulls.push(sk);
+      }
+      /* the head is the one that faces forward, and it is no bigger than any of the others —
+         there is nothing in charge of this thing */
+      e.head = obox(0.30, 0.30, 0.32, bone, 0, 1.95, -0.30);
+      /* six stumps for legs. It does not walk so much as roll over itself. */
+      const mkStump = (sx, sz) => {
+        const hip = new THREE.Group(); hip.position.set(sx, 0.42, sz); g.add(hip);
+        obox(0.22, 0.44, 0.22, dark, 0, -0.22, 0, hip);
+        obox(0.28, 0.10, 0.30, dark, 0, -0.44, 0.02, hip);
+        return hip;
+      };
+      e.legL  = mkStump( 0.46,  0.50);
+      e.legR  = mkStump(-0.46,  0.50);
+      e.legL2 = mkStump(-0.46, -0.50);
+      e.legR2 = mkStump( 0.46, -0.50);
+      mkStump( 0.52, 0.00); mkStump(-0.52, 0.00);
     } else if(c.bossKey === 'sixfold'){
       /* the body hangs; the limbs arch over it and come down like the frame of a tent */
       const hide = '#3a3230', bone = '#c9bfa8';
@@ -16562,6 +17151,8 @@ function buildCharMesh(c){
       grazer:  {len:1.60, hgt:0.85, wid:0.90, stand:0.78, headF:0.95, headY:0.62, headSz:0.46, legT:0.26},
       elk:     {len:1.00, hgt:0.46, wid:0.40, stand:0.72, headF:0.62, headY:0.92, headSz:0.26, legT:0.10},
       mule:    {len:0.95, hgt:0.45, wid:0.50, stand:0.50, headF:0.55, headY:0.62, headSz:0.32, legT:0.14},
+      /* longer than a mule and lower, because the whole animal is a load-bed */
+      cart:    {len:1.35, hgt:0.34, wid:0.58, stand:0.46, headF:0.82, headY:0.50, headSz:0.26, legT:0.13},
     };
     const S = SPEC[K] || SPEC.hound;
     e.torso = obox(S.wid, S.hgt, S.len, beastCol, 0, S.stand + S.hgt*0.1, 0);
@@ -16603,7 +17194,19 @@ function buildCharMesh(c){
     e.legR  = mkBLeg(-lx,  lz);
     e.legL2 = mkBLeg(-lx, -lz);   /* back pair — diagonal partners of the front */
     e.legR2 = mkBLeg( lx, -lz);
-    if(c.mule){
+    if(c.cart){
+      /* A FLATBED OF RIBS. Not saddlebags — a rack, open at the top, with the ribs turned
+         upward to make sides. What it carries rides on top of it in plain sight, which is
+         the point of the thing: you can see how full it is from the camera. */
+      const rib = '#d8ccb0';
+      obox(S.wid*1.02, 0.05, S.len*0.92, rib, 0, 0.68, -0.05);             /* the bed */
+      for(let i = -3; i <= 3; i++)
+        obox(0.05, 0.26, 0.05, rib, S.wid*0.5, 0.80, i*0.16);              /* right rail */
+      for(let i = -3; i <= 3; i++)
+        obox(0.05, 0.26, 0.05, rib, -S.wid*0.5, 0.80, i*0.16);             /* left rail */
+      obox(S.wid*1.02, 0.05, 0.05, rib, 0, 0.92, -S.len*0.46);             /* tailboard */
+      obox(0.14, 0.30, 0.14, rib, 0, 0.82, S.len*0.40);                    /* the yoke post */
+    } else if(c.mule){
       /* saddlebags — the mark of the pack beast */
       obox(0.66, 0.4, 0.3, '#5a4630', 0, 0.78, -0.1);
       obox(0.3, 0.3, 0.34, '#6b5a40', 0, 0.72, 0.25);
@@ -16657,6 +17260,22 @@ function buildCharMesh(c){
           e.boxBody.push(obox(0.70, 0.05, 0.28, '#4a443e', 0, yy, 0.01, e.spine));
         for(const sx of [-1, 1])
           e.boxBody.push(obox(0.06, 0.62, 0.06, '#4a443e', sx*0.30, 0.28, 0, e.spine));
+      }
+      if(kin === 'stitch'){
+        /* ---------- THE STITCH-HAND ----------
+           It has to read as a surgeon at a glance and not as one more archer. Three things
+           do it: the ribcage is CLOSED — sailcloth laced over the gaps, because this one was
+           put back together by somebody who cared — a roll of instruments across the small of
+           the back, and thread spooled at the hip. Nothing here is a weapon and it should not
+           look like one. */
+        const cloth = '#6e6552', gut = '#c0b48e';
+        e.boxBody.push(obox(0.44, 0.44, 0.20, cloth, 0, 0.30, 0.02, e.spine));      /* laced front */
+        for(let i = 0; i < 4; i++)                                                   /* the lacing */
+          e.boxBody.push(obox(0.30, 0.022, 0.02, gut, 0, 0.44 - i*0.11, 0.12, e.spine));
+        e.boxBody.push(obox(0.46, 0.10, 0.10, '#4a443e', 0, 0.10, -0.16, e.spine));  /* instrument roll */
+        for(let i = 0; i < 5; i++)
+          e.boxBody.push(obox(0.02, 0.14, 0.02, '#8a8478', -0.16 + i*0.08, 0.12, -0.20, e.spine));
+        e.boxBody.push(obox(0.10, 0.10, 0.10, gut, 0.22, 0.00, -0.10, e.spine));     /* the spool */
       }
       if(kin === 'mage'){
         /* ---------- THE SKELETON MAGE ----------
@@ -16720,6 +17339,33 @@ function buildCharMesh(c){
       e.boxBody.push(obox(0.42, 0.20, 0.25, bodyCol, 0, -0.01, 0, e.spine));   /* hips, down to meet the legs */
     }
     if(!risen) e.boxBody.push(obox(0.5*SH, 0.14, 0.28*(fem?0.92:1), bodyCol, 0, 0.55, 0, e.spine));   /* shoulder yoke */
+    /* ---------- A LIEUTENANT HAS A NAME, AND IT SHOULD BE VISIBLE ----------
+       Gear was supposed to carry this and it does not: a lieutenant is one risen among a
+       dozen identical risen, and from the camera height its blade is four pixels of a
+       different colour. Reported as exactly that — they are impossible to tell apart.
+       So it gets a STANDARD: a bone staff off the left shoulder with a gold pennon hung from
+       it, riding above the head where nothing else in the roster has anything at all. It is
+       the tallest thing on the body, it is the only gold on the field that is not a lich, and
+       it reads from any zoom the game allows. The pennon segments hang on `e.cape`, which the
+       animator already drags a beat behind the body, so it trails when they run. */
+    if(c.lieutenant && !c.lich && e.spine){
+      const staff = '#e2d8bc', gold = '#d4a040', deep = '#a8761f';
+      e.boxBody.push(obox(0.045, 1.05, 0.045, staff, -0.26, 0.86, -0.10, e.spine));   /* the pole */
+      e.boxBody.push(obox(0.10, 0.10, 0.10, gold, -0.26, 1.42, -0.10, e.spine));      /* the finial */
+      e.boxBody.push(obox(0.16, 0.03, 0.16, deep, -0.26, 1.34, -0.10, e.spine));      /* the collar under it */
+      e.cape = e.cape || []; e.capeLift = 0.22;
+      { let par = e.spine;
+        for(let i = 0; i < 3; i++){
+          const seg = new THREE.Group();
+          seg.position.set(i === 0 ? -0.26 : 0, i === 0 ? 1.24 : -0.16, i === 0 ? -0.10 : -0.02);
+          par.add(seg);
+          /* obox, not the local `B` helper — that one is scoped to the lich's authored body
+             two hundred lines below and is not in scope here */
+          e.boxBody.push(obox(0.02, 0.17, 0.20 - i*0.05, i % 2 ? gold : deep, 0, -0.08, -0.10, seg));
+          e.cape.push(seg); par = seg;
+        }
+      }
+    }
     e.headG = new THREE.Group();
     e.headG.position.set(0, kin === 'brute' ? 0.545 : 0.62, 0); e.spine.add(e.headG);
     e.boxBody.push(obox(0.1, 0.1, 0.1, skinCol, 0, 0.02, 0, e.headG));                /* neck */
@@ -18587,8 +19233,14 @@ function renderOverlay(){
     if(c.state==='dead') continue;
     /* marker triangles */
     if(c.faction==='player'){
-      cx.fillStyle = c.lich ? '#d4a040' : c.undead ? '#a98ad4' : '#5ad4ff';
+      /* a lieutenant reads gold like a lich, because it is the same kind of exception: a body
+         that kept a mind. The standard on its back says the same thing in three dimensions. */
+      cx.fillStyle = c.lich ? '#d4a040' : c.lieutenant ? '#e8c86a' : c.undead ? '#a98ad4' : '#5ad4ff';
       cx.beginPath(); cx.moveTo(top.x, top.y-2); cx.lineTo(top.x-4, top.y-9); cx.lineTo(top.x+4, top.y-9); cx.fill();
+      /* and a second, smaller mark above it — one triangle among twelve is not a difference */
+      if(c.lieutenant && !c.lich){
+        cx.beginPath(); cx.moveTo(top.x, top.y-10); cx.lineTo(top.x-3, top.y-15); cx.lineTo(top.x+3, top.y-15); cx.fill();
+      }
     }
     /* enemy health hint */
     const worst = Math.min(...PARTS.map(k=>c.parts[k].severed?100:c.parts[k].hp));
@@ -18612,11 +19264,13 @@ function renderOverlay(){
       cx.fillStyle = '#141008'; cx.fillText(c.name, top.x+1, top.y-13);
       cx.fillStyle = '#d4c8a0'; cx.fillText(c.name, top.x, top.y-14);
     }
-    if(c.bossKey){
+    if(c.bossKey || (c.lieutenant && c.faction === 'player')){
       setFont('bold 11px monospace');
-      cx.fillStyle = '#141008'; cx.fillText(c.name, top.x+1, top.y-13);
-      cx.fillStyle = c.provoked || c.faction==='bandit' ? '#e07a5f' : '#d4c8a0';
-      cx.fillText(c.name, top.x, top.y-14);
+      const ly = c.lieutenant && !c.bossKey ? top.y - 19 : top.y - 14;
+      cx.fillStyle = '#141008'; cx.fillText(c.name, top.x+1, ly+1);
+      cx.fillStyle = c.lieutenant && !c.bossKey ? '#e8c86a'
+        : (c.provoked || c.faction==='bandit' ? '#e07a5f' : '#d4c8a0');
+      cx.fillText(c.name, top.x, ly);
     }
     /* THE SEAT HAS A FACE. A town leader was an ordinary townsman in a room full of ordinary
        townsmen — you could not tell who ran the place without clicking every body in the
@@ -22131,8 +22785,8 @@ function snapshot(){
     job:c.job, job2:c.job2||null, grp:c.grp||null,
     cmd: c.cmd ? {...c.cmd, home:{...c.cmd.home}} : null, under: c.under ?? null,
     wasJob: c.wasJob ? [...c.wasJob] : null, heldAt:c.heldAt||null, heldT:c.heldT||0, midden:c.midden||null, caveId:c.caveId||null, roomId:(c.roomId??null), caveDweller:!!c.caveDweller, floor: c.floor||0, captured:!!c.captured, dragId: c.drag ? c.drag.id : null,
-    clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
-    servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
+    clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
+    servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, whisp:!!c.whisp, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null,
     salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
@@ -22200,6 +22854,7 @@ function snapshot(){
     corpseIds: corpses.map(c=>c.id),
     cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
     threads: threads.map(t => ({key:t.key, title:t.title, step:t.step, hint:t.hint, done:t.done, at:t.at})),
+    cairnId: cairn ? cairn.id : 0,
     closing: {on: closing.on, told: closing.told, known: closing.known},
     search: {on: search.on, asked: {...search.asked}, found: search.found,
              siteId: search.siteId, leads: search.leads, met: search.met,
@@ -22403,11 +23058,13 @@ function restore(d){
       const cv = caves.find(x => x.id === c.caveId);
       if(cv && cv.rooms) c.homeRoom = cv.rooms.find(rm => rm.id === s.roomId) || c.homeRoom;
     } c.floor = s.floor || 0; c.captured = !!s.captured;
-    c.clawDmg = s.clawDmg || 0; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.eatsDead = !!s.eatsDead;
+    c.clawDmg = s.clawDmg || 0; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.eatsDead = !!s.eatsDead;
     c.structMult = s.structMult || 1; c.bindWeight = s.bindWeight || 1; c.shortTag = s.shortTag || '';
     c.servitor = !!s.servitor; c.minded = !!s.minded; c.crafted = !!s.crafted; c.autoFight = !!s.autoFight;
+    c.cart = !!s.cart; c.stitcher = !!s.stitcher; c.whisp = !!s.whisp; c.noFight = !!s.noFight;
     c.onlyArt = s.onlyArt || null; c.speedMult = s.speedMult || 0;
     c.markT = s.markT || 0; c.heat = s.heat || 0; c.mustered = !!s.mustered;
+    if(s.ate != null) c.ate = s.ate;
     c.shape = s.shape ? {...s.shape} : null; c.shapeName = s.shapeName || null; c.kills = s.kills || 0;
     c.salted = !!s.salted; c.saltedAt = s.saltedAt ?? null; c.rot = s.rot || null;
     if(s.knit != null) c.knit = s.knit;
@@ -22555,6 +23212,15 @@ function restore(d){
   };
   for(const c of chars) relink(c);
   for(const b of pBuilds) if(b.stored) for(const c of b.stored) relink(c);
+  /* THE BEAST IS A REFERENCE, and a reference does not survive JSON. Everything about its size
+     is a function of `ate`, which rides along on the character like any other field — so the
+     module-level handle is all that has to be found again, by id, and the body is re-derived
+     rather than re-stored. A save from before it existed simply has no beast.
+     REBOUND HERE, with the other relinks, and not up beside the quest flags: the first version
+     looked the beast up before `chars` had been repopulated and came back with null every
+     time, which read in the probe as the whole creature failing to survive a save. */
+  cairn = d.cairnId ? (chars.find(c => c.id === d.cairnId) || null) : (chars.find(c => c.bossKey === 'cairn') || null);
+  if(cairn) cairnGrow(cairn);
   for(const c of chars){
     if(c.isLeader >= 0 && towns[c.isLeader] && towns[c.isLeader].leader) towns[c.isLeader].leader.charId = c.id;
     if(c.campId >= 0){ const camp = camps.find(k => k.id === c.campId); if(camp) c.squad = camp.squad; }

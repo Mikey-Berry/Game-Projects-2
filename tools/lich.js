@@ -137,9 +137,18 @@ const OUT = path.resolve(process.argv[2] || path.join(__dirname, 'lich.png'));
       const bb = new THREE.Box3().setFromObject(o);
       lo = Math.min(lo, bb.min.y); hi = Math.max(hi, bb.max.y);
     });
-    out.meshes = `${vis} visible meshes, ${lo.toFixed(2)} to ${hi.toFixed(2)}`;
-    out.reachesGround = lo < 0.06 ? 'the hem reaches the ground'
-      : `!! THE ROBE STOPS ${lo.toFixed(2)} ABOVE THE GROUND — there is a gap where the legs were`;
+    /* RELATIVE TO THE GROUND IT IS STANDING ON, not to world zero. `Box3.setFromObject` is
+       world-space, and the character group is parked at `groundY(c.x, c.y)` — so this read
+       the TERRAIN HEIGHT under the lich and called it a gap in the robe. It passed for as
+       long as the test body happened to spawn on flat ground near sea level and failed the
+       moment anything upstream consumed a different number of random values and moved it up
+       a hill. The same trap, and the same fix, as the hood check below. */
+    const base = new THREE.Vector3();
+    e.g.getWorldPosition(base);
+    const hem = lo - base.y;
+    out.meshes = `${vis} visible meshes, ${hem.toFixed(2)} to ${(hi - base.y).toFixed(2)} above its own feet`;
+    out.reachesGround = hem < 0.06 ? 'the hem reaches the ground'
+      : `!! THE ROBE STOPS ${hem.toFixed(2)} ABOVE THE GROUND — there is a gap where the legs were`;
     /* THE HOOD IS THE TOPMOST THING ON IT — asserted against the body it is actually on,
        not against an absolute height. Bodies vary in height by a per-character roll, so a
        fixed 1.85 was calibrated to one individual and failed by a centimetre the moment
