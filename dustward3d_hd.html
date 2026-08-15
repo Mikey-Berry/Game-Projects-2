@@ -2867,14 +2867,19 @@ function spawnInquest(){
   const anchor = pick(player().filter(c => c.state !== 'dead'));
   if(!anchor) return;
   const sq = {id: squadN, anchor: {x: anchor.x, y: anchor.y}, kind: 'inquest'};
+  /* AND A SHADE LESS THAN A BOSS. The other half of the note was that an Inquisitor is
+     stronger than the host that summons one — the trigger is a dozen risen and the answer to
+     it was a 40/44/30 in masterwork plate with two paladins. Pulled back to something a
+     prepared squad of the size that provokes it can actually fight, rather than something
+     that has to be cheesed or run from. */
   const iq = makeChar('Inquisitor', 'purge', x, y,
-    {atk:40, def:44, tough:30, ath:7, magic:14, gift:'divine', armr:50, squad:sq, weapon:'w_kat', armor:'a_marshal'});
+    {atk:31, def:33, tough:24, ath:7, magic:12, gift:'divine', armr:38, squad:sq, weapon:'w_kat', armor:'a_pla'});
   iq.inquisitor = true; iq.neutral = true;
   chars.push(iq);
   for(let i = 0; i < 2; i++){
     const p = findOpenNear(x, y, 3);
     const c = makeChar('Paladin', 'purge', p.x, p.y,
-      {atk:28, def:28, tough:24, ath:7, armr:40, squad:sq, weapon:'w_kat', armor:'a_pla'});
+      {atk:22, def:22, tough:19, ath:7, armr:30, squad:sq, weapon:'w_kat', armor:'a_pla'});
     c.neutral = true; c.inquestGuard = true;
     chars.push(c);
   }
@@ -3999,6 +4004,44 @@ function spawnHostileSquad(kind){
 /* ============================================================ LOG / TIME */
 const logEl = document.getElementById('log');
 const chronicle = [];   /* the full, timestamped record — the transient feed forgets, this does not */
+/* ============================================================ THREADS
+   WHAT YOU ARE IN THE MIDDLE OF.
+
+   Every quest in this game was already made of the systems around it — ask in halls, walk out
+   and look, listen in the right hole — which is the right way to build them and completely
+   invisible if the only place the first step is ever stated is one line of a log that keeps
+   seven lines. Two notes came back saying the same thing in different words: the search for
+   Lyre "gives absolutely zero leads whatsoever", and reaching the second Fracture creates
+   urgency with "zero clarity on how to actually stop what's happening". Both were false. Both
+   were also true, because a mechanic nobody can find does not exist.
+
+   A THREAD is one line of standing text: what you are doing and what the next move is. It
+   is not a marker, it does not draw an arrow on the world, and it never tells you an answer
+   the world has not already told you — it is the note you would have written down yourself.
+   `threadSet` both records it and says it out loud once, so the step arrives in the feed
+   where you are looking AND stays somewhere you can go back to. */
+const threads = [];
+function threadOf(key){ return threads.find(t => t.key === key) || null; }
+function threadSet(key, title, step, opts){
+  const o = opts || {};
+  let t = threadOf(key);
+  if(!t){ t = {key, title, step:'', done:false, at:day, hint:''}; threads.push(t); }
+  t.title = title;
+  t.hint = o.hint || '';
+  if(t.step === step) return t;         /* the same step restated is not news */
+  t.step = step; t.at = day;
+  /* WORDS, NOT SYMBOLS. The page is set in Courier New and this file has already shipped two
+     tofu boxes by assuming a glyph was there — a pencil on the canvas and a box-drawing arrow
+     on a button. There is nothing here a plain word cannot say. */
+  if(!o.quiet) log(`${title.toUpperCase()} — ${step}`, 'good');
+  return t;
+}
+function threadDone(key, step){
+  const t = threadOf(key); if(!t || t.done) return;
+  t.done = true; t.step = step || t.step; t.at = day;
+  log(`${t.title.toUpperCase()}, DONE — ${t.step}`, 'good');
+}
+function threadsOpen(){ return threads.filter(t => !t.done).length; }
 function log(msg, cls=''){
   const d = document.createElement('div'); d.className = 'm '+cls; d.textContent = msg;
   logEl.appendChild(d);
@@ -4079,18 +4122,56 @@ function renderWorldNews(body){
 function openChronicles(){
   openModal('CHRONICLES', 'Everything the log has said, kept and dated. The newest is at the top.');
   const body = $('modalbody');
-  let filter = 'all';
+  /* OPEN ON THE THING YOU ARE DOING. A player with a live thread came here to find out what
+     the next move was; a player with none came to read back over what happened. */
+  let filter = threadsOpen() ? 'threads' : 'all';
   const rndr = () => {
     body.innerHTML = '';
     const bar = document.createElement('div');
     bar.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap';
-    for(const [key, label] of [['all','All'],['good','Results'],['bad','Trouble'],['world','The World']]){
+    for(const [key, label] of [['threads','Doing' + (threadsOpen() ? ` (${threadsOpen()})` : '')],
+                               ['all','All'],['good','Results'],['bad','Trouble'],['world','The World']]){
       const b = document.createElement('button');
       b.textContent = label; b.className = 'bbtn' + (filter===key ? ' on' : '');
       b.onclick = () => { filter = key; rndr(); };
       bar.appendChild(b);
     }
     body.appendChild(bar);
+    if(filter === 'threads'){
+      const sub = document.createElement('div');
+      sub.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:8px';
+      sub.textContent = 'What you are in the middle of, and what the next move is. Nothing here is a marker on the map.';
+      body.appendChild(sub);
+      const open = threads.filter(t => !t.done), shut = threads.filter(t => t.done);
+      if(!threads.length){
+        const n = document.createElement('div'); n.style.cssText = 'color:var(--dust)';
+        n.textContent = 'Nothing yet. Take a life with something in front of it, or wait for the sky to say something.';
+        body.appendChild(n);
+      }
+      for(const t of open.concat(shut)){
+        const row = document.createElement('div');
+        row.style.cssText = 'padding:6px 0;border-bottom:1px solid rgba(120,100,80,.12)';
+        const h = document.createElement('div');
+        h.style.cssText = `font-size:12px;letter-spacing:1px;color:${t.done ? 'var(--dust)' : 'var(--gold)'}`;
+        h.textContent = t.title.toUpperCase() + (t.done ? ' — DONE' : '');
+        const m = document.createElement('div');
+        m.style.cssText = `font-size:12px;color:${t.done ? 'var(--dust)' : 'var(--bone)'};margin-top:2px`;
+        m.textContent = t.step;
+        row.appendChild(h); row.appendChild(m);
+        if(t.hint && !t.done){
+          const q = document.createElement('div');
+          q.style.cssText = 'font-size:11px;color:var(--dust);margin-top:2px';
+          q.textContent = t.hint;
+          row.appendChild(q);
+        }
+        const d = document.createElement('div');
+        d.style.cssText = 'font-size:10px;color:var(--dust);margin-top:2px';
+        d.textContent = `day ${t.at}`;
+        row.appendChild(d);
+        body.appendChild(row);
+      }
+      return;
+    }
     if(filter === 'world'){
       const sub = document.createElement('div');
       sub.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:8px';
@@ -4833,6 +4914,31 @@ function wantedCheck(dt){
     }
   }
 }
+/* ---------- SETTLING UP ----------
+   A bounty used to be payable at exactly one desk: the town Leader's, which sits in the
+   middle of the town whose watch is walking towards you with irons out. So in practice a
+   price on your head could not be paid off at all — you waited out the five-percent-a-day
+   decay, or you never went back. There are three doors now, and the price is the difference:
+   the Leader (1.5x, if you can reach the desk), the bar in the same town (1.8x, a fixer's
+   cut, and the bar is a door you can actually get to), and the bar in ANY other town (2.5x,
+   which buys a courier and his silence). There is always a way to pay. It is only ever a
+   question of how much. */
+function settleBounty(t, price, who){
+  if(!t || !t.bounty) return false;
+  if(cats < price){ refuse('Not enough coin.'); return false; }
+  cats -= price;
+  t.bounty = 0; t.wanted = false;
+  /* the watch is called off mid-arrest — including anybody already being walked to a cell */
+  for(const g of chars){
+    if(g.homeTown !== t) continue;
+    if(g.arrestTarget){ g.arrestTarget = null; g.provoked = false; g.target = null; }
+    if(g.drag && g.drag.faction === 'player'){ g.drag.captured = false; g.drag = null; }
+  }
+  dropRep(t, -10);
+  log(`${who} takes the coin and ${t.name}'s ledger closes. No further business with you.`, 'good');
+  refreshTop(); refreshInv();
+  return true;
+}
 /* Old debts get quieter. Not forgiven — a murder is still on the books for a long while —
    but a town has other things to think about, and a bounty that never moves is a wall. */
 function bountyDecay(){
@@ -4953,6 +5059,10 @@ function xpGain(c, stat, amt){
      again as fast as anybody and will never be much with a blade, and after a hundred days
      of play that is the whole difference between two people who started identical. */
   { const L = subOf(c).learn; if(L && L[stat] !== undefined) amt *= L[stat]; }
+  /* AND HOW MUCH OF A MIND IT WAS GIVEN. A shaped body's MIND axis is the difference between
+     a hand that will be exactly as good in a hundred days as it is now and one that is
+     genuinely learning its trade. Living people have no `learnMult` and are unaffected. */
+  if(c.learnMult) amt *= c.learnMult;
   if(c.age < 16) amt *= 1.6;
   else if(c.age > traitOf(c, 'deathAge', 62) - 7) amt *= 0.6;
   if(c.goal === stat) amt *= 1.25;
@@ -5432,7 +5542,7 @@ function kill(c, by){
   if(c.bossKey && by && by.faction==='player') log(`${c.name} has fallen.`, 'good');
   if(by && by.faction==='player' && c.faction==='purge'){
     purgeWrath++;
-    if(purgeWrath >= 4 && !purgeHuntActive()){ purgeWrath = 0; spawnPurge(true); }
+    if(purgeWrath >= 9 && !purgeHuntActive()){ purgeWrath = 0; spawnPurge(true); }
   }
   if(c.phantom){ dispelPhantom(c); return; }   /* struck true: the figure comes apart into dust */
   if(c.swag && (c.swag.gold > 0 || Object.keys(c.swag.items).length)){
@@ -5665,7 +5775,8 @@ function nearShack(c){
 /* ============================================================ PLAYER BUILDINGS */
 const pBuilds = [];
 const BUILD_TYPES = {
-  wall:    {name:'Wall',      mats:3,  w:1, h:1, desc:'Blocks movement — and its top is a rampart your own people can stand on'},
+  wall:    {name:'Wall',      mats:3,  w:1, h:1, line:true,
+    desc:'Blocks movement — and its top is a rampart your own people can stand on. Click once to set the corner, again to run the whole length'},
   rampart: {name:'Rampart Stair', cost:{wood:8, mats:4}, w:1, h:1,
     desc:'A stair to the wall-tops. Without one, the rampart is a shelf nobody can reach'},
   shack:   {name:'Shack',     mats:25, w:3, h:3, desc:'Free bed inside — 8x healing'},
@@ -5889,8 +6000,44 @@ function canAfford(cost){
   for(const k of Object.keys(cost)) if(campHas(k) < cost[k]) return false;
   return true;
 }
-function tryBuild(type, tx, ty){
+/* A WALL IS ONE TILE, and it always was — eleven other pieces of logic (decks, emplacement
+   mounts, siege damage, the upkeep tally) look up a wall by its exact tile, so widening the
+   footprint would break every one of them. What was actually wrong is that a fortification is
+   twenty clicks. So: stake out a straight RUN of one-tile walls in a single gesture. Each tile
+   that lands is still an ordinary 1x1 wall, and the ones that can't land are quietly skipped
+   rather than shouting 'Blocked ground.' nineteen times. */
+const RUN_CAP = 32;
+/* aliases so tryBuild can shadow its own `refuse`/`log` without losing the real ones */
+const outerRefuse = m => refuse(m), outerLog = (m, k) => log(m, k);
+function runTiles(ax, ay, bx2, by2){
+  const dx = bx2 - ax, dy = by2 - ay;
+  const out = [];
+  /* axis-locked: the longer of the two deltas wins, so a rough drag still gives a clean line */
+  if(Math.abs(dx) >= Math.abs(dy)){
+    const n = Math.min(Math.abs(dx), RUN_CAP - 1), s = dx < 0 ? -1 : 1;
+    for(let i = 0; i <= n; i++) out.push([ax + i*s, ay]);
+  } else {
+    const n = Math.min(Math.abs(dy), RUN_CAP - 1), s = dy < 0 ? -1 : 1;
+    for(let i = 0; i <= n; i++) out.push([ax, ay + i*s]);
+  }
+  return out;
+}
+function buildRun(type, ax, ay, bx2, by2){
+  const tiles = runTiles(ax, ay, bx2, by2);
+  let laid = 0;
+  for(const [x, y] of tiles) if(tryBuild(type, x, y, true)) laid++;
   const bt = BUILD_TYPES[type];
+  if(!laid){ refuse(`Nowhere along that line will take a ${bt.name.toLowerCase()}.`); return 0; }
+  const cost = buildCost(type);
+  const total = {};
+  for(const k of Object.keys(cost)) total[k] = cost[k] * laid;
+  log(`${laid} ${bt.name.toLowerCase()}${laid===1?'':'s'} staked out. The run needs ${costText(total)} and hands on the BUILD job.`, 'good');
+  return laid;
+}
+function tryBuild(type, tx, ty, quiet){
+  const bt = BUILD_TYPES[type];
+  const refuse = quiet ? (() => {}) : outerRefuse;
+  const log = quiet ? (() => {}) : outerLog;
   /* AN EMPLACEMENT MAY STAND ON A WALL, which is the entire point of one, so it is the one
      thing allowed to be staked out on ground the collision map calls solid. Anywhere else it
      wants clear dirt or an existing deck like everything else does. */
@@ -7293,6 +7440,7 @@ function jobHasWork(c, j){
   switch(j){
     case 'build':  return blueprints.length > 0;
     case 'raise':  return corpses.some(b => b.state === 'dead' && !b.raised) && risenLoad(c) < risenCap(c);
+    case 'carrion': return corpses.some(carrionFodder);
     case 'flesh':  return pBuilds.some(b => (FLESH[b.type] || b.type === 'vat'));
     case 'farm':   return pBuilds.some(b => b.type === 'farm');
     case 'craft':  return pBuilds.some(b => b.type === 'workbench' || b.type === 'forge');
@@ -7882,7 +8030,16 @@ function physics(c, dt){
       /* --- the old bolts --- */
       if(c.stance==='ranged'){
         if((c.gift==='destruction' || c.omni) && c.mana >= SPELLS.firebolt.cost && d <= SPELLS.firebolt.range){ castFirebolt(c, t); return; }
-        if((c.gift==='dark' || c.omni) && c.mana >= SPELLS.darkbolt.cost && d <= SPELLS.darkbolt.range){ castDarkbolt(c, t); return; }
+        /* A DARKBOLT IS A MARKER, NOT A GUN. Its damage was pulled back to a token on purpose;
+           what it buys is the mark, and the mark does not stack with itself. So a dark caster
+           on RANGED used to empty a full pool re-marking a target that was already marked,
+           and end the fight with nothing left for the thing the pool is actually for.
+           Three rules now: don't re-mark, prefer somebody unmarked who is standing in range,
+           and keep a raise in the bank. */
+        if((c.gift==='dark' || c.omni) && c.mana >= SPELLS.darkbolt.cost + darkReserve(c) && d <= SPELLS.darkbolt.range){
+          const want = (t.markT || 0) > 1.5 ? nearestUnmarked(c) : t;
+          if(want) { castDarkbolt(c, want); return; }
+        }
       }
     }
     const w = c.weapon ? ITEMS[c.weapon] : null;
@@ -8208,6 +8365,53 @@ function physics(c, dt){
           }
         }
       }
+    } else if(ej==='carrion'){
+      /* THE HARVEST ROUNDS. Walk to the nearest body nobody has a claim on, turn out its
+         pockets, then render it down. Two beats per corpse — the looting is the first pass,
+         the harvest the second — so a hand on this job clears a field the same way you would
+         by hand, just without the clicking. */
+      const now = day + hour / 24;
+      c.carrScanT = (c.carrScanT || 0) - dt;
+      if(c.carrScanT <= 0){
+        c.carrScanT = 2.0;
+        let body = null, bd = 1e9;
+        for(const b of corpses){
+          if(!carrionFodder(b) || b._harvSkip > now) continue;
+          const d2 = dist(b.x, b.y, c.x, c.y);
+          if(d2 < 34 && d2 < bd){ bd = d2; body = b; }
+        }
+        if(body !== c.carrBody) c.carrGiveUp = 40;   /* seconds to reach it before we call it unreachable */
+        c.carrBody = body;
+      }
+      const body = c.carrBody && corpses.includes(c.carrBody) && carrionFodder(c.carrBody) ? c.carrBody : null;
+      if(!body){ c.carrBody = null; return; }
+      if(dist(c.x, c.y, body.x, body.y) > 1.1){
+        /* A BODY ACROSS A RIVER IS NOT WORK. Without this the nearest corpse is re-picked
+           every scan, and a hand set to HARVEST spends the rest of the run walking at a
+           cliff — which in play reads as the job simply not doing anything. */
+        c.carrGiveUp = (c.carrGiveUp || 40) - dt;
+        if(c.carrGiveUp <= 0){ body._harvSkip = now + 0.1; c.carrBody = null; c.carrScanT = 0; return; }
+        travel(c, body.x, body.y, dt, 0.6);
+        return;
+      }
+      c._working = 0.5;
+      c.carrT = (c.carrT || 0) - dt;
+      if(c.carrT > 0) return;
+      c.carrT = 1.6;
+      if(rnd() < 0.7) addSpecks(c.x, c.y - 0.4, '#8a5a4a', 2);
+      if(!body.looted){
+        const got = lootCorpse(body, true) || [];
+        if(got.length) log(`${c.name} turns out a body: ${got.join(', ')}.`, 'good');
+        refreshTop(); refreshInv();
+      } else {
+        const dk = decayStage(body);
+        const n = harvestCorpse(body, true);
+        log(`${c.name} renders down a ${dk.label} body — ${n} Mortal Remains.`, 'good');
+        c.carrBody = null; c.carrScanT = 0;
+        xpGain(c, 'labor', 0.4);
+        AU.build && AU.build(c.x, c.y);
+      }
+      return;
     } else if(ej==='build'){
       const bp = blueprints
         .sort((a,b2) => dist(a.x,a.y,c.x,c.y) - dist(b2.x,b2.y,c.x,c.y))[0];
@@ -8406,10 +8610,16 @@ function reapPhylacteries(){
    The accelerant deliberately does not engage below ATTENDED. Ordinary casting has to stay
    free, or the whole magic system reads as a penalty and the correct play becomes never
    touching it. */
-const FRACTURE_DAYS = 120;        /* calendar-only days to land it; the one number to tune */
+/* 120 was too short, and the note that came back said exactly why: "especially if you spend a
+   lot of time wandering and figuring out how the game works." That is the correct way to play
+   a world like this one, and a clock that punishes it is a clock that wants you to already
+   know the game. 180 leaves room for a run that is mostly walking around, and the escalation
+   is on this number now — the tide, the gaunt draw, the rift cap and the blood moons all read
+   the stage rather than your notice — so lengthening it lengthens the whole curve at once. */
+const FRACTURE_DAYS = 180;        /* calendar-only days to land it; the one number to tune */
 const FRACTURE_STAGES = [
   {at:0,   name:'THE DUST FALLS',      tell:null},
-  {at:20,  name:'A STILLNESS',
+  {at:20,  name:'A STILLNESS', opens:true,
    tell:'The dust stopped falling. For eleven seconds, across the whole of the waste, it simply stopped — and then it went on as if nothing had happened.'},
   {at:40,  name:'THE THINNING',
    tell:'The tears are not closing on their own any more. Caravans go out on the north road and the road gives some of them back.'},
@@ -8426,9 +8636,26 @@ function fractureStageOf(v){
   for(let k = 0; k < FRACTURE_STAGES.length; k++) if(v >= FRACTURE_STAGES[k].at) i = k;
   return i;
 }
-/* the accelerant: what your own work adds on top of the calendar, per day */
+/* ---------- THE TIDE COMES IN ON A CLOCK ----------
+   The eldritch pressure used to be read off `noticeTier`, which is a score you raise by
+   working the formulae — so the more necromancy you did, the more gaunts came, the faster the
+   sky opened, and the more inquisitors arrived, all at once and all from the same cause. That
+   is being punished three times for playing the game the game is about, and the note that
+   came back was the obvious one: an increasing number of gaunts AND inquisitors AND bandits
+   is not a difficulty curve, it is a wall.
+
+   So the tide is the CALENDAR now. It rises as the second Fracture approaches and it does not
+   care what you have been doing — which is also the better story, because the thing behind
+   the dust was never coming for you personally. Notice still counts for something, capped
+   small, so a host of forty is not free; it just cannot be the whole of it any more. */
+function eldritchTide(){
+  return Math.min(3, fractureStage * 0.7 + Math.min(0.6, noticeTier * 0.2));
+}
+/* the accelerant: what your own work adds on top of the calendar, per day. Cut hard for the
+   same reason — it was the loop that made a loud player's clock run out early on top of
+   everything else the loudness was already buying them. */
 function fractureAccel(){
-  return noticeTier >= 3 ? 0.85 : noticeTier >= 2 ? 0.35 : 0;
+  return noticeTier >= 3 ? 0.25 : 0;
 }
 function advanceFracture(days){
   if(fracture >= 100) return;
@@ -8445,6 +8672,7 @@ function advanceFracture(days){
       const anchor = player().find(c => c.state !== 'dead') || {x: W/2, y: H/2};
       worldEvent('fracture', anchor.x, anchor.y, st.tell);
       AU.news();
+      if(st.opens) openTheClosing();
     }
   }
 }
@@ -8782,7 +9010,7 @@ function compactBeacon(r){
     log(`The beacons have it: a tear at ${Math.round(r.x)}, ${Math.round(r.y)}. Every signed seat knows already.`, 'bad');
   }
 }
-function riftCap(){ return Math.max(1, noticeTier) + fractureStage; }   /* the sky never fully closed */
+function riftCap(){ return Math.max(1, Math.round(eldritchTide())) + fractureStage; }   /* the sky never fully closed */
 /* ============================================================ THE SECOND FRACTURE ITSELF
    The ladder ends here. This is not a harder difficulty band — it is a different game, and
    it is one you can lose without the run ending, because a game-over screen would throw away
@@ -8820,6 +9048,81 @@ function openTheDoor(){
   worldEvent('door', x, y, 'The sky has opened out past the fences. Not a tear this time. A door, and it is standing wide.');
   AU.news();
   return theDoor;
+}
+/* ============================================================ THE CLOSING RITE
+   The door can be shut. It has always been able to be shut: somebody with a gift stands in it
+   for four minutes of held formula and pays a pile of flesh, iron and remains at the end, and
+   the sky closes. Every piece of that was in the game and none of it was anywhere a player
+   could find out about before the sky was already open — which is the worst possible moment to
+   start looking. The note that came back was fair: the last stage "creates a sense of urgency,
+   but zero clarity on how to actually stop what's happening."
+
+   So the answer is learnable, early, and from the world rather than from a menu. It starts the
+   day the dust stops falling, it is carried by the scholars — who are the only people in this
+   setting who write anything down — and it is finished by reading a Golden-Age codex, which is
+   an item that already drops out of the deep and already sells for six thousand.
+
+   It reveals information and nothing else. No shortcut, no discount, no marker: what you get
+   is the cost and the requirement, in advance, while there is still time to lay one in. */
+/* NAMED `closing` AND NOT `rite`, and its tick is `closingTick` and not `riteTick`, because
+   THE LAST RITE ALREADY OWNS THOSE NAMES. A second top-level `function riteTick` in the same
+   classic script does not collide loudly — the later declaration silently wins, so the first
+   version of this shipped a dead closing-rite tick AND an ascension rite being advanced twice
+   a frame. Nothing threw. One name, one meaning, in a file this size especially. */
+const closing = {on:false, told:false, known:false};
+function openTheClosing(){
+  if(closing.on) return;
+  closing.on = true;
+  threadSet('rite', 'What the stillness was',
+    'The dust stopped, and it has done that before. Ask a scholar — they are the only people out here who write anything down.',
+    {hint: 'Right-click any wandering scholar. Every town has news of where one is.'});
+}
+/* a scholar, asked about the stillness, knows what it was and what was done about it */
+function tellScholarOfTheClosing(sc){
+  if(!closing.on || closing.told) return false;
+  closing.told = true;
+  log(`${sc.name}: "The stillness. Yes. It is in the record twice — once nine generations ago, and once eleven seconds ago, and you were standing in the second one."`, 'good');
+  log(`${sc.name}: "The first Fracture did not close itself. Somebody shut it. By hand, standing in it, holding a formula until it gave. The working is written down — it is in a Golden-Age codex, and I have never held one."`, 'good');
+  worldEvent('rite', sc.x, sc.y,
+    'A scholar has been saying, to anyone who will stand still, that the first Fracture was closed by hand and that the working was written down.');
+  threadSet('rite', 'What the stillness was',
+    'The first Fracture was closed by hand, and the working was written down in a Golden-Age codex. Get one and read it.',
+    {hint: 'A Codex comes out of the deep — sealed redoubts, the old vaults, the things reagent hunters dig up. Bring it into your stores and somebody will read it.'});
+  return true;
+}
+/* Reading it. Held in the common stores is enough — somebody in the camp who can hold a
+   formula will get to it, and the codex is not consumed: it is a book, not a reagent. */
+let _closeT = 0;
+function closingTick(dt){
+  if(!closing.on) return;
+  if((_closeT -= dt) > 0) return;
+  _closeT = 4;
+  /* on the same slow beat, because it rebuilds a cost string and there is no reason at all
+     for that to happen sixty times a second */
+  if(theDoor) closingDoorThread();
+  if(closing.known || !closing.told || campHas('codex') < 1) return;
+  const reader = player().find(c => c.state === 'ok' && c.gift && (!c.undead || c.lich));
+  if(!reader) return;
+  closing.known = true;
+  log(`${reader.name} reads the codex through twice and then a third time, slowly. "It is not a spell. It is a HOLD. You stand in the thing and you do not let go of it, and you pay it at the end."`, 'good');
+  log(`THE CLOSING RITE. When the sky opens: send everyone with a gift to the door and they hold it. It will want ${costText(DOOR_SEAL_COST)} at the moment it gives, plus more for every seat that has fallen by then.`, 'good');
+  worldEvent('rite', reader.x, reader.y,
+    'Somebody out in the waste has read a Golden-Age codex and knows how the first Fracture was closed.');
+  threadSet('rite', 'The closing rite',
+    `Known. When the door opens, right-click it with every gifted body you have and they will hold it. Lay in ${costText(DOOR_SEAL_COST)} before then — the price rises for every seat that falls.`,
+    {hint: 'The rite is a long hold, not a cast. A caster driven off it loses the progress; more casters make it shorter.'});
+}
+/* and once it is standing, the thread becomes a progress readout rather than a lesson */
+function closingDoorThread(){
+  if(!theDoor) return;
+  const pct = Math.round(theDoor.work / DOOR_WORK * 100);
+  const cost = costText(doorSealCost());
+  threadSet('rite', 'The closing rite',
+    closing.known
+      ? `The door is open. The hold is ${pct}% of the way through, and it will want ${cost} when it gives.`
+      : `The door is open and you do not know what to do about it. A scholar knows; a Golden-Age codex knows better.`,
+    {hint: closing.known ? 'Right-click the door with every gifted body you have. They have to stay on it.'
+                      : 'Ask a scholar about the stillness, then find a codex.', quiet: true});
 }
 function doorSealCost(){
   /* every seat that falls makes the closing dearer — the door is wider for it */
@@ -8942,7 +9245,7 @@ function enterRuin(){
 }
 function riftTick(dh){
   /* the world is thin now. It was never whole to begin with — and it gets thinner when you work the formulae. */
-  if(rifts.length < riftCap() && rnd() < (0.004 + noticeTier * 0.0016) * dh){
+  if(rifts.length < riftCap() && rnd() < (0.004 + eldritchTide() * 0.0016) * dh){
     const anchor = pick(player().filter(c => c.state !== 'dead')) || {x: W/2, y: H/2};
     const a = rnd() * Math.PI * 2, d = 22 + rnd() * 30;
     const x = clamp(Math.round(anchor.x + Math.cos(a) * d), 6, W-7);
@@ -9337,7 +9640,7 @@ function bloodMoonRoll(){
     return;
   }
   /* rare. It should be a thing people remember, not a weekly chore. */
-  if(day > 12 && rnd() < 0.022 + noticeTier * 0.006){
+  if(day > 12 && rnd() < 0.022 + eldritchTide() * 0.006){
     bloodMoon = 1;
     log('THE MOON IS COMING UP RED. Get behind something. Tonight the door is wide open.', 'bad');
     /* on a red moon, the door is not a figure of speech */
@@ -9370,10 +9673,10 @@ function gauntTick(dh){
   }
   if(!isNight() && !rifts.length) return;   /* a tear makes its own night */
   const living = chars.filter(c => c.faction === 'gaunt' && c.state !== 'dead');
-  const tier = noticeTier;
+  const tier = eldritchTide();
   const cap = (3 + tier * 2 + Math.floor(purgeWrath / 60)) * (bloodMoon && isNight() ? 6 : 1);
   if(living.length >= cap) return;
-  /* the more you have worked the formulae, the more of them are looking */
+  /* the nearer the sky is to opening, the more of them are already through */
   const draw = (0.30 + tier * 0.32) * (bloodMoon && isNight() ? 14 : 1);
   if(rnd() > draw * dh) return;
   const anchor = pick(player().filter(c => c.state !== 'dead')) || {x: W/2, y: H/2};
@@ -9864,10 +10167,26 @@ function retaliate(t, attacker){
   t.target = attacker; t.targetManual = false;
   t.moveTarget = null; t.path = null; t.pathGoal = null;
 }
-function lootCorpse(t){
+/* ---------- what a HARVEST hand is allowed to render down ----------
+   The job exists to clear a field, not to decide who counts as a person. So it takes only
+   what nobody would argue about: nameless dead, on your ground, that no one else has a claim
+   on. Townsfolk are excluded outright — auto-looting a neighbour's body would quietly earn
+   you a bounty you never chose, and you would find out about it from the guards. */
+function carrionFodder(b){
+  if(!b || b.state !== 'dead' || b.raised) return false;
+  if(b.bossKey || b.vip || b.phyl) return false;              /* names, not material */
+  if(b.faction === 'town' || b.homeTown) return false;        /* that is a theft, not a chore */
+  if(chars.some(o => o.carry === b || o.raiseBody === b)) return false;   /* already spoken for */
+  /* your own fallen are not stock. A grown cadaver was never a person, and a risen thing put
+     down a second time is already yours to render. */
+  if(b.faction === 'player' && !b.grown && !b.undead) return false;
+  return true;
+}
+function lootCorpse(t, quiet){
+  const log = quiet ? (() => {}) : outerLog;
   /* going through the pockets of somebody's neighbour, in front of the neighbours */
   if(t && (t.faction === 'town' || t.homeTown)) crime('theft', t.x, t.y, player()[0] || null);
-  if(t.looted){ return harvestCorpse(t); }
+  if(t.looted){ return harvestCorpse(t, quiet); }
   t.looted = true;
   let got = [];
   if(t.loot){ cats += t.loot; got.push(`${t.loot} gold`); }
@@ -9884,8 +10203,10 @@ function lootCorpse(t){
   log((got.length ? `Looted: ${got.join(', ')}.` : 'Nothing worth taking.') +
       ` The body is ${dstate.label}${t.salted ? ', and cured' : ''}. (Right-click again to harvest remains.)`, got.length?'good':'');
   refreshTop(); refreshInv();
+  return got;
 }
-function harvestCorpse(t){
+function harvestCorpse(t, quiet){
+  const log = quiet ? (() => {}) : outerLog;
   /* a fresh body gives up more than a picked-over one */
   const dk = decayStage(t);
   const n = Math.max(1, dk.remains - (rnd() < 0.4 ? 0 : 1));
@@ -9895,6 +10216,7 @@ function harvestCorpse(t){
   const xi = chars.indexOf(t); if(xi>=0) chars.splice(xi,1);
   log(`Harvested ${n} Mortal Remains from a ${dk.label} body.`, 'good');
   refreshInv();
+  return n;
 }
 
 /* ============================================================ MAGIC
@@ -10304,6 +10626,28 @@ function dispelPhantom(c){
    target up to the dead. The bonus is deliberately slight: it is multiplied by every risen
    swinging at that target, and a host of twenty would run away with anything larger. */
 const MARK_TIME = 9;
+/* WHAT A DARK CASTER KEEPS BACK. A necromancer's pool is for raising and for the things that
+   actually turn a fight; bolts are what they do with the change. Somebody who can raise holds
+   a raise in reserve, and everyone else holds a little anyway so they are not empty the moment
+   something worth spending on walks in. */
+function darkReserve(c){
+  if(!c) return 0;
+  const canRaise = attOf(c, 'dark') >= 2 && (!c.undead || c.lich);
+  return canRaise ? SPELLS.raise.cost : Math.round(maxMana(c) * 0.2);
+}
+/* somebody in range who does not already carry a mark. Null if everyone worth hitting has one,
+   which is the case where the right move is to stand there and get the mana back. */
+function nearestUnmarked(c){
+  let best = null, bd = SPELLS.darkbolt.range;
+  for(const o of charsNear(c.x, c.y, SPELLS.darkbolt.range)){
+    if(o === c || o.state !== 'ok' || (o.markT || 0) > 1.5) continue;
+    if(!hostile(c, o) && !(o.neutral && o.provoked)) continue;
+    if((o.floor || 0) !== (c.floor || 0)) continue;
+    const d = dist(c.x, c.y, o.x, o.y);
+    if(d < bd){ bd = d; best = o; }
+  }
+  return best;
+}
 function castDarkbolt(c, foe){
   const dmg = 5 + Math.min(9, c.stats.magic * 0.22);
   projectiles.push({x:c.x, y:c.y-0.5, target:foe, speed:11, floor:c.floor||0,
@@ -10773,6 +11117,12 @@ function craftUndead(kind, caster, circle, shape){
   if(caster.mana < ut.mana){ log(`${caster.name} needs ${ut.mana} mana.`, 'bad'); return false; }
   if(risenLoad(caster) + ut.weight > risenCap(caster)){
     log(`Binding full: ${risenLoad(caster)}/${risenCap(caster)} — ${ut.name} needs ${ut.weight}.`, 'bad'); return false;
+  }
+  /* AND THE CEILING IS ENFORCED HERE, not only in the panel that draws the sliders. The
+     panel is one way in; nothing should be able to bind a shape the rules do not allow. */
+  if(shape && shapeSpent(shape) > shapeCeiling(caster)){
+    log(`That shape is beyond ${caster.name} — ${shapeSpent(shape)} points against a ceiling of ${shapeCeiling(caster)}.`, 'bad');
+    return false;
   }
   /* shaping past the free budget is paid for in material, on top of the recipe */
   const extra = shape ? shapeCost(shape, caster) : {};
@@ -11298,12 +11648,20 @@ const SHAPE_AXES = [
    desc:'How well it is put together. Badly, and limbs come off in a cut fight; well, and there is no seam for a blade to find.'},
   {k:'plate', label:'PLATING',lo:'bare',      hi:'chitinous',
    desc:'What is grafted over it. Bone sheds a cut and folds under a hammer; chitin turns a point and cracks. Both are dead weight.'},
-  {k:'quiet', label:'QUIET',  lo:'clamorous', hi:'silent',
-   desc:'How loud the thing is by existing. A host of loud ones is heard, and what hears it has been getting closer for nine generations.'},
-  {k:'will',  label:'WILL',   lo:'leashed',   hi:'unbound',
-   desc:'How far from its master it still works. Leashed is cheap and must be kept close; unbound operates alone.'},
+  /* ---- MIND ----
+     This was WILL, and WILL was one number: how far from its master the thing kept working.
+     That is a real cost, but a thin one, and it left the interesting question — how much of a
+     person is in there — as something that only ever happened TO a corpse that arrived already
+     named. QUIET sat beside it charging shaping points for a noise budget that stopped
+     mattering the day the Fracture clock moved onto the calendar.
+     So the two are gone and one axis stands where they were. MIND is the leash AND what the
+     thing can become: a hand at the bottom that must be kept close and will never be more than
+     a hand, and at the top something that walks its own errands, learns half again as fast,
+     can be set to work that needs a mind, and is most of the way to a lieutenant already. */
+  {k:'mind',  label:'MIND',   lo:'hollow',    hi:'awake',
+   desc:'How much is left in there. Hollow works only near its master and can never be raised up. Awake keeps its own leash, learns faster, can be set to work that wants a mind, and needs fewer lives to earn a name.'},
 ];
-const SHAPE_BUDGET_BASE = 14;         /* seven axes at neutral — an even body is free */
+const SHAPE_BUDGET_BASE = 12;         /* six axes at neutral — an even body is free */
 const SHAPE_MAX = 5;                  /* per axis */
 /* what a point costs, above the free allocation */
 const SHAPE_EXTRA = {vflesh:4, remains:3, iron:2};
@@ -11350,12 +11708,23 @@ function applyShape(u, shape){
   else if(pl === 3) u.natArmor = {def: 0.18, cls: 'plate'};
   else             u.natArmor = null;    /* two is neutral, and neutral is bare */
   if(pl >= 3) u.speedMult = (u.speedMult || 1) * (1 - (pl - 2) * 0.07);
-  /* ---- QUIET: how loud it is by existing ----
-     The one axis that reaches outside the fight. Notice feeds the Fracture clock, so a host
-     of loud bodies is a host that brings the sky down sooner. */
-  u.noise = Math.max(0.05, 1.5 - (shape.quiet ?? 2) * 0.30);
-  /* ---- WILL: how far it works from the hand that made it ---- */
-  u.leash = 10 + (shape.will ?? 2) * 14;        /* tiles before the binding starts to fray */
+  /* ---- NOISE, which is no longer a slider ----
+     A host is still heard, and notice still buys the dark's attention and the living's
+     opinion of you. It is just not something anybody should be spending shaping points to buy
+     down: how loud a thing is by existing follows from how big it is, which is a decision
+     already made one axis up. */
+  u.noise = clamp(0.75 + m * 0.28, 0.1, 2.0);
+  /* ---- MIND: how much is in there, and therefore how far it can be trusted to go ----
+     One number sets three things — the leash, how fast it learns, and whether it can ever be
+     raised up. The bottom of the scale is the cheap hand the old WILL:0 was, and it is now
+     honest about the trade: it is cheap because it is a tool, and it will never be anything
+     else however many fights it lives through. */
+  const mi = shape.mind ?? 2;
+  u.mindTier = mi;
+  u.leash = mi >= 5 ? 1e9 : ([8, 14, 24, 40, 70][mi] ?? 24);
+  u.learnMult = [0.5, 0.7, 1.0, 1.25, 1.5, 1.8][mi] ?? 1;
+  u.noMind = mi <= 1;                  /* nothing in there to raise up: promotion is closed */
+  if(mi >= 4) u.minded = true;         /* and it can be set to work that wants a mind */
   /* A colossal thing is a wall whether you meant it to be or not — and a wiry one is not,
      even when the recipe it came off was. A Skittering Brute that draws blades toward it is
      a contradiction; the whole reason to build one is that it does not. */
@@ -11366,13 +11735,13 @@ function applyShape(u, shape){
 /* the thing earns its own description, so the roster reads as bodies rather than recipes */
 function shapeNameFor(sh){
   const m = sh.mass || 0, f = sh.force || 0, h = sh.haste || 0;
-  const kn = sh.knit ?? 2, pl = sh.plate ?? 2, q = sh.quiet ?? 2, w = sh.will ?? 2;
+  const kn = sh.knit ?? 2, pl = sh.plate ?? 2, mi = sh.mind ?? 2;
   if(pl >= 4 && m >= 4) return 'Carapace-Wrought';
   if(pl >= 4)           return 'Chitin-Grafted';
   if(kn >= 5)           return 'Seamless';
   if(kn <= 0)           return 'Shambles';
-  if(q >= 5 && m <= 1)  return 'Silent';
-  if(w >= 5)            return 'Unbound';
+  if(mi >= 5)           return 'Awakened';
+  if(mi <= 0)           return 'Hollowed';
   if(m >= 4 && h <= 1) return 'Bone Golem';
   if(m >= 4)           return 'Colossus-Wrought';
   if(h >= 4 && m <= 1) return 'Skittering';
@@ -11383,8 +11752,20 @@ function shapeNameFor(sh){
   if(m <= 1 && f <= 1 && h <= 1) return 'Shoddy';
   return null;
 }
+/* ---------- THERE IS A CEILING, AND MATERIALS DO NOT BUY PAST IT ----------
+   The budget only ever charged EXTRA MATERIALS for spending over it, which is not a limit —
+   it is a price, and a player with a full store can pay it on every axis at once. Reported
+   from play: four colossal, chitin-plated, seamless Ashen Colossi solo'd the second Fracture,
+   one-shotting everything and unable to die. They were not exploiting a bug; they were buying
+   all seven axes because nothing said they could not.
+   So the budget is now a real ceiling with a few points of headroom over it. Four past your
+   skill is still a genuinely fearsome thing and still worth paying for — it is just no longer
+   possible to be the heaviest, the hardest, the best put together and the best armoured at
+   the same time. Mass and plating and knit have to be bought out of one another. */
+function shapeCeiling(caster){ return shapeBudget(caster) + 4; }
+function shapeSpent(shape){ return SHAPE_AXES.reduce((n, ax) => n + (shape[ax.k] || 0), 0); }
 function shapeCost(shape, caster){
-  const spent = SHAPE_AXES.reduce((n, ax) => n + (shape[ax.k] || 0), 0);
+  const spent = shapeSpent(shape);
   const over = Math.max(0, spent - shapeBudget(caster));
   if(!over) return {};
   const out = {};
@@ -11396,11 +11777,20 @@ function shapeCost(shape, caster){
    arrived. There was no way to look at a risen that had been through nine fights with you
    and decide it had earned a name. */
 const PROMOTE_COST = {vflesh:12, remains:10, iron:6, tome:1};
+function promoteKills(u){
+  /* An awakened body is most of the way there already; a hollow one never gets there at all. */
+  return (u && (u.mindTier || 2) >= 5) ? 4 : 6;
+}
 function canPromote(u, caster){
   if(!u || u.lieutenant || u.lich) return {ok:false, why:'already stands apart'};
   if(!u.undead || !u.crafted) return {ok:false, why:'not yours to raise up'};
   if(u.master !== caster) return {ok:false, why:'bound to another will'};
-  if((u.kills || 0) < 6) return {ok:false, why:`has taken ${u.kills||0} of the 6 lives it needs`};
+  /* THE HOLLOW END OF THE MIND AXIS IS A CLOSED DOOR, and that is what makes it cheap.
+     Shaping a thing with nothing in it buys you points back precisely because you have given
+     up on it ever being anybody. */
+  if(u.noMind) return {ok:false, why:'shaped hollow — there is nothing in there to raise up'};
+  const need = promoteKills(u);
+  if((u.kills || 0) < need) return {ok:false, why:`has taken ${u.kills||0} of the ${need} lives it needs`};
   if(!canAfford(PROMOTE_COST)) return {ok:false, why:`needs ${costText(PROMOTE_COST)}`};
   return {ok:true};
 }
@@ -11472,7 +11862,8 @@ function openBinding(circle){
       const note = document.createElement('div');
       note.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:6px';
       const preview = shapeNameFor(sh);
-      note.innerHTML = `${spent}/${budget} points` +
+      const ceil = shapeCeiling(ritualist);
+      note.innerHTML = `${spent}/${budget} points <span style="color:var(--dust)">(ceiling ${ceil})</span>` +
         (over ? ` · <span style="color:#c07a3a">${over} over — pays ${costText(extra)} on top</span>` : ' · within the binding') +
         (preview ? ` · it will come out <span style="color:var(--bone)">${preview}</span>` : '');
       body.appendChild(note);
@@ -11488,7 +11879,9 @@ function openBinding(circle){
         minus.onclick = () => { sh[ax.k] = Math.max(0, v - 1); rndr(); };
         const plus = document.createElement('button');
         plus.textContent = '+'; plus.style.cssText = 'padding:1px 7px;font-size:11px;margin-left:3px';
-        plus.disabled = v >= SHAPE_MAX;
+        /* the ceiling is a wall in the panel too, so the slider simply stops rather than
+           offering a shape the binding will refuse a moment later */
+        plus.disabled = v >= SHAPE_MAX || spent >= shapeCeiling(ritualist);
         plus.onclick = () => { sh[ax.k] = Math.min(SHAPE_MAX, v + 1); rndr(); };
         row.appendChild(minus); row.appendChild(plus);
         body.appendChild(row);
@@ -11524,13 +11917,17 @@ function openBinding(circle){
         h.textContent = 'RAISE ONE UP'; body.appendChild(h);
         const note = document.createElement('div');
         note.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:4px';
-        note.textContent = `A lieutenant keeps a mind, holds a name, and stops weighing against your binding. ${costText(PROMOTE_COST)}, and six lives taken.`;
+        note.textContent = `A lieutenant keeps a mind, holds a name, and stops weighing against your binding. ${costText(PROMOTE_COST)}, and the lives it needs — six, or four for one shaped awake. Nothing shaped hollow can be raised up at all.`;
         body.appendChild(note);
         for(const u of mine.slice(0, 12)){
           const chk = canPromote(u, ritualist);
           const row = document.createElement('div'); row.className = 'trow';
           const shTxt = u.shape ? ` · m${u.shape.mass}/f${u.shape.force}/h${u.shape.haste}` : '';
-          row.innerHTML = `<span class="tn">${u.name} <span style="color:var(--dust)">${u.kills||0} taken${shTxt}</span></span>`;
+          /* say the MIND out loud here, because it is the field that decides whether this row
+             can ever do anything, and it is not visible anywhere else on the body */
+          const mindTxt = u.noMind ? ' · <span style="color:#c98a7a">hollow — cannot be raised up</span>'
+            : (u.mindTier || 2) >= 4 ? ` · <span style="color:#a3c47a">awake</span>` : '';
+          row.innerHTML = `<span class="tn">${u.name} <span style="color:var(--dust)">${u.kills||0}/${promoteKills(u)} taken${shTxt}</span>${mindTxt}</span>`;
           const btn = document.createElement('button');
           btn.textContent = 'RAISE UP';
           btn.disabled = !chk.ok;
@@ -11684,6 +12081,7 @@ function updateParticles(dt){
 let selected = [];
 let camX = startTown.x, camY = startTown.y;
 let buildMode = null, mouseTX = 0, mouseTY = 0;
+let buildAnchor = null;   /* first corner of a wall run, waiting on the second click */
 let spawnT = 20, hourAcc = 0, necroT = 0, bastionWarned = false, autosaveWarned = false;
 let started = false;
 
@@ -11762,6 +12160,7 @@ function update(dt){
   rescueTick(dt);             /* and whether anyone is coming for what you took */
   lyreTick(dt);            /* and whether anyone has walked out far enough to find her */
   motherTick(dt);             /* and whether anyone has gone far enough DOWN to find her */
+  closingTick(dt);            /* and whether anybody has read the codex sitting in the stores */
   commandTick(dt);            /* and what the bands you sent out are doing about it */
   contractTick(dt);           /* and whoever is on a road because you said you would see them across it */
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
@@ -11905,10 +12304,19 @@ function update(dt){
       const deadArmy = chars.filter(c => c.faction==='player' && c.undead && c.state!=='dead').length;
       const patrolCap = 2 + Math.floor(Math.max(0, hostSize - 5) / 5);
       if(menaceFlag && purgePatrolCount() < patrolCap && rnd() < clamp(0.45 + hostSize*0.012, 0.45, 0.85)) spawnPurge(false);
-      if(hostSize >= 8) purgeWrath += 1 + Math.floor(Math.max(0, hostSize - 12) / 8);
-      else purgeWrath = Math.max(0, purgeWrath - 1);
-      if(purgeWrath >= 2 && purgeWrath < 4 && day - lastInquestDay > 6 && !chars.some(c => c.inquisitor)) spawnInquest();
-      if(purgeWrath >= 4 && !purgeHuntActive()){ purgeWrath = 0; spawnPurge(true); }
+      /* ---------- HOW OFTEN THE WHITE BANNER COMES ----------
+         Reported from play: "they come WAY too often — I barely have time to prepare for
+         anything." The arithmetic said the same. Eight risen is a modest host and it used to
+         push wrath up a point EVERY DAY, so two days of ordinary play bought an Inquisitor
+         and six more bought a purge hunt, on a six-day cooldown, forever. The Bastion should
+         notice an army; it should not be standing in your yard the week you raise a squad.
+         Fourteen before they care, half the accrual, a fortnight between banners, and the
+         hunt at nine rather than four — and wrath now falls twice as fast as it climbs when
+         the host is small, so disbanding is a real answer instead of a slow one. */
+      if(hostSize >= 14) purgeWrath += (hostSize >= 26 ? 2 : 1);
+      else purgeWrath = Math.max(0, purgeWrath - 2);
+      if(purgeWrath >= 4 && purgeWrath < 9 && day - lastInquestDay > 15 && !chars.some(c => c.inquisitor)) spawnInquest();
+      if(purgeWrath >= 9 && !purgeHuntActive()){ purgeWrath = 0; spawnPurge(true); }
     }
     spreadNews();    /* the roads carry yesterday's news one town further */
     /* ---------- the ruler's desk, attended daily ---------- */
@@ -13856,18 +14264,21 @@ const HEADFIT = {
      over: it is the wrong comparison — what a player sees is head against shoulders, not
      head against a beard — and it left the named origins visibly smaller-headed than every
      nameless townsperson beside them, which is the opposite of what a named origin should be.
-     These land at 0.24-0.26 against 0.252. Solved rather than guessed: `s` from the ratio
+     Then back down 7%, on the report that parity was a shade heavy — "quite good now, but
+     just a TAD too big". These land at 0.23 against 0.252, which is the honest middle: bigger
+     than the townsfolk would make them cartoons, smaller was the thing that got reported
+     twice. Solved rather than guessed: `s` from the ratio
      each head currently measures, and `y` from the model's own normalised half-height so the
      chin stays at the neck while the crown rises. Lyre needs the least because she is on a
      shorter body and was already at 0.232. */
-  lyonart: {s:0.572, x:0, y:0.266, z:0.012, rx:0, ry:0, rz:0},
-  saga:    {s:0.553, x:0, y:0.265, z:0.012, rx:0, ry:0, rz:0},
+  lyonart: {s:0.532, x:0, y:0.248, z:0.012, rx:0, ry:0, rz:0},
+  saga:    {s:0.514, x:0, y:0.246, z:0.012, rx:0, ry:0, rz:0},
   /* HERS MOVED WHEN SHE GOT A COAT. The share is measured against the body's whole bounding
      box, and a coat skirt reaches below the hip — so giving her the house black lengthened
      the denominator and her head's share fell from 23.1% to 21.4% without the head changing
      at all. Solved against the DRESSED body, which is the one anybody looks at. */
-  lyre:    {s:0.552, x:0, y:0.267, z:0.012, rx:0, ry:0, rz:0},
-  czarina: {s:0.561, x:0, y:0.264, z:0.012, rx:0, ry:0, rz:0},
+  lyre:    {s:0.513, x:0, y:0.248, z:0.012, rx:0, ry:0, rz:0},
+  czarina: {s:0.522, x:0, y:0.245, z:0.012, rx:0, ry:0, rz:0},
 };
 /* ---------- AND THE HELMETS ----------
    Same numbers, same meaning, and hung on the same bone — a helm replaces the whole built
@@ -17835,18 +18246,14 @@ function renderOverlay(){
      closed their book to you say so, because "no jobs" and "no jobs FOR YOU" are different
      things and the second one is information.
 
-     SEEN, NOT IN SIGHT. This asked for `visAt === 2`, which is live vision — a body of yours
-     standing there looking at it — and a town is 36 tiles across with the post in the middle
-     of it. Measured from a town's own gate: 17.7 tiles to the board, and `visAt` there comes
-     back 0 or 1 every time, never 2. So the mark did not appear until you were close enough
-     to the plaza to be standing on it, which is precisely when you no longer need it, and the
-     note that came back was that the board still could not be found in a city.
-     Ground you have WALKED is enough. This is a notice post nailed up in a public square; a
-     town you have been inside is a town whose square you know. It is the same rule the town's
-     own name is drawn under, ten lines above. */
+     IN SIGHT, NOT MERELY SEEN — and this went the other way once and came back. Drawing the
+     mark on ground the squad had merely WALKED made it visible from anywhere on the map, and
+     seven notice posts pinned across the whole world read as clutter rather than as help. The
+     mark is worth having; a permanent map of every town's plaza is not. So it is live vision
+     again: the post is marked while somebody of yours can actually see the square. */
   for(const t of towns){
+    if(visAt(t.x, t.y) !== 2) continue;
     const bp = townBoardPos(t);
-    if(!visAt(bp.x, bp.y)) continue;
     const q = w2s(bp.x, bp.y, groundY(bp.x, bp.y) + 2.05);
     if(!q) continue;
     const open = boardOpen(t);
@@ -17998,9 +18405,59 @@ function renderOverlay(){
       if(a && b){ cx.strokeStyle='rgba(196,84,58,0.5)'; cx.lineWidth=1; cx.beginPath(); cx.moveTo(a.x,a.y); cx.lineTo(b.x,b.y); cx.stroke(); }
     }
   }
+  /* ---------- THE ONE YOU WERE PAID TO KEEP ALIVE ----------
+     An escort job hands you a name and nothing else, and a name in a town of eighty people is
+     a game of clicking strangers — worse when they have wandered out of sight, which is when
+     you most need to find them. A ward is not a stranger: you agreed to walk them somewhere.
+     So they carry a standing mark and their name, out of vision like a compass needle, and an
+     arrow at the screen edge when they are off it. */
+  const wards = chars.filter(c => c.vip && c.escortId && c.state !== 'dead');
+  for(const w of wards){
+    const hh = groundY(w.x, w.y) + floorY(w.floor) + 1.9 * (w.big || 1);
+    const p = w2s(w.x, w.y, hh);
+    const onScreen = p && p.x > 4 && p.x < viewW() - 4 && p.y > 4 && p.y < viewH() - 4;
+    const hurt = w.state !== 'ok';
+    const col = hurt ? '#e07a5f' : '#e8c86a';
+    if(onScreen && onShownFloor(w)){
+      /* a ring above the head, not a triangle — the triangles already mean "one of mine" */
+      cx.strokeStyle = col; cx.lineWidth = 2;
+      cx.beginPath(); cx.arc(p.x, p.y - 14, 5, 0, Math.PI * 2); cx.stroke();
+      cx.beginPath(); cx.moveTo(p.x, p.y - 9); cx.lineTo(p.x, p.y - 3); cx.stroke();
+      setFont('bold 11px monospace');
+      const label = hurt ? `${w.name} — DOWN` : w.name;
+      cx.fillStyle = '#141008'; cx.fillText(label, p.x + 1, p.y - 21);
+      cx.fillStyle = col;      cx.fillText(label, p.x, p.y - 22);
+    } else {
+      /* off the screen, or under a mountain: an arrow on the rim pointing the way */
+      const cxm = viewW() / 2, cym = viewH() / 2, pad = 40;
+      let ax, ay;
+      if(p){ ax = p.x; ay = p.y; }
+      else { const q = w2s(w.x, w.y, groundY(w.x, w.y)); ax = q ? q.x : cxm; ay = q ? q.y : cym; }
+      let vx = ax - cxm, vy = ay - cym;
+      const len = Math.hypot(vx, vy);
+      /* dead centre and unprojectable at once means there is no direction to point in */
+      if(len < 1){ setFont('bold 12px monospace'); continue; }
+      /* project onto the viewport rim, keeping the direction */
+      const k = Math.min((cxm - pad) / Math.abs(vx || 1e-6), (cym - pad) / Math.abs(vy || 1e-6));
+      const ex = cxm + vx * k, ey = cym + vy * k;
+      const a = Math.atan2(vy, vx);
+      cx.save();
+      cx.translate(ex, ey); cx.rotate(a);
+      cx.fillStyle = col;
+      cx.beginPath(); cx.moveTo(11, 0); cx.lineTo(-7, -7); cx.lineTo(-7, 7); cx.fill();
+      cx.restore();
+      setFont('bold 11px monospace');
+      const d0 = player()[0] ? Math.round(dist(player()[0].x, player()[0].y, w.x, w.y)) : 0;
+      const label = `${w.name}${d0 ? ' ' + d0 : ''}`;
+      const tx = clamp(ex - vx / len * 26, 46, viewW() - 46), ty = clamp(ey - vy / len * 20, 20, viewH() - 12);
+      cx.fillStyle = '#141008'; cx.fillText(label, tx + 1, ty + 1);
+      cx.fillStyle = col;      cx.fillText(label, tx, ty);
+    }
+    setFont('bold 12px monospace');
+  }
   /* per-character overlays */
   for(const c of chars){
-    if(c.faction!=='player' && visAt(c.x, c.y) !== 2) continue;
+    if(c.faction!=='player' && visAt(c.x, c.y) !== 2 && !(c.vip && c.escortId)) continue;
     if(!onShownFloor(c)) continue;                 /* it is under a mountain; leave it there */
     const hh = (groundY(c.x,c.y) + floorY(c.floor) + 1.9*(c.big||1));
     const top = w2s(c.x, c.y, hh);
@@ -18098,15 +18555,30 @@ function renderOverlay(){
   if(buildMode){
     const bt = BUILD_TYPES[buildMode];
     cx.strokeStyle = '#d4a040'; cx.fillStyle = 'rgba(212,160,64,0.3)';
-    cx.beginPath();
-    const cs = [[0,0],[bt.w,0],[bt.w,bt.h],[0,bt.h]];
-    let ok = true;
-    cs.forEach(([dx,dy], i) => {
-      const p = w2s(mouseTX+dx, mouseTY+dy, groundY(mouseTX+dx, mouseTY+dy)+0.05);
-      if(!p){ ok = false; return; }
-      i===0 ? cx.moveTo(p.x,p.y) : cx.lineTo(p.x,p.y);
-    });
-    if(ok){ cx.closePath(); cx.fill(); cx.stroke(); }
+    /* a pending run paints every tile it would take, so you can see the length before you pay */
+    const cells = (buildAnchor && buildAnchor.type === buildMode)
+      ? runTiles(buildAnchor.x, buildAnchor.y, mouseTX, mouseTY)
+      : [[mouseTX, mouseTY]];
+    for(const [gx, gy] of cells){
+      cx.beginPath();
+      const cs = [[0,0],[bt.w,0],[bt.w,bt.h],[0,bt.h]];
+      let ok = true;
+      cs.forEach(([dx,dy], i) => {
+        const p = w2s(gx+dx, gy+dy, groundY(gx+dx, gy+dy)+0.05);
+        if(!p){ ok = false; return; }
+        i===0 ? cx.moveTo(p.x,p.y) : cx.lineTo(p.x,p.y);
+      });
+      if(ok){ cx.closePath(); cx.fill(); cx.stroke(); }
+    }
+    if(cells.length > 1){
+      const mid = w2s(buildAnchor.x + 0.5, buildAnchor.y + 0.5, groundY(buildAnchor.x, buildAnchor.y) + 1.6);
+      if(mid){
+        /* setFont, not cx.font — the overlay caches the last value it set and writing the
+           property behind its back leaves the cache lying about what the canvas is using */
+        cx.fillStyle = '#f0d090'; setFont('12px monospace'); cx.textAlign = 'center';
+        cx.fillText(`${cells.length} x ${costText(buildCost(buildMode))}`, mid.x, mid.y);
+      }
+    }
   }
   /* cast range */
   if(castMode && castMode.caster.state==='ok'){
@@ -18273,6 +18745,16 @@ function renderMinimap(){
     mmcx.fillRect(c.x*128/W-1, c.y*128/H-1, 2, 2);
   }
   mmcx.drawImage(mmFog, 0, 0);
+  /* THE WARD GOES ON AFTER THE FOG. Everything else on this map is drawn under it and is
+     therefore invisible on ground you have not walked — which is exactly the ground an escort
+     wanders off onto. You agreed to walk this person somewhere; you know where they are. */
+  for(const w of chars){
+    if(!w.vip || !w.escortId || w.state === 'dead') continue;
+    mmcx.fillStyle = w.state === 'ok' ? '#e8c86a' : '#e07a5f';
+    mmcx.fillRect(w.x*128/W - 2, w.y*128/H - 2, 4, 4);
+    mmcx.strokeStyle = '#141008'; mmcx.lineWidth = 1;
+    mmcx.strokeRect(w.x*128/W - 2.5, w.y*128/H - 2.5, 5, 5);
+  }
   /* camera viewport frame stays on top of the fog */
   const span = camDist * 1.3;
   mmcx.strokeStyle = 'rgba(232,220,196,0.6)';
@@ -18304,8 +18786,8 @@ const TIPS = {
   day:  '<b>THE CALENDAR</b>Eight real seconds to the game hour. Bodies age, fields yield and the world turns on the day.',
   rep:  '<b>STANDING</b>What the nearest town thinks of you. Spill blood inside the walls and watch it fall.',
   conviction:'<b>CONVICTION</b>The thing this one cannot get past. Every deed you do is weighed against it, and the weighing is different for each of them \u2014 a sack that costs you a compassionate medic dearly costs a cold one almost nothing.<i>Push somebody far enough and they walk. Push the wrong somebody far enough and they do not walk.</i>',
-  fracture:'<b>THE SKY</b>How far the Second Fracture has come. It does not go back down. The calendar moves it on its own; working the formulae where you can be heard moves it faster.<i>You cannot stop this. You can be ready for it, or you can be somewhere else when it lands.</i>',
-  notice:'<b>NOTICE</b>How much attention your work with the dead has drawn. It forgets a quiet camp quickly — but once it has actually turned its head it does not look away fast.<i>Every formula you work is heard.</i>',
+  fracture:'<b>THE SKY</b>How far the Second Fracture has come. It does not go back down, and it is the clock that everything else out there keeps: how many gaunts walk, how many tears open, how often the moon comes up red. The calendar moves it on its own; being SEEN moves it a little faster.<i>You cannot stop this. You can be ready for it, or you can be somewhere else when it lands.</i>',
+  notice:'<b>NOTICE</b>How much attention your work with the dead has drawn. It forgets a quiet camp quickly — but once it has actually turned its head it does not look away fast. It is no longer what decides how bad the nights get; that is the calendar. What it buys you is a share on top, and how the living speak to you.<i>Every formula you work is heard.</i>',
   chron:'<b>CHRONICLES [L]</b>Everything you have been told, and everything you have seen — including news of the wider world and who carried it to you.',
   build:'<b>BUILD [B]</b>Place structures. Blueprints need materials hauled to them before anyone can raise them.',
   squad:'<b>SQUAD [S]</b>Select everyone you have. Shift+1-5 stores a group, 1-5 recalls it.',
@@ -18623,7 +19105,7 @@ function refreshCharPanel(){
   jr.innerHTML = '<span style="color:var(--dust);font-size:10px">JOB</span>';
   const JOBS = [
     [null,'NONE'], ['wood','WOOD'], ['stone','STONE'], ['fish','FISH'], ['farm','TEND'],
-    ['build','BUILD'], ['flesh','FLESH'], ['raise','RAISE'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
+    ['build','BUILD'], ['flesh','FLESH'], ['raise','RAISE'], ['carrion','HARVEST'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
   ];
   /* the fallback trade: shown beside the primary, set the same way */
   const mkJobButton = (which) => {
@@ -19639,6 +20121,29 @@ function openBar(v){
         refreshTop(); render();
       };
     }
+    /* THE LEDGER. Standing was always mendable here; the price on your head was not, and it
+       was the one that actually stopped you walking through the gate. A barkeep will take
+       that money too — for his own town at a cut, and for anybody else's by courier. */
+    const wantedTowns = towns.filter(o => (o.bounty || 0) > 0 && !o.playerRuled);
+    wantedTowns.sort((a, b) => (a === town ? -1 : b === town ? 1 : b.bounty - a.bounty));
+    if(wantedTowns.length){
+      const bh = document.createElement('div');
+      bh.style.cssText = 'margin:10px 0 4px;color:var(--warn);letter-spacing:2px';
+      bh.textContent = 'THE LEDGER'; body.appendChild(bh);
+      const priceOf = o => Math.round(o.bounty * (o === town ? 1.8 : 2.5));
+      wantedTowns.forEach((o, i) => {
+        const here = o === town;
+        const row = document.createElement('div'); row.className = 'trow';
+        row.innerHTML = `<span class="tn">${here ? `Settle what ${o.name} wants you for` : `Send the coin on to ${o.name}`}` +
+          ` <span style="color:var(--dust)">bounty ${Math.round(o.bounty)} · ${here ? 'and his cut' : 'a courier, and his silence'}</span></span>` +
+          `<button data-bounty="${i}">PAY ${priceOf(o)}</button>`;
+        body.appendChild(row);
+      });
+      body.querySelectorAll('[data-bounty]').forEach(b => b.onclick = () => {
+        const o = wantedTowns[+b.dataset.bounty]; if(!o) return;
+        if(settleBounty(o, priceOf(o), v.name)) render();
+      });
+    }
     const h = document.createElement('div');
     h.style.cssText = 'margin:10px 0 4px;color:var(--warn);letter-spacing:2px';
     h.textContent = 'FOR HIRE'; body.appendChild(h);
@@ -19772,7 +20277,7 @@ function refreshBuildBar(){
       btn.innerHTML = `<span class="bn">${bt.name.toUpperCase()}</span>`
         + `<span class="bc">${lock ? 'needs ' + lock : costText(cost)}</span>`;
       btn.title = bt.desc;
-      btn.onclick = () => { buildMode = (buildMode === key ? null : key); refreshBuildBar(); };
+      btn.onclick = () => { buildMode = (buildMode === key ? null : key); buildAnchor = null; refreshBuildBar(); };
       grid.appendChild(btn);
     }
     bb.appendChild(grid);
@@ -19780,13 +20285,13 @@ function refreshBuildBar(){
 }
 refreshBuildBar();
 const bx = document.createElement('button'); bx.textContent = '✕';
-bx.onclick = () => { buildMode = null; bb.style.display = 'none'; };
+bx.onclick = () => { buildMode = null; buildAnchor = null; bb.style.display = 'none'; };
 bb.appendChild(bx);
 function toggleBuild(){
   const show = bb.style.display !== 'flex';
   bb.style.display = show ? 'flex' : 'none';
   if(show) refreshBuildBar();   /* costs and locks move while you play */
-  else buildMode = null;
+  else { buildMode = null; buildAnchor = null; }
 }
 
 /* ============================================================ INPUT */
@@ -19948,7 +20453,7 @@ addEventListener('keydown', e => {
   if(e.key==='q' || e.key==='Q'){ listenForMother(); }
   if(e.key==='Escape'){
     /* Esc backs out of anything modal, including the build menu (which used to need B again) */
-    if(buildMode){ buildMode = null; refreshBuildBar && refreshBuildBar(); }
+    if(buildMode){ buildMode = null; buildAnchor = null; refreshBuildBar && refreshBuildBar(); }
     castMode = null; attackArmed(false); guardMode = false;
     hideCtxMenu(); $('modal').style.display='none'; modalOpen=false;
   }
@@ -20099,6 +20604,8 @@ cv.addEventListener('touchmove', e => {
     camSX = camX; camSY = camY;
   } else if(tg.mode === 'marquee'){
     fakeMouse(cv, 'mousemove', p0.x, p0.y, 0, false);
+  } else if(buildMode && tg.mode === 'pending'){
+    fakeMouse(cv, 'mousemove', p0.x, p0.y, 0, false);   /* the ghost follows the finger */
   }
   tg.x = p0.x; tg.y = p0.y;
 }, {passive: false});
@@ -20117,6 +20624,12 @@ cv.addEventListener('touchend', e => {
     dist(c.x, c.y, mp.x, mp.y) < 1.1);
   const busy = castMode || buildMode || attackMoveMode || guardMode;
   if(mine || busy || !selected.length){
+    /* A TAP CARRIES NO POINTER HISTORY. The desktop build ghost is drawn at `mouseTX/mouseTY`,
+       which only ever move on a real mousemove — so on a touchscreen the ghost sat wherever
+       the last mouse had been, and a wall run (which shows its own length and price on that
+       ghost) would have quoted the wrong line. Send the move the desktop path is waiting for
+       before the press, the same way every other gesture here is translated. */
+    fakeMouse(cv, 'mousemove', g.sx, g.sy, 0, false);
     fakeMouse(cv, 'mousedown', g.sx, g.sy, 0, false);
     fakeMouse(window, 'mouseup', g.sx, g.sy, 0, false);
   } else {
@@ -20247,11 +20760,24 @@ cv.addEventListener('mousedown', e => {
       for(const m of crew){ clearOrders(m); m.attackMove = {x:wx, y:wy}; }
       return;
     }
-    if(buildMode){ tryBuild(buildMode, Math.floor(wx), Math.floor(wy)); refreshInv(); return; }
+    if(buildMode){
+      const tx = Math.floor(wx), ty = Math.floor(wy);
+      if(BUILD_TYPES[buildMode] && BUILD_TYPES[buildMode].line){
+        if(!buildAnchor){
+          buildAnchor = {type: buildMode, x: tx, y: ty};
+          log('Corner set. Click again to run the wall out to there — Esc or right-click to drop it.', '');
+        } else {
+          buildRun(buildAnchor.type, buildAnchor.x, buildAnchor.y, tx, ty);
+          buildAnchor = null;
+        }
+      } else tryBuild(buildMode, tx, ty);
+      refreshInv(); return;
+    }
     dragStart = {sx:e.clientX, sy:e.clientY, shift:e.shiftKey};
     return;
   }
   if(e.button === 2){
+    if(buildAnchor){ buildAnchor = null; log('Run dropped.', ''); return; }
     if(castMode){ castMode = null; return; }
     if(attackMoveMode){ attackArmed(false); return; }
     if(guardMode){ guardMode = false; return; }
@@ -20671,6 +21197,11 @@ cv.addEventListener('mousedown', e => {
         log(`${m0.name} goes to speak with ${sch.name}.`);
         return;
       }
+      /* THE LEDGER COMES OUT BEFORE THE SHOP DOES. A scholar who is told a corpse-field has
+         stopped producing has something to say about it, and it is the only lead on the second
+         leg of the search — it should not be buried behind a trade window. */
+      if(tellScholarOfTheCairn(sch)) return;
+      if(tellScholarOfTheClosing(sch)) return;
       openScholar(sch, movers[0]);
       return;
     }
@@ -21202,15 +21733,7 @@ function openAudience(px, py, lc){
      walked in and asked — which means walking into the town that wants you. */
   if(t.bounty > 0){
     const price = Math.round(t.bounty * 1.5);
-    items.push({label:`SETTLE THE BOUNTY (${price})`, fn:()=>{
-      if(cats < price){ refuse ? refuse('Not enough coin.') : log('Not enough coin.', 'bad'); return; }
-      cats -= price;
-      t.bounty = 0; t.wanted = false;
-      for(const g of chars) if(g.arrestTarget && g.homeTown === t) g.arrestTarget = null;
-      dropRep(t, -10);
-      log(`${L ? L.name : t.name} takes the coin and the ledger closes. ${t.name} has no further business with you.`, 'good');
-      refreshTop(); refreshInv();
-    }});
+    items.push({label:`SETTLE THE BOUNTY (${price})`, fn:()=> settleBounty(t, price, L ? L.name : t.name)});
   }
   if(t.warWith) items.push({label:`BROKER PEACE W/ ${t.warWith.name} (800)`, fn:()=>brokerPeace(t, L)});
   else {
@@ -21390,7 +21913,7 @@ function snapshot(){
     cmd: c.cmd ? {...c.cmd, home:{...c.cmd.home}} : null, under: c.under ?? null,
     wasJob: c.wasJob ? [...c.wasJob] : null, heldAt:c.heldAt||null, heldT:c.heldT||0, midden:c.midden||null, caveId:c.caveId||null, roomId:(c.roomId??null), caveDweller:!!c.caveDweller, floor: c.floor||0, captured:!!c.captured, dragId: c.drag ? c.drag.id : null,
     clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
-    servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0,
+    servitor:!!c.servitor, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null,
     salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
@@ -21457,8 +21980,11 @@ function snapshot(){
     chars: chars.filter(c => !c.phantom).map(sChar),
     corpseIds: corpses.map(c=>c.id),
     cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
+    threads: threads.map(t => ({key:t.key, title:t.title, step:t.step, hint:t.hint, done:t.done, at:t.at})),
+    closing: {on: closing.on, told: closing.told, known: closing.known},
     search: {on: search.on, asked: {...search.asked}, found: search.found,
-             siteId: search.siteId, leads: search.leads, met: search.met},
+             siteId: search.siteId, leads: search.leads, met: search.met,
+             cairn: !!search.cairn, told: !!search.told, siteId2: search.siteId2 ?? -1},
     mother: {on: mother.on, caveId: mother.caveId, found: mother.found,
              spoken: mother.spoken, reads: mother.reads, toldPrice: mother.toldPrice},
     shrines: shrines.map(sh => ({broken: !!sh.broken, hp: Math.round(sh.hp), reT: sh.reT || 0})),
@@ -21482,10 +22008,28 @@ function restore(d){
      in the world would wake up in somebody else's cell. */
   for(let i = cells.length - 1; i >= 0; i--) if(cells[i].kind === 'player') cells.splice(i, 1);
   for(const cl of cells){ cl.holds = 0; cl.hp = CELL_HP; }
+  /* A THREAD IS THE PLAYER'S NOTE TO THEMSELVES and has to come back exactly, or reloading a
+     save is how you lose track of what you were doing. Restored wholesale, not rebuilt from
+     the quest flags — a thread's wording is written at the moment it is set. */
+  threads.length = 0;
+  if(d.threads) for(const t of d.threads) threads.push({key:t.key, title:t.title, step:t.step, hint:t.hint || '', done:!!t.done, at:t.at || 1});
+  if(d.closing){ closing.on = !!d.closing.on; closing.told = !!d.closing.told; closing.known = !!d.closing.known; }
+  else { closing.on = fractureStage >= 1; closing.told = false; closing.known = false; }
   if(d.search){
     search.on = !!d.search.on; search.asked = {...(d.search.asked || {})};
     search.found = !!d.search.found; search.siteId = d.search.siteId ?? -1;
     search.leads = d.search.leads || 0; search.met = !!d.search.met;
+    search.cairn = !!d.search.cairn; search.told = !!d.search.told;
+    search.siteId2 = d.search.siteId2 ?? -1;
+    /* A SAVE FROM BEFORE THE SECOND LEG. It has `found` set and no second site at all, and
+       without this the trail ends at a corpse-field with nobody standing in it. Roll the leg
+       it never had, and treat the first field as already walked. */
+    if(search.found && search.siteId2 < 0 && !search.met){
+      const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+      if(sites.length > 1){
+        do { search.siteId2 = ri(0, sites.length - 1); } while(search.siteId2 === search.siteId);
+      } else search.siteId2 = search.siteId;
+    }
   }
   if(d.mother){
     mother.on = !!d.mother.on; mother.caveId = d.mother.caveId ?? -1;
@@ -21651,6 +22195,14 @@ function restore(d){
     if(s.natArmor) c.natArmor = {...s.natArmor};
     if(s.noise != null) c.noise = s.noise;
     if(s.leash != null) c.leash = s.leash;
+    /* MIND, AND WHAT A SAVE WRITTEN BEFORE IT LOOKS LIKE. An old body carries `shape.will`
+       and `shape.quiet` and no `mind`, so it comes back with no `mindTier`, no `learnMult`
+       and `noMind` false: it keeps the leash it was built with, learns at the ordinary rate,
+       and can still be raised up. Nothing already standing in somebody's world gets worse. */
+    if(s.mindTier != null) c.mindTier = s.mindTier;
+    if(s.learnMult != null) c.learnMult = s.learnMult;
+    c.noMind = !!s.noMind;
+    if(c.shape && c.shape.mind === undefined && c.shape.will !== undefined) c.shape.mind = c.shape.will;
     c.conviction = s.conviction || c.conviction || rollConviction(c.gift); c.regard = s.regard || 0;
     /* and a save written before the gift ruled it out gets the reroll on the way in, or the
        devout necromancers already walking around stay devout necromancers forever */
@@ -21793,7 +22345,7 @@ function restore(d){
     }
   }
   towns.forEach((t,i) => t.recruits = (d.recruits && d.recruits[i]) || []);
-  selected = []; castMode = null; buildMode = null; attackArmed(false);
+  selected = []; castMode = null; buildMode = null; buildAnchor = null; attackArmed(false);
   const f = player()[0]; if(f){ camX = f.x; camY = f.y; }
   refreshTop(); refreshInv(); refreshSquadBar(); refreshCharPanel();
   computeVision();   /* a loaded squad stands somewhere new; light it before the first frame */
@@ -22055,16 +22607,25 @@ $('btn-move').onclick = () => { openMoveDialog(); };
 
    Where she actually is, is decided at worldgen and not revealed. She is alive. What she has
    become in the meantime is the part he is not ready for. */
-const search = {on: false, asked: {}, found: false, siteId: 0, leads: 0, met: false};
+const search = {on: false, asked: {}, found: false, siteId: 0, siteId2: -1, leads: 0,
+                met: false, cairn: false, told: false};
 function startTheSearch(me){
   search.on = true; search.asked = {}; search.found = false; search.leads = 0; search.met = false;
+  search.cairn = false; search.told = false;
   /* she is somewhere out past the last of the towns — the corpse sites are the places the
      exiled ended up, which is exactly where somebody sent here to die would have gone */
   const sites = (typeof corpseSites !== 'undefined' && corpseSites.length) ? corpseSites : null;
   search.siteId = sites ? ri(0, sites.length - 1) : -1;
+  /* AND SHE DID NOT STAY THERE. The second field is where she is now; the first is only where
+     she was put. Rolled here so the whole trail exists from the first day of the run. */
+  search.siteId2 = search.siteId;
+  if(sites && sites.length > 1) do { search.siteId2 = ri(0, sites.length - 1); } while(search.siteId2 === search.siteId);
   worldEvent('lyre', me.x, me.y,
     'A man came through at the edge of the world wearing a crown, with six dead walking behind him. He is asking after a woman. He does not ask politely.');
-  log("LYRE. She came through before you, and they did not give her a retinue. Ask in the halls — somebody saw where she was sent.", 'good');
+  log("LYRE. She came through before you, and they did not give her a retinue.", 'good');
+  threadSet('lyre', 'The search for Lyre',
+    'Ask after her at a hall. Any town Leader will do — three tellings will put it together.',
+    {hint: 'A Leader stands in the big house at the middle of a town. Talk to them and pick ASK AFTER LYRE.'});
 }
 /* asking after her: any town leader, once each, and the third one puts it together */
 function askAfterLyre(t, L){
@@ -22080,6 +22641,10 @@ function askAfterLyre(t, L){
     worldEvent('lyre', site.x, site.y,
       'Three tellings agree. A woman was put out past the last fence years ago, and walked toward the corpse-fields on purpose.');
     say(L || t.leader || {name:t.name}, 'Nobody walks out that way to live.');
+    const from = player()[0] || {x: t.x, y: t.y};
+    threadSet('lyre', 'The search for Lyre',
+      `Three halls agree on where she was put out. Walk to the corpse-field — ${placeHint(from.x, from.y, site.x, site.y)}.`,
+      {hint: 'It is a long way past the last fence. Take water and somebody who can fight.'});
   } else {
     const said = [
       '"There was a woman. Southern accent, no kit, would not say who sent her. She did not stay."',
@@ -22087,7 +22652,48 @@ function askAfterLyre(t, L){
       '"She had your face on her, now you stand there. She went out past the fence and nobody stopped her."',
     ][Math.min(search.leads - 1, 2)];
     log(`${L ? L.name : t.name}: ${said}`, '');
+    threadSet('lyre', 'The search for Lyre',
+      `${search.leads} of three halls have told you what they know. Ask at ${3 - search.leads} more.`,
+      {hint: 'A Leader stands in the big house at the middle of a town. Each town knows a different piece.'});
   }
+}
+/* ---------- THE SECOND LEG: SHE WAS NOT WHERE THEY PUT HER ----------
+   Three tellings and a walk was a quest with one verb in it. What is out at the first field is
+   the evidence that she LIVED — a cairn, and a ring of tears closed by hand, which is the one
+   thing in this world nobody does. That is a fact about the map, and there is exactly one kind
+   of person who tracks facts about the map: the scholars, who have been buying marrow off this
+   stretch of waste for years and know precisely which fields have stopped producing it. */
+function lyreCairn(){
+  if(!search.on || !search.found || search.cairn || search.met) return;
+  const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+  const site = sites[search.siteId]; if(!site) return;
+  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 12);
+  if(!near) return;
+  search.cairn = true;
+  log('There is a cairn here, built by somebody who had nothing to build it with but what was lying about. It is not a grave — it is a marker, and it has been added to.', 'good');
+  log('And every tear in this field has been SEALED. By hand, one at a time, badly at first and then well. Whoever did this stood here for years and then moved on.', 'good');
+  worldEvent('lyre', site.x, site.y,
+    'The corpse-field past the last fence has stopped giving up marrow. Every tear in it is shut, and somebody stacked a cairn in the middle of it.');
+  say(near, 'She was here. She was here a long time, and she left on her own feet.');
+  threadSet('lyre', 'The search for Lyre',
+    'She lived here for years and moved on. Find somebody who tracks where the marrow stops coming from — a wandering scholar buys it by the sackful and knows every field in the waste.',
+    {hint: 'Right-click any scholar out in the world. They will be interested in a field that has gone quiet.'});
+}
+/* the scholar names the field she is in now. It costs nothing but finding one. */
+function tellScholarOfTheCairn(sc){
+  if(!search.on || !search.found || !search.cairn || search.told || search.met) return false;
+  const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+  const site2 = sites[search.siteId2]; if(!site2) return false;
+  search.told = true;
+  const from = player()[0] || sc;
+  log(`${sc.name}: "A field that has stopped producing. Yes. I keep a ledger of those, and there are four, and they went quiet in ORDER — one after another, walking outward." They turn the page around so you can see it.`, 'good');
+  log(`${sc.name}: "Whatever is doing it is working through them. This is the one that went quiet last." They tap the page.`, 'good');
+  worldEvent('lyre', site2.x, site2.y,
+    'A scholar has been keeping a ledger of the fields that stopped giving up marrow. They go quiet in order, outward, as if something is walking.');
+  threadSet('lyre', 'The search for Lyre',
+    `The scholar's ledger says the fields go quiet in order, and names the newest — ${placeHint(from.x, from.y, site2.x, site2.y)}. She is still working. Go and stand in it.`,
+    {hint: 'She is not a marker that turns green. She is a person, and she is busy.'});
+  return true;
 }
 /* She is not a marker that turns green. She is a person standing in a corpse-field who has
    been doing the opposite of what her brother came here to do, and the meeting is the whole
@@ -22097,8 +22703,11 @@ function lyreTick(dt){
   if(!search.on || !search.found || search.met) return;
   if((_ilsT -= dt) > 0) return;
   _ilsT = 3;
+  /* the first field is the cairn; she is standing in the last one the scholar's ledger names */
+  if(!search.cairn){ lyreCairn(); return; }
+  if(!search.told) return;
   const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
-  const site = sites[search.siteId];
+  const site = sites[search.siteId2 >= 0 ? search.siteId2 : search.siteId];
   if(!site) return;
   const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 14);
   if(!near) return;
@@ -22117,6 +22726,7 @@ function lyreTick(dt){
     'She is alive. She has been out here a long time, and she has not been idle: the tears in this stretch of waste are closed, one after another, by hand.');
   log('LYRE. She is standing in the middle of a corpse-field, alive, and the tears around her have all been sealed. She has been doing this for years.', 'good');
   log('She has seen the crown. Talk to her.', 'good');
+  threadDone('lyre', 'Found. She is alive, she is not sorry, and she is still working. Talk to her.');
 }
 /* ---------- THE DESCENT: LOOKING FOR MOTHER ----------
    The world already says who she is; nobody has put the two halves together. The Scholars
@@ -22143,7 +22753,10 @@ function startTheDescent(me){
   mother.caveId = (typeof caves !== 'undefined' && caves.length) ? caves[ri(0, caves.length - 1)].id : -1;
   worldEvent('mother', me.x, me.y,
     'Something walked out of a sealed redoubt in the waste, alone, wearing what the people inside it were wearing. It did not close the door behind it.');
-  log('MOTHER. You were cut off something and fitted to a body, and the something is still alive and still held. She is under a mountain. Press Q to be quiet and listen.', 'good');
+  log('MOTHER. You were cut off something and fitted to a body, and the something is still alive and still held.', 'good');
+  threadSet('mother', 'Looking for Mother',
+    'She is under a mountain, and you can hear her. Press Q anywhere to stop and listen — the reading is vague at the surface and sharpens as you go down.',
+    {hint: 'A Hollow hears more than a host, and the dust art is her own frequency. Find a cave mouth and descend; Q again on every floor.'});
 }
 function motherCave(){ return (typeof caves !== 'undefined') ? caves.find(v => v.id === mother.caveId) : null; }
 /* Which hole somebody is standing in. `caveId` is stamped on the things that LIVE down there,
@@ -22186,11 +22799,26 @@ function listenForMother(){
   /* underground, in the right hole: the reading stops being a guess */
   if(below && caveContaining(c) === cv){
     const bottom = -cv.depth;
-    if((c.floor || 0) <= bottom) say(c, 'She is through this wall. She has stopped pretending to breathe.');
-    else say(c, `Down. ${Math.abs(bottom - (c.floor || 0))} more floors of down.`);
+    if((c.floor || 0) <= bottom){
+      say(c, 'She is through this wall. She has stopped pretending to breathe.');
+      threadSet('mother', 'Looking for Mother', 'The right hole, the bottom floor. She is through this wall.',
+        {hint: 'Find the vault door on this floor and stand at it.'});
+    } else {
+      say(c, `Down. ${Math.abs(bottom - (c.floor || 0))} more floors of down.`);
+      /* THE READING IS THE QUEST, so it is what the journal keeps. Anything he last heard is
+         worth more than a step written months ago at the start of the run. */
+      threadSet('mother', 'Looking for Mother',
+        `The right hole. ${Math.abs(bottom - (c.floor || 0))} more floors down from where you are standing.`,
+        {hint: 'Take the stairs down. Press Q on each floor to check you are still on her.'});
+    }
     return;
   }
-  if(below){ say(c, 'Rock, and water moving in it, and nothing that knows my name. Wrong hole.'); return; }
+  if(below){
+    say(c, 'Rock, and water moving in it, and nothing that knows my name. Wrong hole.');
+    threadSet('mother', 'Looking for Mother', 'Wrong hole. She is not under this one — come up and try another cave mouth.',
+      {hint: 'Press Q on the surface for a bearing before you commit to a descent.'});
+    return;
+  }
   const band = d < 18 ? 'close' : d < 45 ? 'near' : d < 90 ? 'far' : 'distant';
   const dir = acu >= 3 ? bearingFrom(c, cv.mouth.x, cv.mouth.y) : null;
   const lines = {
@@ -22200,6 +22828,11 @@ function listenForMother(){
     distant: 'Almost nothing. A pull, the way a tooth pulls before it goes.',
   };
   say(c, lines[band] + (dir ? ` It comes from the ${dir}.` : ''));
+  threadSet('mother', 'Looking for Mother',
+    dir ? `She reads ${band} to the ${dir} of where you last listened. Walk that way and listen again; find a cave mouth and go down.`
+        : `She reads ${band} from where you last listened, with no direction to it yet.`,
+    {hint: dir ? 'The reading sharpens as you close, and stops guessing entirely once you are in the right hole.'
+               : 'A better ear for the dust art would give the reading a bearing. Train dust, or listen with a Hollow.'});
   if(!dir && acu < 3 && mother.reads === 2)
     log('The reading is blunt. A better ear for the dust art would give it a direction.', '');
 }

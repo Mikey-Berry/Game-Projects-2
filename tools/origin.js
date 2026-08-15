@@ -203,11 +203,29 @@ const KEY = process.argv[3] || 'lyonart';
     askAfterLyre(ts[0], ts[0].leader);
     R.noDoubleDipping = search.leads === l0 ? 'a hall tells you once' : 'ASKED TWICE FOR CREDIT';
 
-    /* --- finding her --- */
+    /* --- finding her: THREE LEGS, not one ---
+       The halls say where she was PUT OUT. What is out there is a cairn and a field of tears
+       closed by hand — she lived there for years and moved on. A scholar keeps a ledger of the
+       fields that stopped giving up marrow and names the one that went quiet last, and that is
+       where she is standing now. Walking to the first field must NOT produce her. */
     const site = corpseSites[search.siteId];
     R.siteChosen = site ? 'a corpse-field' : 'NO SITE';
     if (site && him) {
       him.x = site.x; him.y = site.y;
+      for (let i = 0; i < 20 && !search.cairn; i++) lyreTick(4);
+    }
+    R.theCairn = search.cairn ? 'a cairn and a field of sealed tears' : 'NO CAIRN AT THE FIRST FIELD';
+    R.notThereYet = !search.met ? 'and she is not standing in it' : 'THE FIRST FIELD HANDS HER OVER';
+    /* the scholar's ledger */
+    const site2 = corpseSites[search.siteId2 >= 0 ? search.siteId2 : search.siteId];
+    if (him) {
+      const sc = makeChar('Ledger Scholar', 'town', him.x + 2, him.y, { magic: 30 });
+      sc.scholar = true; sc.neutral = true; chars.push(sc);
+      tellScholarOfTheCairn(sc);
+    }
+    R.theLedger = search.told ? 'a scholar names the field that went quiet last' : 'NO LEDGER, NO SECOND LEG';
+    if (site2 && him) {
+      him.x = site2.x; him.y = site2.y;
       for (let i = 0; i < 40 && !search.met; i++) lyreTick(4);
     }
     const her = chars.find(c => c.bossKey === 'lyre');

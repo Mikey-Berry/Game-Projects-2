@@ -342,71 +342,80 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
      overlay is set to bare `monospace` and takes whatever font the machine happens to have.
      Every state check in the file passed while the mark was invisible. So: point the camera
      at the plaza, read the pixels where the mark should be, and require them to differ from
-     the same pixels with the mark suppressed. */
+     the same pixels with the mark suppressed.
+
+     It is TWO measurements, because the rule has two halves and the fix for the first note
+     broke the second. Drawing the mark on ground the squad had merely walked made the post
+     findable — and put seven of them on the map at once, permanently, which came back as
+     "seeing the quest boards marked across the entire map is a bit distracting." So the mark
+     is gated on LIVE sight: legible while somebody of yours can see the square, and gone the
+     moment they walk away. A test that only measured the first half is what let the second
+     one ship. */
   const seen = await p.evaluate(async () => {
     /* PAUSE, or the control is measuring pedestrians. Townspeople keep walking between the
        two grabs, and a plaza full of them moving one pixel each was 78 pixels of difference
        with nothing drawn at all — noise the size of a small mark. */
     /* DEBUG VISION OFF. `visAt` returns 2 for everything while `debugSeeAll` is set, which is
-       the exact value the mark used to be gated on — so this probe was answering the question
-       with the answer switched on, and passed just as happily against the build where the
-       mark was invisible from anywhere but the plaza itself. The squad walks in and back out
-       below; that is what makes the ground known, and it has to be the only thing that does. */
-    /* NIGHT, and that is the whole point of the number. Sight is `17 + dayness*13` tiles, so
-       at noon a body at the gate sees 29 tiles and the plaza 17.7 away is lit — the old rule
-       worked, at midday, from the one spot this probe happened to stand. At dawn, at dusk,
-       after dark, or from anywhere off the town's centre line, the radius is 17 and the mark
-       simply was not there. Testing it at noon is testing the half of the day that worked. */
-    hour = 2; debugSeeAll = false; paused = true; if(typeof syncPauseBtn === 'function') syncPauseBtn();
+       the exact value the mark is gated on — so a probe left with it on answers the question
+       with the answer switched on, and passes just as happily against a build where the mark
+       never draws at all. */
+    hour = 12; debugSeeAll = false; paused = true; if(typeof syncPauseBtn === 'function') syncPauseBtn();
     if (typeof fogPlane !== 'undefined') fogPlane.visible = false;
     const t = towns[0];
     refreshBoard(t, true);
     const bp = townBoardPos(t);
-    /* STAND WHERE A PLAYER STANDS. This put the squad and the camera ON the plaza, which
-       proved the mark renders and never once asked whether it could be FOUND — and the mark
-       was gated on live vision at the town centre, so for the whole life of that check it was
-       invisible from anywhere in the town except the two tiles it was nailed to. A second
-       note came back saying the board still could not be found in a city.
-       So: walk the squad in once, so the ground is known the way it would be in play, then
-       put them back at the town's south gate. 17.7 tiles, which is where you actually arrive. */
-    for(const c of player()){ c.x = bp.x; c.y = bp.y; }
-    computeVision();
-    let gy2 = t.y;
-    for(const bd of buildings) if(bd.town === t) gy2 = Math.max(gy2, bd.y + bd.h);
-    const gate = { x: t.x, y: gy2 + 2 };
-    for(const c of player()){ c.x = gate.x; c.y = gate.y; }
-    computeVision(); computeVision();
-    window.__gateDist = Math.hypot(bp.x - gate.x, bp.y - gate.y);
+    const frame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     camX = camSX = bp.x; camY = camSY = bp.y;
     camDist = camDistTarget = 13; camPitch = camPitchT = 0.62; camYaw = camYawT = 0.4;
     camFollow = false; selected = [];
-    const frame = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    /* the camera eases toward its target — reading w2s in the same tick it was set projects
+       from wherever the camera happened to be, which off a start position is off-screen */
     await frame(); await frame(); await frame();
+
+    /* The measurement itself: read the pixels where the mark belongs, then suppress THE MARK
+       AND NOTHING ELSE by making the one projection call it depends on come back null.
+       Emptying `towns` was the first attempt and it was not a control — it also takes away the
+       town's name, drawn from a different call at a different height, and left 78 pixels of
+       difference with the mark already invisible, enough to pass a test of its own. */
     const q = w2s(bp.x, bp.y, groundY(bp.x, bp.y) + 2.05);
     if (!q) return { fail: 'the board does not project to the screen at all' };
     const dpr = cx.canvas.width / cx.canvas.clientWidth || 1;
     const grab = () => Array.from(cx.getImageData((q.x - 10) * dpr, (q.y - 20) * dpr, 20 * dpr, 24 * dpr).data);
-    const withMark = grab();
-    /* Suppress THE MARK AND NOTHING ELSE, by making the one projection call it depends on
-       come back null. Emptying `towns` was the first attempt and it was not a control: it
-       also takes away the town's name, which is drawn from a different call at a different
-       height, and left 78 pixels of difference with the mark already invisible — enough to
-       pass a test of its own. This narrows the control to exactly the pixels in question. */
-    const realW2S = window.w2s;
-    window.w2s = function(x, y, z){
-      if (Math.abs(x - bp.x) < 1e-6 && Math.abs(y - bp.y) < 1e-6) return null;
-      return realW2S.apply(this, arguments);
+    const measure = async () => {
+      await frame(); await frame(); await frame();
+      const withMark = grab();
+      const realW2S = window.w2s;
+      window.w2s = function(x, y, z){
+        if (Math.abs(x - bp.x) < 1e-6 && Math.abs(y - bp.y) < 1e-6) return null;
+        return realW2S.apply(this, arguments);
+      };
+      await frame(); await frame();
+      const without = grab();
+      window.w2s = realW2S;
+      await frame();
+      let diff = 0;
+      for (let i = 3; i < withMark.length; i += 4) if (withMark[i] !== without[i]) diff++;
+      for (let i = 0; i < withMark.length; i += 4) if (Math.abs(withMark[i] - without[i]) > 24) diff++;
+      return diff;
     };
-    await frame(); await frame();
-    const without = grab();
-    window.w2s = realW2S;
-    await frame();
-    let diff = 0;
-    for (let i = 3; i < withMark.length; i += 4) if (withMark[i] !== without[i]) diff++;
-    for (let i = 0; i < withMark.length; i += 4) if (Math.abs(withMark[i] - without[i]) > 24) diff++;
-    return { diff, px: Math.round(20 * dpr * 24 * dpr), gate: window.__gateDist,
-             dbg: debugSeeAll, rawCentre: vis[Math.floor(t.y)*W+Math.floor(t.x)],
-             visCentre: visAt(t.x, t.y), visBoard: visAt(bp.x, bp.y),
+
+    /* ---------- A. SOMEBODY IS LOOKING AT THE SQUARE ---------- */
+    for(const c of player()){ c.x = bp.x; c.y = bp.y + 3; }
+    computeVision(); computeVision();
+    const liveVis = visAt(bp.x, bp.y);
+    const diffNear = await measure();
+
+    /* ---------- B. THEY HAVE WALKED AWAY AGAIN ----------
+       This is the half a note came back about. Marking a post on ground the squad had merely
+       WALKED made every one of the seven plazas visible from anywhere on the map at once, and
+       that read as clutter rather than as help. Remembered ground must draw NOTHING. */
+    for(const c of player()){ c.x = bp.x + 120; c.y = bp.y + 120; }
+    computeVision(); computeVision();
+    const memVis = visAt(bp.x, bp.y);
+    const diffFar = await measure();
+
+    return { diffNear, diffFar, liveVis, memVis,
+             px: Math.round(20 * dpr * 24 * dpr), dbg: debugSeeAll,
              whoIsNear: chars.filter(c => c.faction === 'player' && c.state !== 'dead'
                           && Math.hypot(c.x - bp.x, c.y - bp.y) < 12).map(c => c.name).slice(0, 6) };
   });
@@ -416,15 +425,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
      to a player at any honest zoom, and enough to satisfy any threshold set just above zero.
      The drawn mark is 476. The bar goes between them, nearer the top, because the property is
      "a player can see it" and not "some ink reached the canvas". */
-  /* and the number that says it was a fair test */
-  out.visionState = `debugSeeAll=${seen.dbg}, raw ${seen.rawCentre}, centre ${seen.visCentre}, board ${seen.visBoard}` +
-    (seen.whoIsNear && seen.whoIsNear.length ? ` — still near the plaza: ${seen.whoIsNear.join(', ')}` : ' — nobody left near the plaza');
-  out.markFromTheGate = seen.gate
-    ? `read from the gate, ${seen.gate.toFixed(0)} tiles out, on ground the squad had walked`
-    : '!! COULD NOT WORK OUT WHERE THE GATE WAS';
+  /* and the numbers that say it was a fair test */
+  out.visionState = `debugSeeAll=${seen.dbg}, live ${seen.liveVis}, remembered ${seen.memVis}`;
+  out.markSightState = (seen.liveVis === 2 && seen.memVis === 1)
+    ? 'the plaza went from live sight to remembered, which is the whole question'
+    : `!! THE PROBE NEVER CHANGED WHAT THE SQUAD COULD SEE (${seen.liveVis} then ${seen.memVis})`;
   out.markIsOnScreen = seen.fail ? '!! ' + seen.fail
-    : seen.diff >= 250 ? `the post wears a mark you can see — ${seen.diff} pixels of one`
-    : `!! THE MARK ON THE POST IS NOT LEGIBLE (${seen.diff} pixels of ${seen.px} — a tofu box is 78)`;
+    : seen.diffNear >= 250 ? `with somebody watching the square, the post wears a mark you can see — ${seen.diffNear} pixels of one`
+    : `!! THE MARK ON THE POST IS NOT LEGIBLE (${seen.diffNear} pixels of ${seen.px} — a tofu box is 78)`;
+  out.markIsNotAMap = seen.fail ? '' 
+    : seen.diffFar <= 40 ? `and once they walk away it is gone again — ${seen.diffFar} pixels on remembered ground`
+    : `!! THE POST IS MARKED ACROSS THE WHOLE MAP (${seen.diffFar} pixels with nobody in sight of it)`;
 
   console.log('=== THE POST ===\n');
   for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(16) + v);
