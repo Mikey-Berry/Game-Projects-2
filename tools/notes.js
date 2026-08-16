@@ -358,10 +358,19 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       else {
         const sb = spanOf(es.float), hb = spanOf(em.headG);
         const skullMid = (sb.min.y + sb.max.y) / 2 - groundY(sv.x, sv.y);
-        const headMid = (hb.min.y + hb.max.y) / 2 - groundY(me2.x, me2.y);
-        R.skullRides = Math.abs(skullMid - headMid) < 0.22
-          ? `the bound skull floats at ${skullMid.toFixed(2)} against a living head at ${headMid.toFixed(2)}`
-          : `!! THE SKULL FLOATS AT ${skullMid.toFixed(2)} AND A HEAD IS AT ${headMid.toFixed(2)}`;
+        /* The yardstick has to be a body of KNOWN size, not whichever body worldgen happened
+           to roll first. `baseSY` is a coin-flip on sex plus a hash of the id — a male dustborn
+           stands about 10% taller than a female one — so the living head that this reads for a
+           reference moves 0.17 between worlds, which is most of the tolerance. This assertion
+           went red for exactly that reason: six new wanderers upstream shifted the worldgen RNG,
+           the first crew member came up male instead of female, and the head rose from 1.65 to
+           1.82 while the skull sat exactly where it always had. Divide the reference by its own
+           body's world scale so it is the head height of a canonical 1.0 body either way. */
+        const wsc = new THREE.Vector3(); em.g.getWorldScale(wsc);
+        const headMid = ((hb.min.y + hb.max.y) / 2 - groundY(me2.x, me2.y)) / (wsc.y || 1);
+        R.skullRides = Math.abs(skullMid - headMid) < 0.28
+          ? `the bound skull floats at ${skullMid.toFixed(2)} against a head at ${headMid.toFixed(2)} on a body of standard build`
+          : `!! THE SKULL FLOATS AT ${skullMid.toFixed(2)} AND A STANDARD HEAD IS AT ${headMid.toFixed(2)}`;
       }
     } catch (e) { R.skullRides = '!! THREW: ' + e.message; }
 
