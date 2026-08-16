@@ -4013,6 +4013,15 @@ spawnCaravan();
 /* snapshots for save/load: world before any player construction */
 const baseBlocked = new Set(blocked);
 const baseBeds = beds.map(b => ({...b}));
+/* The wall rings AS GENERATED. restore() resets `blocked` to baseBlocked, which puts every
+   town wall back as solid ground — but nothing ever put the ring ARRAYS back, and the load
+   path could only delete from them. So a load into a session that had already seen a wall
+   come down left that segment missing from the ring (no mesh, no hp, town reads open) while
+   it was still standing in `blocked` (nothing can walk through it). Keeping the generated
+   rings here lets restore rebuild from the world and then apply the save's damage to that,
+   which makes loading idempotent instead of one-way. */
+const baseTownWalls = towns.map(t => t.walls.map(w => ({...w})));
+const baseBastionWalls = bastion ? bastion.walls.map(w => ({...w})) : [];
 
 /* hostile squads roam the map */
 function spawnHostileSquad(kind){
@@ -5644,11 +5653,11 @@ function kill(c, by){
   c.state = 'dead'; clearOrders(c);
   /* A WHISP DOES NOT DIE, IT GOES OUT — and it takes the reaction it was holding with it.
      AFTER the state is written, deliberately. The burst damages everything nearby, which can
-     put another whisp out, whose `kill` runs inside this one — and the guard at the top of
+     put another wisp out, whose `kill` runs inside this one — and the guard at the top of
      this function is the only thing standing between a line of them and infinite recursion.
      Fired here rather than in `applyDamage` so it happens exactly once however it was put
-     down: a blade, a bolt, the dust reclaiming it, or the whisp two strides away. */
-  if(c.whisp) whispBurst(c);
+     down: a blade, a bolt, the dust reclaiming it, or the wisp two strides away. */
+  if(c.wisp) wispBurst(c);
   if(c.campId >= 0){
     const camp = camps.find(k => k.id === c.campId);
     if(camp && !chars.some(o => o !== c && o.campId === camp.id && o.state !== 'dead')){
@@ -5925,7 +5934,19 @@ const UNDEAD_TYPES = {
   stitch:     {name:'Stitch-Hand',   tech:'rites_binding', mana:12, weight:1, tag:'SH',
     cost:{remains:1, fabric:3, copper:2},
     desc:'A surgeon with its hands still in the trade. It cannot fight. It walks the line mending what you bound, and every mending is paid for in Mortal Remains'},
-  whisp:      {name:'Whisp',         tech:'rites_deep',    mana:16, weight:1, tag:'WP',
+  /* THE DEDICATED HARVESTER. The HARVEST job already exists and any hand can be put on it —
+     what this is for is being BETTER at it than a person, which is the whole argument for
+     spending a binding slot on something that cannot fight: it loots first, renders second,
+     and takes more out of a body than anybody else would have got. */
+  deatheater: {name:'Death Eater',  tech:'rites_binding', mana:14, weight:1, tag:'DE',
+    cost:{remains:2, fabric:2, hide:2},
+    desc:'Bound for one purpose and thoroughly good at it. Turns out a body, then renders it — and gets more Mortal Remains out of one than any living hand would'},
+  /* THE LOAD-BEARER. A necromancer's ceiling is one number, and until now the only way to
+     raise it was to raise the necromancer. This spends a slot to buy several back. */
+  soulbound:  {name:'Soulbound',    tech:'rites_deep',    mana:20, weight:1, tag:'SB',
+    cost:{remains:2, copper:6, vflesh:3},
+    desc:'A simulacrum with the binding poured through it instead of around it. Its master can hold three more of the dead — and it is made of glass, and the dark can hear it from a long way off'},
+  wisp:       {name:'Wisp',         tech:'rites_deep',    mana:16, weight:1, tag:'WP',
     cost:{remains:1, copper:5, fabric:2},
     desc:'A held ball of alchemical fire, bound and given just enough of a mind to follow. It lights the country and the dark will not come near it — and everything within a few strides of it dies when it goes out'},
   servitor:   {name:'Bound Servitor',tech:'rites_binding', mana:8,  weight:1, tag:'SV',
@@ -6531,7 +6552,7 @@ function ai(c, dt){
   }
   /* find target */
   if(c.target && c.target.state !== 'ok') c.target = null;   /* dead quarry drops instantly */
-  /* SOME BOUND THINGS DO NOT FIGHT AT ALL. A Stitch-Hand and a Whisp are both built with the
+  /* SOME BOUND THINGS DO NOT FIGHT AT ALL. A Stitch-Hand and a Wisp are both built with the
      one instinct that keeps them useful, and it is not aggression — a surgeon that wandered
      off to brawl would be a surgeon nowhere near the wounded, and a lamp that charged the
      line would be a bomb going off in the middle of your own people. They never acquire, and
@@ -8583,12 +8604,12 @@ function physics(c, dt){
       c.carrT = 1.6;
       if(rnd() < 0.7) addSpecks(c.x, c.y - 0.4, '#8a5a4a', 2);
       if(!body.looted){
-        const got = lootCorpse(body, true) || [];
+        const got = lootCorpse(body, true, c) || [];
         if(got.length) log(`${c.name} turns out a body: ${got.join(', ')}.`, 'good');
         refreshTop(); refreshInv();
       } else {
         const dk = decayStage(body);
-        const n = harvestCorpse(body, true);
+        const n = harvestCorpse(body, true, c);
         log(`${c.name} renders down a ${dk.label} body — ${n} Mortal Remains.`, 'good');
         c.carrBody = null; c.carrScanT = 0;
         xpGain(c, 'labor', 0.4);
@@ -10332,8 +10353,8 @@ function gauntTick(dh){
      lamp out ahead of your people a decision rather than a decoration. It is not a shield: a
      blood moon opens the door wide and the light stops mattering, exactly as it does for the
      towns that bought the lamps. */
-  if(!bloodMoon && chars.some(o => o.whisp && o.state === 'ok' && o.faction === 'player' &&
-      dist(o.x, o.y, x, y) < WHISP_WARD)) return;
+  if(!bloodMoon && chars.some(o => o.wisp && o.state === 'ok' && o.faction === 'player' &&
+      dist(o.x, o.y, x, y) < WISP_WARD)) return;
   const roll = rnd();
   /* corpse-eaters are the commonest thing out here. The dead are the whole reason they came. */
   /* the Larder-Kin only comes once something out there has taken an interest in you —
@@ -10935,9 +10956,9 @@ function stitchTick(c, dt){
 /* ============================================================ THE WHISP
    It goes out badly. Everything within a few strides takes the whole held reaction at once,
    friend and otherwise — which is the price of walking your light into a crowd. */
-const WHISP_R = 4.2, WHISP_DMG = 46;
-const WHISP_WARD = 16;   /* tiles of dark it holds off — a warding lamp is 22, and bolted down */
-function whispBurst(c){
+const WISP_R = 4.2, WISP_DMG = 46;
+const WISP_WARD = 16;   /* tiles of dark it holds off — a warding lamp is 22, and bolted down */
+function wispBurst(c){
   addSpecks(c.x, c.y, '#9fe8ff', 40);
   addSpecks(c.x, c.y, '#ffffff', 24);
   AU.rite && AU.rite(c.x, c.y);
@@ -10947,13 +10968,13 @@ function whispBurst(c){
      walking. Measured: the bystander one tile from the burst took nothing at all, because the
      array emptied itself on the first inner call. Anything that damages inside a charsNear
      loop has to copy first. */
-  for(const o of charsNear(c.x, c.y, WHISP_R).slice()){
+  for(const o of charsNear(c.x, c.y, WISP_R).slice()){
     if(o === c || o.state === 'dead') continue;
     if((o.floor || 0) !== (c.floor || 0)) continue;
     const d = dist(o.x, o.y, c.x, c.y);
-    const falloff = clamp(1 - d / WHISP_R, 0, 1);
+    const falloff = clamp(1 - d / WISP_R, 0, 1);
     if(falloff <= 0) continue;
-    applyDamage(c, o, pickPart(), WHISP_DMG * falloff, 'burn', false);
+    applyDamage(c, o, pickPart(), WISP_DMG * falloff, 'burn', false);
   }
 }
 /* ---------- what a HARVEST hand is allowed to render down ----------
@@ -10971,11 +10992,11 @@ function carrionFodder(b){
   if(b.faction === 'player' && !b.grown && !b.undead) return false;
   return true;
 }
-function lootCorpse(t, quiet){
+function lootCorpse(t, quiet, by){
   const log = quiet ? (() => {}) : outerLog;
   /* going through the pockets of somebody's neighbour, in front of the neighbours */
   if(t && (t.faction === 'town' || t.homeTown)) crime('theft', t.x, t.y, player()[0] || null);
-  if(t.looted){ return harvestCorpse(t, quiet); }
+  if(t.looted){ return harvestCorpse(t, quiet, by); }
   t.looted = true;
   let got = [];
   if(t.loot){ cats += t.loot; got.push(`${t.loot} gold`); }
@@ -10994,11 +11015,15 @@ function lootCorpse(t, quiet){
   refreshTop(); refreshInv();
   return got;
 }
-function harvestCorpse(t, quiet){
+function harvestCorpse(t, quiet, by){
   const log = quiet ? (() => {}) : outerLog;
   /* a fresh body gives up more than a picked-over one */
   const dk = decayStage(t);
-  const n = Math.max(1, dk.remains - (rnd() < 0.4 ? 0 : 1));
+  /* A DEATH EATER GETS MORE OUT OF ONE. `by` is whoever did the rendering — the harvest job
+     passes itself in; a player right-clicking a body passes nothing and gets the ordinary
+     yield, which is correct: this is the creature's edge, not a global buff. */
+  let n = Math.max(1, dk.remains - (rnd() < 0.4 ? 0 : 1));
+  if(by && by.harvestBonus) n += by.harvestBonus;
   addItem('remains', n);
   if(dk.k === 'fresh' && rnd() < 0.35) addItem('vflesh', 1);
   const ci = corpses.indexOf(t); if(ci>=0) corpses.splice(ci,1);
@@ -11331,9 +11356,22 @@ function risenLoad(caster){
 function lieutenantsOf(caster){
   return chars.filter(x => x.lieutenant && x.state!=='dead' && x.master===caster).length;
 }
+/* WHAT THE SOULBOUND ADD. Each one standing is three more of the dead their master can hold —
+   and they weigh one against that same binding, so the net is +2 a piece. They have to be
+   ALIVE for it: kill the simulacra and the host they were carrying goes over the ceiling,
+   which is exactly the pressure they are for. */
+function soulboundOf(caster){
+  if(!caster) return 0;
+  let n = 0;
+  for(const c of chars){
+    if(c.soulbound && c.state !== 'dead' && c.master === caster) n += (c.bindBonus || 3);
+  }
+  return n;
+}
 function risenCap(caster){
-  if(caster.lich) return 5 + Math.floor(caster.stats.magic/8) + (research.done.necromancy ? 2 : 0);
-  return 3 + Math.floor(caster.stats.magic/10) + (research.done.necromancy ? 2 : 0);
+  const soul = soulboundOf(caster);
+  if(caster.lich) return 5 + Math.floor(caster.stats.magic/8) + (research.done.necromancy ? 2 : 0) + soul;
+  return 3 + Math.floor(caster.stats.magic/10) + (research.done.necromancy ? 2 : 0) + soul;
 }
 function spendCast(c, key){
   if(key !== 'veil') breakVeil(c, 'works a formula');
@@ -11942,6 +11980,30 @@ function craftUndead(kind, caster, circle, shape){
     u.beast = true; u.mule = true; u.cart = true; u.fleeOnHit = true;
     u.kin = 'cart';
     u.blood = 120; u.maxBlood = 120;
+  } else if(kind==='deatheater'){
+    /* It does the HARVEST rounds and nothing else, and it is better at them: `harvestBonus`
+       is read by `harvestCorpse` and by nothing else, so being good at this costs the rest
+       of the game nothing. */
+    u = makeChar('Death Eater '+risenN, caster.faction, p.x, p.y,
+      {atk:4, def:8, tough:12+m*0.3, ath:9, labor:16, medic:2});
+    u.kin = 'eater'; u.stitcher = false;
+    u.noFight = true; u.fleeOnHit = true;
+    u.eater = true; u.harvestBonus = 2;
+    u.job = 'carrion';               /* it wakes up already doing the one thing it is for */
+    u.blood = 90; u.maxBlood = 90;
+  } else if(kind==='soulbound'){
+    /* THE LOAD-BEARER. It does not fight, it does not work, and it does not move well. What
+       it does is stand somewhere and make its master's ceiling higher — which is a thing the
+       game has never had a way to buy. Loud by construction, and about as sturdy as a lamp. */
+    u = makeChar('Soulbound '+risenN, caster.faction, p.x, p.y,
+      {atk:1, def:6, tough:3, ath:5, labor:0, magic: 10 + m*0.3});
+    u.kin = 'soul'; u.minded = true;
+    u.noFight = true; u.fleeOnHit = true;
+    u.soulbound = true; u.bindBonus = 3;
+    u.noise = 3.2;                   /* the dark hears it. That is the price of the ceiling. */
+    u.speedMult = 0.7;
+    u.blood = 50; u.maxBlood = 50;
+    for(const k of VITAL){ u.parts[k].hp = 38; u.parts[k].max = 38; }
   } else if(kind==='stitch'){
     /* A STITCH-HAND cannot hurt anything. What it does is the one repair in the game: it puts
        your bound dead back together, limbs included, and it charges Mortal Remains for the
@@ -11951,12 +12013,12 @@ function craftUndead(kind, caster, circle, shape){
     u.kin = 'stitch'; u.minded = true; u.stitcher = true;
     u.noFight = true; u.fleeOnHit = true;
     u.blood = 80; u.maxBlood = 80;
-  } else if(kind==='whisp'){
+  } else if(kind==='wisp'){
     /* Not a body at all. A held reaction in a shell, bound the way a servitor's skull is
        bound, with just enough mind on it to follow somebody. It is a lamp with a temper. */
-    u = makeChar('Whisp '+risenN, caster.faction, p.x, p.y,
+    u = makeChar('Wisp '+risenN, caster.faction, p.x, p.y,
       {atk:1, def:14, tough:2, ath:4, labor:0, magic: 8 + m*0.3});
-    u.beast = true; u.whisp = true; u.minded = true;
+    u.beast = true; u.wisp = true; u.minded = true;
     u.noFight = true; u.fleeOnHit = true;
     u.big = 0.5; u.speedMult = 0.62;
     u.blood = 45; u.maxBlood = 45;
@@ -12006,7 +12068,7 @@ function craftUndead(kind, caster, circle, shape){
   u.bindWeight = ut.weight; u.shortTag = ut.tag + risenN;
   /* the shaping goes on before it stands up, and renames it if it came out extreme */
   applyShape(u, shape);
-  if(u.shapeName) u.name = u.shapeName + ' ' + u.name.replace(/^(Risen|Colossus|Gravehound|Hollow Brute|Bone Knight|Marrow Archer|Bone Mule|Gravecart|Stitch-Hand|Whisp|Servitor|Skeleton Mage) /, '');
+  if(u.shapeName) u.name = u.shapeName + ' ' + u.name.replace(/^(Risen|Colossus|Gravehound|Hollow Brute|Bone Knight|Marrow Archer|Bone Mule|Gravecart|Stitch-Hand|Wisp|Whisp|Servitor|Skeleton Mage) /, '');
   chars.push(u);
   caster.mana -= ut.mana; caster.castCd = 1.4;
   xpGain(caster, 'magic', 0.8);
@@ -14182,7 +14244,7 @@ function computeVision(){
     /* A WHISP IS A LAMP. It sees no better than anything else does — it makes the ground
        around it visible, which is a different thing and the whole reason to walk one out
        ahead of the column. The storm still swallows it like everything else. */
-    if(c.whisp) r += 13;
+    if(c.wisp) r += 13;
     stampVision(c.x, c.y, r * stormK);
   }
   for(const b of pBuilds) stampVision(b.x + b.w/2, b.y + b.h/2, 11);
@@ -16595,8 +16657,13 @@ function factionColor(c){
   return '#b0402e';
 }
 function colorKeyOf(c){
-  /* sex is part of the silhouette, so it belongs in the rebuild key */
-  return factionColor(c) + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.whisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.face||'');
+  /* sex is part of the silhouette, so it belongs in the rebuild key.
+     So does `kin`, and its absence was a real bug: a skeleton mage and a plain risen
+     labourer produced an IDENTICAL key (same faction, undead, no weapon, no flag), so
+     whichever got built first in a session handed its rig to the other through the mesh
+     cache — which is why the mage's mantle appeared some runs and not others. The beast
+     rigs had the same collision: elk, grazer and gravehound are all just `|b`. */
+  return factionColor(c) + '|' + (c.kin||'') + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.wisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.eater?'|E':'') + (c.soulbound?'|B':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.face||'');
 }
 const SKINS = ['#8a5c34', '#6e4426', '#a06c40', '#5a3820', '#96683a'];
 const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0'];
@@ -17076,14 +17143,35 @@ function buildCharMesh(c){
   /* what a risen was bound FOR shows in the frame: a brute is built thick, an archer lean */
   const kin = risen ? (c.kin || null) : null;
   const kinLimb = kin === 'brute' ? 1.55 : kin === 'colossus' ? 1.9
-    : kin === 'archer' ? 0.82 : kin === 'mage' ? 0.78 : kin === 'stitch' ? 0.74 : 1;
+    : kin === 'archer' ? 0.82 : kin === 'mage' ? 0.78 : kin === 'stitch' ? 0.74 : kin === 'eater' ? 0.86 : 1;
   /* Rot reads in the build as well as the colour: something raised fresh still has meat on
      it, something scraped off a month-old field is a frame with a rag hung on it. */
   const ROT_LIMB = {fresh:1.22, cooling:1.06, spoiled:0.92, bones:0.78};
   const rotLimb = (risen && c.rot && ROT_LIMB[c.rot]) ? ROT_LIMB[c.rot] : 1;
   const LIMB = (fem ? 0.88 : 1) * (risen ? 0.66 * kinLimb * rotLimb : 1);   /* limb thickness — bone is thin */
   if(c.beast){
-    if(c.whisp){
+    if(c.soulbound){
+      /* A SIMULACRUM: a small blank figure with no face and no feet, hung in the air inside a
+         ring of its master's binding. It is deliberately the least threatening thing on the
+         field and the most obviously worth killing — a lamp-shaped ceiling. */
+      const wax = '#c8bda6', cord = '#a98ad4', dark = '#2b2432';
+      e.float = new THREE.Group(); e.float.position.set(0, 1.15, 0); g.add(e.float);
+      e.head = e.float;
+      mk(BOXG, ownBone(wax), 0.30, 0.46, 0.22, 0, 0, 0, e.float);            /* the little body */
+      mk(SPHG, ownBone(wax), 0.26, 0.28, 0.26, 0, 0.36, 0, e.float);         /* a blank head */
+      for(const sx of [-1, 1])
+        mk(BOXG, ownBone(wax), 0.07, 0.30, 0.07, sx * 0.20, -0.04, 0, e.float);   /* arms, hanging */
+      mk(BOXG, ownBone(dark), 0.20, 0.03, 0.02, 0, 0.36, 0.13, e.float);     /* where a face is not */
+      /* the binding itself, poured through it: three rings turning at different heights */
+      e.spineBits = [];
+      for(let i = 0; i < 3; i++){
+        const r2 = new THREE.Group(); r2.position.set(0, 0.30 - i * 0.30, 0); e.float.add(r2);
+        mk(CYLG, ownGlow(cord), 0.42 - i * 0.06, 0.014, 0.42 - i * 0.06, 0, 0, 0, r2);
+        e.spineBits.push(r2);
+      }
+      e.sigil = mk(CYLG, ownGlow(cord), 0.50, 0.012, 0.50, 0, -0.74, 0, e.float);
+      e.servitor = true;                 /* floats and bobs by the same rules */
+    } else if(c.wisp){
       /* A WHISP: a held reaction in a shell. No skull, no frame, nothing that was ever alive
          — a lantern-glass sphere with the light sitting inside it and three bone splinters
          orbiting where a binding was struck. It rides the same `float` group the servitor's
@@ -17523,6 +17611,20 @@ function buildCharMesh(c){
           e.boxBody.push(obox(0.70, 0.05, 0.28, '#4a443e', 0, yy, 0.01, e.spine));
         for(const sx of [-1, 1])
           e.boxBody.push(obox(0.06, 0.62, 0.06, '#4a443e', sx*0.30, 0.28, 0, e.spine));
+      }
+      if(kin === 'eater'){
+        /* ---------- THE DEATH EATER ----------
+           A Stitch-Hand mends and this one takes apart, and at this camera height they must
+           not read as the same silhouette. So: no closed ribcage, a long hooked blade slung
+           at the hip, and a sack across the back that fills up. Everything about it says
+           butcher rather than surgeon. */
+        const iron = '#6a6258', sack = '#4a4034', gut = '#8a7a5e';
+        e.boxBody.push(obox(0.34, 0.34, 0.26, sack, 0, 0.22, -0.20, e.spine));      /* the sack */
+        e.boxBody.push(obox(0.30, 0.06, 0.06, gut, 0, 0.42, -0.20, e.spine));       /* its cord */
+        e.boxBody.push(obox(0.05, 0.42, 0.05, iron, 0.24, 0.06, 0.08, e.spine));    /* the hook, slung */
+        e.boxBody.push(obox(0.14, 0.06, 0.05, iron, 0.24, -0.15, 0.10, e.spine));   /* and its curve */
+        for(let i = 0; i < 3; i++)                                                   /* hooks on the belt */
+          e.boxBody.push(obox(0.03, 0.12, 0.03, iron, -0.16 + i * 0.09, -0.04, 0.13, e.spine));
       }
       if(kin === 'stitch'){
         /* ---------- THE STITCH-HAND ----------
@@ -23090,8 +23192,13 @@ function snapshot(){
     job:c.job, job2:c.job2||null, grp:c.grp||null,
     cmd: c.cmd ? {...c.cmd, home:{...c.cmd.home}} : null, under: c.under ?? null,
     wasJob: c.wasJob ? [...c.wasJob] : null, heldAt:c.heldAt||null, heldT:c.heldT||0, midden:c.midden||null, caveId:c.caveId||null, roomId:(c.roomId??null), caveDweller:!!c.caveDweller, floor: c.floor||0, captured:!!c.captured, dragId: c.drag ? c.drag.id : null,
+    /* What a body was bound FOR. restore() has always read `s.kin`, but nothing ever wrote
+       it: every risen came back off a save as the generic rig, so the skeleton mage lost its
+       burnt mantle and its ember, the Bone Knight came back thin, the archer came back
+       thick. Saving one string fixes the whole roster. */
+    kin:c.kin||null,
     clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
-    servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, whisp:!!c.whisp, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
+    servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, eater:!!c.eater, harvestBonus:c.harvestBonus??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null,
     salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
@@ -23239,20 +23346,38 @@ function restore(d){
     }
     window._cellHp = null;
   }
-  /* Walls are restored by matching the freshly-generated ring against the saved one and
-     applying the saved damage (removed segments, current hp). But if the save was made in
-     a differently-generated world (a worldgen change between builds), NONE of the coords
-     line up — and the old code read every mismatch as "this wall was destroyed" and deleted
-     the whole ring. A save must never be able to unbuild a town it doesn't recognise. So:
-     only prune when the save clearly belongs to this world (most segments matched). */
-  const applyWalls = (ring, saved) => {
-    if(!ring || !ring.length) return;
-    let matched = 0;
+  /* Walls are restored by rebuilding the ring the world GENERATED and then applying the
+     save's damage to it — removed segments, current hp. Rebuilding first is what makes a
+     load idempotent: the earlier version worked off whatever ring was left in memory and
+     could only ever splice, so it could take a wall away and had no way to put one back.
+     But if the save was made in a differently-generated world (a worldgen change between
+     builds, or another seed), NONE of the coords line up, every one of them reads as "this
+     wall was destroyed", and the town gets unbuilt. A save must never be able to raze a town
+     it doesn't recognise — so only prune when most of what the SAVE claims is actually here. */
+  const applyWalls = (ring, base, saved) => {
+    if(!ring || !base || !base.length) return;
+    /* Start from the world as it was GENERATED, not from whatever is left of the ring in
+       memory. This is the whole fix: `blocked` has just been reset to baseBlocked, so every
+       generated wall is solid again, and the ring has to agree with that before any of the
+       save's damage goes on. Rebuilding here also makes a second load in one session come
+       out the same as the first — the old code only ever spliced, so damage accumulated
+       across loads and never came back. */
+    ring.length = 0;
+    for(const w of base) ring.push({...w});
+    /* null means the save has no wall data at all (it predates the field) — keep the ring we
+       just rebuilt. An EMPTY array is different: it means this town was recorded with its
+       ring flat, and that has to be honoured. */
+    if(!saved) return;
     const savedAt = new Map();
     for(const sw of saved) savedAt.set(sw.x + ',' + sw.y, sw);
+    let matched = 0;
     for(const w of ring) if(savedAt.has(w.x + ',' + w.y)) matched++;
-    /* the save doesn't fit this world's walls — keep the generated ring, damage and all */
-    if(saved.length && matched < ring.length * 0.5){
+    /* the save doesn't fit this world's walls (a worldgen change between builds, or a save
+       from another seed) — every coordinate would read as "destroyed" and unbuild the town,
+       so keep the generated ring instead. A save must never be able to raze what it does
+       not recognise. Measured against the SAVE's length, not the ring's: a ring that is
+       mostly rubble in the save is a legitimate siege, not a mismatch. */
+    if(matched < saved.length * 0.5){
       console.warn && console.warn('save wall layout does not match worldgen; keeping generated walls');
       return;
     }
@@ -23264,8 +23389,8 @@ function restore(d){
       } else w.hp = sw.hp;
     }
   };
-  if(d.townWalls) towns.forEach((t, ti) => applyWalls(t.walls, d.townWalls[ti] || []));
-  if(bastion && d.bastionWalls) applyWalls(bastion.walls, d.bastionWalls);
+  towns.forEach((t, ti) => applyWalls(t.walls, baseTownWalls[ti], d.townWalls ? (d.townWalls[ti] || []) : null));
+  if(bastion) applyWalls(bastion.walls, baseBastionWalls, d.bastionWalls || null);
   middens.length = 0;
   if(Array.isArray(d.middens)) for(const m of d.middens) middens.push({id:m.id, x:m.x, y:m.y, found:!!m.found, held:[]});
   if(Array.isArray(d.caves)){
@@ -23366,7 +23491,14 @@ function restore(d){
     c.clawDmg = s.clawDmg || 0; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.eatsDead = !!s.eatsDead;
     c.structMult = s.structMult || 1; c.bindWeight = s.bindWeight || 1; c.shortTag = s.shortTag || '';
     c.servitor = !!s.servitor; c.minded = !!s.minded; c.crafted = !!s.crafted; c.autoFight = !!s.autoFight;
-    c.cart = !!s.cart; c.stitcher = !!s.stitcher; c.whisp = !!s.whisp; c.noFight = !!s.noFight;
+    c.cart = !!s.cart; c.stitcher = !!s.stitcher; c.noFight = !!s.noFight;
+    /* `whisp` was a typo and is now `wisp`; a save written under the old spelling still has a
+       body in it that thinks it is a lamp, and dropping the field would leave it a mute beast
+       that neither lights anything nor goes off. Read both, write one. */
+    c.wisp = !!(s.wisp || s.whisp);
+    c.eater = !!s.eater; c.soulbound = !!s.soulbound;
+    if(s.harvestBonus != null) c.harvestBonus = s.harvestBonus;
+    if(s.bindBonus != null) c.bindBonus = s.bindBonus;
     c.onlyArt = s.onlyArt || null; c.speedMult = s.speedMult || 0;
     c.markT = s.markT || 0; c.heat = s.heat || 0; c.mustered = !!s.mustered;
     if(s.ate != null) c.ate = s.ate;

@@ -12,7 +12,7 @@
  *      cheapens the seal — through the real `workTheDoor` and `doorSealCost`
  *   3. the Gravecart fetches six bodies and does NOT render them down
  *   4. the Stitch-Hand puts a severed limb back on, which nothing else in the game can do
- *   5. a Whisp lights the ground, holds the dark off, and takes the room with it when it goes
+ *   5. a Wisp lights the ground, holds the dark off, and takes the room with it when it goes
  *   6. the Bone Knight costs stone, the Bone Mule is gone, and a lieutenant is visibly one
  *
  * Anything starting '!!' fails the build.
@@ -181,7 +181,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.knight = (UNDEAD_TYPES.brute.name === 'Bone Knight' && UNDEAD_TYPES.brute.cost.stone && !UNDEAD_TYPES.brute.cost.hide)
         ? `the Bone Knight costs ${costText(UNDEAD_TYPES.brute.cost)} — stone, not hide`
         : `!! THE KNIGHT IS WRONG (${UNDEAD_TYPES.brute.name}, ${JSON.stringify(UNDEAD_TYPES.brute.cost)})`;
-      const want = ['gravecart', 'stitch', 'whisp'];
+      const want = ['gravecart', 'stitch', 'wisp'];
       const missing = want.filter(k => !UNDEAD_TYPES[k]);
       R.bench = !missing.length
         ? `the circle offers ${Object.keys(UNDEAD_TYPES).length}: ${Object.values(UNDEAD_TYPES).map(u => u.name).join(', ')}`
@@ -196,7 +196,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       for (const k of ['remains', 'stone', 'fabric', 'copper', 'wood', 'hide']) stash[k] = (stash[k] || 0) + 400;
       const circle = { x: ritualist.x, y: ritualist.y };
       const bound = {};
-      for (const k of ['gravecart', 'stitch', 'whisp', 'brute']) {
+      for (const k of ['gravecart', 'stitch', 'wisp', 'brute']) {
         const n0 = chars.length;
         craftUndead(k, ritualist, circle, null);
         bound[k] = chars.length > n0 ? chars[chars.length - 1] : null;
@@ -268,28 +268,28 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : '!! IT MENDS OUT OF THIN AIR';
 
       /* ---- THE WHISP ---- */
-      const w = bound.whisp;
-      R.whispFrail = (w.maxBlood <= 50 && moveSpeed(w) < moveSpeed(bound.brute))
-        ? `a Whisp is ${w.maxBlood} blood and slower than a Knight — fragile and obvious, as promised`
+      const w = bound.wisp;
+      R.wispFrail = (w.maxBlood <= 50 && moveSpeed(w) < moveSpeed(bound.brute))
+        ? `a Wisp is ${w.maxBlood} blood and slower than a Knight — fragile and obvious, as promised`
         : `!! THE WHISP IS NOT FRAGILE (${w.maxBlood} blood)`;
       /* it lights ground. Measured off the real computeVision, with everyone else moved away. */
       for (const o of player()) if (o !== w) { o.x = 4; o.y = 4; }
       w.x = 150; w.y = 150; w.state = 'ok';
       vis.fill(0); computeVision();
-      let litWhisp = 0;
-      for (let i = 0; i < vis.length; i++) if (vis[i] === 2) litWhisp++;
+      let litWisp = 0;
+      for (let i = 0; i < vis.length; i++) if (vis[i] === 2) litWisp++;
       const wx = w.x, wy = w.y;
-      w.whisp = false;
+      w.wisp = false;
       vis.fill(0); computeVision();
       let litPlain = 0;
       for (let i = 0; i < vis.length; i++) if (vis[i] === 2) litPlain++;
-      w.whisp = true;
-      R.whispLights = litWhisp > litPlain
-        ? `it lights ${litWhisp - litPlain} tiles more ground than an ordinary body standing on the same spot`
-        : `!! A WHISP LIGHTS NOTHING EXTRA (${litWhisp} vs ${litPlain})`;
+      w.wisp = true;
+      R.wispLights = litWisp > litPlain
+        ? `it lights ${litWisp - litPlain} tiles more ground than an ordinary body standing on the same spot`
+        : `!! A WHISP LIGHTS NOTHING EXTRA (${litWisp} vs ${litPlain})`;
       /* and it holds the dark off — driven through the real gaunt spawn */
-      R.whispWards = typeof WHISP_WARD === 'number' && WHISP_WARD > 0
-        ? `and holds gaunts off ${WHISP_WARD} tiles of it`
+      R.wispWards = typeof WISP_WARD === 'number' && WISP_WARD > 0
+        ? `and holds gaunts off ${WISP_WARD} tiles of it`
         : '!! NO WARD RADIUS';
       /* the burst. A bystander at arm's length must take real damage from the real path. */
       const near = makeChar('Bystander', 'bandit', wx + 1, wy, { tough: 30 });
@@ -300,21 +300,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       rebuildCharGrid();
       /* MEASURE THE PARTS, NOT THE BLOOD. `blood` is the bleed-out pool and only drains on the
          bleeding tick; a blow lands on `parts[k].hp`. The first version of this read `blood`,
-         saw it unchanged, and reported that the whisp went out quietly — while it was in fact
+         saw it unchanged, and reported that the wisp went out quietly — while it was in fact
          taking thirty-five points off the bystander's chest. */
       const pool = o => o.blood + Object.values(o.parts).reduce((s, q) => s + q.hp, 0);
       const nb0 = pool(near), ab0 = pool(away2);
       kill(w, null);
-      R.whispBursts = pool(near) < nb0
+      R.wispBursts = pool(near) < nb0
         ? `and when it goes out it takes the room with it — a bystander at one tile lost ${Math.round(nb0 - pool(near))}`
         : '!! THE WHISP WENT OUT QUIETLY';
-      R.whispFalloff = pool(away2) === ab0
+      R.wispFalloff = pool(away2) === ab0
         ? 'while somebody twenty tiles off is untouched'
         : '!! THE BURST HAS NO FALLOFF';
       /* and it fires exactly once, however it was put down */
       const nb1 = pool(near);
       kill(w, null);
-      R.whispOnce = pool(near) === nb1 ? 'and it only goes out once' : '!! THE BURST FIRES TWICE';
+      R.wispOnce = pool(near) === nb1 ? 'and it only goes out once' : '!! THE BURST FIRES TWICE';
     }
 
     /* ============================================================ 4. LIEUTENANTS */
