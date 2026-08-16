@@ -216,7 +216,21 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
       const W2 = document.documentElement.clientWidth, H2 = document.documentElement.clientHeight;
       for(let y = H2 * 0.45; y < H2 * 0.75; y += 12) for(let x = W2 * 0.2; x < W2 * 0.8; x += 12){
         const el = document.elementFromPoint(x, y);
-        if(el && el.id === 'game') return {x: Math.round(x), y: Math.round(y)};
+        if(!el || el.id !== 'game') continue;
+        /* UNCOVERED CANVAS IS NOT THE SAME AS OPEN GROUND. The click handler is a chain of
+           `find`s ordered by specificity, and a townsperson within 0.9 of the cursor wins the
+           tap before the move order is ever reached — so a point that is plainly canvas can
+           still produce no order, because a civilian happens to be standing there.
+           That is exactly what happened: a change upstream added twenty-one `ri()` draws at
+           worldgen, every roll after them shifted, and a townsperson who used to stand 1.0
+           tiles from this point moved to 0.6 — inside the pick radius. The game was correct in
+           both worlds and this probe reported the touch layer dead.
+           So resolve the point to the WORLD and require the ground there to be genuinely
+           empty, which is what the test always meant. */
+        const w = screenToWorld(x, y);
+        if(!w || isBlocked(w.x, w.y)) continue;
+        if(chars.some(c => c.state !== 'dead' && dist(c.x, c.y, w.x, w.y) < 1.6)) continue;
+        return {x: Math.round(x), y: Math.round(y)};
       }
       return null;
     });

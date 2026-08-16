@@ -708,11 +708,12 @@ function pickNameFor(sex, full){
 }
 /* ============================================================ TOWNS */
 const TOWNS = [
-  {key:'dustport',  name:'DUSTPORT',   pref:1, giftChance:.35, mult:{copper:1.5, fabric:0.8, rum:0.65, hide:1.2, meat:1.0, fruit:1.1},
+  {key:'dustport',  name:'DUSTPORT',   pref:1, giftChance:.35, mult:{copper:1.5, fabric:0.8, rum:0.65, hide:1.2, meat:1.0, fruit:1.1, iron_ore:1.35, iron:1.25},
     wall:{r:25, mat:'wood', hp:400}, guards:11, civs:19,
     civBarks:['Nets came up empty again.','Storm coming off the water, mark me.','Rum\'s cheap, everything else costs blood.','Watch the docks after dark.'],
     lore:'A rough harbor town. Everything washes up here eventually — cargo, drifters, bodies.'},
-  {key:'copperhold',name:'COPPERHOLD', pref:2, giftChance:.35, mult:{copper:0.5, fabric:1.35, rum:1.3, hide:1.0, meat:1.3, fruit:1.4},
+  {key:'copperhold',name:'COPPERHOLD', pref:2, giftChance:.35, mult:{copper:0.5, fabric:1.35, rum:1.3, hide:1.0, meat:1.3, fruit:1.4,
+           iron_ore:1.15, coal:1.05, iron:0.85},   /* it smelts, but it does not dig iron */
     wall:{r:27, mat:'stone', hp:900}, guards:13, civs:21, mercs:true,
     civBarks:['The vein runs deep this year.','Mercenary pay is triple guard pay. Triple.','Copper buys anything. Even quiet.','New shipment of arms at the smelter.'],
     lore:'Mine money built these walls, and mine money hires the blades on them.'},
@@ -732,7 +733,8 @@ const TOWNS = [
     lore:'A shuttered town on the salt flats, curing fish and hoarding brine. They marry among themselves, bury among themselves, and count every stranger twice.'},
   {key:'ironscar',  name:'IRONSCAR',   pref:2, giftChance:.42, mercs:true,
     wall:{r:26, mat:'stone', hp:900}, guards:13, civs:17,
-    mult:{copper:0.55, fabric:1.35, rum:1.25, hide:1.15, meat:1.4, fruit:1.5},
+    mult:{copper:0.55, fabric:1.35, rum:1.25, hide:1.15, meat:1.4, fruit:1.5,
+           iron_ore:0.45, coal:0.50, iron:0.60},   /* the pit sets the price of iron */
     civBarks:['Work off the debt or the debt works you off.','Copper is cheap here. So are we.','The pit took my brother. It is hiring.','Mercs eat first. Always have.','Nobody leaves Ironscar paid up.'],
     lore:'An open pit worked by the indebted, order kept by hired blades over a workforce that would knife them for a day off. Copper flows out cheap because someone bleeds for every ingot.'},
   {key:'fallowend', name:'FALLOWEND',  pref:0, giftChance:.3,
@@ -2197,6 +2199,16 @@ for(const t of towns){
   const seed = (k, n) => t.stock[k] = (t.stock[k]||0) + n;
   for(const k of ['meat','fruit','fish','bandage','mats','wood','stone','copper','fabric','rum','hide']) seed(k, ri(4,10));
   seed('salt', t.def.key === 'saltmere' ? ri(40, 70) : ri(3, 9));   /* the flats give salt */
+  /* AND THE PIT GIVES IRON. Opening stock as well as daily production, so a player who walks
+     into Ironscar on day two can buy ore instead of waiting a fortnight for the smelter to
+     build a pile. Everywhere else keeps a little, the way any town keeps a little of
+     everything, and pays for the privilege. */
+  {
+    const pit = t.def.key === 'ironscar';
+    seed('iron_ore', pit ? ri(55, 85) : ri(4, 12));
+    seed('coal',     pit ? ri(35, 55) : ri(3, 9));
+    seed('iron',     pit ? ri(14, 22) : (t.def.key === 'copperhold' ? ri(6, 11) : ri(1, 4)));
+  }
   seed('pack_s', 2); seed('pack_l', 1);
   for(const k of ['w_plank','w_club','w_rkat','w_kat','w_bow']) seed(tierKey(k, pick(['c','n','n','f'])), ri(1,3));
   seed(tierKey('a_rag', 'n'), 3); seed(tierKey('a_lea', pick(['c','n','f'])), 2);
@@ -2305,6 +2317,25 @@ function regardTick(){
     if(v >= 60 && !c.devoted){ c.devoted = true; c.morale = 100;
       log(`${c.name} has thrown in with you completely. Whatever it is you are doing, they are doing it too.`, 'good'); }
     if(v < 45 && c.devoted){ c.devoted = false; }
+    /* ---------- THE BOUND DO NOT WALK OUT ----------
+       A risen with a mind of its own can resent you, and that is worth keeping — an undead
+       lieutenant with a grudge is one of the better things in here. What it cannot do is
+       LEAVE. It is bound; that is the entire relationship. The old code ran every one of them
+       through the same door a living mercenary uses, so a Skeleton Mage could decide it had
+       had enough of the arrangement and walk off into the waste, and a cruel one could turn
+       and swing at the necromancer who made it.
+       So the strain stays, the convictions stay, the regard still falls and still shows in the
+       panel — only the exit is closed. It says so once, the first time it would have gone,
+       because a grievance nobody ever hears about is not a grievance. */
+    if(c.undead){
+      if(v <= -60 && !c.boundTold){
+        c.boundTold = true;
+        log(`${c.name} would leave you if leaving were something it could do.`, 'bad');
+        say(c, 'You made me. That is the whole of it.');
+      }
+      if(v > -35) c.boundTold = false;
+      continue;
+    }
     /* WALKING OUT: not a betrayal. They simply stop being yours. */
     if(v <= -60 && !c.leaving && rnd() < 0.25){
       c.leaving = day + 1;
@@ -9906,14 +9937,44 @@ let coilStruck = false;
    whole reason the HARVEST job and the Gravecart exist, stated as a creature. */
 const CAIRN_CAP = 8.0;               /* nothing in the renderer has ever been past 2.4 */
 const CAIRN_PER = 0.06;              /* big, per body */
+/* ---------- THERE IS MORE THAN ONE, AND THERE ARE MORE LATER ----------
+   The first version made exactly one per world and never made another, which is the wrong
+   shape for what this creature IS. It is not a boss that exists because the designer placed
+   it — it is what happens to a field nobody cleared. So it answers the dead: the more bodies
+   lying unclaimed in the world, the more of them stand up, which puts the pressure exactly
+   where the late game puts the corpses. `cairn` is kept as "the first living one" because a
+   good deal of older code and one scholar's conversation reach for a single beast. */
+let cairns = [];
+const CAIRN_MAX = 4;                 /* four of these is already a great deal of walking field */
+const CAIRN_PER_BODY = 26;           /* unclaimed dead needed before the ground answers again */
 let cairn = null;
-function spawnCairnBeast(){
-  if(cairn && cairn.state !== 'dead') return cairn;
+function liveCairns(){
+  cairns = cairns.filter(c => c && c.state !== 'dead');
+  cairn = cairns[0] || null;
+  return cairns;
+}
+function spawnCairnBeast(force){
+  if(!force && liveCairns().length >= CAIRN_MAX) return null;
   /* it forms where the dead already are: a corpse-field, well out past the last fence */
   const site = (typeof corpseSites !== 'undefined' && corpseSites.length) ? pick(corpseSites) : null;
   const q = site ? findOpenNear(site.x + ri(-6, 6), site.y + ri(-6, 6), 8)
                  : findOpenNear(ri(60, W-60), ri(60, H-60), 10);
-  const c = makeChar('The Cairn Beast', 'fauna', q.x, q.y, {atk:24, def:6, tough:44, ath:3});
+  /* NAMED FOR WHERE IT ROSE, once there is more than one — a log with three identical
+     "The Cairn Beast" lines in it tells you nothing about which field is walking. */
+  const home = cairnTown(q.x, q.y);
+  let nm = !cairns.length ? 'The Cairn Beast'
+         : home ? `The Cairn ${compassFrom(home.x, home.y, q.x, q.y)} of ${home.name}`
+         : 'A Cairn Beast';
+  /* Naming by town alone is not enough — the corpse-fields cluster, and two of these rising
+     on the same side of the same town both came out "The Cairn of IRONSCAR", which is exactly
+     the log-is-useless problem the naming was for. The bearing does most of the separating and
+     this closes the rest, on a loop rather than a guess. */
+  if(chars.some(o => o.bossKey === 'cairn' && o.name === nm)){
+    let n = 2;
+    while(chars.some(o => o.bossKey === 'cairn' && o.name === `${nm}, the ${n}${n===2?'nd':n===3?'rd':'th'}`)) n++;
+    nm = `${nm}, the ${n}${n===2?'nd':n===3?'rd':'th'}`;
+  }
+  const c = makeChar(nm, 'fauna', q.x, q.y, {atk:24, def:6, tough:44, ath:3});
   c.beast = true; c.neutral = true; c.bossKey = 'cairn'; c.kin = 'cairn';
   c.big = 1.6; c.clawDmg = 18; c.taunt = true;
   c.blood = 420; c.maxBlood = 420;
@@ -9921,10 +9982,29 @@ function spawnCairnBeast(){
   c.ate = 0;                          /* the whole stat line is a function of this */
   c.dropItems = {remains: 4};
   chars.push(c);
-  cairn = c;
+  cairns.push(c);
+  cairn = cairns[0];
+  /* ---------- SAY WHERE ----------
+     It spawned correctly and was never once seen in a full playthrough, and the reason is
+     arithmetic: one neutral animal, standing up five hundred tiles from the player, in a
+     world 1440 across, announced by a line of news that named no place at all. A thing this
+     size is supposed to be a rumour you go and find, so the rumour has to carry a bearing —
+     and it is taken from the nearest TOWN rather than from the player, because a town is
+     somewhere you can walk to on purpose and "west of here" is worthless once you have
+     moved. */
   worldEvent('cairn', q.x, q.y,
-    'Something has stood up in one of the corpse-fields. Drovers say it is not a creature — that it is the field itself, and that it has started walking.');
+    `Something has stood up in one of the corpse-fields ${cairnWhere(q.x, q.y)}. Drovers say it is ` +
+    'not a creature — that it is the field itself, and that it has started walking.');
   return c;
+}
+/* where it is, in terms of a place with a name on the map */
+function cairnTown(x, y){
+  return towns.filter(t => t.stock).sort((a, b) => dist(a.x,a.y,x,y) - dist(b.x,b.y,x,y))[0] || null;
+}
+function cairnWhere(x, y){
+  const t = cairnTown(x, y);
+  if(!t) return `out in the waste`;
+  return `${compassFrom(t.x, t.y, x, y)} of ${t.name}, ${farWord(dist(t.x, t.y, x, y))}`;
 }
 /* what it will swallow. Looser than a harvest hand's rules — it is not deciding anything is
    worthless, it is eating — but it leaves named dead alone, because a thing with a name is a
@@ -9947,17 +10027,43 @@ function cairnGrow(c){
      A third of a walking person is still coming. */
   c.speedMult = Math.max(0.35, 1 - n * 0.012);
   c.noise = Math.min(6, 2.4 + n * 0.05);
+  /* ---------- AND KEEP SAYING WHERE ----------
+     One notice on day zero is not a rumour, it is a line in a log somebody scrolled past. It
+     walks, it eats, and it gets visibly bigger, so it gets SEEN again — a fresh bearing off
+     the nearest town every time it puts on another stride of height. That is what makes it a
+     thing you can decide to go and look at instead of a thing you find by accident.
+     Keyed off a rounded size so the notices come at real milestones and not every tick. */
+  const tier = Math.floor((c.big - 1.6) / 0.7);
+  if(tier > (c._cairnSeen || 0) && !full){
+    c._cairnSeen = tier;
+    worldEvent('cairn', c.x, c.y,
+      `The thing in the fields has been seen again ${cairnWhere(c.x, c.y)}. It is bigger than it was. ` +
+      `Whatever it has been eating, there was a great deal of it.`);
+  }
   if(full && !c._cairnFull){
     c._cairnFull = true;
-    worldEvent('cairn', c.x, c.y, 'The thing out in the fields has stopped getting bigger. Nobody is sure whether that is good news.');
+    worldEvent('cairn', c.x, c.y,
+      `The thing out in the fields has stopped getting bigger — ${cairnWhere(c.x, c.y)}, and taller than the gatehouse. ` +
+      'Nobody is sure whether that is good news.');
   }
 }
 let _cairnT = 0;
 function cairnTick(dt){
-  const c = cairn;
-  if(!c || c.state === 'dead') return;
   if((_cairnT -= dt) > 0) return;
   _cairnT = 1.0;
+  const live = liveCairns();
+  /* ---------- THE GROUND ANSWERS THE DEAD ----------
+     A new one forms when there is enough unclaimed dead lying about to make one, which means
+     the player's own housekeeping is the difficulty dial: clear your fields, or the fields
+     get up. It only counts bodies a beast would actually eat, so a tidy graveyard of named
+     dead never conjures anything, and it needs a real pile — twenty-six of them per beast
+     already standing — so the late game, where the corpses are, is where they come from. */
+  const fodder = corpses.reduce((n, b) => n + (cairnFood(b) ? 1 : 0), 0);
+  if(live.length < CAIRN_MAX && fodder >= CAIRN_PER_BODY * (live.length + 1)) spawnCairnBeast();
+  for(const c of live) cairnOne(c);
+}
+function cairnOne(c){
+  if(!c || c.state === 'dead') return;
   /* ---- IT EATS ---- */
   let ate = 0;
   for(let i = corpses.length - 1; i >= 0 && ate < 3; i--){
@@ -9980,7 +10086,7 @@ function cairnTick(dt){
     cairnGrow(c);
     c.blood = Math.min(c.maxBlood, c.blood + ate * 14);
     if(player().some(o => o.state !== 'dead' && dist(o.x, o.y, c.x, c.y) < 26))
-      log(`The Cairn Beast takes ${ate === 1 ? 'a body' : ate + ' bodies'} into itself. It is bigger than it was.`, 'bad');
+      log(`${c.name} takes ${ate === 1 ? 'a body' : ate + ' bodies'} into itself. It is bigger than it was.`, 'bad');
   }
   /* ---- AND IT WALKS TOWARD THE NEXT ONE ----
      It does not seek the living. Left alone with nothing dead within reach it simply stands,
@@ -10267,7 +10373,7 @@ function spawnSixfold(atX, atY){
 spawnSixfold();
 /* and one Cairn Beast, standing in a corpse-field from the first day, growing on whatever
    the world kills whether or not you ever go near it */
-spawnCairnBeast();
+spawnCairnBeast(true);   /* the world opens with one; the rest answer the dead */
 /* and the six who are out there every time — in the gaols, the ruins, the redoubts, the
    slaver camp and on the roads, all of which already exist by the time this runs */
 spawnWanderers();
@@ -13405,7 +13511,19 @@ function update(dt){
           case 'farmer': put('fruit', 1 + Math.floor(sk/12)); break;
           case 'fisher': put('fish', 1 + Math.floor(sk/14)); break;
           case 'hunter': put('meat', 1 + Math.floor(sk/16)); if(rnd()<0.5) put('hide'); if(rnd()<0.55) put('wood', 1 + Math.floor(sk/22)); break;
-          case 'miner':  put('copper', 1 + Math.floor(sk/15)); put('stone'); break;
+          /* ---------- WHAT THE GROUND HAS ----------
+             Every miner in the world brought up copper, and every smith spent copper, so no
+             shelf anywhere ever held iron ore, coal or bar iron — which made the endgame
+             door, priced in iron, impossible to close by trade. Ironscar is an open PIT and
+             its entire lore is iron; it mines iron. Everyone else turns some up. */
+          case 'miner': {
+            const pit = t.def.key === 'ironscar';
+            if(pit || rnd() < 0.22) put('iron_ore', 1 + Math.floor(sk/15));
+            else put('copper', 1 + Math.floor(sk/15));
+            if(pit || rnd() < 0.30) put('coal', 1 + Math.floor(sk/22));
+            put('stone');
+            break;
+          }
           case 'brewer': if(take('fruit', 2)){ put('rum', 1 + (sk>25?1:0)); } break;
           case 'crafter':
             if(rnd()<0.5 && take('hide')){ put('fabric', 2); }
@@ -13413,6 +13531,14 @@ function update(dt){
             else put('mats');
             break;
           case 'smith': {
+            /* A SMELTER FIRST. Ore and coal into bar iron is where the world's iron comes
+               from — without this the ore the miners now raise would pile up unsmelted and
+               the only iron in the game would still be whatever the player smelted himself. */
+            if((st.iron_ore||0) >= 2 && (st.coal||0) >= 2 && rnd() < 0.55){
+              take('iron_ore', 2); take('coal', 2);
+              put('iron', 1 + (sk > 30 ? 1 : 0));
+              break;
+            }
             if(!take('copper', 2)) break;
             const q = rollQuality(sk);
             if(q === null) break;   /* slag day */
@@ -13770,10 +13896,23 @@ function update(dt){
   spawnT -= dt;
   if(spawnT <= 0){
     spawnT = 26 + rnd()*30;
-    const hostiles = chars.filter(c => (isOutlaw(c.faction)||c.faction==='wild') && c.state!=='dead' && !c.guard).length;
-    if(hostiles < 22){
+    /* ---------- TWO BUDGETS, NOT ONE ----------
+       Bandits, slavers and dust hounds used to share a single ceiling of 22, and that is why
+       the hounds quietly went extinct: outlaws HOLD GROUND — they sit in camps, they are not
+       anybody's natural prey, and they accumulate — while a wild pack is killed by towns, by
+       outlaws and by the player alike. So the outlaws silt up the shared count, the ceiling
+       stays full, and the last hound that dies is the last hound in the world. Reported as
+       "I RARELY see packs of dust hounds anymore", and it was worse than rarely.
+       Counting them apart means the waste keeps its animals whatever the men are doing. */
+    const outlaws = chars.filter(c => isOutlaw(c.faction) && c.state!=='dead' && !c.guard).length;
+    const packs   = chars.filter(c => c.faction==='wild' && c.state!=='dead').length;
+    const roomOut = outlaws < 18, roomWild = packs < 10;
+    if(roomOut || roomWild){
       const r = rnd();
-      spawnHostileSquad(r < .45 ? 'bandit' : r < .75 ? 'hound' : 'slaver');
+      /* when both have room the split is about a third wild, which is roughly what the old
+         weighting intended before the shared ceiling ate it */
+      if(roomWild && (!roomOut || r < 0.38)) spawnHostileSquad('hound');
+      else if(roomOut) spawnHostileSquad(r < 0.72 ? 'bandit' : 'slaver');
     }
   }
   const _pl = chars.filter(u => u.faction === 'player' && u.state !== 'dead');
@@ -20248,6 +20387,24 @@ function refreshSquadBar(){
   /* and the two that always exist */
   drawGroup('LIVING', living, {state: _defGrpLiving, name: null, mini: false, always: true});
   drawGroup('RISEN',  risen,  {state: _defGrpRisen,  name: null, mini: true,  always: risen.length > 0});
+  liftLogAboveSquad();
+}
+/* ---------- THE LOG SITS ON TOP OF THE SQUAD, NOT UNDER IT ----------
+   `#log` was pinned at a fixed `bottom:150px` while `#squadbar` wraps UPWARD from `bottom:10px`,
+   so the two were only ever going to agree at one host size. Raise forty risen and the squad's
+   wrapped rows climb straight through the log and the last few lines of it become unreadable —
+   which is exactly when the log matters most, because that is a battle.
+   There is plenty of vertical space, so the log simply stands on top of the bar: measure what
+   the squad actually occupies and put the log's floor just above it. Measured rather than
+   computed from a row count, because the rows wrap against `max-width` and the true height
+   depends on the window. Touch layout is left alone — it pins the log to its own sheet and
+   sets `bottom` with `!important`, so this would be fighting a rule it cannot win. */
+function liftLogAboveSquad(){
+  const bar = $('squadbar'), lg = $('log');
+  if(!bar || !lg || document.body.classList.contains('touch')) return;
+  const h = bar.offsetHeight || 0;
+  /* 10px is the bar's own offset from the bottom, then a small gutter above it */
+  lg.style.bottom = Math.max(150, h + 22) + 'px';
 }
 function refreshCharPanel(){
   const c = selected[0];
@@ -23323,7 +23480,7 @@ function snapshot(){
     kin:c.kin||null,
     clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
     servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, eater:!!c.eater, harvestBonus:c.harvestBonus??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
-    conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null,
+    conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, boundTold:!!c.boundTold,
     salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
     bindWeight:c.bindWeight, shortTag:c.shortTag,
@@ -23390,7 +23547,7 @@ function snapshot(){
     corpseIds: corpses.map(c=>c.id),
     cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
     threads: threads.map(t => ({key:t.key, title:t.title, step:t.step, hint:t.hint, done:t.done, at:t.at})),
-    cairnId: cairn ? cairn.id : 0,
+    cairnIds: cairns.filter(c => c && c.state !== 'dead').map(c => c.id),
     closing: {on: closing.on, told: closing.told, known: closing.known},
     search: {on: search.on, asked: {...search.asked}, found: search.found,
              siteId: search.siteId, leads: search.leads, met: search.met,
@@ -23651,7 +23808,7 @@ function restore(d){
     if(c.questGive === 'ilsabet') c.questGive = 'lyre';
     if(c.face === 'ilsabet') c.face = 'lyre';
     if(typeof c.name === 'string' && c.name.indexOf('Ilsabet') === 0) c.name = c.name.replace('Ilsabet', 'Lyre');
-    c.devoted = !!s.devoted; c.leaving = s.leaving || null;
+    c.devoted = !!s.devoted; c.leaving = s.leaving || null; c.boundTold = !!s.boundTold;
     c.doorborn = !!s.doorborn; c.doorWork = !!s.doorWork;
     c.neutral = !!s.neutral; c.provoked = !!s.provoked; c.bossKey = s.bossKey || null; c.dropItems = s.dropItems || null;
     c.scholar = !!s.scholar; c.quest = s.quest || null; c.questsDone = s.questsDone || 0; c.offered = !!s.offered;
@@ -23782,8 +23939,14 @@ function restore(d){
      REBOUND HERE, with the other relinks, and not up beside the quest flags: the first version
      looked the beast up before `chars` had been repopulated and came back with null every
      time, which read in the probe as the whole creature failing to survive a save. */
-  cairn = d.cairnId ? (chars.find(c => c.id === d.cairnId) || null) : (chars.find(c => c.bossKey === 'cairn') || null);
-  if(cairn) cairnGrow(cairn);
+  /* EVERY beast in the world now, not just the first. Falls back to a sweep of `chars` for
+     saves written when there was only ever one of them, so an old world reloads with its
+     beast intact and simply starts growing a population from there. */
+  cairns = Array.isArray(d.cairnIds) && d.cairnIds.length
+    ? d.cairnIds.map(id => chars.find(c => c.id === id)).filter(Boolean)
+    : chars.filter(c => c.bossKey === 'cairn' && c.state !== 'dead');
+  liveCairns();
+  for(const c of cairns) cairnGrow(c);
   for(const c of chars){
     if(c.isLeader >= 0 && towns[c.isLeader] && towns[c.isLeader].leader) towns[c.isLeader].leader.charId = c.id;
     if(c.campId >= 0){ const camp = camps.find(k => k.id === c.campId); if(camp) c.squad = camp.squad; }

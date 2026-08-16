@@ -265,3 +265,29 @@ the truth was 45%.
   extend a comment, anchor on the code when you mean to precede it, and let `node tools/prep.js`
   be the thing that tells you which one you did — it syntax-checks the main script block and
   refuses to write, which is why this class of mistake never reaches a harness.
+- **The worst bugs are starvations, and no probe that spawns what it needs will ever see one.**
+  Five reports came back from one playthrough — dust hounds gone, iron unbuyable, the Cairn
+  Beast never met, the log unreadable, the bound resigning — and every existing harness passed
+  on all five, because a harness spawns exactly what it wants to measure and measures it a
+  second later. The bugs lived in the gap between systems over hours of world time: one shared
+  spawn ceiling that outlaws silt up until the animals can never come back; a commodity with a
+  consumer and no producer; a creature 515 tiles away announced by news that named no place.
+  `world.js` is the answer to that class — it runs `update()` forward for twelve game-days and
+  then asks what is still in the world.
+- **A long-run assertion can pass on the broken build and prove nothing.** The first version of
+  the dust-hound check counted animals after twelve days and reported 27 alive — on the fixed
+  build AND the broken one, because extinction takes longer than that. Counting the symptom was
+  useless; the fix was to test the RULE. Once the outlaws alone are past the old shared ceiling
+  (they reach thirty by day twelve unaided), kill every animal and run four thousand more ticks:
+  the old build respawns exactly zero, the new one refills to eight. When a bug is a starvation,
+  starve it deliberately rather than waiting for the world to do it.
+- **Uncovered canvas is not the same as open ground.** `touch.js` found a tap point by asking
+  `document.elementFromPoint` for something whose id is `game`, which proves only that no HUD
+  div is in the way. The click handler is a chain of `find`s ordered by specificity, and a
+  townsperson within 0.9 tiles wins the tap long before the move order is reached — so a point
+  that is plainly canvas can still produce no order at all. It went red when an upstream change
+  added twenty-one `ri()` draws to worldgen (three per town, seven towns), every roll after them
+  shifted, and one civilian moved from 1.0 tiles away to 0.6. The game was correct in both
+  worlds. Resolve a screen point to the WORLD and assert the ground there is empty, and note
+  that **any new `ri()`/`rnd()` call at worldgen moves every body placed after it** — that is
+  now three separate harnesses broken by the same mechanism.
