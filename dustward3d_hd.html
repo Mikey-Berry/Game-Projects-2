@@ -511,7 +511,19 @@ function oreAt(x, y){
   return null;
 }
 function rawDecorAt(x,y){
-  if(towns.some(t2 => dist(t2.x, t2.y, x, y) < 15)) return null;   /* streets are swept; nothing wild takes root */
+  /* ---------- NOTHING WILD GROWS INSIDE A TOWN ----------
+     This used to clear a flat fifteen tiles around the centre, and the walls run to
+     twenty-seven — so every walled town had a ring of trees, boulders and ore outcrops
+     growing between r15 and its own rampart, inside the gates, in the streets. Distracting to
+     look at and genuinely awkward to walk through, which is how it was reported.
+     Cleared to the wall now, plus a little, and `clearR` is stored on the town rather than
+     derived here because this function is called for every tile the renderer and the pathing
+     touch. The AABB reject in front of the distance test is for the same reason. */
+  for(const t2 of towns){
+    const r = t2.clearR || 15;
+    if(Math.abs(t2.x - x) > r || Math.abs(t2.y - y) > r) continue;
+    if(dist(t2.x, t2.y, x, y) < r) return null;
+  }
   const h = hash2(x*3+7, y*3+13);
   const t = terr[y*W+x];
   const ore = oreAt(x,y);
@@ -972,6 +984,9 @@ function warBias(t){
 }
 function placeTownAt(def, cx0, cy0){
   const t = {def, x:cx0, y:cy0, name:def.name, mult:def.mult, posts:[], rep:0, walls:[],
+    /* how far out the streets are swept — the wall and a little past it, so nothing wild
+       grows against the ramparts either. An unwalled town still has a settlement to keep clear. */
+    clearR: def.wall ? def.wall.r + 3 : 18,
     necroHostile:false, necroWarned:false, necroGrace:0, necroCalm:0, warnedHostile:false};
   towns.push(t);
   t.leader = makeLeader(t);
@@ -1091,9 +1106,15 @@ function placeTownAt(def, cx0, cy0){
   for(const [key, kind, r] of rich){
     const t = at(key);
     if(!t) continue;
-    /* the seam that built the town — close enough to own, far enough to walk */
+    /* The seam that built the town — close enough to own, far enough to walk. It sat 13 tiles
+       from the centre, which was outside the old 15-tile sweep by a whisker and is entirely
+       inside the new one: sweeping the streets properly deleted both mining towns' ore and
+       left `findNode` returning nothing for iron anywhere in the world. So the seam is pushed
+       out past the wall, where a pit belongs anyway — the town owns it, the town does not
+       stand on it, and the ore is still the first thing you walk into leaving the gate. */
     const a = rnd() * Math.PI * 2;
-    oreFields.push({x: Math.round(t.x + Math.cos(a)*13), y: Math.round(t.y + Math.sin(a)*13), r, kind, home: key});
+    const off = (t.clearR || 15) + Math.round(r * 0.7);
+    oreFields.push({x: Math.round(t.x + Math.cos(a)*off), y: Math.round(t.y + Math.sin(a)*off), r, kind, home: key});
   }
   /* wild seams out in the waste: no one's yet, and worth a war */
   let tries = 0;
@@ -7942,7 +7963,7 @@ function physics(c, dt){
         const raw = rawDecorAt(ntx, nty);
         if(raw && NODE_CAP[raw]){
           useNode(ntx, nty);
-          if(nodeDepleted(ntx, nty) && !(g.kind==='stone' && tileAt(ntx,nty)===2)) c.gather = null;
+          if(nodeDepleted(ntx, nty)) c.gather = null;   /* every stone source is a node now, and every node runs out */
         }
       }
     } else c.gatherT = 0;
@@ -10614,7 +10635,12 @@ function findNode(c, kind){
       const tx = cx0 + Math.round(Math.cos(ang)*r), ty = cy0 + Math.round(Math.sin(ang)*r);
       if(tx<1||ty<1||tx>=W-1||ty>=H-1) continue;
       if(kind==='wood' && decorAt(tx,ty)==='tree' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'wood', sx:tx+0.5, sy:ty+0.5};
-      if(kind==='stone' && (decorAt(tx,ty)==='rock' || tileAt(tx,ty)===2) && !isBlocked(tx+0.5, ty+0.5)) return {kind:'stone', sx:tx+0.5, sy:ty+0.5};
+      /* ONLY OFF A ROCK. Rocky GROUND used to count as a stone source, which made every
+         mountainside a quarry — and since a mountain is the biggest thing on the map, a
+         click meant to walk somewhere near one landed on "mine that instead". It also made
+         stone infinite, because terrain does not deplete. A boulder is a node with a cap on
+         it, so stone is now a thing you can actually work out of a place. */
+      if(kind==='stone' && decorAt(tx,ty)==='rock' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'stone', sx:tx+0.5, sy:ty+0.5};
       if(kind==='copper' && decorAt(tx,ty)==='cvein' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'copper', sx:tx+0.5, sy:ty+0.5};
       if(kind==='iron_ore' && decorAt(tx,ty)==='ivein' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'iron_ore', sx:tx+0.5, sy:ty+0.5};
       if(kind==='fish' && tileAt(tx,ty)===3){
@@ -23406,7 +23432,8 @@ function gatherKindAt(wx, wy){
   const t = tileAt(tx, ty);
   const dec = (tx>=0 && ty>=0 && tx<W && ty<H) ? decorAt(tx, ty) : null;
   if(dec==='tree' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'wood', sx:tx+0.5, sy:ty+0.5};
-  if((dec==='rock' || t===2) && !isBlocked(tx+0.5, ty+0.5)) return {kind:'stone', sx:tx+0.5, sy:ty+0.5};
+  /* a boulder, never the bare hillside — see findNode for why */
+  if(dec==='rock' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'stone', sx:tx+0.5, sy:ty+0.5};
   if(dec==='cvein' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'copper', sx:tx+0.5, sy:ty+0.5};
   if(dec==='ivein' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'iron_ore', sx:tx+0.5, sy:ty+0.5};
   if(t===3){

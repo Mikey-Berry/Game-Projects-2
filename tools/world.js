@@ -57,6 +57,61 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : '!! THE IRON TOWN DOES NOT PRICE IRON ANY DIFFERENTLY';
     }
 
+    /* ---------- 1b. THE STREETS ARE SWEPT, AND STONE COMES OFF A ROCK ----------
+       Decor was cleared to a flat 15 tiles around a town centre while the walls run to 27, so
+       every walled town had trees, boulders and ore outcrops growing between r15 and its own
+       rampart — inside the gates, in the streets, in the way. And rocky GROUND counted as a
+       stone source, which made every mountainside a quarry: a click meant to walk near a
+       mountain landed on "mine that instead", and stone was infinite because terrain does not
+       deplete. */
+    {
+      let inWall = 0;
+      for (const t of towns) {
+        const wr = t.def.wall ? t.def.wall.r : 15;
+        for (let y = Math.floor(t.y - wr); y <= t.y + wr; y++)
+          for (let x = Math.floor(t.x - wr); x <= t.x + wr; x++)
+            if (x >= 0 && y >= 0 && x < W && y < H && dist(t.x, t.y, x, y) < wr && rawDecorAt(x, y)) inWall++;
+      }
+      R.townsAreSwept = inWall === 0
+        ? 'not one tree, boulder or outcrop inside any town wall'
+        : `!! ${inWall} DECOR TILES ARE GROWING INSIDE TOWN WALLS`;
+    }
+    {
+      /* find a bare rocky tile with no boulder on it — the mountainside that used to be a mine */
+      let bare = null, boulder = null;
+      for (let y = 4; y < H - 4 && (!bare || !boulder); y += 3)
+        for (let x = 4; x < W - 4 && (!bare || !boulder); x += 3) {
+          const d = decorAt(x, y);
+          if (!bare && tileAt(x, y) === 2 && !d && !isBlocked(x + 0.5, y + 0.5)) bare = { x, y };
+          if (!boulder && d === 'rock' && !isBlocked(x + 0.5, y + 0.5)) boulder = { x, y };
+        }
+      const gBare = bare ? gatherKindAt(bare.x + 0.5, bare.y + 0.5) : null;
+      const gRock = boulder ? gatherKindAt(boulder.x + 0.5, boulder.y + 0.5) : null;
+      R.hillsAreNotQuarries = (bare && (!gBare || gBare.kind !== 'stone'))
+        ? 'bare rocky ground offers no stone to a click'
+        : `!! A BARE HILLSIDE STILL ANSWERS AS ${gBare && gBare.kind}`;
+      R.bouldersAreQuarries = (gRock && gRock.kind === 'stone')
+        ? 'and a boulder still does' : '!! A BOULDER DOES NOT GIVE STONE';
+      /* finite: work one out and it is gone */
+      if (boulder) {
+        for (let i = 0; i < NODE_CAP.rock + 2; i++) useNode(boulder.x, boulder.y);
+        R.stoneRunsOut = decorAt(boulder.x, boulder.y) !== 'rock'
+          ? `and it can be mined out — ${NODE_CAP.rock} uses and the stone is gone`
+          : '!! A BOULDER NEVER RUNS OUT';
+      }
+      /* and the mining towns can still reach their own seam, which sweeping nearly deleted */
+      const seamOf = (key, kind) => {
+        const t = towns.find(t => t.def.key === key);
+        if (!t) return 'NONE';
+        const n = findNode({ x: t.x, y: t.y }, kind);
+        return n ? dist(t.x, t.y, n.sx, n.sy).toFixed(1) : 'NONE';
+      };
+      const ir = seamOf('ironscar', 'iron_ore'), cu = seamOf('copperhold', 'copper');
+      R.seamsSurvivedTheSweep = (ir !== 'NONE' && cu !== 'NONE')
+        ? `the pit still has its ore (Ironscar ${ir} tiles, Copperhold ${cu})`
+        : `!! SWEEPING THE STREETS DELETED A MINING TOWN'S SEAM (iron ${ir}, copper ${cu})`;
+    }
+
     /* ---------- 2. THE WASTE KEEPS ITS ANIMALS ----------
        Outlaws and wild packs shared one ceiling. Outlaws hold camps and accumulate; a hound
        pack is killed by everybody. So the ceiling silted up with men and the animals went

@@ -291,3 +291,12 @@ the truth was 45%.
   worlds. Resolve a screen point to the WORLD and assert the ground there is empty, and note
   that **any new `ri()`/`rnd()` call at worldgen moves every body placed after it** — that is
   now three separate harnesses broken by the same mechanism.
+- **Widening an exclusion zone deletes whatever was placed just outside the old one.** Clearing
+  decor out to the town wall (15 tiles to 28) was two lines and looked self-contained. It also
+  silently destroyed both mining towns' ore: the rich seam is centred 13 tiles from the town
+  with a radius of 15-17, which cleared the old sweep by a whisker and sits wholly inside the
+  new one, so `findNode` came back NONE for iron from every town in the world. Nothing threw and
+  no existing harness noticed. When a radius grows, go and look at everything positioned
+  relative to the old one — the fix here was to push the seam out past the wall, where a pit
+  belongs anyway, which ended up leaving MORE iron in the world than before (80 vein tiles to
+  114) because the seam now lands on ground that is not swept.
