@@ -472,6 +472,19 @@ function bkey(x, y, f = 0){ return (f + 4) * FLOOR_SPAN + y * W + x; }   /* +4 s
 function floorY(f){ return (f || 0) * FLOOR_H; }
 function charY(c){ return groundY(c.x, c.y) + floorY(c.floor); }
 const decks = new Set();        /* tiles that have solid ground on an upper floor */
+/* Every mutation of `decks` bumps an epoch, so anything that CACHES a question about upper-floor
+   shape can tell in one comparison whether its answer is still true. Wrapped the same way
+   `blocked` is wrapped below, and for the same reason: the set is the source of truth and the
+   derived thing must not be allowed to drift from it. Counting entries would not do — a rampart
+   pulled down and a wall raised in the same frame leaves the size unchanged and the SHAPE
+   different, which is exactly the case a cache gets wrong and never notices. */
+let deckEpoch = 0;
+{
+  const _a = Set.prototype.add, _d = Set.prototype.delete, _c = Set.prototype.clear;
+  decks.add    = function(k){ deckEpoch++; return _a.call(this, k); };
+  decks.delete = function(k){ deckEpoch++; return _d.call(this, k); };
+  decks.clear  = function(){ deckEpoch++; return _c.call(this); };
+}
 function isDeck(x, y, f){ return f === 0 ? true : decks.has(bkey(Math.floor(x), Math.floor(y), f)); }
 /* The ground floor is asked about several hundred thousand times a second (A* alone accounts
    for most of it), and a Set lookup on a computed key is a hash probe. Mirror the ground
@@ -828,6 +841,14 @@ const VENDOR_STOCK = {
   occult:  ['tome','formula_t','formula_w','sunder','bandage','fabric','rum','mats','meat','remains','a_shroud','aether_cell'],
   bar:     ['meat','fruit','rum'],
 };
+/* Which towns deal in pre-Fall oddments at all. Read off the town DEFINITION rather than off
+   `vendors`, because the opening stock is laid in while the town is still being planned and its
+   vendors do not exist yet — and it has to agree with the plan, which gives an OCCULTIST to the
+   undead-friendly seats and THE LOW ROOM to Dustport. */
+function hasOccultDealer(t){
+  const def = t.def || t;
+  return !!def.undeadFriendly || def.key === 'dustport';
+}
 /* bandage kits hold 8 charges; kitOpen = charges left in the opened kit */
 let kitOpen = 0;
 function useBandageCharge(){
@@ -2262,6 +2283,18 @@ for(const t of towns){
   seed(tierKey('a_rag', 'n'), 3); seed(tierKey('a_lea', pick(['c','n','f'])), 2);
   if(t.def.key==='copperhold'){ seed(tierKey('w_nod','f'), 1); seed(tierKey('a_pla', pick(['n','f'])), 2); seed('w_xbow', 2); }
   if(t.def.undeadFriendly){ seed('tome', 3); seed('remains', 4); seed('a_shroud', 2); }
+  /* ---------- AETHER CELLS, AND WHY THERE WERE NEVER ANY ----------
+     `aether_cell` was listed in VENDOR_STOCK.occult, so an occult dealer would have sold you
+     one — and no town, anywhere, ever had a single one to sell. Measured on a fresh world:
+     0 cells across 7 town stocks, against 2 occult dealers standing in front of empty shelves.
+     The only cells in existence were the 5-11 in a sealed redoubt, and the handheld Aether Lance
+     spends one per shot. So the best firearm in the game was a museum piece with a magazine of
+     five, for the whole run, and it said nothing about why it had stopped working.
+     The fix is a supply chain, not a shelf, and it has to keep the fiction: nobody MAKES these.
+     Salvage washes up at a port and finds its way to whoever knows what it is worth — which is
+     the occult trade, and Dustport's whole blurb is that everything washes up there. So the
+     dealers hold a few, and a few more turn up over time, and that is all there ever is. */
+  if(hasOccultDealer(t)) seed('aether_cell', t.def.key === 'dustport' ? ri(3, 6) : ri(2, 4));
   const nG = garrisonSize(t);
   const pr = t.def.wall ? t.def.wall.r - 3 : 9;
   for(let i=0;i<nG;i++){
@@ -6090,9 +6123,17 @@ function completeBlueprint(bp){
   const i = blueprints.indexOf(bp);
   if(i < 0) return;
   blueprints.splice(i, 1);
-  placeStructure(bp.type, bp.x, bp.y);
+  const built = placeStructure(bp.type, bp.x, bp.y);
   AU.raised(bp.x + (bp.w || 1) / 2, bp.y + (bp.h || 1) / 2);
   log(`${BUILD_TYPES[bp.type].name} raised — the crew steps back and it stands on its own.`, 'good');
+  /* ---------- A WEAPON NOBODY CAN CLIMB TO ----------
+     The moment to say this is now, while the player is looking at the thing they just paid for
+     and can still put a stair beside it. An emplacement on a bare wall is otherwise a silent
+     dead end: it never fires, and the crew assigned to it never explains itself. */
+  if(built && isEmpl(bp.type) && (built.floor || 0) > 0 &&
+     !stairToward({x: built.x + 0.5, y: built.y + 0.5, floor: 0}, 0, 1, built.x + 0.5, built.y + 0.5, 1)){
+    log(`Nothing can reach it up there. That length of wall has no Rampart Stair, and a gunner cannot climb a wall.`, 'bad');
+  }
 }
 function bpNeeded(bp){
   for(const [k, n] of Object.entries(bp.need)) if((bp.got[k] || 0) < n) return k;
@@ -6668,7 +6709,18 @@ function ai(c, dt){
      they drop anything a stray blow gave them. */
   if(c.noFight){ c.target = null; c.targetManual = false; }
   c.scanT = (c.scanT || 0) - dt;
-  if(!c.noFight && !c.target && c.scanT <= 0){
+  /* ---------- AND A HAND WALKING TO A MOUNTED WEAPON KEEPS WALKING ----------
+     THIS SCAN, not the auto-acquire block four hundred lines below, is what broke the gunnery
+     job. It gives EVERY body a target inside nine tiles, whatever their stance and whatever
+     they were told to do — so the moment a camp was actually attacked, which is the only moment
+     a turret matters, every gunner in it dropped the job and went to meet the enemy with a
+     knife. Measured: a gunner two tiles from a rampart stair acquired a bandit five tiles off
+     and spent the next thirty seconds circling it while the turret stood empty.
+     `if(c.manning){ c.target = null; ... }` already states the rule — "abandoning something far
+     deadlier than their knife" — and it only ever applied after arrival. It applies on the way
+     now, which is the half that was missing. `retaliate` has always worked this way for a body
+     under a move order: a runner keeps running and pays the toll in passing cuts. */
+  if(!c.noFight && !c.target && c.scanT <= 0 && !boundForAWeapon(c)){
     c.scanT = 0.22 + rnd() * 0.12;             /* eyes sweep at human speed, not framerate */
     c.target = nearestEnemy(c, c.faction==='town' ? 10 : 9);
     if(c.target && !c.saidAggro){
@@ -7549,9 +7601,12 @@ function useStairs(c){
     c.wantFloor = null;
     if(c.afterStair){ c.moveTarget = c.afterStair; c.afterStair = null; }   /* arrived: finish the walk */
   } else {
-    /* still more storeys to go — head for the next stair toward the goal */
+    /* still more storeys to go — head for the next stair toward the goal, and it has to be one
+       on the piece of floor we just stepped onto */
     c.onStair = false;
-    const next = nearestStairFor(c, c.floor, c.floor + (wantUp ? 1 : -1));
+    const g = c.afterStair;
+    const next = stairToward(c, c.floor, c.floor + (wantUp ? 1 : -1),
+                            g ? g.x : c.x, g ? g.y : c.y, c.wantFloor);
     if(next) c.moveTarget = {x: next.x + 0.5, y: next.y + 0.5};
   }
 }
@@ -7688,6 +7743,21 @@ function clearOrders(c){
   c.path = null; c.pathGoal = null;
   if(c.resting){ c.resting.user = null; c.resting = null; }
 }
+/* ---------- ON THE WAY TO SOMETHING DEADLIER THAN A KNIFE ----------
+   The rule already exists one step too late. `if(c.manning){ c.target = null; ... }` says a hand
+   with its hands on a mounted weapon does not wander off to stab people, "abandoning something
+   far deadlier than their knife" — but that only holds once they have ARRIVED. Before that,
+   auto-acquire (a tank stance, an attack-move, a mindless risen) grabs anything within seven
+   tiles, and the walk to the turret is abandoned at exactly the moment a turret would matter.
+   A hand ON THE WAY to a weapon is treated the same as a hand already on it. So is a hand on
+   HOLD, which otherwise clears its own moveTarget every tick and can never set out at all. */
+function boundForAWeapon(c){
+  if(c.faction !== 'player' || c.manning) return false;
+  if(c.job !== 'gunner' && c.job2 !== 'gunner') return false;
+  /* a second trade only comes up when the first has nothing to offer */
+  if(c.job !== 'gunner' && jobHasWork(c, c.job)) return false;
+  return jobHasWork(c, 'gunner');
+}
 /* Does this hand actually have work of this kind to do right now? Used to decide whether a
    worker falls through to their SECOND trade instead of standing idle. Cheap checks only. */
 function jobHasWork(c, j){
@@ -7700,7 +7770,9 @@ function jobHasWork(c, j){
     case 'farm':   return pBuilds.some(b => b.type === 'farm');
     case 'craft':  return pBuilds.some(b => b.type === 'workbench' || b.type === 'forge');
     case 'research': return mindedDead(c) && pBuilds.some(b => b.type === 'r_bench');
-    case 'gunner': return pBuilds.some(b => isEmpl(b.type) && emplUsableBy(b, c));
+    /* a weapon they cannot climb to is not work — otherwise a hand with a second trade stands
+       at the foot of an unreachable rampart instead of going back to the fields */
+    case 'gunner': return pBuilds.some(b => isEmpl(b.type) && emplUsableBy(b, c) && emplReachable(b, c));
     case 'wood': case 'stone': case 'fish': return true;   /* the waste always has more of these */
     default: return true;                                   /* guard, patrol and the rest always apply */
   }
@@ -8175,7 +8247,7 @@ function physics(c, dt){
       c.repairTarget = null;
     } else return;
   }
-  if(c.stance==='hold' && c.faction==='player'){
+  if(c.stance==='hold' && c.faction==='player' && !boundForAWeapon(c)){
     c.moveTarget = null; c.path = null;
     const near = nearestEnemy(c, 1.4);
     if(near){ c.target = near; }
@@ -8188,7 +8260,8 @@ function physics(c, dt){
   if(c.manning){ c.target = null; c.targetManual = false; c.attackMove = null; c.moveTarget = null; }
   /* auto-acquire: attack-move, tanks, the mindless dead, and the few risen built to pick
      their own fights (the skeleton mage) — never medics, and never a servitor */
-  if(!c.target && !c.manning && !c.mule && !c.drag && c.stance!=='medic' && (c.attackMove || c.stance==='tank' || c.autoFight || (!mindedDead(c) && !c.mule))){
+  if(!c.target && !c.manning && !c.mule && !c.drag && c.stance!=='medic' && !boundForAWeapon(c) &&
+     (c.attackMove || c.stance==='tank' || c.autoFight || (!mindedDead(c) && !c.mule))){
     const e = nearestEnemy(c, 7);
     if(e){ c.target = e; c.targetManual = false; }
   }
@@ -8557,9 +8630,18 @@ function physics(c, dt){
        - a manual attack order or a far move order is never overridden (the kiting model, §8)
        - only a foe close enough to be genuinely "here", and only one it can actually see
        - a worker mid-task keeps working; this is for the idle and the escorting
-     Risen count: they defend the camp exactly like anything else that answers to you. */
+     Risen count: they defend the camp exactly like anything else that answers to you.
+     AND A GUNNER IS NEVER IDLE. This is the block that actually killed the gunnery job, and
+     the mechanism is an ordering one: STAND-TO runs HERE, and the job branch that sets a
+     gunner's move order runs thirty lines further down. So on the first tick after the job is
+     given, `c.moveTarget` is still null, `onErrand` is false, and any enemy inside 7.5 tiles
+     is taken as a target — after which the combat branch returns every tick and the job block
+     is never reached again. The gunner never takes a single step toward the weapon, and there
+     is nothing in the log because nothing went wrong as far as any one line of this is
+     concerned. Which is exactly the reported symptom, and it bites hardest when a camp is
+     under attack: the one time a turret is worth having is the one time nobody mans it. */
   if(c.faction === 'player' && c.state === 'ok' && !c.target && !c.attackMove &&
-     !c.gather && !c.craftT && c.fleeT <= 0 && !concExclusive(c)){
+     !c.gather && !c.craftT && c.fleeT <= 0 && !concExclusive(c) && !boundForAWeapon(c)){
     const onErrand = c.moveTarget && dist(c.x, c.y, c.moveTarget.x, c.moveTarget.y) > 3;
     if(!onErrand){
       const foe = nearestEnemy(c, 7.5);
@@ -8622,20 +8704,42 @@ function physics(c, dt){
          is what makes a rampart reachable — it walks them to a stair first if the weapon is
          upstairs, which is where a turret worth having usually is. */
       c.gunT = (c.gunT || 0) - dt;
+      c.gunSayT = (c.gunSayT || 0) - dt;
       if(c.gunT > 0) return;
       c.gunT = 1.2;
-      let want = null, wd = 1e9;
+      /* WHY THERE IS NO WEAPON, not just that there is none. Four different things used to come
+         out as one sentence telling you to build a turret you had already built: the body has no
+         mind, the weapon will not have it, somebody else is on it, or there is no way up onto the
+         wall it is bolted to. The last of those is the reported bug — the gunnery job "doing
+         nothing" is nearly always a turret on a rampart with no stair.
+         AND IT HAS TO ACTUALLY BE SAID. The old line was gated on `rnd() < dt * 0.04`, a
+         per-frame probability — inside a branch that only runs once every 1.2 seconds. Measured:
+         0.05 expected messages in thirty seconds of standing there uselessly, which is why the
+         job read as silent. A cooldown in seconds is the right instrument for a scan on a timer. */
+      let want = null, wd = 1e9, saw = 0, permitted = 0, taken = 0, stranded = null;
       for(const b of pBuilds){
-        if(!isEmpl(b.type) || !emplUsableBy(b, c)) continue;
+        if(!isEmpl(b.type)) continue;
+        saw++;
+        if(!emplUsableBy(b, c)) continue;
+        permitted++;
         const held = emplGunner(b);
-        if(held && held !== c) continue;                 /* somebody else has it */
+        if(held && held !== c){ taken++; continue; }     /* somebody else has it */
+        if(!emplReachable(b, c)){ stranded = stranded || b; continue; }
         const d = dist(c.x, c.y, b.x + 0.5, b.y + 0.5) + Math.abs((b.floor||0) - (c.floor||0)) * 6;
         if(d < wd){ wd = d; want = b; }
       }
       if(!want){
-        if(rnd() < dt * 0.04) log(`${c.name} has no weapon to work — build a turret, or find someone who can touch a lance.`, '');
+        if(c.gunSayT <= 0){
+          c.gunSayT = 24;
+          if(!saw) log(`${c.name} has no weapon to work — nothing is emplaced yet.`, '');
+          else if(!mindedDead(c)) log(`${c.name} has no mind to give a mechanism. A mounted weapon wants somebody home behind the eyes.`, '');
+          else if(!permitted) log(`${c.name} cannot touch what is emplaced — the lance will not have a gifted hand.`, '');
+          else if(stranded) log(`${c.name} cannot get up to the ${BUILD_TYPES[stranded.type].name} on the wall — it wants a Rampart Stair to reach it.`, 'bad');
+          else if(taken) log(`${c.name} finds every weapon already crewed.`, '');
+        }
         return;
       }
+      c.gunSayT = 0;                      /* it has work; the next complaint is a fresh one */
       routeTo(c, want.x + 0.5, want.y + 0.5, want.floor || 0);
       return;
     }
@@ -10798,9 +10902,18 @@ function lanceFire(c, w){
      draw on your stores — a Warden out in the waste keeps its own counsel. */
   if(w.charge && c.faction === 'player'){
     if(!takeItem('aether_cell')){
+      /* SAY IT WHERE IT HAPPENS. This used to be one line in the log, once, and the lance then
+         went quiet forever — which is exactly the "the lance seemed broken and incapable of
+         firing anything" report. A body that will not shoot has to say why over its own head,
+         the same way an overheating one does, and the sentence has to name where cells come
+         from, because a player who does not know they are traded cannot go and buy any. */
+      addFloat(c.x, c.y - 1.3, 'NO CELL', '#8fd0ff');
       if(!c._lanceDry){
         c._lanceDry = true;
-        log(`${c.name}'s lance is dry. It needs a cell, and nobody has made one in a very long time.`, 'bad');
+        const where = [...new Set(vendors.filter(v => v.vt === 'occult' && v.town).map(v => v.town.name))];
+        log(`${c.name}'s lance is dry. Nobody alive makes Aether Cells — they are scavenged, and ` +
+            (where.length ? `the occult dealers at ${where.join(' and ')} are where they surface.`
+                          : `only a sealed redoubt still has any.`), 'bad');
         refreshInv();
       }
       return false;
@@ -10875,6 +10988,20 @@ function emplUsableBy(b, c){
   const spec = emplSpec(b); if(!spec) return false;
   if(spec.nullOnly && c.gift) return false;
   return mindedDead(c);
+}
+/* ---------- AND CAN THEY ACTUALLY GET TO IT ----------
+   Permission is not access. A turret bolted to a wall stands on storey 1, and the whole of the
+   turret's advertised use is that it stands up there — but a bare wall has no way up, and
+   nothing checked. `jobHasWork` said yes, the job branch walked off toward the nearest stair in
+   the WORLD (measured: fifty-two tiles away, in somebody else's town), and the turret was never
+   crewed and never said why. That is the "gunnery job does nothing" report.
+   Ground-level weapons are always reachable. An elevated one needs a stair whose landing is on
+   the same run of deck the weapon is standing on — which is precisely what a Rampart Stair
+   beside the wall provides, and what a wall on its own does not. */
+function emplReachable(b, c){
+  const bf = b.floor || 0, cf = c.floor || 0;
+  if(bf === cf) return true;
+  return !!stairToward(c, cf, bf > cf ? cf + 1 : cf - 1, b.x + 0.5, b.y + 0.5, bf);
 }
 function emplTarget(b, spec){
   const bx = b.x + 0.5, by = b.y + 0.5, bf = b.floor || 0;
@@ -12384,8 +12511,9 @@ function craftUndead(kind, caster, circle, shape){
   }
   /* AND THE CEILING IS ENFORCED HERE, not only in the panel that draws the sliders. The
      panel is one way in; nothing should be able to bind a shape the rules do not allow. */
-  if(shape && shapeSpent(shape) > shapeCeiling(caster)){
-    log(`That shape is beyond ${caster.name} — ${shapeSpent(shape)} points against a ceiling of ${shapeCeiling(caster)}.`, 'bad');
+  if(shape && shapeSpent(shape) > shapeCeiling()){
+    log(`No binding holds that shape — ${shapeSpent(shape)} points against a ceiling of ${shapeCeiling()}. ` +
+        `The ceiling is the same for every binder; ${caster.name}'s skill only makes a shape cheaper.`, 'bad');
     return false;
   }
   /* shaping past the free budget is paid for in material, on top of the recipe */
@@ -12948,9 +13076,11 @@ function openImmortal(c){
    hits like a collapsing wall and arrives next week, or something that arrives immediately
    and comes apart when looked at.
 
-   Materials buy budget. That is the only way to raise the ceiling, and it is where the time
-   and love goes: a risen you spent a fortune on is measurably a different animal from one
-   you knocked together out of a corpse and some hide. */
+   Materials buy the points you have not earned yet — spending past your free budget is paid
+   for out of the store, so a risen you spent a fortune on is measurably a different animal
+   from one you knocked together out of a corpse and some hide. What materials do NOT buy is
+   the ceiling: that is a constant (SHAPE_CEILING, below) and no amount of skill, research or
+   money moves it. Skill only makes the same shape cheaper. */
 const SHAPE_AXES = [
   {k:'mass',  label:'MASS',   lo:'wiry',      hi:'colossal',
    desc:'Bulk, blood and reach. Everything about it gets heavier, including how long it takes to get anywhere.'},
@@ -12978,6 +13108,9 @@ const SHAPE_AXES = [
 ];
 const SHAPE_BUDGET_BASE = 12;         /* six axes at neutral — an even body is free */
 const SHAPE_MAX = 5;                  /* per axis */
+/* The middle of every axis, in one place. Derived from SHAPE_AXES so a seventh axis cannot be
+   added and then quietly left out of the two places that reset the bench. */
+const SHAPE_NEUTRAL = SHAPE_AXES.reduce((o, ax) => (o[ax.k] = 2, o), {});
 /* what a point costs, above the free allocation */
 const SHAPE_EXTRA = {vflesh:4, remains:3, iron:2};
 function shapeBudget(caster){
@@ -13067,17 +13200,26 @@ function shapeNameFor(sh){
   if(m <= 1 && f <= 1 && h <= 1) return 'Shoddy';
   return null;
 }
-/* ---------- THERE IS A CEILING, AND MATERIALS DO NOT BUY PAST IT ----------
+/* ---------- THERE IS A CEILING, AND NOTHING BUYS PAST IT ----------
    The budget only ever charged EXTRA MATERIALS for spending over it, which is not a limit —
    it is a price, and a player with a full store can pay it on every axis at once. Reported
    from play: four colossal, chitin-plated, seamless Ashen Colossi solo'd the second Fracture,
    one-shotting everything and unable to die. They were not exploiting a bug; they were buying
    all seven axes because nothing said they could not.
-   So the budget is now a real ceiling with a few points of headroom over it. Four past your
-   skill is still a genuinely fearsome thing and still worth paying for — it is just no longer
-   possible to be the heaviest, the hardest, the best put together and the best armoured at
-   the same time. Mass and plating and knit have to be bought out of one another. */
-function shapeCeiling(caster){ return shapeBudget(caster) + 4; }
+   The first answer to that was `shapeBudget(caster) + 4`, and it did not hold, because it
+   moved with the caster. Six axes at SHAPE_MAX is 30 points; a lich's budget is 28, so its
+   ceiling stood at 32 and it could max the entire board with two points to spare. The
+   tradeoff the sliders exist to pose therefore only existed in the early game, and evaporated
+   at exactly the tier where the host was already running away with the world.
+   So the ceiling is now a CONSTANT — the base allocation plus the same four points of
+   headroom, the same wall for a first-week novice and for a lich. 16 against a 30-point board
+   is a real choice: the heaviest, the hardest, the best put together and the best armoured
+   are bought out of one another and always will be.
+   Skill and research still move `shapeBudget`, and that is the whole of what they now buy:
+   the same shape for less material. A high magic score makes a Bone Golem CHEAP. It does not
+   make a better Bone Golem exist. */
+const SHAPE_CEILING = SHAPE_BUDGET_BASE + 4;
+function shapeCeiling(){ return SHAPE_CEILING; }
 function shapeSpent(shape){ return SHAPE_AXES.reduce((n, ax) => n + (shape[ax.k] || 0), 0); }
 function shapeCost(shape, caster){
   const spent = shapeSpent(shape);
@@ -13163,7 +13305,11 @@ function openBinding(circle){
     /* ---- THE SHAPING BENCH ----
        Three sliders against one budget, so every point of one is a point off another. The
        panel says what it will cost and what it will come out as before anything is bound. */
-    circle.shape = circle.shape || {mass:2, force:2, haste:2, knit:2, plate:2, quiet:2, will:2};
+    /* SHAPE_NEUTRAL rather than a literal written out here and again on the EVEN button. The
+       two literals used to say `quiet:2, will:2` — axes that were merged into MIND and are no
+       longer in SHAPE_AXES, so those keys were written and saved and never read again, while
+       `mind` itself was absent and arrived only through the defaulting loop underneath. */
+    circle.shape = circle.shape || {...SHAPE_NEUTRAL};
     for(const ax of SHAPE_AXES) if(circle.shape[ax.k] === undefined) circle.shape[ax.k] = 2;
     const sh = circle.shape;
     const budget = shapeBudget(ritualist);
@@ -13177,11 +13323,22 @@ function openBinding(circle){
       const note = document.createElement('div');
       note.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:6px';
       const preview = shapeNameFor(sh);
-      const ceil = shapeCeiling(ritualist);
-      note.innerHTML = `${spent}/${budget} points <span style="color:var(--dust)">(ceiling ${ceil})</span>` +
-        (over ? ` · <span style="color:#c07a3a">${over} over — pays ${costText(extra)} on top</span>` : ' · within the binding') +
+      const ceil = shapeCeiling();
+      /* The two numbers are different things and the panel used to blur them: the CEILING is a
+         constant wall nobody passes, and the BUDGET is how much of the way to it is free.
+         Read against the ceiling, because that is what the + button stops at. */
+      note.innerHTML = `${spent}/${ceil} points` +
+        (spent >= ceil ? ` <span style="color:var(--warn)">— at the ceiling</span>` : '') +
+        (over ? ` · <span style="color:#c07a3a">${over} past ${ritualist.name}'s free ${budget} — pays ${costText(extra)} on top</span>`
+              : ` · <span style="color:var(--dust)">free to ${budget}</span>`) +
         (preview ? ` · it will come out <span style="color:var(--bone)">${preview}</span>` : '');
       body.appendChild(note);
+      const law = document.createElement('div');
+      law.style.cssText = 'color:var(--muted);font-size:10px;margin-bottom:6px;line-height:1.5';
+      law.textContent = `${ceil} points is the ceiling for every binder alive or dead — six axes at ` +
+        `${SHAPE_MAX} would cost ${SHAPE_AXES.length * SHAPE_MAX}, so this is a choice, not a stockpile. ` +
+        `Skill and research raise your free budget (${budget}), which buys the same shape for less material.`;
+      body.appendChild(law);
       for(const ax of SHAPE_AXES){
         const row = document.createElement('div'); row.className = 'trow';
         const v = sh[ax.k];
@@ -13196,14 +13353,14 @@ function openBinding(circle){
         plus.textContent = '+'; plus.style.cssText = 'padding:1px 7px;font-size:11px;margin-left:3px';
         /* the ceiling is a wall in the panel too, so the slider simply stops rather than
            offering a shape the binding will refuse a moment later */
-        plus.disabled = v >= SHAPE_MAX || spent >= shapeCeiling(ritualist);
+        plus.disabled = v >= SHAPE_MAX || spent >= shapeCeiling();
         plus.onclick = () => { sh[ax.k] = Math.min(SHAPE_MAX, v + 1); rndr(); };
         row.appendChild(minus); row.appendChild(plus);
         body.appendChild(row);
       }
       const rst = document.createElement('button');
       rst.textContent = 'EVEN'; rst.style.cssText = 'padding:1px 6px;font-size:10px;margin-bottom:8px';
-      rst.onclick = () => { circle.shape = {mass:2, force:2, haste:2, knit:2, plate:2, quiet:2, will:2}; rndr(); };
+      rst.onclick = () => { circle.shape = {...SHAPE_NEUTRAL}; rndr(); };
       body.appendChild(rst);
       const sep = document.createElement('div');
       sep.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:1px;margin:10px 0 4px';
@@ -13907,6 +14064,12 @@ function update(dt){
           if((st[bk]||0) < floor && rnd() < (merc ? 0.85 : 0.7)) put(bk, ri(1, merc ? 4 : 3));
         }
         for(const bk of ['bandage','fabric','copper','meat','fruit']){ if((st[bk]||0) < 5 && rnd() < 0.35) put(bk, 1); }
+        /* SALVAGE, NOT PRODUCTION. A scavenger walks in with something nobody can identify and
+           the occult dealer can. It is slow on purpose and it stops at a hard ceiling — the
+           Aether Lance is meant to be a weapon you ration, so the shelf must never become a
+           magazine you can simply buy out. Six cells at Dustport, four elsewhere, and roughly
+           one new one a week per dealer. */
+        if(hasOccultDealer(t) && (st.aether_cell || 0) < (t.def.key === 'dustport' ? 6 : 4) && rnd() < 0.14) put('aether_cell', 1);
       }
     }
     /* ---- the world turns: camps, wars, misfortunes ---- */
@@ -19954,11 +20117,87 @@ function elevatedHit(px, py){
   }
   return null;
 }
-/* the nearest stair connecting two storeys */
+/* ---------- WHICH FLOOR OF WHAT: THE DECK A TILE BELONGS TO ----------
+   `decks` is one flat set of every upper-storey tile in the world, so "is there floor under
+   me" has always been answerable. What was NOT answerable is "is that piece of floor the same
+   piece of floor as this one" — and every stair question is really that question. A rampart
+   run behind your camp and a watchtower deck in a town forty tiles away are both `decks`
+   entries on storey 1, and nothing distinguished them.
+   Flood the tile's own connected run, four-connected, and cap it: a camp's rampart is a
+   handful of tiles and a cap turns a pathological world into a wrong answer rather than a
+   hung frame. */
+const DECK_FLOOD_CAP = 900;
+/* The answer only changes when `decks` does, and the callers ask it several times a tick per
+   gunner — the reachability test sits in three different branches of the AI. So it is cached
+   against `deckEpoch`, which every mutation of the set bumps. */
+let _runEpoch = -1;
+const _runCache = new Map();
+function deckRun(x, y, f){
+  if(_runEpoch !== deckEpoch){ _runCache.clear(); _runEpoch = deckEpoch; }
+  /* The key is a TILE, and a body walking along a rampart asks about a new tile every stride,
+     so a long-lived epoch would otherwise accumulate one entry per tile ever stood on. Drop the
+     lot rather than track ages: refilling it costs one flood and the hit rate is what matters. */
+  if(_runCache.size > 96) _runCache.clear();
+  const ck = bkey(Math.floor(x), Math.floor(y), f);
+  const hit = _runCache.get(ck);
+  if(hit) return hit;
+  const out = new Set();
+  if(!f){ _runCache.set(ck, out); return out; }        /* the ground is all one piece */
+  const sx = Math.floor(x), sy = Math.floor(y);
+  if(!decks.has(bkey(sx, sy, f))){ _runCache.set(ck, out); return out; }
+  const q = [sx, sy];
+  out.add(bkey(sx, sy, f));
+  for(let i = 0; i < q.length && out.size < DECK_FLOOD_CAP; i += 2){
+    const cx = q[i], cy = q[i + 1];
+    for(const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+      const nx = cx + dx, ny = cy + dy, k = bkey(nx, ny, f);
+      if(out.has(k) || !decks.has(k)) continue;
+      out.add(k); q.push(nx, ny);
+    }
+  }
+  return out;
+}
+/* the nearest stair connecting two storeys — ANYWHERE. Kept because plenty of callers want
+   exactly that, and because it is the honest fallback when nothing better is known. */
 function nearestStairFor(c, fa, fb){
   let best = null, bd = 1e9;
   for(const st of stairs){
     if(!((st.from === fa && st.to === fb) || (st.from === fb && st.to === fa))) continue;
+    const d = dist(c.x, c.y, st.x + 0.5, st.y + 0.5);
+    if(d < bd){ bd = d; best = st; }
+  }
+  return best;
+}
+/* ---------- AND THE NEAREST STAIR THAT ACTUALLY GETS YOU THERE ----------
+   THE BUG THIS EXISTS FOR: a hand sent up onto a rampart took `nearestStairFor`, which
+   answers "the closest stair between these two storeys, anywhere in the world". Measured on a
+   camp with a turret bolted to a wall and no stair of its own: the gunner set off for a stair
+   fifty-two tiles away, in somebody else's town, and stood at the bottom of it for the rest of
+   the game. `routeTo` returned TRUE, so nothing was logged and nothing looked wrong.
+   A stair only serves a destination on an upper storey if its landing is on the SAME RUN of
+   deck as the destination. Return the nearest one that is; return null rather than a stair
+   that goes up somewhere else, because the honest answer to "how do I get up there" is
+   sometimes "you do not, yet". */
+function stairToward(c, fa, fb, gx, gy, gf){
+  /* CLIMBING: the stair's landing must be a piece of the same run the destination stands on —
+     but only when this step lands on the destination's own storey. Two storeys up through a
+     bunker, the intermediate landing has no relation to the goal and the old answer is the
+     best one available.
+     DESCENDING: the constraint is on the near side instead — you can only take a stair that is
+     on the piece of deck you are standing on. */
+  let side = 0, sx = 0, sy = 0;
+  if(fb > fa && fb === gf && fb > 0){ side = fb; sx = gx; sy = gy; }
+  else if(fb < fa && fa > 0){ side = fa; sx = c.x; sy = c.y; }
+  const run = side ? deckRun(sx, sy, side) : null;
+  /* An EMPTY run means the elevated end is not a deck tile at all — a cave floor, a point
+     somebody asked for that has no floor under it. There is nothing to reason about, so fall
+     back to the old answer rather than refusing every route. Only a real, non-empty run of deck
+     is evidence about which stairs serve it. */
+  const gate = run && run.size ? run : null;
+  let best = null, bd = 1e9;
+  for(const st of stairs){
+    if(!((st.from === fa && st.to === fb) || (st.from === fb && st.to === fa))) continue;
+    if(gate && !gate.has(bkey(st.x, st.y, side))) continue;
     const d = dist(c.x, c.y, st.x + 0.5, st.y + 0.5);
     if(d < bd){ bd = d; best = st; }
   }
@@ -19978,7 +20217,11 @@ function routeTo(c, x, y, tf){
      stairs rarely connect the ground straight to the top. Head for the stair that takes
      you the FIRST step in the right direction; useStairs advances wantFloor as you climb. */
   const step = tf > f ? f + 1 : f - 1;
-  const st = nearestStairFor(c, f, step);
+  /* A STAIR THAT GOES UP SOMEWHERE ELSE IS NOT A ROUTE. This used to ask for the nearest stair
+     between the two storeys anywhere in the world, and would happily send a hand across the map
+     to a town's stairwell to reach a turret on your own wall — returning true, so nothing was
+     logged and nothing looked wrong. */
+  const st = stairToward(c, f, step, x, y, tf);
   if(!st){ log('No stair connects there from here.', 'bad'); return false; }
   c.wantFloor = tf;                 /* the true goal */
   c.afterStair = {x, y};
@@ -21018,6 +21261,13 @@ function refreshCharPanel(){
     [null,'NONE'], ['wood','WOOD'], ['stone','STONE'], ['fish','FISH'], ['farm','TEND'],
     ['build','BUILD'], ['flesh','FLESH'], ['raise','RAISE'], ['carrion','HARVEST'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
   ];
+  /* ---------- THE TRADES THAT WANT SOMEBODY HOME BEHIND THE EYES ----------
+     STUDY and CRAFT were filtered by `mindedDead` and GUNNERY was not, although `emplGunner`
+     refuses a mindless body at the weapon — so the menu offered a necromancer their whole host
+     of hollow risen for the turrets, and every one of them stood in the dirt doing nothing.
+     One list, read by both job buttons and by both assignment loops, so the menu and the
+     simulation cannot disagree again. */
+  const NEEDS_A_MIND = ['research', 'craft', 'gunner'];
   /* the fallback trade: shown beside the primary, set the same way */
   const mkJobButton = (which) => {
     const b2 = document.createElement('button');
@@ -21028,14 +21278,14 @@ function refreshCharPanel(){
       const targets = selected.filter(u => u.faction === 'player' && u.state !== 'dead');
       const r2 = b2.getBoundingClientRect();
       const items2 = JOBS.filter(([jk]) => {
-        if(jk === 'research' || jk === 'craft')
+        if(NEEDS_A_MIND.includes(jk))
           return targets.some(u => mindedDead(u));
         return true;
       }).map(([jk, jl]) => ({
         label: (targets.every(u => ((which === 2 ? u.job2 : u.job) || null) === jk) ? '● ' : '   ') + jl,
         fn: () => {
           for(const u of targets){
-            if((jk === 'research' || jk === 'craft') && !mindedDead(u)) continue;
+            if(NEEDS_A_MIND.includes(jk) && !mindedDead(u)) continue;
             if(which === 2){ u.job2 = jk; }
             else { u.job = jk; if(!jk){ u.gather = null; u.gatherT = 0; } u.jobNodeT = 0; u.patrolPost = null;
                    if(jk === 'guard') u.guardTarget = wardFor(u, targets); }
@@ -21058,15 +21308,15 @@ function refreshCharPanel(){
     const targets = selected.filter(u => u.faction === 'player' && u.state !== 'dead');
     const r = jb.getBoundingClientRect();
     const items = JOBS.filter(([jk]) => {
-      /* the mindless dead can haul and fight, but they cannot study, craft or keep a watch */
-      if(jk === 'research' || jk === 'craft')
+      /* the mindless dead can haul and fight, but they cannot study, craft or work a machine */
+      if(NEEDS_A_MIND.includes(jk))
         return targets.some(u => mindedDead(u));
       return true;
     }).map(([jk, jl]) => ({
       label: (targets.every(u => (u.job || null) === jk) ? '● ' : '   ') + jl,
       fn: () => {
         for(const u of targets){
-          if((jk === 'research' || jk === 'craft') && !mindedDead(u)) continue;
+          if(NEEDS_A_MIND.includes(jk) && !mindedDead(u)) continue;
           u.job = jk;
           if(!jk){ u.gather = null; u.gatherT = 0; }
           u.jobNodeT = 0; u.patrolPost = null;
