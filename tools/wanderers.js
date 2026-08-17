@@ -310,11 +310,25 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     T.farRemembers = me.talkTarget === sc
       ? `${me.name} sets off to speak with them, and the walk knows why`
       : `!! THE WALK FORGOT WHY IT WAS ORDERED (talkTarget ${me.talkTarget && me.talkTarget.name})`;
+    /* CLEAR THE LAST TILE. `talkTarget` has a 30-second give-up on it, and `travel` has to get
+       inside TALK_REACH to count as arrived — so one townsman standing on the scholar's last
+       approach tile runs the clock out, the order is dropped WITHOUT opening anything, and the
+       next assertion reports "arriving opened nothing" for a walk that never arrived. That is
+       exactly how this went red inside `npm run check` and green on its own: the crowd around
+       the scholar differs by a body between runs. Crowd navigation is what `givesUp` below is
+       for; this leg is about the intent surviving the walk, so it is staged in the open. */
+    for (const o of chars) {
+      if (o === sc || o === me || o.state === 'dead') continue;
+      if (dist(o.x, o.y, sc.x, sc.y) < 3) { o.x += 14; o.y += 14; }
+    }
+    rebuildCharGrid();
     /* now run the real sim until they arrive */
+    let gaveUp = false;
     for (let i = 0; i < 3000 && me.talkTarget; i++) { me.state = 'ok'; physics(me, 1 / 30); }
-    T.arrives = !me.talkTarget && dist(me.x, me.y, sc.x, sc.y) < 3.2
+    if (!me.talkTarget && dist(me.x, me.y, sc.x, sc.y) > 3.2) gaveUp = true;
+    T.arrives = !me.talkTarget && !gaveUp && dist(me.x, me.y, sc.x, sc.y) < 3.2
       ? `and they walk the ${Math.round(dist(far.x, far.y, sc.x, sc.y))} tiles`
-      : `!! THEY NEVER GOT THERE (${dist(me.x, me.y, sc.x, sc.y).toFixed(1)} tiles out)`;
+      : `!! THEY NEVER GOT THERE — ${gaveUp ? 'THE 30s GIVE-UP FIRED' : 'STILL WALKING'} (${dist(me.x, me.y, sc.x, sc.y).toFixed(1)} tiles out)`;
     T.opensOnArrival = (modal.style.display !== 'none' && title().includes(sc.name.toUpperCase().split(' ')[0]))
       ? 'and the conversation opens when they arrive, with no second click'
       : `!! ARRIVING OPENED NOTHING — THE SECOND CLICK IS STILL REQUIRED ("${title()}")`;

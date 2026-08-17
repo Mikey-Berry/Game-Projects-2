@@ -353,3 +353,44 @@ the truth was 45%.
   session could have gone into the cache key and the `kin` table without touching the cause.
   Before theorising about why a feature is missing on some bodies, grep for the flag that
   turns it on and count how many places test it.
+- **A feature that works in a quiet camp and never in a fight is a race, not a wiring fault.**
+  The gunnery job read as correctly wired end to end — job key, `emplGunner`, `emplacementTick`,
+  all consistent — and did nothing in play. Three staged orders separated it: assign the job in
+  a quiet camp and the crew mans the turret in eight seconds; man it first and then raid, and it
+  fires nine bolts; raid first and then assign, and the crew is stolen by target acquisition on
+  the walk and never arrives. Only the third is the order a player uses. When a system "does
+  nothing" but reads correctly, vary the ORDER of the setup, not the setup.
+- **`render()` assigns state that `update()` does not.** `activeFloor` is set from
+  `selected[0].floor` inside `render()` and nowhere else, so a `paused = true` probe that only
+  steps `update()` reads 0 forever. The first `descend.js` reported a camera bug that does not
+  exist. Before asserting that a display value is wrong, check which loop writes it.
+- **`deck` and `blocked` are two different questions.** Decking a tile says "there is something
+  to stand on here"; it does not clear the wall somebody already wrote at the same coordinate.
+  Cave stairs were decked and drawn and still solid. Any generator that carves after it walls
+  needs one helper that does both, not two calls the reader has to remember to pair.
+- **A guard flag can outlive the order that set it.** `onStair` stops a body yo-yoing on a
+  stair, and is tested BEFORE `wantFloor` — so a body that lands on a stair keeps the flag and
+  silently discards every later order to use it again. Anyone who walked into a cave could never
+  leave. When a latch gates an intent, make sure issuing a NEW intent clears the latch.
+- **Kill the target before you ask what the weapon can see.** `guns.js` first checked
+  `emplTarget` after its run and reported the turret blind; the turret had killed the only
+  hostile on the field. Spawn a fresh one — and note `charsNear` reads a grid rebuilt inside
+  `update()`, so a body pushed while paused is invisible to it until a tick passes.
+- **A give-up timer makes an unrelated assertion lie.** `wanderers.js` walks somebody to a
+  scholar and then checks the conversation opened. `talkTarget` carries a 30-second give-up, so
+  one townsman standing on the last approach tile ran the clock out, dropped the order without
+  opening anything, and the NEXT assertion reported "arriving opened nothing" — for a walk that
+  never arrived. Green alone, red in `npm run check`, because the crowd around the scholar
+  differs by one body between runs. Two lessons: stage the leg you are testing in the open and
+  let a separate assertion cover the crowded case, and when an order can end two ways, have the
+  harness say which way it ended rather than inferring it from what happened next.
+- **A stale DOM read makes a failure message point at the wrong thing.** The same assertion
+  printed the modal's `title()` in its failure text — and the title still held the value from an
+  earlier, successful open, because hiding a panel does not clear it. The message read as though
+  the right panel was open when the panel was closed. Assert on the thing that changes
+  (`display`), and do not quote a field that persists across the state you are reporting.
+- **A negative control that also passes means the harness is unproven, not that the bug is
+  fixed.** `roads.js` found zero caravan stalls; stripping out the `travel` fallback whose
+  comment names that exact failure produced zero stalls as well. So the harness guards against
+  wagons that stop moving, and it is NOT established that it would catch the reported failure if
+  it returned. Worth keeping, worth writing down honestly, not worth calling the item fixed.

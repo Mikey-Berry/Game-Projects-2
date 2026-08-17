@@ -3302,6 +3302,19 @@ function placeCave(mtn){
 
   const wall = (wx, wy, fl) => { if(wx>1&&wy>1&&wx<W-1&&wy<H-1){ blocked.add(bkey(wx, wy, fl)); cave.walls.push({x:wx, y:wy, f:fl}); } };
   const deck = (wx, wy, fl) => { decks.add(bkey(wx, wy, fl)); };
+  /* ---------- A STAIR TILE HAS TO BE FLOOR ON BOTH SIDES ----------
+     `deck` alone does not make one. It adds the tile to `decks` — "there is something to
+     stand on here" — and says nothing about `blocked`, which the chamber ring wrote first.
+     So a stair whose tile landed on its own chamber's wall was decked, drawn, and still
+     solid: `isBlocked` said no, nobody could path onto it, and that level of the warren had
+     no way down. One stair in sixteen came out that way at the shipped seed.
+     `carve` clears both, and also drops the tile from `cave.walls` so the renderer does not
+     draw a block of rock standing in the stairwell. */
+  const carve = (wx, wy, fl) => {
+    deck(wx, wy, fl);
+    blocked.delete(bkey(wx, wy, fl));
+    cave.walls = cave.walls.filter(w => !(w.x === wx && w.y === wy && w.f === fl));
+  };
 
   /* a chamber on floor fl: a decked room ringed by rock wall, with one guaranteed door and a
      garrison that keeps to it. Depth decides who lives here and what they are sitting on. */
@@ -3353,22 +3366,32 @@ function placeCave(mtn){
   /* carve each floor: a central chamber the stair drops into, plus a couple of side rooms */
   let sx = mouth.x, sy = mouth.y;
   stairs.push({x: mouth.x, y: mouth.y, from: 0, to: -1});   /* the mouth is the first stair */
-  deck(mouth.x, mouth.y, -1);
+  carve(mouth.x, mouth.y, -1);
   for(let fl = -1; fl >= -depth; fl--){
     /* the landing chamber, centred a little off the stair so you don't drop into a wall */
     const cx = clamp(sx + ri(-2, 2), 6, W-7), cy = clamp(sy + ri(-2, 2), 6, H-7);
     const main = chamber(cx, cy, ri(4,6), ri(3,5), fl, {x: sx, y: sy}, (rm) => stockRoom(rm, fl));
-    deck(sx, sy, fl);   /* ensure the stair's landing tile is floor */
     /* a side chamber or two */
     for(let s2 = 0; s2 < ri(1, 2); s2++){
       const ox = cx + (rnd()<0.5?-1:1) * ri(6, 9), oy = cy + (rnd()<0.5?-1:1) * ri(5, 8);
       const scx = clamp(ox, 6, W-7), scy = clamp(oy, 6, H-7);
       chamber(scx, scy, ri(3,4), ri(2,4), fl, {x: cx, y: cy}, (rm) => stockRoom(rm, fl));
     }
+    /* THE LANDING, CARVED LAST. It used to be decked immediately after the main chamber,
+       which left the side chambers — carved above, and free to overlap — able to put a wall
+       straight back on top of the tile you arrive on. Nothing carved on this floor comes
+       after this line. */
+    carve(sx, sy, fl);
     /* the stair down to the next floor, unless this is the bottom */
     if(fl > -depth){
-      const nsx = clamp(cx + ri(-3, 3), 5, W-6), nsy = clamp(cy + ri(-3, 3), 5, H-6);
-      deck(nsx, nsy, fl); deck(nsx, nsy, fl-1);
+      /* INSIDE the chamber, not merely near its centre. `cx + ri(-3,3)` against a room whose
+         half-height is as little as 3 put the stair on the wall ring itself — which `carve`
+         would now open, but opening a hole in a chamber wall to hold a stairwell is a worse
+         room than simply putting the stair in the floor. Same two `ri()` draws as before, so
+         nothing downstream in the worldgen stream moves. */
+      const nsx = clamp(ri(main.x0 + 1, main.x1 - 1), 5, W-6);
+      const nsy = clamp(ri(main.y0 + 1, main.y1 - 1), 5, H-6);
+      carve(nsx, nsy, fl); carve(nsx, nsy, fl-1);
       stairs.push({x: nsx, y: nsy, from: fl, to: fl-1});
       sx = nsx; sy = nsy;
     } else {
@@ -7561,6 +7584,17 @@ function orderFloor(c, target, sx, sy){
   c.wantFloor = target;
   clearOrders(c);
   c.wantFloor = target;
+  /* ---------- AND RE-ARM THE STAIR UNDER ITS FEET ----------
+     THE ONE-WAY TRIP. `onStair` exists so a body does not yo-yo while standing on a stair,
+     and it is set the moment a body arrives on one — including the tile it lands on after
+     crossing, because a stair is the same tile on both storeys. `useStairs` tests it BEFORE
+     it looks at `wantFloor`, so the flag outlived the order that set it: walk into a cave
+     and you are standing on the mouth with `onStair` true, and the order to go back up is
+     read and discarded every tick for the rest of the game. Nothing logs. The body simply
+     never leaves.
+     A NEW ORDER IS NOT A YO-YO. Clearing it here keeps the guard doing its actual job — no
+     bouncing on an unchanged order — and lets a fresh one through. */
+  c.onStair = false;
   c.moveTarget = {x: sx + 0.5, y: sy + 0.5};
 }
 function isBlocked3(c, x, y){ return isBlocked(x, y, c.floor || 0); }
@@ -8186,6 +8220,24 @@ function physics(c, dt){
   /* HANDS ON A MOUNTED WEAPON stay on it. The emplacement is doing the fighting; a gunner who
      wandered off to stab someone would be abandoning something far deadlier than their knife. */
   if(c.manning){ c.target = null; c.targetManual = false; c.attackMove = null; c.moveTarget = null; }
+  /* ---------- AND A GUNNER ON ITS WAY TO ONE DOES NOT STOP TO FIGHT ----------
+     THE RACE THAT MADE THE WHOLE JOB LOOK DEAD. The rule above protects a crew that has
+     ALREADY got its hands on the weapon; nothing protected the walk. So the job worked
+     perfectly in an empty camp and not at all in the only situation anybody assigns it in:
+     with a turret standing and a raid coming, the crew set out, auto-acquired a raider at
+     seven tiles on the way, stopped where it stood to fight with its knife, and the
+     emplacement was never crewed. Measured: quiet camp, hands on in eight seconds and nine
+     bolts fired; raid already under way, stopped 5.3 tiles short and zero bolts, forever.
+     From the player's chair that is "the gunnery job does absolutely nothing", which is
+     exactly how it was reported.
+     The same sentence the rule above is built on settles it: a gunner trading knife blows
+     is abandoning something far deadlier than their knife. So while there is a mount to get
+     to, there is no target — it runs for the gun and lets the gun do the fighting. It will
+     take hits on the way. That is the trade, and it is the right one: the turret is worth
+     more than the walk. */
+  if(!c.manning && (c._ej || c.job) === 'gunner' && jobHasWork(c, 'gunner')){
+    c.target = null; c.targetManual = false; c.attackMove = null;
+  }
   /* auto-acquire: attack-move, tanks, the mindless dead, and the few risen built to pick
      their own fights (the skeleton mage) — never medics, and never a servitor */
   if(!c.target && !c.manning && !c.mule && !c.drag && c.stance!=='medic' && (c.attackMove || c.stance==='tank' || c.autoFight || (!mindedDead(c) && !c.mule))){
@@ -19982,6 +20034,7 @@ function routeTo(c, x, y, tf){
   if(!st){ log('No stair connects there from here.', 'bad'); return false; }
   c.wantFloor = tf;                 /* the true goal */
   c.afterStair = {x, y};
+  c.onStair = false;                /* a new order re-arms the stair — see orderFloor */
   c.moveTarget = {x: st.x + 0.5, y: st.y + 0.5};
   return true;
 }

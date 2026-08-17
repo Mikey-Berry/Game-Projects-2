@@ -27,6 +27,13 @@ WHAT IS DONE SO FAR, and where the proof lives:
     machines) and what the rest comes back wearing. The shape assertions are
     measured off the built MESH, not off the flags, because carrying a flag no
     rig reads would pass a flag test and change nothing on screen.
+  · tools/descend.js — the way into a cave and back out of it, driven through the
+    same `orderFloor` the right-click handler calls.
+  · tools/guns.js   — the turret, the emplaced lance and the handheld lance, each
+    staged in the order a player actually meets it. The turret case is staged
+    with the raid ALREADY under way, which is the only order that fails.
+  · tools/roads.js  — fifteen caravans on the world's own routes for nine game-days,
+    watching for wagons that stop moving. Nothing was fixed here; see the note.
 
 Two rules this file keeps learning the hard way, both worth reading first:
   1. A harness that passes on the broken build proves nothing. Several items
@@ -158,8 +165,23 @@ Two rules this file keeps learning the hard way, both worth reading first:
     216 and cannot be mistaken for a machine. Fixes the Gravecart the same way.
     Asserted in tools/raise.js (`deadBeastsReadAsBone`).
 
-[OPEN] Casting shroud the dead seems to only work while the caster is extremely close. However, the purple “concentration” circle persists atop the undead/caster’s heads, making it seem like its active when it really isn’t.
-    NOT STARTED.
+[LOOKED] Casting shroud the dead seems to only work while the caster is extremely close. However, the purple “concentration” circle persists atop the undead/caster’s heads, making it seem like its active when it really isn’t.
+    NOT FIXED. A short read only — no harness yet — but it rules two things
+    out, both of which look like the obvious answer:
+      · THE DISTANCE RULE IS ALREADY GONE. `concentrationUpkeep` drops the shroud only
+        if the subject is dead or missing, and its comment says so outright: "holds at
+        any distance — only concentration and the subject's life matter". The 6-tile
+        number on the spell is CAST range, not hold range. So either the report predates
+        that change or the real gate is somewhere else — most likely in what actually
+        reads the disguise (`isObviouslyUndead`, ~line 6553) or in whoever calls it.
+      · IT IS NOT A STALE-TARGET LEAK. Shrouding a second body looked like it would
+        orphan the first, since `castShroud` overwrites `c.shroudTarget` — but
+        `startConcentration` calls `endConcentration` first, which clears the old
+        subject's `shrouded`. That path is clean.
+    START AT THE READERS, not the caster. And check the ring separately: find what
+    draws it and whether it keys off `c.concentrating` (the caster) or `c.shrouded`
+    (the subject) — the report describes it on BOTH heads, which suggests two markers,
+    only one of which is wrong.
 
 [OPEN] Studying old formulae to convert into insight should also take time. It should not be an instant transfer type thing – but more like the usual research flow. Same with converting wood/stone into building materials – the craftsman should take a tad more time (sort of like the green bar built up when harvesting materials.)
     NOT STARTED.
@@ -247,24 +269,64 @@ Two rules this file keeps learning the hard way, both worth reading first:
     (the pit opens with ~70 ore), and priced by place — x0.45 at the pit, x1.15 at
     Copperhold, x1.35 at Dustport — so where you buy it means something.
 
-[LOOKED] Gunnery job currently seems to do absolutely nothing. Same with turrets. Also in my last playthrough, the Aetheric Lance also seemed broken and incapable of firing anything, even when held by a non-alchemist.
-    NOT FIXED YET — the biggest remaining item, and it wants a session of
-    its own. Confirmed present and wired: `emplacementTick` exists, `EMPL` holds both
-    `turret` and `lance`, and the turret is buildable. So the parts are all there and
-    something in the middle is not connecting. Start at `emplacementTick` and the
-    `gunnery` branch of the job loop (~line 8510), which already logs "has no weapon
-    to work" when it cannot find one.
+[DONE] Gunnery job currently seems to do absolutely nothing. Same with turrets. Also in my last playthrough, the Aetheric Lance also seemed broken and incapable of firing anything, even when held by a non-alchemist.
+    ONE BUG, and it is a RACE, which is why nothing looked wrong when read.
+    Measured three ways in tools/guns.js:
+      A. Quiet camp, then assign GUNNERY  -> hands on in 8s, 9 bolts. Always worked.
+      B. Manned first, then a raid        -> 9 bolts, raider down. Always worked.
+      C. Raid already under way           -> stopped 5.3 tiles short, ZERO bolts, forever.
+    C is the only order anybody plays in. `ai` protects a crew that has ALREADY got
+    hold of the weapon (`if(c.manning){ c.target = null; ... }`) and protected nothing
+    about the WALK, so a gunner setting out auto-acquired a raider at seven tiles,
+    stopped where it stood to fight with its knife, and the mount was never crewed.
+    The fix is the same sentence the existing rule is built on: while there is a mount
+    to get to, a gunner holds no target. It runs for the gun and lets the gun fight.
+    THE HANDHELD LANCE IS NOT BROKEN and was not changed. It runs on `aether_cell`,
+    which has no recipe — you only find them — and with none in the stash it refuses
+    and says so once per body. Verified: dry it refuses, charged it fires, spends a
+    cell, lands damage in play, and cooks the wielder's arm at twelve shots. If it
+    seemed dead in play, the camp was out of cells. Four assertions now pin that so
+    the next report can be answered with a number.
 
-[LOOKED] The multi-layer system in caves seems not to work at all. I can’t seem to go into the first “underlayer” of a mountain/cave.
-    NOT FIXED YET. The data is all there: 7 caves, the first four levels
-    deep with 9 rooms, and 26 down-stairs in `stairs` with `to < 0`. So generation
-    works and the failure is in DESCENDING — look at `activeFloor` and whatever
-    handles a body reaching a stair, not at the cave generator.
+[DONE] The multi-layer system in caves seems not to work at all. I can’t seem to go into the first “underlayer” of a mountain/cave.
+    The note above was right that the generator is fine and wrong about
+    `activeFloor` — that follows `selected[0].floor` inside `render()` and always did.
+    (A first pass of tools/descend.js reported a camera bug that does not exist,
+    because a paused probe only calls `update()` and never `render()`.)
+    TWO REAL BUGS, both found by driving the descent:
+      1. THE ONE-WAY TRIP. `onStair` is set the moment a body stands on a stair —
+         including the tile it LANDS on, since a stair is one tile on both storeys —
+         and `useStairs` tests it BEFORE it looks at `wantFloor`. So the flag outlived
+         the order that set it: walk into a cave and every subsequent order to come
+         back up is read and discarded, silently, forever. `orderFloor` and `routeTo`
+         now clear it, because a new order is not a yo-yo.
+      2. A STAIR EMBEDDED IN ROCK. `deck()` says "there is something to stand on"
+         and says nothing about `blocked`, which the chamber ring wrote first. One
+         down-stair in sixteen was decked, drawn and still solid — a level of the
+         warren with no way down. New `carve()` clears both; the down-stair is also
+         now placed strictly inside the room rather than up to 3 tiles off centre,
+         and the landing is carved AFTER the side chambers, which could previously
+         wall straight back over it.
 
-[OPEN] Caravans have a tendency to get caught on city walls. Their pathing should be fixed up a bit.
-    NOT STARTED. Likely related: town gates are the two tiles where the wall
-    ring is skipped (`Math.abs(i) <= 1 && Math.abs(j)===r`), so a caravan that does
-    not steer for a gate has no way through a 26-tile ring.
+[LOOKED] Caravans have a tendency to get caught on city walls. Their pathing should be fixed up a bit.
+    NOT REPRODUCED, and nothing was changed. tools/roads.js puts a fleet of
+    fifteen wagons on the world's own routes — the world only runs one or two at a
+    time, which over nine days is two legs and proves nothing — and samples every one
+    of them every game-minute, calling a wagon stalled when it has not moved a tile
+    in a minute of daylight while awake, unengaged and not sheltering out the night.
+    Result over nine game-days: 22 legs finished, ZERO stalls, and nothing standing
+    within three tiles of a rampart. The likely reason is that it is already fixed —
+    `travel` carries a fallback whose comment names this exact failure ("the leg
+    fails, the body walks into the wall, and a caravan sits there forever"): a
+    truncated 40-tile leg that lands on a wall now re-asks for the real goal, which
+    routes through the gate.
+    AND THE NEGATIVE CONTROL SAYS SO CAUTIOUSLY. Stripping that fallback back out and
+    re-running did NOT reproduce a stall either — so the harness is a regression guard
+    for wagons that stop moving, and it is NOT established that it would catch this
+    particular failure if it came back. If you see it again in play, note the town and
+    the hour; that is worth more than another sweep.
+    The gate geometry in the old note is right and still worth knowing: gates are the
+    two tiles where the ring is skipped (`Math.abs(i) <= 1 && Math.abs(j) === r`).
 
 [DONE] I’m convinced that Lyre doesn’t exist in the world? I’ve had my risen scour every inch (and even used the test mode map reveal feature) and CANNOT find her on the last quest step. I get that she doesn’t need a giant green indicator, but given how huge the world is, there needs to be better direction than just “east.” And ideally she isn’t just spawned into the world before I find her, as she could easily die that way.
     The DIRECTIONS are fixed; the questline itself was never broken.
