@@ -10,7 +10,23 @@ box-rig bones. **You are not animating a GLB — you are skinning box-rig bones 
 geometry.** That is the whole trick, and why the lich animates with the same machine as every
 other character.
 
-Stack: Three.js r128 (global `THREE`), single-file `dustward3d_hd.html`, no build step.
+Stack: Three.js r128 (global `THREE`), single-file `dustward3d_hd.html`.
+
+> **The encoder exists now.** This note used to say `glb/convert.js` was lost and would have
+> to be rebuilt. It was — as `tools/bakehead.js`, which does the whole job (GLB in, a
+> `{v,w,p,c,i}` table out) and simplifies with quadric error metrics rather than the vertex
+> clustering that melted the first set of faces. It is table-agnostic:
+>
+> ```
+> BAKE_TABLE=HELMP BAKE_OUT=helms.gen.js node tools/bakehead.js alch=path/to.glb:2400
+> ```
+>
+> `BAKE_TABLE` names the const the generated file declares, `BAKE_OUT` where it lands, and
+> `key=file.glb:tris` sets a per-asset triangle budget. The `.gen.js` it writes is **not
+> loaded by the game** — the file has to stay one download, so its contents are spliced into
+> the matching `const XP = {...}` block in the HTML. Splice with an anchored edit, never a
+> global replace: the packs are megabytes of base64 sitting in the same text and a loose
+> substitution corrupts a mesh silently.
 
 ---
 
@@ -18,7 +34,12 @@ Stack: Three.js r128 (global `THREE`), single-file `dustward3d_hd.html`, no buil
 
 | Symbol | ~Line | Role |
 |---|---|---|
-| `const LICHP = {` | 8212 | baked part data table |
+| `const LICHP = {` | 15046 | the lich's hood — all that is left of the authored lich body |
+| `const HEADP = {` | 15058 | sculpted faces, including `lyonlich` |
+| `const HELMP = {` | 15083 | helmets, which replace a whole head |
+| `const WEPP = {` | 15087 | authored weapons |
+| `function bakedGeo(pack, store, k)` | 15093 | ONE decoder for every pack |
+| `const LICHFACE = {` | ~15190 | named faces that have their own ascended head |
 | `const D2R = Math.PI/180` | 8252 | degrees→radians for FIT rotations |
 | `function lichGeo(k)` | 8224 | runtime decode → cached BufferGeometry |
 | `const LICHFIT = {` | 8244 | per-part transform tuning table |
@@ -151,9 +172,34 @@ the automaton are box-only (no GLB) and are NOT models for this path.
 
 ---
 
+## Fitting: the part that is not plumbing
+
+`s`, `x/y/z` and `rx/ry/rz` cannot be reasoned out, because none of them is a property of this
+game — they are properties of whoever exported the file. Three traps, each of which cost a
+round of guessing:
+
+- **The baker normalises on the LONGEST axis, whichever that is.** A helmet's longest axis is
+  front-to-back, so scaling one uniformly to head width leaves it half again as deep as the
+  head it covers. `HELMFIT` takes optional `sx/sy/sz` multipliers on top of `s` for exactly
+  this; the alchemy helm needs `sz: 0.78` to stop reading as a snout.
+- **The same rotation means two different things in two stances.** The Aether Lance's `rx:80.2`
+  levels it while the body is braced to fire and points it into the dirt while the arm hangs.
+  A weapon with two carries declares an `aim` pose in `WEPFIT` and the animator crossfades
+  between them off `e.aimK`; both ends have to be measured *in the stance they are used in*.
+- **A named body may keep its own rig.** `LICHFACE` maps a face to its ascended head, and
+  `robedLich(c)` is what every strip-the-body branch asks — the robe assembly, the box-hiding
+  and the float-instead-of-walk. A new one of these must be added to `LICHFACE` and nothing
+  else; it must NOT be special-cased at the call sites.
+
+Measure with `tools/kit.js`, which renders the three sheets and then asserts the numbers under
+them. Fit numbers can be overridden on the command line so a value is found in one browser
+session rather than one rebuild of a 1.8 MB file per guess:
+
+```
+node tools/kit.js /tmp/out game.html '{"w_lance":{"s":2.4},"alch":{"sz":0.7}}'
+```
+
 ## Honest caveat
 
-`glb/convert.js` is described from the project record; it is **not in the runtime file**, so
-its exact source can't be shown here. **The decoder (`lichGeo`) in the game file is the
-authoritative spec for what the encoder must output** — if the two ever disagree, the decoder
-wins, because that's what actually runs.
+**The decoder (`bakedGeo`) in the game file is the authoritative spec for what the encoder must
+output** — if the two ever disagree, the decoder wins, because that's what actually runs.
