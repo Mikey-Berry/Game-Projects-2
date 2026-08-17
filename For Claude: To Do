@@ -23,6 +23,10 @@ WHAT IS DONE SO FAR, and where the proof lives:
     helm, the Aether Lance's two carries.
   · tools/origin.js — Lyre's trail end to end, including that the directions
     actually point somewhere.
+  · tools/raise.js  — the raise-mechanic rework: what the rite refuses (Watchers,
+    machines) and what the rest comes back wearing. The shape assertions are
+    measured off the built MESH, not off the flags, because carrying a flag no
+    rig reads would pass a flag test and change nothing on screen.
 
 Two rules this file keeps learning the hard way, both worth reading first:
   1. A harness that passes on the broken build proves nothing. Several items
@@ -74,14 +78,19 @@ Two rules this file keeps learning the hard way, both worth reading first:
     engagement loop at ~line 8300 already counts bodies within 1.9 tiles of a target for the
     Kenshi side-cap. Read that count instead of writing a second one.
 
-[OPEN] Skeleton versions of Chimeras would be nice to have so that they don’t take the default human skeleton after being raised up. (Especially for lieutenants.)
-    NOT STARTED. Note: the rig already branches on `kin` for risen bodies
-    (`kinLimb` in buildCharMesh) and `kin` now rides the save, so a chimera kin is a
-    new branch there plus a key in colorKeyOf.
-    SEE ALSO the raise-mechanic rework below — this item is one third of it, and the two
-    should probably be taken in one session since both are `kin` work on the same rig.
+[DONE] Skeleton versions of Chimeras would be nice to have so that they don’t take the default human skeleton after being raised up. (Especially for lieutenants.)
+    Built as part of the raise-mechanic rework below; the two were one job.
+    The cause was not `kin` at all — it is that the chimera geometry lives in TWO
+    blocks in buildCharMesh and both are gated `&& !c.undead`: the scaleborn block
+    (~18502) and the general line block (~18577). So the lines were not colliding in
+    the cache, they were simply never built for a dead body. There is now a third
+    block, `if(risen && c.race === 'chimera')`, carrying a bone version of each of
+    the four lines — houndkin's muzzle and tail, the ox's horns and shoulder blades,
+    the thinblood's stretched skull, the scaleborn's crest, dorsal spines, bare wing
+    spars and tail. Bone only: no fur, no scales, no membrane, no veins.
+    Lieutenants get it for free — that branch already copied `race` and `sub`.
 
-[OPEN] Rework the “raise undead” mechanic for corpses in the world, in three parts.
+[DONE] Rework the “raise undead” mechanic for corpses in the world, in three parts.
        (a) Watchers should not be raisable at all — their eldritch proportions wouldn’t allow
        for a clean bone-raised undead. They may only be harvested for Mortal Remains.
        (b) Same principle for automatons and such, except harvesting those should give
@@ -89,23 +98,31 @@ Two rules this file keeps learning the hard way, both worth reading first:
        (c) What is raised should LOOK like what it was raised from. Chimeras want the custom
        skeletons above; fauna want variations on their own form — a dust hound or dust elk
        should come back as something like a gravehound, not as a human skeleton.
-    NOT STARTED. Each part lands in a different place, and none of them is large:
-    (a) A Watcher is `c.gauntKind` (the GAUNTS table — gaunt, stalker, maw, shrike, choir,
-    larder — plus the brood and the sixfold). `raiseDead` has no exclusion test for it today,
-    so the refusal is one clause beside the existing ones, and `harvestCorpse` already turns
-    a body into remains with no changes needed. Note `nightborn` is already on ordinary
-    gaunts (the dawn unmakes them), so check how long one of these is even available to raise
-    before spending effort on the message.
-    (b) Automatons are `c.construct` — but so are seamless-knit risen (shape knit 5) and the
-    Sigil-Bound, so `construct` alone is the WRONG test and will catch your own bodies. The
-    Redoubt ones carry `c.redoubtId`; the town Bone Golems carry `c.golem`. Pick a positive
-    flag rather than the material one. The harvest yield wants a per-body drop table, which
-    `dropItems` already is — that may be the whole of it.
-    (c) This is the same `kin` branch as the chimera item. Note `kin` already exists for
-    'hound' (the Gravehound uses it), so a raised dust hound has somewhere to land TODAY;
-    'elk'/'grazer' exist as beast rigs but share a colour key with the hound, which is the
-    known collision behind the gravehound/redoubt texture item further down. Fix that key
-    before adding more kins to it or the new ones will collide too.
+    Proof in tools/raise.js — 18 of its 22 assertions fail on the build before it.
+    (a) `isWatcherBody` (gauntKind, or faction 'gaunt' for the strays) and a refusal
+    at the top of `castRaise`, before `crime()` so a refused rite is not also a crime.
+    The refusal deliberately leaves the corpse on the ground — asserted, because a
+    refusal that eats the body is worse than the bug.
+    (b) `isMachineBody` is `(redoubtId || golem) && construct`, exactly as this note
+    warned: `construct` alone catches the Sigil-Bound and the seamless-knit risen.
+    `dropItems` turned out to be the wrong tool — that is a LOOT table and the yield
+    belongs on the HARVEST side — so `harvestCorpse` forks to `stripMachine`, which
+    gives iron/ore/copper by frame size. THE HALF THAT IS EASY TO MISS: a machine must
+    not feed `rememberRemains` either, or the refusal is undone in one step AND a
+    walker's 20 tough quietly raises the remains quality that `bindCeiling` reads.
+    Asserted separately.
+    ALSO FIXED HERE: `golem` was never written to the save, so a Bone Golem lost its
+    flag on reload and became raisable again. Added to sChar and restore.
+    (c) The real cause was not the rig — `castRaise` handed `makeChar` stats and gear
+    and NOTHING else, so `beast`, `kin`, `big`, `race`, `sub` and `sex` were dropped
+    and re-rolled at random. `carryShape` carries them across. A mule's `kin` is
+    resolved AT THE RITE rather than left to the rig's build-time fallback, because
+    the fallback does not survive a save. Size is damped by rot, so a Carrion Maw
+    scraped off old ground comes up at 2.0x rather than 3.2x.
+    AND A CLAMP LEAK FOUND ON THE WAY: `makeChar` adds the line's flat bonuses to
+    whatever it is handed, so the "never stronger dead than in life" ceilings passed
+    in as arguments were then raised again by a subrace makeChar rolled at random
+    (Ironscar-bred is +3 atk). The clamp now lands after the build.
 
 [OPEN] The Last Rite ends very quickly. Like, the enemies barely have time to spawn and move toward the caster before it’s over. It should be a bit more dramatic and lengthened.
     NOT STARTED. `riteTick` is the Last Rite's own timer — do not confuse it
@@ -126,15 +143,20 @@ Two rules this file keeps learning the hard way, both worth reading first:
     spoiled, bones) and `rot` already rides the save and already drives both the
     body's build and its colour, so the machinery for this exists.
 
-[LOOKED] For some reason, the Gravehound uses a redoubt automaton skin/texture. Which is cute but confusing. (Probably from when we changed the redoubt creatures from animal texture to real automotons.)
-    NOT FIXED YET, and the obvious cause is already gone. `kin` was missing
-    from the mesh cache key until last session, which is exactly the bug that hands
-    one creature another's body — but measured now, a gravehound keys as
-    `#cfc9b8|hound|u||b|...` and a redoubt construct as `#8a9098||l|w|b|g|...`, so
-    they no longer collide in the cache. That means the remaining cause is in the
-    beast rig itself (`const K = c.kin || ...` in buildCharMesh, which picks a beast
-    body by kin), not in the cache. Re-check against a fresh build before spending
-    time on it — it may already be fixed.
+[DONE] For some reason, the Gravehound uses a redoubt automaton skin/texture. Which is cute but confusing. (Probably from when we changed the redoubt creatures from animal texture to real automotons.)
+    Neither guess in the note above was right, and the measurement is worth
+    keeping. It was NOT the cache — the keys do not collide — and it was NOT `const K
+    = c.kin`, which correctly picked the hound body all along. It was that the beast
+    rig had no undead treatment AT ALL: every quadruped took `bodyCol`, the faction
+    tint standing in for hide, and the player faction's tint is `#cfc9b8`. So a
+    Gravehound was a smooth pale-grey four-legged box — which is also a fair
+    description of a Redoubt automaton, hence the report.
+    `skinCol` already resolved to bone for anything undead, rot stage and all; the
+    beast rig simply never asked for it. It does now, and an undead quadruped is also
+    built as a CARCASS — spine ridge, rib bars with daylight between them, pelvis,
+    shoulder girdle, hollow eye sockets — so it is 552 vertices against a live hound's
+    216 and cannot be mistaken for a machine. Fixes the Gravecart the same way.
+    Asserted in tools/raise.js (`deadBeastsReadAsBone`).
 
 [OPEN] Casting shroud the dead seems to only work while the caster is extremely close. However, the purple “concentration” circle persists atop the undead/caster’s heads, making it seem like its active when it really isn’t.
     NOT STARTED.

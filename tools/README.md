@@ -330,3 +330,26 @@ the truth was 45%.
   nothing thrown and nothing logged. Gate on a property (`wI.bow`), not on a key, and when
   adding a variant of an existing thing, grep for its key before assuming the systems around it
   are generic.
+- **Counting meshes on a baked rig counts buckets, not detail.** `raise.js` first asked whether
+  an undead quadruped had more BOXES than a live one, to prove the new ribcage was really being
+  built. It reported the same number for both, because `bakeBoxes` merges every `obox` proxy
+  into a handful of vertex-coloured buckets before the mesh is returned — so a solid slab and a
+  twenty-bar ribcage are both "two meshes". Count `geometry.attributes.position.count` instead.
+  The same trap is waiting for anything that tries to measure a rig by object count.
+- **A ceiling passed as an argument is not a ceiling.** `castRaise` computes
+  `atk: Math.min(4 + m*0.7, bs.atk)` — "a corpse is never stronger dead than it was in life" —
+  and hands it to `makeChar`, which then adds the flat bonuses of whatever subrace it rolled for
+  the new body. An Ironscar-bred roll is +3 atk over the stated clamp. Nothing was wrong on
+  either side: `makeChar` adding the line's worth to a caller's number is deliberate and
+  documented. Clamps have to land AFTER construction, or they are suggestions.
+- **A build-time fallback does not survive a save.** The beast rig picks its body with
+  `const K = c.kin || (c.mule ? 'mule' : 'hound')`, so a pack mule with no `kin` renders
+  correctly forever — until something copies the body and copies `kin` (null) without copying
+  `mule`. Resolve a fallback at the point the object is CREATED, not at the point it is drawn,
+  whenever the field rides the save.
+- **Two gates on the same feature, in two places, both saying `&& !c.undead`.** The chimera
+  geometry looked like one block; it is two — the scaleborn rig and the general line rig — and
+  both excluded the dead. The bug read as "a raised chimera loses its `kin`", and a whole
+  session could have gone into the cache key and the `kin` table without touching the cause.
+  Before theorising about why a feature is missing on some bodies, grep for the flag that
+  turns it on and count how many places test it.

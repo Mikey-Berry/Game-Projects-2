@@ -8661,6 +8661,7 @@ function physics(c, dt){
           let body = null, bd = 1e9;
           for(const b of corpses){
             if(b.bossKey) continue;                          /* lieutenants are chosen, not chores */
+            if(!raisableBody(b)) continue;                   /* it would walk there and fail, forever */
             if(chars.some(o => o.carry === b)) continue;
             const d2 = dist(b.x, b.y, c.x, c.y);
             if(d2 < 14 && d2 < bd){ bd = d2; body = b; }
@@ -11166,6 +11167,71 @@ function wispBurst(c){
     applyDamage(c, o, pickPart(), WISP_DMG * falloff, 'burn', false);
   }
 }
+/* ---------- WHAT KIND OF DEAD THING IS THIS ----------
+   Two tests, both used by the rite and by the rendering, and both deliberately POSITIVE.
+
+   `construct` is the obvious test for a machine and it is the wrong one: it is also true of a
+   seamless-knit risen (shape knit 5) and of the Sigil-Bound, so keying off it would refuse to
+   raise your own bodies and would try to melt them down for scrap. What actually marks a
+   machine is where it came from — a Redoubt automaton carries `redoubtId`, a town Bone Golem
+   carries `golem`. Anything else that happens to be `construct` is somebody's craft, not a
+   machine, and is left alone. */
+function isMachineBody(b){
+  return !!b && (!!b.redoubtId || !!b.golem) && !!b.construct;
+}
+/* A Watcher is anything out of the GAUNTS table plus the two that came through the door with
+   it. `gauntKind` is set on every one of them at spawn; the faction test catches the strays. */
+function isWatcherBody(b){
+  return !!b && (!!b.gauntKind || b.faction === 'gaunt');
+}
+/* One question, asked in four places. `castRaise` refuses these bodies outright, and every
+   AUTOMATIC caster has to ask BEFORE it walks: a hand on the raise job picks the nearest
+   corpse, and if that corpse is a Watcher it would walk over, fail, clear its pick, find the
+   same nearest corpse two and a half seconds later, and do it again forever — a red line in
+   the log every time. Exactly the loop the `holy.told` flag exists to stop on consecrated
+   ground, and cheaper to prevent than to apologise for. */
+function raisableBody(b){ return !!b && !isWatcherBody(b) && !isMachineBody(b); }
+/* ---------- WHAT A RISEN IS CALLED, AND WHAT SHAPE IT KEEPS ----------
+   Two halves of the same rule: the rite raises the body in front of it, not a generic one.
+
+   The noun first. Everything off the ground used to be "Risen 14" whatever it had been, and
+   the rot prefix stacked on top of that to produce "Bone-Risen Risen 14" — a sentence nobody
+   wrote on purpose. The kin table names the animal instead, so the squad bar reads as a list
+   of things rather than a list of numbers, and the prefix now qualifies a noun. */
+const RISEN_NOUN = {
+  hound:'Gravehound', tick:'Carrion Tick', strider:'Bone Strider', grazer:'Bone Ox',
+  elk:'Bone Elk', mule:'Bone Mule', cart:'Bone Dray', cairn:'Cairn-Risen',
+};
+function risenNoun(body){
+  if(!body) return 'Risen';
+  if(body.beast) return RISEN_NOUN[body.kin || (body.mule ? 'mule' : 'hound')] || 'Risen Beast';
+  if(body.race === 'chimera') return 'Risen Chimera';
+  return 'Risen';
+}
+/* And the shape. Only the flags the mesh builder actually reads, plus the two behaviour bits
+   (`clawDmg`, `mule`) without which a beast-shaped risen would be a harmless prop.
+   `rot` damps SIZE deliberately: a Carrion Maw raised off old ground should not stand up at
+   full house-height, and "what the ground took it does not give back" is already the rule
+   every other number here follows. */
+function carryShape(r, body, rot, m){
+  if(!r || !body) return;
+  if(body.beast){
+    r.beast = true;
+    /* the beast rig's own fallback, resolved HERE and stored — otherwise a raised pack mule
+       saves without a `kin`, reloads, and silently becomes a hound */
+    r.kin  = body.kin || (body.mule ? 'mule' : 'hound');
+    r.mule = !!body.mule; r.cart = !!body.cart;
+    /* a dead animal keeps its teeth, cut to what the rite could actually lift */
+    r.clawDmg = Math.max(3, Math.min(body.clawDmg || 6, 6 + m * 0.9));
+    r.weapon = null; r.armor = null; r.pack = null;   /* none of it was ever kit */
+  } else {
+    r.race = body.race || r.race;
+    r.sub  = body.sub  || null;
+    r.sex  = body.sex  || r.sex;
+    if(body.clawDmg) r.clawDmg = Math.max(3, Math.min(body.clawDmg, 6 + m * 0.9));
+  }
+  r.big = 1 + ((body.big || 1) - 1) * rot;
+}
 /* ---------- what a HARVEST hand is allowed to render down ----------
    The job exists to clear a field, not to decide who counts as a person. So it takes only
    what nobody would argue about: nameless dead, on your ground, that no one else has a claim
@@ -11274,8 +11340,34 @@ function applyBindCeiling(u){
   u.dmgAtk = 34 * (1 - Math.exp(-u.stats.atk / 26));
   if(u.clawDmg) u.clawDmg = Math.min(u.clawDmg, 10 + cap.atk * 0.85);
 }
+/* ---------- WHAT COMES OFF A MACHINE ----------
+   A broken automaton is not a corpse and the harvest hand's knife is the wrong tool for it.
+   Nothing in it rots, so `decayStage` says nothing useful; nothing in it is marrow, so the
+   remains pile must not be fed from it — that is the whole point of the refusal in the rite,
+   and it would be undone in one step if a stripped walker still stacked up as bone.
+   It renders to what it was built out of instead: frame and plate as iron, the fittings and
+   coil work as copper, and whatever was too fused to separate stays ore. Scaled by the frame,
+   so a Redoubt walker is a bigger pile than a household golem, and the Death Eater's bonus is
+   deliberately not applied — it is a creature's appetite, and there is nothing here to eat. */
+function stripMachine(t, quiet){
+  const log = quiet ? (() => {}) : outerLog;
+  const frame = Math.max(0.8, t.big || 1);
+  const ingots = Math.max(1, Math.round(frame * (t.redoubtId ? 2.1 : 1.3) + (rnd() < 0.5 ? 1 : 0)));
+  const ore    = Math.max(1, Math.round(frame * 1.4));
+  const cop    = rnd() < 0.72 ? Math.max(1, Math.round(frame * 0.9)) : 0;
+  const got = [];
+  addItem('iron', ingots);      got.push(`${ingots} Iron Ingot${ingots>1?'s':''}`);
+  addItem('iron_ore', ore);     got.push(`${ore} Iron Ore`);
+  if(cop){ addItem('copper', cop); got.push(`${cop} Copper Ore`); }
+  const ci = corpses.indexOf(t); if(ci>=0) corpses.splice(ci,1);
+  const xi = chars.indexOf(t); if(xi>=0) chars.splice(xi,1);
+  log(`You strip the wreck for what it was built from: ${got.join(', ')}.`, 'good');
+  refreshInv();
+  return ingots;
+}
 function harvestCorpse(t, quiet, by){
   const log = quiet ? (() => {}) : outerLog;
+  if(isMachineBody(t)) return stripMachine(t, quiet);
   /* a fresh body gives up more than a picked-over one */
   const dk = decayStage(t);
   /* A DEATH EATER GETS MORE OUT OF ONE. `by` is whoever did the rendering — the harvest job
@@ -11923,6 +12015,23 @@ function castRaise(c, body){
     addFloat(c.x, c.y - 1.2, 'HALLOWED', '#e8dcc4');
     return false;
   }
+  /* ---------- SOME THINGS DO NOT COME BACK ----------
+     The rite raises a BODY: it needs a frame it can stand a person's worth of binding on.
+     Two kinds of dead in this world are not that, and both used to come up anyway as an
+     ordinary human skeleton wearing somebody else's stats.
+     Neither refusal costs you the corpse — a Watcher still renders down for Mortal Remains
+     and a machine still renders down for what it is made of. The body is not wasted; it is
+     just not a soldier. */
+  if(isWatcherBody(body)){
+    log(`${body.name} will not take a binding. Whatever that was built along, it does not run parallel to a spine — there is nothing here to stand up. Render it down instead.`, 'bad');
+    addFloat(body.x, body.y, 'WILL NOT STAND', '#7d5a95');
+    return false;
+  }
+  if(isMachineBody(body)){
+    log(`${body.name} is not dead, it is BROKEN. There is no marrow in it to call to. Strip it for metal.`, 'bad');
+    addFloat(body.x, body.y, 'NO MARROW', '#8a9098');
+    return false;
+  }
   /* the thing they hang people for, done where somebody can see it */
   crime('raising', c.x, c.y, c);
   /* WHO COMES BACK. It used to be bosses only, so a companion you had walked three hundred
@@ -11973,7 +12082,7 @@ function castRaise(c, body){
        closes the gap — and what the rot has already taken, it does not give back. */
     const dk = decayStage(body), rot = dk.raise;
     const m = c.stats.magic * (research.done.necromancy ? 1.5 : 1) * rot;
-    r = makeChar('Risen ' + (++risenN), c.faction, body.x, body.y,
+    r = makeChar(risenNoun(body) + ' ' + (++risenN), c.faction, body.x, body.y,
       {atk:Math.min(4+m*0.7, bs.atk), def:Math.min(3+m*0.5, bs.def), tough:Math.min(3+m*0.4, bs.tough), ath:6, magic:1, labor:5,
        weapon: body.looted ? null : body.weapon, armor: body.looted ? null : body.armor});
     if(!body.looted){
@@ -11981,12 +12090,29 @@ function castRaise(c, body){
       if(body.inv) r.inv = {...body.inv};
     }
     r.shortTag = 'R' + risenN;
+    /* ---------- IT COMES BACK AS WHAT IT WAS ----------
+       `makeChar` above is handed stats and gear and nothing else, so every flag the mesh
+       builder reads to pick a silhouette — `beast`, `kin`, `big`, `race`, `sub`, `sex` — was
+       dropped on the floor and replaced by whatever `makeChar`'s own random roll produced.
+       Raise a dust hound and a randomly-raced HUMAN stood up wearing the hound's numbers.
+       Carry them across. The rot palette and the bone treatment in the beast rig do the rest:
+       a raised hound comes up as a hound-shaped frame in bone, which is a gravehound, which
+       is plainly what the rite ought to produce. */
+    carryShape(r, body, rot, m);
+    /* AND THE CEILING HAS TO LAND AFTER THE BUILD, NOT IN THE ARGUMENTS. `makeChar` adds the
+       LINE's flat bonuses on top of whatever it is handed — deliberately, so that a caller
+       asking for a number gets "that number plus what the line is worth" — which means the
+       three ceilings computed above were then quietly raised again by a subrace `makeChar`
+       rolled at random for a body that already had one of its own. An Ironscar-bred roll is
+       +3 atk; a pitborn is +4 tough. Small, and a straight contradiction of the rule this
+       branch is built on, so cut it back to the corpse where it can be seen. */
+    for(const k of ['atk', 'def', 'tough']) r.stats[k] = Math.min(r.stats[k], bs[k]);
     /* what rotted off does not come back on: by the time it is bare bones there is nothing
        holding a jacket to it, and the blood it stands up with is what is left */
     r.rot = dk.k;
     if(rot < 0.7){ r.armor = null; r.pack = null; }
     if(rot < 0.5){ r.weapon = null; r.inv = null; }
-    if(dk.k !== 'fresh') r.name = (dk.k === 'bones' ? 'Bone-Risen ' : dk.k === 'spoiled' ? 'Rotted ' : '') + r.name;
+    if(dk.k !== 'fresh') r.name = (dk.k === 'bones' ? 'Bone-picked ' : dk.k === 'spoiled' ? 'Rotted ' : '') + r.name;
     log(`${c.name} raised ${dk.k === 'fresh' ? 'the dead' : 'a ' + dk.label + ' body'}${body.looted || rot < 0.5 ? '' : ' — kit and all'}. ` +
         `${dk.k === 'fresh' ? '' : `It comes up at ${Math.round(rot*100)}% of what it was.`}`, 'good');
   }
@@ -14363,6 +14489,7 @@ function update(dt){
     let body = null, bd = 1e9;
     for(const b of corpses){
       if(chars.some(o => o.carry === b)) continue;
+      if(!raisableBody(b)) continue;                     /* same walk-and-fail loop as the raise job */
       if(dist(b.x, b.y, hm.x, hm.y) >= 14) continue;
       const d2 = dist(b.x, b.y, c.x, c.y);
       if(d2 < bd){ bd = d2; body = b; }
@@ -17940,7 +18067,14 @@ function buildCharMesh(c){
       e.spine = e.torso;
       e.construct = true;
     } else {
-    const beastCol = c.mule && !c.undead ? '#7a6248' : bodyCol;
+    /* ---------- A DEAD ANIMAL IS NOT A LIVE ONE IN TEAM COLOURS ----------
+       Every quadruped took `bodyCol`, which is the faction tint standing in for hide — so a
+       Gravecart, a Gravehound and a hound you raised yesterday were the live dust hound rig
+       painted your colour, and nothing about any of them read as dead at camera distance.
+       `skinCol` already resolves to bone for anything undead, rot stage and all; the beast
+       rig simply never asked for it. */
+    const boneBeast = !!c.undead;
+    const beastCol = boneBeast ? skinCol : (c.mule ? '#7a6248' : bodyCol);
     /* ---------- quadrupeds, nose to +Z like every other body in the game ----------
        There was one rig here and five animals wearing it: a hound, a tick, a strider, an
        elk and a boss the size of a house were the same box on four legs at scales from
@@ -17961,7 +18095,24 @@ function buildCharMesh(c){
       cart:    {len:1.35, hgt:0.34, wid:0.58, stand:0.46, headF:0.82, headY:0.50, headSz:0.26, legT:0.13},
     };
     const S = SPEC[K] || SPEC.hound;
-    e.torso = obox(S.wid, S.hgt, S.len, beastCol, 0, S.stand + S.hgt*0.1, 0);
+    if(boneBeast){
+      /* A CARCASS, NOT A BODY: a spine ridge with rib bars hung off it and real daylight
+         between them. Deliberately the same read as the biped risen's ribcage, so a raised
+         hound and a raised man look like the same kind of dead thing at the same distance,
+         and neither looks like a live animal wearing a team colour. */
+      e.torso = obox(S.wid*0.30, S.hgt*0.40, S.len*0.98, beastCol, 0, S.stand + S.hgt*0.28, 0);
+      const nr = Math.max(4, Math.round(S.len*4.5));
+      for(let i = 0; i < nr; i++){
+        const t = i/(nr-1), z = S.len*(0.42 - t*0.84);
+        const spread = 0.62 + Math.sin(t*Math.PI)*0.38;         /* barrel-shaped, widest amidships */
+        for(const sx of [-1, 1])
+          obox(S.wid*0.10, S.hgt*0.92, S.len*0.055, beastCol, sx*S.wid*0.46*spread, S.stand + S.hgt*0.02, z);
+      }
+      obox(S.wid*0.80, S.hgt*0.44, S.len*0.18, beastCol, 0, S.stand + S.hgt*0.10, -S.len*0.40);   /* pelvis */
+      obox(S.wid*0.74, S.hgt*0.48, S.len*0.20, beastCol, 0, S.stand + S.hgt*0.16,  S.len*0.36);   /* shoulder girdle */
+    } else {
+      e.torso = obox(S.wid, S.hgt, S.len, beastCol, 0, S.stand + S.hgt*0.1, 0);
+    }
     if(K === 'grazer'){
       /* the bulk is the point: a hump over the shoulders and a broad flat skull */
       obox(S.wid*0.86, 0.42, S.len*0.44, beastCol, 0, S.stand + S.hgt*0.55, -0.16);
@@ -17988,6 +18139,12 @@ function buildCharMesh(c){
         for(const sx of [-1, 1])
           obox(0.07, 0.16, 0.05, beastCol, sx*0.1, S.headY + 0.2, S.headF - 0.04);   /* ears back */
       }
+    }
+    /* the skull's two holes. On a bone-coloured head the sockets are the only thing that
+       says skull rather than pale animal, and they are cheap. */
+    if(boneBeast && K !== 'tick' && K !== 'strider'){
+      for(const sx of [-1, 1])
+        obox(0.055, 0.055, 0.04, '#241e18', sx*S.headSz*0.28, S.headY + S.headSz*0.10, S.headF + S.headSz*0.50);
     }
     const mkBLeg = (sx, sz) => {
       const hip = new THREE.Group(); hip.position.set(sx, S.stand, sz); g.add(hip);
@@ -18423,6 +18580,93 @@ function buildCharMesh(c){
         low.rotation.set(0, side*0.75, 0);
         e.boxBody.push(obox(0.045, 0.045, 0.34, dark, 0, 0, -0.17, low));       /* the fold */
         e.boxBody.push(obox(0.03, 0.22, 0.30, membrane, 0, -0.10, -0.15, low));
+      }
+    }
+    /* ---------- THE CHIMERA SKELETONS ----------
+       A chimera's line is skeletal before it is anything else: a houndkin's muzzle, an ox's
+       horns, a thinblood's stretched skull and a scaleborn's crest and tail are all BONE, and
+       every one of them was thrown away the moment the body came up dead — the scaleborn
+       block above is gated `&& !c.undead` and the line block below is gated the same way, so
+       a raised chimera stood up as the same anonymous human skeleton as a raised farmhand.
+       These are the parts the ground would leave. Bone only: no scales, no fur, no membrane,
+       no veins — the frame those things were stretched over, which is the better object. */
+    if(risen && c.race === 'chimera'){
+      const bone = skinCol, dkb = shade(bone, 0.78);
+      const B = (w, h, d, col, x, y, z, par) => { e.boxBody.push(obox(w, h, d, col, x, y, z, par)); return e.boxBody[e.boxBody.length-1]; };
+      if(subIs(c, 'houndkin')){
+        /* the long jaw outlasts everything else about it */
+        B(0.130, 0.095, 0.20, bone, 0, 0.205, 0.20, e.headG);
+        B(0.100, 0.045, 0.09, dkb,  0, 0.168, 0.305, e.headG);
+        for(const tx of [-0.034, 0.034]) B(0.020, 0.048, 0.13, bone, tx, 0.150, 0.245, e.headG);  /* teeth */
+        for(const sx of [-1, 1]){
+          const ear = B(0.030, 0.19, 0.028, bone, sx*0.115, 0.41, -0.06, e.headG);   /* bare cartilage */
+          ear.rotation.set(-0.45, 0, sx*0.30);
+        }
+        B(0.095, 0.20, 0.095, bone, 0, 0.555, 0.01, e.spine);       /* a long run of neck vertebrae */
+        e.tail = [];
+        { let par = g;
+          for(let i = 0; i < 4; i++){
+            const seg = new THREE.Group();
+            seg.position.set(0, i === 0 ? 0.80 : 0, i === 0 ? -0.15 : -0.145);
+            par.add(seg);
+            e.boxBody.push(obox(0.055 - i*0.009, 0.055 - i*0.009, 0.15, bone, 0, 0, -0.08, seg));
+            e.tail.push(seg); par = seg;
+          }
+          e.tailLift = -0.42; }
+      } else if(subIs(c, 'oxbound')){
+        for(const sx of [-1, 1]){
+          const hA = B(0.075, 0.075, 0.22, bone, sx*0.175, 0.335, -0.01, e.headG);
+          hA.rotation.set(-0.25, sx*1.30, 0);
+          const hB = B(0.060, 0.060, 0.15, dkb, sx*0.325, 0.425, -0.055, e.headG);
+          hB.rotation.set(-0.55, sx*0.95, 0);
+        }
+        B(0.27, 0.060, 0.14, dkb,  0, 0.312, 0.115, e.headG);       /* the heavy brow, nothing over it */
+        B(0.24, 0.090, 0.18, bone, 0, 0.112, 0.085, e.headG);       /* and the jaw to match */
+        B(0.17, 0.110, 0.17, bone, 0, 0.575, 0.01, e.spine);        /* a thick column of neck */
+        for(const sx of [-1, 1]) B(0.20, 0.095, 0.24, bone, sx*0.26, 0.50, -0.01, e.spine);   /* shoulder blades */
+      } else if(subIs(c, 'thinblood')){
+        B(0.205, 0.30, 0.205, bone, 0, 0.36, -0.01, e.headG);       /* the skull, stretched */
+        B(0.170, 0.09, 0.185, dkb,  0, 0.525, -0.01, e.headG);
+        B(0.075, 0.30, 0.075, bone, 0, 0.585, 0, e.spine);          /* on a neck too long for it */
+        for(const sx of [-1, 1]) B(0.09, 0.05, 0.15, bone, sx*0.195, 0.475, 0, e.spine);      /* sharp shoulders */
+      } else if(subIs(c, 'scaleborn')){
+        B(0.165, 0.125, 0.20, bone, 0, 0.205, 0.20, e.headG);       /* the long muzzle */
+        B(0.135, 0.050, 0.17, dkb,  0, 0.142, 0.20, e.headG);       /* lower jaw, hanging */
+        for(let i = 0; i < 3; i++){
+          const t2 = i / 2;
+          for(const hx of [-0.085, 0.085]){
+            const hn = B(0.040 - t2*0.010, 0.052 + t2*0.070, 0.10, dkb, hx, 0.37 + t2*0.03, -0.02 - t2*0.13, e.headG);
+            hn.rotation.x = 0.55 + t2*0.35;                          /* the crest, swept back */
+          }
+        }
+        for(let i = 0; i < 5; i++){
+          const t2 = i / 4;
+          B(0.045, 0.095 - t2*0.042, 0.07, dkb, 0, 0.50 - i*0.135, -0.135 - t2*0.01, e.spine);   /* dorsal spines */
+        }
+        /* THE WING SPARS, WITHOUT THE WING. Whatever was stretched over these is long gone;
+           the frame stays folded along the ribs exactly where it was carried in life. */
+        for(const side of [-1, 1]){
+          const sh = new THREE.Group();
+          sh.position.set(side*0.24, 0.44, -0.10); e.spine.add(sh);
+          sh.rotation.set(0.30, side*0.55, side*0.35);
+          e.boxBody.push(obox(0.045, 0.045, 0.46, bone, 0, 0, -0.22, sh));
+          const low = new THREE.Group();
+          low.position.set(0, 0, -0.44); sh.add(low);
+          low.rotation.set(0, side*0.75, 0);
+          e.boxBody.push(obox(0.035, 0.035, 0.34, bone, 0, 0, -0.17, low));
+        }
+        e.tail = [];
+        { let par = g;
+          for(let i = 0; i < 5; i++){
+            const seg = new THREE.Group();
+            seg.position.set(0, i === 0 ? 0.80 : 0, i === 0 ? -0.16 : -0.19);
+            par.add(seg);
+            const w = 0.105 - i*0.017;
+            e.boxBody.push(obox(w, w, 0.20, bone, 0, 0, -0.10, seg));
+            if(i < 3) e.boxBody.push(obox(0.028, 0.055 - i*0.012, 0.09, dkb, 0, w*0.60, -0.10, seg));
+            e.tail.push(seg); par = seg;
+          }
+          e.tail[0].rotation.x = 0.30; }
       }
     }
     /* ---------- WHAT A LINE LOOKS LIKE ----------
@@ -23724,7 +23968,7 @@ function snapshot(){
     bindWeight:c.bindWeight, shortTag:c.shortTag,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
-    immortal:c.immortal||null, wanderKey:c.wanderKey||null, wanderMet:c.wanderMet||0, wanderSeen:c.wanderSeen?{...c.wanderSeen}:null, wanderJoined:!!c.wanderJoined, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
+    immortal:c.immortal||null, wanderKey:c.wanderKey||null, wanderMet:c.wanderMet||0, wanderSeen:c.wanderSeen?{...c.wanderSeen}:null, wanderJoined:!!c.wanderJoined, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, golem:!!c.golem, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
     carryId: c.carry ? c.carry.id : null,
     carryIds: c.carryList ? c.carryList.map(b => b.id) : null,
     lich: !!c.lich, face: c.face||null, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
@@ -24061,7 +24305,7 @@ function restore(d){
     if(c.questDone && c.questGive && IMMORTAL_LINES[c.questGive]){
       c.questStage = IMMORTAL_LINES[c.questGive].stages.length;
       favors[c.questGive] = favors[c.questGive] || 1;
-    } c.friendly = !!s.friendly; c.construct = !!s.construct; c.redoubtId = s.redoubtId || null;
+    } c.friendly = !!s.friendly; c.construct = !!s.construct; c.golem = !!s.golem; c.redoubtId = s.redoubtId || null;
     c.roomId = (s.roomId ?? null); c.redoubtDeep = s.redoubtDeep || null; c.concentrating = s.concentrating || null; c.weaponFlame = !!s.weaponFlame; c.weaponHallow = !!s.weaponHallow; c.arts = s.arts || null; c.lightbearer = !!s.lightbearer; c.hiddenNecro = !!s.hiddenNecro;
     if(c.redoubtDeep != null && c.roomId != null){
       const rd = redoubts.find(x => x.id === c.redoubtDeep);
