@@ -572,7 +572,7 @@ function regrowNodes(){
 /* how heavy things are, in kg; anything unlisted weighs 1 */
 const KG = {wood:2, stone:3, copper:2, iron_ore:3.5, c_ingot:1.5, iron:2.5, coal:1.5, vflesh:2, mats:2.5, fabric:0.5, meat:0.6, fruit:0.4, fish:0.6,
   bandage:0.4, rum:1, hide:1, hide_lev:2, tome:1, remains:2, crown:1,
-  w_plank:2.5, w_club:2, w_kat:2, w_rkat:2, w_nod:3.5, w_bow:1.5, w_xbow:3, w_kingsfang:3, w_pyre:2.5,
+  w_plank:2.5, w_club:2, w_kat:2, w_rkat:2, w_nod:3.5, w_bow:1.5, w_sinew:1.2, w_xbow:3, w_kingsfang:3, w_pyre:2.5,
   w_lance:3, w_sever:3, aether_cell:0.3, salt:1, a_carap:5, codex:1, lead:4, gold_bar:2, formula_t:0.3, formula_w:0.3, formula_p:0.3, sunder:2, doctrine:0.5,
   a_rag:1, a_lea:3, a_pla:6, a_lev:3, a_shroud:1, a_baroness:5, a_marshal:6, pack_s:1.5, pack_l:3};
 const ITEMS = {
@@ -613,7 +613,23 @@ const ITEMS = {
      A hunting arrow finds a gap now and then; a crossbow bolt was invented to punch mail. */
   salt:    {name:'Salt',          base:26,  type:'trade',
     desc:'Coarse grey brine-salt off the flats. Packs a body against the rot, which is a use nobody in Saltmere mentions out loud'},
-  w_bow:   {name:'Hunting Bow',   base:260, type:'weapon', dmg:11, wt:'pierce', range:7, ap:0.20, rof:2.6, draw:0.45},
+  w_bow:   {name:'Hunting Bow',   base:260, type:'weapon', dmg:11, wt:'pierce', range:7, ap:0.20, rof:2.6, draw:0.45, bow:true},
+  /* ---------- GROWN, NOT CARRIED ----------
+     The Marrow Archer used to cost a whole Hunting Bow, which had to be crafted at a
+     Workbench from wood and fabric, hauled to the stores and consumed — six craft cycles
+     before six archers, and the one recipe on the bench that reached outside the dark
+     economy for a component. This is a bone stave with a sinew string, grown into the arms
+     rather than held.
+     ITS DAMAGE IS A CONSTANT, and that is not incidental — it is the reason the archer is
+     the best-balanced fighting body on the bench. Everything else off the circle scales its
+     damage on the necromancer's magic; this comes off the bow, so a magic-150 lich's archer
+     hits exactly as hard as a novice's. Anything that ties this number to `m` rebuilds the
+     Colossus with a longer reach. Nine against the Hunting Bow's eleven, a slower draw and
+     effectively no armour-piercing: worse than the bought bow, and free of the supply chain.
+     `grown` keeps it out of the world's economy — it cannot be looted off the body, sold, or
+     stripped, because it is part of the body. */
+  w_sinew: {name:'Sinew-Drawn Bow', base:0, type:'weapon', dmg:9, wt:'pierce', range:7, ap:0.04, rof:3.2, draw:0.62, bow:true, grown:true,
+    desc:'A stave of long bone with a sinew string, grown through the forearms of the thing that draws it. It cannot be dropped, and nothing else can pick it up.'},
   w_xbow:  {name:'Crossbow',      base:750, type:'weapon', dmg:18, wt:'pierce', range:8, ap:0.40, rof:3.2, draw:0.30},
   a_rag:   {name:'Rag Shirt',     base:60,  type:'armor',  def:.08, pen:.05},
   a_lea:   {name:'Leather Jacket',base:380, type:'armor',  def:.18, pen:.14},
@@ -1979,7 +1995,7 @@ const HEFT = {
    are. The weapon mesh is parented to the RIGHT elbow, which is why the bow arm below is
    the right one and the left hand is the one that draws. */
 const TWO_HAND = new Set(['w_nod', 'w_kingsfang', 'w_sever', 'w_pyre', 'w_kat',
-                          'w_bow', 'w_xbow', 'w_lance']);
+                          'w_bow', 'w_sinew', 'w_xbow', 'w_lance']);
 function twoHanded(c){
   const w = wepOf(c);
   if(!w) return false;
@@ -2082,7 +2098,18 @@ function atkPower(c){
     const cap = charsNear(c.x, c.y, 6).find(o => o.captain && o.warF === c.warF && o.state === 'ok');
     if(cap) d *= 1.1;
   }
-  d *= 1 + c.stats.atk * 0.03;
+  /* ---------- `atk` IS TWO STATS WEARING ONE NAME ----------
+     It decides whether a blow lands (in `hitChance`, which clamps at 0.94 and stops paying
+     around enemy def + 20) and it multiplies how hard the blow lands, here, three percent a
+     point, forever. For everything the world spawns that is fine, because their atk is a
+     constant. For a body off the binding circle it was ruinous: `craftUndead` scaled BOTH the
+     claw and the atk with the necromancer's magic, so damage came out as a product of two
+     linear terms — quadratic, with no ceiling anywhere in it. A magic-100 Colossus hit ten
+     times as hard as the hardest human in the game; a lich's, nineteen.
+     `dmgAtk` splits the two apart. A bound body keeps a rising atk so it can still land a
+     blow on plate, and carries a SEPARATE, bounded number for the damage multiplier. Nothing
+     else in the world sets it, so nothing else changes. */
+  d *= 1 + (c.dmgAtk === undefined ? c.stats.atk : c.dmgAtk) * 0.03;
   const la = c.parts['l.arm'], ra = c.parts['r.arm'];
   const armFactor = (a) => a.severed ? (a.pros ? Math.max(.35, prosVal(a)) : .35) : a.hp <= 0 ? .5 : a.hp < 50 ? .75 : 1;
   d *= Math.max(armFactor(la), armFactor(ra));
@@ -3544,6 +3571,23 @@ function questProgress(q){
 /* Where the thing is FROM WHERE YOU ARE NOW, not from where the scholar was standing when
    they said it. A bearing taken at the counter is worthless three days east of the counter,
    and it is the row a player re-reads, not the sentence. */
+/* ---------- HOW YOU GET THERE, SAID PROPERLY ----------
+   `placeHint` names a landmark only if a town is within 70 tiles of the target, and the places
+   the exiled ended up are deliberately further out than that — so for exactly the destinations
+   that need directing to, it fell through to "east of here, a long way", which is what got
+   reported as a quest that cannot be finished in a world 1440 tiles across.
+   Two legs, always. A LIVE one off the player, which is the one that changes as you walk, and
+   a FIXED one off the nearest town, which is the one you can actually plan a route with —
+   "northeast of GREENREST" is a thing you can go and do. The town is named however far away it
+   is, because a distant anchor still beats no anchor. */
+function wayTo(x, y){
+  const me0 = player().find(c => c.state !== 'dead') || player()[0];
+  const t = towns.filter(t2 => t2.stock).sort((a, b) => dist(a.x,a.y,x,y) - dist(b.x,b.y,x,y))[0];
+  const legs = [];
+  if(me0) legs.push(`${compassFrom(me0.x, me0.y, x, y)} of you, ${farWord(dist(me0.x, me0.y, x, y))}`);
+  if(t)   legs.push(`${compassFrom(t.x, t.y, x, y)} of ${t.name}`);
+  return legs.join(' — ') || 'somewhere out in the waste';
+}
 function liveHint(q){
   if(q.x === undefined) return '';
   const me0 = player()[0];
@@ -4133,7 +4177,13 @@ function threadOf(key){ return threads.find(t => t.key === key) || null; }
 function threadSet(key, title, step, opts){
   const o = opts || {};
   let t = threadOf(key);
-  if(!t){ t = {key, title, step:'', done:false, at:day, hint:''}; threads.push(t); }
+  if(!t){ t = {key, title, step:'', done:false, at:day, hint:'', mark:null}; threads.push(t); }
+  /* WHERE, RECOMPUTED WHEN IT IS READ. A step that says "east of here" was written once, at
+     the counter, from wherever you happened to be standing — and it is worthless three days
+     east of that counter. A thread that names a place carries the coordinates instead, and
+     the journal works the bearing out fresh every time it draws. `null` clears it, so a step
+     that is no longer about a place does not keep pointing at one. */
+  if(opts && 'mark' in opts) t.mark = opts.mark;
   t.title = title;
   t.hint = o.hint || '';
   if(t.step === step) return t;         /* the same step restated is not news */
@@ -4266,6 +4316,13 @@ function openChronicles(){
         m.style.cssText = `font-size:12px;color:${t.done ? 'var(--dust)' : 'var(--bone)'};margin-top:2px`;
         m.textContent = t.step;
         row.appendChild(h); row.appendChild(m);
+        /* the live leg: worked out now, from where you are now */
+        if(t.mark && !t.done){
+          const w = document.createElement('div');
+          w.style.cssText = 'font-size:11px;color:var(--gold);margin-top:2px';
+          w.textContent = wayTo(t.mark.x, t.mark.y);
+          row.appendChild(w);
+        }
         if(t.hint && !t.done){
           const q = document.createElement('div');
           q.style.cssText = 'font-size:11px;color:var(--dust);margin-top:2px';
@@ -5970,8 +6027,8 @@ const UNDEAD_TYPES = {
      wants was gated behind hunting trips. Stone is under your feet everywhere. */
   brute:      {name:'Bone Knight',   tech:'rites_binding', mana:16, weight:2, tag:'BK',
     cost:{remains:2, stone:4, fabric:2}, desc:'A hulk in grafted bone plate — draws every blade toward it'},
-  archer:     {name:'Marrow Archer', tech:'rites_deep',    mana:14, weight:2, tag:'MA',
-    cost:{remains:1, w_bow:1, wood:2},  desc:'Dead hands, steady bow'},
+  archer:     {name:'Marrow Archer', tech:'rites_deep',    mana:12, weight:2, tag:'MA',
+    cost:{remains:2, wood:3, hide:1},  desc:'Dead hands and a bow of bone and sinew grown through them. It brings its own — no bench, no bowyer, and nothing to drop'},
   colossus:   {name:'Ashen Colossus',tech:'rites_deep',    mana:25, weight:3, tag:'CO',
     cost:{remains:3, stone:6, copper:4},desc:'A wall that walks — barely. Enormously hard to put down, and slow enough that it should be waiting where the fight comes to it'},
   /* THE BONE MULE IS GONE and the Gravecart has its job. A mule that hauls goods was a
@@ -11132,7 +11189,8 @@ function lootCorpse(t, quiet, by){
   t.looted = true;
   let got = [];
   if(t.loot){ cats += t.loot; got.push(`${t.loot} gold`); }
-  if(t.weapon && (t.bossKey || rnd()<.7)){ addItem(t.weapon); got.push(ITEMS[t.weapon].name); }
+  /* a grown weapon is not kit — there is nothing to take off the body */
+  if(t.weapon && !(ITEMS[t.weapon] && ITEMS[t.weapon].grown) && (t.bossKey || rnd()<.7)){ addItem(t.weapon); got.push(ITEMS[t.weapon].name); }
   if(t.armor && (t.bossKey || rnd()<.6)){ addItem(t.armor); got.push(ITEMS[t.armor].name); }
   if(t.dropItems){
     for(const k of Object.keys(t.dropItems)){
@@ -11147,6 +11205,75 @@ function lootCorpse(t, quiet, by){
   refreshTop(); refreshInv();
   return got;
 }
+/* ============================================================ WHAT THE REMAINS REMEMBER
+   `castRaise` has always known the right rule and says so in its own comment: "a corpse is
+   never stronger dead than it was in life; the necromancer's skill only closes the gap." It
+   clamps every stat of a risen body to the stats of the body it came out of, and multiplies
+   the necromancer's contribution by rot on top.
+   The binding circle never inherited any of that, for one structural reason: it does not
+   build from a corpse, it builds from Mortal Remains, and remains are a number in a stash.
+   There was no reference body to clamp to, so there was no ceiling, so magic bought power
+   forever.
+
+   This gives the stash a memory. Remains carry a QUALITY — a running measure of the fighting
+   worth of what was rendered into them — and the circle clamps to that instead of to a
+   specific corpse. Kept as one rolling number rather than by making remains non-fungible,
+   because a stash of individually-tracked bone is a far larger change to the inventory than
+   this problem is worth, and the rolling figure gets the design where it needs to be: the
+   quality of what you feed the circle is the ceiling on what walks out of it.
+
+   Which makes the whole carrion chain matter. Rendering bandits builds an army of bandits.
+   If you want Bone Knights that can stand in front of a garrison, you have to go and kill
+   something worth rendering — and the Death Eater, the Gravecart, the harvest job and the
+   Ossuary all stop being flavour and start being how you arm yourself. */
+const REMAINS_Q_FLOOR = 9;         /* what a picked-over nobody is worth */
+/* AND A TRUE CEILING ON THE CEILING. Without this the rule is still unbounded, just slower:
+   render forty bosses and the quality climbs to boss level and the old numbers come straight
+   back. A plateau that can be farmed off is not a plateau. 46 is around an elite mercenary —
+   the best thing the world fields in numbers — so the diet still matters across the whole
+   range a player will actually see, and stops mattering exactly where it would start to
+   reproduce the problem. */
+const REMAINS_Q_CAP = 46;
+/* NOT a stash key, deliberately. Five separate places walk `Object.keys(stash)` — the stash
+   panel, the trade lists, the compact's tithe — and every one of them would have rendered a
+   quality figure as a phantom item called "remainsQ" that you could try to sell. It is a
+   property OF the pile, not a thing in it, so it lives beside it and is saved on its own. */
+let remainsQual = 0;
+function remainsQ(){ return Math.min(REMAINS_Q_CAP, remainsQual > 0 ? remainsQual : REMAINS_Q_FLOOR); }
+/* Blend a rendered body into the pile. Weighted by how much came off it, so one boss does not
+   permanently launder a mountain of rats — and multiplied by rot, because what the ground has
+   already taken it does not give back, exactly as `castRaise` has it. */
+function rememberRemains(t, n, dk){
+  if(!t || !t.stats) return;
+  const rot = (dk && dk.raise !== undefined) ? dk.raise : 1;
+  const worth = Math.max(REMAINS_Q_FLOOR,
+    Math.max(t.stats.atk || 0, t.stats.def || 0, (t.stats.tough || 0) * 0.7) * rot);
+  const had = Math.max(0, (stash.remains || 0) - n);      /* the pile before this body went in */
+  const q0 = remainsQ();
+  remainsQual = (q0 * had + worth * n) / Math.max(1, had + n);
+}
+/* The ceiling a bound body is cut to. Shaped like `castRaise`'s: a floor the circle can always
+   reach on its own, plus what the remains were worth. */
+function bindCeiling(){
+  const q = remainsQ();
+  return {atk: 10 + q * 1.15, def: 8 + q * 0.85, tough: 16 + q * 1.30};
+}
+/* Cut a body off the circle down to what its materials could support, and give it the
+   SEPARATE bounded number that the damage multiplier reads (see `atkPower`). One place, after
+   the recipe has built it, rather than eleven edited stat lines. */
+function applyBindCeiling(u){
+  if(!u || !u.stats) return;
+  const cap = bindCeiling();
+  u.stats.atk   = Math.min(u.stats.atk,   cap.atk);
+  u.stats.def   = Math.min(u.stats.def,   cap.def);
+  u.stats.tough = Math.min(u.stats.tough, cap.tough);
+  /* THE DAMAGE MULTIPLIER SATURATES. To-hit may keep climbing with the ceiling — a bound body
+     still has to be able to land a blow on plate — but the three-percent-a-point multiplier
+     must not, or the quadratic comes straight back the moment somebody renders a good corpse.
+     Rises fast where it matters and flattens: 24 of a possible 34 by atk 30. */
+  u.dmgAtk = 34 * (1 - Math.exp(-u.stats.atk / 26));
+  if(u.clawDmg) u.clawDmg = Math.min(u.clawDmg, 10 + cap.atk * 0.85);
+}
 function harvestCorpse(t, quiet, by){
   const log = quiet ? (() => {}) : outerLog;
   /* a fresh body gives up more than a picked-over one */
@@ -11157,6 +11284,7 @@ function harvestCorpse(t, quiet, by){
   let n = Math.max(1, dk.remains - (rnd() < 0.4 ? 0 : 1));
   if(by && by.harvestBonus) n += by.harvestBonus;
   addItem('remains', n);
+  rememberRemains(t, n, dk);
   if(dk.k === 'fresh' && rnd() < 0.35) addItem('vflesh', 1);
   const ci = corpses.indexOf(t); if(ci>=0) corpses.splice(ci,1);
   const xi = chars.indexOf(t); if(xi>=0) chars.splice(xi,1);
@@ -11188,6 +11316,57 @@ function concLock(c){ return (c.concentrating && c.concentrating.lock) || 0; }
    is to go through the person holding it. */
 function bindStrain(c){
   return c ? Math.min(0.62, (c._bindW || 0) * 0.05) : 0;
+}
+/* ============================================================ WHAT A HOST COSTS TO KEEP
+   Every pressure on necromancy was a cost of BUILDING a host — mana and materials at the
+   circle, `bindStrain` on the caster's pool, the host's noise on the Fracture clock. None of
+   them was a cost of HAVING one. So a host was paid for once and was free forever, and by the
+   time a necromancer reached magic 100 seven bound bodies erased a twenty-three-strong town
+   garrison without a single loss. Measured, in tools/host.js, not guessed.
+
+   Rent is the answer that changes the shape rather than the size: it gives the corpse economy
+   a SINK, which is what turns the harvest job, the Gravecart and the Death Eater from flavour
+   into infrastructure, and it makes an over-large host self-correcting — you cannot feed
+   forty, so you keep twenty good ones.
+
+   ONLY THE CIRCLE PAYS. A body bound at the binding circle is a made thing held together by
+   an ongoing act, and it eats Mortal Remains to stay held. A body raised off a battlefield
+   corpse is not: it was already a body, the rite only stood it up, and it costs nothing. That
+   split is deliberate and it is what keeps this a MIDGAME cost — an early necromancer working
+   from the dead of a bandit camp pays nothing at all, and only the bench charges rent. */
+const UPKEEP_PER_WEIGHT = 0.25;      /* remains per day, per point of bind weight */
+function upkeepBodies(){
+  return chars.filter(c => c.faction === 'player' && c.undead && c.crafted && !c.lich && c.state !== 'dead');
+}
+function upkeepDue(){
+  return upkeepBodies().reduce((s, c) => s + (c.bindWeight || 1), 0) * UPKEEP_PER_WEIGHT;
+}
+function hostUpkeep(){
+  const due = upkeepDue();
+  if(due <= 0) return;
+  const have = stash.remains || 0;
+  if(have >= due){
+    stash.remains = have - due;
+    /* said only when it is worth knowing about — a big host is a running bill */
+    if(due >= 4 && rnd() < 0.34)
+      log(`The host takes ${due.toFixed(1)} Mortal Remains to hold for another day.`, '');
+    return;
+  }
+  /* SHORT. Spend what there is, and the binding gives somewhere. One body a day, cheapest
+     first, so a shortfall is a warning you can act on rather than a host that evaporates —
+     and never a lieutenant, who is a name and an investment rather than a number. */
+  stash.remains = 0;
+  const pool = upkeepBodies().filter(c => !c.lieutenant)
+    .sort((a, b) => (a.bindWeight || 1) - (b.bindWeight || 1));
+  if(!pool.length){
+    log('There are no Mortal Remains left to hold the host, and nothing left that can be let go.', 'bad');
+    return;
+  }
+  const c = pool[0];
+  log(`There are no Mortal Remains left. ${c.name} comes apart where it stands.`, 'bad');
+  addSpecks(c.x, c.y, '#6a5a4a', 18);
+  addFloat(c.x, c.y, 'UNBOUND', '#a978ff');
+  kill(c, null);
 }
 /* recomputed on the necro tick rather than per-hit — risenLoad walks the roster */
 /* THE NOISE OF A HOST. Every shaped body carries a `noise`; the sum of it is heard once a
@@ -12103,7 +12282,7 @@ function craftUndead(kind, caster, circle, shape){
     u.kin = 'brute'; u.clawDmg = 12 + m*0.6; u.blood = 140; u.maxBlood = 140; u.big = 1.4; u.taunt = true;
   } else if(kind==='archer'){
     u = makeChar('Marrow Archer '+risenN, caster.faction, p.x, p.y, {atk:8+m*0.9, def:4+m*0.4, tough:4+m*0.3, ath:7, labor:4});
-    u.kin = 'archer'; u.weapon = 'w_bow'; u.blood = 70; u.maxBlood = 70;
+    u.kin = 'archer'; u.weapon = 'w_sinew'; u.blood = 70; u.maxBlood = 70;
   } else if(kind==='gravecart'){
     /* It fetches. It does not fight, it does not render anything down, and it does not stop.
        `mule` is kept alongside `cart` because a dozen places already know what a mule is —
@@ -12195,6 +12374,8 @@ function craftUndead(kind, caster, circle, shape){
     u.clawDmg = 20 + m; u.blood = 420; u.maxBlood = 420; u.big = 2.0;
     u.speedMult = 0.5; u.taunt = true;
   }
+  /* CUT TO WHAT IT WAS MADE OF, before anything else is hung on it */
+  applyBindCeiling(u);
   u.undead = true; u.crafted = true; u.master = caster; u.hunger = 100;
   u.guardTarget = caster;
   u.bindWeight = ut.weight; u.shortTag = ut.tag + risenN;
@@ -12902,6 +13083,22 @@ function openBinding(circle){
       sep.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:1px;margin:10px 0 4px';
       sep.textContent = 'BINDINGS'; body.appendChild(sep);
     }
+    /* ---------- WHAT THE PILE IS WORTH, SAID OUT LOUD ----------
+       The binding now cuts every body down to the quality of the Mortal Remains it is built
+       from, and a ceiling the player cannot see is not a mechanic, it is an unexplained nerf.
+       So the circle states it: what the pile is worth, what that permits, and — the part that
+       makes it actionable — that rendering better bodies is how the number goes up. */
+    {
+      const q = remainsQ(), cap = bindCeiling();
+      const band = q >= REMAINS_Q_CAP - 1 ? 'the best you will get'
+                 : q > 32 ? 'soldiers' : q > 18 ? 'fighting men' : 'nobodies and vermin';
+      const qr = document.createElement('div');
+      qr.style.cssText = 'color:var(--dust);font-size:11px;margin:2px 0 8px;line-height:1.5';
+      qr.innerHTML = `The remains are worth <b style="color:var(--gold)">${q.toFixed(0)}</b> — ${band}. ` +
+        `Nothing bound from them exceeds atk ${Math.round(cap.atk)} · def ${Math.round(cap.def)} · tough ${Math.round(cap.tough)}.<br>` +
+        `<span style="color:var(--muted)">A body is never stronger than what it was made of. Render better dead and the ceiling rises.</span>`;
+      body.appendChild(qr);
+    }
     for(const [k, ut] of Object.entries(UNDEAD_TYPES)){
       const row = document.createElement('div'); row.className = 'trow';
       const bill = {...ut.cost};
@@ -13521,6 +13718,7 @@ function update(dt){
         chars.push(kid);
       }
     }
+    hostUpkeep();
     /* ---- every shelf is stocked by someone's hands ---- */
     for(const t of towns){
       if(!t.stock) continue;
@@ -17026,6 +17224,15 @@ const WEAPONS = {
      the whole forward rotation and lay diagonally across the chest. Swept the axis against
      the held draw pose: below 1.0 it is diagonal, above 1.6 it lies over, and 1.03-1.34
      stands the limbs upright. */
+  /* the sinew bow: the hunting bow's shape in bone and gut, a little shorter and thicker in
+     the limbs the way something grown rather than shaved would be */
+  w_sinew: {rest:{x:1.20, y:1.45, z:0.14, pos:{x:0.13, y:-0.28, z:0.02}}, parts:[
+    {w:0.052,h:0.17, d:0.066, y: 0,    z: 0.035, col:'#8a7f68'},
+    {w:0.042,h:0.31, d:0.055, y: 0.21, z: 0.025, rx:-0.30, col:'#cfc6ad'},
+    {w:0.042,h:0.31, d:0.055, y:-0.21, z: 0.025, rx: 0.30, col:'#cfc6ad'},
+    {w:0.032,h:0.10, d:0.045, y: 0.38, z:-0.02,  col:'#9a8f76'},
+    {w:0.032,h:0.10, d:0.045, y:-0.38, z:-0.02,  col:'#9a8f76'},
+    {w:0.012,h:0.80, d:0.012, y: 0,    z:-0.055, col:'#b9ad8e'}]},
   w_bow: {rest:{x:1.20, y:1.45, z:0.14, pos:{x:0.13, y:-0.28, z:0.02}}, parts:[
     {w:0.048,h:0.18, d:0.062, y: 0,    z: 0.035, col:WC.bowDk},
     {w:0.036,h:0.34, d:0.05,  y: 0.22, z: 0.025, rx:-0.30, col:WC.bow},
@@ -19013,7 +19220,11 @@ function syncChars(dt){
       let armLz = 0, armRz = 0, legLz = e._hipZL, legRz = e._hipZR, spineY = 0, headY = 0;
       const th = twoHanded(c);
       const wI = c.weapon ? ITEMS[c.weapon] : null;
-      const bow = !!(wI && wI.range && !wI.lance && (wI.tierOf || c.weapon) === 'w_bow');
+      /* ASK WHAT IT IS, NOT WHAT IT IS CALLED. This read `(wI.tierOf || c.weapon) === 'w_bow'`,
+         so the draw — locked bow arm, string hand back to the jaw — belonged to one item key.
+         Any second bow in the game silently fell through to `gun` and got the braced crossbow
+         crouch instead, which is a different weapon entirely. `bow:true` is the property. */
+      const bow = !!(wI && wI.range && !wI.lance && wI.bow);
       const gun = !!(wI && wI.range && !bow);
       /* ---------- THE LANCE COMES UP TO FIRE AND GOES BACK DOWN ----------
          It is a spear that shoots, so it is carried as a spear and levelled to shoot, and the
@@ -23531,7 +23742,7 @@ function snapshot(){
     pilgrimDestI: c.pilgrimage ? towns.indexOf(c.pilgrimage.dest) : -1,
   });
   return {
-    v:20, cats, bloodMoon, redoubts:[...redoubts], stash:{...stash}, oreFields, nodeUses:[...nodeUses], phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
+    v:20, cats, bloodMoon, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields, nodeUses:[...nodeUses], phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen},
@@ -23573,7 +23784,7 @@ function snapshot(){
     chars: chars.filter(c => !c.phantom).map(sChar),
     corpseIds: corpses.map(c=>c.id),
     cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
-    threads: threads.map(t => ({key:t.key, title:t.title, step:t.step, hint:t.hint, done:t.done, at:t.at})),
+    threads: threads.map(t => ({key:t.key, title:t.title, step:t.step, hint:t.hint, done:t.done, at:t.at, mark:t.mark || null})),
     cairnIds: cairns.filter(c => c && c.state !== 'dead').map(c => c.id),
     closing: {on: closing.on, told: closing.told, known: closing.known},
     search: {on: search.on, asked: {...search.asked}, found: search.found,
@@ -23606,7 +23817,7 @@ function restore(d){
      save is how you lose track of what you were doing. Restored wholesale, not rebuilt from
      the quest flags — a thread's wording is written at the moment it is set. */
   threads.length = 0;
-  if(d.threads) for(const t of d.threads) threads.push({key:t.key, title:t.title, step:t.step, hint:t.hint || '', done:!!t.done, at:t.at || 1});
+  if(d.threads) for(const t of d.threads) threads.push({key:t.key, title:t.title, step:t.step, hint:t.hint || '', done:!!t.done, at:t.at || 1, mark:t.mark || null});
   if(d.closing){ closing.on = !!d.closing.on; closing.told = !!d.closing.told; closing.known = !!d.closing.known; }
   else { closing.on = fractureStage >= 1; closing.told = false; closing.known = false; }
   if(d.search){
@@ -23745,6 +23956,7 @@ function restore(d){
   }
   for(const k of Object.keys(stash)) delete stash[k];
   Object.assign(stash, d.stash);
+  remainsQual = (typeof d.remainsQual === 'number' && d.remainsQual > 0) ? d.remainsQual : 0;
   /* A save written before the chest-shape fix can carry NaN gold and NaN stash counts.
      Scrub them AFTER the stash lands, or the poison arrives behind the cleanup. */
   if(!Number.isFinite(cats)){ cats = 0; log('Your ledger was unreadable and has been reset to zero.', 'bad'); }
@@ -23799,6 +24011,9 @@ function restore(d){
     c.clawDmg = s.clawDmg || 0; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.eatsDead = !!s.eatsDead;
     c.structMult = s.structMult || 1; c.bindWeight = s.bindWeight || 1; c.shortTag = s.shortTag || '';
     c.servitor = !!s.servitor; c.minded = !!s.minded; c.crafted = !!s.crafted; c.autoFight = !!s.autoFight;
+    /* re-derived rather than stored: it is a pure function of the atk that came back with the
+       body, so storing it would only give it a way to disagree with itself */
+    if(c.crafted && c.stats) c.dmgAtk = 34 * (1 - Math.exp(-c.stats.atk / 26));
     c.cart = !!s.cart; c.stitcher = !!s.stitcher; c.noFight = !!s.noFight;
     /* `whisp` was a typo and is now `wisp`; a save written under the old spelling still has a
        body in it that thinks it is a lamp, and dropping the field would leave it a mute beast
@@ -24281,8 +24496,9 @@ function askAfterLyre(t, L){
     say(L || t.leader || {name:t.name}, 'Nobody walks out that way to live.');
     const from = player()[0] || {x: t.x, y: t.y};
     threadSet('lyre', 'The search for Lyre',
-      `Three halls agree on where she was put out. Walk to the corpse-field — ${placeHint(from.x, from.y, site.x, site.y)}.`,
-      {hint: 'It is a long way past the last fence. Take water and somebody who can fight.'});
+      'Three halls agree on where she was put out. Walk to the corpse-field.',
+      {hint: 'It is a long way past the last fence. Take water and somebody who can fight.',
+       mark: {x: site.x, y: site.y}});
   } else {
     const said = [
       '"There was a woman. Southern accent, no kit, would not say who sent her. She did not stay."',
@@ -24305,7 +24521,7 @@ function lyreCairn(){
   if(!search.on || !search.found || search.cairn || search.met) return;
   const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
   const site = sites[search.siteId]; if(!site) return;
-  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 12);
+  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 20);
   if(!near) return;
   search.cairn = true;
   log('There is a cairn here, built by somebody who had nothing to build it with but what was lying about. It is not a grave — it is a marker, and it has been added to.', 'good');
@@ -24315,7 +24531,8 @@ function lyreCairn(){
   say(near, 'She was here. She was here a long time, and she left on her own feet.');
   threadSet('lyre', 'The search for Lyre',
     'She lived here for years and moved on. Find somebody who tracks where the marrow stops coming from — a wandering scholar buys it by the sackful and knows every field in the waste.',
-    {hint: 'Right-click any scholar out in the world. They will be interested in a field that has gone quiet.'});
+    {hint: 'Right-click any scholar out in the world. They will be interested in a field that has gone quiet.',
+     mark: null});
 }
 /* the scholar names the field she is in now. It costs nothing but finding one. */
 function tellScholarOfTheCairn(sc){
@@ -24329,8 +24546,9 @@ function tellScholarOfTheCairn(sc){
   worldEvent('lyre', site2.x, site2.y,
     'A scholar has been keeping a ledger of the fields that stopped giving up marrow. They go quiet in order, outward, as if something is walking.');
   threadSet('lyre', 'The search for Lyre',
-    `The scholar's ledger says the fields go quiet in order, and names the newest — ${placeHint(from.x, from.y, site2.x, site2.y)}. She is still working. Go and stand in it.`,
-    {hint: 'She is not a marker that turns green. She is a person, and she is busy.'});
+    "The scholar's ledger says the fields go quiet in order, and names the newest. She is still working. Go and stand in it.",
+    {hint: 'She is not a marker that turns green. She is a person, and she is busy.',
+     mark: {x: site2.x, y: site2.y}});
   return true;
 }
 /* She is not a marker that turns green. She is a person standing in a corpse-field who has
@@ -24347,7 +24565,11 @@ function lyreTick(dt){
   const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
   const site = sites[search.siteId2 >= 0 ? search.siteId2 : search.siteId];
   if(!site) return;
-  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 14);
+  /* WIDER THAN THE SITE. A corpse-field carries r:12 and the old arrival test was 14, which
+     is a two-tile skin around a circle nobody can see, in a world 1440 tiles across. Walking
+     THROUGH the field and missing her by three tiles is how this reads as "she does not
+     exist". 22 means arriving at the field is arriving. */
+  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 22);
   if(!near) return;
   search.met = true;
   const p2 = findOpenNear(site.x + ri(-3, 3), site.y + ri(-3, 3), 6) || {x: site.x, y: site.y};

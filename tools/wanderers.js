@@ -262,6 +262,16 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const me = player().find(c => c.state === 'ok' && !c.undead) || player()[0];
     T.subject = sc ? `${sc.name} is standing somewhere` : '!! NO SCHOLAR IN THE WORLD';
     if (!sc) return T;
+    /* STOP THE WORLD. Every step below is separated by an `await frame()`, and while this
+       probe is awaiting, the game's own loop is still running in REAL time — so how far the
+       world moves between two assertions depends on how busy the machine is. Run this file
+       alone and it passes; run it inside the suite with a loaded box and a second scholar
+       wanders into the click radius between the order and the arrival, and the panel opens on
+       somebody else. It failed exactly that way twice under `npm run check` and passed three
+       times out of three on its own, which is the signature of a wall-clock dependency rather
+       than a bug. The walk below is driven by explicit `physics()` calls and does not need the
+       loop, so pausing costs the test nothing and makes it deterministic. */
+    paused = true;
 
     /* ---- ON TOP OF THEM: the click must find the SCHOLAR, not the generic townsperson ---- */
     shut();
