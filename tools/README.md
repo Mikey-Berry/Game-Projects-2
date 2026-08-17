@@ -394,3 +394,16 @@ the truth was 45%.
   comment names that exact failure produced zero stalls as well. So the harness guards against
   wagons that stop moving, and it is NOT established that it would catch the reported failure if
   it returned. Worth keeping, worth writing down honestly, not worth calling the item fixed.
+- **A browser re-serialises CSS, so grep the RULE, not the sheet.** `aid.js` checked for
+  `animation: none` inside a `prefers-reduced-motion` block by regexing the concatenated
+  `cssText` of every rule. Chrome expands it to the eight-part longhand
+  (`animation: none 0s ease 0s 1 normal none running`), so the naive test missed it and
+  reported a bug that was not there. Walk `styleSheets` -> media rules -> `cssRules` and ask
+  which selectors are inside, rather than pattern-matching the serialised text.
+- **Check the container id before asserting on zero.** The same file queried `#squad .port`
+  and got `0 of 0`, which reads exactly like "the class is never applied". The bar is
+  `#squadbar`. A count of zero out of zero is a selector bug until proven otherwise — print
+  the denominator in the failure message so the difference is visible at a glance.
+- **`PARTS` are anatomical, not generic.** `'torso'` is not a body part in this game
+  (`head, chest, stomach, l.arm, r.arm, l.leg, r.leg`), and passing it to `applyDamage` throws
+  from inside the render path rather than failing an assertion. Read the constant.
