@@ -407,3 +407,12 @@ the truth was 45%.
 - **`PARTS` are anatomical, not generic.** `'torso'` is not a body part in this game
   (`head, chest, stomach, l.arm, r.arm, l.leg, r.leg`), and passing it to `applyDamage` throws
   from inside the render path rather than failing an assertion. Read the constant.
+- **A restored world starts running the moment it arrives.** `carry.js` snapshots a world, sends
+  it to a second browser as a code, and checks the same person is on the same tile. It compared
+  coordinates to two decimal places across an unbounded wall-clock wait — so it was measuring a
+  LIVE world against a frozen snapshot, and flaked the first time the marker's walk crossed a
+  rounding boundary (1085.07 -> 1085.06 was the entire failure). Green for many runs, then red
+  when an added harness shifted the suite's timing. Two fixes, and both were needed: pause the
+  receiving world the instant the restore reports done, and compare PLACES rather than
+  centimetres. When a probe samples something that is allowed to move, either stop it moving or
+  give the comparison a tolerance the design actually promises.
