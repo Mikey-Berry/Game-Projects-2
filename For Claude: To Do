@@ -31,6 +31,12 @@ WHAT IS DONE SO FAR, and where the proof lives:
     and half of it drives the real bench in the DOM, because the rule is enforced
     in two places and a panel that offers a shape the binding will refuse is its
     own bug.
+  · tools/gunnery.js — the emplacements: a turret in the dirt, a turret on a wall
+    with and without a stair, both stances that used to freeze a gunner, the lance's
+    one rule about gifted hands, and where an Aether Cell comes from. It watches
+    `manning` WHILE the loop runs rather than reading the last frame, because by
+    then the world clock has moved several minutes and a hand that took up its post
+    perfectly may correctly have gone to bed.
 
 Two rules this file keeps learning the hard way, both worth reading first:
   1. A harness that passes on the broken build proves nothing. Several items
@@ -251,19 +257,94 @@ Two rules this file keeps learning the hard way, both worth reading first:
     (the pit opens with ~70 ore), and priced by place — x0.45 at the pit, x1.15 at
     Copperhold, x1.35 at Dustport — so where you buy it means something.
 
-[LOOKED] Gunnery job currently seems to do absolutely nothing. Same with turrets. Also in my last playthrough, the Aetheric Lance also seemed broken and incapable of firing anything, even when held by a non-alchemist.
-    NOT FIXED YET — the biggest remaining item, and it wants a session of
-    its own. Confirmed present and wired: `emplacementTick` exists, `EMPL` holds both
-    `turret` and `lance`, and the turret is buildable. So the parts are all there and
-    something in the middle is not connecting. Start at `emplacementTick` and the
-    `gunnery` branch of the job loop (~line 8510), which already logs "has no weapon
-    to work" when it cannot find one.
+[DONE] Gunnery job currently seems to do absolutely nothing. Same with turrets. Also in my last playthrough, the Aetheric Lance also seemed broken and incapable of firing anything, even when held by a non-alchemist.
+    Proof in tools/gunnery.js — 11 of its 25 assertions fail on the build before it.
+    THE NOTE BELOW WAS RIGHT THAT NOTHING WAS MISSING, and wrong about where to look. It is not
+    `emplacementTick` and it is not the weapon: a turret standing in the DIRT with a hand beside
+    it fires, kills, and levels gunnery, on the old build and the new one. The failure was in
+    FIVE places, and every one of them failed in silence.
+
+    1. THE ONE THAT ACTUALLY DID IT: the STAND-TO block, and the mechanism is ORDERING.
+    STAND-TO ("a body of yours with nothing else to do does not watch a fight happen beside it")
+    runs about thirty lines ABOVE the job branch that gives a gunner its move order. So on the
+    first tick after you assign the job, `c.moveTarget` is still null, its `onErrand` test is
+    false, and any enemy inside 7.5 tiles is taken as a target — after which the combat branch
+    returns every tick and the job block is never reached again. The gunner never takes ONE STEP
+    toward the weapon, and nothing is logged because nothing went wrong as far as any single line
+    of it is concerned. It bites hardest exactly when it matters: the one time a turret is worth
+    having is a camp under attack, which is the one time nobody will man it.
+    The same exemption was needed on the general 9-tile target scan (~line 6699, which gives
+    EVERY body a target regardless of stance) and on the auto-acquire block.
+    `if(c.manning){ c.target = null; ... }` already states this rule — "abandoning something far
+    deadlier than their knife" — and only ever applied AFTER arrival. `boundForAWeapon(c)` is
+    that rule applied on the way, and it also exempts a gunner on HOLD, which otherwise cleared
+    its own moveTarget every tick and could never set out at all.
+
+    2. NOBODY COULD CLIMB TO A WALL TURRET, which is the turret's whole advertised use ("Put it
+    on a wall and it shoots down over it"). `routeTo` asked `nearestStairFor` for the nearest
+    stair between two storeys ANYWHERE IN THE WORLD. Measured on a camp with no stair of its own:
+    the gunner set off for a stairwell 52 tiles away in somebody else's town, and routeTo returned
+    TRUE, so nothing was logged and nothing looked wrong.
+    `decks` was one flat set of every upper-storey tile in the world, so "is there floor here" was
+    answerable and "is that the SAME piece of floor as this" was not — and every stair question is
+    really the second one. `deckRun(x,y,f)` floods the connected run (capped at 900 tiles) and
+    `stairToward(c, fa, fb, gx, gy, gf)` returns only a stair whose landing is on the destination's
+    own run, or null. It constrains the near side when descending instead, which was broken the
+    same way. `nearestStairFor` is kept for callers that genuinely want the global answer.
+    WORTH KNOWING: an EMPTY run means the elevated end is not a deck tile at all, and there the
+    function falls back to the old global answer rather than refusing every route — that is what
+    keeps cave descent (`to < 0`, no decks involved) behaving exactly as it did.
+
+    3. AND `emplReachable(b, c)` makes that a rule the job obeys: `jobHasWork('gunner')` is false
+    for a weapon nobody can climb to, so a hand with a second trade goes back to the fields
+    instead of standing at the foot of a wall.
+
+    4. THE JOB MENU OFFERED GUNNERY TO BODIES THE WEAPON REFUSES. It filtered STUDY and CRAFT by
+    `mindedDead` and not this one, although `emplGunner` requires exactly that — so a necromancer
+    could put a whole host of hollow risen on the turrets and watch them stand in the dirt. There
+    is one `NEEDS_A_MIND` list now, read by both job buttons and both assignment loops.
+
+    5. AND THE ONE LINE THAT WOULD HAVE EXPLAINED ANY OF IT was gated on `rnd() < dt * 0.04` — a
+    per-FRAME probability, inside a branch that only runs once every 1.2 SECONDS. Measured: 0.05
+    expected messages across thirty seconds of standing there uselessly. It is a cooldown in
+    seconds now, and it says WHICH of the four things is wrong. A turret raised on a bare wall
+    also says so at the moment it is built, which is when you can still put a stair beside it.
+
+    THE LANCE IS A SEPARATE THING AND WAS NOT BROKEN — IT WAS UNARMED. The handheld Aether Lance
+    spends one `aether_cell` per shot. `aether_cell` was listed in VENDOR_STOCK.occult, so an
+    occult dealer would have sold you one, and NO TOWN IN THE WORLD EVER HAD ANY: measured at 0
+    cells across 7 town stocks in front of 2 occult dealers. The only cells in existence were the
+    5-11 in a sealed redoubt. So the best firearm in the game had a magazine of five for the whole
+    run, and a dry lance said so once, quietly, and then went silent forever.
+    Fixed as a supply chain rather than a shelf, and it keeps the fiction that nobody MAKES these:
+    salvage washes up at a port and reaches whoever knows what it is worth, which is the occult
+    trade — and Dustport's entire blurb is that everything washes up there. The dealers open with
+    2-6 and turn up about one a week, hard-capped at 6 (Dustport) and 4 (elsewhere), so the lance
+    is rationed rather than resupplied. No ordinary market carries them.
+    And a dry lance now floats NO CELL over the body the way an overheating one floats OVERHEAT,
+    and names the towns where cells surface — read off `vendors` rather than hardcoded, so the
+    sentence cannot go stale.
+    NOT TOUCHED, and worth a look another day: the cell price (base 220) and the emplaced lance,
+    which spends no cells at all — it runs off the camp. That asymmetry may be right (an
+    emplacement is plumbed into something) or may be an oversight; it is a balance call, not a bug.
+    ALSO NOT TOUCHED: at 0.9 tiles a lance-holder neither fires (correctly — "too close: guard,
+    don't shoot") nor swings. That belongs with the kiting item above, which is about the same
+    branch.
 
 [LOOKED] The multi-layer system in caves seems not to work at all. I can’t seem to go into the first “underlayer” of a mountain/cave.
     NOT FIXED YET. The data is all there: 7 caves, the first four levels
     deep with 9 rooms, and 26 down-stairs in `stairs` with `to < 0`. So generation
     works and the failure is in DESCENDING — look at `activeFloor` and whatever
     handles a body reaching a stair, not at the cave generator.
+    READ THE GUNNERY ITEM BELOW BEFORE STARTING THIS — it is the same family and it found
+    one of the two mechanisms already. `routeTo` used to pick the nearest stair between two
+    storeys ANYWHERE IN THE WORLD, which for a cave mouth means it may well have been steering
+    people toward a different cave. `stairToward` now exists and constrains the choice, but
+    DELIBERATELY DOES NOT constrain a descent from the ground: `decks` has no entries for
+    negative floors, so a cave has no "run" to reason about and the function falls back to the
+    old global answer. Giving cave floors the same connected-component treatment `deckRun` gives
+    ramparts is probably the shape of this fix, and it will need something `decks` does not have:
+    a set of walkable tiles per negative storey.
 
 [OPEN] Caravans have a tendency to get caught on city walls. Their pathing should be fixed up a bit.
     NOT STARTED. Likely related: town gates are the two tiles where the wall
