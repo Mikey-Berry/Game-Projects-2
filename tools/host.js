@@ -145,9 +145,35 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const town = towns.find(t => t.def.key === 'greenrest') || towns[0];
     const GN = garrisonSize(town);
 
+    /* ---------- WHAT THE CIRCLE WAS FED ----------
+       The binding now clamps to the quality of the Mortal Remains it is built from, the way
+       `castRaise` has always clamped to the corpse in front of it. So a host's ceiling is a
+       function of what the player has been rendering, and a harness that simply writes 100000
+       remains into the stash is testing ONE end of that — the pile of rats. Both ends have to
+       be measured or the number is meaningless. */
+    const feedOn = (atk, count) => {
+      remainsQual = 0;                       /* forget the last diet */
+      stash.remains = 0;
+      for (let i = 0; i < count; i++) {
+        const body = makeChar('Rendered', 'bandit', gx + 2, gy + 2,
+          { atk, def: atk * 0.8, tough: atk, ath: 6 });
+        body.state = 'dead'; body.deadAt = day; body.looted = true; body.__probe = true;
+        chars.push(body); corpses.push(body);
+        harvestCorpse(body, true, null);
+      }
+      stash.remains += 100000;               /* plenty of material, of THAT quality */
+      return remainsQ();
+    };
+
+    /* The magic ladder is measured on a REALISTIC diet, not on the raw stash. Writing 100000
+       remains straight into the pile is the "rendered nothing but rats" case — the ceiling
+       sits at its floor, every tier is clamped to the same body, and the sweep reports that
+       magic buys nothing, which is true only of that one diet. A player at magic 100 has been
+       rendering things for a hundred days. Bandits are what the waste actually supplies. */
     for (const [label, magic, lich] of [['early  m20', 20, false], ['mid    m50', 50, false],
                                         ['late   m100', 100, false], ['lich   m150', 150, true]]) {
       wipe();
+      feedOn(22, 40);
       const nec = makeNec(magic, lich);
       const host = raiseHost(nec);
       const foes = garrison(town, GN);
@@ -174,8 +200,56 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
                   evenN: host2.length, evenLeft: r2.hostLeft, evenFoe: r2.foeLeft, ex2 });
     }
 
+    /* ---------- THE SAME NECROMANCER, THREE DIETS ----------
+       This is the whole point of the reference-body rule: magic decides how close you get to
+       the ceiling, and what you rendered decides where the ceiling is. */
+    for (const [label, atk, n] of [['fed rats   ', 8, 40], ['fed bandits', 22, 40], ['fed guards ', 40, 40]]) {
+      wipe();
+      const q = feedOn(atk, n);
+      const nec = makeNec(100, false);
+      const host = raiseHost(nec);
+      const foes = garrison(town, host.length);
+      const sample = host.find(h => h.kin === 'brute');
+      const line = sample ? `atk ${Math.round(sample.stats.atk)} def ${Math.round(sample.stats.def)} tough ${Math.round(sample.stats.tough)}` : '?';
+      const r = fight(host, foes);
+      const lost = host.length - r.hostLeft, foeLost = foes.length - r.foeLeft;
+      const ex = lost === 0 ? Infinity : foeLost / lost;
+      R['d_' + label.trim().replace(/\s+/g, '_')] =
+        `remains worth ${q.toFixed(0)} · ${host.length}v${host.length} even → ${r.hostLeft}v${r.foeLeft} ` +
+        `(${ex === Infinity ? 'FLAWLESS' : ex.toFixed(1) + ':1'}) · knight ${line}`;
+      rows.push({ diet: label, q, ex, line });
+    }
+    /* the rule that makes the whole thing worth having: better corpses, better host */
+    {
+      const diets = rows.filter(r => r.diet);
+      const rats = diets[0], guards = diets[diets.length - 1];
+      const f = v => v === Infinity ? 'FLAWLESS' : v.toFixed(1) + ':1';
+      R.dietDecidesTheCeiling = (guards.q > rats.q * 2 &&
+        parseFloat(guards.line.split(' ')[1]) > parseFloat(rats.line.split(' ')[1]) * 1.5)
+        ? `what you render is the ceiling: rats give atk ${rats.line.split(' ')[1]}, guards give ${guards.line.split(' ')[1]}`
+        : `!! THE DIET DOES NOT MOVE THE CEILING (rats ${rats.line}, guards ${guards.line})`;
+      R.ratsAreNotAnArmy = rats.ex !== Infinity && rats.ex < 2
+        ? `and a host built out of nobodies trades at ${f(rats.ex)} — it is not an army`
+        : `!! A HOST OF RENDERED RATS TRADES AT ${f(rats.ex)}`;
+      /* and the ceiling itself must have a ceiling, or the rule is only slower to break */
+      {
+        wipe();
+        const qBoss = feedOn(200, 60);       /* forty bosses' worth of rendering */
+        const nec = makeNec(150, true);
+        const host = raiseHost(nec);
+        const k = host.find(h => h.kin === 'brute');
+        R.qualityIsCapped = k && k.stats.atk < 70
+          ? `rendering nothing but bosses tops out at quality ${qBoss.toFixed(0)}, knight atk ${Math.round(k.stats.atk)}`
+          : `!! FARMING BOSSES REOPENS THE TOP END (quality ${qBoss.toFixed(0)}, knight atk ${k ? Math.round(k.stats.atk) : '?'})`;
+      }
+      R.goodCorpsesStillWin = guards.ex >= 1
+        ? `while one built out of real soldiers trades at ${f(guards.ex)}`
+        : `!! EVEN A WELL-FED HOST IS WORTHLESS AT ${f(guards.ex)} — THE CLAMP IS TOO TIGHT`;
+    }
+
     R.city = `${town.name}: a garrison of ${GN}`;
     for (const r of rows) {
+      if (r.diet) continue;
       R['x_' + r.label.trim().replace(/\s+/g, '_')] =
         `cap ${String(r.cap).padStart(2)} · ${String(r.host).padStart(2)}v${r.foes} city → ` +
         `${String(r.hostLeft).padStart(2)}v${String(r.foeLeft).padStart(2)} ` +
@@ -192,10 +266,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        These lines exist so the number stays in front of us. When the `m` curve is bent — which
        is the change that actually moves them — they become assertions with thresholds. */
     {
-      const late = rows[rows.length - 1], early = rows[0];
+      const tiers = rows.filter(r => r.label);
+      const late = tiers[tiers.length - 1], early = tiers[0];
       const f = v => v === Infinity ? 'FLAWLESS' : v.toFixed(1) + ':1';
-      R.WATCH_evenFight = `one bound body against one guard: ${rows.map(r => r.label.trim().split(/\s+/)[0] + ' ' + f(r.ex2)).join(' · ')}`;
-      R.WATCH_city = `a full host against a city: ${rows.map(r => r.label.trim().split(/\s+/)[0] + ' ' + f(r.ex)).join(' · ')}`;
+      R.WATCH_evenFight = `one bound body against one guard: ${tiers.map(r => r.label.trim().split(/\s+/)[0] + ' ' + f(r.ex2)).join(' · ')}`;
+      R.WATCH_city = `a full host against a city: ${tiers.map(r => r.label.trim().split(/\s+/)[0] + ' ' + f(r.ex)).join(' · ')}`;
       const climb = (late.ex2 === Infinity || early.ex2 === Infinity) ? Infinity : late.ex2 / Math.max(0.1, early.ex2);
       R.WATCH_curve = `per-body power climbs ${climb === Infinity ? 'without bound' : climb.toFixed(1) + 'x'} from first host to last ` +
         `(knight atk ${rows[0].line.split(' ')[1]} → ${late.line.split(' ')[1]})`;

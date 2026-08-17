@@ -315,3 +315,11 @@ the truth was 45%.
   number. Failing the suite on a value the current work is not trying to change would make the
   suite lie about what is broken; leaving it unmeasured would lose it. Print it, name it a
   watch, and promote it to an assertion when something is actually aimed at it.
+- **A stat can be two stats wearing one name.** `atk` decides whether a blow lands *and*
+  multiplies how hard it lands (`d *= 1 + atk * 0.03`). For anything the world spawns that is
+  harmless, because their atk is a constant — but `craftUndead` scaled both the claw and the
+  atk off the necromancer's magic, so bound damage came out as a product of two linear terms.
+  Quadratic, with the two halves four thousand lines apart, and neither line wrong on its own.
+  When auditing a scaling system, follow every stat it touches all the way to where the damage
+  is finally computed; reading the stat line and stopping is how an earlier pass called this
+  curve "linear".

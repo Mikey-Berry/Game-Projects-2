@@ -2082,7 +2082,18 @@ function atkPower(c){
     const cap = charsNear(c.x, c.y, 6).find(o => o.captain && o.warF === c.warF && o.state === 'ok');
     if(cap) d *= 1.1;
   }
-  d *= 1 + c.stats.atk * 0.03;
+  /* ---------- `atk` IS TWO STATS WEARING ONE NAME ----------
+     It decides whether a blow lands (in `hitChance`, which clamps at 0.94 and stops paying
+     around enemy def + 20) and it multiplies how hard the blow lands, here, three percent a
+     point, forever. For everything the world spawns that is fine, because their atk is a
+     constant. For a body off the binding circle it was ruinous: `craftUndead` scaled BOTH the
+     claw and the atk with the necromancer's magic, so damage came out as a product of two
+     linear terms — quadratic, with no ceiling anywhere in it. A magic-100 Colossus hit ten
+     times as hard as the hardest human in the game; a lich's, nineteen.
+     `dmgAtk` splits the two apart. A bound body keeps a rising atk so it can still land a
+     blow on plate, and carries a SEPARATE, bounded number for the damage multiplier. Nothing
+     else in the world sets it, so nothing else changes. */
+  d *= 1 + (c.dmgAtk === undefined ? c.stats.atk : c.dmgAtk) * 0.03;
   const la = c.parts['l.arm'], ra = c.parts['r.arm'];
   const armFactor = (a) => a.severed ? (a.pros ? Math.max(.35, prosVal(a)) : .35) : a.hp <= 0 ? .5 : a.hp < 50 ? .75 : 1;
   d *= Math.max(armFactor(la), armFactor(ra));
@@ -11177,6 +11188,75 @@ function lootCorpse(t, quiet, by){
   refreshTop(); refreshInv();
   return got;
 }
+/* ============================================================ WHAT THE REMAINS REMEMBER
+   `castRaise` has always known the right rule and says so in its own comment: "a corpse is
+   never stronger dead than it was in life; the necromancer's skill only closes the gap." It
+   clamps every stat of a risen body to the stats of the body it came out of, and multiplies
+   the necromancer's contribution by rot on top.
+   The binding circle never inherited any of that, for one structural reason: it does not
+   build from a corpse, it builds from Mortal Remains, and remains are a number in a stash.
+   There was no reference body to clamp to, so there was no ceiling, so magic bought power
+   forever.
+
+   This gives the stash a memory. Remains carry a QUALITY — a running measure of the fighting
+   worth of what was rendered into them — and the circle clamps to that instead of to a
+   specific corpse. Kept as one rolling number rather than by making remains non-fungible,
+   because a stash of individually-tracked bone is a far larger change to the inventory than
+   this problem is worth, and the rolling figure gets the design where it needs to be: the
+   quality of what you feed the circle is the ceiling on what walks out of it.
+
+   Which makes the whole carrion chain matter. Rendering bandits builds an army of bandits.
+   If you want Bone Knights that can stand in front of a garrison, you have to go and kill
+   something worth rendering — and the Death Eater, the Gravecart, the harvest job and the
+   Ossuary all stop being flavour and start being how you arm yourself. */
+const REMAINS_Q_FLOOR = 9;         /* what a picked-over nobody is worth */
+/* AND A TRUE CEILING ON THE CEILING. Without this the rule is still unbounded, just slower:
+   render forty bosses and the quality climbs to boss level and the old numbers come straight
+   back. A plateau that can be farmed off is not a plateau. 46 is around an elite mercenary —
+   the best thing the world fields in numbers — so the diet still matters across the whole
+   range a player will actually see, and stops mattering exactly where it would start to
+   reproduce the problem. */
+const REMAINS_Q_CAP = 46;
+/* NOT a stash key, deliberately. Five separate places walk `Object.keys(stash)` — the stash
+   panel, the trade lists, the compact's tithe — and every one of them would have rendered a
+   quality figure as a phantom item called "remainsQ" that you could try to sell. It is a
+   property OF the pile, not a thing in it, so it lives beside it and is saved on its own. */
+let remainsQual = 0;
+function remainsQ(){ return Math.min(REMAINS_Q_CAP, remainsQual > 0 ? remainsQual : REMAINS_Q_FLOOR); }
+/* Blend a rendered body into the pile. Weighted by how much came off it, so one boss does not
+   permanently launder a mountain of rats — and multiplied by rot, because what the ground has
+   already taken it does not give back, exactly as `castRaise` has it. */
+function rememberRemains(t, n, dk){
+  if(!t || !t.stats) return;
+  const rot = (dk && dk.raise !== undefined) ? dk.raise : 1;
+  const worth = Math.max(REMAINS_Q_FLOOR,
+    Math.max(t.stats.atk || 0, t.stats.def || 0, (t.stats.tough || 0) * 0.7) * rot);
+  const had = Math.max(0, (stash.remains || 0) - n);      /* the pile before this body went in */
+  const q0 = remainsQ();
+  remainsQual = (q0 * had + worth * n) / Math.max(1, had + n);
+}
+/* The ceiling a bound body is cut to. Shaped like `castRaise`'s: a floor the circle can always
+   reach on its own, plus what the remains were worth. */
+function bindCeiling(){
+  const q = remainsQ();
+  return {atk: 10 + q * 1.15, def: 8 + q * 0.85, tough: 16 + q * 1.30};
+}
+/* Cut a body off the circle down to what its materials could support, and give it the
+   SEPARATE bounded number that the damage multiplier reads (see `atkPower`). One place, after
+   the recipe has built it, rather than eleven edited stat lines. */
+function applyBindCeiling(u){
+  if(!u || !u.stats) return;
+  const cap = bindCeiling();
+  u.stats.atk   = Math.min(u.stats.atk,   cap.atk);
+  u.stats.def   = Math.min(u.stats.def,   cap.def);
+  u.stats.tough = Math.min(u.stats.tough, cap.tough);
+  /* THE DAMAGE MULTIPLIER SATURATES. To-hit may keep climbing with the ceiling — a bound body
+     still has to be able to land a blow on plate — but the three-percent-a-point multiplier
+     must not, or the quadratic comes straight back the moment somebody renders a good corpse.
+     Rises fast where it matters and flattens: 24 of a possible 34 by atk 30. */
+  u.dmgAtk = 34 * (1 - Math.exp(-u.stats.atk / 26));
+  if(u.clawDmg) u.clawDmg = Math.min(u.clawDmg, 10 + cap.atk * 0.85);
+}
 function harvestCorpse(t, quiet, by){
   const log = quiet ? (() => {}) : outerLog;
   /* a fresh body gives up more than a picked-over one */
@@ -11187,6 +11267,7 @@ function harvestCorpse(t, quiet, by){
   let n = Math.max(1, dk.remains - (rnd() < 0.4 ? 0 : 1));
   if(by && by.harvestBonus) n += by.harvestBonus;
   addItem('remains', n);
+  rememberRemains(t, n, dk);
   if(dk.k === 'fresh' && rnd() < 0.35) addItem('vflesh', 1);
   const ci = corpses.indexOf(t); if(ci>=0) corpses.splice(ci,1);
   const xi = chars.indexOf(t); if(xi>=0) chars.splice(xi,1);
@@ -12276,6 +12357,8 @@ function craftUndead(kind, caster, circle, shape){
     u.clawDmg = 20 + m; u.blood = 420; u.maxBlood = 420; u.big = 2.0;
     u.speedMult = 0.5; u.taunt = true;
   }
+  /* CUT TO WHAT IT WAS MADE OF, before anything else is hung on it */
+  applyBindCeiling(u);
   u.undead = true; u.crafted = true; u.master = caster; u.hunger = 100;
   u.guardTarget = caster;
   u.bindWeight = ut.weight; u.shortTag = ut.tag + risenN;
@@ -12982,6 +13065,22 @@ function openBinding(circle){
       const sep = document.createElement('div');
       sep.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:1px;margin:10px 0 4px';
       sep.textContent = 'BINDINGS'; body.appendChild(sep);
+    }
+    /* ---------- WHAT THE PILE IS WORTH, SAID OUT LOUD ----------
+       The binding now cuts every body down to the quality of the Mortal Remains it is built
+       from, and a ceiling the player cannot see is not a mechanic, it is an unexplained nerf.
+       So the circle states it: what the pile is worth, what that permits, and — the part that
+       makes it actionable — that rendering better bodies is how the number goes up. */
+    {
+      const q = remainsQ(), cap = bindCeiling();
+      const band = q >= REMAINS_Q_CAP - 1 ? 'the best you will get'
+                 : q > 32 ? 'soldiers' : q > 18 ? 'fighting men' : 'nobodies and vermin';
+      const qr = document.createElement('div');
+      qr.style.cssText = 'color:var(--dust);font-size:11px;margin:2px 0 8px;line-height:1.5';
+      qr.innerHTML = `The remains are worth <b style="color:var(--gold)">${q.toFixed(0)}</b> — ${band}. ` +
+        `Nothing bound from them exceeds atk ${Math.round(cap.atk)} · def ${Math.round(cap.def)} · tough ${Math.round(cap.tough)}.<br>` +
+        `<span style="color:var(--muted)">A body is never stronger than what it was made of. Render better dead and the ceiling rises.</span>`;
+      body.appendChild(qr);
     }
     for(const [k, ut] of Object.entries(UNDEAD_TYPES)){
       const row = document.createElement('div'); row.className = 'trow';
@@ -23613,7 +23712,7 @@ function snapshot(){
     pilgrimDestI: c.pilgrimage ? towns.indexOf(c.pilgrimage.dest) : -1,
   });
   return {
-    v:20, cats, bloodMoon, redoubts:[...redoubts], stash:{...stash}, oreFields, nodeUses:[...nodeUses], phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
+    v:20, cats, bloodMoon, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields, nodeUses:[...nodeUses], phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen},
@@ -23827,6 +23926,7 @@ function restore(d){
   }
   for(const k of Object.keys(stash)) delete stash[k];
   Object.assign(stash, d.stash);
+  remainsQual = (typeof d.remainsQual === 'number' && d.remainsQual > 0) ? d.remainsQual : 0;
   /* A save written before the chest-shape fix can carry NaN gold and NaN stash counts.
      Scrub them AFTER the stash lands, or the poison arrives behind the cleanup. */
   if(!Number.isFinite(cats)){ cats = 0; log('Your ledger was unreadable and has been reset to zero.', 'bad'); }
@@ -23881,6 +23981,9 @@ function restore(d){
     c.clawDmg = s.clawDmg || 0; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.eatsDead = !!s.eatsDead;
     c.structMult = s.structMult || 1; c.bindWeight = s.bindWeight || 1; c.shortTag = s.shortTag || '';
     c.servitor = !!s.servitor; c.minded = !!s.minded; c.crafted = !!s.crafted; c.autoFight = !!s.autoFight;
+    /* re-derived rather than stored: it is a pure function of the atk that came back with the
+       body, so storing it would only give it a way to disagree with itself */
+    if(c.crafted && c.stats) c.dmgAtk = 34 * (1 - Math.exp(-c.stats.atk / 26));
     c.cart = !!s.cart; c.stitcher = !!s.stitcher; c.noFight = !!s.noFight;
     /* `whisp` was a typo and is now `wisp`; a save written under the old spelling still has a
        body in it that thinks it is a lamp, and dropping the field would leave it a mute beast
