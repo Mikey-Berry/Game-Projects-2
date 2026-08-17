@@ -416,3 +416,18 @@ the truth was 45%.
   receiving world the instant the restore reports done, and compare PLACES rather than
   centimetres. When a probe samples something that is allowed to move, either stop it moving or
   give the comparison a tolerance the design actually promises.
+- **A feature can be fully built and still have no reason to exist.** The Watchtower had a
+  footprint, a walled ground floor with a doorway, an upper deck, a stair and a parapet — and
+  stamped the same 11 tiles of sight as a shack, so building one opened SEVEN more tiles than
+  a shed on the same ground. Nothing was broken; the number was just never given. When a report
+  says a feature "does not work", check whether the feature does anything *different* from the
+  cheapest thing next to it before looking for a fault.
+- **A bonus for height that reads the terrain gives nothing for architecture.** The sight bonus
+  came off `heightAt`, which is the ground, so a lookout on a tower deck saw exactly what they
+  saw in the mud beside it — 5750 tiles either way. Anything keyed to elevation needs to ask
+  `c.floor` as well, or every storey the player builds is decoration.
+- **A cap expressed relative to the thing it caps is not a cap.** The shaping ceiling was
+  `shapeBudget(caster) + 4`, so it grew with exactly the stat it was meant to bound: an archlich
+  reached 32 against a theoretical maximum of 30 and could max every axis at once. If a ceiling
+  is supposed to force a trade-off, it has to be a constant, and the progression has to be moved
+  to something that is not the ceiling — here, what the same shape *costs*.
