@@ -276,6 +276,52 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         `(knight atk ${rows[0].line.split(' ')[1]} → ${late.line.split(' ')[1]})`;
     }
 
+    /* ---------- THE ARCHER BRINGS ITS OWN BOW, AND ITS DAMAGE IS A CONSTANT ----------
+       The Marrow Archer used to cost a whole crafted Hunting Bow — the one recipe on the bench
+       that reached outside the dark economy for a component. It grows one now. The important
+       half is not the logistics though: this is the best-balanced fighting body on the bench
+       precisely BECAUSE its damage comes off a weapon constant instead of the necromancer's
+       magic, so a lich's archer hits exactly as hard as a novice's. Tie that number to `m` and
+       you have rebuilt the Colossus with a longer reach. */
+    {
+      wipe();
+      feedOn(40, 40);                       /* the best diet, so nothing else is the limit */
+      for (const k of Object.keys(stash)) if (k === 'w_bow') stash[k] = 0;
+      stash.w_bow = 0;                      /* not one bow anywhere in the world */
+      const dmgs = [];
+      let a0 = null;
+      for (const mag of [20, 50, 100, 150]) {
+        const n = makeNec(mag, false);
+        const before = chars.length;
+        craftUndead('archer', n, { x: n.x, y: n.y }, null);
+        const a = chars.length > before ? chars[chars.length - 1] : null;
+        if (!a) { dmgs.push(null); continue; }
+        a0 = a0 || a;
+        dmgs.push(atkPower(a, ITEMS[a.weapon]));
+      }
+      R.archerNeedsNoBowyer = (a0 && (stash.w_bow || 0) === 0 && a0.weapon === 'w_sinew')
+        ? `it binds with no bow in the world and stands up holding ${ITEMS[a0.weapon].name}`
+        : `!! THE ARCHER STILL NEEDS A CRAFTED BOW (weapon ${a0 && a0.weapon})`;
+      const lo = Math.min(...dmgs.filter(Boolean)), hi = Math.max(...dmgs.filter(Boolean));
+      R.archerDamageIsFlat = (hi / lo) < 1.25
+        ? `and its damage is a constant across the whole magic ladder — ${lo.toFixed(1)} to ${hi.toFixed(1)}`
+        : `!! THE GROWN BOW SCALES WITH MAGIC (${lo.toFixed(1)} -> ${hi.toFixed(1)}) — IT IS A COLOSSUS WITH RANGE`;
+      /* and it must still be an ARCHER to the animator, not a crossbowman */
+      const wI = a0 && ITEMS[a0.weapon];
+      R.archerDrawsABow = (wI && wI.range && !wI.lance && wI.bow && weaponGeo(a0.weapon))
+        ? 'it reads as a bow to the animator and has a mesh of its own'
+        : '!! THE GROWN BOW IS NOT RECOGNISED AS A BOW — IT WILL USE THE CROSSBOW CROUCH';
+      /* grown, so there is nothing to strip off the body */
+      if (a0) {
+        a0.state = 'dead'; a0.deadAt = day; corpses.push(a0);
+        const had = stash.w_sinew || 0;
+        lootCorpse(a0, true, null);
+        R.grownBowIsNotLoot = (stash.w_sinew || 0) === had
+          ? 'and it cannot be looted off the corpse — it was part of the body'
+          : '!! A GROWN BOW DROPS AS KIT, WHICH IS A FREE BOW FARM';
+      }
+    }
+
     /* ---------- UPKEEP: THE CIRCLE PAYS, THE BATTLEFIELD DOES NOT ---------- */
     wipe();
     if (typeof hostUpkeep !== 'function') {

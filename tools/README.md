@@ -323,3 +323,10 @@ the truth was 45%.
   When auditing a scaling system, follow every stat it touches all the way to where the damage
   is finally computed; reading the stat line and stopping is how an earlier pass called this
   curve "linear".
+- **Behaviour keyed to an item's NAME breaks the second item of that kind.** The archer draw —
+  bow arm locked, string hand back to the jaw — was gated on
+  `(wI.tierOf || c.weapon) === 'w_bow'`. Adding a second bow silently dropped it into the `gun`
+  branch and gave it the braced crossbow crouch, which is a different weapon entirely, with
+  nothing thrown and nothing logged. Gate on a property (`wI.bow`), not on a key, and when
+  adding a variant of an existing thing, grep for its key before assuming the systems around it
+  are generic.
