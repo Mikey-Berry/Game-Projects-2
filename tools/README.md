@@ -300,3 +300,18 @@ the truth was 45%.
   relative to the old one — the fix here was to push the seam out past the wall, where a pit
   belongs anyway, which ended up leaving MORE iron in the world than before (80 vein tiles to
   114) because the seam now lands on ground that is not swept.
+- **While a probe is `await`ing, the game is still running in real time.** `wanderers.js` drove
+  its own walk with explicit `physics()` calls and looked deterministic, but every step was
+  separated by an `await frame()` — and how far the world moves across one of those depends
+  entirely on how busy the machine is. It passed three times out of three run alone and failed
+  twice inside `npm run check`, because under load a second scholar drifted into the click
+  radius between the order and the arrival and the panel opened on the wrong person. That
+  signature — green alone, red in the suite, same build both times — is a wall-clock dependency
+  and never a real bug. Set `paused = true` for any probe that drives the sim itself; it costs
+  such a probe nothing and removes the whole class.
+- **A balance number belongs in the output, not always in the pass/fail.** `host.js` prints the
+  host-versus-garrison exchange rate as `WATCH_` lines rather than asserting on it, because the
+  change it was written alongside (upkeep) is an economy lever and was never going to move that
+  number. Failing the suite on a value the current work is not trying to change would make the
+  suite lie about what is broken; leaving it unmeasured would lose it. Print it, name it a
+  watch, and promote it to an assertion when something is actually aimed at it.

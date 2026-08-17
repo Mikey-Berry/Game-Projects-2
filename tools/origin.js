@@ -224,7 +224,54 @@ const KEY = process.argv[3] || 'lyonart';
       tellScholarOfTheCairn(sc);
     }
     R.theLedger = search.told ? 'a scholar names the field that went quiet last' : 'NO LEDGER, NO SECOND LEG';
+
+    /* ---------- CAN IT ACTUALLY BE FOUND? ----------
+       Everything above teleports the player onto the exact tile, which is why this harness
+       passed for months while the quest was, in play, unfinishable: "I've had my risen scour
+       every inch and CANNOT find her." The mechanism was never broken. The DIRECTIONS were.
+       `placeHint` only names a landmark when a town is within 70 tiles of the target, and the
+       fields the exiled were put out at are deliberately further out than that — so for
+       exactly the destinations that need directing to, it fell through to "east of here", and
+       "east" in a world 1440 tiles across is not a direction, it is a quarter of the map.
+       Worse, the bearing was baked into the journal line at the moment the scholar spoke, off
+       wherever the player happened to be standing, so it was wrong the moment they walked. */
+    {
+      const th = threads.find(t => t.key === 'lyre');
+      R.theStepIsPlaced = th && th.mark && Math.abs(th.mark.x - site2.x) < 1 && Math.abs(th.mark.y - site2.y) < 1
+        ? 'the journal step carries the field\'s coordinates, not a frozen sentence'
+        : '!! THE LYRE STEP CARRIES NO PLACE — THE BEARING IS BAKED IN AND GOES STALE';
+      if (th && th.mark) {
+        /* the live leg has to move when the player does, and has to name a fixed anchor */
+        him.x = 60; him.y = 60;
+        const a = wayTo(th.mark.x, th.mark.y);
+        him.x = W - 60; him.y = H - 60;
+        const b2 = wayTo(th.mark.x, th.mark.y);
+        R.bearingIsLive = a !== b2
+          ? 'and the bearing is worked out fresh from where you are standing'
+          : '!! THE BEARING READS THE SAME FROM OPPOSITE CORNERS OF THE MAP';
+        R.bearingNamesAPlace = towns.some(t => a.includes(t.name))
+          ? `and it names a town to steer by — "${a}"`
+          : `!! THE DIRECTIONS NAME NO PLACE AT ALL: "${a}"`;
+      }
+      /* And the mark has to be WRITTEN to a save, or reloading loses the directions. Read the
+         snapshot object rather than restoring from it: `restore` rebuilds `chars`, which
+         detaches every reference this harness is still holding — the first version did the
+         full round trip here and knocked over the four assertions after it, none of which had
+         anything to do with saving. The read side is already covered by the reload check at
+         the end of this file. */
+      const snapT = (snapshot().threads || []).find(t => t.key === 'lyre');
+      R.placeRidesTheSave = snapT && snapT.mark && Math.abs(snapT.mark.x - site2.x) < 1
+        ? 'and the save carries it' : '!! THE PLACE IS NOT WRITTEN TO THE SAVE';
+    }
+
+    /* ARRIVING AT THE FIELD IS ARRIVING. A corpse-field carries r:12; the old test was 14, a
+       two-tile skin around a circle nobody can see. Walk to the edge, not the centre pixel. */
     if (site2 && him) {
+      him.x = site2.x + 18; him.y = site2.y;
+      for (let i = 0; i < 40 && !search.met; i++) lyreTick(4);
+      R.theEdgeCounts = search.met
+        ? 'standing at the edge of the field finds her, not just the centre tile'
+        : '!! WALKING TO WITHIN 18 TILES OF THE FIELD FINDS NOTHING';
       him.x = site2.x; him.y = site2.y;
       for (let i = 0; i < 40 && !search.met; i++) lyreTick(4);
     }

@@ -3544,6 +3544,23 @@ function questProgress(q){
 /* Where the thing is FROM WHERE YOU ARE NOW, not from where the scholar was standing when
    they said it. A bearing taken at the counter is worthless three days east of the counter,
    and it is the row a player re-reads, not the sentence. */
+/* ---------- HOW YOU GET THERE, SAID PROPERLY ----------
+   `placeHint` names a landmark only if a town is within 70 tiles of the target, and the places
+   the exiled ended up are deliberately further out than that — so for exactly the destinations
+   that need directing to, it fell through to "east of here, a long way", which is what got
+   reported as a quest that cannot be finished in a world 1440 tiles across.
+   Two legs, always. A LIVE one off the player, which is the one that changes as you walk, and
+   a FIXED one off the nearest town, which is the one you can actually plan a route with —
+   "northeast of GREENREST" is a thing you can go and do. The town is named however far away it
+   is, because a distant anchor still beats no anchor. */
+function wayTo(x, y){
+  const me0 = player().find(c => c.state !== 'dead') || player()[0];
+  const t = towns.filter(t2 => t2.stock).sort((a, b) => dist(a.x,a.y,x,y) - dist(b.x,b.y,x,y))[0];
+  const legs = [];
+  if(me0) legs.push(`${compassFrom(me0.x, me0.y, x, y)} of you, ${farWord(dist(me0.x, me0.y, x, y))}`);
+  if(t)   legs.push(`${compassFrom(t.x, t.y, x, y)} of ${t.name}`);
+  return legs.join(' — ') || 'somewhere out in the waste';
+}
 function liveHint(q){
   if(q.x === undefined) return '';
   const me0 = player()[0];
@@ -4133,7 +4150,13 @@ function threadOf(key){ return threads.find(t => t.key === key) || null; }
 function threadSet(key, title, step, opts){
   const o = opts || {};
   let t = threadOf(key);
-  if(!t){ t = {key, title, step:'', done:false, at:day, hint:''}; threads.push(t); }
+  if(!t){ t = {key, title, step:'', done:false, at:day, hint:'', mark:null}; threads.push(t); }
+  /* WHERE, RECOMPUTED WHEN IT IS READ. A step that says "east of here" was written once, at
+     the counter, from wherever you happened to be standing — and it is worthless three days
+     east of that counter. A thread that names a place carries the coordinates instead, and
+     the journal works the bearing out fresh every time it draws. `null` clears it, so a step
+     that is no longer about a place does not keep pointing at one. */
+  if(opts && 'mark' in opts) t.mark = opts.mark;
   t.title = title;
   t.hint = o.hint || '';
   if(t.step === step) return t;         /* the same step restated is not news */
@@ -4266,6 +4289,13 @@ function openChronicles(){
         m.style.cssText = `font-size:12px;color:${t.done ? 'var(--dust)' : 'var(--bone)'};margin-top:2px`;
         m.textContent = t.step;
         row.appendChild(h); row.appendChild(m);
+        /* the live leg: worked out now, from where you are now */
+        if(t.mark && !t.done){
+          const w = document.createElement('div');
+          w.style.cssText = 'font-size:11px;color:var(--gold);margin-top:2px';
+          w.textContent = wayTo(t.mark.x, t.mark.y);
+          row.appendChild(w);
+        }
         if(t.hint && !t.done){
           const q = document.createElement('div');
           q.style.cssText = 'font-size:11px;color:var(--dust);margin-top:2px';
@@ -11189,6 +11219,57 @@ function concLock(c){ return (c.concentrating && c.concentrating.lock) || 0; }
 function bindStrain(c){
   return c ? Math.min(0.62, (c._bindW || 0) * 0.05) : 0;
 }
+/* ============================================================ WHAT A HOST COSTS TO KEEP
+   Every pressure on necromancy was a cost of BUILDING a host — mana and materials at the
+   circle, `bindStrain` on the caster's pool, the host's noise on the Fracture clock. None of
+   them was a cost of HAVING one. So a host was paid for once and was free forever, and by the
+   time a necromancer reached magic 100 seven bound bodies erased a twenty-three-strong town
+   garrison without a single loss. Measured, in tools/host.js, not guessed.
+
+   Rent is the answer that changes the shape rather than the size: it gives the corpse economy
+   a SINK, which is what turns the harvest job, the Gravecart and the Death Eater from flavour
+   into infrastructure, and it makes an over-large host self-correcting — you cannot feed
+   forty, so you keep twenty good ones.
+
+   ONLY THE CIRCLE PAYS. A body bound at the binding circle is a made thing held together by
+   an ongoing act, and it eats Mortal Remains to stay held. A body raised off a battlefield
+   corpse is not: it was already a body, the rite only stood it up, and it costs nothing. That
+   split is deliberate and it is what keeps this a MIDGAME cost — an early necromancer working
+   from the dead of a bandit camp pays nothing at all, and only the bench charges rent. */
+const UPKEEP_PER_WEIGHT = 0.25;      /* remains per day, per point of bind weight */
+function upkeepBodies(){
+  return chars.filter(c => c.faction === 'player' && c.undead && c.crafted && !c.lich && c.state !== 'dead');
+}
+function upkeepDue(){
+  return upkeepBodies().reduce((s, c) => s + (c.bindWeight || 1), 0) * UPKEEP_PER_WEIGHT;
+}
+function hostUpkeep(){
+  const due = upkeepDue();
+  if(due <= 0) return;
+  const have = stash.remains || 0;
+  if(have >= due){
+    stash.remains = have - due;
+    /* said only when it is worth knowing about — a big host is a running bill */
+    if(due >= 4 && rnd() < 0.34)
+      log(`The host takes ${due.toFixed(1)} Mortal Remains to hold for another day.`, '');
+    return;
+  }
+  /* SHORT. Spend what there is, and the binding gives somewhere. One body a day, cheapest
+     first, so a shortfall is a warning you can act on rather than a host that evaporates —
+     and never a lieutenant, who is a name and an investment rather than a number. */
+  stash.remains = 0;
+  const pool = upkeepBodies().filter(c => !c.lieutenant)
+    .sort((a, b) => (a.bindWeight || 1) - (b.bindWeight || 1));
+  if(!pool.length){
+    log('There are no Mortal Remains left to hold the host, and nothing left that can be let go.', 'bad');
+    return;
+  }
+  const c = pool[0];
+  log(`There are no Mortal Remains left. ${c.name} comes apart where it stands.`, 'bad');
+  addSpecks(c.x, c.y, '#6a5a4a', 18);
+  addFloat(c.x, c.y, 'UNBOUND', '#a978ff');
+  kill(c, null);
+}
 /* recomputed on the necro tick rather than per-hit — risenLoad walks the roster */
 /* THE NOISE OF A HOST. Every shaped body carries a `noise`; the sum of it is heard once a
    second. This is the loop that ties the necromancy bench to the Fracture clock — build big
@@ -13521,6 +13602,7 @@ function update(dt){
         chars.push(kid);
       }
     }
+    hostUpkeep();
     /* ---- every shelf is stocked by someone's hands ---- */
     for(const t of towns){
       if(!t.stock) continue;
@@ -23573,7 +23655,7 @@ function snapshot(){
     chars: chars.filter(c => !c.phantom).map(sChar),
     corpseIds: corpses.map(c=>c.id),
     cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
-    threads: threads.map(t => ({key:t.key, title:t.title, step:t.step, hint:t.hint, done:t.done, at:t.at})),
+    threads: threads.map(t => ({key:t.key, title:t.title, step:t.step, hint:t.hint, done:t.done, at:t.at, mark:t.mark || null})),
     cairnIds: cairns.filter(c => c && c.state !== 'dead').map(c => c.id),
     closing: {on: closing.on, told: closing.told, known: closing.known},
     search: {on: search.on, asked: {...search.asked}, found: search.found,
@@ -23606,7 +23688,7 @@ function restore(d){
      save is how you lose track of what you were doing. Restored wholesale, not rebuilt from
      the quest flags — a thread's wording is written at the moment it is set. */
   threads.length = 0;
-  if(d.threads) for(const t of d.threads) threads.push({key:t.key, title:t.title, step:t.step, hint:t.hint || '', done:!!t.done, at:t.at || 1});
+  if(d.threads) for(const t of d.threads) threads.push({key:t.key, title:t.title, step:t.step, hint:t.hint || '', done:!!t.done, at:t.at || 1, mark:t.mark || null});
   if(d.closing){ closing.on = !!d.closing.on; closing.told = !!d.closing.told; closing.known = !!d.closing.known; }
   else { closing.on = fractureStage >= 1; closing.told = false; closing.known = false; }
   if(d.search){
@@ -24281,8 +24363,9 @@ function askAfterLyre(t, L){
     say(L || t.leader || {name:t.name}, 'Nobody walks out that way to live.');
     const from = player()[0] || {x: t.x, y: t.y};
     threadSet('lyre', 'The search for Lyre',
-      `Three halls agree on where she was put out. Walk to the corpse-field — ${placeHint(from.x, from.y, site.x, site.y)}.`,
-      {hint: 'It is a long way past the last fence. Take water and somebody who can fight.'});
+      'Three halls agree on where she was put out. Walk to the corpse-field.',
+      {hint: 'It is a long way past the last fence. Take water and somebody who can fight.',
+       mark: {x: site.x, y: site.y}});
   } else {
     const said = [
       '"There was a woman. Southern accent, no kit, would not say who sent her. She did not stay."',
@@ -24305,7 +24388,7 @@ function lyreCairn(){
   if(!search.on || !search.found || search.cairn || search.met) return;
   const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
   const site = sites[search.siteId]; if(!site) return;
-  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 12);
+  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 20);
   if(!near) return;
   search.cairn = true;
   log('There is a cairn here, built by somebody who had nothing to build it with but what was lying about. It is not a grave — it is a marker, and it has been added to.', 'good');
@@ -24315,7 +24398,8 @@ function lyreCairn(){
   say(near, 'She was here. She was here a long time, and she left on her own feet.');
   threadSet('lyre', 'The search for Lyre',
     'She lived here for years and moved on. Find somebody who tracks where the marrow stops coming from — a wandering scholar buys it by the sackful and knows every field in the waste.',
-    {hint: 'Right-click any scholar out in the world. They will be interested in a field that has gone quiet.'});
+    {hint: 'Right-click any scholar out in the world. They will be interested in a field that has gone quiet.',
+     mark: null});
 }
 /* the scholar names the field she is in now. It costs nothing but finding one. */
 function tellScholarOfTheCairn(sc){
@@ -24329,8 +24413,9 @@ function tellScholarOfTheCairn(sc){
   worldEvent('lyre', site2.x, site2.y,
     'A scholar has been keeping a ledger of the fields that stopped giving up marrow. They go quiet in order, outward, as if something is walking.');
   threadSet('lyre', 'The search for Lyre',
-    `The scholar's ledger says the fields go quiet in order, and names the newest — ${placeHint(from.x, from.y, site2.x, site2.y)}. She is still working. Go and stand in it.`,
-    {hint: 'She is not a marker that turns green. She is a person, and she is busy.'});
+    "The scholar's ledger says the fields go quiet in order, and names the newest. She is still working. Go and stand in it.",
+    {hint: 'She is not a marker that turns green. She is a person, and she is busy.',
+     mark: {x: site2.x, y: site2.y}});
   return true;
 }
 /* She is not a marker that turns green. She is a person standing in a corpse-field who has
@@ -24347,7 +24432,11 @@ function lyreTick(dt){
   const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
   const site = sites[search.siteId2 >= 0 ? search.siteId2 : search.siteId];
   if(!site) return;
-  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 14);
+  /* WIDER THAN THE SITE. A corpse-field carries r:12 and the old arrival test was 14, which
+     is a two-tile skin around a circle nobody can see, in a world 1440 tiles across. Walking
+     THROUGH the field and missing her by three tiles is how this reads as "she does not
+     exist". 22 means arriving at the field is arriving. */
+  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 22);
   if(!near) return;
   search.met = true;
   const p2 = findOpenNear(site.x + ri(-3, 3), site.y + ri(-3, 3), 6) || {x: site.x, y: site.y};
