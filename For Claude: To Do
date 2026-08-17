@@ -17,6 +17,19 @@ before this.
 [OPEN] The “command” system is clunky and also really hard to see right now. Its submenu tends to collapse outside of view. Need to work on the UI for it.
     NOT STARTED.
 
+[OPEN] Combat or dangerous events that may need manual intervention are hard to spot right now. Perhaps in the UI, characters under attack/targeted by an enemy can flash red (subtly) to alert the player that there’s a fight or something happening.
+    NOT STARTED. The place for it is `makePort` inside `refreshSquadBar` — it already
+    builds one div per body and already varies the class on state (`.sel`, `.down`), so a
+    `.threat` class alongside those is the whole of the DOM work. What it should key off is
+    the harder question: `c.target` is who THIS body is fighting, which is not the same as
+    being in danger. The field that means "something is swinging at me" is somebody else's
+    `target`, so this wants either a reverse scan or a cheap `threatT` stamped on the
+    defender when a blow lands (`applyDamage` already touches the defender every hit and is
+    the natural place). Prefer the stamp — a reverse scan over `chars` on every squad-bar
+    rebuild is the kind of thing that gets expensive with forty risen in the bar.
+    Note the bar is rebuilt on events, not per frame, so a pulse wants CSS animation rather
+    than a JS loop, and `prefers-reduced-motion` should turn it into a steady border.
+
 [OPEN] A “watchtower” building, based on the multi-story system we have in place. Ideally it also allows for much further vision, like mountains but even more expanded
     NOT STARTED. Note for whoever takes it: vision is stamped by
     `stampVision(x, y, r)` in `computeVision`, and pBuilds already stamp 11. A
@@ -28,10 +41,54 @@ before this.
 [OPEN] The melee pathing system seems to have gone a bit janky. Everyone tries to beeline towards the enemy and gets caught on allies. They should attempt to flank around where possible. (Could be an unintended side effect of the “walling” effect we built to prevent enemies from beelining through allies to attack mages etc.)
     NOT STARTED.
 
+[OPEN] Kiting should slow down the ranged attacker. It doesn’t make sense that someone could run backwards at full speed while still firing projectiles. And catching a ranged attacker in melee should somewhat lock them down from fleeing again. (Somewhat — they should reasonably be able to escape if, say, an ally also engages that enemy.)
+    NOT STARTED, and start by looking at who is actually doing the kiting, because the
+    AUTO-FIGHT path already refuses to do it. The ranged branch (~line 8283) reads:
+    `if(d > w.range){ travel(...); return; }` with the comment "no firing on the move", then
+    stands still and opens a `c.windup` of `w.draw` seconds. So an AI archer closes OR shoots,
+    never both. Whatever is kiting is therefore doing it around this branch — a player move
+    order, or `attackMove` — so the fix probably belongs where a move order interacts with
+    `windup`, not in this branch. Confirm which before writing anything.
+    The same branch already half-answers the second half: `if(d < 1.7){ c.blocking = true;
+    return; }` — "too close: guard, don't shoot" — so a body in melee ALREADY cannot fire. What
+    is missing is that nothing stops it walking away. A disengage cost wants to live near
+    `oppCd` (the opportunity-attack cooldown already on every body) rather than as a new
+    system, and the "unless an ally is also engaged" clause has a ready-made counter: the
+    engagement loop at ~line 8300 already counts bodies within 1.9 tiles of a target for the
+    Kenshi side-cap. Read that count instead of writing a second one.
+
 [OPEN] Skeleton versions of Chimeras would be nice to have so that they don’t take the default human skeleton after being raised up. (Especially for lieutenants.)
     NOT STARTED. Note: the rig already branches on `kin` for risen bodies
     (`kinLimb` in buildCharMesh) and `kin` now rides the save, so a chimera kin is a
     new branch there plus a key in colorKeyOf.
+    SEE ALSO the raise-mechanic rework below — this item is one third of it, and the two
+    should probably be taken in one session since both are `kin` work on the same rig.
+
+[OPEN] Rework the “raise undead” mechanic for corpses in the world, in three parts.
+       (a) Watchers should not be raisable at all — their eldritch proportions wouldn’t allow
+       for a clean bone-raised undead. They may only be harvested for Mortal Remains.
+       (b) Same principle for automatons and such, except harvesting those should give
+       metal/ore/ingots rather than remains.
+       (c) What is raised should LOOK like what it was raised from. Chimeras want the custom
+       skeletons above; fauna want variations on their own form — a dust hound or dust elk
+       should come back as something like a gravehound, not as a human skeleton.
+    NOT STARTED. Each part lands in a different place, and none of them is large:
+    (a) A Watcher is `c.gauntKind` (the GAUNTS table — gaunt, stalker, maw, shrike, choir,
+    larder — plus the brood and the sixfold). `raiseDead` has no exclusion test for it today,
+    so the refusal is one clause beside the existing ones, and `harvestCorpse` already turns
+    a body into remains with no changes needed. Note `nightborn` is already on ordinary
+    gaunts (the dawn unmakes them), so check how long one of these is even available to raise
+    before spending effort on the message.
+    (b) Automatons are `c.construct` — but so are seamless-knit risen (shape knit 5) and the
+    Sigil-Bound, so `construct` alone is the WRONG test and will catch your own bodies. The
+    Redoubt ones carry `c.redoubtId`; the town Bone Golems carry `c.golem`. Pick a positive
+    flag rather than the material one. The harvest yield wants a per-body drop table, which
+    `dropItems` already is — that may be the whole of it.
+    (c) This is the same `kin` branch as the chimera item. Note `kin` already exists for
+    'hound' (the Gravehound uses it), so a raised dust hound has somewhere to land TODAY;
+    'elk'/'grazer' exist as beast rigs but share a colour key with the hound, which is the
+    known collision behind the gravehound/redoubt texture item further down. Fix that key
+    before adding more kins to it or the new ones will collide too.
 
 [OPEN] The Last Rite ends very quickly. Like, the enemies barely have time to spawn and move toward the caster before it’s over. It should be a bit more dramatic and lengthened.
     NOT STARTED. `riteTick` is the Last Rite's own timer — do not confuse it
@@ -96,6 +153,29 @@ before this.
     housekeeping the difficulty dial. All of them ride the save; old saves with a
     single beast load fine and start growing a population from there.
 
+[OPEN] Malathuun’s Curse: a world event, like the blood moon. A sundered site… stands up.
+       (A carrion beast spawns somewhere in the world, not fully grown but not nascent either.)
+    NOT STARTED, and almost all of the machinery is already sitting there waiting for it.
+    `spawnCairnBeast(force)` ALREADY takes a force flag that skips the CAIRN_MAX check, and it
+    ALREADY prefers to rise at a `corpseSites` entry — which is to say, at a sundered site.
+    So the spawn half of this is one call.
+    "Not fully grown but not nascent either" is a solved problem too: `c.ate` is the single
+    number the whole stat line is computed from, and `cairnGrow(c)` recomputes big, blood,
+    claw, tough, atk, pace and noise from it. Set `ate` to a mid value before calling
+    `cairnGrow` and you get exactly the half-grown thing you are describing, with no new stats
+    and nothing extra to save — the comment on `cairnGrow` says a save only has to store `ate`.
+    The EVENT half is the part that does not exist. `worldEvent(kind, x, y, text)` is the entry
+    point and there is already a `cairn:'bad'` tone registered for it. What a new kind needs is
+    an entry in DREAD_WEIGHT (bloodmoon sits at 6, sundered at 10 — this probably wants to be
+    heavier than both) and a line in each DREAD_TRAIT row, or leaders will have no opinion
+    about it. A pious seat should care a great deal.
+    Two things worth deciding before building: whether the site is CONSUMED (a sundered site
+    that stood up should probably stop being lootable, and the loot-visibility item below is
+    already about those sites), and whether the curse fires off the Fracture clock like the
+    blood moon does or off something the player did. The second is more interesting — the
+    Cairn Beast population already keys off unclaimed corpses, so the player's own
+    housekeeping is an established dial for this creature and the curse could read the same one.
+
 [DONE] On a similar note, I RARELY see packs of dust hounds anymore. I guess native fauna is getting wiped out by something? Not sure.
     Bandits, slavers and hounds shared ONE ceiling of 22. Outlaws hold
     ground — they sit in camps, nothing hunts them, they accumulate — while a wild
@@ -159,8 +239,69 @@ before this.
     what already exists (squad groups and `grp`, the LIVING/RISEN split, stances,
     jobs) rather than being answered off the top of the head between code changes.
 
-[OPEN] Binding Circle undead are just way too strong. They trivialize everything when summoned by a high level necromancer. We need to figure out how to balance them. Again, give me some IDEAS here and not just an immediate fix. Let’s brainstorm this.
-    BRAINSTORM OWED — deliberately not started, same reason.
+[LOOKED] Binding Circle undead are just way too strong. They trivialize everything when summoned by a high level necromancer. We need to figure out how to balance them. Again, give me some IDEAS here and not just an immediate fix. Let’s brainstorm this.
+    BRAINSTORM DELIVERED, nothing built. Measured by binding one of each type through the
+    real `craftUndead` at magic 4/20/40/70/100/150 and pricing the exchange against real
+    enemies through the real hitChance/atkPower/mitigate. Do not re-derive this:
+
+    THE CAUSE IS TWO LINES THAT WERE NEVER MEANT TO MEET. `craftUndead` sets `m = magic*1.5`
+    and scales BOTH `clawDmg` and `atk` on it. Four thousand lines away, the last multiplier
+    in `atkPower` is `d *= 1 + c.stats.atk * 0.03`. So `atk` is not only a to-hit stat, it is
+    a 3%-per-point DAMAGE multiplier — and the circle scales it alongside the claw. Two linear
+    terms multiplied: damage is QUADRATIC in the necromancer's magic, against a world whose
+    numbers are fixed constants.
+    Measured damage per blow, unshaped, magic 4 -> 150:
+      Gravehound      10 ->  545        Marrow Archer   16 -> 82
+      Bone Knight     27 ->  984        Skeleton Mage    8 -> 17
+      Ashen Colossus  53 -> 2101
+    For scale, the hardest human in the game (Grand Marshal Vey) is 110 and never moves.
+    A magic-100 Colossus kills a Bastion Paladin in 0.1 swings and needs 114 to die: a 926x
+    edge, 1914x at lich cap. The note in the source blaming the shaping ceiling for the four
+    colossi that solo'd the second Fracture is WRONG — an unshaped Colossus already does this.
+
+    SECOND MECHANISM, and the one that makes it feel invulnerable rather than merely strong:
+    bound `def` also scales on `m`, and `hitChance` clamps to [0.15, 0.94]. Past about magic 70
+    every attacker in the world — boss or bandit — is floored at 0.15 against your dogs.
+
+    THREE OF THE FOUR SCALING STATS ARE ALREADY DEAD WEIGHT. Toughness mitigation is
+    `min(0.45, tough*0.006)`, maxed at tough 75; a Colossus reads 229. To-hit is dead past
+    roughly enemy def + 20. Only the damage multiplier keeps paying, forever, which is exactly
+    the wrong survivor. The panel is reporting numbers that do nothing.
+
+    THE FIX TEMPLATE IS ALREADY IN THE FILE. `raiseDead` runs nearly the same arithmetic and
+    then clamps it: `atk: Math.min(4 + m*0.7, bs.atk)`, with the comment "A corpse is never
+    stronger dead than it was in life; the necromancer's skill only closes the gap." The circle
+    never inherited that clamp because it builds from Mortal Remains rather than from a named
+    body. Giving Remains a reference stat line to clamp against is the faithful fix and makes
+    the whole carrion chain (Death Eater, Gravecart, Charnel, Ossuary) matter.
+    DO NOT nerf flatly: at magic 4-20 these same units are genuinely WEAK (a Gravehound loses
+    to a Paladin ten to one). What is missing is a plateau, not a smaller number.
+    AND DO NOT TOUCH the seven utility bindings — Gravecart, Stitch-Hand, Death Eater,
+    Soulbound, Wisp, Servitor, and the Mage's spell damage are all FLAT across the whole magic
+    ladder and correctly priced. They are the part of the roster that works.
+
+[OPEN] For the shaping “sliders” in the binding circle (size, mind, etc.) — those should have a set ceiling independent of caster skill. A lich is capable of creating godly undead with almost maxed shaping across the board. Keep the ceiling at the base level so these represent a genuine tradeoff.
+    NOT STARTED, and the arithmetic says you are right by a wider margin than it looks.
+    `shapeCeiling(caster)` is `shapeBudget(caster) + 4`, and `shapeBudget` is
+    `12 + floor(magic/12) + 2 (necromancy) + 2 (ossuary_rites)`. Measured:
+      magic   4 -> budget 16, ceiling 20
+      magic 100 -> budget 24, ceiling 28
+      magic 150 (lich) -> budget 28, ceiling 32
+    SHAPE_AXES is six axes and SHAPE_MAX is 5, so maxing EVERY axis costs 30. A lich's ceiling
+    is 32. It can therefore max all six with two points to spare, which is precisely the "no
+    tradeoff at all" you are describing — and a living necromancer at the skill cap is at 28
+    of 30, which is barely better. The tradeoff only exists in the early game.
+    The change is small: hold `shapeCeiling` at a constant (SHAPE_BUDGET_BASE + 4 = 16 is the
+    obvious candidate, and 16 against a 30-point board is a real choice) and leave
+    `shapeBudget` scaling as it is, so skill keeps buying you the same shape more CHEAPLY
+    without buying you a better one. That preserves what the budget is for and kills what the
+    ceiling has become. Both are enforced in two places — the panel disables the `+` button
+    and `craftUndead` re-checks — so both want the same constant.
+    WHILE YOU ARE IN THERE: the shape initialiser and the EVEN button both write
+    `{mass, force, haste, knit, plate, quiet, will}`. `quiet` and `will` were merged into MIND
+    and are no longer in SHAPE_AXES, so those two keys are written, saved, and never read —
+    and `mind` is absent from both literals, arriving only via the defaulting loop underneath.
+    Harmless today, confusing later.
 
 [DONE] No materials should spawn INSIDE the towns — distracting, and makes it tougher to maneuver.
     Decor was cleared to a flat 15 tiles around a town centre while the walls run to 27, so
@@ -188,3 +329,56 @@ before this.
     a cap of 14 uses and a slow regrow, so a place can be worked out. There are ~43,000 boulders
     in the world and the nearest one to a town is 17-31 tiles, so stone is plentiful without
     being underfoot.
+
+===============================================================================
+NEW ENEMIES FOR THE LATER GAME.  Specifications, not tasks — nothing here has
+been started.  Both are Watcher-kin and both want the GAUNTS table, which is the
+one place a new hostile body is cheap to add: a row of stats plus a `claw`, a
+`big` and barks, and `spawnGaunt(kind, x, y)` does the rest.
+===============================================================================
+
+[OPEN] Eyes of Ainzopha’ar: swarms of floating eyes. Their gaze lights heretics aflame with holy fire. (Ranged enemy, incorporates destruction alchemy.)
+    NOT STARTED. The name is already load-bearing lore — AINZOPHA'AR'S LIGHT is the divine
+    warding spell, the small terrible sun that gaunts will not approach. Something named for
+    that carrying holy fire against YOU is a good inversion and should probably be written to
+    read as one.
+    Mechanically the closest thing that exists is the Wisp: `beast` + a small `big` + no
+    humanoid rig, which is how a floating body is already done. For the gaze, note the
+    Skeleton Mage is the existing pattern for a body that casts and only casts — `gift`,
+    `onlyArt`, an `arts` map and `stance:'ranged'` — so an Eye is roughly a hostile Wisp body
+    with the Mage's casting wiring. `emberrot` (EMBERS OF AVARICE, a fire that keeps burning)
+    is the obvious art and already exists.
+    SWARM is the part to think hardest about, because it is the part the game does not have.
+    Everything hostile currently spawns as individuals with a squad id. A swarm that behaves as
+    one thing is either a lot of cheap bodies (watch the `charsNear` cost and the squad-bar
+    collision the log-lift item was about) or one body that renders as many. Decide which
+    before writing anything — they are completely different builds.
+    Balance note: read the binding-circle findings above first. A ranged enemy that ignores
+    armour is exactly the counter to a host whose survivability comes from `def` flooring
+    everything at 0.15, so this creature is a real lever on the necromancy balance problem and
+    should be designed with that in mind rather than by accident.
+
+[OPEN] Messengers: intelligent Watchers, speaking an ancient tongue no one understands or remembers. Variable stats, capable of learning and growing, and they come in multiple varieties — alchemist and warrior classes. They do not use technology, relying on latent eldritch power to wield weapons composed of fire and light. (Their weapons are not lootable, but unique to them.) Late game, some walk among the Paladins.
+    NOT STARTED. This one is more interesting than it looks because "capable of learning and
+    growing" is a thing the game already simulates and currently gives to nobody hostile:
+    `learnMult` on a body multiplies every `xpGain`, and the MIND shaping axis is the only
+    thing that sets it. Put `learnMult` on a Messenger and it genuinely gets better over a
+    long campaign, which no other enemy in the world does. That, not the stat line, is the
+    creature — and it means they should be spawned EARLY and rarely so there is time for it
+    to happen, rather than being introduced at full strength late.
+    Existing pieces to build on:
+      - `gauntKind` for what they are; they should count as Watchers for the cull/news tables
+        (CULL_FOES already maps gaunt -> 'watchers').
+      - `onlyArt` for the alchemist class — attCap already returns 3 for the one art and 0 for
+        the rest, so a Messenger that knows fire and can never know anything else is free.
+      - Unlootable weapons: `dropItems` is the drop table and a body with no `weapon` but a
+        `clawDmg` already fights with what it is rather than what it carries. A weapon of fire
+        and light is most cheaply an unarmed body with a high claw and a `wt` of 'burn', which
+        also means it can never be disarmed or looted by construction rather than by a flag.
+      - "Some walk among the Paladins": the Purge is the `purge` faction and already spawns
+        Paladins at the Bastion and in roaming bands. A Messenger placed in those spawns is a
+        faction line, not a new system — but note the Purge burns people for the profane gift,
+        so a Watcher standing in their ranks is a story beat and should probably be something
+        the player can notice and react to rather than a silent stat upgrade.
+    The ancient tongue: `barks` is already per-body and already used for the Redoubt units.
+    Untranslated speech costs nothing and is the cheapest characterful thing on this list.
