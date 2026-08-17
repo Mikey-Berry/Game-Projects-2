@@ -12384,8 +12384,9 @@ function craftUndead(kind, caster, circle, shape){
   }
   /* AND THE CEILING IS ENFORCED HERE, not only in the panel that draws the sliders. The
      panel is one way in; nothing should be able to bind a shape the rules do not allow. */
-  if(shape && shapeSpent(shape) > shapeCeiling(caster)){
-    log(`That shape is beyond ${caster.name} — ${shapeSpent(shape)} points against a ceiling of ${shapeCeiling(caster)}.`, 'bad');
+  if(shape && shapeSpent(shape) > shapeCeiling()){
+    log(`No binding holds that shape — ${shapeSpent(shape)} points against a ceiling of ${shapeCeiling()}. ` +
+        `The ceiling is the same for every binder; ${caster.name}'s skill only makes a shape cheaper.`, 'bad');
     return false;
   }
   /* shaping past the free budget is paid for in material, on top of the recipe */
@@ -12948,9 +12949,11 @@ function openImmortal(c){
    hits like a collapsing wall and arrives next week, or something that arrives immediately
    and comes apart when looked at.
 
-   Materials buy budget. That is the only way to raise the ceiling, and it is where the time
-   and love goes: a risen you spent a fortune on is measurably a different animal from one
-   you knocked together out of a corpse and some hide. */
+   Materials buy the points you have not earned yet — spending past your free budget is paid
+   for out of the store, so a risen you spent a fortune on is measurably a different animal
+   from one you knocked together out of a corpse and some hide. What materials do NOT buy is
+   the ceiling: that is a constant (SHAPE_CEILING, below) and no amount of skill, research or
+   money moves it. Skill only makes the same shape cheaper. */
 const SHAPE_AXES = [
   {k:'mass',  label:'MASS',   lo:'wiry',      hi:'colossal',
    desc:'Bulk, blood and reach. Everything about it gets heavier, including how long it takes to get anywhere.'},
@@ -12978,6 +12981,9 @@ const SHAPE_AXES = [
 ];
 const SHAPE_BUDGET_BASE = 12;         /* six axes at neutral — an even body is free */
 const SHAPE_MAX = 5;                  /* per axis */
+/* The middle of every axis, in one place. Derived from SHAPE_AXES so a seventh axis cannot be
+   added and then quietly left out of the two places that reset the bench. */
+const SHAPE_NEUTRAL = SHAPE_AXES.reduce((o, ax) => (o[ax.k] = 2, o), {});
 /* what a point costs, above the free allocation */
 const SHAPE_EXTRA = {vflesh:4, remains:3, iron:2};
 function shapeBudget(caster){
@@ -13067,17 +13073,26 @@ function shapeNameFor(sh){
   if(m <= 1 && f <= 1 && h <= 1) return 'Shoddy';
   return null;
 }
-/* ---------- THERE IS A CEILING, AND MATERIALS DO NOT BUY PAST IT ----------
+/* ---------- THERE IS A CEILING, AND NOTHING BUYS PAST IT ----------
    The budget only ever charged EXTRA MATERIALS for spending over it, which is not a limit —
    it is a price, and a player with a full store can pay it on every axis at once. Reported
    from play: four colossal, chitin-plated, seamless Ashen Colossi solo'd the second Fracture,
    one-shotting everything and unable to die. They were not exploiting a bug; they were buying
    all seven axes because nothing said they could not.
-   So the budget is now a real ceiling with a few points of headroom over it. Four past your
-   skill is still a genuinely fearsome thing and still worth paying for — it is just no longer
-   possible to be the heaviest, the hardest, the best put together and the best armoured at
-   the same time. Mass and plating and knit have to be bought out of one another. */
-function shapeCeiling(caster){ return shapeBudget(caster) + 4; }
+   The first answer to that was `shapeBudget(caster) + 4`, and it did not hold, because it
+   moved with the caster. Six axes at SHAPE_MAX is 30 points; a lich's budget is 28, so its
+   ceiling stood at 32 and it could max the entire board with two points to spare. The
+   tradeoff the sliders exist to pose therefore only existed in the early game, and evaporated
+   at exactly the tier where the host was already running away with the world.
+   So the ceiling is now a CONSTANT — the base allocation plus the same four points of
+   headroom, the same wall for a first-week novice and for a lich. 16 against a 30-point board
+   is a real choice: the heaviest, the hardest, the best put together and the best armoured
+   are bought out of one another and always will be.
+   Skill and research still move `shapeBudget`, and that is the whole of what they now buy:
+   the same shape for less material. A high magic score makes a Bone Golem CHEAP. It does not
+   make a better Bone Golem exist. */
+const SHAPE_CEILING = SHAPE_BUDGET_BASE + 4;
+function shapeCeiling(){ return SHAPE_CEILING; }
 function shapeSpent(shape){ return SHAPE_AXES.reduce((n, ax) => n + (shape[ax.k] || 0), 0); }
 function shapeCost(shape, caster){
   const spent = shapeSpent(shape);
@@ -13163,7 +13178,11 @@ function openBinding(circle){
     /* ---- THE SHAPING BENCH ----
        Three sliders against one budget, so every point of one is a point off another. The
        panel says what it will cost and what it will come out as before anything is bound. */
-    circle.shape = circle.shape || {mass:2, force:2, haste:2, knit:2, plate:2, quiet:2, will:2};
+    /* SHAPE_NEUTRAL rather than a literal written out here and again on the EVEN button. The
+       two literals used to say `quiet:2, will:2` — axes that were merged into MIND and are no
+       longer in SHAPE_AXES, so those keys were written and saved and never read again, while
+       `mind` itself was absent and arrived only through the defaulting loop underneath. */
+    circle.shape = circle.shape || {...SHAPE_NEUTRAL};
     for(const ax of SHAPE_AXES) if(circle.shape[ax.k] === undefined) circle.shape[ax.k] = 2;
     const sh = circle.shape;
     const budget = shapeBudget(ritualist);
@@ -13177,11 +13196,22 @@ function openBinding(circle){
       const note = document.createElement('div');
       note.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:6px';
       const preview = shapeNameFor(sh);
-      const ceil = shapeCeiling(ritualist);
-      note.innerHTML = `${spent}/${budget} points <span style="color:var(--dust)">(ceiling ${ceil})</span>` +
-        (over ? ` · <span style="color:#c07a3a">${over} over — pays ${costText(extra)} on top</span>` : ' · within the binding') +
+      const ceil = shapeCeiling();
+      /* The two numbers are different things and the panel used to blur them: the CEILING is a
+         constant wall nobody passes, and the BUDGET is how much of the way to it is free.
+         Read against the ceiling, because that is what the + button stops at. */
+      note.innerHTML = `${spent}/${ceil} points` +
+        (spent >= ceil ? ` <span style="color:var(--warn)">— at the ceiling</span>` : '') +
+        (over ? ` · <span style="color:#c07a3a">${over} past ${ritualist.name}'s free ${budget} — pays ${costText(extra)} on top</span>`
+              : ` · <span style="color:var(--dust)">free to ${budget}</span>`) +
         (preview ? ` · it will come out <span style="color:var(--bone)">${preview}</span>` : '');
       body.appendChild(note);
+      const law = document.createElement('div');
+      law.style.cssText = 'color:var(--muted);font-size:10px;margin-bottom:6px;line-height:1.5';
+      law.textContent = `${ceil} points is the ceiling for every binder alive or dead — six axes at ` +
+        `${SHAPE_MAX} would cost ${SHAPE_AXES.length * SHAPE_MAX}, so this is a choice, not a stockpile. ` +
+        `Skill and research raise your free budget (${budget}), which buys the same shape for less material.`;
+      body.appendChild(law);
       for(const ax of SHAPE_AXES){
         const row = document.createElement('div'); row.className = 'trow';
         const v = sh[ax.k];
@@ -13196,14 +13226,14 @@ function openBinding(circle){
         plus.textContent = '+'; plus.style.cssText = 'padding:1px 7px;font-size:11px;margin-left:3px';
         /* the ceiling is a wall in the panel too, so the slider simply stops rather than
            offering a shape the binding will refuse a moment later */
-        plus.disabled = v >= SHAPE_MAX || spent >= shapeCeiling(ritualist);
+        plus.disabled = v >= SHAPE_MAX || spent >= shapeCeiling();
         plus.onclick = () => { sh[ax.k] = Math.min(SHAPE_MAX, v + 1); rndr(); };
         row.appendChild(minus); row.appendChild(plus);
         body.appendChild(row);
       }
       const rst = document.createElement('button');
       rst.textContent = 'EVEN'; rst.style.cssText = 'padding:1px 6px;font-size:10px;margin-bottom:8px';
-      rst.onclick = () => { circle.shape = {mass:2, force:2, haste:2, knit:2, plate:2, quiet:2, will:2}; rndr(); };
+      rst.onclick = () => { circle.shape = {...SHAPE_NEUTRAL}; rndr(); };
       body.appendChild(rst);
       const sep = document.createElement('div');
       sep.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:1px;margin:10px 0 4px';

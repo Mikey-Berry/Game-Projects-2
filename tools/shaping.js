@@ -19,8 +19,13 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
    for(const k of ['vflesh','remains','iron','hide','fabric','stone','copper','wood','tome','c_ingot']) stash[k]=9999;
    const circle={x:caster.x, y:caster.y};
    R.budget = shapeBudget(caster);
-   // three deliberate extremes off the same recipe
-   const N = {mass:2, force:2, haste:2, knit:2, plate:2, quiet:2, will:2};
+   // deliberate extremes off the same recipe. The neutral is derived from SHAPE_AXES rather
+   // than written out: this table used to say `quiet:2, will:2` and carry a `silent (q5)` and
+   // a `leashed (w0)` build, and both of those axes were merged into MIND a long time ago —
+   // so a third of what this harness measured was two keys nothing read, while `mind` itself
+   // was never set and every build in the table was silently the same on the axis that now
+   // decides the leash, the learning rate and whether a body can be raised up at all.
+   const N = SHAPE_AXES.reduce((o, ax) => (o[ax.k] = 2, o), {});
    const builds = {
      'even':            {...N},
      'golem':           {...N, mass:5, force:4, haste:0},
@@ -29,10 +34,8 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
      'seamless (kn5)':  {...N, knit:5},
      'bone-plated':     {...N, plate:3},
      'chitin-grafted':  {...N, plate:5},
-     'silent (q5)':     {...N, quiet:5, mass:1},
-     'clamorous (q0)':  {...N, quiet:0},
-     'leashed (w0)':    {...N, will:0},
-     'unbound (w5)':    {...N, will:5},
+     'hollow (mi0)':    {...N, mind:0},
+     'awake (mi5)':     {...N, mind:5},
    };
    R.shapes={};
    for(const [label, sh] of Object.entries(builds)){
@@ -47,6 +50,8 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
        partMax:Math.round(u.parts.chest.max),
        plating:u.natArmor?`${u.natArmor.cls} ${(u.natArmor.def*100).toFixed(0)}%`:'bare',
        noise:+(u.noise??0).toFixed(2), leash:u.leash,
+       mind:u.mindTier, learnMult:u.learnMult, noMind:!!u.noMind, minded:!!u.minded,
+       points:`${shapeSpent(sh)}/${shapeCeiling()}`,
        cost:costText(shapeCost(sh, caster))||'within budget' };
    }
    // promotion: gated on kills, then real
