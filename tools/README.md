@@ -389,6 +389,13 @@ the truth was 45%.
   earlier, successful open, because hiding a panel does not clear it. The message read as though
   the right panel was open when the panel was closed. Assert on the thing that changes
   (`display`), and do not quote a field that persists across the state you are reporting.
+- **Snapshot the moment you are making a claim about.** `curse.js` asserts that Malathuun's
+  Curse arrives "not fully grown but not nascent either" — and read the beast's size at the END
+  of a four-day run, by which time it had eaten the ninety corpses that summoned it and stood at
+  7.1x against a ceiling of 8. It read 3.6x the first time only because that run happened to end
+  before it finished its meal. The probe was measuring the appetite, not the arrival. If the
+  claim is about a moment, step the world and catch that moment; the growth afterwards is a
+  second, separate assertion — and worth having, since it is the thing that broke the first one.
 - **A threshold pinned to one build's exact arrangement fails on the next unrelated change.**
   `press.js` asserted that no more than THREE of twelve bodies end up in one eighth of the
   circle, because the build in front of it measured two. Three revisions later the same fixed

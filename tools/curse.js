@@ -100,7 +100,22 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           ? { ...chests[s.cacheIdx].loot.items } : null,
       }));
       layDead(90, corpseSites[0].x, corpseSites[0].y);
-      runDays(4);
+      /* ---------- CATCH IT AS IT STANDS UP ----------
+         "Not fully grown but not nascent either" is a claim about the moment it ARRIVES, and
+         the first version of this read `big` at the end of a four-day run — by which time the
+         thing had eaten the ninety bodies that summoned it and stood at 7.1x, one stride off
+         the ceiling. The probe was measuring the appetite, not the arrival, and it happened to
+         read 3.6x the first time only because the run ended before it had finished its meal.
+         Step the world and snapshot the first tick a cursed body exists. */
+      let bornBig = null, bornAte = null;
+      paused = false;
+      for (let i = 0; i < 4 * 40 && bornBig === null; i++) {
+        update(0.5);
+        const c0 = liveCurses()[0];
+        if (c0) { bornBig = c0.big; bornAte = c0.ate || 0; }
+      }
+      for (let i = 0; i < 4 * 40; i++) update(0.5);
+      paused = true;
       const now = liveCurses();
       R.theFieldsGetUp = now.length >= 1
         ? `ninety unclaimed dead and the ground answered: ${now[0].name}`
@@ -108,9 +123,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       beast = now[0] || null;
       if (beast) {
         /* ---------- 3. NOT NASCENT, NOT FULL ---------- */
-        R.itArrivesHalfGrown = beast.big > 2.6 && beast.big < CAIRN_CAP * 0.7
-          ? `it stands up at ${beast.big.toFixed(1)}x — past the Sixfold, well under the ${CAIRN_CAP}x ceiling`
-          : `!! IT ARRIVED AT ${beast.big.toFixed(1)}x (ceiling ${CAIRN_CAP}) — nascent or already finished`;
+        R.itArrivesHalfGrown = bornBig > 2.6 && bornBig < CAIRN_CAP * 0.7
+          ? `it stands up at ${bornBig.toFixed(1)}x on ${bornAte} bodies — past the Sixfold, well under the ${CAIRN_CAP}x ceiling`
+          : `!! IT ARRIVED AT ${bornBig === null ? 'never' : bornBig.toFixed(1) + 'x'} (ceiling ${CAIRN_CAP}) — nascent or already finished`;
+        /* and it is not finished: the ceiling is still somewhere it can get to */
+        R.andItGoesOnEating = beast.big > bornBig
+          ? `and it goes on eating what is lying there — ${bornBig.toFixed(1)}x at the rite, ${beast.big.toFixed(1)}x four days later`
+          : `!! IT NEVER GREW AFTER ARRIVING (${bornBig.toFixed(1)}x -> ${beast.big.toFixed(1)}x)`;
         R.itIsStillACairnBeast = beast.bossKey === 'cairn' && (beast.ate || 0) > 0
           ? `and it is an ordinary Cairn Beast underneath (ate ${beast.ate}), so it still grows and still sheds`
           : `!! IT IS NOT A CAIRN BEAST (bossKey ${beast.bossKey}, ate ${beast.ate})`;
