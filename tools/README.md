@@ -459,3 +459,42 @@ the truth was 45%.
   `ps -eo args | grep -E "^(npm|node tools/)"` instead — and note a bare `pgrep -c -f "npm run
   check"` also matches the agent's own process, whose arguments contain the whole system
   prompt, so it will happily report processes that do not exist.
+
+## HOW LONG THE SUITE TAKES, AND WHY
+
+Measured rather than guessed, because the first two guesses were both wrong.
+
+Per harness, before a single assertion runs:
+
+  · 6.5s to `goto` the built game.html — parsing 1.82 MB and 25,713 lines of script.
+  · ~5.1s more for worldgen and the start click (2.5s + 2.6s, polled).
+
+That is ~11.6s of startup on EVERY harness, about seven minutes across the chain. For the
+cheap harnesses it is most of their runtime: raise.js takes 15.1s total, so roughly three
+seconds of it is testing.
+
+**The two 3-second sleeps are not the problem.** Every harness opens with
+`waitForTimeout(3000)` twice, which looks like six seconds of pure waste — and polling for
+real readiness instead takes 5.1s, so the whole change is worth about 0.9s a harness, half a
+minute across the suite. Worth doing to remove a guess, not worth doing for speed. Measure
+before rewriting thirty-seven files.
+
+**Parallelism does not work here yet, and that was worth finding out.** A four-harness sample
+ran 102.2s serial and 61.1s at four-way with all four passing, so the whole suite was tried at
+four-way. Four harnesses went red that pass serially: `carry.js`, `wanderers.js`, `kit.js`,
+`races.js` — the last with "golem/clay BUILT NO BODY", a mesh that did not finish building
+inside the probe's window. None is a real defect. All are the same wall-clock class this file
+already documents three times, and concurrency makes it more likely rather than less. There is
+deliberately no `npm run check:par`; `tools/run.js --jobs N` exists so the next person can
+re-measure after fixing those four.
+
+**What actually helps:**
+
+  · `npm run check:fast` — six harnesses that would notice a broken build at all (boot, save,
+    roundtrip, fight, towncheck, races). 104s instead of ~15 minutes, for the edit loop.
+  · `npm run check` — the serial chain, unchanged, for a push.
+  · Run the full suite ONCE, at the end. Running it two or three times inside one sitting is
+    the largest avoidable cost there is, and running two at once invalidates both.
+  · roads.js was 233s — twenty-two percent of the suite in the file whose negative control
+    passed. Halved to 112s after checking what the halving costs: still thirteen legs, both
+    stall checks intact.

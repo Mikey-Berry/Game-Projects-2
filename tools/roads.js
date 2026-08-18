@@ -61,9 +61,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const arrivals = new Map();      /* id -> how many legs it finished */
     let ticks = 0;
     const SAMPLE = 600;              /* 60s of game time per sample at dt 0.1 */
-    /* ~9 game-days. Long enough that a wagon has to complete several legs, and every one of
-       them has to pass a walled town, which is where the report puts the failure. */
-    const TOTAL = 60000;
+    /* ~4.5 game-days. It was nine, which cost 233 SECONDS — twenty-two percent of the whole
+       suite in one file, and this is the harness whose negative control passed, i.e. the one
+       with the least proven value in it. Halved after measuring what the halving costs: the
+       fleet still finishes multiple legs and every wagon still passes walled towns, which is
+       the only thing the stall checks need. If a wall-pinning report ever comes back, put it
+       up rather than guessing — the number is here and the cost of raising it is known. */
+    const TOTAL = 30000;
 
     for (const c of wagons()) { seen.set(c.id, { x: c.x, y: c.y, stall: 0, worst: 0, atWall: 0 }); arrivals.set(c.id, 0); }
     const destOf = new Map();
@@ -104,15 +108,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const totalLegs = rows.reduce((n, r) => n + r.legs, 0);
 
     R.theRoadsAreWalked = totalLegs > 0
-      ? `${totalLegs} legs finished across ${rows.length} wagons in nine game-days (${alive} still alive)`
+      ? `${totalLegs} legs finished across ${rows.length} wagons in four and a half game-days (${alive} still alive)`
       : `!! NOT ONE CARAVAN COMPLETED A SINGLE LEG IN NINE GAME-DAYS (${alive} alive)`;
-    /* REPORTED, NOT ASSERTED — the host.js rule. "How many wagons delivered in nine days" is a
+    /* REPORTED, NOT ASSERTED — the host.js rule. "How many wagons delivered in four and a half days" is a
        function of route length, night sheltering and how many were eaten on the way, none of
        which this file is about, and an early draft failed the suite on 7/15 when not one of
        those seven had stood still for a single minute. They were walking the whole time; the
        legs are just long. The stall checks below are the actual test. */
     const idle = rows.filter(r => r.legs === 0).length;
-    R.WATCH_delivery = `${rows.length - idle}/${rows.length} wagons delivered at least once in nine days; ${rows.length - alive} were lost on the road`;
+    R.WATCH_delivery = `${rows.length - idle}/${rows.length} wagons delivered at least once in four and a half days; ${rows.length - alive} were lost on the road`;
     R.nobodyStandsStill = stalled.length === 0
       ? 'no wagon stood still for three minutes of daylight with somewhere to be'
       : `!! ${stalled.length}/${rows.length} WAGONS STALLED (worst run ${Math.max(...stalled.map(r => r.worst))} minutes)`;
