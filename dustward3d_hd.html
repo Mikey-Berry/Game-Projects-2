@@ -2851,7 +2851,7 @@ const NEWS_TONE = {
   fracture:'bad', dread:'', compact:'good', door:'bad', fallen:'bad', ruin:'bad',
   rite:'bad', lieutenant:'good', departure:'bad', betrayal:'bad',
   peace:'good', pact:'good', sealed:'good', razed:'good',
-  wanderer:'', cairn:'bad',
+  wanderer:'', cairn:'bad', curse:'bad',
 };
 function newsAge(e){
   const late = day - e.day;
@@ -9404,25 +9404,38 @@ const DREAD_WEIGHT = {          /* base persuasive force of an event kind */
   fracture: 26, rift: 14, sixfold: 12, bloodmoon: 6, attention: 8, omen: 7,
   sack: 9, razed: 5, plague: 7, ambush: 4, camp: 3, war: 3, sundered: 10, coil: 8,
   purge: 4, rebellion: 3, conquest: 4,
+  /* A sundered site standing up is the sundered site (10) plus the thing that walked off it,
+     and it is the only event on this table that a seat can be told is somebody's FAULT. It
+     sits under the Fracture and over everything else. */
+  curse: 18,
 };
 /* trait multiplier per kind. 1.0 = it lands as written; 0 = that leader does not care. */
 const DREAD_TRAIT = {
+  /* the dead god got up out of the ground. There is no reading a pious seat cares about more. */
   pious:      {fracture:1.5, omen:1.8, bloodmoon:1.6, sundered:1.5, coil:1.5, sixfold:1.4,
-               rift:1.0, sack:0.7, war:0.4, camp:0.3, ambush:0.4, conquest:0.5},
+               rift:1.0, sack:0.7, war:0.4, camp:0.3, ambush:0.4, conquest:0.5, curse:1.9},
+  /* not a portent to them — a thing the size of a barn standing on a trade road */
   mercantile: {ambush:1.8, camp:1.6, war:1.5, sack:1.4, plague:1.3, rift:0.9,
-               omen:0.3, bloodmoon:0.3, fracture:0.8, sixfold:0.5, coil:0.4},
+               omen:0.3, bloodmoon:0.3, fracture:0.8, sixfold:0.5, coil:0.4, curse:1.1},
+  /* they discount omens and do not discount something that can be fought */
   warlike:    {sack:1.7, razed:1.6, war:1.5, rift:1.2, sixfold:1.3, purge:1.4,
-               omen:0.2, bloodmoon:0.3, fracture:0.7, coil:0.4, plague:0.6},
+               omen:0.2, bloodmoon:0.3, fracture:0.7, coil:0.4, plague:0.6, curse:1.0},
   craven:     {},   /* everything frightens them; the floor multiplier does the work */
   ironfisted: {rebellion:1.6, conquest:1.5, war:1.2, sack:1.1,
-               omen:0.2, bloodmoon:0.2, fracture:0.6, rift:0.7, sixfold:0.5, coil:0.3},
+               omen:0.2, bloodmoon:0.2, fracture:0.6, rift:0.7, sixfold:0.5, coil:0.3,
+               /* it wants a kept house; an uncleared field IS an unkept house, and it says so */
+               curse:1.3},
   /* A JUST seat is moved by what is being done to people, and not much by portents. */
   just:       {sack:1.5, razed:1.5, plague:1.4, ambush:1.3, camp:1.2, rebellion:1.2,
-               rift:1.0, omen:0.4, bloodmoon:0.4, fracture:1.0, sixfold:0.8},
+               rift:1.0, omen:0.4, bloodmoon:0.4, fracture:1.0, sixfold:0.8,
+               /* moved by what is being done to people, and this one is being done TO them */
+               curse:1.4},
   /* A CUNNING one is not frightened of anything. It is interested in which way the wind is
      going to blow, and it reads the sky itself before it reads a report of a raid. */
   cunning:    {fracture:1.4, rift:1.2, sixfold:1.2, coil:1.1, sundered:1.2, attention:1.3,
-               ambush:0.6, camp:0.5, war:0.9, omen:0.7, bloodmoon:0.6},
+               ambush:0.6, camp:0.5, war:0.9, omen:0.7, bloodmoon:0.6,
+               /* reads it as information: the ground is keeping score, and it wants to know of what */
+               curse:1.5},
 };
 /* craven hears everything and hears it loudly; ironfisted discounts all of it and wants to
    be shown a kept house instead (see the order term below) */
@@ -10303,6 +10316,11 @@ const corpseSites = [];
     };
     const cang = (s.id * 2.39996) + 1.9;      /* the monument's own turn, plus a quarter */
     const cpos = openAt(p.x + Math.cos(cang) * 11, p.y + Math.sin(cang) * 11);
+    /* WHICH CHEST IS THIS SITE'S, recorded rather than searched for later. Malathuun's Curse
+       has the site take its own grave-goods up with it, and "the chest nearest the middle" is
+       not a safe way to find them — a ruin or a camp can sit inside the same radius. An index
+       taken at the moment it is pushed cannot pick the wrong one, and it costs no draw. */
+    s.cacheIdx = chests.length;
     chests.push({x: cpos.x, y: cpos.y, opened: false, loot: {cats: 0, items: {
       sunder: ri(2, 4),
       ...(rnd() < 0.6 ? {formula_p: 1} : {formula_w: ri(1, 2)}),
@@ -10451,10 +10469,13 @@ function liveCairns(){
   cairn = cairns[0] || null;
   return cairns;
 }
-function spawnCairnBeast(force){
+function spawnCairnBeast(force, atSite, quiet){
   if(!force && liveCairns().length >= CAIRN_MAX) return null;
-  /* it forms where the dead already are: a corpse-field, well out past the last fence */
-  const site = (typeof corpseSites !== 'undefined' && corpseSites.length) ? pick(corpseSites) : null;
+  /* it forms where the dead already are: a corpse-field, well out past the last fence.
+     `atSite` names one instead of taking whichever; `quiet` withholds the ordinary notice for
+     a caller that is going to say something better. Both are for the Curse, and both leave the
+     no-argument call — which is the one worldgen and cairnTick make — byte for byte as it was. */
+  const site = atSite || ((typeof corpseSites !== 'undefined' && corpseSites.length) ? pick(corpseSites) : null);
   const q = site ? findOpenNear(site.x + ri(-6, 6), site.y + ri(-6, 6), 8)
                  : findOpenNear(ri(60, W-60), ri(60, H-60), 10);
   /* NAMED FOR WHERE IT ROSE, once there is more than one — a log with three identical
@@ -10490,7 +10511,7 @@ function spawnCairnBeast(force){
      and it is taken from the nearest TOWN rather than from the player, because a town is
      somewhere you can walk to on purpose and "west of here" is worthless once you have
      moved. */
-  worldEvent('cairn', q.x, q.y,
+  if(!quiet) worldEvent('cairn', q.x, q.y,
     `Something has stood up in one of the corpse-fields ${cairnWhere(q.x, q.y)}. Drovers say it is ` +
     'not a creature — that it is the field itself, and that it has started walking.');
   return c;
@@ -10546,6 +10567,79 @@ function cairnGrow(c){
   }
 }
 let _cairnT = 0;
+/* ============================================================ MALATHUUN'S CURSE
+   A world event, like the blood moon, except that a blood moon is weather and this is an
+   ACCUSATION. A sundered site — a place where a piece of the dead god came down — stops being
+   scenery and stands up, already most of the way grown.
+
+   WHAT FIRES IT IS YOU, and that is the whole design. The blood moon runs off the Fracture
+   clock, which is to say off time passing, and there is nothing to be done about time passing.
+   The Cairn Beast population already reads a dial the player controls — unclaimed dead lying
+   in the fields — so the Curse reads the same one and simply sets the bar much higher: an
+   ordinary beast forms at twenty-six bodies per beast already standing, and the Curse wants
+   seventy on the ground at once. That is not a tide coming in, it is a mess you made and did
+   not clear, and it is answerable: burn your dead, or the ground answers for you.
+
+   NOT NASCENT AND NOT FULL. `ate` is the one number the whole stat line is computed from, so
+   thirty-two of them makes a body around 3.5x — past the Sixfold, past anything else walking,
+   and still less than half the 8.0 ceiling a beast reaches by eating its way there. It arrives
+   as a problem rather than as a curiosity, and it can still get much worse.
+
+   IT TAKES ITS GRAVE-GOODS WITH IT. The site's fragment cache goes into the thing that stood
+   up rather than being destroyed with it: the ground is no longer lootable, which is what a
+   site that got up should mean, but nothing the player could have had is deleted — it walked
+   off, and it can be killed for. `cacheIdx` is recorded at worldgen so the right chest is
+   certain, and `chestsOpened` already rides the save, so a looted-and-walked site stays that
+   way across a reload with nothing new to store. */
+const CURSE_FODDER = 70;         /* unclaimed dead on the ground before the site answers */
+const CURSE_GAP = 6;             /* game-days between curses, so it stays an event */
+const CURSE_ATE = 32;            /* half-grown: ~3.5x, against a ceiling of 8.0 */
+const CURSE_DAY = 16;            /* not in the first fortnight; there are no fields yet */
+/* Read off the news rather than stored: `events` ride the save, so the cooldown survives a
+   reload without a new field. A curse old enough to have been pruned out of a 500-event log is
+   old enough that the gap has long since passed anyway. */
+function lastCurseDay(){
+  for(let i = events.length - 1; i >= 0; i--) if(events[i].kind === 'curse') return events[i].day;
+  return -999;
+}
+function malathuunsCurse(){
+  if(!corpseSites.length) return null;
+  /* prefer a site with its cache still in the ground — a site already stripped has nothing to
+     carry off, and the point of the thing is that it takes the reason you went there */
+  const loaded = corpseSites.filter(s => s.cacheIdx >= 0 && chests[s.cacheIdx] && !chests[s.cacheIdx].opened);
+  const site = pick(loaded.length ? loaded : corpseSites);
+  const c = spawnCairnBeast(true, site, true);
+  if(!c) return null;
+  c.ate = CURSE_ATE;
+  c._cairnSeen = 99;                                  /* no ordinary growth notice: it announces itself */
+  cairnGrow(c);
+  c._cairnSeen = Math.floor((c.big - 1.6) / 0.7);     /* but it still calls out when it grows FURTHER */
+  c.blood = c.maxBlood;
+  c.cursed = true;
+  const home = cairnTown(c.x, c.y);
+  let nm = home ? `Malathuun's Answer at ${home.name}` : "Malathuun's Answer";
+  if(chars.some(o => o !== c && o.name === nm)){
+    let n = 2;
+    while(chars.some(o => o !== c && o.name === `${nm}, the ${n}${n===2?'nd':n===3?'rd':'th'}`)) n++;
+    nm = `${nm}, the ${n}${n===2?'nd':n===3?'rd':'th'}`;
+  }
+  c.name = nm;
+  /* the ground gives up what it was holding, into the thing that got up off it */
+  const ch = site.cacheIdx >= 0 ? chests[site.cacheIdx] : null;
+  if(ch && !ch.opened){
+    ch.opened = true;
+    c.loot = (c.loot || 0) + ((ch.loot && ch.loot.cats) || 0);
+    c.dropItems = c.dropItems || {};
+    for(const k in ((ch.loot && ch.loot.items) || {})) c.dropItems[k] = (c.dropItems[k] || 0) + ch.loot.items[k];
+  }
+  worldEvent('curse', c.x, c.y,
+    `MALATHUUN'S CURSE. The sundered ground ${cairnWhere(c.x, c.y)} has got up. Where a piece of ` +
+    'the dead god came down there is now a hole, and something the size of a barn walking away from it.');
+  log(`MALATHUUN'S CURSE — ${c.name} has risen from the sundered ground ${cairnWhere(c.x, c.y)}. ` +
+      'It did not have to eat its way to that size. The fields did it for you.', 'bad');
+  AU.news();
+  return c;
+}
 function cairnTick(dt){
   if((_cairnT -= dt) > 0) return;
   _cairnT = 1.0;
@@ -10558,6 +10652,12 @@ function cairnTick(dt){
      already standing — so the late game, where the corpses are, is where they come from. */
   const fodder = corpses.reduce((n, b) => n + (cairnFood(b) ? 1 : 0), 0);
   if(live.length < CAIRN_MAX && fodder >= CAIRN_PER_BODY * (live.length + 1)) spawnCairnBeast();
+  /* ---------- AND SOMETIMES THE GROUND DOES NOT WAIT TO BE FED ----------
+     The Curse reads the same dial and sets the bar far higher — see the block above cairnTick.
+     It is allowed ONE past the ordinary ceiling, which is what makes it an event rather than a
+     fifth of the same thing; the day floor and the six-day gap keep it from becoming weather. */
+  if(day >= CURSE_DAY && fodder >= CURSE_FODDER && live.length < CAIRN_MAX + 1 &&
+     day - lastCurseDay() >= CURSE_GAP) malathuunsCurse();
   for(const c of live) cairnOne(c);
 }
 function cairnOne(c){
