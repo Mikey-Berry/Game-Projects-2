@@ -1469,7 +1469,7 @@ function makeChar(name, faction, x, y, o={}){
     manning: null, gunT: 0,
     path: null, pathGoal: null, repathT: 0,
     rescueOf: 0,
-    hitT: 0, looseT: 0, lungeT: 0, lungeDX: 0, lungeDY: 0, lungeDur: 0, lungeK: 0,
+    hitT: 0, looseT: 0, shotT: 0, lungeT: 0, lungeDX: 0, lungeDY: 0, lungeDur: 0, lungeK: 0,
     shoveT: 0, shoveDur: 0, shoveK: 0, shoveDX: 0, shoveDY: 0,
     undead: false, master: null,
     atkCd: 0, downT: 0, guard: o.guard||null, homeTown: o.homeTown||null,
@@ -1562,9 +1562,35 @@ function dropOneBody(c, body, at){
   refreshCharPanel();
   return true;
 }
+const RANGED_DRAG = 1.15;        /* seconds of heavy legs after a loose */
+/* ---------- CAUGHT, AND WHETHER YOU CAN LEAVE ----------
+   "Catching a ranged attacker in melee should somewhat lock them down from fleeing again.
+   Somewhat — they should reasonably be able to escape if, say, an ally also engages that
+   enemy." Both halves are here and the second is the interesting one: the way out is not a
+   dice roll or a cooldown, it is that the body holding you has somebody ELSE to worry about.
+   `_contacts` on the pinner is how many hostiles are on it, counted in `separate()`. One means
+   you and nobody else, and you are held. Two means a friend has come to fetch you, and you are
+   free — which makes rescuing a caught archer a real thing you can do rather than a stat. */
+function pinnedDown(c){
+  const o = c._pinnedBy;
+  if(!o || o.state !== 'ok' || c.state !== 'ok') return false;
+  if((o.floor||0) !== (c.floor||0)) return false;
+  if(c.veilT > 0) return false;              /* they cannot hold what they cannot see */
+  return (o._contacts || 0) <= 1;
+}
 function moveSpeed(c){
   let s = 3.4 * (1 + c.stats.ath*0.012);
   s *= 1 - armorPen(c);
+  /* ---------- A SHOT COSTS YOUR FEET FOR A MOMENT ----------
+     Nothing in this game fires on the move — the AI branch closes OR shoots and a move order
+     runs through `clearOrders`, which drops the target. So the report ("running backwards at
+     full speed while still firing") is not one body doing both at once, it is SHOOT AND SCOOT:
+     loose, order a move, retreat at full pace, order the shot again. The shot was free and only
+     the standing still was paid for. Now the loose leaves a drag on the legs that outlasts the
+     follow-through, so backing out between shots gives up ground. Standing and shooting is
+     untouched, which is the trade this is meant to pose. */
+  if(c.shotT > 0) s *= 1 - 0.4 * Math.min(1, c.shotT / RANGED_DRAG);
+  if(pinnedDown(c)) s *= 0.45;
   if(c.drag) s *= 0.7;
   if(c.carry) s *= 0.8;
   if(c.carryList && c.carryList.length) s *= Math.pow(0.93, c.carryList.length);   /* a laden mule is a slow mule */
@@ -8032,6 +8058,7 @@ function physics(c, dt){
              to guard between frames and the shot had no follow-through at all. */
           c.recoverT = c.recoverDur = 0.20;
           c.looseT = 0.20;
+          c.shotT = RANGED_DRAG;   /* the legs stay heavy after the string is back — see moveSpeed */
         }
         if(wu.kind === 'melee'){
           c.looseT = 0;
@@ -8122,6 +8149,7 @@ function physics(c, dt){
   if(c.lungeT > 0) c.lungeT -= dt;
   if(c.shoveT > 0) c.shoveT -= dt;
   if(c.looseT > 0) c.looseT -= dt;
+  if(c.shotT > 0) c.shotT -= dt;
   c.mana = Math.min(maxMana(c), c.mana + dt*0.5);
   if(c.dot) applyDot(c, dt);
   c.blocking = false;
@@ -8642,24 +8670,70 @@ function physics(c, dt){
       return;
     }
     if(d > 1.0){
-      /* Kenshi rule: a body only has so many sides. Extras circle at spear-length and wait. */
-      if(!(c.targetManual && c.faction==='player') && d < 4.5){
-        const cap = (t.big||1) > 1.3 ? 5 : 3;
-        let engaged = 0;
-        for(const o of charsNear(t.x, t.y, 2.2)){
-          if(o !== c && o.state==='ok' && o.target === t && dist(o.x,o.y,t.x,t.y) < 1.9) engaged++;
-        }
-        if(engaged >= cap){
-          c.blocking = true;
-          if(d < 2.7){   /* keep spacing */
-            const ux = (c.x - t.x)/Math.max(0.01, d), uy = (c.y - t.y)/Math.max(0.01, d);
-            travel(c, clamp(c.x + ux*1.5, 2, W-2), clamp(c.y + uy*1.5, 2, H-2), dt, 0);
+      /* ---------- ONE LOOK AT THE SCRUM, TWO QUESTIONS ----------
+         How many are already on it (the Kenshi cap, which was here) and WHO ELSE IS COMING
+         (new). Both come out of a single pass because `charsNear` hands back one shared
+         buffer — a second scan inside this loop would empty it underneath us.
+         THE FAN IS THE FLANKING. A body walking at an enemy used to aim at its centre, so six
+         of them converged on one tile, arrived as a queue, and the five at the back spent the
+         fight shouldering the one at the front. Now each one takes a stable place in the
+         group — its rank among everybody chasing the same body, by id, so no dice and no
+         state to save — and swings its approach off its own bearing by that much. Six bodies
+         coming from one side arrive spread around the target instead of stacked behind it.
+         THE FIRST VERSION OF THIS ONLY LOOKED 2.8 TILES OUT and was therefore nearly useless:
+         nobody is within 2.8 tiles until somebody has already arrived, so the fan opened
+         after the queue had formed. It reads to 6 tiles now, which is while they are still
+         walking, which is when the decision is worth anything.
+         Steering stops at 2.2 tiles. The last stretch is the original straight line,
+         deliberately: a body that flanks all the way in can circle something it is already
+         touching and never land the blow it walked over for. */
+      const TAU = Math.PI * 2;
+      let engaged = 0, mates = 0, rank = 0, bx = 0, by = 0;
+      if(d < 6.0){
+        for(const o of charsNear(t.x, t.y, 6.0)){
+          if(o.state !== 'ok' || o.target !== t) continue;
+          const od = dist(o.x, o.y, t.x, t.y);
+          if(o !== c && od < 1.9) engaged++;
+          if(od < 6.0){
+            mates++; if(o.id < c.id) rank++;
+            /* the group's own approach direction, summed as unit vectors so it means the same
+               thing to every one of them — see the note on the fan below */
+            bx += (o.x - t.x) / Math.max(0.01, od); by += (o.y - t.y) / Math.max(0.01, od);
           }
-          return;
         }
       }
+      /* everybody's own arc around the target, computed once and used by both branches */
+      let fan = null;
+      if(mates > 1){
+        const spread = Math.min(TAU * 0.72, (mates - 1) * 0.62);
+        fan = Math.atan2(by, bx) + (rank / (mates - 1) - 0.5) * spread;
+      }
+      const cap = (t.big||1) > 1.3 ? 5 : 3;
+      if(!(c.targetManual && c.faction==='player') && d < 4.5 && engaged >= cap){
+        c.blocking = true;
+        /* CIRCLE at spear-length — which is what this rule has always said and never did. It
+           used to push the extra man straight back down the line he arrived on, so a queue
+           stayed a queue and only got longer; the men waiting their turn were the whole of
+           the reported "everyone gets caught on allies". Now he walks round to his own arc
+           and waits on it, which is both what the comment promised and the half of the fan
+           that actually shows: the three who cannot get hold of it are the three with room
+           to go somewhere. */
+        if(fan !== null){
+          travel(c, clamp(t.x + Math.cos(fan)*2.4, 2, W-2), clamp(t.y + Math.sin(fan)*2.4, 2, H-2), dt, 0.35);
+        } else if(d < 2.7){
+          const ux = (c.x - t.x)/Math.max(0.01, d), uy = (c.y - t.y)/Math.max(0.01, d);
+          travel(c, clamp(c.x + ux*1.5, 2, W-2), clamp(c.y + uy*1.5, 2, H-2), dt, 0);
+        }
+        return;
+      }
       const px = c.x, py = c.y;
-      travel(c, t.x, t.y, dt, 0.95);
+      let gx = t.x, gy = t.y, arrive = 0.95;
+      if(fan !== null && d > 2.2){
+        gx = t.x + Math.cos(fan) * 1.0;
+        gy = t.y + Math.sin(fan) * 1.0;
+        arrive = 0.25;
+      }
+      travel(c, gx, gy, dt, arrive);
       /* jammed against the player's walls? smash through */
       if(c.faction !== 'player' && c.faction !== 'town'){
         if(dist(px, py, c.x, c.y) < moveSpeed(c)*dt*0.15) c.stuckT += dt; else c.stuckT = 0;
@@ -14971,7 +15045,17 @@ function update(dt){
 }
 
 /* soft collision: nudge overlapping bodies apart (gives way under pathing pressure) */
+/* ---------- AND WHO HAS HOLD OF WHOM ----------
+   The pin (see `pinnedDown`) needs two numbers per body: is a melee-capable enemy in contact
+   with me, and is that enemy dealing with anybody else. Both fall out of the pair loop below
+   for free, which is the only reason they are computed here rather than somewhere they would
+   read better. Nothing else in the tick walks every close pair, and `charsNear` hands back one
+   shared buffer, so a second scan issued from inside `moveSpeed` would empty this one under
+   whoever was iterating it. One tick of lag on the result is deliberate and harmless — it is a
+   grapple, not a trigger. */
+const PIN_REACH = 1.45;          /* the same reach a passing blade has */
 function separate(){
+  for(const c of chars){ c._contacts = 0; c._pinnedBy = null; }
   for(const [, cell] of charGrid){
     for(let i=0;i<cell.length;i++){
       const a = cell[i];
@@ -14985,6 +15069,16 @@ function separate(){
         if((a.floor||0) !== (b.floor||0)) continue;      /* a storey apart is a world apart */
         const dx = b.x-a.x, dy = b.y-a.y, d2 = dx*dx+dy*dy;
         const foes = hostile(a, b);
+        /* CONTACT IS WIDER THAN OVERLAP, so this is counted before the separation cull below:
+           bodies are pushed apart to 0.8 and a blade reaches further than that, so culling
+           first would have meant nobody was ever holding anybody. */
+        if(foes && d2 < PIN_REACH*PIN_REACH && a.state === 'ok' && b.state === 'ok'){
+          const aw = a.weapon ? ITEMS[a.weapon] : null, bw = b.weapon ? ITEMS[b.weapon] : null;
+          a._contacts++; b._contacts++;
+          /* a bow cannot hold anybody in place, and a body already down holds nothing */
+          if(!(aw && aw.range) && !a.mule && !a.noFight) b._pinnedBy = a;
+          if(!(bw && bw.range) && !b.mule && !b.noFight) a._pinnedBy = b;
+        }
         const R = foes ? 0.8 : 0.6;          /* an enemy's reach is part of his body */
         if(d2 >= R*R) continue;
         if(d2 < 0.0004){
@@ -14995,12 +15089,20 @@ function separate(){
         const ux = dx/d, uy = dy/d;
         nudge(a, -ux*push, -uy*push);
         nudge(b,  ux*push,  uy*push);
-        /* a mover blocked by a hostile body slides around it rather than grinding forever */
-        if(foes){
-          const slide = push * 0.55;
-          if(a.moveTarget || a.attackMove){ nudge(a, -uy*slide, ux*slide); }
-          if(b.moveTarget || b.attackMove){ nudge(b, uy*slide, -ux*slide); }
-        }
+        /* ---------- AND A BODY WITH SOMEWHERE TO BE GOES ROUND, NOT THROUGH ----------
+           This slide existed and fired in neither of the two cases that actually jam a line.
+           It asked `foes`, so a body shouldered into the back of its OWN side ground straight
+           into them — and an ally is far and away the more common thing to be stuck behind,
+           because allies are the ones all walking at the same enemy. And it asked for
+           `moveTarget` or `attackMove`, which a body closing on `c.target` has NEITHER of:
+           the chase is driven off `target` alone, so the one body most likely to be shoving
+           through a crowd was the one body excluded from going around it. That pair of gaps
+           is the reported "everyone beelines and gets caught on allies".
+           Allies slide apart more gently than enemies do: a shield wall that comes undone the
+           moment somebody wants past is a worse failure than one that jostles. */
+        const slide = push * (foes ? 0.55 : 0.42);
+        if(a.moveTarget || a.attackMove || a.target){ nudge(a, -uy*slide, ux*slide); }
+        if(b.moveTarget || b.attackMove || b.target){ nudge(b, uy*slide, -ux*slide); }
       }
     }
   }

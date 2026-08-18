@@ -49,6 +49,9 @@ WHAT IS DONE SO FAR, and where the proof lives:
     bandage order through a real right-click on the canvas.
   · tools/reach.js  — what a watchtower is worth, whether a sundered cache is inside
     its own monument, and whether anybody can buy a perfect body at the circle.
+  · tools/press.js  — how a line closes and what it costs to leave one: twelve bodies
+    onto one target measured by BEARING rather than distance, and the two speed rules
+    measured against the same body with the rule switched off.
   · tools/rites.js  — the Last Rite as a scene: not "is it longer" but whether what
     it summons crosses the ground in time to be fought at the circle.
   · tools/menus.js  — where the command menu lands, at three window sizes. The bug
@@ -208,25 +211,66 @@ Two rules this file keeps learning the hard way, both worth reading first:
     MEDIC stance walks past a bleeding stranger, and still picks up one of your own
     bleeding in the same spot. `fieldSurgeon` works the commander's band only.
 
-[OPEN] The melee pathing system seems to have gone a bit janky. Everyone tries to beeline towards the enemy and gets caught on allies. They should attempt to flank around where possible. (Could be an unintended side effect of the “walling” effect we built to prevent enemies from beelining through allies to attack mages etc.)
-    NOT STARTED.
+[DONE] The melee pathing system seems to have gone a bit janky. Everyone tries to beeline towards the enemy and gets caught on allies. They should attempt to flank around where possible. (Could be an unintended side effect of the “walling” effect we built to prevent enemies from beelining through allies to attack mages etc.)
+    Your guess was close: not the walling effect, but the slide that was
+    supposed to keep it from jamming. Proof in tools/press.js — 7 of its 11 assertions
+    fail on the build before this one.
+    MEASURED FIRST, because "janky" is not a number. Twelve bodies sent at one target
+    from the same side, then counted by BEARING rather than by distance — six bodies
+    standing 1.2 tiles away can be a neat ring or a heap on one side and only the
+    bearings tell them apart. Old build: SEVEN of the twelve ended up in one eighth of
+    the circle, three sides occupied out of eight, the tail trailing back to 4.5 tiles.
+    New: two per side at worst, seven sides of eight, everybody inside 2.5.
+    THREE CAUSES, and the first two are one line each.
+      1. `separate()` had a slide that lets a blocked body go round rather than grind —
+         and it asked `foes`, so it never fired for a body stuck behind its OWN side.
+         An ally is the far more common thing to be stuck behind, because allies are
+         the ones all walking at the same enemy.
+      2. The same slide asked for `moveTarget || attackMove`. A body closing on
+         `c.target` has NEITHER — the chase runs off `target` alone — so the one body
+         most likely to be shoving through a crowd was the one excluded from going
+         around it.
+      3. THE REAL ONE. "Extras circle at spear-length and wait" is what the Kenshi cap
+         comment says, and the code pushed the extra man straight back down the line he
+         arrived on. So a queue stayed a queue and only got longer. Extras now walk
+         round to their own arc and wait on it, which is what the comment always
+         promised, and it is most of the measured difference.
+    The fan itself: each body takes a stable place among everybody chasing the same
+    target (by id — no dice, nothing to save) and swings its approach off the GROUP's
+    mean bearing by that much. Off the group's, not its own: fanning off your own
+    bearing is a feedback loop, because turning toward the offset moves the bearing the
+    offset was measured from, and a body chases its own tail round the target. Measured
+    at three sides occupied — WORSE than changing nothing. The scan reads 6 tiles out,
+    not 2.8, because nobody is within 2.8 tiles until the queue has already formed.
+    Steering stops at 2.2 tiles so nothing circles a body it is already touching.
 
-[OPEN] Kiting should slow down the ranged attacker. It doesn’t make sense that someone could run backwards at full speed while still firing projectiles. And catching a ranged attacker in melee should somewhat lock them down from fleeing again. (Somewhat — they should reasonably be able to escape if, say, an ally also engages that enemy.)
-    NOT STARTED, and start by looking at who is actually doing the kiting, because the
-    AUTO-FIGHT path already refuses to do it. The ranged branch (~line 8283) reads:
-    `if(d > w.range){ travel(...); return; }` with the comment "no firing on the move", then
-    stands still and opens a `c.windup` of `w.draw` seconds. So an AI archer closes OR shoots,
-    never both. Whatever is kiting is therefore doing it around this branch — a player move
-    order, or `attackMove` — so the fix probably belongs where a move order interacts with
-    `windup`, not in this branch. Confirm which before writing anything.
-    The same branch already half-answers the second half: `if(d < 1.7){ c.blocking = true;
-    return; }` — "too close: guard, don't shoot" — so a body in melee ALREADY cannot fire. What
-    is missing is that nothing stops it walking away. A disengage cost wants to live near
-    `oppCd` (the opportunity-attack cooldown already on every body) rather than as a new
-    system, and the "unless an ally is also engaged" clause has a ready-made counter: the
-    engagement loop at ~line 8300 already counts bodies within 1.9 tiles of a target for the
-    Kenshi side-cap. Read that count instead of writing a second one.
-
+[DONE] Kiting should slow down the ranged attacker. It doesn’t make sense that someone could run backwards at full speed while still firing projectiles. And catching a ranged attacker in melee should somewhat lock them down from fleeing again. (Somewhat — they should reasonably be able to escape if, say, an ally also engages that enemy.)
+    Proof in tools/press.js. The note below was right that the AI never kites,
+    and that turned out to be the useful half: NOTHING in this game fires on the move.
+    The AI branch closes OR shoots, and a player move order runs through `clearOrders`,
+    which drops the target. So there was no "firing while running" to slow down.
+    WHAT IS ACTUALLY HAPPENING IS SHOOT AND SCOOT: loose, order a move, retreat at full
+    pace, order the shot again. Standing still was already paid for — a 0.20s
+    follow-through — and the RETREAT was free, which is what reads as running backwards
+    at full speed. So the loose now leaves `shotT` on the legs, 1.15s of it, decaying:
+    a body that has just fired moves at about 60% of its own pace and is back to normal
+    by the time it could fire again. Standing and shooting is untouched, which is the
+    trade this is meant to pose.
+    THE LOCK-DOWN, and the escape clause is the better half. `pinnedDown(c)` holds a
+    body at 45% pace while a melee-capable enemy is in contact with it — and lets go the
+    moment that enemy has somebody ELSE on it. So the way out is not a timer or a dice
+    roll, it is that a friend came and gave the man holding you something to think
+    about, which makes fetching a caught archer a thing you can do rather than a stat.
+    Both numbers fall out of `separate()`, which is the only pass in the tick that
+    already walks every close pair — and it has to be there rather than in `moveSpeed`,
+    because `charsNear` hands back ONE SHARED BUFFER and a scan issued from inside
+    moveSpeed would empty the caller's list underneath it. One tick of lag on the
+    result, deliberately: it is a grapple, not a trigger.
+    CONTACT IS COUNTED BEFORE THE SEPARATION CULL. Bodies are pushed apart to 0.8 and a
+    blade reaches 1.45, so counting after the cull would have meant nobody ever held
+    anybody. A bow cannot hold you, and neither can a mule or anything `noFight`.
+    NOT DONE HERE, and it belongs with this: at 0.9 tiles a lance-holder still neither
+    fires (correctly — too close to shoot) nor swings. That is the same branch.
 [DONE] Skeleton versions of Chimeras would be nice to have so that they don’t take the default human skeleton after being raised up. (Especially for lieutenants.)
     Built as part of the raise-mechanic rework below; the two were one job.
     The cause was not `kin` at all — it is that the chimera geometry lives in TWO
