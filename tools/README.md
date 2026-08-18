@@ -431,3 +431,19 @@ the truth was 45%.
   reached 32 against a theoretical maximum of 30 and could max every axis at once. If a ceiling
   is supposed to force a trade-off, it has to be a constant, and the progression has to be moved
   to something that is not the ceiling — here, what the same shape *costs*.
+- **Assert what you built, not the sentence you liked.** `study.js` first claimed "the fifth
+  bench is a shed" and went red on its own build — a power curve gives constant RELATIVE
+  falloff, so the fifth bench pays about three-quarters of the third, not nothing. The
+  temptation was to steepen the curve until the sentence became true. The right move was to fix
+  the sentence, in the assertion AND in the panel's hint text, since both were telling the
+  player something the code does not do.
+- **A harness that cannot RUN against the broken build cannot prove it catches the bug.**
+  `study.js` referenced a new constant bare, so on the old build the evaluate threw a
+  ReferenceError and the whole probe crashed before printing a single line — which reads
+  exactly like a clean pass at a glance. Guard any new global a harness touches
+  (`typeof X !== 'undefined' ? X : fallback`) if you ever intend to point it at an earlier
+  revision, which is the whole A/B discipline.
+- **A tolerance can smuggle in a second assertion.** `aLoneScholarIsUnchanged` used `< 0.12`,
+  which also happened to fail on the old build for reading 1.16 — nothing to do with what the
+  line claims to check. A guard that fails for a reason outside its own sentence will send the
+  next reader after the wrong thing.
