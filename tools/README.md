@@ -447,3 +447,15 @@ the truth was 45%.
   which also happened to fail on the old build for reading 1.16 — nothing to do with what the
   line claims to check. A guard that fails for a reason outside its own sentence will send the
   next reader after the wrong thing.
+- **Never run two `npm run check` at once.** Every run starts with `node tools/prep.js`, which
+  rewrites `tools/game.html` — so two concurrent suites clobber each other's build mid-flight
+  and every harness after the collision is reading a file that does not match what it is being
+  asked about. Neither result means anything. The same applies to editing the game while a
+  suite is running: a `prep` from your own shell lands in the middle of somebody else's run.
+  One suite at a time, and rebuild only between runs.
+- **Killing the suite reports 144, including on the command that does the killing.** A
+  `pgrep`-driven kill matches the shell wrapper that launched it and takes your own command
+  down with it, so `kill` "fails" with 144 while having worked perfectly. Confirm with
+  `ps -eo args | grep -E "^(npm|node tools/)"` instead — and note a bare `pgrep -c -f "npm run
+  check"` also matches the agent's own process, whose arguments contain the whole system
+  prompt, so it will happily report processes that do not exist.
