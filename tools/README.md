@@ -389,6 +389,15 @@ the truth was 45%.
   earlier, successful open, because hiding a panel does not clear it. The message read as though
   the right panel was open when the panel was closed. Assert on the thing that changes
   (`display`), and do not quote a field that persists across the state you are reporting.
+- **When a duration comes in under what the constants allow, the feature is not what broke.**
+  `rites.js` reported "AT MAGIC 150 THE RITE IS OVER IN 39s" on a build whose `RITE_WORK` (120)
+  and rate cap (2.0) were byte for byte the ones that had measured 60s the day before. 120 at a
+  hard cap of 2.0 is 60 seconds and cannot be 39 — so the rite was not finishing early, it was
+  ENDING SOME OTHER WAY (`collapseRite`, because a summon reached the circle). The actual cause
+  was one `ri()` added to town stock seeding four thousand lines away, which moved every body
+  worldgen placed after it and stood the waves up somewhere slightly different. Do the
+  arithmetic on the constants first: it tells you whether you are looking for a slower feature
+  or a different exit, and those are different searches.
 - **A negative control that also passes means the harness is unproven, not that the bug is
   fixed.** `roads.js` found zero caravan stalls; stripping out the `travel` fallback whose
   comment names that exact failure produced zero stalls as well. So the harness guards against
