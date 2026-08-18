@@ -1426,7 +1426,7 @@ function makeChar(name, faction, x, y, o={}){
     floor: 0,
     inv: {}, pack: null, haulTarget: null,
     structTarget: null, repairTarget: null, stuckT: 0,
-    healProg: 0, gatherT: 0, bubble: null,
+    healProg: 0, gatherT: 0, bubble: null, craftJob: null,
     /* audio timing. Declared here rather than sprung on the object later: stepToward touches
        strideD for every mover on every tick, and a hidden-class transition in that path is
        not worth a footstep. Neither needs saving — both re-derive within a second of play. */
@@ -6516,6 +6516,71 @@ function researchRate(){
    Deliberately modest, because the crew curve above is doing most of the work: a lone scholar
    takes about a third longer, a camp with three staffed benches nearly three times. */
 const RESEARCH_DRAG = 1.35;
+/* ============================================================ A CRAFT IS WORK
+   Every recipe resolved inside the click: press CRAFT and the materials vanished and the item
+   appeared, ten at a time on shift. That made the bench the one place in this game where a job
+   took no time at all — a woodcutter stands at a tree for five seconds with a green bar over
+   their head, and turning that same wood into Build Materials was instantaneous.
+   The crafter stands at the bench and works now, one item at a time, on the bar every other
+   working body already uses.
+
+   MATERIALS ARE SPENT AS EACH ITEM COMPLETES, not up front. That is what makes an interrupted
+   batch safe: walk the crafter away or take another order and whatever has not been made yet
+   was never paid for. It is also why the job is deliberately NOT saved — a reload drops an
+   unfinished batch and costs nothing, which is a better trade than plumbing a transient
+   through the save file. */
+const CRAFT_SECS = 2.4;               /* per item, for somebody with no skill at all */
+function craftDur(c, kind){
+  const sk = craftSkillFor(kind);
+  return CRAFT_SECS / (1 + (c.stats[sk] || 0) * 0.02);   /* a master is about twice a novice */
+}
+function finishCraft(c, why){
+  const j = c.craftJob;
+  if(!j) return;
+  c.craftJob = null;
+  const madeTxt = Object.keys(j.made).map(k => `${j.made[k]} ${ITEMS[k].name}`).join(', ');
+  if(madeTxt) log(`${c.name} crafted ${madeTxt}.`, 'good');
+  if(j.ruined) log(`${c.name} ruined ${j.ruined} — the materials are lost.`, 'bad');
+  if(why) log(why, 'bad');
+  refreshInv();
+}
+/* Returns true while the body is busy at the bench, so the AI leaves them alone. */
+function craftTick(c, dt){
+  const j = c.craftJob;
+  if(!j) return false;
+  const r = (RECIPES[j.kind] || []).find(x => x.out === j.out);
+  if(!r){ c.craftJob = null; return false; }
+  /* THE WORK HAPPENS AT THE BENCH. Wander off and it waits rather than cancelling — the
+     player did not take the order back, they just moved. */
+  if(dist(c.x, c.y, j.bx, j.by) > 2.6) return false;
+  c._working = 0.5;
+  j.t += dt;
+  if(j.t < j.dur) return true;
+  j.t = 0;
+  if(!canAfford(r.cost)){ finishCraft(c, 'The materials ran out.'); return true; }
+  campSpend(r.cost);
+  const sk = craftSkillFor(j.kind);
+  xpGain(c, sk, 0.6);
+  const gear = ITEMS[j.out].type === 'weapon' || ITEMS[j.out].type === 'armor';
+  if(gear){
+    const q = rollQuality(c.stats[sk]);
+    if(q === null) j.ruined++;
+    else {
+      const out = tierKey(j.out, q);
+      addItem(out, r.n);
+      j.made[out] = (j.made[out] || 0) + r.n;
+      if(q === 'm') addFloat(c.x, c.y - 1, 'MASTERWORK', '#d4a040');
+    }
+  } else if(rnd() < 0.04) j.ruined++;
+  else {
+    if(ITEMS[j.out].type === 'mat') storeItem(j.out, r.n, c);
+    else addItem(j.out, r.n);
+    j.made[j.out] = (j.made[j.out] || 0) + r.n;
+  }
+  j.done++;
+  if(j.done >= j.want) finishCraft(c, null);
+  return true;
+}
 function benchCrew(b){
   return chars.filter(c => c.faction==='player' && c.job==='research' &&
     mindedDead(c) && c.state==='ok' &&
@@ -7803,6 +7868,7 @@ function clearOrders(c){
   c.talkTarget = null;
   c.structTarget = null; c.repairTarget = null; c.stuckT = 0;
   c.carryTarget = null; c.rescueTarget = null; c.seizeTarget = null;
+  c.craftJob = null;      /* a new order takes them off the bench; nothing unmade was paid for */
   c.guardTarget = null; c.haulTarget = null;
   c.path = null; c.pathGoal = null;
   if(c.resting){ c.resting.user = null; c.resting = null; }
@@ -8105,6 +8171,8 @@ function physics(c, dt){
     }
     else { c.healProg = 0; return; }
   }
+  /* a craft in progress holds the crafter at the bench — see craftTick */
+  if(c.craftJob && craftTick(c, dt)) return;
   /* gather order: stand at the node and work */
   if(c.gather){
     const g = c.gather;
@@ -20553,6 +20621,7 @@ function renderOverlay(){
     let prog = 0;
     if(c.healTarget && c.healProg > 0 && dist(c.x,c.y,c.healTarget.x,c.healTarget.y) < 1.3) prog = c.healProg/tendDur(c.healTarget);
     else if(c.gather && c.gatherT > 0) prog = c.gatherT/5;
+    else if(c.craftJob && c.craftJob.t > 0) prog = c.craftJob.t / c.craftJob.dur;
     if(prog > 0 && base){
       cx.fillStyle = '#000'; cx.fillRect(base.x-10, base.y+6, 20, 4);
       cx.fillStyle = '#a3c47a'; cx.fillRect(base.x-9, base.y+7, 18*clamp(prog,0,1), 2);
@@ -21799,36 +21868,20 @@ function openCrafting(kind, bench){
       const r = RECIPES[kind].find(x => x.out===b.dataset.cr);
       const crafter = bestCrafter(kind, craftingBench);
       if(!crafter){ log('Nobody close enough to work it.', 'bad'); return; }
-      const sk = craftSkillFor(kind);
-      const gear = ITEMS[r.out].type==='weapon' || ITEMS[r.out].type==='armor';
+      if(!canAfford(r.cost)){ log('Not enough materials.', 'bad'); return; }
+      if(crafter.craftJob){ log(`${crafter.name} is already at the bench.`, 'bad'); return; }
       /* shift for a full shift's work — hold the bench down and run the batch */
       const want = e.shiftKey ? 10 : 1;
-      let done = 0, ruined = 0;
-      const made = {};
-      for(let i=0;i<want;i++){
-        if(!canAfford(r.cost)) break;
-        campSpend(r.cost);
-        xpGain(crafter, sk, 0.6);
-        if(gear){
-          const q = rollQuality(crafter.stats[sk]);
-          if(q === null){ ruined++; continue; }
-          const out = tierKey(r.out, q);
-          addItem(out, r.n);
-          made[out] = (made[out]||0) + r.n;
-          if(q==='m') addFloat(crafter.x, crafter.y-1, 'MASTERWORK', '#d4a040');
-        } else {
-          if(rnd() < 0.04){ ruined++; continue; }
-          if(ITEMS[r.out].type === 'mat') storeItem(r.out, r.n, crafter);
-          else addItem(r.out, r.n);
-          made[r.out] = (made[r.out]||0) + r.n;
-        }
-        done++;
-      }
-      if(!done && !ruined){ log('Not enough materials.', 'bad'); return; }
-      const madeTxt = Object.keys(made).map(k => `${made[k]} ${ITEMS[k].name}`).join(', ');
-      if(madeTxt) log(`${crafter.name} crafted ${madeTxt}.`, 'good');
-      if(ruined) log(`${crafter.name} ruined ${ruined} — the materials are lost.`, 'bad');
-      refreshInv(); rndr();
+      /* THE ORDER, NOT THE OUTCOME. Everything that used to happen here now happens in
+         `craftTick`, a bit at a time, with the crafter standing at the bench. */
+      crafter.craftJob = {
+        kind, out: r.out, want, done: 0, ruined: 0, made: {},
+        t: 0, dur: craftDur(crafter, kind),
+        bx: craftingBench.x + (craftingBench.w || 2) / 2,
+        by: craftingBench.y + (craftingBench.h || 2) / 2,
+      };
+      log(`${crafter.name} sets to work${want > 1 ? ` — ${want} × ${ITEMS[r.out].name}` : ` on ${ITEMS[r.out].name}`}.`, '');
+      rndr();
     });
   };
   rndr();

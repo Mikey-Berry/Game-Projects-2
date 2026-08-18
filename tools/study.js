@@ -184,12 +184,67 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       research.study = null;
     }
 
+    /* ================ AND A CRAFT IS WORK TOO ================
+       The other half of the same report: "converting wood/stone into building materials — the
+       craftsman should take a tad more time (sort of like the green bar built up when
+       harvesting materials)." It used to resolve inside the click. */
+    {
+      wipe();
+      research.done.construction = true;
+      const bench = { type: 'workbench', x: gx, y: gy, w: 2, h: 2, floor: 0, hp: 90, maxHp: 90, progress: 1, __probe: true };
+      pBuilds.push(bench);
+      const smith = makeChar('Hand', 'player', gx + 1, gy + 1, { atk: 4, def: 4, tough: 8, ath: 6, crafting: 10 });
+      smith.__probe = true; chars.push(smith);
+      stash.wood = 100; stash.stone = 100;
+      const mats0 = campHas('mats'), wood0 = stash.wood;
+
+      const r = RECIPES.workbench.find(x => x.out === 'mats');
+      smith.craftJob = { kind: 'workbench', out: 'mats', want: 1, done: 0, ruined: 0, made: {},
+                         t: 0, dur: craftDur(smith, 'workbench'), bx: gx + 1, by: gy + 1 };
+      const dur = smith.craftJob.dur;
+      R.aCraftTakesTime = dur > 0.5
+        ? `one Build Materials is ${dur.toFixed(1)}s of work for a hand with crafting 10`
+        : `!! A CRAFT STILL TAKES NO TIME (${dur}s)`;
+
+      /* half way through: nothing made, and NOTHING SPENT — an interrupted batch must be free */
+      craftTick(smith, dur * 0.5);
+      R.nothingIsSpentUpFront = stash.wood === wood0 && campHas('mats') === mats0
+        ? 'half way through, no wood is gone and no materials exist yet'
+        : `!! THE COST WAS TAKEN BEFORE THE WORK WAS DONE (wood ${wood0} -> ${stash.wood})`;
+      R.theBarIsDrawable = smith.craftJob.t > 0 && smith.craftJob.dur > 0
+        ? 'and there is progress for the work bar to read'
+        : '!! NO PROGRESS FOR THE BAR TO SHOW';
+
+      craftTick(smith, dur * 0.6);
+      R.theCraftLands = campHas('mats') > mats0 && stash.wood < wood0
+        ? `and when the work is done the materials are made (${mats0} -> ${campHas('mats')}) and the wood is spent`
+        : `!! THE WORK FINISHED AND NOTHING WAS MADE (mats ${mats0} -> ${campHas('mats')})`;
+      R.aSingleOrderEnds = !smith.craftJob
+        ? 'a one-item order clears itself when it is done'
+        : '!! THE JOB NEVER ENDS';
+
+      /* walking away pauses rather than cancels, and costs nothing */
+      smith.craftJob = { kind: 'workbench', out: 'mats', want: 5, done: 0, ruined: 0, made: {},
+                         t: 0, dur, bx: gx + 1, by: gy + 1 };
+      smith.x = gx + 20; smith.y = gy + 20;
+      const wood1 = stash.wood;
+      for (let i = 0; i < 20; i++) craftTick(smith, dur);
+      R.awayFromTheBenchNothingHappens = stash.wood === wood1 && smith.craftJob && smith.craftJob.done === 0
+        ? 'and a crafter who walks off the bench makes nothing and spends nothing until they come back'
+        : `!! WORK CONTINUES AWAY FROM THE BENCH (done ${smith.craftJob && smith.craftJob.done}, wood ${wood1} -> ${stash.wood})`;
+      /* and a new order takes them off it, with nothing lost */
+      clearOrders(smith);
+      R.aNewOrderCancelsCleanly = !smith.craftJob && stash.wood === wood1
+        ? 'a new order takes them off the bench and nothing unmade was paid for'
+        : `!! CANCELLING LEAKS (job ${!!smith.craftJob}, wood ${wood1} -> ${stash.wood})`;
+    }
+
     wipe();
     return R;
   });
 
   console.log('=== THE BENCH, AND HOW LONG IT TAKES ===\n');
-  for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(28) + v);
+  for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(32) + v);
   const bad = Object.values(out).map(String).filter(v => v.startsWith('!!'));
   console.log('\n' + (bad.length ? '*** ' + bad.join('\n*** ')
     : 'THE TREE IS SLOWER, THE BENCHES SHARE A CURVE, AND READING A FORMULA IS WORK'));
