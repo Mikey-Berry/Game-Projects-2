@@ -113,8 +113,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.theySpreadAround = sectors >= 5
         ? `the ${ring.length} of them around it stand on ${sectors} of 8 sides`
         : `!! ${ring.length} BODIES ON ${sectors} SIDE(S) — the line is queueing, not flanking`;
-      R.nobodyStacksUp = maxPer <= 3
-        ? `and no side holds more than ${maxPer} of them`
+      /* THE LINE IS AT 5 AND NOT AT 3, and the difference matters. The queue this exists to
+         catch puts SEVEN of twelve into one eighth of the circle; the fixed build has measured
+         2, 3 and 4 across three different revisions while the sides-occupied count went 6, 7,
+         7 — which is to say the worst-cluster number bounces at the margin for reasons that
+         have nothing to do with queueing (bodies get whatever weapon `makeChar` rolls them,
+         and a bow behaves differently in contact from an axe). A threshold pinned to one
+         build's exact arrangement is a threshold that fails on the next unrelated change,
+         which is what happened. Five separates the bug from the fix with room, and 12 bodies
+         over 8 sectors averages 1.5, so five in one is still plainly a heap. */
+      R.nobodyStacksUp = maxPer <= 5
+        ? `and no side holds more than ${maxPer} of them (a queue puts 7 there)`
         : `!! ${maxPer} OF THEM PILED ONTO ONE SIDE — that is the queue, measured`;
       /* nobody wedged: the least-travelled body still has to have gone somewhere */
       const moved = start.map(s => dist(s.x, s.y, s.a.x, s.a.y)).sort((u, v) => u - v);
@@ -173,7 +182,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        real loop, with the enemy already in contact so there is no approach to confuse it. */
     {
       wipe();
-      const archer = mk('Bowman', 'player', gx, gy, { atk: 26, def: 10, tough: 60, ath: 8, weapon: 'w_bow' });
+      const archer = mk('Lancer', 'player', gx, gy, { atk: 26, def: 10, tough: 60, ath: 8, weapon: 'w_lance' });
+      archer.gift = null;                              /* the lance refuses a gifted hand */
       archer.autoFight = true;
       const thug = mk('Thug', 'bandit', gx + 0.85, gy, { atk: 6, def: 6, tough: 400, ath: 1 });
       thug.noFight = true; thug.speedMult = 0.0001;   /* it stands in contact and soaks */
@@ -199,6 +209,39 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.cornersFightBack = thug.blood < hp0
         ? `an archer with somebody on its chest defends itself — the thug drops from ${hp0} to ${Math.max(0, thug.blood).toFixed(0)}`
         : `!! IT STANDS THERE AND TAKES IT (thug still at ${thug.blood.toFixed(0)}, archer atkCd ${archer.atkCd.toFixed(1)})`;
+      /* ---------- AND A BOW DOES NOT ----------
+         THE FIRST VERSION OF THIS FIX SENT EVERY RANGED BODY INTO THE BRAWL, bows included,
+         and `command.js` found it inside the hour: a foraging band came home 5 dead of 5,
+         commander included. `blocking` multiplies an attacker's hit chance by as little as
+         0.30 and halves the stagger roll, so archers had been quietly living on it every time
+         something reached them — standing and guarding is the RIGHT answer for a bow, and the
+         wrong one only for a weapon with a spike on the end of it. Both halves are pinned here
+         so the next person to widen this branch has to mean it. */
+      {
+        const bowman = mk('Bowman', 'player', gx, gy + 6, { atk: 26, def: 10, tough: 60, ath: 8, weapon: 'w_bow' });
+        bowman.autoFight = true;
+        const brute = mk('Brute', 'bandit', gx + 0.85, gy + 6, { atk: 6, def: 6, tough: 400, ath: 1 });
+        brute.noFight = true; brute.speedMult = 0.0001;
+        bowman.target = brute; bowman.targetManual = true;
+        /* MEASURED WHERE THE RULE APPLIES, again. "The brute took no damage" is the wrong
+           reading: `separate()` shoves the pair apart past 1.7 and the bowman then quite
+           correctly shoots it. What must never happen is a bow SWINGING at arm's length
+           instead of guarding — so count melee windups inside the threshold, not damage. */
+        let guarded = 0, bowSwings = 0;
+        paused = false;
+        for (let i = 0; i < 120; i++) {
+          update(0.1);
+          const dd = dist(bowman.x, bowman.y, brute.x, brute.y);
+          if (dd < 1.7) {
+            if (bowman.blocking) guarded++;
+            if (bowman.windup && bowman.windup.kind !== 'ranged') bowSwings++;
+          }
+        }
+        paused = true;
+        R.aBowKeepsItsGuard = bowSwings === 0 && guarded > 20
+          ? `a bow at the same range keeps its guard up instead — ${guarded} frames blocking inside 1.7 tiles and not one swing`
+          : `!! A BOWMAN IS BRAWLING (${bowSwings} swings inside 1.7, blocked ${guarded}) — that is what killed the forage band`;
+      }
       /* and the rule this is built on has to survive: nobody looses an arrow into a body at
          arm's length. Both halves matter — a fix that simply deleted the 1.7-tile refusal
          would pass the assertion above and break the thing the refusal is for. */

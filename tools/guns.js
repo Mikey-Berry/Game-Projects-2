@@ -72,6 +72,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       chars.push(c);
       return c;
     };
+    /* a weapon that stops working has to SAY why, so the sentence has to be catchable */
+    const logs = [];
+    const _log = log; window.log = (m, k) => { logs.push(String(m)); return _log(m, k); };
     const run = (n) => { paused = false; for (let i = 0; i < n; i++) update(0.1); paused = true; };
 
     /* ================== 1. THE TURRET ================== */
@@ -139,11 +142,31 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.theLanceTakesTheDeaf = emplUsableBy(t, deaf)
         ? 'while the alchemically deaf may hold it'
         : '!! THE LANCE REFUSES EVERYBODY, WHICH IS WHY IT LOOKS BROKEN';
+      /* ---------- THE HEAVY IS THE ONE THAT EATS CELLS NOW ----------
+         It used to spend nothing at all while the handheld paid for every trigger pull. Dry
+         first, because a weapon that fires on an empty stash makes the whole supply line
+         decorative, and a dry emplacement is now a thing a player can actually build. */
+      stash.aether_cell = 0;
+      const f0 = foe(gx + 8, gy);
+      logs.length = 0;
+      run(200);
+      R.aDryHeavyHoldsItsFire = (t.shots || 0) === 0 && f0.blood === 100
+        ? 'with an empty stash the Heavy will not fire at all'
+        : `!! A DRY HEAVY FIRES ANYWAY (${t.shots} bolts) — the charge rule does nothing`;
+      R.aDryHeavySaysWhereCellsComeFrom = logs.some(l => /Heavy Aetheric Lance is dry/.test(l) && /scavenged/.test(l) && /(Dustport|Hollowmere|occult dealers|redoubt)/.test(l))
+        ? `and it says why, and where they come from: "${(logs.find(l => /is dry/.test(l)) || '').slice(0, 92)}…"`
+        : `!! A DRY HEAVY IS UNEXPLAINED (said ${logs.find(l => /dry/.test(l)) || 'nothing'})`;
+      /* now feed it */
+      stash.aether_cell = 20;
+      const cells0 = stash.aether_cell;
       const f = foe(gx + 8, gy);
       run(500);
       R.theEmplacedLanceFires = (t.shots || 0) > 0
-        ? `it fires — ${t.shots} bolts, and the raider is at ${Math.max(0, f.blood).toFixed(0)} blood`
-        : `!! THE EMPLACED LANCE NEVER FIRES (gunner ${t.gunnerId}, cool ${(t.cool || 0).toFixed(1)})`;
+        ? `fed, it fires — ${t.shots} bolts, and the raider is at ${Math.max(0, f.blood).toFixed(0)} blood`
+        : `!! THE EMPLACED LANCE NEVER FIRES (gunner ${t.gunnerId}, cool ${(t.cool || 0).toFixed(1)}, cells ${stash.aether_cell})`;
+      R.andTheHeavySpendsCells = stash.aether_cell < cells0
+        ? `and it spends them doing it — ${cells0} -> ${stash.aether_cell} for ${t.shots} bolts`
+        : `!! THE HEAVY FIRES FOR FREE (cells still ${stash.aether_cell})`;
     }
 
     /* ================== 3. THE HANDHELD LANCE ================== */
@@ -161,17 +184,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.theLanceIsCarryable = !ITEMS.w_lance.nullOnly || !c.gift
         ? 'an ungifted hand may carry the Aether Lance'
         : '!! THE LANCE CANNOT BE CARRIED AT ALL';
-      const dry = lanceFire(c, w);
-      R.aDryLanceRefuses = dry === false
-        ? 'with no cells in the stash it will not fire, which is the design'
-        : '!! A DRY LANCE FIRES ANYWAY — THE CHARGE RULE DOES NOTHING';
-      stash.aether_cell = 20;
-      c._lanceDry = false; c.heat = 0;
+      /* ---------- AND THE HANDHELD IS NOT AMMUNITION-FED ANY MORE ----------
+         Ammunition on the thing your people carry made the gunline an expensive annoyance and
+         the weapon a museum piece between resupplies. The charges moved to the emplacement,
+         which is where the supply line belongs. Asserted with an EMPTY stash, because "it
+         fires" is worth nothing if the probe left cells lying about. */
       const cells0 = stash.aether_cell;
-      const wet = lanceFire(c, w);
-      R.aChargedLanceFires = wet === true && stash.aether_cell === cells0 - 1
-        ? `with cells in the stash it fires and spends one (${cells0} -> ${stash.aether_cell})`
-        : `!! A CHARGED LANCE STILL WILL NOT FIRE (returned ${wet}, cells ${cells0} -> ${stash.aether_cell})`;
+      const dry = lanceFire(c, w);
+      R.theHandheldNeedsNoAmmunition = dry === true && stash.aether_cell === cells0
+        ? `it fires on an empty stash and spends nothing (${cells0} -> ${stash.aether_cell})`
+        : `!! THE HANDHELD STILL WANTS FEEDING (returned ${dry}, cells ${cells0} -> ${stash.aether_cell})`;
+      c._lanceDry = false; c.heat = 0;
       /* and through the real attack path, not just the helper */
       c.atkCd = 0; c.heat = 0;
       const hp0 = f.blood, cells1 = stash.aether_cell;

@@ -389,6 +389,17 @@ the truth was 45%.
   earlier, successful open, because hiding a panel does not clear it. The message read as though
   the right panel was open when the panel was closed. Assert on the thing that changes
   (`display`), and do not quote a field that persists across the state you are reporting.
+- **A threshold pinned to one build's exact arrangement fails on the next unrelated change.**
+  `press.js` asserted that no more than THREE of twelve bodies end up in one eighth of the
+  circle, because the build in front of it measured two. Three revisions later the same fixed
+  behaviour measured 2, 3 and 4 while the number that actually matters — sides occupied — went
+  6, 7, 7. The assertion went red for a lance change that had nothing to do with flanking. Set
+  the line where it SEPARATES the bug from the fix (the queue puts seven there) and leave room,
+  rather than where the current build happens to sit.
+- **`R.x = 'some string'` is not an assertion.** `gunnery.js` carried
+  `R.andItSpendsNoCells = 'the emplacement runs off the camp...'` — a hardcoded sentence with no
+  reading behind it, printing a green line forever and testing nothing. It survived a rewrite of
+  the thing it claimed to describe. If a line cannot fail, delete it or give it a number.
 - **Measure a rule only where the rule applies.** `press.js` asserts that a body holding a bow
   does not shoot inside 1.7 tiles, and the first version counted every draw over the whole run:
   24 violations, for a body that never once loosed inside its own guard. `separate()` pushes

@@ -638,9 +638,19 @@ const ITEMS = {
   w_nod:   {name:'Nodachi',       base:1500,type:'weapon', dmg:28, wt:'cut'},
   aether_cell:{name:'Aether Cell', base:220, type:'mat',
     desc:'A pre-Fall charge cell, still holding. Nobody alive knows how they were made, and nobody is making more'},
+  /* ---------- A LANCE IS A POLEARM WITH A GUN IN IT ----------
+     `melee` is the profile it fights with when something is close enough that shooting is out
+     of the question. It is NOT `dmg`: 44 is what the plasma does at nine tiles, and a weapon
+     that dealt its bolt damage as a club would quietly be the best melee weapon in the game as
+     well as the best gun. 26 and a pierce is a heavy spike on the end of a long frame — better
+     than being beaten to death holding it, worse than a real polearm in trained hands.
+     THE CELLS MOVED TO THE EMPLACEMENT (see EMPL.lance). Ammunition on the handheld made the
+     gunline an expensive annoyance and the weapon a museum piece between resupplies; the
+     emplaced Heavy is the one that is plumbed into something and throws a 72-damage bolt
+     through a column, so that is the one that eats pre-Fall charges now. */
   w_lance: {name:'Aether Lance',  base:9000,type:'weapon', dmg:44, wt:'pierce', range:9, pre:true, nullOnly:true,
-    rof:4.6, draw:0.55, lance:true, charge:true, ap:0.80,
-    desc:'A golden-age firearm that transmutes latent ether to plasma. In a gifted hand the interference cascades — the lance and the hand go together. Only the alchemically deaf can carry one.'},
+    rof:4.6, draw:0.55, lance:true, ap:0.80, melee:{dmg:26, wt:'pierce'},
+    desc:'A golden-age firearm that transmutes latent ether to plasma, on a frame long enough to keep a man off you. In a gifted hand the interference cascades — the lance and the hand go together. Only the alchemically deaf can carry one.'},
   w_sever: {name:'Sundering Edge',base:9500,type:'weapon', dmg:40, wt:'cut',    pre:true},
   a_carap: {name:'Alchemic Carapace', base:11000, type:'armor', pre:true, def:.52, pen:.30},
   codex:   {name:'Transmutation Codex', base:6000, type:'tome', codex:true},
@@ -2146,7 +2156,9 @@ function swingHeft(c){ return heftOf(c) * skillEase(c); }
 function atkPower(c){
   const w = wepOf(c);
   let d;
-  if(w) d = w.dmg;
+  /* a weapon with a `melee` block is being swung, not fired — see w_lance */
+  if(w && w.range && w.melee) d = w.melee.dmg;
+  else if(w) d = w.dmg;
   else if(c.clawDmg) d = c.clawDmg;
   else if(c.undead || c.beast) d = 8;
   else d = 4 + c.stats.martial * 0.5;
@@ -2155,7 +2167,7 @@ function atkPower(c){
      must not be a damage decision. What you buy with it is impact and stagger, and what you
      pay is the seconds you spend rooted in the wind and the follow-through. Melee only — a
      bow's rate of fire is its own problem, handled where it is drawn. */
-  if(!w || !w.range) d *= Math.pow(heftOf(c), 1.04);
+  if(!w || !w.range || w.melee) d *= Math.pow(heftOf(c), 1.04);
   if(c.undead && consecratedAt(c.x, c.y)) d *= 0.78;   /* and they strike weakly on it */
   d *= 1 + c.stats[wSkillKey(c)] * 0.015;
   d *= 1 - packPenalty(c);
@@ -5525,7 +5537,7 @@ function attack(a, d){
     return;
   }
   const w = wepOf(a);
-  const wt = w ? w.wt : 'blunt';
+  const wt = w ? ((w.range && w.melee) ? w.melee.wt : w.wt) : 'blunt';
   if(!w && !a.beast && !a.undead && a.stats.martial >= 15){ d.staggerT = Math.max(d.staggerT, 0.45); d.windup = null; }
   const mvA = MOVES[a.swingMove] || MOVES.slash;
   let dmg = atkPower(a) * (0.75 + rnd()*0.5) * mvA.dmg;
@@ -6232,8 +6244,12 @@ const UNDEAD_TYPES = {
 const EMPL = {
   turret: {name:'Crossbow Turret', range:15, dmg:24, reload:2.4, wt:'pierce', hp:170,
            pierce:1, aim:0.55, tag:'TUR'},
+  /* `cell` is what it spends per shot out of the camp stash. It used to spend nothing at all
+     while the handheld paid for every trigger pull, which was backwards twice over: the thing
+     bolted to your wall is the one with a supply line, and it is the one throwing a bolt that
+     goes through four men. */
   lance:  {name:'Heavy Aetheric Lance', range:22, dmg:72, reload:7.5, wt:'burn', hp:240,
-           pierce:4, aim:0.80, tag:'LNC', nullOnly:true, unlock:'aether_ordnance'},
+           pierce:4, aim:0.80, tag:'LNC', nullOnly:true, unlock:'aether_ordnance', cell:1},
 };
 function emplSpec(b){ return EMPL[(BUILD_TYPES[b.type] || {}).empl] || null; }
 function isEmpl(type){ return !!(BUILD_TYPES[type] && BUILD_TYPES[type].empl); }
@@ -8688,8 +8704,17 @@ function physics(c, dt){
          that gap is the one the old comment was actually about. */
       if(d < 1.7){
         c.blocking = true;
-        if(d > 1.0) return;              /* out of reach and too close to shoot: guard and wait */
-        /* and inside reach, fall through to the swing */
+        /* ONLY A WEAPON THAT CAN ACTUALLY FIGHT DROPS THE GUARD, and the first version of this
+           did not check — it sent EVERY ranged body into a brawl, bows included. `command.js`
+           found it within the hour and it was not subtle: a foraging band came home 5 dead of
+           5, commander included, because `blocking` is worth a great deal (it multiplies an
+           attacker's hit chance by as little as 0.30 and cuts the stagger roll nearly in half)
+           and archers had been quietly relying on it every time something reached them.
+           So guarding is still the right answer for a bow. A LANCE is a different weapon —
+           a spike on a frame long enough to keep a man off you — and for that one, and
+           anything else given a `melee` profile, standing there was always the wrong answer. */
+        if(d > 1.0 || !w.melee) return;  /* out of reach, or nothing to fight with: guard and wait */
+        /* and inside reach, with something to fight with, fall through to the swing */
       }
       else if(d > w.range){ travel(c, t.x, t.y, dt, w.range - 0.5); return; } /* no firing on the move */
       else {
@@ -8788,7 +8813,8 @@ function physics(c, dt){
          cooldown you were free to walk around during — which is why every fight in the game
          had the texture of a click contest. Now: wind, land, recover. All three scale with
          what you are holding. */
-      const mvKey = !(wepOf(c) || {}).range ? pickMove(c, t) : 'slash';
+      const wq = wepOf(c) || {};
+      const mvKey = (!wq.range || wq.melee) ? pickMove(c, t) : 'slash';
       const mv = MOVES[mvKey];
       c.swingMove = mvKey;
       /* finding a new one is worth being told about, once */
@@ -11479,6 +11505,30 @@ function hostileToPlayer(o){
   return hostile({faction: 'player'}, o);
 }
 function emplFire(b, spec, g, t){
+  /* ---------- THE HEAVY EATS PRE-FALL CHARGES ----------
+     It used to spend nothing while the handheld paid for every trigger pull, and that was
+     backwards twice over: the thing bolted to your wall is the one with a supply line behind
+     it, and it is the one throwing a bolt that goes through four men. So the cells live here
+     now. The refusal reads like the handheld's used to, for the same reason — a weapon that
+     stops working has to say why over its own head, and the sentence has to name where cells
+     come from, or a player who does not know they are traded cannot go and buy any. */
+  if(spec.cell){
+    if(!takeItem('aether_cell', spec.cell)){
+      addFloat(b.x + 0.5, b.y - 0.6, 'NO CELL', '#8fd0ff');
+      b.cool = 2.0;                       /* do not re-ask every tick */
+      if(!b._dry){
+        b._dry = true;
+        const where = [...new Set(vendors.filter(v => v.vt === 'occult' && v.town).map(v => v.town.name))];
+        log(`The ${spec.name} is dry. Nobody alive makes Aether Cells — they are scavenged, and ` +
+            (where.length ? `the occult dealers at ${where.join(' and ')} are where they surface.`
+                          : `only a sealed redoubt still has any.`), 'bad');
+        refreshInv();
+      }
+      return;
+    }
+    b._dry = false;
+    refreshInv();
+  }
   const bx = b.x + 0.5, by = b.y + 0.5, bf = b.floor || 0;
   const tf = t.floor || 0;
   const skill = g.stats.gunnery;
