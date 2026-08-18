@@ -391,13 +391,21 @@ the truth was 45%.
   (`display`), and do not quote a field that persists across the state you are reporting.
 - **When a duration comes in under what the constants allow, the feature is not what broke.**
   `rites.js` reported "AT MAGIC 150 THE RITE IS OVER IN 39s" on a build whose `RITE_WORK` (120)
-  and rate cap (2.0) were byte for byte the ones that had measured 60s the day before. 120 at a
-  hard cap of 2.0 is 60 seconds and cannot be 39 — so the rite was not finishing early, it was
-  ENDING SOME OTHER WAY (`collapseRite`, because a summon reached the circle). The actual cause
-  was one `ri()` added to town stock seeding four thousand lines away, which moved every body
-  worldgen placed after it and stood the waves up somewhere slightly different. Do the
-  arithmetic on the constants first: it tells you whether you are looking for a slower feature
-  or a different exit, and those are different searches.
+  and rate cap (2.0) were byte for byte the ones that measured 60s the day before. 120 at a hard
+  cap of 2.0 is sixty seconds and cannot be thirty-nine — so the rite was not finishing early, it
+  was ENDING SOME OTHER WAY (`collapseRite`, because summons crowding the ring shoved the
+  ritualist off their own circle). Do the arithmetic on the constants first: it tells you whether
+  you are hunting a slower feature or a different exit, and those are different searches.
+- **Pin everything the probe calls fixed, not just the half you remembered.** The same harness
+  declared the ritualist "rooted and defenceless by design" and pinned their STATE and limbs
+  every tick — but not their TILE, which is the one the collapse rule actually reads. It was
+  measuring a rite that had been pushed out from under its own caster. If a comment says a body
+  is held still, hold all of it.
+- **A single shot is not a measurement.** `guns.js` asserts the handheld lance does damage in
+  play, and the lance fires exactly ONCE inside the probe's window — so the assertion is one hit
+  roll. It landed on two worldgen streams and missed on a third, which reads as "THE LANCE DOES
+  NO DAMAGE IN PLAY" and is really a coin coming up tails. Any assertion that rides on one roll
+  of anything wants a bigger sample, not a re-baselined number.
 - **A negative control that also passes means the harness is unproven, not that the bug is
   fixed.** `roads.js` found zero caravan stalls; stripping out the `travel` fallback whose
   comment names that exact failure produced zero stalls as well. So the harness guards against

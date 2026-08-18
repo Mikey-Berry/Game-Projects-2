@@ -74,25 +74,42 @@ Two rules this file keeps learning the hard way, both worth reading first:
   1. A harness that passes on the broken build proves nothing. Several items
      below record a first assertion that did exactly that.
   2. Any new `ri()`/`rnd()` call at worldgen moves every body placed after it.
-     FOUR separate harnesses have now been broken by that one mechanism, and the
-     fourth is the instructive one because it did not look like this bug at all.
-     Merging the audit branch turned tools/rites.js red with "AT MAGIC 150 THE RITE
-     IS OVER IN 39s", against a build whose RITE_WORK and rate cap were byte for
-     byte the ones that had just measured 60s. Nothing about the Last Rite had
-     changed. What had changed was one line four thousand lines away — an
-     `ri(3, 6) : ri(2, 4)` seeding aether cells into town stock, sitting directly
-     above the garrison loop — so every guard and every body placed after a town
-     with an occult dealer moved by one draw, the rite's summons stood up somewhere
-     slightly different, one of them reached the circle early, and the rite
-     COLLAPSED rather than completing. The harness could only report the duration.
-     THE ARITHMETIC IS THE TELL, and it is worth copying: 120 work at a rate hard
-     capped to 2.0 is 60 seconds and cannot be 39, so the rite was not completing
-     early — it was ending some other way. When a duration comes in under what the
-     constants allow, stop reading the feature and go and find what ended it.
-     Proved by changing that one line to constants and re-running: 39s -> 60s, all
-     nine assertions green, nothing else touched. Fixed as `cellHoard(t)`, derived
-     from the town's name — the same "derived, not rolled" pattern the sundered
-     caches already use, and for the same reason.
+     Three separate harnesses have been broken by that one mechanism, and a fourth
+     came close on the way in to this merge. THE FOURTH IS THE INSTRUCTIVE ONE,
+     because the harness turned out to be the thing at fault, not the world.
+     tools/rites.js came back "AT MAGIC 150 THE RITE IS OVER IN 39s" against a build
+     whose RITE_WORK (120) and rate cap (2.0) were byte for byte the ones that had
+     just measured 60s. THE ARITHMETIC IS THE TELL and it is worth copying: 120 work
+     at a rate hard capped to 2.0 is sixty seconds and CANNOT be thirty-nine, so the
+     rite was never completing early — it was ending the other way, through
+     `collapseRite`. When a duration comes in under what the constants allow, stop
+     reading the feature and go and find what ended it.
+     What ended it: `riteTick` collapses the working if the ritualist finishes more
+     than 2.5 tiles off the circle, and a crowd of summons arriving at the ring
+     SHOVES them. The probe pinned the ritualist's STATE — it calls them "rooted and
+     defenceless by design" — but not their TILE, so it was reporting a short rite
+     for a body pushed out of its own ceremony. Pinning the tile fixes it, holds on
+     both worldgen streams, and still fails four ways on the pre-fix build, which is
+     the only thing that makes it worth keeping.
+
+     AND A REAL LANDMINE, FOUND AND DELIBERATELY NOT DEFUSED. What flipped that
+     lottery was one line: `seed('aether_cell', ... ri(3, 6) : ri(2, 4))` in the town
+     stock, sitting directly above the garrison loop, so every guard and every body
+     placed after a town with an occult dealer moves by one draw. That is exactly the
+     rule above, freshly violated. It was fixed once — derived from the town's name
+     instead of rolled, the same "derived, not rolled" pattern the sundered caches
+     use — MEASURED, and then reverted, because removing the draw shifts the stream
+     AGAIN and turned two other harnesses red:
+       · guns.js `theLanceLandsInPlay` — the lance fires exactly ONCE in the probe's
+         window, so the assertion is a single hit roll. It landed on two streams
+         (100->88, 100->84) and missed on the third. A one-shot sample is the bug.
+       · wanderers.js `opensOnArrival` — the walk arrives and the modal does not
+         open. Note the failure text quotes a title that is still correct, because
+         hiding a panel does not clear it; the display flag is the thing to read.
+     So the draw stays for now and this is written down instead. Whoever removes it
+     should expect to fix those two assertions in the same sitting, and should fix
+     them by giving each a bigger sample rather than by re-baselining a number.
+
 ===============================================================================
 
 [DONE] The “command” system is clunky and also really hard to see right now. Its submenu tends to collapse outside of view. Need to work on the UI for it.

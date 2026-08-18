@@ -70,12 +70,24 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       if (!theRite) return null;
       const r = theRite;
       let t = 0, firstArrival = null, closest = 1e9, peakInRing = 0;
+      /* ROOTED MEANS ROOTED, INCLUDING WHERE THEY STAND. `riteTick` collapses the working if
+         the ritualist ends up more than 2.5 tiles off the circle, and a crowd of summons
+         arriving at the ring SHOVES them — so this probe could report a short rite for a body
+         that was pushed out of its own ceremony, which is not what it is measuring. It already
+         declares them rooted and keeps them alive; pinning the tile is the same intent applied
+         to the same body. Without this the assertion is a lottery on where the waves stand up:
+         it read 60s on one worldgen stream and 39s on another with byte-identical rite
+         constants, which is how a one-line change to town stock four thousand lines away came
+         to look like a Last Rite regression. Whether an UNDEFENDED rite can be broken up is a
+         real question and a different one; it wants its own probe, not this one's silence. */
+      const rx = rit.x, ry = rit.y, sx = sac.x, sy = sac.y;
       paused = false;
       while (theRite && t < 4000) {
         update(0.1); t++;
         /* the ritualist is rooted and defenceless by design; this probe is asking about the
            APPROACH, not about whether the squad can win, so keep them alive */
         rit.state = 'ok'; sac.state = 'ok';
+        rit.x = rx; rit.y = ry; sac.x = sx; sac.y = sy;
         for (const k of PARTS) { rit.parts[k].hp = rit.parts[k].max; sac.parts[k].hp = sac.parts[k].max; }
         const born = chars.filter(c => c.riteborn && c.state === 'ok');
         let inRing = 0;
