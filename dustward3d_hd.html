@@ -5932,8 +5932,22 @@ function kill(c, by){
     c.phyl.carried = false; c.phyl.x = c.x; c.phyl.y = c.y; c.phyl = null;
     log('The phylactery falls from dead hands.', 'bad');
   }
-  if(!c.undead || c.bossKey) corpses.push(c);   /* bosses always leave remains to claim */
+  /* ---------- WHAT A LIEUTENANT LEAVES ----------
+     An ordinary risen goes to dust, and that is right: it was never anybody, and there is
+     nothing on the ground afterwards worth arguing with. A LIEUTENANT is somebody — it kept
+     its name, its face, the conviction it held about you and every skill it ever earned — and
+     until now one unlucky quarrel ended all of that permanently, on a body whose whole design
+     is that death did not take the whole of them. That is the harshest rule in the game and
+     the reason a careful player never fielded one.
+     It comes off the ground now, once per rung of the decay ladder: fresh, cooling, spoiled,
+     bare bones, and then there is nothing left to call to and it goes with the rest of the
+     dust. Each raising spends a rung, so a lieutenant is somebody you can spend — and what it
+     has left to spend is legible on the body itself, in the same four colours every other
+     corpse in the world is already using. Nothing new had to be invented to show it. */
+  const lieuSpent = c.lieutenant && (c.lieuWear || 0) >= DECAY.length;
+  if(!c.undead || c.bossKey || (c.lieutenant && !lieuSpent)) corpses.push(c);   /* bosses always leave remains to claim */
   else {
+    if(lieuSpent) log(`${c.name} does not leave a body. Four times up off the ground is all there was in it.`, 'bad');
     if(c.faction==='player'){
       if(c.undead){
         /* dust to dust, kit to the wagon */
@@ -7743,11 +7757,11 @@ function patrolTick(c, dt){
   if(!ctr){ if(rnd() < dt*0.05) log(`${c.name} has nothing to guard.`, ''); return true; }
   const foe = nearestEnemy(c, 13);
   if(foe){
-    if(!c.raised){ c.raised = true; raiseAlarm(c, foe); }
+    if(!c.alarmed){ c.alarmed = true; raiseAlarm(c, foe); }
     c.target = foe;
     return false;   /* fall through to the fight */
   }
-  c.raised = false;
+  c.alarmed = false;
   /* A watch walks its holding; it does not orbit it. The old version drove everyone around
      a fixed-radius circle, which looked wrong and marched them straight through walls.
      Now: pick an open spot somewhere inside the holding, walk there, stand a moment, repeat. */
@@ -11779,6 +11793,21 @@ function carryShape(r, body, rot, m){
    what nobody would argue about: nameless dead, on your ground, that no one else has a claim
    on. Townsfolk are excluded outright — auto-looting a neighbour's body would quietly earn
    you a bounty you never chose, and you would find out about it from the guards. */
+/* ---------- `raised` MEANT TWO THINGS AND DID NEITHER ----------
+   `b.raised` is read HERE, in `cartFodder`, in `cairnFood` and in the raise job's work check,
+   and in all four it means "this body has already been raised from the dead, leave it alone".
+   Nothing set it. The only writer in the file was `patrolTick`, where `c.raised` meant "this
+   watchman has raised the ALARM" — so the flag was true for exactly one population: town
+   guards who spotted an enemy, which is to say town guards immediately before they die.
+   Both halves were therefore wrong. The intended exclusion never once fired, and a guard
+   killed at his post left a body the Gravecart would not fetch, the carrion job would not
+   render, and a Cairn Beast would not eat — the commonest corpse in the world, silently
+   exempt from the entire corpse economy.
+   The alarm flag is `alarmed` now, which is what it was always about. These four reads are
+   left exactly as they are: they express an intent nobody has implemented, and making them
+   live is a design decision about whether a risen put down a second time is still material —
+   which the comment below already argues it SHOULD be. That is a decision, not a rename, so
+   it is written down rather than made in passing. */
 function carrionFodder(b){
   if(!b || b.state !== 'dead' || b.raised) return false;
   if(b.bossKey || b.vip || b.phyl) return false;              /* names, not material */
@@ -12520,6 +12549,13 @@ function decayStage(c){
   const a = corpseAge(c);
   let d = DECAY[0];
   for(const s of DECAY) if(a >= s.at) d = s;
+  /* ---------- AND NOTHING COMES BACK OUT OF THE GROUND FRESHER THAN IT WENT IN ----------
+     A lieutenant that has been raised before carries the count on `lieuWear`, and each one is
+     a rung it can never climb back up. It is a FLOOR and not a pin (which is what the brine
+     is): a twice-raised body left lying in the sun still goes on rotting past `cooling` on
+     its own. Dead bodies only — the flag rides the living lieutenant too, so that the next
+     corpse it leaves knows what it has already spent. */
+  if(c.state === 'dead' && c.lieuWear) d = DECAY[Math.min(Math.max(DECAY.indexOf(d), c.lieuWear), DECAY.length-1)];
   return d;
 }
 function decayIndex(c){ return DECAY.indexOf(decayStage(c)); }
@@ -12587,8 +12623,11 @@ function castRaise(c, body){
      was a companion", so meat grown in a house came back as a LIEUTENANT: name kept, face
      kept, conviction kept, and a slot off a cap of two or three. It never had a name to keep.
      A lieutenant is somebody who lived beside you and died; a grown cadaver is a crop. */
+  /* `!body.undead` is what stops an ordinary risen coming back as somebody. A lieutenant
+     corpse is undead AND somebody, so it needs naming here or the rite would render the one
+     body in the game that has a name into a numbered Bone Knight. */
   const isUnique = !body.beast && !body.construct && !body.grown &&
-    (!!body.bossKey || (wasYours && !body.undead && !body.mule && !body.settler));
+    (!!body.bossKey || !!body.lieutenant || (wasYours && !body.undead && !body.mule && !body.settler));
   if(isUnique){
     const lieuCap = (c.lich ? 2 : 1) + (research.done.necromancy ? 1 : 0);
     if(lieutenantsOf(c) >= lieuCap){ log(`${c.name} cannot bind another lieutenant (${lieutenantsOf(c)}/${lieuCap}).`, 'bad'); return false; }
@@ -12600,11 +12639,21 @@ function castRaise(c, body){
   const bs = body.stats;
   let r;
   if(isUnique){
-    /* a lieutenant rises as it was — name, prowess and gear intact — skeletal, and sworn to you */
+    /* A lieutenant rises as it was — name, prowess and gear intact — skeletal, and sworn to
+       you. THE SECOND TIME IT IS NOT QUITE AS IT WAS, and each time after that a little less:
+       `lieuRot` is 1.00 the first time off the ground and follows the ladder down after, so a
+       lieutenant on its fourth raising comes up at 44% of the person it was. The kit is
+       deliberately NOT stripped the way the generic branch strips a rotted risen's — a
+       lieutenant is buried with what it held and comes up wearing it, and taking that as well
+       would make the last two rungs not worth paying for. */
+    const ldk = decayStage(body), lieuRot = ldk.raise;
     r = makeChar(body.name, c.faction, body.x, body.y,
-      {atk:bs.atk, def:bs.def, tough:bs.tough, ath:bs.ath||8, magic:1, labor:4,
+      {atk:bs.atk*lieuRot, def:bs.def*lieuRot, tough:bs.tough*lieuRot, ath:bs.ath||8, magic:1, labor:4,
        weapon:body.weapon, armor:body.armor});
     r.lieutenant = true;
+    /* the count rides the living body too, so the NEXT corpse it leaves knows what it spent */
+    r.lieuWear = (body.lieuWear || 0) + 1;
+    r.rot = ldk.k;
     r.shortTag = 'LT';
     r.big = body.big || 1;
     /* the whole point of a lieutenant is that it is still them: the face, the conviction they
@@ -12614,11 +12663,19 @@ function castRaise(c, body){
     r.conviction = body.conviction || null;
     r.regard = body.regard || 0;
     r.spouse = body.spouse || 0; r.partner = body.partner || 0;
+    /* every skill it earned, at what the rot left of it — and a floor, because a lieutenant
+       that has forgotten its trade is not the same character coming back worse, it is a
+       different and duller one */
     r.stats = {...body.stats, magic: Math.max(1, body.stats.magic * 0.5)};
+    for(const k in r.stats) if(k !== 'magic') r.stats[k] = Math.max(1, Math.round(r.stats[k] * lieuRot));
     if(body.inv) r.inv = {...body.inv};
     r.pack = body.pack || null;
+    const left = DECAY.length - r.lieuWear;
     log(body.bossKey ? `${c.name} bound ${body.name} into undeath — a lieutenant rises.`
-      : `${body.name} stands up again, and knows ${c === body ? 'their own' : c.name + "'s"} name. Death did not take the whole of them.`, 'good');
+      : r.lieuWear > 1
+        ? `${body.name} comes up again — ${ldk.label}, at ${Math.round(lieuRot*100)}% of what they were. ` +
+          (left > 0 ? `${left} more time${left>1?'s':''} in them.` : 'There will not be another.')
+        : `${body.name} stands up again, and knows ${c === body ? 'their own' : c.name + "'s"} name. Death did not take the whole of them.`, 'good');
   } else {
     /* A corpse is never stronger dead than it was in life; the necromancer's skill only
        closes the gap — and what the rot has already taken, it does not give back. */
@@ -24764,7 +24821,7 @@ function snapshot(){
     clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
     servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, eater:!!c.eater, harvestBonus:c.harvestBonus??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, boundTold:!!c.boundTold,
-    salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null,
+    salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null, lieuWear:c.lieuWear||0,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
     bindWeight:c.bindWeight, shortTag:c.shortTag,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
@@ -25071,7 +25128,7 @@ function restore(d){
     c.markT = s.markT || 0; c.heat = s.heat || 0; c.mustered = !!s.mustered;
     if(s.ate != null) c.ate = s.ate;
     c.shape = s.shape ? {...s.shape} : null; c.shapeName = s.shapeName || null; c.kills = s.kills || 0;
-    c.salted = !!s.salted; c.saltedAt = s.saltedAt ?? null; c.rot = s.rot || null;
+    c.salted = !!s.salted; c.saltedAt = s.saltedAt ?? null; c.rot = s.rot || null; c.lieuWear = s.lieuWear || 0;
     if(s.knit != null) c.knit = s.knit;
     if(s.natArmor) c.natArmor = {...s.natArmor};
     if(s.noise != null) c.noise = s.noise;
