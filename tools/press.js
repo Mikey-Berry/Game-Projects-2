@@ -166,6 +166,47 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! A SHOT COSTS NOTHING (${base.toFixed(2)} -> ${dragged.toFixed(2)}) — shoot and scoot is free`;
     }
 
+    /* ================== 3b. TOO CLOSE TO SHOOT IS NOT NOTHING TO DO ==================
+       The other half of the same branch. A body holding a ranged weapon refuses to fire
+       inside 1.7 tiles — correctly — and used to stop there, so anything that reached an
+       archer got to beat it to death while it stood with its guard up. Measured through the
+       real loop, with the enemy already in contact so there is no approach to confuse it. */
+    {
+      wipe();
+      const archer = mk('Bowman', 'player', gx, gy, { atk: 26, def: 10, tough: 60, ath: 8, weapon: 'w_bow' });
+      archer.autoFight = true;
+      const thug = mk('Thug', 'bandit', gx + 0.85, gy, { atk: 6, def: 6, tough: 400, ath: 1 });
+      thug.noFight = true; thug.speedMult = 0.0001;   /* it stands in contact and soaks */
+      archer.target = thug; archer.targetManual = true;
+      const hp0 = thug.blood;
+      /* WATCH WHILE IT RUNS. The no-shoot rule is about what happens DURING the fight, and a
+         windup lasts a fraction of a second — reading `archer.windup` after 12 seconds would
+         sample one arbitrary frame and call it a proof. */
+      let sawRanged = 0, sawMelee = 0, closest = 9;
+      paused = false;
+      for (let i = 0; i < 120; i++) {
+        update(0.1);
+        const dd = dist(archer.x, archer.y, thug.x, thug.y);
+        if (dd < closest) closest = dd;
+        /* ONLY WHILE INSIDE THE RULE'S RANGE. `separate()` pushes hostile bodies apart to 0.8
+           and keeps shoving, so a body staged in contact drifts back out past 1.7 during a
+           long run and is then perfectly entitled to shoot. Counting every draw over the whole
+           run reported 24 violations for a body that never once loosed inside its own guard —
+           the probe was measuring the separation, not the rule. */
+        if (archer.windup && dd < 1.7) (archer.windup.kind === 'ranged' ? sawRanged++ : sawMelee++);
+      }
+      paused = true;
+      R.cornersFightBack = thug.blood < hp0
+        ? `an archer with somebody on its chest defends itself — the thug drops from ${hp0} to ${Math.max(0, thug.blood).toFixed(0)}`
+        : `!! IT STANDS THERE AND TAKES IT (thug still at ${thug.blood.toFixed(0)}, archer atkCd ${archer.atkCd.toFixed(1)})`;
+      /* and the rule this is built on has to survive: nobody looses an arrow into a body at
+         arm's length. Both halves matter — a fix that simply deleted the 1.7-tile refusal
+         would pass the assertion above and break the thing the refusal is for. */
+      R.stillWillNotShoot = sawMelee > 0 && sawRanged === 0
+        ? `and it swings rather than shooting — ${sawMelee} melee windups inside 1.7 tiles and not one draw (closest ${closest.toFixed(2)})`
+        : `!! IT IS ${sawRanged ? 'SHOOTING FROM INSIDE ITS OWN GUARD (' + sawRanged + ' draws under 1.7)' : 'NOT SWINGING EITHER'}`;
+    }
+
     /* ================== 4. HELD, AND LET GO ==================
        The escape clause is the interesting half: it is not a timer, it is whether the body
        holding you has somebody else on it. */

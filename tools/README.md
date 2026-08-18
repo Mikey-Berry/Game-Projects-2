@@ -389,6 +389,18 @@ the truth was 45%.
   earlier, successful open, because hiding a panel does not clear it. The message read as though
   the right panel was open when the panel was closed. Assert on the thing that changes
   (`display`), and do not quote a field that persists across the state you are reporting.
+- **Measure a rule only where the rule applies.** `press.js` asserts that a body holding a bow
+  does not shoot inside 1.7 tiles, and the first version counted every draw over the whole run:
+  24 violations, for a body that never once loosed inside its own guard. `separate()` pushes
+  hostile bodies apart and keeps shoving, so a probe staged in contact drifts back out past the
+  threshold and is then perfectly entitled to shoot. The assertion was measuring the separation.
+  Sample the condition and the rule in the same tick.
+- **A harness going red after an unrelated change is sometimes the harness finding your
+  backlog.** `guns.js` failed after a combat-AI commit that had nothing to do with lances. It
+  was not flake and not the commit: the new timing walked the lancer into a documented dead end
+  — inside 1.7 tiles it would not shoot, and it never reached the melee branch to swing — that
+  had been filed twice in the To Do and never hit. Before blaming the change or the harness,
+  read what state the probe actually ended in.
 - **When a duration comes in under what the constants allow, the feature is not what broke.**
   `rites.js` reported "AT MAGIC 150 THE RITE IS OVER IN 39s" on a build whose `RITE_WORK` (120)
   and rate cap (2.0) were byte for byte the ones that measured 60s the day before. 120 at a hard
