@@ -353,3 +353,176 @@ the truth was 45%.
   session could have gone into the cache key and the `kin` table without touching the cause.
   Before theorising about why a feature is missing on some bodies, grep for the flag that
   turns it on and count how many places test it.
+- **A feature that works in a quiet camp and never in a fight is a race, not a wiring fault.**
+  The gunnery job read as correctly wired end to end — job key, `emplGunner`, `emplacementTick`,
+  all consistent — and did nothing in play. Three staged orders separated it: assign the job in
+  a quiet camp and the crew mans the turret in eight seconds; man it first and then raid, and it
+  fires nine bolts; raid first and then assign, and the crew is stolen by target acquisition on
+  the walk and never arrives. Only the third is the order a player uses. When a system "does
+  nothing" but reads correctly, vary the ORDER of the setup, not the setup.
+- **`render()` assigns state that `update()` does not.** `activeFloor` is set from
+  `selected[0].floor` inside `render()` and nowhere else, so a `paused = true` probe that only
+  steps `update()` reads 0 forever. The first `descend.js` reported a camera bug that does not
+  exist. Before asserting that a display value is wrong, check which loop writes it.
+- **`deck` and `blocked` are two different questions.** Decking a tile says "there is something
+  to stand on here"; it does not clear the wall somebody already wrote at the same coordinate.
+  Cave stairs were decked and drawn and still solid. Any generator that carves after it walls
+  needs one helper that does both, not two calls the reader has to remember to pair.
+- **A guard flag can outlive the order that set it.** `onStair` stops a body yo-yoing on a
+  stair, and is tested BEFORE `wantFloor` — so a body that lands on a stair keeps the flag and
+  silently discards every later order to use it again. Anyone who walked into a cave could never
+  leave. When a latch gates an intent, make sure issuing a NEW intent clears the latch.
+- **Kill the target before you ask what the weapon can see.** `guns.js` first checked
+  `emplTarget` after its run and reported the turret blind; the turret had killed the only
+  hostile on the field. Spawn a fresh one — and note `charsNear` reads a grid rebuilt inside
+  `update()`, so a body pushed while paused is invisible to it until a tick passes.
+- **A give-up timer makes an unrelated assertion lie.** `wanderers.js` walks somebody to a
+  scholar and then checks the conversation opened. `talkTarget` carries a 30-second give-up, so
+  one townsman standing on the last approach tile ran the clock out, dropped the order without
+  opening anything, and the NEXT assertion reported "arriving opened nothing" — for a walk that
+  never arrived. Green alone, red in `npm run check`, because the crowd around the scholar
+  differs by one body between runs. Two lessons: stage the leg you are testing in the open and
+  let a separate assertion cover the crowded case, and when an order can end two ways, have the
+  harness say which way it ended rather than inferring it from what happened next.
+- **A stale DOM read makes a failure message point at the wrong thing.** The same assertion
+  printed the modal's `title()` in its failure text — and the title still held the value from an
+  earlier, successful open, because hiding a panel does not clear it. The message read as though
+  the right panel was open when the panel was closed. Assert on the thing that changes
+  (`display`), and do not quote a field that persists across the state you are reporting.
+- **When a duration comes in under what the constants allow, the feature is not what broke.**
+  `rites.js` reported "AT MAGIC 150 THE RITE IS OVER IN 39s" on a build whose `RITE_WORK` (120)
+  and rate cap (2.0) were byte for byte the ones that measured 60s the day before. 120 at a hard
+  cap of 2.0 is sixty seconds and cannot be thirty-nine — so the rite was not finishing early, it
+  was ENDING SOME OTHER WAY (`collapseRite`, because summons crowding the ring shoved the
+  ritualist off their own circle). Do the arithmetic on the constants first: it tells you whether
+  you are hunting a slower feature or a different exit, and those are different searches.
+- **Pin everything the probe calls fixed, not just the half you remembered.** The same harness
+  declared the ritualist "rooted and defenceless by design" and pinned their STATE and limbs
+  every tick — but not their TILE, which is the one the collapse rule actually reads. It was
+  measuring a rite that had been pushed out from under its own caster. If a comment says a body
+  is held still, hold all of it.
+- **A single shot is not a measurement.** Both lance-damage assertions in this repo rode on one
+  roll. `guns.js` fires exactly ONCE inside its window: it landed on two worldgen streams and
+  missed on a third, which reads as "THE LANCE DOES NO DAMAGE IN PLAY" and is really a coin
+  coming up tails. `gunnery.js` watched six seconds, which catches the weapon mid-windup — two
+  cells spent for a graze of 0.4 blood, one rounding step from failing on every run, and it duly
+  failed one suite run in three. Widened to thirty seconds it is 100 -> 42 on seven cells and
+  identical every time. Give the thing room to happen several times; do not re-baseline the
+  number it happened to produce once.
+- **Widen the window, but keep a control in the same loop.** The fix above is only trustworthy
+  because the DRY case runs the identical thirty seconds and still does nothing at all. A longer
+  window that makes every case pass has not proved the weapon works — it has proved the window
+  is long enough to hide the question.
+- **Rounding inside a pass message hides how close it was.** `gunnery.js` printed "the mark
+  drops from 100 to 100 blood" as its SUCCESS string, because `Math.round` turned 99.6 into 100.
+  The assertion was passing on four tenths of a point and the message gave no hint of it. Print
+  enough precision that a near-miss looks like one.
+- **A negative control that also passes means the harness is unproven, not that the bug is
+  fixed.** `roads.js` found zero caravan stalls; stripping out the `travel` fallback whose
+  comment names that exact failure produced zero stalls as well. So the harness guards against
+  wagons that stop moving, and it is NOT established that it would catch the reported failure if
+  it returned. Worth keeping, worth writing down honestly, not worth calling the item fixed.
+- **A browser re-serialises CSS, so grep the RULE, not the sheet.** `aid.js` checked for
+  `animation: none` inside a `prefers-reduced-motion` block by regexing the concatenated
+  `cssText` of every rule. Chrome expands it to the eight-part longhand
+  (`animation: none 0s ease 0s 1 normal none running`), so the naive test missed it and
+  reported a bug that was not there. Walk `styleSheets` -> media rules -> `cssRules` and ask
+  which selectors are inside, rather than pattern-matching the serialised text.
+- **Check the container id before asserting on zero.** The same file queried `#squad .port`
+  and got `0 of 0`, which reads exactly like "the class is never applied". The bar is
+  `#squadbar`. A count of zero out of zero is a selector bug until proven otherwise — print
+  the denominator in the failure message so the difference is visible at a glance.
+- **`PARTS` are anatomical, not generic.** `'torso'` is not a body part in this game
+  (`head, chest, stomach, l.arm, r.arm, l.leg, r.leg`), and passing it to `applyDamage` throws
+  from inside the render path rather than failing an assertion. Read the constant.
+- **A restored world starts running the moment it arrives.** `carry.js` snapshots a world, sends
+  it to a second browser as a code, and checks the same person is on the same tile. It compared
+  coordinates to two decimal places across an unbounded wall-clock wait — so it was measuring a
+  LIVE world against a frozen snapshot, and flaked the first time the marker's walk crossed a
+  rounding boundary (1085.07 -> 1085.06 was the entire failure). Green for many runs, then red
+  when an added harness shifted the suite's timing. Two fixes, and both were needed: pause the
+  receiving world the instant the restore reports done, and compare PLACES rather than
+  centimetres. When a probe samples something that is allowed to move, either stop it moving or
+  give the comparison a tolerance the design actually promises.
+- **A feature can be fully built and still have no reason to exist.** The Watchtower had a
+  footprint, a walled ground floor with a doorway, an upper deck, a stair and a parapet — and
+  stamped the same 11 tiles of sight as a shack, so building one opened SEVEN more tiles than
+  a shed on the same ground. Nothing was broken; the number was just never given. When a report
+  says a feature "does not work", check whether the feature does anything *different* from the
+  cheapest thing next to it before looking for a fault.
+- **A bonus for height that reads the terrain gives nothing for architecture.** The sight bonus
+  came off `heightAt`, which is the ground, so a lookout on a tower deck saw exactly what they
+  saw in the mud beside it — 5750 tiles either way. Anything keyed to elevation needs to ask
+  `c.floor` as well, or every storey the player builds is decoration.
+- **A cap expressed relative to the thing it caps is not a cap.** The shaping ceiling was
+  `shapeBudget(caster) + 4`, so it grew with exactly the stat it was meant to bound: an archlich
+  reached 32 against a theoretical maximum of 30 and could max every axis at once. If a ceiling
+  is supposed to force a trade-off, it has to be a constant, and the progression has to be moved
+  to something that is not the ceiling — here, what the same shape *costs*.
+- **Assert what you built, not the sentence you liked.** `study.js` first claimed "the fifth
+  bench is a shed" and went red on its own build — a power curve gives constant RELATIVE
+  falloff, so the fifth bench pays about three-quarters of the third, not nothing. The
+  temptation was to steepen the curve until the sentence became true. The right move was to fix
+  the sentence, in the assertion AND in the panel's hint text, since both were telling the
+  player something the code does not do.
+- **A harness that cannot RUN against the broken build cannot prove it catches the bug.**
+  `study.js` referenced a new constant bare, so on the old build the evaluate threw a
+  ReferenceError and the whole probe crashed before printing a single line — which reads
+  exactly like a clean pass at a glance. Guard any new global a harness touches
+  (`typeof X !== 'undefined' ? X : fallback`) if you ever intend to point it at an earlier
+  revision, which is the whole A/B discipline.
+- **A tolerance can smuggle in a second assertion.** `aLoneScholarIsUnchanged` used `< 0.12`,
+  which also happened to fail on the old build for reading 1.16 — nothing to do with what the
+  line claims to check. A guard that fails for a reason outside its own sentence will send the
+  next reader after the wrong thing.
+- **Never run two `npm run check` at once.** Every run starts with `node tools/prep.js`, which
+  rewrites `tools/game.html` — so two concurrent suites clobber each other's build mid-flight
+  and every harness after the collision is reading a file that does not match what it is being
+  asked about. Neither result means anything. The same applies to editing the game while a
+  suite is running: a `prep` from your own shell lands in the middle of somebody else's run.
+  One suite at a time, and rebuild only between runs.
+- **Killing the suite reports 144, including on the command that does the killing.** A
+  `pgrep`-driven kill matches the shell wrapper that launched it and takes your own command
+  down with it, so `kill` "fails" with 144 while having worked perfectly. Confirm with
+  `ps -eo args | grep -E "^(npm|node tools/)"` instead — and note a bare `pgrep -c -f "npm run
+  check"` also matches the agent's own process, whose arguments contain the whole system
+  prompt, so it will happily report processes that do not exist.
+
+## HOW LONG THE SUITE TAKES, AND WHY
+
+Measured rather than guessed, because the first two guesses were both wrong.
+
+Per harness, before a single assertion runs:
+
+  · 6.5s to `goto` the built game.html — parsing 1.82 MB and 25,713 lines of script.
+  · ~5.1s more for worldgen and the start click (2.5s + 2.6s, polled).
+
+That is ~11.6s of startup on EVERY harness, about seven minutes across the chain. For the
+cheap harnesses it is most of their runtime: raise.js takes 15.1s total, so roughly three
+seconds of it is testing.
+
+**The two 3-second sleeps are not the problem.** Every harness opens with
+`waitForTimeout(3000)` twice, which looks like six seconds of pure waste — and polling for
+real readiness instead takes 5.1s, so the whole change is worth about 0.9s a harness, half a
+minute across the suite. Worth doing to remove a guess, not worth doing for speed. Measure
+before rewriting thirty-seven files.
+
+**Parallelism does not work here yet, and that was worth finding out.** A four-harness sample
+ran 102.2s serial and 61.1s at four-way with all four passing, so the whole suite was tried at
+four-way. Four harnesses went red that pass serially: `carry.js`, `wanderers.js`, `kit.js`,
+`races.js` — the last with "golem/clay BUILT NO BODY", a mesh that did not finish building
+inside the probe's window. None is a real defect. All are the same wall-clock class this file
+already documents three times, and concurrency makes it more likely rather than less. There is
+deliberately no `npm run check:par`; `tools/run.js --jobs N` exists so the next person can
+re-measure after fixing those four.
+
+**What actually helps:**
+
+  · `npm run check:fast` — six harnesses that would notice a broken build at all (boot, save,
+    roundtrip, fight, towncheck, races). 104s instead of ~15 minutes, for the edit loop.
+  · `npm run check` — the serial chain, unchanged, for a push.
+  · Run the full suite ONCE, at the end. Running it two or three times inside one sitting is
+    the largest avoidable cost there is, and running two at once invalidates both.
+  · roads.js was 233s — twenty-two percent of the suite in the file whose negative control
+    passed. Halved to 112s after checking what the halving costs: still thirteen legs, both
+    stall checks intact.

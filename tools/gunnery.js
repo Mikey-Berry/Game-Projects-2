@@ -249,7 +249,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const foe = mk('Mark', 'bandit', gx + 5, gy, { atk: 14, def: 10, tough: 30, ath: 8 });
         foe.noFight = true;
         const b0 = foe.blood;
-        run(6);
+        run(30);
         if (label === 'dry') {
           R.aDryLanceSaysWhereCellsComeFrom = (foe.blood === b0 && logs.some(l => /lance is dry/.test(l) && /scavenged/.test(l) && /(Dustport|Hollowmere|occult dealers)/.test(l)))
             ? `it fires nothing and names the trade: "${logs.find(l => /lance is dry/.test(l)).slice(0, 120)}…"`
