@@ -12825,7 +12825,23 @@ function openCrypt(crypt){
    comes. The rest of the squad has one job, which is to see that nothing reaches the circle
    before the rite finishes. Interrupt it and the working collapses — the sacrifice is spent
    either way, because that is the kind of thing this is. */
-const RITE_WORK = 42;                 /* seconds of standing still, at magic 25 */
+/* ---------- HOW LONG THE RITE TAKES, AND WHY IT WAS OVER BEFORE IT STARTED ----------
+   This was 42, with a comment claiming "seconds of standing still, at magic 25" — and the
+   comment was already wrong, because `work` accrues at `1 + magic * 0.035`. At magic 25 that
+   is 1.875, so 42 units of work was 22 seconds. At magic 150 it is 6.25, and the whole rite
+   was SIX AND A HALF SECONDS.
+
+   Which is the entire report. The waves spawn 16 to 24 tiles out and have to WALK in; at
+   roughly two and a half tiles a second that is six to ten seconds of travel before the first
+   one can reach the circle. So on any caster worth performing the rite with, every gaunt it
+   summoned was still crossing open ground when the rite completed. The scene could not
+   happen. It was not a pacing problem, it was an arithmetic one.
+
+   Two changes, and they are different in kind. The base is longer, so there is a scene to
+   have. And the magic term is CAPPED, so skill shortens the vigil rather than deleting it —
+   an unbounded multiplier on a fixed-length approach march can only ever end one way. */
+const RITE_WORK = 120;
+const RITE_RATE_CAP = 2.0;            /* the fastest anybody works, however deep the gift */
 let theRite = null;                   /* {ritualist, sacrifice, x, y, work, drawn} */
 function beginAscension(ritualist, sacrifice){
   if(theRite) { log('A rite is already open. One at a time.', 'bad'); return; }
@@ -12847,13 +12863,17 @@ function riteTick(dt){
   /* rooted: the rite happens where it was opened, or not at all */
   if(dist(c.x, c.y, r.x, r.y) > 2.5){ collapseRite(`${c.name} was driven off the circle`); return; }
   c.mana = Math.max(0, c.mana - dt * 1.2);
-  r.work += dt * (1 + c.stats.magic * 0.035);
+  r.work += dt * Math.min(RITE_RATE_CAP, 1 + c.stats.magic * 0.035);
   r.t += dt;
   /* it is heard, and what hears it walks */
   bumpNotice(dt * 0.9);
   if(rnd() < dt * 6) addSpecks(r.x + (rnd()-0.5)*4, r.y + (rnd()-0.5)*4, '#a970e8', 3);
-  /* the dark answers in waves, and the waves get worse */
-  const wave = Math.floor(r.work / (RITE_WORK / 3));
+  /* THE DARK ANSWERS IN WAVES, AND THE WAVES GET WORSE — and they are pulled FORWARD.
+     Thirds meant the last wave spawned at the moment the rite completed, so it arrived to an
+     empty circle even once the rite was long enough to walk across. Fifths put all four waves
+     inside the first eighty percent, which leaves the last of them time to actually reach the
+     ring and be fought there, which is the whole point of the scene. */
+  const wave = Math.min(4, Math.floor(r.work / (RITE_WORK / 5)));
   if(wave > r.drawn){
     r.drawn = wave;
     const n = 2 + wave;
@@ -12863,7 +12883,8 @@ function riteTick(dt){
       const g = spawnGaunt(wave >= 2 ? pick(['maw','stalker','shrike']) : pick(['gaunt','stalker']), q.x, q.y);
       if(g){ g.nightborn = false; g.guard = {x: r.x, y: r.y}; g.riteborn = true; }
     }
-    log(wave >= 3 ? 'THEY ARE COMING FOR THE CIRCLE. Hold.' :
+    log(wave >= 4 ? 'EVERYTHING OUT THERE IS COMING. Hold the ring.' :
+        wave === 3 ? 'THEY ARE COMING FOR THE CIRCLE. Hold.' :
         wave === 2 ? 'More of them. The rite is louder than it was.' :
                      'Something has heard it. It is coming.', 'bad');
     AU.news();

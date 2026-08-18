@@ -43,7 +43,7 @@ const path = require('path');
 const ALL = [
   'boot.js', 'origin.js', 'towncheck.js', 'fight.js', 'roundtrip.js', 'save.js', 'walls.js',
   'world.js', 'host.js', 'raise.js', 'descend.js', 'guns.js', 'roads.js', 'aid.js', 'reach.js',
-  'study.js', 'carry.js', 'jail.js', 'command.js', 'menus.js', 'notes.js', 'board.js', 'chores.js',
+  'study.js', 'carry.js', 'jail.js', 'command.js', 'menus.js', 'rites.js', 'notes.js', 'board.js', 'chores.js',
   'threads.js', 'beasts.js', 'wanderers.js', 'survive.js', 'melee.js', 'lich.js', 'heads.js',
   'kit.js', 'wepsoak.js', 'races.js', 'mobile.js', 'touch.js', 'terrain.js', 'axes.js',
   'civics.js',
