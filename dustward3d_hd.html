@@ -639,7 +639,7 @@ const ITEMS = {
   aether_cell:{name:'Aether Cell', base:220, type:'mat',
     desc:'A pre-Fall charge cell, still holding. Nobody alive knows how they were made, and nobody is making more'},
   w_lance: {name:'Aether Lance',  base:9000,type:'weapon', dmg:44, wt:'pierce', range:9, pre:true, nullOnly:true,
-    rof:4.6, draw:0.55, lance:true, charge:true, ap:0.80,
+    rof:4.6, draw:0.55, lance:true, charge:true, ap:0.80, reload:0.42,
     desc:'A golden-age firearm that transmutes latent ether to plasma. In a gifted hand the interference cascades — the lance and the hand go together. Only the alchemically deaf can carry one.'},
   w_sever: {name:'Sundering Edge',base:9500,type:'weapon', dmg:40, wt:'cut',    pre:true},
   a_carap: {name:'Alchemic Carapace', base:11000, type:'armor', pre:true, def:.52, pen:.30},
@@ -652,7 +652,14 @@ const ITEMS = {
      A hunting arrow finds a gap now and then; a crossbow bolt was invented to punch mail. */
   salt:    {name:'Salt',          base:26,  type:'trade',
     desc:'Coarse grey brine-salt off the flats. Packs a body against the rot, which is a use nobody in Saltmere mentions out loud'},
-  w_bow:   {name:'Hunting Bow',   base:260, type:'weapon', dmg:11, wt:'pierce', range:7, ap:0.20, rof:2.6, draw:0.45, bow:true},
+  /* ---------- `reload`: WHAT THE NEXT SHOT COSTS THE LEGS ----------
+     A fraction of walking speed, held for as long as the weapon is being made ready again
+     (see `reloadT`). It is not a flavour number — it is the whole answer to running backwards
+     at full speed while shooting, and it is graded by how much of the reload is done with both
+     hands and eyes down. A bow is nocked half-blind and half-walking; a crossbow has to be
+     spanned against the body; the lance has to spin something up. Anything without the field
+     falls back to RELOAD_DRAG. */
+  w_bow:   {name:'Hunting Bow',   base:260, type:'weapon', dmg:11, wt:'pierce', range:7, ap:0.20, rof:2.6, draw:0.45, bow:true, reload:0.62},
   /* ---------- GROWN, NOT CARRIED ----------
      The Marrow Archer used to cost a whole Hunting Bow, which had to be crafted at a
      Workbench from wood and fabric, hauled to the stores and consumed — six craft cycles
@@ -667,9 +674,9 @@ const ITEMS = {
      effectively no armour-piercing: worse than the bought bow, and free of the supply chain.
      `grown` keeps it out of the world's economy — it cannot be looted off the body, sold, or
      stripped, because it is part of the body. */
-  w_sinew: {name:'Sinew-Drawn Bow', base:0, type:'weapon', dmg:9, wt:'pierce', range:7, ap:0.04, rof:3.2, draw:0.62, bow:true, grown:true,
+  w_sinew: {name:'Sinew-Drawn Bow', base:0, type:'weapon', dmg:9, wt:'pierce', range:7, ap:0.04, rof:3.2, draw:0.62, bow:true, grown:true, reload:0.58,
     desc:'A stave of long bone with a sinew string, grown through the forearms of the thing that draws it. It cannot be dropped, and nothing else can pick it up.'},
-  w_xbow:  {name:'Crossbow',      base:750, type:'weapon', dmg:18, wt:'pierce', range:8, ap:0.40, rof:3.2, draw:0.30},
+  w_xbow:  {name:'Crossbow',      base:750, type:'weapon', dmg:18, wt:'pierce', range:8, ap:0.40, rof:3.2, draw:0.30, reload:0.50},
   a_rag:   {name:'Rag Shirt',     base:60,  type:'armor',  def:.08, pen:.05},
   a_lea:   {name:'Leather Jacket',base:380, type:'armor',  def:.18, pen:.14},
   a_pla:   {name:'Iron Plate',    base:1300,type:'armor',  def:.35, pen:.32},
@@ -1448,6 +1455,7 @@ function makeChar(name, faction, x, y, o={}){
     jailedAt: null, jailT: 0, heldKit: null, arrestTarget: null, breakT: 0,
     eater: false, warF: -1, warT: -1, campId: -1, rebelOf: -1, sick: 0, isLeader: -1,
     windup: null, staggerT: 0, flinchT: 0, castT: 0, oppCd: 0, recoverT: 0, recoverDur: 0,
+    reloadT: 0, reloadK: 0,      /* making the next shot ready, and what it costs the legs */
     age: o.age ?? ri(18, 38), goal: null, wasChild: false, legacyTrade: null,
     race: o.race || 'human', sub: o.sub || null,
     sex: o.sex || (rnd() < 0.5 ? 'f' : 'm'), spouse: 0, partner: 0, grief: 0, pregnant: 0, omni: !!o.omni,
@@ -1562,9 +1570,21 @@ function dropOneBody(c, body, at){
   refreshCharPanel();
   return true;
 }
+const RELOAD_DRAG = 0.60;   /* the default for a ranged weapon that names no `reload` of its own */
 function moveSpeed(c){
   let s = 3.4 * (1 + c.stats.ath*0.012);
   s *= 1 - armorPen(c);
+  /* MAKING THE NEXT ONE READY. Held from the loose until the weapon comes off cooldown — the
+     same window `atkCd` runs — so an archer who keeps shooting never gets their legs back, and
+     an archer who stops has them again in a couple of seconds.
+     THE DRAW WAS NEVER THE HOLE. `physics` already plants the feet for it ("feet planted while
+     the swing is committed"), and a probe that gives the run order on the tick the draw opens
+     measures zero tiles walked before the arrow leaves, on this build and on the one before it.
+     But a bow's draw is 0.45s of a 2.3s cycle: rooting it costs a fifth of the tempo and the
+     archer walks the other four fifths flat out, which measured 86% of free running. THIS is
+     what the complaint was about, and the reload window is the only part of the cycle big
+     enough to answer it. See tools/kiting.js. */
+  if(c.reloadT > 0) s *= (c.reloadK || RELOAD_DRAG);
   if(c.drag) s *= 0.7;
   if(c.carry) s *= 0.8;
   if(c.carryList && c.carryList.length) s *= Math.pow(0.93, c.carryList.length);   /* a laden mule is a slow mule */
@@ -7815,10 +7835,67 @@ function orderFloor(c, target, sx, sy){
   c.moveTarget = {x: sx + 0.5, y: sy + 0.5};
 }
 function isBlocked3(c, x, y){ return isBlocked(x, y, c.floor || 0); }
+/* ---------- WHO HAS HOLD OF YOU ----------
+   The other half of the kiting complaint: "catching a ranged attacker in melee should somewhat
+   lock them down from fleeing again — somewhat, they should reasonably be able to escape if,
+   say, an ally also engages that enemy."
+
+   THE OPPORTUNITY STRIKE ALREADY EXISTED and is not this. That one makes leaving HURT, once,
+   on a 1.5s cooldown; a body that is willing to eat the cut still walks off at full speed,
+   which is exactly what the report describes. This makes leaving SLOW. The two want to stay
+   separate — one is a cost, one is a grip.
+
+   Four rules, and each of them is there to stop the grip from being a root:
+     · somebody has to actually be ON you. Not merely hostile and nearby — `o.target === c`.
+     · with something they can hold you with. A bow at arm's length holds nobody, which is the
+       same test the passing strike already makes, and empty hands DO hold (that is a wrestle).
+     · not if you are big enough that one man on your flank is a detail.
+     · and an ally with their hands full of your pinner buys you most of the way out. That
+       count is the same shape as the Kenshi side-cap in `ai` — bodies inside 1.9 tiles whose
+       quarry is the one in question — because the two are asking the same question about the
+       same scrum, and a second answer to it would drift away from the first.
+   The grip is DIRECTIONAL and that is enforced in `stepToward`, not here: closing, circling at
+   spear-length, and standing your ground all cost nothing. Only leaving costs. */
+function repin(c){
+  c._pinBy = null; c._pinK = 1;
+  if(c.state !== 'ok') return;
+  if((c.big || 1) > 1.6) return;               /* one man on the flank of that is a detail */
+  let k = 1, worst = null, held = 0;
+  for(const o of charsNear(c.x, c.y, 1.7)){
+    if(o === c || o.state !== 'ok') continue;
+    if((o.floor || 0) !== (c.floor || 0)) continue;
+    if(o.target !== c) continue;
+    if(!hostile(o, c)) continue;
+    const w2 = wepOf(o);
+    if(w2 && w2.range) continue;
+    if(dist(o.x, o.y, c.x, c.y) > 1.6) continue;
+    let relief = 0;
+    for(const a of charsNear(o.x, o.y, 2.0)){
+      if(a === c || a === o || a.state !== 'ok') continue;
+      if(a.target !== o) continue;
+      if(hostile(a, c)) continue;
+      if(dist(a.x, a.y, o.x, o.y) > 1.9) continue;
+      if(++relief >= 2) break;
+    }
+    const kk = relief >= 2 ? 0.95 : relief === 1 ? 0.85 : 0.5;
+    held++;
+    if(kk < k){ k = kk; worst = o; }
+  }
+  if(held > 1) k *= Math.pow(0.85, held - 1);   /* a second blade on you is a second problem */
+  c._pinBy = worst; c._pinK = Math.max(0.3, k);
+}
 function stepToward(c, tx, ty, dt){
   const d = dist(c.x,c.y,tx,ty);
   if(d < 0.05) return true;
-  const sp = moveSpeed(c) * dt;
+  let sp = moveSpeed(c) * dt;
+  /* and whoever has hold of you gets a say in the leaving. Dot the step against the line to
+     them: below -0.2 is genuinely turning away rather than circling, and only that pays. */
+  const pin = c._pinBy;
+  if(pin && pin.state === 'ok' && c._pinK < 1){
+    const px = pin.x - c.x, py = pin.y - c.y;
+    const pd = Math.hypot(px, py);
+    if(pd > 0.01 && ((tx - c.x) * px + (ty - c.y) * py) / (d * pd) < -0.2) sp *= c._pinK;
+  }
   const nx = c.x + (tx-c.x)/d * Math.min(sp, d);
   const ny = c.y + (ty-c.y)/d * Math.min(sp, d);
   if(!isBlocked3(c, nx, ny)){ c.x = nx; c.y = ny; }
@@ -8115,6 +8192,10 @@ function physics(c, dt){
   c._ox = c.x; c._oy = c.y;   /* remember where the feet were: passing blades punish movers */
   c.atkCd -= dt;
   if(c.oppCd > 0) c.oppCd -= dt; c.castCd -= dt;
+  if(c.reloadT > 0) c.reloadT -= dt;
+  /* WHO HAS HOLD OF YOU. Four times a second, not every frame: it is a search over the
+     neighbours and the answer does not move inside 250ms. `stepToward` reads the result. */
+  if((c._pinT = (c._pinT || 0) - dt) <= 0){ c._pinT = 0.25; repin(c); }
   if(c.hitT > 0) c.hitT -= dt;
   /* the threat mark fades on its own, and the bar is told ONCE when it does — see markThreat */
   if(c.threatT > 0 && (c.threatT -= dt) <= 0){ c.threatT = 0; queueSquadRefresh(); }
@@ -11182,6 +11263,9 @@ function fireRanged(c, t, w){
   AU.shot(c.x, c.y);
   breakVeil(c, 'shoots');
   c.atkCd = (w.rof || 2.2) / (1 + c.stats.atk*0.012) * (1 + armorPen(c)*0.7);
+  /* and the legs are spoken for until it is ready again — see moveSpeed */
+  c.reloadT = c.atkCd;
+  c.reloadK = w.reload || RELOAD_DRAG;
   xpGain(c, 'atk', 0.05);
   xpGain(c, 'ranged', 0.08);
   let victim = t, ff = false;
