@@ -54,6 +54,10 @@ WHAT IS DONE SO FAR, and where the proof lives:
   · tools/menus.js  — where the command menu lands, at three window sizes. The bug
     only shows on some of them: the JOB list fits above its button on a tall desktop
     and lands at top -40 on a short one.
+  · tools/kiting.js — what a shot costs the legs and what a blade costs the exit. Measured
+    in GROUND COVERED rather than in flags, because every flag in that system reads
+    correctly on the broken build; the case that looks like it is testing the draw is a
+    deliberate control that passes on both.
   · tools/study.js  — the research bench: how much a second bench is really worth,
     that reading a formula is work, and that a craft is too (including that an
     interrupted batch costs nothing). Measured in game-HOURS of effort rather than
@@ -103,8 +107,22 @@ Two rules this file keeps learning the hard way, both worth reading first:
        · guns.js `theLanceLandsInPlay` — the lance fires exactly ONCE in the probe's
          window, so the assertion is a single hit roll. It landed on two streams
          (100->88, 100->84) and missed on the third. A one-shot sample is the bug.
-         STILL UNFIXED, because it is green on the stream that shipped; the same
-         treatment gunnery.js just had is what it wants when somebody touches it.
+         NOW FIXED, AND IT WENT RED EXACTLY AS PREDICTED. The kiting work moved the
+         stream — no new draw at worldgen, but the reload rule changes where bodies
+         stand in a fight and the roll landed the other way — and guns.js came back
+         "THE LANCE DOES NO DAMAGE IN PLAY" against a lance that works. One cell
+         spent on both builds, which is the tell: the weapon fired, the arrow missed,
+         and that was the whole assertion.
+         WHAT MADE IT ONE SHOT was not the rate of fire (3.7s at atk 20, so twenty
+         seconds is five shots) but the raider — it crosses the five tiles in about
+         a second and a half, and a body inside 1.7 tiles makes the lance guard
+         instead of shoot. The probe was measuring the opening shot of a fight and
+         then a wrestle. It pins the raider's TILE now, the same way rites.js had to
+         pin the ritualist's, widens to sixty seconds, and asserts on a burst: six
+         shots and 100 -> 34 blood here, six shots and 100 -> 55 on the build before,
+         identical across repeat runs on each. It refuses to pass at all on fewer
+         than three cells spent, so it cannot quietly decay back into a coin flip,
+         and the DRY case runs the identical sixty seconds in the same loop.
        · wanderers.js `opensOnArrival` — the walk arrives and the modal does not
          open. Note the failure text quotes a title that is still correct, because
          hiding a panel does not clear it; the display flag is the thing to read.
@@ -120,6 +138,11 @@ Two rules this file keeps learning the hard way, both worth reading first:
      So the draw stays for now and this is written down instead. Whoever removes it
      should expect to fix those two assertions in the same sitting, and should fix
      them by giving each a bigger sample rather than by re-baselining a number.
+     ONE OF THE TWO IS NOW PAID OFF. guns.js was widened during the kiting work, and
+     the advice above held exactly: a bigger sample, no re-baselined number, and a
+     control in the same loop. `wanderers.js opensOnArrival` is the one still owed —
+     it survived this change untouched, so it is still a live landmine and still
+     wants the same treatment rather than a new number.
 
 ===============================================================================
 
@@ -208,24 +231,91 @@ Two rules this file keeps learning the hard way, both worth reading first:
     MEDIC stance walks past a bleeding stranger, and still picks up one of your own
     bleeding in the same spot. `fieldSurgeon` works the commander's band only.
 
-[OPEN] The melee pathing system seems to have gone a bit janky. Everyone tries to beeline towards the enemy and gets caught on allies. They should attempt to flank around where possible. (Could be an unintended side effect of the “walling” effect we built to prevent enemies from beelining through allies to attack mages etc.)
-    NOT STARTED.
+[LOOKED] The melee pathing system seems to have gone a bit janky. Everyone tries to beeline towards the enemy and gets caught on allies. They should attempt to flank around where possible. (Could be an unintended side effect of the “walling” effect we built to prevent enemies from beelining through allies to attack mages etc.)
+    NOT BUILT — a read only, no harness yet, done alongside the kiting item because the two
+    share a system. But it rules the guess in the report OUT and names something better.
+    THE "WALLING" EFFECT IS NOT THE CAUSE. What that phrase refers to is two separate things
+    and neither of them beelines anybody into an ally:
+      · the WHAT-IS-IN-THE-WAY rule in `physics` (~8620) hands a body to a nearer interloper
+        when its quarry is more than 4.5 tiles off — it takes bodies OUT of the beeline, and
+        it is explicitly skipped for a player's own manual order.
+      · the Kenshi side-cap below it caps how many bodies engage one target (3, or 5 on
+        something big) and makes the extras hold at spear length. That is half the flanking
+        machinery already — but only half: an extra backs off to 1.5 tiles and STANDS there.
+        Nothing sends it round to an open side.
+    THE ACTUAL MECHANISM IS IN `separate()`, and it is one word. A* (`findPath`) treats bodies
+    as air — `isBlocked` is terrain and structures only — so every route through a crowd is a
+    straight line by design, and the crowd is meant to be resolved by the soft-collision pass
+    afterwards. That pass pushes an overlapping pair apart along the line between them, and
+    then adds a TANGENTIAL SLIDE so a blocked mover goes around rather than grinding:
+        if(foes){
+          const slide = push * 0.55;
+          if(a.moveTarget || a.attackMove){ nudge(a, -uy*slide, ux*slide); }
+    `if(foes)`. THE SLIDE ONLY EXISTS FOR HOSTILE PAIRS. Two bodies on the same side get the
+    straight push-apart and nothing else, so a hand walking into the back of its own front rank
+    is shoved directly backwards, walks in again, and grinds — which is the report, word for
+    word. The radius is smaller for allies too (0.6 against 0.8), so they interpenetrate more
+    before anything happens at all.
+    THE OBVIOUS FIRST FIX IS TO DROP THE `if(foes)` GUARD and give the slide to any pair where
+    the mover has somewhere to be. Cheap, one line, and it is the same trick already proven to
+    work on the enemy side. DO NOT TRUST THAT WITHOUT MEASURING IT, for two reasons: the slide
+    direction is derived from pair order (`b.id <= a.id` decides who is `a`), so two allies
+    heading the same way may slide the same way and stay stacked; and a formation that holds a
+    line — the shield wall, a guard post — may want the grind. Measure ARRIVAL TIME through a
+    friendly crowd and the spread of final positions around a target, not "did they arrive".
+    The kiting item's file is the shape to copy: tools/kiting.js measures ground covered per
+    tick, and its first two attempts both measured the wrong window.
 
-[OPEN] Kiting should slow down the ranged attacker. It doesn’t make sense that someone could run backwards at full speed while still firing projectiles. And catching a ranged attacker in melee should somewhat lock them down from fleeing again. (Somewhat — they should reasonably be able to escape if, say, an ally also engages that enemy.)
-    NOT STARTED, and start by looking at who is actually doing the kiting, because the
-    AUTO-FIGHT path already refuses to do it. The ranged branch (~line 8283) reads:
-    `if(d > w.range){ travel(...); return; }` with the comment "no firing on the move", then
-    stands still and opens a `c.windup` of `w.draw` seconds. So an AI archer closes OR shoots,
-    never both. Whatever is kiting is therefore doing it around this branch — a player move
-    order, or `attackMove` — so the fix probably belongs where a move order interacts with
-    `windup`, not in this branch. Confirm which before writing anything.
-    The same branch already half-answers the second half: `if(d < 1.7){ c.blocking = true;
-    return; }` — "too close: guard, don't shoot" — so a body in melee ALREADY cannot fire. What
-    is missing is that nothing stops it walking away. A disengage cost wants to live near
-    `oppCd` (the opportunity-attack cooldown already on every body) rather than as a new
-    system, and the "unless an ally is also engaged" clause has a ready-made counter: the
-    engagement loop at ~line 8300 already counts bodies within 1.9 tiles of a target for the
-    Kenshi side-cap. Read that count instead of writing a second one.
+[DONE] Kiting should slow down the ranged attacker. It doesn’t make sense that someone could run backwards at full speed while still firing projectiles. And catching a ranged attacker in melee should somewhat lock them down from fleeing again. (Somewhat — they should reasonably be able to escape if, say, an ally also engages that enemy.)
+    THE NOTE THIS ITEM USED TO CARRY WAS WRONG, and it is left below because the way it was
+    wrong is the useful part. It said to go and find where a move order interacts with
+    `windup`, on the reasoning that the auto-fight branch refuses to fire on the move, so the
+    kiting must be getting in around it. There is no such seam. `ai()` opens with
+    `if(c.state !== 'ok' || c.faction === 'player') return;` — EVERY PLAYER UNIT IS DRIVEN BY
+    `physics`, orders and combat together — and `physics` returns early for the whole length of
+    a windup under a comment that already says "feet planted while the swing is committed".
+    Traced tick by tick on the pre-fix build: give the run order on the tick the draw opens and
+    the archer walks 0.000 tiles before the arrow leaves. A guard was written for the seam,
+    measured, and REMOVED again, because it moved the number by nothing at all and every player
+    order path would have paid for it.
+    THE REAL ANSWER IS ARITHMETIC, AND NO FLAG WOULD EVER HAVE SHOWN IT. A hunting bow at atk 10
+    is a 2.3-second cycle of which the rooted draw is 0.45. Root the draw perfectly and the
+    archer still walks four fifths of every cycle flat out — measured at 86% of the ground the
+    same archer covers doing nothing but running. That is the complaint, in one number. So the
+    cost goes on the RELOAD, which is the only part of the cycle big enough to carry it:
+      · `reloadT` runs from the loose until the weapon is ready again (the same window `atkCd`
+        runs), and while it is up `moveSpeed` multiplies by the weapon's own `reload` field —
+        bow 0.62, sinew bow 0.58, crossbow 0.50, Aether Lance 0.42, graded by how much of the
+        reload is done with both hands and eyes down. Keep shooting and you never get your legs
+        back; stop, and you have them again in about two seconds.
+        Measured after: 64% of free running, and the control in the same file says an archer
+        with nobody near them and nothing to reload still runs flat out, so it is the shooting
+        that is being charged for and not everybody.
+      · THIS DELIBERATELY DOES NOT TOUCH MAGES. Firebolt and darkbolt go through `castCd`, not
+        `fireRanged`, so a caster is not dragged. The ranged-stance mage branch already roots
+        them in a 7-tile band and makes them stand to cast, and widening a physical reload rule
+        over the whole spell system to catch a case nobody reported is how a fix turns into a
+        rebalance. If bolt-kiting is reported, it is its own item.
+    AND THE SECOND HALF — the grip — IS A NEW THING, not the opportunity strike. The note was
+    right that `oppCd` is next door and wrong that it is the same job: the passing strike makes
+    leaving HURT, once, on a 1.5s cooldown, and a body willing to eat the cut still walks off at
+    full speed. That IS the report. `repin` (beside `stepToward`) makes leaving SLOW instead:
+    four times a second it asks who is actually on you — `o.target === c`, inside 1.6 tiles, on
+    your storey, holding something that is not a bow (empty hands count; that is a wrestle) —
+    and sets a factor of 0.5, or 0.85 with one ally engaging that pinner and 0.95 with two.
+    A second unrelieved blade multiplies by another 0.85, floored at 0.3.
+    THE GRIP IS DIRECTIONAL, and that is the whole reason it is not a root: `stepToward` dots
+    the step against the line to the pinner and only applies the factor below -0.2, so closing,
+    circling at spear-length and standing your ground all cost nothing. Only leaving costs.
+    Measured: 4s of running covers 13.4 tiles free, 9.2 pinned, 13.4 pinned with an ally on the
+    pinner — the relief clause does not merely soften the grip, it lets you break contact, after
+    which you are simply loose.
+    A TRAP WORTH KEEPING, because it is the same shape as three others in this file. The probe
+    first read the grip factor as a SNAPSHOT two ticks in and reported 1.00 for the unrelieved
+    case — on a build that demonstrably slows it — because the separation pass had shoved the
+    two apart that exact frame and the chase closed again a moment later. A grip that comes and
+    goes is still a grip. It takes the minimum over the run now. One sample is not a measurement.
+    Asserted in tools/kiting.js, which fails four ways on the build before this.
 
 [DONE] Skeleton versions of Chimeras would be nice to have so that they don’t take the default human skeleton after being raised up. (Especially for lieutenants.)
     Built as part of the raise-mechanic rework below; the two were one job.
