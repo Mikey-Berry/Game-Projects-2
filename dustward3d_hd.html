@@ -44,6 +44,20 @@
     padding:5px 7px;cursor:pointer;font-size:11px}
   .port.sel{border-color:var(--warn);background:var(--panel2)}
   .port.down{border-color:var(--blood)}
+  /* ---------- SOMEBODY IS SWINGING AT THIS ONE ----------
+     A fight forty tiles off the camera is invisible, and the first the player hears of it is
+     a body on the floor. The pulse is deliberately quiet — a border and a wash, not a flash:
+     it has to survive twelve of them going at once without turning the bar into a strobe.
+     `.down` still wins on colour, because bleeding out is the more urgent fact.
+     CSS animation rather than a JS loop on purpose: the squad bar is rebuilt on events, not
+     per frame, so there is no frame hook to drive a pulse from and no reason to add one. */
+  @keyframes threatPulse{0%,100%{border-color:var(--edge);background:var(--panel)}
+    50%{border-color:var(--blood);background:#2a1412}}
+  .port.threat{animation:threatPulse 1.1s ease-in-out infinite}
+  .port.threat.sel{animation:none;border-color:var(--blood)}
+  @media (prefers-reduced-motion: reduce){
+    .port.threat{animation:none;border-color:var(--blood);background:#2a1412}
+  }
   .port .nm{letter-spacing:1px;margin-bottom:3px;white-space:nowrap;overflow:hidden}
   .bar{height:4px;background:#000;margin-top:2px;position:relative}
   .bar i{position:absolute;left:0;top:0;bottom:0;display:block}
@@ -256,9 +270,21 @@ body.touch #hint{display:none}
   .overlay button{font-size:15px;padding:10px 34px;letter-spacing:3px}
   #deadoverlay{display:none}
   #deadoverlay h1{color:var(--blood);text-shadow:4px 4px 0 #000}
-  #ctxmenu{position:absolute;background:var(--panel);border:1px solid var(--edge);z-index:15;
-    display:none;flex-direction:column;min-width:130px}
-  #ctxmenu button{border:none;border-bottom:1px solid #ffffff10;text-align:left;padding:6px 12px}
+  /* ---------- THE COMMAND MENU, MADE LEGIBLE ----------
+     "Hard to see" was fair: a one-pixel border and a panel colour that is a near neighbour of
+     the dirt it opens over, so the menu had no edge against the world behind it. It reads as
+     a thing sitting ON the scene now — an opaque ground, a warm border, and a drop shadow to
+     lift it — and the rows are far enough apart to hit on a touchscreen (36px against the
+     44px target, which is what the min-height buys).
+     `overscroll-behavior` matters on the long JOB list: without it, flicking past the end of
+     a scrolled menu scrolls the page underneath instead. */
+  #ctxmenu{position:absolute;background:#14110c;border:1px solid var(--warn);z-index:15;
+    display:none;flex-direction:column;min-width:150px;max-width:min(320px, 92vw);
+    box-shadow:0 6px 22px #000a, 0 0 0 1px #0008;overscroll-behavior:contain}
+  #ctxmenu button{border:none;border-bottom:1px solid #ffffff14;text-align:left;
+    padding:9px 13px;min-height:36px;white-space:normal;line-height:1.25}
+  #ctxmenu button:last-child{border-bottom:none}
+  #ctxmenu button:hover{background:var(--panel2);color:var(--warn)}
   #minimap{position:absolute;top:44px;right:10px;border:1px solid var(--edge);
     image-rendering:pixelated;opacity:.9}
   #hint{position:absolute;top:44px;left:10px;font-size:11px;color:var(--dust);
@@ -1433,7 +1459,7 @@ function makeChar(name, faction, x, y, o={}){
     floor: 0,
     inv: {}, pack: null, haulTarget: null,
     structTarget: null, repairTarget: null, stuckT: 0,
-    healProg: 0, gatherT: 0, bubble: null,
+    healProg: 0, gatherT: 0, bubble: null, craftJob: null,
     /* audio timing. Declared here rather than sprung on the object later: stepToward touches
        strideD for every mover on every tick, and a hidden-class transition in that path is
        not worth a footstep. Neither needs saving — both re-derive within a second of play. */
@@ -3335,6 +3361,19 @@ function placeCave(mtn){
 
   const wall = (wx, wy, fl) => { if(wx>1&&wy>1&&wx<W-1&&wy<H-1){ blocked.add(bkey(wx, wy, fl)); cave.walls.push({x:wx, y:wy, f:fl}); } };
   const deck = (wx, wy, fl) => { decks.add(bkey(wx, wy, fl)); };
+  /* ---------- A STAIR TILE HAS TO BE FLOOR ON BOTH SIDES ----------
+     `deck` alone does not make one. It adds the tile to `decks` — "there is something to
+     stand on here" — and says nothing about `blocked`, which the chamber ring wrote first.
+     So a stair whose tile landed on its own chamber's wall was decked, drawn, and still
+     solid: `isBlocked` said no, nobody could path onto it, and that level of the warren had
+     no way down. One stair in sixteen came out that way at the shipped seed.
+     `carve` clears both, and also drops the tile from `cave.walls` so the renderer does not
+     draw a block of rock standing in the stairwell. */
+  const carve = (wx, wy, fl) => {
+    deck(wx, wy, fl);
+    blocked.delete(bkey(wx, wy, fl));
+    cave.walls = cave.walls.filter(w => !(w.x === wx && w.y === wy && w.f === fl));
+  };
 
   /* a chamber on floor fl: a decked room ringed by rock wall, with one guaranteed door and a
      garrison that keeps to it. Depth decides who lives here and what they are sitting on. */
@@ -3386,22 +3425,32 @@ function placeCave(mtn){
   /* carve each floor: a central chamber the stair drops into, plus a couple of side rooms */
   let sx = mouth.x, sy = mouth.y;
   stairs.push({x: mouth.x, y: mouth.y, from: 0, to: -1});   /* the mouth is the first stair */
-  deck(mouth.x, mouth.y, -1);
+  carve(mouth.x, mouth.y, -1);
   for(let fl = -1; fl >= -depth; fl--){
     /* the landing chamber, centred a little off the stair so you don't drop into a wall */
     const cx = clamp(sx + ri(-2, 2), 6, W-7), cy = clamp(sy + ri(-2, 2), 6, H-7);
     const main = chamber(cx, cy, ri(4,6), ri(3,5), fl, {x: sx, y: sy}, (rm) => stockRoom(rm, fl));
-    deck(sx, sy, fl);   /* ensure the stair's landing tile is floor */
     /* a side chamber or two */
     for(let s2 = 0; s2 < ri(1, 2); s2++){
       const ox = cx + (rnd()<0.5?-1:1) * ri(6, 9), oy = cy + (rnd()<0.5?-1:1) * ri(5, 8);
       const scx = clamp(ox, 6, W-7), scy = clamp(oy, 6, H-7);
       chamber(scx, scy, ri(3,4), ri(2,4), fl, {x: cx, y: cy}, (rm) => stockRoom(rm, fl));
     }
+    /* THE LANDING, CARVED LAST. It used to be decked immediately after the main chamber,
+       which left the side chambers — carved above, and free to overlap — able to put a wall
+       straight back on top of the tile you arrive on. Nothing carved on this floor comes
+       after this line. */
+    carve(sx, sy, fl);
     /* the stair down to the next floor, unless this is the bottom */
     if(fl > -depth){
-      const nsx = clamp(cx + ri(-3, 3), 5, W-6), nsy = clamp(cy + ri(-3, 3), 5, H-6);
-      deck(nsx, nsy, fl); deck(nsx, nsy, fl-1);
+      /* INSIDE the chamber, not merely near its centre. `cx + ri(-3,3)` against a room whose
+         half-height is as little as 3 put the stair on the wall ring itself — which `carve`
+         would now open, but opening a hole in a chamber wall to hold a stairwell is a worse
+         room than simply putting the stair in the floor. Same two `ri()` draws as before, so
+         nothing downstream in the worldgen stream moves. */
+      const nsx = clamp(ri(main.x0 + 1, main.x1 - 1), 5, W-6);
+      const nsy = clamp(ri(main.y0 + 1, main.y1 - 1), 5, H-6);
+      carve(nsx, nsy, fl); carve(nsx, nsy, fl-1);
       stairs.push({x: nsx, y: nsy, from: fl, to: fl-1});
       sx = nsx; sy = nsy;
     } else {
@@ -5538,7 +5587,40 @@ function mitigate(d, dmg, wt, ap, a){
   if(d.markT > 0 && a && a.undead) dmg *= 1.10;
   return dmg >= 0 ? dmg : 0;
 }
+/* ---------- THE THREAT MARK ----------
+   How long a body keeps the mark after the last blow. Long enough that a slow exchange —
+   a crossbow reloading, two bodies circling — reads as one continuous fight rather than
+   a stutter, and short enough that the bar goes quiet promptly once it is over. */
+const THREAT_HOLD = 2.6;
+/* ONE REBUILD, NOT FORTY. `refreshSquadBar` rebuilds every port in the bar, and a real fight
+   marks a dozen bodies inside the same second and clears them inside the same second after.
+   Coalesce: the first caller books a rebuild a fraction of a second out and everybody else
+   inside that window rides it. 120ms is well under the pulse's own period, so nothing ever
+   arrives late enough to see. */
+let _sqPending = false;
+function queueSquadRefresh(){
+  if(_sqPending) return;
+  _sqPending = true;
+  setTimeout(() => { _sqPending = false; refreshSquadBar(); }, 120);
+}
+function markThreat(c){
+  if(!c) return;
+  const fresh = !(c.threatT > 0);
+  c.threatT = THREAT_HOLD;
+  if(fresh) queueSquadRefresh();     /* a body already marked needs no second rebuild */
+}
 function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
+  /* ---------- SOMETHING IS SWINGING AT THIS ONE ----------
+     `c.target` is who a body is fighting, which is not the same question as whether anybody
+     is fighting IT — so the squad bar could not tell a hand being cut down off-camera from a
+     hand standing in a field. A reverse scan on every bar rebuild would answer it and would
+     also be forty bodies against forty on every event; stamping the DEFENDER costs one write
+     on a path that is already writing to them.
+     Marked here rather than in the melee resolver so every source counts: blades, arrows,
+     bolts, spells and the turret all arrive through this function. Friendly fire and the
+     Ember Rot do not — `a` is null for a burn ticking down, and a stray arrow from your own
+     line is not the alarm this is for. */
+  if(a && a !== d && d.faction === 'player' && hostile(a, d)) markThreat(d);
   /* armour and toughness, for every path — melee, arrow, bolt, lance and spell alike */
   if(!raw) dmg = mitigate(d, dmg, wt, ap, a);
   /* an awakened parasite remembers what it was bred to kill */
@@ -6380,7 +6462,7 @@ const TECHS = {
     desc:'Conjure a squad that was never there. Enemies bite at nothing while yours do the cutting'},
   last_rite:    {name:'The Last Rite',     cost:2500,hours:120, req:'rites_deep',   rp:60, desc:'Ascension to lichdom — at a price'},
 };
-const research = { done:{}, active:null, left:0, rp:0 };
+const research = { done:{}, active:null, left:0, rp:0, study:null };
 const FORMULA_KEYS = ['formula_t','formula_w','formula_p'];
 /* ---------- FAVOR, AND WHERE IT LIVES ----------
    This used to ask `chars.some(c => c.questGive === kind && c.questDone)` — that is, it read
@@ -6468,18 +6550,121 @@ function researchRate(){
     const skill = crew.length ? Math.max(...crew.map(c => c.stats.magic || 1)) : 0;
     rate += mult * (1 + Math.min(0.5, skill * 0.008));
   }
-  return rate;
+  /* ---------- AND THE SAME RULE ACROSS BENCHES ----------
+     The curve above says the right thing and only said it INSIDE one bench: a second mind is
+     worth most of another hand, a third less, a fourth has nowhere to stand. Build a second
+     bench and none of that applied — the benches summed, flat, forever. Three benches with
+     three scholars apiece came out at 9.9x, so an eighty-hour project finished in about a
+     minute of real time and the whole tree fell over in an afternoon. That is the "especially
+     with multiple people at the bench" in the report.
+     A sublinear total says it once for the whole camp instead. One scholar at one bench is
+     untouched (1.0 stays 1.0); a full bench goes 3.3 -> 2.3; three full benches 9.9 -> 4.8.
+     Still worth building the second bench. No longer worth building five. */
+  return Math.pow(rate, 0.68);
+}
+/* HOW LONG THE READING TAKES, over and above the crew curve. The `hours` in the table are a
+   READABLE ordering — 40 for the first tech, 104 for the deepest — and re-typing twenty of
+   them to slow the tree down would have thrown that ordering away for nothing. One multiplier
+   here keeps the table meaning what it says and makes the whole tree cost what it should.
+   Deliberately modest, because the crew curve above is doing most of the work: a lone scholar
+   takes about a third longer, a camp with three staffed benches nearly three times. */
+const RESEARCH_DRAG = 1.35;
+/* ============================================================ A CRAFT IS WORK
+   Every recipe resolved inside the click: press CRAFT and the materials vanished and the item
+   appeared, ten at a time on shift. That made the bench the one place in this game where a job
+   took no time at all — a woodcutter stands at a tree for five seconds with a green bar over
+   their head, and turning that same wood into Build Materials was instantaneous.
+   The crafter stands at the bench and works now, one item at a time, on the bar every other
+   working body already uses.
+
+   MATERIALS ARE SPENT AS EACH ITEM COMPLETES, not up front. That is what makes an interrupted
+   batch safe: walk the crafter away or take another order and whatever has not been made yet
+   was never paid for. It is also why the job is deliberately NOT saved — a reload drops an
+   unfinished batch and costs nothing, which is a better trade than plumbing a transient
+   through the save file. */
+const CRAFT_SECS = 2.4;               /* per item, for somebody with no skill at all */
+function craftDur(c, kind){
+  const sk = craftSkillFor(kind);
+  return CRAFT_SECS / (1 + (c.stats[sk] || 0) * 0.02);   /* a master is about twice a novice */
+}
+function finishCraft(c, why){
+  const j = c.craftJob;
+  if(!j) return;
+  c.craftJob = null;
+  const madeTxt = Object.keys(j.made).map(k => `${j.made[k]} ${ITEMS[k].name}`).join(', ');
+  if(madeTxt) log(`${c.name} crafted ${madeTxt}.`, 'good');
+  if(j.ruined) log(`${c.name} ruined ${j.ruined} — the materials are lost.`, 'bad');
+  if(why) log(why, 'bad');
+  refreshInv();
+}
+/* Returns true while the body is busy at the bench, so the AI leaves them alone. */
+function craftTick(c, dt){
+  const j = c.craftJob;
+  if(!j) return false;
+  const r = (RECIPES[j.kind] || []).find(x => x.out === j.out);
+  if(!r){ c.craftJob = null; return false; }
+  /* THE WORK HAPPENS AT THE BENCH. Wander off and it waits rather than cancelling — the
+     player did not take the order back, they just moved. */
+  if(dist(c.x, c.y, j.bx, j.by) > 2.6) return false;
+  c._working = 0.5;
+  j.t += dt;
+  if(j.t < j.dur) return true;
+  j.t = 0;
+  if(!canAfford(r.cost)){ finishCraft(c, 'The materials ran out.'); return true; }
+  campSpend(r.cost);
+  const sk = craftSkillFor(j.kind);
+  xpGain(c, sk, 0.6);
+  const gear = ITEMS[j.out].type === 'weapon' || ITEMS[j.out].type === 'armor';
+  if(gear){
+    const q = rollQuality(c.stats[sk]);
+    if(q === null) j.ruined++;
+    else {
+      const out = tierKey(j.out, q);
+      addItem(out, r.n);
+      j.made[out] = (j.made[out] || 0) + r.n;
+      if(q === 'm') addFloat(c.x, c.y - 1, 'MASTERWORK', '#d4a040');
+    }
+  } else if(rnd() < 0.04) j.ruined++;
+  else {
+    if(ITEMS[j.out].type === 'mat') storeItem(j.out, r.n, c);
+    else addItem(j.out, r.n);
+    j.made[j.out] = (j.made[j.out] || 0) + r.n;
+  }
+  j.done++;
+  if(j.done >= j.want) finishCraft(c, null);
+  return true;
 }
 function benchCrew(b){
   return chars.filter(c => c.faction==='player' && c.job==='research' &&
     mindedDead(c) && c.state==='ok' &&
     dist(c.x, c.y, b.x+1, b.y+1) < 3.2);
 }
+/* ---------- READING A FORMULA IS WORK ----------
+   Insight used to be a button. Click STUDY ALL and the formulae vanished and the pool jumped
+   — no bench, no scholar, no time — which made the one thing you go into a Golden-Age bunker
+   FOR the single most effortless act in the game.
+   It is a project now, on the same bench and the same crew curve as everything else. The
+   formulae are given up the moment you commit (they have gone to the bench), and the insight
+   arrives when the reading is done. Priced per point rather than per document so a fat
+   Ashen Formula is a longer read than a scrap, which is the obvious reading of it. */
+const STUDY_HOURS_PER_RP = 2.2;
 function researchTick(dh){
-  if(!research.active) return;
   /* the bench wants ASSIGNED minds at it — the work does not do itself */
   const rate = researchRate();
   if(rate <= 0) return;
+  /* THE READING COMES FIRST, and it occupies the bench: a camp cannot study the old world and
+     push the tree at the same time. That is the whole of "more like the usual research flow". */
+  if(research.study){
+    research.study.left -= dh * rate;
+    if(research.study.left <= 0){
+      research.rp += research.study.rp;
+      log(`The formulae come apart under study. +${research.study.rp} insight.`, 'good');
+      research.study = null;
+      refreshInv();
+    }
+    return;
+  }
+  if(!research.active) return;
   research.left -= dh * rate;
   if(research.left <= 0){
     research.done[research.active] = true;
@@ -7616,6 +7801,17 @@ function orderFloor(c, target, sx, sy){
   c.wantFloor = target;
   clearOrders(c);
   c.wantFloor = target;
+  /* ---------- AND RE-ARM THE STAIR UNDER ITS FEET ----------
+     THE ONE-WAY TRIP. `onStair` exists so a body does not yo-yo while standing on a stair,
+     and it is set the moment a body arrives on one — including the tile it lands on after
+     crossing, because a stair is the same tile on both storeys. `useStairs` tests it BEFORE
+     it looks at `wantFloor`, so the flag outlived the order that set it: walk into a cave
+     and you are standing on the mouth with `onStair` true, and the order to go back up is
+     read and discarded every tick for the rest of the game. Nothing logs. The body simply
+     never leaves.
+     A NEW ORDER IS NOT A YO-YO. Clearing it here keeps the guard doing its actual job — no
+     bouncing on an unchanged order — and lets a fresh one through. */
+  c.onStair = false;
   c.moveTarget = {x: sx + 0.5, y: sy + 0.5};
 }
 function isBlocked3(c, x, y){ return isBlocked(x, y, c.floor || 0); }
@@ -7739,6 +7935,7 @@ function clearOrders(c){
   c.talkTarget = null;
   c.structTarget = null; c.repairTarget = null; c.stuckT = 0;
   c.carryTarget = null; c.rescueTarget = null; c.seizeTarget = null;
+  c.craftJob = null;      /* a new order takes them off the bench; nothing unmade was paid for */
   c.guardTarget = null; c.haulTarget = null;
   c.path = null; c.pathGoal = null;
   if(c.resting){ c.resting.user = null; c.resting = null; }
@@ -7919,6 +8116,8 @@ function physics(c, dt){
   c.atkCd -= dt;
   if(c.oppCd > 0) c.oppCd -= dt; c.castCd -= dt;
   if(c.hitT > 0) c.hitT -= dt;
+  /* the threat mark fades on its own, and the bar is told ONCE when it does — see markThreat */
+  if(c.threatT > 0 && (c.threatT -= dt) <= 0){ c.threatT = 0; queueSquadRefresh(); }
     if(c.flinchT > 0) c.flinchT -= dt;
   if(c.lungeT > 0) c.lungeT -= dt;
   if(c.shoveT > 0) c.shoveT -= dt;
@@ -8056,6 +8255,8 @@ function physics(c, dt){
     }
     else { c.healProg = 0; return; }
   }
+  /* a craft in progress holds the crafter at the bench — see craftTick */
+  if(c.craftJob && craftTick(c, dt)) return;
   /* gather order: stand at the node and work */
   if(c.gather){
     const g = c.gather;
@@ -8258,6 +8459,24 @@ function physics(c, dt){
   /* HANDS ON A MOUNTED WEAPON stay on it. The emplacement is doing the fighting; a gunner who
      wandered off to stab someone would be abandoning something far deadlier than their knife. */
   if(c.manning){ c.target = null; c.targetManual = false; c.attackMove = null; c.moveTarget = null; }
+  /* ---------- AND A GUNNER ON ITS WAY TO ONE DOES NOT STOP TO FIGHT ----------
+     THE RACE THAT MADE THE WHOLE JOB LOOK DEAD. The rule above protects a crew that has
+     ALREADY got its hands on the weapon; nothing protected the walk. So the job worked
+     perfectly in an empty camp and not at all in the only situation anybody assigns it in:
+     with a turret standing and a raid coming, the crew set out, auto-acquired a raider at
+     seven tiles on the way, stopped where it stood to fight with its knife, and the
+     emplacement was never crewed. Measured: quiet camp, hands on in eight seconds and nine
+     bolts fired; raid already under way, stopped 5.3 tiles short and zero bolts, forever.
+     From the player's chair that is "the gunnery job does absolutely nothing", which is
+     exactly how it was reported.
+     The same sentence the rule above is built on settles it: a gunner trading knife blows
+     is abandoning something far deadlier than their knife. So while there is a mount to get
+     to, there is no target — it runs for the gun and lets the gun do the fighting. It will
+     take hits on the way. That is the trade, and it is the right one: the turret is worth
+     more than the walk. */
+  if(!c.manning && (c._ej || c.job) === 'gunner' && jobHasWork(c, 'gunner')){
+    c.target = null; c.targetManual = false; c.attackMove = null;
+  }
   /* auto-acquire: attack-move, tanks, the mindless dead, and the few risen built to pick
      their own fights (the skeleton mage) — never medics, and never a servitor */
   if(!c.target && !c.manning && !c.mule && !c.drag && c.stance!=='medic' && !boundForAWeapon(c) &&
@@ -9987,8 +10206,30 @@ const corpseSites = [];
     if(corpseSites.some(s => dist(s.x, s.y, p.x, p.y) < 60)) continue;
     const s = {id: i + 1, x: p.x, y: p.y, r: 12};
     corpseSites.push(s);
-    /* the fragment cache: what everyone comes here for */
-    chests.push({x: p.x, y: p.y, opened: false, loot: {cats: 0, items: {
+    /* ---------- THE FRAGMENT CACHE, OUT FROM UNDER THE BONES ----------
+       It used to sit at the exact centre of the site — which is also where the skull, the
+       ribcage and the hand are all centred. The skull variant alone is a 13x11 dome sitting
+       on the ground, so the chest was inside several storeys of solid bone: you could not
+       tell whether you had already looted a site, and often could not see the chest at all.
+       Pushed out past the widest of the three monuments (the skull's jaw reaches z 10) and
+       turned with the monument's own rotation, so it lands beside the thing rather than
+       under it — still well inside the site's radius of 12, so it reads as belonging to it.
+
+       DERIVED FROM `s.id`, NOT ROLLED, and `openAt` walks a fixed spiral rather than calling
+       `findOpenNear`. Both deliberate: `findOpenNear` burns up to 120 `rnd()` draws, and any
+       new draw here would move every body worldgen places after this loop. That mechanism has
+       broken three harnesses before now, and it is not worth a chest. */
+    const openAt = (ax, ay) => {
+      if(!isBlocked(ax, ay)) return {x: ax, y: ay};
+      for(let ring = 1; ring <= 10; ring++) for(let a = 0; a < 12; a++){
+        const bx = ax + Math.cos(a/12*Math.PI*2) * ring, by = ay + Math.sin(a/12*Math.PI*2) * ring;
+        if(bx > 1 && by > 1 && bx < W-1 && by < H-1 && !isBlocked(bx, by)) return {x: bx, y: by};
+      }
+      return {x: ax, y: ay};
+    };
+    const cang = (s.id * 2.39996) + 1.9;      /* the monument's own turn, plus a quarter */
+    const cpos = openAt(p.x + Math.cos(cang) * 11, p.y + Math.sin(cang) * 11);
+    chests.push({x: cpos.x, y: cpos.y, opened: false, loot: {cats: 0, items: {
       sunder: ri(2, 4),
       ...(rnd() < 0.6 ? {formula_p: 1} : {formula_w: ri(1, 2)}),
     }}});
@@ -12712,7 +12953,23 @@ function openCrypt(crypt){
    comes. The rest of the squad has one job, which is to see that nothing reaches the circle
    before the rite finishes. Interrupt it and the working collapses — the sacrifice is spent
    either way, because that is the kind of thing this is. */
-const RITE_WORK = 42;                 /* seconds of standing still, at magic 25 */
+/* ---------- HOW LONG THE RITE TAKES, AND WHY IT WAS OVER BEFORE IT STARTED ----------
+   This was 42, with a comment claiming "seconds of standing still, at magic 25" — and the
+   comment was already wrong, because `work` accrues at `1 + magic * 0.035`. At magic 25 that
+   is 1.875, so 42 units of work was 22 seconds. At magic 150 it is 6.25, and the whole rite
+   was SIX AND A HALF SECONDS.
+
+   Which is the entire report. The waves spawn 16 to 24 tiles out and have to WALK in; at
+   roughly two and a half tiles a second that is six to ten seconds of travel before the first
+   one can reach the circle. So on any caster worth performing the rite with, every gaunt it
+   summoned was still crossing open ground when the rite completed. The scene could not
+   happen. It was not a pacing problem, it was an arithmetic one.
+
+   Two changes, and they are different in kind. The base is longer, so there is a scene to
+   have. And the magic term is CAPPED, so skill shortens the vigil rather than deleting it —
+   an unbounded multiplier on a fixed-length approach march can only ever end one way. */
+const RITE_WORK = 120;
+const RITE_RATE_CAP = 2.0;            /* the fastest anybody works, however deep the gift */
 let theRite = null;                   /* {ritualist, sacrifice, x, y, work, drawn} */
 function beginAscension(ritualist, sacrifice){
   if(theRite) { log('A rite is already open. One at a time.', 'bad'); return; }
@@ -12734,13 +12991,17 @@ function riteTick(dt){
   /* rooted: the rite happens where it was opened, or not at all */
   if(dist(c.x, c.y, r.x, r.y) > 2.5){ collapseRite(`${c.name} was driven off the circle`); return; }
   c.mana = Math.max(0, c.mana - dt * 1.2);
-  r.work += dt * (1 + c.stats.magic * 0.035);
+  r.work += dt * Math.min(RITE_RATE_CAP, 1 + c.stats.magic * 0.035);
   r.t += dt;
   /* it is heard, and what hears it walks */
   bumpNotice(dt * 0.9);
   if(rnd() < dt * 6) addSpecks(r.x + (rnd()-0.5)*4, r.y + (rnd()-0.5)*4, '#a970e8', 3);
-  /* the dark answers in waves, and the waves get worse */
-  const wave = Math.floor(r.work / (RITE_WORK / 3));
+  /* THE DARK ANSWERS IN WAVES, AND THE WAVES GET WORSE — and they are pulled FORWARD.
+     Thirds meant the last wave spawned at the moment the rite completed, so it arrived to an
+     empty circle even once the rite was long enough to walk across. Fifths put all four waves
+     inside the first eighty percent, which leaves the last of them time to actually reach the
+     ring and be fought there, which is the whole point of the scene. */
+  const wave = Math.min(4, Math.floor(r.work / (RITE_WORK / 5)));
   if(wave > r.drawn){
     r.drawn = wave;
     const n = 2 + wave;
@@ -12750,7 +13011,8 @@ function riteTick(dt){
       const g = spawnGaunt(wave >= 2 ? pick(['maw','stalker','shrike']) : pick(['gaunt','stalker']), q.x, q.y);
       if(g){ g.nightborn = false; g.guard = {x: r.x, y: r.y}; g.riteborn = true; }
     }
-    log(wave >= 3 ? 'THEY ARE COMING FOR THE CIRCLE. Hold.' :
+    log(wave >= 4 ? 'EVERYTHING OUT THERE IS COMING. Hold the ring.' :
+        wave === 3 ? 'THEY ARE COMING FOR THE CIRCLE. Hold.' :
         wave === 2 ? 'More of them. The rite is louder than it was.' :
                      'Something has heard it. It is coming.', 'bad');
     AU.news();
@@ -13312,7 +13574,9 @@ function openBinding(circle){
     circle.shape = circle.shape || {...SHAPE_NEUTRAL};
     for(const ax of SHAPE_AXES) if(circle.shape[ax.k] === undefined) circle.shape[ax.k] = 2;
     const sh = circle.shape;
-    const budget = shapeBudget(ritualist);
+    /* what is FREE, which can no longer exceed what is possible — a lich reading "16/28
+       points" would be told about twelve points it has no way to spend */
+    const budget = Math.min(shapeBudget(ritualist), SHAPE_CEILING);
     const spent = SHAPE_AXES.reduce((n, ax) => n + (sh[ax.k] || 0), 0);
     const over = Math.max(0, spent - budget);
     const extra = shapeCost(sh, ritualist);
@@ -14894,13 +15158,28 @@ function computeVision(){
     let r = base;
     const h = heightAt(c.x, c.y);
     if(h > 1.2) r += Math.min(18, (h - 1.2) * 1.9);   /* the view from up there */
+    /* ---------- AND HEIGHT YOU BUILT COUNTS LIKE HEIGHT YOU CLIMBED ----------
+       `heightAt` reads the TERRAIN, so a body standing on a tower deck, a rampart or the
+       Redoubt's upper floors saw precisely what it saw standing in the mud at the foot of
+       them. Which made the second storey worth nothing to a lookout and left the Watchtower
+       a shape with a stair in it — you built one, put somebody on top, and the fog sat where
+       it had been. A storey is not a mountain, so it is worth about what a low ridge is
+       worth, and it stacks the way the ranges do rather than replacing them. */
+    const fl = c.floor || 0;
+    if(fl > 0) r += Math.min(16, fl * 9);
     /* A WHISP IS A LAMP. It sees no better than anything else does — it makes the ground
        around it visible, which is a different thing and the whole reason to walk one out
        ahead of the column. The storm still swallows it like everything else. */
     if(c.wisp) r += 13;
     stampVision(c.x, c.y, r * stormK);
   }
-  for(const b of pBuilds) stampVision(b.x + b.w/2, b.y + b.h/2, 11);
+  /* A WATCHTOWER IS FOR SEEING, and it stamped the same 11 tiles every other building does —
+     the ground its people keep and the light it throws — which made it a very expensive shack
+     with a stair. It is the one structure whose entire purpose is the horizon, so it reaches
+     past what a body on open ground sees at noon (30) even with nobody standing in it, and a
+     lookout ON the deck adds their own storey on top of that. The storm swallows it like it
+     swallows everything else. */
+  for(const b of pBuilds) stampVision(b.x + b.w/2, b.y + b.h/2, (b.type === 'tower' ? 34 * stormK : 11));
   for(const t of towns) if(t.playerRuled) stampVision(t.x, t.y, t.def.wall ? t.def.wall.r + 3 : 15);
   if(changed || visChanged) fogDirty = true;
   if(visChanged) syncDecorFog();   /* the newly-seen ground raises what stands on it */
@@ -20225,6 +20504,7 @@ function routeTo(c, x, y, tf){
   if(!st){ log('No stair connects there from here.', 'bad'); return false; }
   c.wantFloor = tf;                 /* the true goal */
   c.afterStair = {x, y};
+  c.onStair = false;                /* a new order re-arms the stair — see orderFloor */
   c.moveTarget = {x: st.x + 0.5, y: st.y + 0.5};
   return true;
 }
@@ -20604,6 +20884,7 @@ function renderOverlay(){
     let prog = 0;
     if(c.healTarget && c.healProg > 0 && dist(c.x,c.y,c.healTarget.x,c.healTarget.y) < 1.3) prog = c.healProg/tendDur(c.healTarget);
     else if(c.gather && c.gatherT > 0) prog = c.gatherT/5;
+    else if(c.craftJob && c.craftJob.t > 0) prog = c.craftJob.t / c.craftJob.dur;
     if(prog > 0 && base){
       cx.fillStyle = '#000'; cx.fillRect(base.x-10, base.y+6, 20, 4);
       cx.fillStyle = '#a3c47a'; cx.fillRect(base.x-9, base.y+7, 18*clamp(prog,0,1), 2);
@@ -21038,7 +21319,10 @@ function refreshSquadBar(){
   const risen  = mine.filter(c => c.undead && !c.lich && c.state!=='dead' && !c.grp);
   const makePort = (c, mini) => {
     const d = document.createElement('div');
-    d.className = 'port' + (mini?' mini':'') + (selected.includes(c)?' sel':'') + (c.state==='down'?' down':'');
+    /* `.threat` only while the body is still standing: once it is down, `.down` is the fact
+       that matters and a pulsing border over it says the fight is still their problem. */
+    d.className = 'port' + (mini?' mini':'') + (selected.includes(c)?' sel':'') + (c.state==='down'?' down':'')
+      + (c.threatT > 0 && c.state === 'ok' ? ' threat' : '');
     const worst = Math.min(...PARTS.map(k=>c.parts[k].severed?0:Math.max(0,c.parts[k].hp)));
     const status = (c.state==='dead'?' †':c.state==='down'?' ▼':c.captured?' ⛓':c.resting?' z':'')
       + (c.sick>0?' <span style="color:var(--warn)" title="ill">☣</span>':'');
@@ -21330,7 +21614,11 @@ function refreshCharPanel(){
         refreshCharPanel();
       }
     }));
-    showCtxMenu(r.left, Math.max(6, r.top - items.length * 30), items);
+    /* opens UPWARD from its button, because the button lives at the bottom of the character
+       panel. The `- items.length * 30` guess that used to be here is gone: `showCtxMenu`
+       measures the real menu and clamps both edges, so asking for the button's top is enough
+       and asking for a computed offset was actively wrong. */
+    showCtxMenu(r.left, r.top, items, true);   /* upward: the button sits at the panel's foot */
   };
   jr.appendChild(jb);
   jr.appendChild(mkJobButton(2));   /* the fallback trade sits beside the first */
@@ -21681,17 +21969,30 @@ function openResearch(){
       pool.style.cssText = 'margin-bottom:8px;color:#a98ad4';
       pool.textContent = `INSIGHT: ${research.rp} pts — formulae recovered from the old world, studied here.`;
       body.appendChild(pool);
+      /* what the bench is currently reading, and what it will be worth when it finishes */
+      if(research.study){
+        const rd = document.createElement('div');
+        rd.style.cssText = 'margin-bottom:8px;color:var(--warn);font-size:11px';
+        const rr = researchRate();
+        rd.innerHTML = `READING: ${Math.ceil(research.study.left)}h left, worth ${research.study.rp} insight` +
+          (rr > 0 ? ` <span style="color:var(--dust)">(~${Math.ceil(research.study.left / rr)}h at this pace)</span>`
+                  : ` <span style="color:var(--blood)">(nobody is studying — assign the STUDY job)</span>`);
+        body.appendChild(rd);
+      }
       if(held.length){
         const row = document.createElement('div'); row.className = 'trow';
         const txt = held.map(([k,n]) => `${ITEMS[k].name} ×${n}`).join(' · ');
         const gain = held.reduce((a,[k,n]) => a + ITEMS[k].rp * n, 0);
         row.innerHTML = `<span class="tn">${txt} <span style="color:var(--dust)">→ ${gain} insight</span></span>`;
         const sb = document.createElement('button'); sb.textContent = 'STUDY ALL';
+        sb.disabled = !!research.study;
         sb.onclick = () => {
+          if(research.study){ log('The bench is already reading.', 'bad'); return; }
           let got = 0;
           for(const [k,n] of held){ if(campSpend({[k]:n})) got += ITEMS[k].rp * n; }
-          research.rp += got;
-          log(`The formulae come apart under study. +${got} insight.`, 'good');
+          if(!got){ rndr(); return; }
+          research.study = {rp: got, left: got * STUDY_HOURS_PER_RP};
+          log(`The formulae go to the bench — ${Math.ceil(research.study.left)}h of reading before anything comes of them.`, '');
           refreshInv(); rndr();
         };
         row.appendChild(sb); body.appendChild(row);
@@ -21742,8 +22043,12 @@ function openResearch(){
       body.appendChild(d);
       const hint = document.createElement('div');
       hint.style.cssText = 'margin-bottom:10px;color:var(--dust);font-size:11px';
+      /* The old line ended "Build more benches to seat more", which was true and is now
+         misleading: extra benches used to sum flat, and the whole camp is on one curve. Say
+         what the curve actually does, so nobody builds five of them expecting five times. */
       hint.textContent = `A bench seats ${BENCH_SEATS}. A second mind is worth most of another hand; a third, less. `
-        + `Build more benches to seat more.`;
+        + `A second bench helps again — but the whole camp shares one curve, and each bench after `
+        + `it is worth a little less than the one before.`;
       body.appendChild(hint);
     }
     for(const key of Object.keys(TECHS)){
@@ -21781,7 +22086,7 @@ function openResearch(){
       cats -= t.cost;
       campSpend(mats);
       if(t.rp) research.rp -= t.rp;
-      research.active = key; research.left = t.hours;
+      research.active = key; research.left = t.hours * RESEARCH_DRAG;
       deed('research', 1);
       refreshTop(); refreshInv(); rndr();
     });
@@ -21837,36 +22142,20 @@ function openCrafting(kind, bench){
       const r = RECIPES[kind].find(x => x.out===b.dataset.cr);
       const crafter = bestCrafter(kind, craftingBench);
       if(!crafter){ log('Nobody close enough to work it.', 'bad'); return; }
-      const sk = craftSkillFor(kind);
-      const gear = ITEMS[r.out].type==='weapon' || ITEMS[r.out].type==='armor';
+      if(!canAfford(r.cost)){ log('Not enough materials.', 'bad'); return; }
+      if(crafter.craftJob){ log(`${crafter.name} is already at the bench.`, 'bad'); return; }
       /* shift for a full shift's work — hold the bench down and run the batch */
       const want = e.shiftKey ? 10 : 1;
-      let done = 0, ruined = 0;
-      const made = {};
-      for(let i=0;i<want;i++){
-        if(!canAfford(r.cost)) break;
-        campSpend(r.cost);
-        xpGain(crafter, sk, 0.6);
-        if(gear){
-          const q = rollQuality(crafter.stats[sk]);
-          if(q === null){ ruined++; continue; }
-          const out = tierKey(r.out, q);
-          addItem(out, r.n);
-          made[out] = (made[out]||0) + r.n;
-          if(q==='m') addFloat(crafter.x, crafter.y-1, 'MASTERWORK', '#d4a040');
-        } else {
-          if(rnd() < 0.04){ ruined++; continue; }
-          if(ITEMS[r.out].type === 'mat') storeItem(r.out, r.n, crafter);
-          else addItem(r.out, r.n);
-          made[r.out] = (made[r.out]||0) + r.n;
-        }
-        done++;
-      }
-      if(!done && !ruined){ log('Not enough materials.', 'bad'); return; }
-      const madeTxt = Object.keys(made).map(k => `${made[k]} ${ITEMS[k].name}`).join(', ');
-      if(madeTxt) log(`${crafter.name} crafted ${madeTxt}.`, 'good');
-      if(ruined) log(`${crafter.name} ruined ${ruined} — the materials are lost.`, 'bad');
-      refreshInv(); rndr();
+      /* THE ORDER, NOT THE OUTCOME. Everything that used to happen here now happens in
+         `craftTick`, a bit at a time, with the crafter standing at the bench. */
+      crafter.craftJob = {
+        kind, out: r.out, want, done: 0, ruined: 0, made: {},
+        t: 0, dur: craftDur(crafter, kind),
+        bx: craftingBench.x + (craftingBench.w || 2) / 2,
+        by: craftingBench.y + (craftingBench.h || 2) / 2,
+      };
+      log(`${crafter.name} sets to work${want > 1 ? ` — ${want} × ${ITEMS[r.out].name}` : ` on ${ITEMS[r.out].name}`}.`, '');
+      rndr();
     });
   };
   rndr();
@@ -23108,6 +23397,19 @@ cv.addEventListener('mousedown', e => {
         {
           const m0 = movers.length === 1 ? movers[0] : null;
           const items = [{label:'TALK', fn:()=>talkTo(local)}];
+          /* TEND SOMEBODY WHO IS NOT YOURS. A body on the ground is handled by the click
+             itself — there is no conversation to be had with an unconscious person — but one
+             on their feet and bleeding still has TALK as the obvious meaning of a click, so
+             the offer belongs in the menu underneath it rather than in front of it. Chiefly
+             for escorts: keeping the person you were paid to deliver alive is the job. */
+          if(treatable(local)){
+            const doc = movers.filter(m => m.faction === 'player' && m.state === 'ok' && (!m.undead || m.lich))
+              .sort((a, b) => b.stats.medic - a.stats.medic)[0];
+            if(doc) items.push({label:`TEND ${local.name.toUpperCase()}`, fn:()=>{
+              clearOrders(doc); doc.healTarget = local;
+              log(`${doc.name} goes to see to ${local.name}.`, '');
+            }});
+          }
           /* somebody you took money to keep alive: the bodyguard order, on the person it is
              actually for. This is the whole reason `vip` exists. */
           if(local.vip){
@@ -23320,6 +23622,26 @@ cv.addEventListener('mousedown', e => {
         if(nearestEnemy(necro, 9)){ log('No time for rites — enemies near.', 'bad'); return; }
         clearOrders(necro); necro.healTarget = risen; return;
       }
+    }
+    /* ---------- SOMEBODY ELSE'S WOUNDED, ON THE GROUND ----------
+       Bandaging was for your own faction and nobody else, which left an escort you were paid
+       to deliver alive un-helpable, and left no way to stop a beaten enemy bleeding out before
+       you could take them.
+       Restricted to a body that is DOWN, and that is the whole of the design: nobody talks to
+       an unconscious person, so there is no existing click here to steal. Somebody merely
+       wounded and still on their feet keeps TALK as the first thing a click means and is
+       offered TEND in their own menu instead.
+       THE AUTOMATIC PATHS ARE UNTOUCHED and stay allies-only, as asked: `fieldSurgeon` walks
+       the commander's own band, and the medic stance scans past anything where
+       `o.faction !== c.faction`. This is an order you give, not a policy a hand adopts. */
+    const stranger = chars.find(o => o.faction !== 'player' && !o.undead && o.state === 'down' &&
+      dist(o.x, o.y, wx, wy) < 0.9);
+    if(stranger){
+      const medic = movers.filter(m => !m.undead || m.lich).sort((a,b)=>b.stats.medic-a.stats.medic)[0];
+      if(!medic){ log('The risen lack the wit for medicine.', 'bad'); return; }
+      clearOrders(medic); medic.healTarget = stranger;
+      log(`${medic.name} goes to stop ${stranger.name} bleeding out.`, '');
+      return;
     }
     /* ONE OF YOUR OWN, ON THEIR FEET. The wounded fast-paths above already fired, so this is
        a healthy squadmate — and the only thing right-clicking one used to do was order the
@@ -24094,7 +24416,7 @@ function talkTo(t){
 }
 /* small context menu at the cursor */
 const ctxEl = document.getElementById('ctxmenu');
-function showCtxMenu(px, py, items){
+function showCtxMenu(px, py, items, up){
   ctxEl.innerHTML = '';
   for(const it of items){
     const b = document.createElement('button');
@@ -24102,9 +24424,36 @@ function showCtxMenu(px, py, items){
     b.onclick = () => { hideCtxMenu(); it.fn(); };
     ctxEl.appendChild(b);
   }
-  ctxEl.style.left = Math.min(px, viewW()-150) + 'px';
-  ctxEl.style.top = Math.min(py, viewH() - items.length*30 - 10) + 'px';
+  /* ---------- PUT IT WHERE IT FITS, HAVING MEASURED IT ----------
+     This was two guesses and one missing clamp, and between them they are the whole of the
+     "the submenu collapses outside of view" report.
+       · The height was `items.length * 30` — a guess. Buttons are 6px padding on 13px text
+         and a long label WRAPS, so a fourteen-entry JOB menu is taller than the guess says
+         and the bottom entries end up under the edge of the window.
+       · The width was a flat 150. `GUARD ANNOTATOR MERRICK (3)` is not 150px wide, so menus
+         opened near the right edge ran off it.
+       · And both clamps were `Math.min` ONLY. Nothing stopped a negative result, so a menu
+         opened high on the screen — the JOB list deliberately opens UPWARD from its button —
+         was placed at a negative top and the first entries were simply off the top of the
+         window. That is the one you cannot scroll to and cannot click.
+     Measure the real box instead. It has to be laid out to be measured, so it goes visible
+     first, off-screen, and is moved once the size is known — one reflow, no flicker.
+     AND IT SCROLLS. A menu taller than the window cannot be placed anywhere; on a short
+     landscape phone the fourteen jobs never fit at any offset. Capping the height and letting
+     it scroll is the only answer that always works. */
+  const M = 6;                                  /* keep it off the very edge */
+  ctxEl.style.maxHeight = Math.max(120, viewH() - M * 2) + 'px';
+  ctxEl.style.overflowY = 'auto';
+  ctxEl.style.left = '-9999px'; ctxEl.style.top = '0px';
   ctxEl.style.display = 'flex';
+  const box = ctxEl.getBoundingClientRect();
+  /* `up` means "hang it above this point" — for a button at the bottom of a panel, where a
+     downward menu would open straight off the bottom of the window. It is expressed as an
+     intent rather than as a caller-computed offset because only this function knows how tall
+     the menu actually turned out to be. */
+  const wantY = up ? py - box.height : py;
+  ctxEl.style.left = Math.max(M, Math.min(px, viewW() - box.width - M)) + 'px';
+  ctxEl.style.top  = Math.max(M, Math.min(wantY, viewH() - box.height - M)) + 'px';
 }
 function hideCtxMenu(){ ctxEl.style.display = 'none'; }
 function examine(t){
@@ -24291,7 +24640,7 @@ function snapshot(){
       store: b.store ? {...b.store} : undefined,
       stored: b.stored ? b.stored.map(sChar) : undefined})),
     recruits: towns.map(t=>t.recruits),
-    research: {done:{...research.done}, active:research.active, left:research.left, rp:research.rp},
+    research: {done:{...research.done}, active:research.active, left:research.left, rp:research.rp, study:research.study?{...research.study}:null},
   };
 }
 function restore(d){
@@ -24461,7 +24810,7 @@ function restore(d){
   drops.length = 0;
   if(Array.isArray(d.drops)) for(const dr of d.drops) drops.push({x:dr.x, y:dr.y, items:{...dr.items}});
   kitOpen = d.kitOpen||0; day = d.day; hour = d.hour; uid = d.uid;
-  research.done = d.research.done||{}; research.active = d.research.active; research.left = d.research.left||0; research.rp = d.research.rp||0;
+  research.done = d.research.done||{}; research.active = d.research.active; research.left = d.research.left||0; research.rp = d.research.rp||0; research.study = d.research.study ? {...d.research.study} : null;
   const byId = {};
   const revive = (s) => {
     const c = makeChar(s.name, s.faction, s.x, s.y, {});
@@ -25488,7 +25837,7 @@ function applyCreation(race, gift, origin, sub){
 
     /* every formula the golden age left behind */
     for(const k of Object.keys(TECHS)) research.done[k] = true;
-    research.active = null; research.left = 0;
+    research.active = null; research.left = 0; research.study = null;
 
     /* the necromancer, already past the point of no return */
     me = mk(p, {atk:16, def:14, tough:14, ath:6, medic:8, magic:80, gift:'dark', race,

@@ -88,6 +88,12 @@ const GAME = 'file://' + gamePath(process.argv[2]);
     const d = [...document.querySelectorAll('#modalbody div')].map(x => x.textContent).join(' ');
     return /not a Dustward save|Nothing pasted/i.test(d);
   }, null, { timeout: 60000 }).catch(() => {});
+  /* STOP THE CLOCK ON ARRIVAL. The modal closing means the restore finished — and the instant
+     it does, the RECEIVING world starts running: bodies walk, and the marker walks with them.
+     It is supposed to. So this was comparing a live world against a frozen snapshot across an
+     unbounded wall-clock wait, and it flaked the first time the drift crossed a rounding
+     boundary (1085.07 -> 1085.06 was the whole of it). Freeze it, then look. */
+  await q.evaluate(() => { paused = true; }).catch(() => {});
   await q.waitForTimeout(400);
   const after = await q.evaluate(()=>{
     const me = chars.find(c=>c.name==='Marker Of The Run');
@@ -96,8 +102,12 @@ const GAME = 'file://' + gamePath(process.argv[2]);
              overlay: document.getElementById('startoverlay').style.display,
              modal: document.getElementById('modal').style.display };
   });
+  /* AND COMPARE PLACES, NOT CENTIMETRES. The claim is that the same person arrived on the
+     same tile, which is what a player would check; a quarter-tile of walking between the two
+     samples is the world being alive, not the save being wrong. */
+  const near = (u, v) => u !== null && v !== null && Math.abs(u - v) <= 0.25;
   R.arrived = (after.name === before.name && after.day === before.day && after.chars === before.chars
-               && after.x === before.x && after.y === before.y && after.cats === before.cats)
+               && near(after.x, before.x) && near(after.y, before.y) && after.cats === before.cats)
     ? `day ${after.day}, ${after.chars} bodies, the same person on the same tile with the same purse`
     : `!! THE WORLD DID NOT SURVIVE THE TRIP: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`;
   R.survivesMangling = R.arrived.startsWith('!!') ? '!! (see above)' : 'through line wrapping, indentation and quotes';
