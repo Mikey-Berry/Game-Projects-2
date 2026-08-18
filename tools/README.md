@@ -401,11 +401,22 @@ the truth was 45%.
   every tick — but not their TILE, which is the one the collapse rule actually reads. It was
   measuring a rite that had been pushed out from under its own caster. If a comment says a body
   is held still, hold all of it.
-- **A single shot is not a measurement.** `guns.js` asserts the handheld lance does damage in
-  play, and the lance fires exactly ONCE inside the probe's window — so the assertion is one hit
-  roll. It landed on two worldgen streams and missed on a third, which reads as "THE LANCE DOES
-  NO DAMAGE IN PLAY" and is really a coin coming up tails. Any assertion that rides on one roll
-  of anything wants a bigger sample, not a re-baselined number.
+- **A single shot is not a measurement.** Both lance-damage assertions in this repo rode on one
+  roll. `guns.js` fires exactly ONCE inside its window: it landed on two worldgen streams and
+  missed on a third, which reads as "THE LANCE DOES NO DAMAGE IN PLAY" and is really a coin
+  coming up tails. `gunnery.js` watched six seconds, which catches the weapon mid-windup — two
+  cells spent for a graze of 0.4 blood, one rounding step from failing on every run, and it duly
+  failed one suite run in three. Widened to thirty seconds it is 100 -> 42 on seven cells and
+  identical every time. Give the thing room to happen several times; do not re-baseline the
+  number it happened to produce once.
+- **Widen the window, but keep a control in the same loop.** The fix above is only trustworthy
+  because the DRY case runs the identical thirty seconds and still does nothing at all. A longer
+  window that makes every case pass has not proved the weapon works — it has proved the window
+  is long enough to hide the question.
+- **Rounding inside a pass message hides how close it was.** `gunnery.js` printed "the mark
+  drops from 100 to 100 blood" as its SUCCESS string, because `Math.round` turned 99.6 into 100.
+  The assertion was passing on four tenths of a point and the message gave no hint of it. Print
+  enough precision that a near-miss looks like one.
 - **A negative control that also passes means the harness is unproven, not that the bug is
   fixed.** `roads.js` found zero caravan stalls; stripping out the `travel` fallback whose
   comment names that exact failure produced zero stalls as well. So the harness guards against
