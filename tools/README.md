@@ -403,9 +403,17 @@ the truth was 45%.
   measuring a rite that had been pushed out from under its own caster. If a comment says a body
   is held still, hold all of it.
 - **A single shot is not a measurement.** Both lance-damage assertions in this repo rode on one
-  roll. `guns.js` fires exactly ONCE inside its window: it landed on two worldgen streams and
+  roll, and both have now been widened after each duly went red on a build that was working.
+  `guns.js` fired exactly ONCE inside its window: it landed on two worldgen streams and
   missed on a third, which reads as "THE LANCE DOES NO DAMAGE IN PLAY" and is really a coin
-  coming up tails. `gunnery.js` watched six seconds, which catches the weapon mid-windup — two
+  coming up tails. The reason it was one shot is worth keeping, because it was not the rate of
+  fire — 3.7s at atk 20 means twenty seconds is five shots. It was the raider, which crosses
+  the five tiles in about a second and a half, after which a body inside 1.7 tiles makes the
+  lance guard instead of shoot: the probe was measuring the opening shot of a fight and then a
+  wrestle. **Pin whatever is turning your window into a footrace** — the raider's tile here, the
+  same way `rites.js` had to pin the ritualist's — and the same sixty seconds is six shots and
+  100 -> 34 blood, repeatable. It now also refuses to pass on fewer than three cells spent, so
+  it cannot silently decay back into a coin flip. `gunnery.js` watched six seconds, which catches the weapon mid-windup — two
   cells spent for a graze of 0.4 blood, one rounding step from failing on every run, and it duly
   failed one suite run in three. Widened to thirty seconds it is 100 -> 42 on seven cells and
   identical every time. Give the thing room to happen several times; do not re-baseline the
