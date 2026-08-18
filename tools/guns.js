@@ -172,13 +172,43 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.aChargedLanceFires = wet === true && stash.aether_cell === cells0 - 1
         ? `with cells in the stash it fires and spends one (${cells0} -> ${stash.aether_cell})`
         : `!! A CHARGED LANCE STILL WILL NOT FIRE (returned ${wet}, cells ${cells0} -> ${stash.aether_cell})`;
-      /* and through the real attack path, not just the helper */
-      c.atkCd = 0; c.heat = 0;
-      const hp0 = f.blood, cells1 = stash.aether_cell;
-      run(200);
-      R.theLanceLandsInPlay = f.blood < hp0 || f.state !== 'ok'
-        ? `and in play it actually hits — the raider drops from ${hp0} to ${Math.max(0, f.blood).toFixed(0)}, ${cells1 - stash.aether_cell} cells spent`
-        : `!! THE LANCE DOES NO DAMAGE IN PLAY (cells spent ${cells1 - stash.aether_cell}, atkCd ${c.atkCd.toFixed(2)})`;
+      /* ---------- AND THROUGH THE REAL ATTACK PATH, NOT JUST THE HELPER ----------
+         THIS WAS A COIN FLIP AND IS NOW A BURST, which is the treatment `gunnery.js` had for the
+         same disease and which the to-do file has been predicting for this assertion by name.
+         The old version ran 20 seconds against a raider free to walk, spent exactly ONE cell in
+         all of it, and asserted on that single hit roll. It landed on two worldgen streams and
+         missed on a third, so it read "THE LANCE DOES NO DAMAGE IN PLAY" whenever anything
+         upstream moved the stream by one draw — a failure that says nothing whatever about the
+         lance. What made it one shot is not the rate of fire (3.7s at atk 20, so 20 seconds is
+         five shots) but the raider: it crosses the five tiles in about a second and a half, and
+         a body inside 1.7 tiles makes the lance guard instead of shoot. The probe was measuring
+         the first shot of a fight and then a wrestle.
+         PIN THE RAIDER'S TILE, the same way rites.js had to pin the ritualist's — the point here
+         is the weapon, not the footrace — and let it fire a good handful of times. And keep a DRY
+         control in the same loop, because a window wide enough to make every case pass would
+         only prove the window was wide enough to hide the question. */
+      const burst = (cells) => {
+        c.atkCd = 0; c.heat = 0; c._lanceDry = false;
+        f.x = gx + 5; f.y = gy; f.blood = 100; f.state = 'ok';
+        for (const p of Object.values(f.parts || {})) { p.hp = p.max; p.bleed = 0; p.severed = false; }
+        stash.aether_cell = cells;
+        const hp = f.blood, c0 = stash.aether_cell;
+        paused = false;
+        for (let i = 0; i < 600; i++) { f.x = gx + 5; f.y = gy; f.moveTarget = null; f.path = null; update(0.1); }
+        paused = true;
+        return { dmg: hp - f.blood, spent: c0 - stash.aether_cell, down: f.state !== 'ok' };
+      };
+      const wetRun = burst(20);
+      const dryRun = burst(0);
+      R.theLanceLandsInPlay = wetRun.spent < 3
+        ? `!! ONLY ${wetRun.spent} CELLS SPENT IN 60s — THIS IS BACK TO BEING A SINGLE HIT ROLL, NOT A MEASUREMENT`
+        : wetRun.dmg > 0 || wetRun.down
+          ? `and in play it actually hits — ${wetRun.spent} shots take the raider from 100 to ${Math.max(0, 100 - wetRun.dmg).toFixed(0)} blood`
+          : `!! THE LANCE DOES NO DAMAGE IN PLAY OVER ${wetRun.spent} SHOTS (atkCd ${c.atkCd.toFixed(2)})`;
+      /* the control that keeps the widened window honest */
+      R.aDryLanceDoesNothingInPlay = dryRun.spent === 0 && dryRun.dmg <= 0 && !dryRun.down
+        ? 'and the identical sixty seconds with an empty stash does nothing at all'
+        : `!! A DRY LANCE STILL DID SOMETHING OVER THE SAME WINDOW (${dryRun.spent} cells, ${dryRun.dmg.toFixed(1)} blood)`;
       /* the overheat is the cost that makes it interesting; it must actually bite */
       c.heat = 0; stash.aether_cell = 200;
       for (let i = 0; i < 12; i++) lanceFire(c, w);
