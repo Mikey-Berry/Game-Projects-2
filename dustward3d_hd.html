@@ -270,9 +270,21 @@ body.touch #hint{display:none}
   .overlay button{font-size:15px;padding:10px 34px;letter-spacing:3px}
   #deadoverlay{display:none}
   #deadoverlay h1{color:var(--blood);text-shadow:4px 4px 0 #000}
-  #ctxmenu{position:absolute;background:var(--panel);border:1px solid var(--edge);z-index:15;
-    display:none;flex-direction:column;min-width:130px}
-  #ctxmenu button{border:none;border-bottom:1px solid #ffffff10;text-align:left;padding:6px 12px}
+  /* ---------- THE COMMAND MENU, MADE LEGIBLE ----------
+     "Hard to see" was fair: a one-pixel border and a panel colour that is a near neighbour of
+     the dirt it opens over, so the menu had no edge against the world behind it. It reads as
+     a thing sitting ON the scene now — an opaque ground, a warm border, and a drop shadow to
+     lift it — and the rows are far enough apart to hit on a touchscreen (36px against the
+     44px target, which is what the min-height buys).
+     `overscroll-behavior` matters on the long JOB list: without it, flicking past the end of
+     a scrolled menu scrolls the page underneath instead. */
+  #ctxmenu{position:absolute;background:#14110c;border:1px solid var(--warn);z-index:15;
+    display:none;flex-direction:column;min-width:150px;max-width:min(320px, 92vw);
+    box-shadow:0 6px 22px #000a, 0 0 0 1px #0008;overscroll-behavior:contain}
+  #ctxmenu button{border:none;border-bottom:1px solid #ffffff14;text-align:left;
+    padding:9px 13px;min-height:36px;white-space:normal;line-height:1.25}
+  #ctxmenu button:last-child{border-bottom:none}
+  #ctxmenu button:hover{background:var(--panel2);color:var(--warn)}
   #minimap{position:absolute;top:44px;right:10px;border:1px solid var(--edge);
     image-rendering:pixelated;opacity:.9}
   #hint{position:absolute;top:44px;left:10px;font-size:11px;color:var(--dust);
@@ -21344,7 +21356,11 @@ function refreshCharPanel(){
         refreshCharPanel();
       }
     }));
-    showCtxMenu(r.left, Math.max(6, r.top - items.length * 30), items);
+    /* opens UPWARD from its button, because the button lives at the bottom of the character
+       panel. The `- items.length * 30` guess that used to be here is gone: `showCtxMenu`
+       measures the real menu and clamps both edges, so asking for the button's top is enough
+       and asking for a computed offset was actively wrong. */
+    showCtxMenu(r.left, r.top, items, true);   /* upward: the button sits at the panel's foot */
   };
   jr.appendChild(jb);
   jr.appendChild(mkJobButton(2));   /* the fallback trade sits beside the first */
@@ -24142,7 +24158,7 @@ function talkTo(t){
 }
 /* small context menu at the cursor */
 const ctxEl = document.getElementById('ctxmenu');
-function showCtxMenu(px, py, items){
+function showCtxMenu(px, py, items, up){
   ctxEl.innerHTML = '';
   for(const it of items){
     const b = document.createElement('button');
@@ -24150,9 +24166,36 @@ function showCtxMenu(px, py, items){
     b.onclick = () => { hideCtxMenu(); it.fn(); };
     ctxEl.appendChild(b);
   }
-  ctxEl.style.left = Math.min(px, viewW()-150) + 'px';
-  ctxEl.style.top = Math.min(py, viewH() - items.length*30 - 10) + 'px';
+  /* ---------- PUT IT WHERE IT FITS, HAVING MEASURED IT ----------
+     This was two guesses and one missing clamp, and between them they are the whole of the
+     "the submenu collapses outside of view" report.
+       · The height was `items.length * 30` — a guess. Buttons are 6px padding on 13px text
+         and a long label WRAPS, so a fourteen-entry JOB menu is taller than the guess says
+         and the bottom entries end up under the edge of the window.
+       · The width was a flat 150. `GUARD ANNOTATOR MERRICK (3)` is not 150px wide, so menus
+         opened near the right edge ran off it.
+       · And both clamps were `Math.min` ONLY. Nothing stopped a negative result, so a menu
+         opened high on the screen — the JOB list deliberately opens UPWARD from its button —
+         was placed at a negative top and the first entries were simply off the top of the
+         window. That is the one you cannot scroll to and cannot click.
+     Measure the real box instead. It has to be laid out to be measured, so it goes visible
+     first, off-screen, and is moved once the size is known — one reflow, no flicker.
+     AND IT SCROLLS. A menu taller than the window cannot be placed anywhere; on a short
+     landscape phone the fourteen jobs never fit at any offset. Capping the height and letting
+     it scroll is the only answer that always works. */
+  const M = 6;                                  /* keep it off the very edge */
+  ctxEl.style.maxHeight = Math.max(120, viewH() - M * 2) + 'px';
+  ctxEl.style.overflowY = 'auto';
+  ctxEl.style.left = '-9999px'; ctxEl.style.top = '0px';
   ctxEl.style.display = 'flex';
+  const box = ctxEl.getBoundingClientRect();
+  /* `up` means "hang it above this point" — for a button at the bottom of a panel, where a
+     downward menu would open straight off the bottom of the window. It is expressed as an
+     intent rather than as a caller-computed offset because only this function knows how tall
+     the menu actually turned out to be. */
+  const wantY = up ? py - box.height : py;
+  ctxEl.style.left = Math.max(M, Math.min(px, viewW() - box.width - M)) + 'px';
+  ctxEl.style.top  = Math.max(M, Math.min(wantY, viewH() - box.height - M)) + 'px';
 }
 function hideCtxMenu(){ ctxEl.style.display = 'none'; }
 function examine(t){
