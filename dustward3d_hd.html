@@ -3207,6 +3207,24 @@ function spawnPurge(hunt){
     }
     chars.push(c);
   }
+  /* ---------- AND LATE ON, SOMETHING WALKS WITH THEM ----------
+     The Purge burns people for the profane gift. A Watcher standing in its ranks is therefore
+     not a stat upgrade to the patrol, it is a fact about the Purge that the player is supposed
+     to be able to NOTICE — so it is announced, in the log if you can see it and in the news if
+     you cannot, rather than slipped quietly into the spawn. Late only, and never on the
+     ordinary patrols: this is what a hunt looks like after the Bastion has stopped being
+     careful about what it takes help from. */
+  if(hunt && day > 45 && rnd() < 0.22){
+    const p2 = findOpenNear(x, y, 4);
+    const m = spawnGaunt('messenger', p2.x, p2.y);
+    m.faction = 'purge';                 /* it is marching WITH them, not at them */
+    m.squad = sq;
+    m.nightborn = false;
+    log('There is something walking with the Paladins. It is a head taller than any of them, ' +
+        'it carries a bar of light, and none of them will look at it.', 'bad');
+    worldEvent('purge', p2.x, p2.y,
+      'A Bastion hunt went out with something in its column that was not a man, and the Confessor riding at the front did not appear to have been consulted.');
+  }
   log(hunt ? 'The Bastion has marked your squad. Hunters ride out.' : 'A Paladin patrol sets out from the Bastion.', hunt ? 'bad' : '');
 }
 function purgePatrolCount(){
@@ -5537,7 +5555,11 @@ function attack(a, d){
     return;
   }
   const w = wepOf(a);
-  const wt = w ? ((w.range && w.melee) ? w.melee.wt : w.wt) : 'blunt';
+  /* `clawWt` lets a body that fights with what it IS choose how the wound reads. Everything
+     unarmed used to be 'blunt', which is right for a fist and wrong for a Messenger holding a
+     bar of fire — and it is the whole of what makes that weapon unlootable, since there is no
+     item anywhere for anybody to take off the corpse. */
+  const wt = w ? ((w.range && w.melee) ? w.melee.wt : w.wt) : (a.clawWt || 'blunt');
   if(!w && !a.beast && !a.undead && a.stats.martial >= 15){ d.staggerT = Math.max(d.staggerT, 0.45); d.windup = null; }
   const mvA = MOVES[a.swingMove] || MOVES.slash;
   let dmg = atkPower(a) * (0.75 + rnd()*0.5) * mvA.dmg;
@@ -10266,6 +10288,34 @@ const GAUNTS = {
   /* It does not want to fight you. It wants one of you, and it will wait all night. */
   larder: {name:'Larder-Kin',   atk:16, def:26, tough:22, ath:20, big:1.1,  claw:6,
     bark:['...', '(something being folded)', '(a long, patient breath)']},
+  /* ---------- THE EYES OF AINZOPHA'AR ----------
+     Named for the warding light — the small terrible sun a divine alchemist carries and that
+     these things' own kin will not close on — and they turn it on you. That inversion is the
+     creature: the one spell in the game that keeps the dark off is also what comes out of the
+     dark at a necromancer.
+     Individually they are nothing: 0.42 across, twenty-two points of blood, a claw that barely
+     scratches. The threat is the GAZE, and the gaze is `emberrot` — a rot-fire that burns on a
+     timer rather than a blow that lands. That is the point of them, and it is deliberate: a
+     bound host's survivability comes out of `def`, which floors mitigation at 0.15 and makes
+     plate the answer to everything. A fire already burning inside a body does not care what
+     the body is wearing. They are the counter to a wall of Bone Knights, by construction. */
+  eye:    {name:"Eye of Ainzopha'ar", atk:8, def:20, tough:6, ath:16, big:0.42, claw:3,
+    bark:['(it does not blink)', '(the light behind it swells)', '(a hymn, sung wrong)']},
+  /* ---------- THE MESSENGERS ----------
+     Intelligent Watchers, and the only thing in this world hostile to you that GETS BETTER.
+     `learnMult` multiplies every `xpGain` and until now belonged solely to the MIND axis of
+     the binding circle — which is to say, to bodies you made. A Messenger has it too, so a
+     campaign that runs long enough produces one that has been practising the whole time.
+     That is the creature. The stat line below is only where it starts.
+     They carry nothing. A weapon of fire and light is an unarmed body with a heavy `clawDmg`
+     and a `clawWt` of 'burn' — which means it cannot be disarmed, cannot be looted, and cannot
+     be picked up off the ground by construction rather than by a flag saying so. */
+  messenger:{name:'Messenger',   atk:26, def:24, tough:30, ath:14, big:1.2,  claw:16,
+    bark:['SHEM. SHEM ARAK.', '(it is speaking. none of it is words.)', 'KA-ORU. KA-ORU NETH.',
+          '(the vowels arrive before the consonants)']},
+  herald: {name:'Messenger-Herald', atk:18, def:22, tough:24, ath:12, big:1.15, claw:10,
+    bark:['ORU. ORU-SHEM ANAK.', '(a sentence, and the end of it is on fire)',
+          '(it repeats itself. it is not repeating itself.)']},
 };
 /* ---------- THE MIDDEN ----------
    A Larder-Kin keeps a place. It is not a nest and nothing is built: it is a heap in the
@@ -10336,9 +10386,72 @@ function spawnGaunt(kind, x, y){
   c.big = g.big;
   c.clawDmg = g.claw;
   c.nightborn = true;            /* the dark made it; the dawn unmakes it */
+  if(g.bark) c.barks = [...g.bark];
   if(kind === 'maw') c.eatsDead = true;
+  if(kind === 'eye'){
+    /* a floating body is `beast` + a small `big` and no humanoid rig — the same way the Wisp
+       is done — and the casting is the Skeleton Mage's wiring: one art, deaf to the rest */
+    c.wisp = true;                 /* it floats, and the rig knows what that looks like */
+    c.speedMult = 0.78;
+    c.blood = 22; c.maxBlood = 22;
+    for(const k of VITAL) { c.parts[k].hp = 18; c.parts[k].max = 18; }
+    c.gift = 'divine'; c.onlyArt = 'divine';
+    c.att = {divine:2, destruction:0, dark:0, dust:0};
+    c.attXp = {divine:0, destruction:0, dark:0, dust:0};
+    c.arts = {emberrot: true};     /* the gaze. It burns on a timer, so armour is no answer. */
+    c.stats.magic = 16;
+    c.mana = rawMaxMana(c);
+    c.stance = 'ranged';           /* it holds off and looks at you */
+    c.autoFight = true;
+  }
+  if(kind === 'messenger' || kind === 'herald'){
+    /* THE ONE THING OUT THERE THAT IMPROVES. Spawned early and rarely on purpose: the whole
+       creature is the campaign it has had, and a Messenger introduced at full strength in the
+       last week is just another statline. Dawn does not collect them either — a thing that
+       learns cannot be `nightborn`, or it is unmade before it has learned anything. */
+    c.nightborn = false;
+    c.minded = true;
+    c.learnMult = kind === 'herald' ? 1.9 : 1.6;
+    c.clawWt = 'burn';             /* fire and light: unlootable because there is nothing to loot */
+    c.autoFight = true;
+    if(kind === 'herald'){
+      /* the alchemist class. `onlyArt` caps every other branch at 0, so it knows fire and can
+         never know anything else however long it lives. */
+      c.gift = 'destruction'; c.onlyArt = 'destruction';
+      c.att = {divine:0, destruction:2, dark:0, dust:0};
+      c.attXp = {divine:0, destruction:0, dark:0, dust:0};
+      c.arts = {emberrot: true};
+      c.stats.magic = 20;
+      c.mana = rawMaxMana(c);
+      c.stance = 'ranged';
+    }
+  }
   chars.push(c);
   return c;
+}
+/* ---------- A FLIGHT, NOT A BODY ----------
+   The note that specified these asked for the swarm decision to be made before anything was
+   written, because the two builds are completely different: a lot of cheap bodies, or one body
+   that renders as many. This is the first, and the reason is counter-play. One body drawn as
+   several has a single pool of blood and a single position — it cannot be thinned, cannot
+   surround anybody, and the swarm is a picture rather than a situation. Cheap bodies get all
+   of it for free: they die one at a time, they come at you from several sides because the
+   flanking work already makes them, and every system that already exists — targeting, the
+   projectile mill, the cull, the bounty board — reads them without being told anything.
+   The cost the note warned about is `charsNear`, and it is affordable: a flight is four to
+   seven bodies against a world that boots with six hundred and thirty-three. */
+function spawnEyeFlight(x, y, n){
+  const flight = {id: ++squadN, lair: {x, y, r: 14}};
+  const made = [];
+  n = n || ri(4, 7);
+  for(let i = 0; i < n; i++){
+    const a = (i / n) * Math.PI * 2;
+    const q = findOpenNear(Math.round(x + Math.cos(a) * 3), Math.round(y + Math.sin(a) * 3), 6);
+    const e = spawnGaunt('eye', q.x, q.y);
+    e.squad = flight;
+    made.push(e);
+  }
+  return made;
 }
 /* ---------- MALATHUUN'S CORPSE-SITES ----------
    Where a piece of the Sundered fell, the waste stopped being empty. The ground breeds
@@ -11123,6 +11236,35 @@ function gauntTick(dh){
   /* corpse-eaters are the commonest thing out here. The dead are the whole reason they came. */
   /* the Larder-Kin only comes once something out there has taken an interest in you —
      it is not a scavenger of the dead, it is a collector of the living. */
+  /* ---------- A FLIGHT COMES AS A FLIGHT ----------
+     The Eyes are the one thing on this table that does not arrive as a body, so they are
+     drawn before the single-body roll and return early: `spawnEyeFlight` puts four to seven
+     of them up at once and the rest of this function has nothing to say about that. Tier 2
+     and up, and rare inside it — the gaze bypasses armour, which is exactly the counter to a
+     late host and exactly the wrong thing to meet in week one. */
+  if(tier >= 2 && roll < 0.08){
+    const flight = spawnEyeFlight(x, y);
+    if(flight.length){
+      for(const e of flight) if(tier >= 2 || bloodMoon) e.hunt = anchor;
+      if(dist(flight[0].x, flight[0].y, anchor.x, anchor.y) < 34 && visAt(flight[0].x, flight[0].y) === 2)
+        log(`Lights are coming up out of the dark, and they are looking at you. ${flight.length} of them.`, 'bad');
+      return flight[0];
+    }
+  }
+  /* ---------- AND ONE THING OUT THERE IS TAKING NOTES ----------
+     A Messenger is rare at every tier and deliberately available from the FIRST — it is the
+     only hostile body in the world with `learnMult`, so what makes it frightening is the
+     campaign it has had, and one introduced late is only a stat line. Two is the ceiling: a
+     world with a dozen of these growing in it is a different game. */
+  if(roll > 0.985 && chars.filter(o => (o.gauntKind === 'messenger' || o.gauntKind === 'herald') && o.state !== 'dead').length < 2){
+    const m = spawnGaunt(rnd() < 0.35 ? 'herald' : 'messenger', x, y);
+    m.hunt = anchor;
+    if(dist(m.x, m.y, anchor.x, anchor.y) < 34 && visAt(m.x, m.y) === 2)
+      log(`Something out there is talking. It is not talking to you, and none of it is words.`, 'bad');
+    else worldEvent('attention', m.x, m.y,
+      'Drovers on the waste road heard something speaking in the dark. Not calling — speaking, in sentences, in a tongue nobody could place.');
+    return m;
+  }
   const kind = (tier >= 1 && roll < 0.14) ? 'larder'
              : (tier >= 2 && roll < 0.30) ? 'shrike'
              : roll < 0.50 ? 'maw' : roll < 0.75 ? 'stalker' : 'gaunt';
@@ -24888,7 +25030,7 @@ function snapshot(){
        burnt mantle and its ember, the Bone Knight came back thin, the archer came back
        thick. Saving one string fixes the whole roster. */
     kin:c.kin||null,
-    clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
+    clawDmg:c.clawDmg, clawWt:c.clawWt||null, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
     servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, eater:!!c.eater, harvestBonus:c.harvestBonus??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, boundTold:!!c.boundTold,
     salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null, lieuWear:c.lieuWear||0,
@@ -25180,7 +25322,7 @@ function restore(d){
       const cv = caves.find(x => x.id === c.caveId);
       if(cv && cv.rooms) c.homeRoom = cv.rooms.find(rm => rm.id === s.roomId) || c.homeRoom;
     } c.floor = s.floor || 0; c.captured = !!s.captured;
-    c.clawDmg = s.clawDmg || 0; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.eatsDead = !!s.eatsDead;
+    c.clawDmg = s.clawDmg || 0; c.clawWt = s.clawWt || null; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.eatsDead = !!s.eatsDead;
     c.structMult = s.structMult || 1; c.bindWeight = s.bindWeight || 1; c.shortTag = s.shortTag || '';
     c.servitor = !!s.servitor; c.minded = !!s.minded; c.crafted = !!s.crafted; c.autoFight = !!s.autoFight;
     /* re-derived rather than stored: it is a pure function of the atk that came back with the
