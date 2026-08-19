@@ -7770,8 +7770,21 @@ function stairAt(x, y){
 function useStairs(c){
   const st = stairAt(c.x, c.y);
   if(!st){ c.onStair = false; return; }
-  if(c.onStair) return;              /* don't yo-yo while standing on it */
-  c.onStair = true;
+  /* ---------- DON'T YO-YO ON *THIS* ONE ----------
+     The guard used to be a plain boolean, which quietly made it "don't use ANY stair until you
+     have stood on ordinary ground again", and that is a different rule. A cave mouth very often
+     has another stair on the tile beside it — the way down to the next storey is carved right
+     there — so a body walking to the mouth crosses that tile first, `useStairs` fires on a
+     stair whose storeys have nothing to do with the surface (`to` comes back null, nothing
+     happens, and the flag is now set), and the body then steps ONTO THE MOUTH ITSELF with the
+     guard still latched. The order is read and discarded every tick for the rest of the game.
+     Nothing logs. That is the whole of "I can't seem to go into the first underlayer".
+     Measured on the shipped build: the walker crosses (374,19), latches, arrives on the mouth
+     at (373,19) at t=30 and stands there with `wantFloor -1` forever.
+     Remembering WHICH stair it is standing on keeps the guard doing its real job — no bouncing
+     on the one under your feet — while a different stair is a different door. */
+  if(c.onStair === st) return;
+  c.onStair = st;
   const f = c.floor || 0;
   if(c.wantFloor === undefined || c.wantFloor === null) return;   /* not trying to change floors */
   if(c.wantFloor === f) return;
@@ -7925,6 +7938,75 @@ function travel(c, x, y, dt, arrive=0.15){
     stepToward(c, x, y, dt);
   }
   return dist(c.x,c.y,x,y) <= arrive;
+}
+/* ---------- WHICH SIDE OF HIM TO STAND ON ----------
+   "Everyone tries to beeline towards the enemy and gets caught on allies. They should attempt
+   to flank around where possible."
+
+   THE FIRST HALF OF THAT WAS A WRONG DIAGNOSIS AND IT IS WORTH WRITING DOWN, because the
+   obvious fix would have been to the pathing and the pathing turned out to be fine. Measured
+   in tools/flank.js before a line of this was written: eight bodies given one order all reach
+   striking distance inside three seconds and NONE of them stalls on the way (zero ticks of
+   the approach spent going nowhere); a runner sent through his own six-man picket line pays
+   1.03x the open walk for it; two lines of six meet with two changes of mind between twelve
+   bodies; and eight ordered through a ONE-TILE gate in a wall are all through and fighting in
+   three and a half seconds. Nobody is getting caught on anybody.
+
+   What is actually wrong is the picture, and the second half of the report names it. All eight
+   walk at the same point — his tile — so they arrive as a column and stand inside each other:
+   eight bodies within one tile of the quarry, occupying five of the eight sides. That is the
+   beeline. The approach simply had no idea anybody else was making it.
+
+   So each body claims a place on a ring around its quarry and walks to THAT. Nearest free
+   place wins, which keeps the front rank walking straight in — the ones behind are the ones
+   who fan out, because the near slots are already spoken for by the time they ask.
+   And a man already fighting somebody has a front and a back: slots in the arc he is facing
+   cost extra, so a squad joining a fight in progress goes round to his flanks rather than
+   queueing up in front of his blade. The penalty is a tile and a half of walking, not a
+   prohibition — if going round is dear enough, the front is still the answer.
+
+   Held for half a second at a time and stored as an OFFSET rather than a point, so it follows
+   a quarry who is moving instead of aiming at where he was. A slot re-chosen every frame is a
+   body that shuffles instead of arriving. */
+const SLOT_RING = [];
+for(let _s = 0; _s < 8; _s++) SLOT_RING.push([Math.cos(_s * Math.PI / 4), Math.sin(_s * Math.PI / 4)]);
+function slotRadius(t){ return 0.9 + Math.max(0, (t.big || 1) - 1) * 0.5; }
+function approachSlot(c, t, dt){
+  c._slotT = (c._slotT || 0) - dt;
+  if(!c._slot || c._slot.t !== t || c._slotT <= 0){
+    c._slotT = 0.5;
+    const r = slotRadius(t), f = c.floor || 0;
+    /* which way is he looking? Only meaningful if he is looking at somebody who ISN'T YOU.
+       A duel has no flank: two bodies each walking round the other's front is two bodies
+       circling each other across the field, and a line of six against a line of six is six
+       duels. Measured, before this line existed: contact took 15 seconds instead of 6, and
+       every one of them was walking a long way round a man who was turning to follow. */
+    let fx = 0, fy = 0;
+    if(t.target && t.target !== c && t.target.state === 'ok'){
+      const td = dist(t.x, t.y, t.target.x, t.target.y);
+      if(td > 0.01){ fx = (t.target.x - t.x)/td; fy = (t.target.y - t.y)/td; }
+    }
+    let best = null, bs = 1e9;
+    for(const [ux, uy] of SLOT_RING){
+      const sx = t.x + ux*r, sy = t.y + uy*r;
+      if(isBlocked(sx, sy, f)) continue;
+      let taken = false;
+      for(const o of charsNear(sx, sy, 0.7)){
+        if(o === c || o === t || o.state !== 'ok' || (o.floor || 0) !== f) continue;
+        if(dist(o.x, o.y, sx, sy) < 0.62){ taken = true; break; }
+      }
+      if(taken) continue;
+      /* the walk, plus what it costs to stand in front of a man mid-swing */
+      let s = dist(c.x, c.y, sx, sy);
+      if(fx || fy){ const face = ux*fx + uy*fy; if(face > 0.64) s += 1.5; }
+      if(s < bs){ bs = s; best = [ux*r, uy*r]; }
+    }
+    /* a new place to be starts a new clock — see `_slotWait` at the call site */
+    const was = c._slot;
+    c._slot = best ? {t, ux: best[0], uy: best[1]} : null;
+    if(!was || !c._slot || was.t !== t || Math.abs(was.ux - c._slot.ux) > 0.01 || Math.abs(was.uy - c._slot.uy) > 0.01) c._slotWait = 0;
+  }
+  return c._slot && c._slot.t === t ? {x: t.x + c._slot.ux, y: t.y + c._slot.uy} : null;
 }
 function clearOrders(c){
   if(concExclusive(c) && !concMobile(c)) endConcentration(c);   /* a rooted light goes out when you move; a lantern travels with you */
@@ -8641,7 +8723,29 @@ function physics(c, dt){
       }
       return;
     }
-    if(d > 1.0){
+    /* ---- THE SIDE THIS ONE IS COMING AT HIM FROM ----
+       Picked here rather than inside the walk because the last half-tile is the half that
+       decides it. A body sent round to the north walks a straight line at the north slot and
+       CLIPS the man's reach on the way past — it is inside 1.0 while it is still due west of
+       him — so a strike gated on distance alone stops it there and it fights from the front
+       after all. That was the second version of this and it measured identically to no
+       version at all: three of three at bearing 0.83, dead in front of his blade.
+       So a body with a place to be finishes going there before it swings. Not for long:
+       a second and a bit is enough to step round a man and not enough to dance around one,
+       and when it runs out the fight happens wherever the body is standing.
+       THE CLOCK IS LATCHED, WHICH IS THE WHOLE OF IT WORKING. Clearing `_slotWait` on the
+       tick it runs out restarts it on the next one, so a body that CANNOT reach its slot —
+       hemmed in, or standing where a moving quarry keeps putting the ring — would circle for
+       a second, swing once, and circle again forever. It stays run-out until the body either
+       reaches the slot or loses the reach, and `approachSlot` restarts it when it hands out a
+       different place to stand. */
+    let circling = false;
+    if(approachSlot(c, t, dt) && d <= 1.0){
+      const sl = {x: t.x + c._slot.ux, y: t.y + c._slot.uy};
+      if(dist(c.x, c.y, sl.x, sl.y) <= 0.45) c._slotWait = 0;                     /* standing in it: fight */
+      else if((c._slotWait = (c._slotWait || 0) + dt) < 1.2) circling = true;
+    } else if(d > 1.0) c._slotWait = 0;
+    if(d > 1.0 || circling){
       /* Kenshi rule: a body only has so many sides. Extras circle at spear-length and wait. */
       if(!(c.targetManual && c.faction==='player') && d < 4.5){
         const cap = (t.big||1) > 1.3 ? 5 : 3;
@@ -8659,7 +8763,12 @@ function physics(c, dt){
         }
       }
       const px = c.x, py = c.y;
-      travel(c, t.x, t.y, dt, 0.95);
+      /* Walk ONTO the slot, not to within a fifth of a tile of it: a slot sits at 0.9 and a
+         blade reaches 1.0, so a loose arrival tolerance parks bodies at 1.1 — a hair outside
+         the reach that would let them swing, standing there forever. */
+      const slot = c._slot && c._slot.t === t ? {x: t.x + c._slot.ux, y: t.y + c._slot.uy} : null;
+      if(slot) travel(c, slot.x, slot.y, dt, 0.05);
+      else travel(c, t.x, t.y, dt, 0.95);
       /* jammed against the player's walls? smash through */
       if(c.faction !== 'player' && c.faction !== 'town'){
         if(dist(px, py, c.x, c.y) < moveSpeed(c)*dt*0.15) c.stuckT += dt; else c.stuckT = 0;

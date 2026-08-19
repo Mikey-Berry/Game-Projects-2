@@ -118,6 +118,34 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! IT CANNOT GET BACK OUT (floor ${c.floor}, wantFloor ${c.wantFloor})`;
     }
 
+    /* ---------- 4b. A STAIR STANDING NEXT TO ANOTHER STAIR ----------
+       The walk above catches this by luck and it should not have to. `useStairs` keeps an
+       `onStair` flag so a body does not bounce on the step under its feet, and while that flag
+       was a plain BOOLEAN it meant "do not use any stair until you have stood on ordinary
+       ground again". A cave mouth usually has the way down to the next storey carved on the
+       tile beside it, so the approach crosses that tile first, the flag latches on a stair
+       whose storeys have nothing to do with the surface, and the mouth is then read and
+       discarded every tick forever. Nothing logs; the body simply stands in the doorway.
+       So this stages it deliberately: put a body on a NEIGHBOURING stair, let the flag latch,
+       then step it onto the mouth and see whether the order is still honoured. */
+    const near = stairs.find(s => s !== st && Math.max(Math.abs(s.x - st.x), Math.abs(s.y - st.y)) <= 1);
+    if (!near) {
+      R.stairBesideStair = `no stair adjacent to the mouth at ${st.x},${st.y} in this world — case not staged`;
+    } else {
+      const c2 = makeChar('Doorstep', 'player', near.x + 0.5, near.y + 0.5, { atk: 10, def: 10, tough: 20, ath: 10 });
+      c2.__probe = true;
+      chars.push(c2);
+      orderFloor(c2, -1, st.x, st.y);
+      c2.x = near.x + 0.5; c2.y = near.y + 0.5;      /* standing on the neighbour, not the mouth */
+      useStairs(c2);                                  /* let it latch on the wrong stair */
+      const latched = !!c2.onStair;
+      c2.x = st.x + 0.5; c2.y = st.y + 0.5;           /* one step across, onto the mouth */
+      useStairs(c2);
+      R.stairBesideStair = (c2.floor || 0) === -1
+        ? `a body stepping off the stair at ${near.x},${near.y} (${near.from}->${near.to}) still goes down the mouth beside it`
+        : `!! THE STAIR NEXT DOOR EATS THE MOUTH (latched ${latched} on ${near.x},${near.y}; floor ${c2.floor || 0}, wantFloor ${c2.wantFloor})`;
+    }
+
     /* ---------- 5. AND THE FLOORS BELOW CONNECT TO EACH OTHER ----------
        Reported per cave rather than in aggregate: one warren with an orphaned level is a
        whole dungeon nobody can finish, and an aggregate count hides it. */

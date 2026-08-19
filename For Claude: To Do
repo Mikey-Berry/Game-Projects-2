@@ -54,6 +54,12 @@ WHAT IS DONE SO FAR, and where the proof lives:
   · tools/menus.js  — where the command menu lands, at three window sizes. The bug
     only shows on some of them: the JOB list fits above its button on a tall desktop
     and lands at top -40 on a short one.
+  · tools/flank.js  — how a squad gets to a fight. Four stagings looking for a stall that
+    is not there (open ground, a picket line, two lines meeting, a one-tile gate) and two
+    that measure the thing that IS wrong: how many SIDES of a man the squad ends up on,
+    and whether three joining a fight already in progress come round off his face. Bearings
+    are read at the first WINDUP rather than at first contact, because a body walking round
+    to the north clips his reach on the way past and would be recorded fighting from the west.
   · tools/study.js  — the research bench: how much a second bench is really worth,
     that reading a formula is work, and that a craft is too (including that an
     interrupted batch costs nothing). Measured in game-HOURS of effort rather than
@@ -208,8 +214,49 @@ Two rules this file keeps learning the hard way, both worth reading first:
     MEDIC stance walks past a bleeding stranger, and still picks up one of your own
     bleeding in the same spot. `fieldSurgeon` works the commander's band only.
 
-[OPEN] The melee pathing system seems to have gone a bit janky. Everyone tries to beeline towards the enemy and gets caught on allies. They should attempt to flank around where possible. (Could be an unintended side effect of the “walling” effect we built to prevent enemies from beelining through allies to attack mages etc.)
-    NOT STARTED.
+[DONE] The melee pathing system seems to have gone a bit janky. Everyone tries to beeline towards the enemy and gets caught on allies. They should attempt to flank around where possible. (Could be an unintended side effect of the “walling” effect we built to prevent enemies from beelining through allies to attack mages etc.)
+    THE FIRST HALF OF THE REPORT WAS A WRONG DIAGNOSIS AND THAT IS THE USEFUL PART.
+    Nothing is getting caught on anything. Four stagings in tools/flank.js went looking
+    for the stall before a line of the fix was written, and the pathing came back clean
+    on all four:
+      · eight bodies given ONE order all reach striking distance inside three seconds,
+        and ZERO ticks of the approach are spent going nowhere;
+      · a runner sent through his own six-man picket line pays 1.03x the open walk;
+      · two lines of six meet with TWO changes of mind between twelve bodies;
+      · eight ordered through a ONE-TILE gate in a wall are all through and fighting in
+        three and a half seconds, none left behind the wall.
+    The walling rule the report suspected is innocent, and so is the separation pass. If
+    a later session sees this behaviour again, the numbers above are the baseline to beat
+    — do not go rewriting travel() on the strength of how it looks.
+    WHAT IS ACTUALLY WRONG IS THE PICTURE, and the second half of the report names it.
+    All eight walked at the same point — his tile — so they arrived as a column and stood
+    inside each other: eight bodies within one tile of the quarry, on five of the eight
+    sides. The approach simply had no idea anybody else was making it.
+    So each body claims a place on a ring around its quarry (`approachSlot`) and walks to
+    THAT. Nearest free place wins, which leaves the front rank walking straight in — it is
+    the ones behind who fan out, because the near slots are taken by the time they ask.
+    Held half a second at a time and stored as an OFFSET, not a point, so it follows a
+    quarry who is moving. Seven of eight sides now, from five.
+    AND A MAN ALREADY FIGHTING SOMEBODY HAS A FRONT. Slots inside the arc he is facing
+    cost an extra tile and a half of walking, so a squad joining a fight in progress goes
+    round to his flanks instead of queueing at his blade. Measured on three men joining a
+    held fight: 0 of 3 came round off his face before (bearings 0.81, 0.83, 0.87, where 1
+    is his nose), 3 of 3 after.
+    TWO WRONG VERSIONS, BOTH INSTRUCTIVE, BOTH MEASURING IDENTICALLY TO NO VERSION AT ALL:
+      1. The facing penalty applied even when the man is fighting YOU. A duel has no flank,
+         and a line of six against a line of six is six duels — so twelve bodies each walked
+         the long way round a man who was turning to follow, and contact took 15 seconds
+         instead of 6. It only applies when he is looking at somebody else.
+      2. The slot governed the walk but handed over to a straight line inside a tile and a
+         half. Sounds harmless, throws the whole feature away: a body sent round to the
+         north crosses that ring while it is still due WEST of him, turns, and comes in at
+         the front like everyone else. The slot has to hold until the body is standing in
+         it, which means a body with somewhere to be finishes going there before it swings
+         — for a second and a bit, which is enough to step round a man and not enough to
+         dance around one.
+    Proof in tools/flank.js: three ways red on the build before, and the other four
+    stagings stay in as guards, because a flanking rule is exactly the kind of change that
+    would break them.
 
 [OPEN] Kiting should slow down the ranged attacker. It doesn’t make sense that someone could run backwards at full speed while still firing projectiles. And catching a ranged attacker in melee should somewhat lock them down from fleeing again. (Somewhat — they should reasonably be able to escape if, say, an ally also engages that enemy.)
     NOT STARTED, and start by looking at who is actually doing the kiting, because the
@@ -226,6 +273,18 @@ Two rules this file keeps learning the hard way, both worth reading first:
     system, and the "unless an ally is also engaged" clause has a ready-made counter: the
     engagement loop at ~line 8300 already counts bodies within 1.9 tiles of a target for the
     Kenshi side-cap. Read that count instead of writing a second one.
+    ONE MORE LEAD, READ OFF THE SOURCE AND NOT YET MEASURED, so measure it before building on
+    it. The comment above the windup tick calls a committed swing "rooted", and NOTHING ROOTS
+    IT. `physics` decrements `c.windup.t` and never touches movement; the plain move branch is
+    `if(c.moveTarget){ travel(...) }` with no windup guard; and `clearOrders` clears fourteen
+    order fields and leaves `c.windup` alone. So a body with a draw in flight that is given a
+    move order walks at full speed and still looses at the end of it — which is exactly the
+    "run backwards at full speed while still firing" in the report, and it is a PLAYER-ORDER
+    path, which is why the AI branch looked innocent when it was read. The cheapest honest fix
+    is probably at the movement end (a body mid-draw walks at a fraction of its speed, or the
+    draw is dropped when the feet move) rather than a new kiting system. Whichever way, a
+    harness wants to drive a real move order into a real windup, because that is the shape of
+    the bug and no existing probe does it.
 
 [DONE] Skeleton versions of Chimeras would be nice to have so that they don’t take the default human skeleton after being raised up. (Especially for lieutenants.)
     Built as part of the raise-mechanic rework below; the two were one job.
@@ -580,6 +639,23 @@ Two rules this file keeps learning the hard way, both worth reading first:
          the order that set it: walk into a cave and every subsequent order to come
          back up is read and discarded, silently, forever. `orderFloor` and `routeTo`
          now clear it, because a new order is not a yo-yo.
+      1b. AND THE SAME FLAG BROKE IT A SECOND TIME, IN THE OTHER DIRECTION, and this one
+         had shipped: `npm run check` on main came back 41/42 with descend.js red, and
+         the failure text is word for word the original report — the walker reaches the
+         mouth and stands in it with `wantFloor -1` forever. The clearing above fixed
+         "the flag outlives the ORDER"; nothing fixed "the flag outlives the STAIR". As
+         a plain boolean it means "do not use ANY stair until you have stood on ordinary
+         ground again", and a cave mouth usually has the way down to the next storey
+         carved on the tile beside it. Measured on the shipped build: the walk to the
+         mouth at 373,19 crosses 374,19 — a -1 -> -2 stair — `useStairs` fires there,
+         finds no side of it on floor 0, returns having set the flag, and the body then
+         steps onto the mouth itself with the guard latched. Every tick after that reads
+         the order and throws it away, in silence.
+         `onStair` now remembers WHICH stair it is standing on rather than THAT it is
+         standing on one, so the guard still stops the bounce and a different stair is a
+         different door. descend.js gained a staged case for it, because the walk only
+         caught it by luck: a body put on the neighbouring stair, allowed to latch, and
+         then stepped one tile onto the mouth. Red both ways on the build before.
       2. A STAIR EMBEDDED IN ROCK. `deck()` says "there is something to stand on"
          and says nothing about `blocked`, which the chamber ring wrote first. One
          down-stair in sixteen was decked, drawn and still solid — a level of the
