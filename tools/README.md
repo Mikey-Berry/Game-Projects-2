@@ -389,6 +389,20 @@ the truth was 45%.
   earlier, successful open, because hiding a panel does not clear it. The message read as though
   the right panel was open when the panel was closed. Assert on the thing that changes
   (`display`), and do not quote a field that persists across the state you are reporting.
+- **A flaky harness is a hypothesis, not a verdict.** `descend.js` passed a full suite and failed
+  the next one on the same file, which is the shape of a load flake and was not one. `useStairs`
+  set its anti-yo-yo latch (`onStair`) BEFORE checking whether the body was trying to change
+  floors at all — so a body that merely stood on a stair tile latched itself, and if it never
+  stepped off, every later order to descend was read and discarded. It only bites when the
+  arrival lands on a tick where `wantFloor` is not set yet, which is why it came and went. The
+  latch belongs where the crossing happens, after every reason not to cross is ruled out.
+- **A rebuild is where a geometric guarantee goes missing.** Both helms moved from baked meshes
+  to boxes, and `e.helm` — the thing two harnesses measured — stopped existing. The temptation
+  is to delete the assertions along with the mesh. What they were about (square, bigger than the
+  skull, one helmet per garrison) survives the rebuild perfectly well; only the handle changed,
+  to `e.helmParts`. Move the claim to the new handle. One claim genuinely changed in KIND and
+  says so in the file: a baked helm REPLACED the head, a built one COVERS it, so "nothing shows
+  through" became "does it enclose the skull".
 - **Snapshot the moment you are making a claim about.** `curse.js` asserts that Malathuun's
   Curse arrives "not fully grown but not nascent either" — and read the beast's size at the END
   of a four-day run, by which time it had eaten the ninety corpses that summoned it and stood at

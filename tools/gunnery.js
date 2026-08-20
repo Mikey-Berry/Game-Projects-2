@@ -220,8 +220,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.andTheHeavyEatsCells = stash.aether_cell < lanCells0
         ? `and it spends pre-Fall charges doing it — ${lanCells0} -> ${stash.aether_cell} across ${lan.shots} bolts`
         : `!! THE HEAVY FIRES FOR FREE (cells still ${stash.aether_cell} after ${lan.shots} bolts)`;
+      /* A FRESH MARK FIRST. The fed phase above put five 72-damage bolts into the last one, so
+         by now there is nothing on the field — and an emplacement with no target never reaches
+         `emplFire`, never asks for a cell, and therefore never says it is dry. The assertion
+         then reads "0 more bolts, said nothing", which is a probe reporting silence it caused
+         itself. This is the same lesson tools/README.md already carries about `guns.js`; I
+         walked into it from the other side. */
       stash.aether_cell = 0;
       const dryShots = lan.shots;
+      mark('Mark2', gx + 8, gy);
       logs.length = 0;
       crewedAt = 0; run(25, deaf);
       R.andADryHeavyHoldsItsFire = lan.shots === dryShots && logs.some(l => /is dry/.test(l) && /scavenged/.test(l))
