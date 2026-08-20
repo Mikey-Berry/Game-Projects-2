@@ -152,10 +152,14 @@ const OVERRIDE = process.argv[4] ? JSON.parse(process.argv[4]) : null;
   ], { dist: 4.6, pitch: 0.10, gap: 1.15 });
 
   /* ---- 2. THE HELM, against the heads it has to sit among ---- */
+  /* BOTH HELMS ARE IN THE ROW NOW, and the Sigil-Bound is staged as the CONSTRUCT he is —
+     otherwise the sheet photographs a plain human and the armet never appears in the one place
+     it exists to be judged. The bare head and the named sculpt stay between them, because the
+     original complaint was about how these sit among the other heads, which is a comparison. */
   const helmRow = [
     { name: 'Redoubt', faction: 'redoubt', race: 'homunculus', weapon: 'w_lance', armor: 'a_carap' },
     { name: 'Bare head', weapon: 'w_kat', armor: 'a_pla' },
-    { name: 'Redoubt', faction: 'redoubt', race: 'homunculus', weapon: 'w_lance', armor: 'a_carap' },
+    { name: 'Sigil-Bound', weapon: 'w_nod', armor: 'a_pla', set: { bossKey: 'sigil', construct: true, big: 1.35 } },
     { name: 'A sculpt', weapon: 'w_kat', armor: 'a_lea', set: { face: 'lyonart' } },
     { name: 'Redoubt', faction: 'redoubt', race: 'homunculus', weapon: 'w_lance', armor: 'a_carap', back: true },
   ];
@@ -248,23 +252,64 @@ const OVERRIDE = process.argv[4] ? JSON.parse(process.argv[4]) : null;
         ? 'and nothing else in the rack grew an aim pose'
         : '!! A NODACHI HAS AN AIM POSE';
     }
-    /* ---- THE HELM IS SQUARE, AND THE SIZE OF A HEAD ---- */
+    /* ---- THE HELM IS SQUARE, AND THE SIZE OF A HEAD ----
+       The helms are BOXES now, not baked meshes, so there is no `e.helm` to take a bounding
+       box off — `bakeBoxes` has merged them into the shared buffers by the time anybody looks.
+       The proxies keep the real transforms, so the span is taken off `e.helmParts` instead.
+       The claims are deliberately UNCHANGED: square, and bigger than the skull it covers. They
+       are what the original report was about ("a helmet SMALLER than the skull it covers"),
+       and a rebuild is exactly the moment a geometric guarantee is most likely to be lost. */
+    const helmSpan = (e) => {
+      const box = new THREE.Box3();
+      for (const o of e.helmParts) {
+        const c0 = new THREE.Vector3(o.position.x, o.position.y, o.position.z);
+        const h = new THREE.Vector3(o.scale.x / 2, o.scale.y / 2, o.scale.z / 2);
+        box.expandByPoint(c0.clone().sub(h));
+        box.expandByPoint(c0.clone().add(h));
+      }
+      return { w: box.max.x - box.min.x, h: box.max.y - box.min.y, d: box.max.z - box.min.z, box };
+    };
     {
       const { e } = mk({ faction: 'redoubt', race: 'homunculus' });
-      if (!e || !e.helm) out.helm = '!! NO HELM BUILT ON A REDOUBT HOMUNCULUS';
+      if (!e || !e.helmParts || !e.helmParts.length) out.helm = '!! NO HELM BUILT ON A REDOUBT HOMUNCULUS';
       else {
-        const s = new THREE.Vector3(); e.g.getWorldScale(s);
-        const bb = span(e.helm);
-        const w = (bb.max.x - bb.min.x) / s.x, h = (bb.max.y - bb.min.y) / s.y, d = (bb.max.z - bb.min.z) / s.z;
-        /* the model is 0.71 x 0.77 x 1.00 in its own box, so a UNIFORM scale lands it half
-           again as deep as it is wide. That is the bug this guards. */
+        const { w, h, d } = helmSpan(e);
+        out.helm = `the Redoubt helm is built from ${e.helmParts.length} boxes, not an imported mesh`;
         out.helmSquare = Math.abs(w - d) < 0.06
           ? `the helm is ${w.toFixed(3)} wide by ${d.toFixed(3)} deep — square enough to be a head`
           : `!! THE HELM IS ${w.toFixed(3)} WIDE AND ${d.toFixed(3)} DEEP — IT IS A SNOUT AGAIN`;
-        /* a box head cube is about 0.31; a helm goes OVER one, so it must not be smaller */
-        out.helmSized = (w > 0.31 && w < 0.40 && h > 0.31 && h < 0.42)
+        out.helmSized = (w > 0.31 && w < 0.40 && h > 0.31 && h < 0.46)
           ? `and ${w.toFixed(3)} x ${h.toFixed(3)}, which sits over a 0.31 box head`
           : `!! THE HELM IS ${w.toFixed(3)} x ${h.toFixed(3)} AGAINST A 0.31 HEAD`;
+        /* FACELESS IS THE REQUIREMENT, so it is asserted rather than left to the picture: no
+           gap anywhere across the eye line. A visor slit would show up here as a box that
+           does not reach, which is precisely the thing that must not exist on this one. */
+        const shell = e.helmParts.filter(o => o.scale.x > 0.25 && o.scale.y > 0.05);
+        out.helmIsFaceless = shell.length >= 2
+          ? `and it closes over the face — ${shell.length} full-width plates, no visor cut`
+          : '!! THE REDOUBT HELM HAS A FACE OPENING IN IT';
+      }
+    }
+    /* ---- AND THE SIGIL-BOUND GETS HIS OWN, WHICH IS A DIFFERENT HELMET ---- */
+    {
+      /* STAGED AS THE BODY HE ACTUALLY IS. `mk` only reads faction/race/weapon/`set`, so the
+         first version passed `{ bossKey: 'sigil' }` at the top level and it was silently
+         dropped — the probe built a plain human and reported no helm. And he must be a
+         `construct`, because that is what sends him down the war-automaton rig rather than the
+         humanoid one; testing him as a human would have tested a branch he never takes. */
+      const { e } = mk({ set: { bossKey: 'sigil', construct: true, big: 1.35 } });
+      if (!e || !e.helmParts || !e.helmParts.length) out.armet = '!! THE SIGIL-BOUND HAS NO HELM';
+      else {
+        const { w, h } = helmSpan(e);
+        out.armet = `the Sigil-Bound wears his own, ${e.helmParts.length} boxes of it`;
+        /* an armet has a sight slit; the Redoubt shell must not. Two helmets, not one recoloured. */
+        const slit = e.helmParts.find(o => o.scale.y < 0.03 && o.scale.x > 0.15 && o.position.z > 0.15);
+        out.armetHasASlit = slit
+          ? `and unlike the faceless one it has a sight slit, ${slit.scale.x.toFixed(2)} across`
+          : '!! THE ARMET HAS NO VISOR SLIT — it is the same helmet in a different colour';
+        out.armetIsSized = (w > 0.31 && w < 0.42 && h > 0.31 && h < 0.50)
+          ? `and it is ${w.toFixed(3)} x ${h.toFixed(3)} over the same 0.31 skull`
+          : `!! THE ARMET IS ${w.toFixed(3)} x ${h.toFixed(3)}`;
       }
     }
     /* ---- HE ASCENDS WITHOUT LOSING HIS COAT ----

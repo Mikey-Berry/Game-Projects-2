@@ -16643,13 +16643,21 @@ const HELMFIT = {
 };
 /* Who is wearing one. Deliberately narrow: this is not an armour slot and it is not something
    the player equips — it is two specific kinds of body that should be recognisable across a
-   field, and everything else keeps the head it had. */
-function helmOf(c){
+   field, and everything else keeps the head it had.
+   `helmOf` NAMED A BAKED MESH AND NOW NAMES NOTHING. Both helms are built out of boxes in
+   `buildCharMesh` (search HELMKIND), because the report was that the imported ones were not
+   working out and a faceless white shell has no texture in it to begin with — it is a shape
+   and two colours. The function is kept, and kept as the single decision point, because the
+   rest of the file asks it who is wearing what and that was always the right shape. */
+const SIGIL_BRONZE = '#9a7434';      /* recolour this for a transmutation immortal; nothing else changes */
+const SIGIL_BRONZE_DK = '#6f5222';
+function helmKind(c){
   if(!c || c.undead || c.beast) return null;
-  if(c.bossKey === 'sigil') return 'runic';
-  if(c.faction === 'redoubt' && c.race === 'homunculus') return 'alch';
+  if(c.bossKey === 'sigil') return 'sigil';
+  if(c.faction === 'redoubt' && c.race === 'homunculus') return 'redoubt';
   return null;
 }
+function helmOf(c){ return helmKind(c); }
 /* ---------- AND THE TWO AUTHORED WEAPONS ----------
    `s` is the weapon's LENGTH in rig units, because the baker normalises every model into a
    unit box on its longest axis — so this is the one number that decides whether the thing
@@ -18623,6 +18631,38 @@ function buildCharMesh(c){
     m.scale.set(sx, sy, sz); m.position.set(x, y, z);
     if(rx) m.rotation.x = rx; m.castShadow = true; parent.add(m); return m;
   };
+  /* ---------- THE SIGIL-BOUND'S ARMET ----------
+     A SEPARATE BUILDER RATHER THAN A FEW MORE LINES IN THE GARMENT CHAIN, because it is eleven
+     boxes and because a recoloured version for a transmutation immortal should be one call.
+     WORTH KNOWING, since the first version of this got it wrong: he takes the ORDINARY HUMANOID
+     RIG. The war-automaton branch reads `c.construct` and looks like his, but it sits inside
+     `if(c.beast)` and he is not a beast — and `helmKind` refuses a beast outright, so an armet
+     hung off that branch could never have been reached. Measured, after building it in the
+     wrong place: headG 0.62, head box 0.24, which is the humanoid skull and not the
+     automaton's 0.12.
+     The parts that make an armet an armet rather than a bucket: a rounded skull, a comb along
+     it, cheek pieces closing at the chin, a visor with a real slit, and a tail at the neck.
+     The etching is INLAY — thin dark strips let into the bronze — because "covered in
+     alchemical etching" with no texture map has to be geometry or it is nothing.
+     `SIGIL_BRONZE` is a constant so a recoloured one for a transmutation immortal is one line
+     and not a second helmet. */
+  const buildArmet = (e, parent, keep) => {
+    const rec = (o) => { (e.helmParts = e.helmParts || []).push(o); return o; };
+    const b = SIGIL_BRONZE, dk = SIGIL_BRONZE_DK, etch = '#3a2c18';
+    const ob = (w,h,d,col,x,y,z) => rec(obox(w,h,d,col,x,y,z,parent));
+    ob(0.35, 0.26, 0.35, b,  0, 0.30, 0.01);              /* the skull */
+    ob(0.07, 0.10, 0.36, dk, 0, 0.44, 0.01);              /* the comb */
+    ob(0.31, 0.13, 0.30, b,  0, 0.14, 0.03);              /* cheek pieces, closed */
+    ob(0.33, 0.09, 0.06, dk, 0, 0.27, 0.18);              /* the visor */
+    ob(0.24, 0.022, 0.02, '#120c06', 0, 0.28, 0.215);     /* and its sight slit */
+    ob(0.20, 0.07, 0.10, b,  0, 0.16, 0.19);              /* the bevor, up over the chin */
+    ob(0.30, 0.10, 0.10, dk, 0, 0.19, -0.17);             /* the tail */
+    ob(0.355, 0.018, 0.355, etch, 0, 0.385, 0.01);        /* the etching, let in */
+    ob(0.355, 0.014, 0.355, etch, 0, 0.335, 0.01);
+    ob(0.315, 0.012, 0.315, etch, 0, 0.115, 0.03);
+    rec(mk(BOXG, ownGlow('#c8a04c'), 0.05, 0.05, 0.02, 0, 0.365, 0.185, parent));
+    return keep;
+  };
   const e = {g, mats, phase: rnd()*10, lastX: c.x, lastY: c.y, colorKey: colorKeyOf(c), rotY: 0};
   /* no two builds quite alike */
   const fem = !c.beast && !c.construct && c.sex === 'f';
@@ -20169,6 +20209,46 @@ function buildCharMesh(c){
       }
       e.hood = lichPart('hood', e.headG, mats, false);   /* the one authored part worth keeping */
     }
+    /* ---------- THE TWO BUILT HELMS ----------
+       These were baked GLB and are boxes now, which is the whole of the fix. The report was
+       "the helmet textures are just not working out" and the honest answer is that a faceless
+       white shell has no texture in it — it is a shape and two colours, and a box rig renders
+       that better than an imported mesh scaled to fit a skull it was not modelled for. The
+       previous work went the other way, re-cutting and squaring the import; this replaces it.
+       Everything here hangs on `e.headG` and goes in BEFORE `bakeBoxes()`, so it merges into
+       the same buffers as every other garment and costs no extra draw call. The plain head
+       underneath is simply covered: the shell is 0.35 across a 0.30 skull and comes down past
+       the jaw, which is what a helmet does, and means no visibility juggling.
+       HELMKIND is the one place that decides who wears what — the same job `helmOf` did. */
+    const _helm = helmKind(c);
+    /* KEPT SO IT CAN BE MEASURED. The boxes are merged into shared buffers by `bakeBoxes`, so
+       there is no single helm mesh to take a bounding box off any more — but the proxies hold
+       the real transforms, and tools/kit.js asserts that this helm is square and the size of a
+       head. A feature whose only proof was a screenshot would lose that on the way from a
+       baked mesh to boxes, which is the wrong direction. */
+    const _hp = (o) => { (e.helmParts = e.helmParts || []).push(o); return o; };
+    if(_helm === 'redoubt'){
+      /* FACELESS, AND THE POINT IS THAT THERE IS NO VISOR. A stormtrooper reads as a face
+         because of the slit; take the slit away and you have to give the eye something else to
+         land on, or it is an egg. So: a hard brow ridge, a cheek taper, and a sensor cluster
+         where a face would be — asymmetric, because a made thing whose sensors are arranged
+         for a job rather than for a face is far more unsettling than a symmetrical mask. */
+      const shell = '#e6e4dc', shade = '#c9c6bb', lens = WC.aether;
+      _hp(obox(0.35, 0.30, 0.34, shell, 0, 0.27, 0.01, e.headG));          /* the shell */
+      _hp(obox(0.33, 0.09, 0.31, shell, 0, 0.11, 0.02, e.headG));          /* the jaw, closed */
+      _hp(obox(0.36, 0.05, 0.35, shade, 0, 0.40, 0.01, e.headG));          /* the crown seam */
+      _hp(obox(0.30, 0.07, 0.03, shade, 0, 0.30, 0.18, e.headG));          /* a brow ridge, not a slit */
+      /* the sensors: three lenses, off centre, and one of them larger */
+      _hp(mk(BOXG, ownGlow(lens), 0.055, 0.055, 0.02, -0.07, 0.29, 0.185, e.headG));
+      _hp(mk(BOXG, ownGlow(lens), 0.035, 0.035, 0.02,  0.04, 0.30, 0.185, e.headG));
+      _hp(mk(BOXG, ownGlow(lens), 0.028, 0.028, 0.02,  0.10, 0.26, 0.185, e.headG));
+      _hp(obox(0.07, 0.10, 0.05, shade, 0, 0.16, 0.17, e.headG));          /* the filter, where a mouth is not */
+      _hp(obox(0.05, 0.05, 0.14, shade, -0.17, 0.22, 0.04, e.headG));      /* intake, left side only */
+    } else if(_helm === 'sigil'){
+      /* the same helmet the automaton branch builds, for the case where somebody carrying
+         `bossKey: 'sigil'` ever takes the humanoid rig — one builder, so they cannot drift */
+      buildArmet(e, e.headG);
+    }
     if(c.pack==='pack_s') obox(0.32, 0.4, 0.22, '#6b5a40', 0, 0.24, -0.28, e.spine);
     if(c.pack==='pack_l'){ obox(0.46, 0.64, 0.3, '#4a3b2c', 0, 0.26, -0.34, e.spine); obox(0.4, 0.11, 0.26, '#8a7048', 0, 0.62, -0.34, e.spine); }
     if(c.faction==='purge' || c.faction==='exile'){
@@ -20223,13 +20303,11 @@ function buildCharMesh(c){
     if(e.head) e.head.visible = false;
     e.sculptHead = headPart(_hk, e.headG, e.mats);
   }
-  /* AND A HELMET, on the same terms and after the same bake. A named face wins — if somebody
-     ever has both, the person is the point and the kit is not. */
-  else if(helmOf(c) && e.headG){
-    for(const ch of [...e.headG.children]) ch.visible = false;
-    if(e.head) e.head.visible = false;
-    e.helm = helmPart(helmOf(c), e.headG, e.mats);
-  }
+  /* AND A HELMET — WHICH IS NO LONGER ATTACHED HERE. Both helms are boxes now and went in
+     with the other garments, before `bakeBoxes`, so they are already in the merged buffers by
+     the time this runs. Hiding the head's children here would take the helm with them, and
+     attaching a baked one would stand a second helmet inside the first. A named face still
+     wins over a helm, and that is the branch above; this one has nothing left to do. */
   return e;
 }
 function syncChars(dt){
