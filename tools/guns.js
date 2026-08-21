@@ -26,7 +26,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
   await p.waitForTimeout(3000);
-  await p.evaluate(() => document.getElementById('btn-start').click());
+  /* ---------- START IT AND STOP IT IN THE SAME BREATH ----------
+     THIS FILE WAS NON-DETERMINISTIC AND IT WAS THIS LINE. `click()` and then three seconds of
+     `waitForTimeout` lets the world run free for however many frames the machine manages in
+     three seconds — which is not a fixed number, and is markedly lower when a 49-harness suite
+     is loading the box. Every body in the world is therefore somewhere slightly different by
+     the time the probe starts staging, and the numbers downstream inherit it.
+     Measured, on ONE build with an unchanged md5: three consecutive runs gave "5 bolts, dry
+     Heavy holds its fire" twice and "3 bolts, dry Heavy fires anyway" once. The assertion was
+     reporting the machine's load, and it had been doing it since long before the changes it
+     eventually went red on. Pausing in the same evaluate as the click leaves no frames at all
+     between the two, so every run starts from the identical world. */
+  await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(3000);
 
   const out = await p.evaluate(() => {
@@ -76,6 +87,34 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const logs = [];
     const _log = log; window.log = (m, k) => { logs.push(String(m)); return _log(m, k); };
     const run = (n) => { paused = false; for (let i = 0; i < n; i++) update(0.1); paused = true; };
+    /* run, and hold the named bodies on their tiles while it runs. Seventy seconds is a long
+       time to leave a raider standing in the open: it wanders off the arc being measured, and
+       the emplacement's shot count becomes a fact about where the raider went. */
+    const runPinned = (n, bodies) => {
+      const at = bodies.map(c => ({ c, x: c.x, y: c.y }));
+      paused = false;
+      for (let i = 0; i < n; i++) {
+        for (const a of at) { a.c.x = a.x; a.c.y = a.y; a.c.moveTarget = null; a.c.path = null; }
+        update(0.1);
+      }
+      paused = true;
+    };
+    /* ---------- AND THE GROUND REALLY IS EMPTY ----------
+       The search above says "open ground well away from anything that would join in" and only
+       ever checked the TERRAIN. Wanderers, hunting parties and anything driven out of a town
+       are none of them terrain, and over seventy seconds of simulation one of them reaching
+       the staged raider is the difference between "the dry Heavy held its fire" and "something
+       shot my control". Enforce what the comment already promised. */
+    const clearGround = (r) => {
+      let n = 0;
+      for (let i = chars.length - 1; i >= 0; i--) {
+        const c = chars[i];
+        if (c.__probe) continue;
+        if (dist(c.x, c.y, gx, gy) < r) { chars.splice(i, 1); n++; }
+      }
+      return n;
+    };
+    R._groundIsClear = `${clearGround(45)} bodies moved off the measuring ground`;
 
     /* ================== 1. THE TURRET ================== */
     {
@@ -149,7 +188,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       stash.aether_cell = 0;
       const f0 = foe(gx + 8, gy);
       logs.length = 0;
-      run(200);
+      runPinned(200, [f0]);
       R.aDryHeavyHoldsItsFire = (t.shots || 0) === 0 && f0.blood === 100
         ? 'with an empty stash the Heavy will not fire at all'
         : `!! A DRY HEAVY FIRES ANYWAY (${t.shots} bolts) — the charge rule does nothing`;
@@ -160,7 +199,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       stash.aether_cell = 20;
       const cells0 = stash.aether_cell;
       const f = foe(gx + 8, gy);
-      run(500);
+      runPinned(500, [f]);
       R.theEmplacedLanceFires = (t.shots || 0) > 0
         ? `fed, it fires — ${t.shots} bolts, and the raider is at ${Math.max(0, f.blood).toFixed(0)} blood`
         : `!! THE EMPLACED LANCE NEVER FIRES (gunner ${t.gunnerId}, cool ${(t.cool || 0).toFixed(1)}, cells ${stash.aether_cell})`;

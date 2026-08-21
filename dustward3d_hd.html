@@ -477,6 +477,28 @@ function rnd(){
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 function ri(a,b){ return a + Math.floor(rnd()*(b-a+1)); }
+/* ---------- AND A SEPARATE STREAM FOR THINGS THAT ONLY LOOK ----------
+   THE SIM IS FIXED-STEP ON PURPOSE. The frame loop runs the world at a flat 30Hz —
+   "the world thinks half as often as the screen paints, with identical math" — so that the
+   same seed gives the same game whatever the frame rate. `rnd()` is the stream that carries
+   that promise.
+   THE DUST WAS DRAWING FROM IT. `updateDust` spawns decorative motes from inside `render()`,
+   six `rnd()` calls per mote, at whatever rate the machine happens to paint. Measured: with
+   the game PAUSED, two and a half seconds of pure drawing moved the generator thirteen steps.
+   So the frame rate perturbed the simulation — a fast machine and a slow one drew different
+   numbers out of the same seed, and a save's seed did not reproduce its own world.
+   It surfaced as a harness that could not make up its mind: `guns.js` returned two different
+   verdicts on a build whose md5 had not changed, and the fingerprints diverged at the seed
+   rather than at anything the probe did.
+   Anything that only affects pixels draws from `vrnd` instead. It is the same generator on
+   its own counter, so the dust looks exactly as it did and owes the world nothing. */
+let vseed = 0x9E3779B9 | 0;
+function vrnd(){
+  vseed = (vseed + 0x6D2B79F5) | 0;
+  let t = Math.imul(vseed ^ (vseed >>> 15), 1 | vseed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
 function hash2(x,y){ let h = (x*374761393 + y*668265263) ^ 0x5bf03635;
   h = Math.imul(h ^ (h>>>13), 1274126177); return ((h ^ (h>>>16))>>>0) / 4294967295; }
 function lerp(a,b,t){ return a+(b-a)*t; }
@@ -18877,7 +18899,16 @@ function buildCharMesh(c){
     rec(mk(BOXG, ownGlow('#c8a04c'), 0.05, 0.05, 0.02, 0, 0.365, 0.185, parent));
     return keep;
   };
-  const e = {g, mats, phase: rnd()*10, lastX: c.x, lastY: c.y, colorKey: colorKeyOf(c), rotY: 0};
+  /* ---------- THE GAIT OFFSET IS DERIVED, NOT ROLLED ----------
+     `phase` only stops a crowd bobbing in lockstep, so it wants to be arbitrary — but it was
+     `rnd()`, and this function runs from `syncChars` when a body first comes into view. That
+     put the SIMULATION's generator on a leash held by the camera: how many rigs got built this
+     frame, and therefore how far the stream advanced, depended on where you were looking and
+     how fast the machine painted. Measured at ten draws in three seconds of a PAUSED game.
+     `hash2` off the body's id is arbitrary in exactly the way this needs, and it is also
+     STABLE: a body that walks out of view and back keeps the gait it had, where a fresh roll
+     gave it a new one on every rebuild. See the note on `vrnd`. */
+  const e = {g, mats, phase: hash2(c.id, 977) * 10, lastX: c.x, lastY: c.y, colorKey: colorKeyOf(c), rotY: 0};
   /* no two builds quite alike */
   const fem = !c.beast && !c.construct && c.sex === 'f';
   /* the difference is skeletal, not decorative: narrower shoulders, wider pelvis,
@@ -21799,9 +21830,10 @@ function updateDust(rdt){
   const moteCap = weather.storm > 0 ? 130 : 36;
   while(dustMotes.length < moteCap){
     dustMotes.push({
-      x: camX + (rnd()-0.5)*span, y: camY + (rnd()-0.5)*span,
-      h: 0.3 + rnd()*2.2, life: 3 + rnd()*4, t: 0,
-      vx: 0.6 + rnd()*0.8, vy: (rnd()-0.5)*0.3,
+      /* vrnd, not rnd: this runs inside render() at frame rate — see the note on vrnd */
+      x: camX + (vrnd()-0.5)*span, y: camY + (vrnd()-0.5)*span,
+      h: 0.3 + vrnd()*2.2, life: 3 + vrnd()*4, t: 0,
+      vx: 0.6 + vrnd()*0.8, vy: (vrnd()-0.5)*0.3,
     });
   }
   for(let i=dustMotes.length-1; i>=0; i--){
