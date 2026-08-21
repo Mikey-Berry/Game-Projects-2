@@ -22157,6 +22157,32 @@ function refreshSquadBar(){
         }
         if(e.shiftKey){ if(!selected.includes(c)) selected.push(c); } else selected = [c]; camFollow = true; refreshSquadBar(); refreshCharPanel(); };
       d.ondblclick = () => { camX = c.x; camY = c.y; camFollow = true; };
+      /* ---------- AND RIGHT-CLICK ONE TO SORT IT ----------
+         "You said that I could right click to organize individual units in the squad, but that
+         is currently impossible. Right-clicking unit tabs does nothing." It was built one level
+         up: `oncontextmenu` went on the GROUP HEADER, which does work, and the portrait — the
+         thing that looks like the unit and is the obvious thing to right-click — had only a
+         left-click and a double-click on it. Nothing logged, because nothing ran.
+         The header menu acts on the SELECTION, which is the right shape for "move these five
+         here". This one acts on the body under the cursor, which is the right shape for "not
+         that one", and it says whose it is in every label so the two cannot be confused. */
+      d.oncontextmenu = (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        const items = [];
+        const others = squadGroups.filter(g => g.name !== c.grp);
+        if(!selected.includes(c) || selected.length > 1)
+          items.push({label:`SELECT ${c.name.toUpperCase()} ONLY`, fn:()=>{
+            selected = [c]; camFollow = true; refreshSquadBar(); refreshCharPanel(); }});
+        for(const g of others)
+          items.push({label:`MOVE TO ${g.name.toUpperCase()}`, fn:()=>{ assignToGroup([c], g.name); refreshSquadBar(); }});
+        items.push({label:'NEW GROUP…', fn:()=>{
+          const n = prompt('Name the group:');
+          if(n){ const g = makeSquadGroup(n); if(g) assignToGroup([c], g.name); refreshSquadBar(); }
+        }});
+        if(c.grp) items.push({label:`OUT OF ${c.grp.toUpperCase()}`, fn:()=>{ assignToGroup([c], null); refreshSquadBar(); }});
+        items.push({label:'CENTRE THE VIEW ON THEM', fn:()=>{ camX = c.x; camY = c.y; camFollow = true; }});
+        showCtxMenu(ev.clientX, ev.clientY, items);
+      };
     } else d.style.opacity = .4;
     return d;
   };
@@ -24352,17 +24378,65 @@ cv.addEventListener('mousedown', e => {
       (e.ctrlKey || c.faction==='bandit' || c.faction==='wild' || c.faction==='slaver' ||
        hostile(movers[0], c) || c.neutral));
     if(foe){
+      /* the ablest hand you have picked who is not the body being clicked. Used by both menus
+         below; a risen one cannot be trusted with gauze, which is the rule everywhere else. */
+      const medicFor = (v) => movers.filter(m => m !== v && m.state === 'ok' && (!m.undead || m.lich))
+        .sort((a, b) => b.stats.medic - a.stats.medic)[0] || null;
+      const tendEntry = (v) => {
+        if(!treatable(v)) return null;
+        const doc = medicFor(v);
+        if(!doc) return null;
+        return {label: `TEND ${v.name.toUpperCase()}`, fn:()=>{
+          clearOrders(doc); doc.healTarget = v;
+          log(`${doc.name} goes to see to ${v.name}.`, '');
+        }};
+      };
       if(foe.neutral && !e.ctrlKey && !foe.provoked && !hostile(movers[0], foe)){
-        /* first strike on a neutral: make it deliberate */
-        log(`${foe.name} is not hostile. Ctrl+right-click to attack anyway.`);
+        /* ---------- SOMEBODY WHO IS NOT YOUR ENEMY IS NOT THEREFORE A WALL ----------
+           This was one line of log — "X is not hostile. Ctrl+right-click to attack anyway." —
+           and a `return`, which is the whole of "there is no option to talk to Lyre. Pretty
+           disappointing end to a long quest." Her conversation was written: `talkTo` carries
+           five answers for her depending on what you did with the eleven years, and it hands
+           out the `found_sister` deed. Nothing could reach it. The TALK menu a few branches up
+           only accepts `faction` 'drifter' or 'town', and she is spawned 'exile', so she fell
+           through to here — where being un-hostile was treated as a reason to do nothing.
+           The refusal was right about one thing and only one: attacking somebody who is not
+           attacking you should be deliberate. That belongs in the menu with everything else,
+           not in place of it. */
+        const items = [];
+        if(foe.state === 'down'){
+          const t2 = tendEntry(foe);
+          if(t2) items.push(t2);
+        } else {
+          items.push({label:'TALK', fn:()=>talkTo(foe)});
+          const t2 = tendEntry(foe);
+          if(t2) items.push(t2);
+        }
+        items.push({label:`ATTACK ${foe.name.toUpperCase()} ANYWAY`, fn:()=>{
+          for(const m of movers){ clearOrders(m); m.target = foe; m.targetManual = true; m.orderTarget = foe; }
+          foe.provoked = true;
+          log(`${foe.name} was not your enemy. They are now.`, 'bad');
+        }});
+        items.push({label:'LEAVE THEM', fn:()=>{}});
+        showCtxMenu(e.clientX, e.clientY, items);
         return;
       }
       if(foe.state === 'down'){
         /* an animal on the ground is game, not a prisoner, and the words matter that much */
-        showCtxMenu(e.clientX, e.clientY, [
+        const items = [
           {label: foe.beast ? 'FINISH IT' : 'EXECUTE', fn:()=>{ const m = movers[0]; clearOrders(m); m.execTarget = foe; }},
-          {label: foe.beast ? 'TAKE IT ALIVE' : 'SEIZE', fn:()=>{ const m = movers[0]; clearOrders(m); m.seizeTarget = foe; }},
-          {label: foe.beast ? 'LEAVE IT' : 'LEAVE THEM', fn:()=>{}}]);
+          {label: foe.beast ? 'TAKE IT ALIVE' : 'SEIZE', fn:()=>{ const m = movers[0]; clearOrders(m); m.seizeTarget = foe; }}];
+        /* ---------- AND STOPPING THE BLEEDING IS A THIRD THING YOU MAY WANT ----------
+           "Bandaging works when it's a neutral faction, but not for enemies." Both halves of
+           that were already true and neither was reachable. The cross-faction branch further
+           down handles a downed stranger and says so in its own comment — but this branch
+           catches every hostile body first and returns, so the only things you could ever do
+           to a beaten enemy were kill it or cage it. A body you were about to seize is a body
+           worth keeping alive long enough to seize. */
+        const t2 = tendEntry(foe);
+        if(t2) items.push(t2);
+        items.push({label: foe.beast ? 'LEAVE IT' : 'LEAVE THEM', fn:()=>{}});
+        showCtxMenu(e.clientX, e.clientY, items);
         return;
       }
       /* `orderTarget` is the standing intent behind the click. `target` is who they are
