@@ -420,6 +420,13 @@ the truth was 45%.
   before it finished its meal. The probe was measuring the appetite, not the arrival. If the
   claim is about a moment, step the world and catch that moment; the growth afterwards is a
   second, separate assertion — and worth having, since it is the thing that broke the first one.
+  **And the fix went in for the size and not for the tile, which is the same fault twice in one
+  block.** "It rose from sundered ground" is also a claim about a moment; the probe read the
+  beast's position after four more game days of it hunting and reported 26 tiles from the
+  nearest site for a thing that is spawned ON a site by construction. It went red on a change to
+  how bodies walk to a fight — which moved the beast and touched nothing about the rite. When you
+  find one assertion reading the wrong moment, check its neighbours in the same block: they were
+  written by the same hand on the same afternoon.
 - **A threshold pinned to one build's exact arrangement fails on the next unrelated change.**
   `press.js` asserted that no more than THREE of twelve bodies end up in one eighth of the
   circle, because the build in front of it measured two. Three revisions later the same fixed

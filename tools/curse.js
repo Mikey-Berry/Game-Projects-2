@@ -106,13 +106,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          thing had eaten the ninety bodies that summoned it and stood at 7.1x, one stride off
          the ceiling. The probe was measuring the appetite, not the arrival, and it happened to
          read 3.6x the first time only because the run ended before it had finished its meal.
-         Step the world and snapshot the first tick a cursed body exists. */
-      let bornBig = null, bornAte = null;
+         Step the world and snapshot the first tick a cursed body exists.
+         THE POSITION IS PART OF THAT SNAPSHOT and was left out of it, which is the same fault
+         twice in one block. "It rose from sundered ground" is a claim about where it STOOD UP;
+         the probe read the beast's tile after four more game days of it hunting, and duly
+         reported 26 tiles from the nearest site for a thing that `malathuunsCurse` spawns ON a
+         site by construction — `spawnCairnBeast(true, site, true)`, there is no other place it
+         can appear. It went red on a change to how bodies walk to a fight, which moved the
+         beast and touched nothing about the rite. Catch the tile with the size. */
+      let bornBig = null, bornAte = null, bornX = null, bornY = null;
       paused = false;
       for (let i = 0; i < 4 * 40 && bornBig === null; i++) {
         update(0.5);
         const c0 = liveCurses()[0];
-        if (c0) { bornBig = c0.big; bornAte = c0.ate || 0; }
+        if (c0) { bornBig = c0.big; bornAte = c0.ate || 0; bornX = c0.x; bornY = c0.y; }
       }
       for (let i = 0; i < 4 * 40; i++) update(0.5);
       paused = true;
@@ -134,9 +141,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           ? `and it is an ordinary Cairn Beast underneath (ate ${beast.ate}), so it still grows and still sheds`
           : `!! IT IS NOT A CAIRN BEAST (bossKey ${beast.bossKey}, ate ${beast.ate})`;
         /* ---------- 4. IT ROSE FROM A SITE, NOT FROM NOWHERE ---------- */
-        const nearest = corpseSites.map(s => dist(s.x, s.y, beast.x, beast.y)).sort((u, v) => u - v)[0];
+        const nearest = corpseSites.map(s => dist(s.x, s.y, bornX, bornY)).sort((u, v) => u - v)[0];
+        const wandered = corpseSites.map(s => dist(s.x, s.y, beast.x, beast.y)).sort((u, v) => u - v)[0];
         R.itRoseFromTheGround = nearest <= 20
-          ? `it stood up ${nearest.toFixed(0)} tiles from sundered ground`
+          ? `it stood up ${nearest.toFixed(0)} tiles from sundered ground (and was ${wandered.toFixed(0)} away four days later, which is its business)`
           : `!! IT ROSE ${nearest.toFixed(0)} TILES FROM THE NEAREST SITE — that is not a site standing up`;
         /* ---------- 5. THE GOODS WALKED OFF, THEY WERE NOT DELETED ----------
            Whichever cache changed state during the run is the one that was taken. */
