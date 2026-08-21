@@ -233,6 +233,92 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     return R;
   }));
 
+  /* ================= 4. CARRYING SOMEBODY OUT ================= */
+  await p.evaluate(() => {
+    const { gx, gy } = window.__G;
+    window.__wipe();
+    hideCtxMenu();
+    const bearer = window.__mk('Bearer', 'player', gx - 2, gy - 20, { atk: 10, def: 10, tough: 20, ath: 14 });
+    const hurt = window.__mk('Escortee', 'town', gx + 2, gy - 20, { atk: 6, def: 8, tough: 14, ath: 6 });
+    hurt.vip = true;
+    selected = [bearer];
+    window.__settle();
+    hurt.state = 'down';
+    window.__look(hurt);
+  });
+  await frame(); await frame(); await frame();
+  Object.assign(R, await p.evaluate(() => {
+    const R = {};
+    const hurt = chars.find(c => c.name === 'Escortee' && c.__probe);
+    const bearer = chars.find(c => c.name === 'Bearer' && c.__probe);
+    const aim = window.__rclick(hurt);
+    const menu = window.__menu();
+    R.theProbeAimsAtTheEscort = aim >= 0 && aim < 0.5
+      ? `the probe clicks the downed escort (${aim.toFixed(2)} tiles off)`
+      : `!! THE PROBE CANNOT AIM AT THEM (${aim < 0 ? 'no projection' : aim.toFixed(2) + ' tiles off'})`;
+    R._whatADownedNeutralOffers = menu.join(' | ') || '(no menu opened)';
+    R.aDownedNeutralCanBePickedUp = menu.some(x => /^PICK UP/.test(x))
+      ? 'a body on the ground that is not your enemy can be picked up'
+      : `!! NO WAY TO PICK THEM UP (${menu.join(' | ')})`;
+    /* AND NOT JAILED. The report draws the line at the destination, and the menu is where it
+       is enforced: nothing offered on a non-hostile can end in a cell. */
+    R.andNotSeized = !menu.some(x => /SEIZE/.test(x))
+      ? 'and nothing offered on them ends in a cell, which is where the kidnapping line sits'
+      : `!! A NON-HOSTILE IS OFFERED SEIZE (${menu.join(' | ')}) — that is the kidnapping the note rules out`;
+    const clicked = window.__pick('PICK UP');
+    /* walk the bearer over and let the lift happen through the real tick.
+       HOLD THEM DOWN WHILE IT HAPPENS. `updateState` stands a body back up as soon as its
+       blood allows, and a full-blooded probe body does that within a second — so the order
+       was correctly dropped ("they can walk") and the probe read it as nobody coming. The
+       thing under test is the carry, not the convalescence: pin the state, the way rites.js
+       pins the ritualist, or the staging dissolves before the measurement. */
+    paused = false;
+    for (let i = 0; i < 60 && !bearer.bearing; i++) { hurt.state = 'down'; update(0.1); }
+    paused = true;
+    R.andSomebodyGoesAndGetsThem = clicked && bearer.bearing === hurt
+      ? `${bearer.name} walks over and gets ${hurt.name} up`
+      : `!! NOBODY PICKS THEM UP (clicked ${clicked}, bearing ${bearer.bearing && bearer.bearing.name}, bearTarget ${bearer.bearTarget && bearer.bearTarget.name})`;
+    if (!bearer.bearing) return R;
+    /* AND THEY TRAVEL. This is the half that made it a feature rather than a menu entry: the
+       player's own drag never moved the body it was dragging. */
+    const gap0 = dist(bearer.x, bearer.y, hurt.x, hurt.y);
+    const from = { x: hurt.x, y: hurt.y };
+    clearOrders(bearer); routeTo(bearer, window.__G.gx - 20, window.__G.gy - 20, 0);
+    paused = false;
+    for (let i = 0; i < 60; i++) { hurt.state = 'down'; update(0.1); }
+    paused = true;
+    const moved = dist(from.x, from.y, hurt.x, hurt.y);
+    const gap1 = dist(bearer.x, bearer.y, hurt.x, hurt.y);
+    R.andTheyComeWithThem = moved > 3 && gap1 < 1.2
+      ? `and they travel — carried ${moved.toFixed(1)} tiles, still ${gap1.toFixed(2)} off the bearer's shoulder`
+      : `!! THE BODY STAYS WHERE IT FELL (moved ${moved.toFixed(1)} tiles, ${gap1.toFixed(1)} from the bearer, was ${gap0.toFixed(1)})`;
+    R.andTheOrderSurvivedTheLift = bearer.bearing === hurt
+      ? 'and a move order does not make them drop the body, which is the only way to carry anybody anywhere'
+      : '!! THE MOVE ORDER DROPPED THEM';
+    /* put them down again */
+    window.__look(hurt);
+    return R;
+  }));
+  await frame(); await frame(); await frame();
+  Object.assign(R, await p.evaluate(() => {
+    const R = {};
+    const hurt = chars.find(c => c.name === 'Escortee' && c.__probe);
+    const bearer = chars.find(c => c.name === 'Bearer' && c.__probe);
+    if (!bearer || !bearer.bearing) { R.andTheyCanBeSetDown = '!! NOBODY IS CARRYING ANYBODY — case not staged'; return R; }
+    window.__rclick(hurt);
+    const menu = window.__menu();
+    R._whatACarriedBodyOffers = menu.join(' | ') || '(no menu opened)';
+    R.aCarriedBodyIsNotOfferedTheKnife = menu.length > 0 && !menu.some(x => /EXECUTE|FINISH/.test(x))
+      ? 'somebody over your shoulder is not offered the knife — the click asks about the carrying'
+      : `!! A BODY BEING RESCUED IS OFFERED EXECUTE (${menu.join(' | ')})`;
+    const clicked = window.__pick('SET');
+    R.andTheyCanBeSetDown = clicked && !bearer.bearing && !hurt.borneBy
+      ? 'and they can be set down again where you want them'
+      : `!! THEY CANNOT BE PUT DOWN (clicked ${clicked}, bearing ${bearer.bearing && bearer.bearing.name})`;
+    window.__wipe();
+    return R;
+  }));
+
   console.log('=== WHAT A RIGHT-CLICK OFFERS ===\n');
   for (const [k, v] of Object.entries(R)) console.log('  ' + (k.startsWith('_') ? ('· ' + k.slice(1)).padEnd(34) : k.padEnd(34)) + v);
   const bad = Object.values(R).map(String).filter(v => v.startsWith('!!'));

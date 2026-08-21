@@ -1549,7 +1549,8 @@ function makeChar(name, faction, x, y, o={}){
     construct: !!(RACES[o.race] || {}).construct,
     clawDmg: 0, big: _sb.big || 1, taunt: false, structMult: 1, bindWeight: 1, shortTag: '',
     neutral: false, provoked: false, bossKey: null, dropItems: null, barkCd: 0,
-    carry: null, carryTarget: null, phyl: null, phylTarget: null, lich: false, guardTarget: null,
+    carry: null, carryTarget: null, bearTarget: null, bearing: null, borneBy: null,
+    phyl: null, phylTarget: null, lich: false, guardTarget: null,
     floor: 0,
     inv: {}, pack: null, haulTarget: null,
     structTarget: null, repairTarget: null, stuckT: 0,
@@ -1723,6 +1724,7 @@ function moveSpeed(c){
      See tools/kiting.js. */
   if(c.reloadT > 0) s *= (c.reloadK || RELOAD_DRAG);
   if(c.drag) s *= 0.7;
+  if(c.bearing) s *= 0.72;   /* a body over your shoulder — see bearTarget */
   if(c.carry) s *= 0.8;
   if(c.carryList && c.carryList.length) s *= Math.pow(0.93, c.carryList.length);   /* a laden mule is a slow mule */
   if(c.frayed) s *= 1 - 0.35 * (c.frayT || 0);
@@ -8235,6 +8237,10 @@ function clearOrders(c){
   c.talkTarget = null;
   c.structTarget = null; c.repairTarget = null; c.stuckT = 0;
   c.carryTarget = null; c.rescueTarget = null; c.seizeTarget = null;
+  /* `bearTarget` is an order and goes. `bearing` is a LOAD and stays: a new move order is
+     how you carry somebody somewhere, so dropping them on it would make the feature
+     impossible to use. Putting them down is its own decision — see `physics`. */
+  c.bearTarget = null;
   c.craftJob = null;      /* a new order takes them off the bench; nothing unmade was paid for */
   c.guardTarget = null; c.haulTarget = null;
   c.path = null; c.pathGoal = null;
@@ -8611,6 +8617,49 @@ function physics(c, dt){
       c.haulTarget = null;
       return;
     } else return;
+  }
+  /* ---------- AND THE LIVING, WHICH IS A DIFFERENT JOB ----------
+     "I cannot pick up downed escort mission people... to get them to safety."
+     THERE WERE THREE CARRY MECHANISMS AND NONE OF THEM WAS THIS ONE. `carryTarget` below
+     drops the order unless `corpses.includes(t)`, so it will not lift anything still alive.
+     `rescueTarget` is narrower than it sounds and only cuts somebody out of a midden.
+     `seizeTarget` does lift a downed living body — and then hauls it to a Holding Cell and
+     sets `captured`, which is the flag the whole world reads as "prisoner". That is the one
+     thing the report rules out: "jailing them or something should be illegal/kidnapping, but
+     to get them to safety, that should be acceptable."
+     So the rule is about the DESTINATION and not the pick-up, and it is enforced by
+     construction rather than by a check — SEIZE is offered on a body you are already fighting
+     and this is offered on anybody, and the two set different fields. Nothing here can put
+     somebody in a cell.
+     THE BODY HAS TO FOLLOW, and that was the other half of the work. The slaver haul and the
+     larder haul each pin their captive beside them by hand, inline; the player's own seize
+     never did, because `jail()` teleports the body at the end and nobody noticed it had been
+     standing in a field the whole time. */
+  if(c.bearTarget){
+    const v = c.bearTarget;
+    if(!chars.includes(v) || v.state !== 'down' || v.captured || v.jailedAt || c.bearing){ c.bearTarget = null; }
+    else if(dist(c.x, c.y, v.x, v.y) > 1.3){ travel(c, v.x, v.y, dt, 0.9); return; }
+    else {
+      c.bearing = v; v.borneBy = c; c.bearTarget = null;
+      log(`${c.name} gets ${v.name} up off the ground.`, '');
+      return;
+    }
+  }
+  if(c.bearing){
+    const v = c.bearing;
+    if(!chars.includes(v) || v.state === 'dead' || v.captured || v.jailedAt){
+      if(v) v.borneBy = null;
+      c.bearing = null;
+    } else if(v.state === 'ok'){
+      /* they came round. Nobody carries somebody who can walk. */
+      v.borneBy = null; c.bearing = null;
+      log(`${v.name} comes round and gets down.`, '');
+    } else {
+      v.x = c.x - 0.4; v.y = c.y + 0.25;
+      v.floor = c.floor || 0;
+      v.moveTarget = null; v.path = null;
+    }
+    /* deliberately no `return`: a bearer still takes orders, which is the whole point */
   }
   /* pick up a corpse */
   if(c.carryTarget){
@@ -24367,6 +24416,26 @@ cv.addEventListener('mousedown', e => {
         return;
       }
     }
+    /* ---------- SOMEBODY ALREADY OVER ONE OF YOUR SHOULDERS ----------
+       Checked before the enemy branch, because a body being carried is still whatever faction
+       it was and would otherwise be offered EXECUTE by the branch below — on a person you are
+       in the middle of rescuing. The same reasoning the corpse-carry branch already uses: the
+       first question about a body somebody is holding is what to do with the holding. */
+    {
+      const borne = chars.find(o => o.borneBy && o.borneBy.faction === 'player' &&
+        o.state !== 'dead' && dist(o.x, o.y, wx, wy) < 0.9);
+      if(borne){
+        const bearer = borne.borneBy;
+        showCtxMenu(e.clientX, e.clientY, [
+          {label:`SET ${borne.name.toUpperCase()} DOWN`, fn:()=>{
+            bearer.bearing = null; borne.borneBy = null;
+            log(`${bearer.name} sets ${borne.name} down.`, '');
+          }},
+          {label:`${bearer.name.toUpperCase()} IS CARRYING THEM`, fn:()=>{}},
+        ]);
+        return;
+      }
+    }
     /* enemy? (ctrl+right-click force-attacks anyone — guards, bosses, caravans)
        `state !== 'dead'` rather than `state === 'ok'`, and that one word is the whole reason
        a silt strider could not be killed. The EXECUTE/SEIZE branch a dozen lines down asks
@@ -24382,6 +24451,19 @@ cv.addEventListener('mousedown', e => {
          below; a risen one cannot be trusted with gauze, which is the rule everywhere else. */
       const medicFor = (v) => movers.filter(m => m !== v && m.state === 'ok' && (!m.undead || m.lich))
         .sort((a, b) => b.stats.medic - a.stats.medic)[0] || null;
+      /* PICK THEM UP. Offered on anybody on the ground, hostile or not — the report asked for
+         neutrals and noted enemies were already possible, and a body you can seize is a body
+         you can also simply move. It sets `bearTarget`, which cannot end in a cell; SEIZE is
+         the one that can, and it is a separate entry with a separate word on it. */
+      const bearEntry = (v) => {
+        if(v.state !== 'down' || v.captured || v.jailedAt || v.borneBy) return null;
+        const hands = movers.filter(m => m !== v && m.state === 'ok' && !m.bearing && !m.carry && !m.drag)
+          .sort((a, b) => b.stats.ath - a.stats.ath)[0];
+        if(!hands) return null;
+        return {label: `PICK UP ${v.name.toUpperCase()}`, fn:()=>{
+          clearOrders(hands); hands.bearTarget = v;
+        }};
+      };
       const tendEntry = (v) => {
         if(!treatable(v)) return null;
         const doc = medicFor(v);
@@ -24407,6 +24489,8 @@ cv.addEventListener('mousedown', e => {
         if(foe.state === 'down'){
           const t2 = tendEntry(foe);
           if(t2) items.push(t2);
+          const b2 = bearEntry(foe);
+          if(b2) items.push(b2);
         } else {
           items.push({label:'TALK', fn:()=>talkTo(foe)});
           const t2 = tendEntry(foe);
@@ -24435,6 +24519,8 @@ cv.addEventListener('mousedown', e => {
            worth keeping alive long enough to seize. */
         const t2 = tendEntry(foe);
         if(t2) items.push(t2);
+        const b2 = bearEntry(foe);
+        if(b2) items.push(b2);
         items.push({label: foe.beast ? 'LEAVE IT' : 'LEAVE THEM', fn:()=>{}});
         showCtxMenu(e.clientX, e.clientY, items);
         return;
@@ -24523,10 +24609,33 @@ cv.addEventListener('mousedown', e => {
     const stranger = chars.find(o => o.faction !== 'player' && !o.undead && o.state === 'down' &&
       dist(o.x, o.y, wx, wy) < 0.9);
     if(stranger){
-      const medic = movers.filter(m => !m.undead || m.lich).sort((a,b)=>b.stats.medic-a.stats.medic)[0];
-      if(!medic){ log('The risen lack the wit for medicine.', 'bad'); return; }
-      clearOrders(medic); medic.healTarget = stranger;
-      log(`${medic.name} goes to stop ${stranger.name} bleeding out.`, '');
+      /* ---------- AND NOW IT IS A MENU, BECAUSE THERE ARE TWO THINGS TO WANT ----------
+         This branch used to fire the bandage order straight off the click, which was right
+         while stopping the bleeding was the only thing you could do to a stranger on the
+         ground. It is not any more: "I cannot pick up downed escort mission people... to get
+         them to safety." Both belong on the same body, so the click has to ask.
+         The risen refusal stays a REFUSAL rather than an absent entry — "the risen lack the
+         wit for medicine" is information, and a menu that silently omits the only thing you
+         wanted teaches nothing. */
+      const items = [];
+      const medic = movers.filter(m => m !== stranger && m.state === 'ok' && (!m.undead || m.lich))
+        .sort((a,b)=>b.stats.medic-a.stats.medic)[0];
+      if(medic && treatable(stranger)) items.push({label:`TEND ${stranger.name.toUpperCase()}`, fn:()=>{
+        clearOrders(medic); medic.healTarget = stranger;
+        log(`${medic.name} goes to stop ${stranger.name} bleeding out.`, '');
+      }});
+      const hands = movers.filter(m => m !== stranger && m.state === 'ok' && !m.bearing && !m.carry && !m.drag)
+        .sort((a,b)=>b.stats.ath-a.stats.ath)[0];
+      if(hands && !stranger.borneBy) items.push({label:`PICK UP ${stranger.name.toUpperCase()}`, fn:()=>{
+        clearOrders(hands); hands.bearTarget = stranger;
+      }});
+      if(!items.length){
+        log(movers.every(m => m.undead && !m.lich) ? 'The risen lack the wit for medicine.'
+                                                   : `There is nothing to be done for ${stranger.name}.`, 'bad');
+        return;
+      }
+      items.push({label:'LEAVE THEM', fn:()=>{}});
+      showCtxMenu(e.clientX, e.clientY, items);
       return;
     }
     /* ONE OF YOUR OWN, ON THEIR FEET. The wounded fast-paths above already fired, so this is
@@ -25455,6 +25564,7 @@ function snapshot(){
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
     immortal:c.immortal||null, wanderKey:c.wanderKey||null, wanderMet:c.wanderMet||0, wanderSeen:c.wanderSeen?{...c.wanderSeen}:null, wanderJoined:!!c.wanderJoined, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, golem:!!c.golem, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
     carryId: c.carry ? c.carry.id : null,
+    bearingId: c.bearing ? c.bearing.id : null,
     carryIds: c.carryList ? c.carryList.map(b => b.id) : null,
     lich: !!c.lich, face: c.face||null, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
     guardTargetId: c.guardTarget ? c.guardTarget.id : null,
@@ -25819,6 +25929,7 @@ function restore(d){
     if(c.civ) c.civT = rnd()*10;
     if(s.pilgrimDestI >= 0) c.pilgrimage = {dest: towns[s.pilgrimDestI], waitT: 0};
     c._mid = s.masterId; c._fid = s.followId; c._did = s.dragId; c._cid = s.carryId; c._gid = s.guardTargetId;
+    c._bid = s.bearingId || null;
     c._cids = s.carryIds || null;
     byId[c.id] = c;
     return c;
@@ -25897,6 +26008,7 @@ function restore(d){
     if(c._mid) c.master = byId[c._mid] || null;
     if(c._fid) c.follow = byId[c._fid] || null;
     if(c._did) c.drag = byId[c._did] || null;
+    if(c._bid){ c.bearing = byId[c._bid] || null; if(c.bearing) c.bearing.borneBy = c; }
     if(c._cid) c.carry = corpses.find(x => x.id === c._cid) || null;
     if(c._cids) c.carryList = c._cids.map(id => corpses.find(x => x.id === id)).filter(Boolean);
     if(c._gid) c.guardTarget = byId[c._gid] || null;
