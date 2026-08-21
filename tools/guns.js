@@ -195,13 +195,61 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? `it fires on an empty stash and spends nothing (${cells0} -> ${stash.aether_cell})`
         : `!! THE HANDHELD STILL WANTS FEEDING (returned ${dry}, cells ${cells0} -> ${stash.aether_cell})`;
       c._lanceDry = false; c.heat = 0;
-      /* and through the real attack path, not just the helper */
+      /* ---------- AND THROUGH THE REAL ATTACK PATH, NOT JUST THE HELPER ----------
+         THIS WAS A COIN FLIP AND IS NOW A BURST, which is the treatment gunnery.js already had
+         for the same disease. The old version ran 20 seconds against a raider free to walk and
+         asserted on what was, in practice, a single hit roll — so it read "THE LANCE DOES NO
+         DAMAGE IN PLAY" whenever anything upstream moved the worldgen stream by one draw, a
+         failure that says nothing whatever about the lance. What made it one shot is not the
+         rate of fire (3.7s at atk 20, so 20 seconds is five shots) but the raider: it crosses
+         the five tiles in about a second and a half, and a body inside 1.7 tiles makes the
+         lance stop shooting and start swinging. The probe was measuring the first shot of a
+         fight and then a wrestle.
+         PIN THE RAIDER'S TILE, the same way rites.js had to pin the ritualist's — the point
+         here is the weapon, not the footrace — and let it fire a good handful of times. The
+         windups are counted so a window that fires nothing says so rather than reading as a
+         miss, which is the failure the old one could not tell apart from the real bug. */
       c.atkCd = 0; c.heat = 0;
-      const hp0 = f.blood, cells1 = stash.aether_cell;
-      run(200);
-      R.theLanceLandsInPlay = f.blood < hp0 || f.state !== 'ok'
-        ? `and in play it actually hits — the raider drops from ${hp0} to ${Math.max(0, f.blood).toFixed(0)}, ${cells1 - stash.aether_cell} cells spent`
-        : `!! THE LANCE DOES NO DAMAGE IN PLAY (cells spent ${cells1 - stash.aether_cell}, atkCd ${c.atkCd.toFixed(2)})`;
+      /* A WALL, NOT AN OPPONENT. The raider `foe()` hands out is tough 40 against a 44-damage
+         lance: it goes down on the third hit and the burst ends there, which is the single hit
+         roll coming back in disguise. This one soaks. */
+      const soak = makeChar('Butt', 'bandit', gx + 5, gy, { atk: 6, def: 8, tough: 400, ath: 1 });
+      soak.__probe = true; soak.autoFight = false; soak.noFight = true; soak.speedMult = 0.0001;
+      chars.push(soak);
+      f.x = gx + 14; f.y = gy + 14;                  /* the old target out of the way entirely */
+      c.target = soak; c.targetManual = true;
+      const hp0 = soak.blood, cells1 = stash.aether_cell;
+      /* THE SHOT IS READ OFF `atkCd` JUMPING, not off a windup being open on the frame the
+         probe happens to look, and not off the raider's blood — a pool that drains over the
+         following seconds and rounds a real hit up to "100 -> 100" on the way past.
+         `fireRanged` is the only thing that resets that cooldown, so a jump IS a loose.
+         SIXTY SECONDS AND NOT FORTY, because the lance cooks: heat past the frame's tolerance
+         burns the hand and the wielder stops to cool. Forty seconds got three shots out of a
+         weapon that nominally fires every 3.7, which is the overheat working, not a stall —
+         but three is one away from the floor this assertion sets, and a measurement standing
+         on its own threshold is the fragile thing this rewrite was for. */
+      let shots = 0, prevCd = c.atkCd, dealt = 0;
+      paused = false;
+      for (let i = 0; i < 600; i++) {
+        /* pinned, because the point here is the weapon and not a footrace: a body that closes
+           to inside 1.7 tiles makes the lance stop shooting and start swinging, and the probe
+           would then be measuring the first shot of a fight and then a wrestle */
+        soak.x = gx + 5; soak.y = gy; soak.moveTarget = null; soak.path = null;
+        update(0.1);
+        if (c.atkCd > prevCd + 0.5) shots++;
+        prevCd = c.atkCd;
+      }
+      dealt = hp0 - soak.blood;
+      paused = true;
+      R.theLanceLandsInPlay = shots < 4
+        ? `!! ONLY ${shots} SHOTS IN 60s — THIS IS BACK TO BEING A SINGLE HIT ROLL, NOT A MEASUREMENT`
+        : dealt > 0 || soak.state !== 'ok'
+          ? `and in play it actually hits — ${shots} shots put ${dealt.toFixed(0)} blood through the mark`
+          : `!! THE LANCE DOES NO DAMAGE IN PLAY OVER ${shots} SHOTS (atkCd ${c.atkCd.toFixed(2)})`;
+      /* and it still costs the camp nothing to do it — the charges live on the emplacement */
+      R.andItStillSpendsNoCells = stash.aether_cell === cells1
+        ? `and sixty seconds of it spends not one cell (${cells1} -> ${stash.aether_cell})`
+        : `!! THE HANDHELD DRANK ${cells1 - stash.aether_cell} CELLS IN PLAY`;
       /* the overheat is the cost that makes it interesting; it must actually bite */
       c.heat = 0; stash.aether_cell = 200;
       for (let i = 0; i < 12; i++) lanceFire(c, w);

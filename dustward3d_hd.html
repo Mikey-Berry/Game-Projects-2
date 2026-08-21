@@ -649,7 +649,7 @@ const ITEMS = {
      emplaced Heavy is the one that is plumbed into something and throws a 72-damage bolt
      through a column, so that is the one that eats pre-Fall charges now. */
   w_lance: {name:'Aether Lance',  base:9000,type:'weapon', dmg:44, wt:'pierce', range:9, pre:true, nullOnly:true,
-    rof:4.6, draw:0.55, lance:true, ap:0.80, melee:{dmg:26, wt:'pierce'},
+    rof:4.6, draw:0.55, lance:true, ap:0.80, reload:0.42, melee:{dmg:26, wt:'pierce'},
     desc:'A golden-age firearm that transmutes latent ether to plasma, on a frame long enough to keep a man off you. In a gifted hand the interference cascades — the lance and the hand go together. Only the alchemically deaf can carry one.'},
   w_sever: {name:'Sundering Edge',base:9500,type:'weapon', dmg:40, wt:'cut',    pre:true},
   a_carap: {name:'Alchemic Carapace', base:11000, type:'armor', pre:true, def:.52, pen:.30},
@@ -662,7 +662,14 @@ const ITEMS = {
      A hunting arrow finds a gap now and then; a crossbow bolt was invented to punch mail. */
   salt:    {name:'Salt',          base:26,  type:'trade',
     desc:'Coarse grey brine-salt off the flats. Packs a body against the rot, which is a use nobody in Saltmere mentions out loud'},
-  w_bow:   {name:'Hunting Bow',   base:260, type:'weapon', dmg:11, wt:'pierce', range:7, ap:0.20, rof:2.6, draw:0.45, bow:true},
+  /* ---------- `reload`: WHAT THE NEXT SHOT COSTS THE LEGS ----------
+     A fraction of walking speed, held for as long as the weapon is being made ready again
+     (see `reloadT`). It is not a flavour number — it is the whole answer to running backwards
+     at full speed while shooting, and it is graded by how much of the reload is done with both
+     hands and eyes down. A bow is nocked half-blind and half-walking; a crossbow has to be
+     spanned against the body; the lance has to spin something up. Anything without the field
+     falls back to RELOAD_DRAG. */
+  w_bow:   {name:'Hunting Bow',   base:260, type:'weapon', dmg:11, wt:'pierce', range:7, ap:0.20, rof:2.6, draw:0.45, bow:true, reload:0.62},
   /* ---------- GROWN, NOT CARRIED ----------
      The Marrow Archer used to cost a whole Hunting Bow, which had to be crafted at a
      Workbench from wood and fabric, hauled to the stores and consumed — six craft cycles
@@ -677,9 +684,9 @@ const ITEMS = {
      effectively no armour-piercing: worse than the bought bow, and free of the supply chain.
      `grown` keeps it out of the world's economy — it cannot be looted off the body, sold, or
      stripped, because it is part of the body. */
-  w_sinew: {name:'Sinew-Drawn Bow', base:0, type:'weapon', dmg:9, wt:'pierce', range:7, ap:0.04, rof:3.2, draw:0.62, bow:true, grown:true,
+  w_sinew: {name:'Sinew-Drawn Bow', base:0, type:'weapon', dmg:9, wt:'pierce', range:7, ap:0.04, rof:3.2, draw:0.62, bow:true, grown:true, reload:0.58,
     desc:'A stave of long bone with a sinew string, grown through the forearms of the thing that draws it. It cannot be dropped, and nothing else can pick it up.'},
-  w_xbow:  {name:'Crossbow',      base:750, type:'weapon', dmg:18, wt:'pierce', range:8, ap:0.40, rof:3.2, draw:0.30},
+  w_xbow:  {name:'Crossbow',      base:750, type:'weapon', dmg:18, wt:'pierce', range:8, ap:0.40, rof:3.2, draw:0.30, reload:0.50},
   a_rag:   {name:'Rag Shirt',     base:60,  type:'armor',  def:.08, pen:.05},
   a_lea:   {name:'Leather Jacket',base:380, type:'armor',  def:.18, pen:.14},
   a_pla:   {name:'Iron Plate',    base:1300,type:'armor',  def:.35, pen:.32},
@@ -1479,7 +1486,7 @@ function makeChar(name, faction, x, y, o={}){
     manning: null, gunT: 0,
     path: null, pathGoal: null, repathT: 0,
     rescueOf: 0,
-    hitT: 0, looseT: 0, shotT: 0, lungeT: 0, lungeDX: 0, lungeDY: 0, lungeDur: 0, lungeK: 0,
+    hitT: 0, looseT: 0, reloadT: 0, reloadK: 0, lungeT: 0, lungeDX: 0, lungeDY: 0, lungeDur: 0, lungeK: 0,
     shoveT: 0, shoveDur: 0, shoveK: 0, shoveDX: 0, shoveDY: 0,
     undead: false, master: null,
     atkCd: 0, downT: 0, guard: o.guard||null, homeTown: o.homeTown||null,
@@ -1572,35 +1579,72 @@ function dropOneBody(c, body, at){
   refreshCharPanel();
   return true;
 }
-const RANGED_DRAG = 1.15;        /* seconds of heavy legs after a loose */
+const RELOAD_DRAG = 0.60;   /* the default for a ranged weapon that names no `reload` of its own */
 /* ---------- CAUGHT, AND WHETHER YOU CAN LEAVE ----------
    "Catching a ranged attacker in melee should somewhat lock them down from fleeing again.
    Somewhat — they should reasonably be able to escape if, say, an ally also engages that
    enemy." Both halves are here and the second is the interesting one: the way out is not a
    dice roll or a cooldown, it is that the body holding you has somebody ELSE to worry about.
-   `_contacts` on the pinner is how many hostiles are on it, counted in `separate()`. One means
-   you and nobody else, and you are held. Two means a friend has come to fetch you, and you are
-   free — which makes rescuing a caught archer a real thing you can do rather than a stat. */
-function pinnedDown(c){
-  const o = c._pinnedBy;
-  if(!o || o.state !== 'ok' || c.state !== 'ok') return false;
-  if((o.floor||0) !== (c.floor||0)) return false;
-  if(c.veilT > 0) return false;              /* they cannot hold what they cannot see */
-  return (o._contacts || 0) <= 1;
+
+   THE OPPORTUNITY STRIKE ALREADY EXISTED AND IS NOT THIS. That one makes leaving HURT, once,
+   on a cooldown; a body willing to eat the cut still walks off at full speed, which is exactly
+   what the report describes. This makes leaving SLOW. One is a cost, one is a grip, and they
+   want to stay separate.
+
+   IT IS A SCALE, NOT A SWITCH. The first version returned a boolean and a flat 0.45, so one
+   friend arriving flipped a caught archer from crawling to free in a single tick. Graded off
+   the pinner's contact count instead: alone with you they have both hands on you, one other
+   body on them and most of the grip is gone, two and it is a formality.
+
+   AND IT IS DIRECTIONAL — enforced in `stepToward`, not here. Closing, circling at spear
+   length and standing your ground all cost nothing. Only leaving costs.
+
+   A GRIP IS RELEASED, NOT OUTRUN, and this is the part that took measuring. Contact is a
+   1.45-tile test, and a body that steps out of it walks away at a dead run on the very next
+   tick — while the man holding it is mid-swing with his feet planted. Measured: the gap opens
+   to 2.3 tiles in three ticks and an equal-footed chaser never closes it again, so the whole
+   grip was worth 0.7 tiles out of thirteen. The escape has to cost about a second, and the
+   second has to keep running after the shoulders part. So `_pinHold` rides for PIN_HOLD past
+   the last contact, on two conditions that both mean he still has you: he is still coming for
+   YOU, and he is still within arm and a stride. Long enough that a chaser re-closes and the
+   hold re-arms; short enough that a clean break really is clean.
+
+   Every number it reads is stamped by `separate()`, which already walks every close pair:
+   `_pinNow` is a melee-capable hostile in contact this tick, `_contacts` is how many hostiles
+   are on THEM, `_holders` is how many are on YOU. Deriving it from that pass rather than from
+   its own neighbour search is not only cheaper, it is the only safe way to ask — `charsNear`
+   hands back one shared buffer, so a scan nested inside another scan empties the outer one
+   under whoever is walking it. */
+const PIN_HOLD = 0.9;            /* how long a grip outlives the contact that made it */
+const PIN_LET_GO = 2.6;          /* and how far he can be dragged before it is not a grip */
+function pinGrip(c, o){
+  if(!o || o.state !== 'ok' || c.state !== 'ok') return 1;
+  if((o.floor||0) !== (c.floor||0)) return 1;
+  if(c.veilT > 0) return 1;                    /* they cannot hold what they cannot see */
+  if((c.big || 1) > 1.6) return 1;             /* one man on the flank of that is a detail */
+  const relief = Math.max(0, (o._contacts || 1) - 1);
+  let k = relief >= 2 ? 0.95 : relief === 1 ? 0.85 : 0.5;
+  const held = c._holders || 1;
+  if(held > 1) k *= Math.pow(0.85, held - 1);  /* a second blade on you is a second problem */
+  return Math.max(0.3, k);
 }
 function moveSpeed(c){
   let s = 3.4 * (1 + c.stats.ath*0.012);
   s *= 1 - armorPen(c);
-  /* ---------- A SHOT COSTS YOUR FEET FOR A MOMENT ----------
-     Nothing in this game fires on the move — the AI branch closes OR shoots and a move order
-     runs through `clearOrders`, which drops the target. So the report ("running backwards at
-     full speed while still firing") is not one body doing both at once, it is SHOOT AND SCOOT:
-     loose, order a move, retreat at full pace, order the shot again. The shot was free and only
-     the standing still was paid for. Now the loose leaves a drag on the legs that outlasts the
-     follow-through, so backing out between shots gives up ground. Standing and shooting is
-     untouched, which is the trade this is meant to pose. */
-  if(c.shotT > 0) s *= 1 - 0.4 * Math.min(1, c.shotT / RANGED_DRAG);
-  if(pinnedDown(c)) s *= 0.45;
+  /* ---------- MAKING THE NEXT ONE READY ----------
+     Held from the loose until the weapon comes off cooldown — the same window `atkCd` runs —
+     so an archer who keeps shooting never gets their legs back, and one who stops has them
+     again in a couple of seconds.
+     THE DRAW WAS NEVER THE HOLE. `physics` already plants the feet for it ("feet planted while
+     the swing is committed"), and a probe that gives the run order on the tick the draw opens
+     measures zero tiles walked before the arrow leaves. But a bow's draw is 0.45s of a 2.3s
+     cycle: rooting it costs a fifth of the tempo and the archer walks the other four fifths
+     flat out, which measured 86% of free running. THAT is what the complaint was about, and
+     the reload window is the only part of the cycle big enough to answer it.
+     Graded per weapon (see `reload` on the ITEMS above), because how much of a reload is done
+     with both hands and the eyes down differs between a nocked arrow and a spanned crossbow.
+     See tools/kiting.js. */
+  if(c.reloadT > 0) s *= (c.reloadK || RELOAD_DRAG);
   if(c.drag) s *= 0.7;
   if(c.carry) s *= 0.8;
   if(c.carryList && c.carryList.length) s *= Math.pow(0.93, c.carryList.length);   /* a laden mule is a slow mule */
@@ -7847,29 +7891,32 @@ function stairAt(x, y){
 }
 function useStairs(c){
   const st = stairAt(c.x, c.y);
-  if(!st){ c.onStair = false; return; }
-  if(c.onStair) return;              /* don't yo-yo while standing on it */
+  if(!st){ c.onStair = null; return; }
+  /* ---------- DON'T YO-YO ON *THIS* ONE ----------
+     Taken from the parallel branch, whose reading of this is better than the one it replaces.
+     The guard was a plain boolean, which quietly means "do not use ANY stair until you have
+     stood on ordinary ground again" — a different and much wider rule than the one intended.
+     A cave mouth very often has another stair on the tile beside it, so a body walking to the
+     mouth crosses that one first: `useStairs` fires on a stair whose storeys have nothing to
+     do with the surface, `to` comes back null, nothing happens, and the flag is now set. The
+     body then steps onto the mouth itself with the guard still latched, and the order is read
+     and discarded every tick for the rest of the game. Nothing logs.
+     Remembering WHICH stair it is standing on keeps the guard doing its real job — no bouncing
+     on the one under your feet — while a different stair is a different door.
+     (The first fix here was mine and narrower: latch only when a crossing actually happens.
+     That passes the same tests, including the stair-beside-a-stair case, because a stair that
+     refuses the crossing never reaches the latch. It is strictly weaker all the same — after a
+     REAL crossing it still blocks an adjacent stair — so the identity version wins.) */
+  if(c.onStair === st) return;
   const f = c.floor || 0;
-  /* ---------- THE LATCH IS SET BY CROSSING, NOT BY ARRIVING ----------
-     `c.onStair = true` used to sit here, above every one of the tests below — so a body that
-     merely STOOD on a stair tile latched itself, whether or not it was trying to go anywhere.
-     Walk somebody onto a cave mouth with no order on them and the flag is set; give the order
-     afterwards and `useStairs` returns at the line above on every subsequent tick, forever.
-     They stand on the doorway and never go through it.
-     The previous fix cleared the flag when a NEW order was issued, which is why this survived:
-     it only bites when the arrival happens on a tick where `wantFloor` is not set yet, so it
-     comes and goes with timing and reads as a flaky harness. Measured: descend.js green on one
-     run of a build and red on the next, same file.
-     The latch exists to stop a body bouncing back the way it came, so it belongs where the
-     crossing actually happens — after every reason not to cross has been ruled out. */
-  if(c.wantFloor === undefined || c.wantFloor === null) return;   /* not trying to change floors */
-  if(c.wantFloor === f) return;
+  if(c.wantFloor === undefined || c.wantFloor === null){ c.onStair = st; return; }
+  if(c.wantFloor === f){ c.onStair = st; return; }
   /* only cross this stair if it moves toward the goal (up when climbing, down when descending) */
   const wantUp = c.wantFloor > f;
   const to = f === st.from ? st.to : f === st.to ? st.from : null;
-  if(to === null) return;
-  if((wantUp && to <= f) || (!wantUp && to >= f)) return;   /* wrong direction: ignore this stair */
-  c.onStair = true;
+  if(to === null){ c.onStair = st; return; }
+  if((wantUp && to <= f) || (!wantUp && to >= f)){ c.onStair = st; return; }
+  c.onStair = st;
   c.floor = to;
   c.path = null; c.pathGoal = null;
   if(c.floor === c.wantFloor){
@@ -7878,7 +7925,7 @@ function useStairs(c){
   } else {
     /* still more storeys to go — head for the next stair toward the goal, and it has to be one
        on the piece of floor we just stepped onto */
-    c.onStair = false;
+    c.onStair = null;
     const g = c.afterStair;
     const next = stairToward(c, c.floor, c.floor + (wantUp ? 1 : -1),
                             g ? g.x : c.x, g ? g.y : c.y, c.wantFloor);
@@ -7892,23 +7939,32 @@ function orderFloor(c, target, sx, sy){
   clearOrders(c);
   c.wantFloor = target;
   /* ---------- AND RE-ARM THE STAIR UNDER ITS FEET ----------
-     THE ONE-WAY TRIP. `onStair` exists so a body does not yo-yo while standing on a stair,
-     and it is set the moment a body arrives on one — including the tile it lands on after
-     crossing, because a stair is the same tile on both storeys. `useStairs` tests it BEFORE
-     it looks at `wantFloor`, so the flag outlived the order that set it: walk into a cave
-     and you are standing on the mouth with `onStair` true, and the order to go back up is
-     read and discarded every tick for the rest of the game. Nothing logs. The body simply
-     never leaves.
+     THE ONE-WAY TRIP. `onStair` remembers the stair a body is standing on so it does not
+     yo-yo across it, and it is set the moment the body arrives — including the tile it lands
+     on after crossing, because a stair is the same tile on both storeys. `useStairs` tests it
+     BEFORE it looks at `wantFloor`, so the latch outlives the order that set it: walk into a
+     cave and you are standing on the mouth with that mouth remembered, and the order to go
+     back up is read and discarded every tick for the rest of the game. Nothing logs. The body
+     simply never leaves.
      A NEW ORDER IS NOT A YO-YO. Clearing it here keeps the guard doing its actual job — no
      bouncing on an unchanged order — and lets a fresh one through. */
-  c.onStair = false;
+  c.onStair = null;
   c.moveTarget = {x: sx + 0.5, y: sy + 0.5};
 }
 function isBlocked3(c, x, y){ return isBlocked(x, y, c.floor || 0); }
 function stepToward(c, tx, ty, dt){
   const d = dist(c.x,c.y,tx,ty);
   if(d < 0.05) return true;
-  const sp = moveSpeed(c) * dt;
+  let sp = moveSpeed(c) * dt;
+  /* and whoever has hold of you gets a say in the LEAVING, and only the leaving — see pinGrip.
+     Dot the step against the line to them: below -0.2 is genuinely turning away rather than
+     circling, and only that pays. */
+  const pin = c._pinBy;
+  if(pin && pin.state === 'ok' && c._pinK < 1){
+    const px = pin.x - c.x, py = pin.y - c.y;
+    const pd = Math.hypot(px, py);
+    if(pd > 0.01 && ((tx - c.x) * px + (ty - c.y) * py) / (d * pd) < -0.2) sp *= c._pinK;
+  }
   const nx = c.x + (tx-c.x)/d * Math.min(sp, d);
   const ny = c.y + (ty-c.y)/d * Math.min(sp, d);
   if(!isBlocked3(c, nx, ny)){ c.x = nx; c.y = ny; }
@@ -8016,6 +8072,83 @@ function travel(c, x, y, dt, arrive=0.15){
   }
   return dist(c.x,c.y,x,y) <= arrive;
 }
+/* ---------- WHICH SIDE OF HIM TO STAND ON ----------
+   "Everyone tries to beeline towards the enemy and gets caught on allies. They should attempt
+   to flank around where possible."
+
+   THE FIRST HALF OF THAT WAS A WRONG DIAGNOSIS AND IT IS WORTH WRITING DOWN, because the
+   obvious fix would have been to the pathing and the pathing turned out to be fine. Measured
+   in tools/flank.js before a line of this was written: eight bodies given one order all reach
+   striking distance inside three seconds and NONE of them stalls on the way (zero ticks of
+   the approach spent going nowhere); a runner sent through his own six-man picket line pays
+   1.03x the open walk for it; two lines of six meet with two changes of mind between twelve
+   bodies; and eight ordered through a ONE-TILE gate in a wall are all through and fighting in
+   three and a half seconds. Nobody is getting caught on anybody.
+
+   What is actually wrong is the picture, and the second half of the report names it. All eight
+   walk at the same point — his tile — so they arrive as a column and stand inside each other:
+   eight bodies within one tile of the quarry, occupying five of the eight sides. That is the
+   beeline. The approach simply had no idea anybody else was making it.
+
+   So each body claims a place on a ring around its quarry and walks to THAT. Nearest free
+   place wins, which keeps the front rank walking straight in — the ones behind are the ones
+   who fan out, because the near slots are already spoken for by the time they ask.
+   And a man already fighting somebody has a front and a back: slots in the arc he is facing
+   cost extra, so a squad joining a fight in progress goes round to his flanks rather than
+   queueing up in front of his blade. The penalty is a tile and a half of walking, not a
+   prohibition — if going round is dear enough, the front is still the answer.
+
+   A FULL RING IS DEAR, NOT SHUT. Rejecting an occupied slot outright reads well and fails at
+   the one size that matters: eight slots and twelve bodies means four bodies with no slot at
+   all, and a body with no slot walks at his tile — the exact beeline this replaces. Measured
+   at twelve: four sides covered, six bodies stacked on the nearest one. Occupancy is priced
+   instead, dearer than any walk around the ring, so a free place always beats a shared one and
+   the overflow doubles up on the emptiest side rather than the closest.
+
+   Held for half a second at a time and stored as an OFFSET rather than a point, so it follows
+   a quarry who is moving instead of aiming at where he was. A slot re-chosen every frame is a
+   body that shuffles instead of arriving. */
+const SLOT_RING = [];
+for(let _s = 0; _s < 8; _s++) SLOT_RING.push([Math.cos(_s * Math.PI / 4), Math.sin(_s * Math.PI / 4)]);
+const SLOT_CROWD = 6.0;          /* dearer than the whole ring is wide: free beats shared, always */
+function slotRadius(t){ return 0.9 + Math.max(0, (t.big || 1) - 1) * 0.5; }
+function approachSlot(c, t, dt){
+  c._slotT = (c._slotT || 0) - dt;
+  if(!c._slot || c._slot.t !== t || c._slotT <= 0){
+    c._slotT = 0.5;
+    const r = slotRadius(t), f = c.floor || 0;
+    /* which way is he looking? Only meaningful if he is looking at somebody who ISN'T YOU.
+       A duel has no flank: two bodies each walking round the other's front is two bodies
+       circling each other across the field, and a line of six against a line of six is six
+       duels. Measured, before this line existed: contact took 15 seconds instead of 6, and
+       every one of them was walking a long way round a man who was turning to follow. */
+    let fx = 0, fy = 0;
+    if(t.target && t.target !== c && t.target.state === 'ok'){
+      const td = dist(t.x, t.y, t.target.x, t.target.y);
+      if(td > 0.01){ fx = (t.target.x - t.x)/td; fy = (t.target.y - t.y)/td; }
+    }
+    let best = null, bs = 1e9;
+    for(const [ux, uy] of SLOT_RING){
+      const sx = t.x + ux*r, sy = t.y + uy*r;
+      if(isBlocked(sx, sy, f)) continue;
+      let crowd = 0;
+      for(const o of charsNear(sx, sy, 0.7)){
+        if(o === c || o === t || o.state !== 'ok' || (o.floor || 0) !== f) continue;
+        if(dist(o.x, o.y, sx, sy) < 0.62) crowd++;
+      }
+      /* the walk, what it costs to share the spot, and what it costs to stand in front of a
+         man mid-swing */
+      let sc = dist(c.x, c.y, sx, sy) + crowd * SLOT_CROWD;
+      if(fx || fy){ const face = ux*fx + uy*fy; if(face > 0.64) sc += 1.5; }
+      if(sc < bs){ bs = sc; best = [ux*r, uy*r]; }
+    }
+    /* a new place to be starts a new clock — see `_slotWait` at the call site */
+    const was = c._slot;
+    c._slot = best ? {t, ux: best[0], uy: best[1]} : null;
+    if(!was || !c._slot || was.t !== t || Math.abs(was.ux - c._slot.ux) > 0.01 || Math.abs(was.uy - c._slot.uy) > 0.01) c._slotWait = 0;
+  }
+  return c._slot && c._slot.t === t ? {x: t.x + c._slot.ux, y: t.y + c._slot.uy} : null;
+}
 function clearOrders(c){
   if(concExclusive(c) && !concMobile(c)) endConcentration(c);   /* a rooted light goes out when you move; a lantern travels with you */
   c.target = null; c.moveTarget = null; c.healTarget = null;
@@ -8122,7 +8255,6 @@ function physics(c, dt){
              to guard between frames and the shot had no follow-through at all. */
           c.recoverT = c.recoverDur = 0.20;
           c.looseT = 0.20;
-          c.shotT = RANGED_DRAG;   /* the legs stay heavy after the string is back — see moveSpeed */
         }
         if(wu.kind === 'melee'){
           c.looseT = 0;
@@ -8213,7 +8345,8 @@ function physics(c, dt){
   if(c.lungeT > 0) c.lungeT -= dt;
   if(c.shoveT > 0) c.shoveT -= dt;
   if(c.looseT > 0) c.looseT -= dt;
-  if(c.shotT > 0) c.shotT -= dt;
+  if(c.reloadT > 0) c.reloadT -= dt;
+  if(c._pinHold > 0) c._pinHold -= dt;   /* the grip outlives the contact — see pinGrip */
   c.mana = Math.min(maxMana(c), c.mana + dt*0.5);
   if(c.dot) applyDot(c, dt);
   c.blocking = false;
@@ -8762,44 +8895,40 @@ function physics(c, dt){
       return;
       }
     }
-    if(d > 1.0){
-      /* ---------- ONE LOOK AT THE SCRUM, TWO QUESTIONS ----------
-         How many are already on it (the Kenshi cap, which was here) and WHO ELSE IS COMING
-         (new). Both come out of a single pass because `charsNear` hands back one shared
-         buffer — a second scan inside this loop would empty it underneath us.
-         THE FAN IS THE FLANKING. A body walking at an enemy used to aim at its centre, so six
-         of them converged on one tile, arrived as a queue, and the five at the back spent the
-         fight shouldering the one at the front. Now each one takes a stable place in the
-         group — its rank among everybody chasing the same body, by id, so no dice and no
-         state to save — and swings its approach off its own bearing by that much. Six bodies
-         coming from one side arrive spread around the target instead of stacked behind it.
-         THE FIRST VERSION OF THIS ONLY LOOKED 2.8 TILES OUT and was therefore nearly useless:
-         nobody is within 2.8 tiles until somebody has already arrived, so the fan opened
-         after the queue had formed. It reads to 6 tiles now, which is while they are still
-         walking, which is when the decision is worth anything.
-         Steering stops at 2.2 tiles. The last stretch is the original straight line,
-         deliberately: a body that flanks all the way in can circle something it is already
-         touching and never land the blow it walked over for. */
-      const TAU = Math.PI * 2;
-      let engaged = 0, mates = 0, rank = 0, bx = 0, by = 0;
-      if(d < 6.0){
-        for(const o of charsNear(t.x, t.y, 6.0)){
-          if(o.state !== 'ok' || o.target !== t) continue;
-          const od = dist(o.x, o.y, t.x, t.y);
-          if(o !== c && od < 1.9) engaged++;
-          if(od < 6.0){
-            mates++; if(o.id < c.id) rank++;
-            /* the group's own approach direction, summed as unit vectors so it means the same
-               thing to every one of them — see the note on the fan below */
-            bx += (o.x - t.x) / Math.max(0.01, od); by += (o.y - t.y) / Math.max(0.01, od);
-          }
+    /* ---- THE SIDE THIS ONE IS COMING AT HIM FROM ----
+       Picked here rather than inside the walk because the last half-tile is the half that
+       decides it. A body sent round to the north walks a straight line at the north slot and
+       CLIPS the man's reach on the way past — it is inside 1.0 while it is still due west of
+       him — so a strike gated on distance alone stops it there and it fights from the front
+       after all. That was an earlier version of this and it measured identically to no
+       version at all: three of three at bearing 0.83, dead in front of his blade.
+       So a body with a place to be finishes going there before it swings. Not for long:
+       a second and a bit is enough to step round a man and not enough to dance around one,
+       and when it runs out the fight happens wherever the body is standing.
+       THE CLOCK IS LATCHED, WHICH IS THE WHOLE OF IT WORKING. Clearing `_slotWait` on the
+       tick it runs out restarts it on the next one, so a body that CANNOT reach its slot —
+       hemmed in, or standing where a moving quarry keeps putting the ring — would circle for
+       a second, swing once, and circle again forever. It stays run-out until the body either
+       reaches the slot or loses the reach, and `approachSlot` restarts it when it hands out a
+       different place to stand. */
+    const slot = approachSlot(c, t, dt);
+    let circling = false;
+    if(slot && d <= 1.0){
+      if(dist(c.x, c.y, slot.x, slot.y) <= 0.45) c._slotWait = 0;                 /* standing in it: fight */
+      else if((c._slotWait = (c._slotWait || 0) + dt) < 1.2) circling = true;
+    } else if(d > 1.0) c._slotWait = 0;
+    if(d > 1.0 || circling){
+      /* ---------- AND WHETHER THERE IS ROOM FOR HIM AT ALL ----------
+         The Kenshi rule: a body only has so many sides, and the extras wait at spear-length.
+         One pass, and nothing else may scan inside it — `charsNear` hands back one shared
+         buffer and a second call would empty this one underneath us. (`approachSlot` above
+         scans too, which is why it is called before this and not inside it.) */
+      let engaged = 0;
+      if(d < 4.5){
+        for(const o of charsNear(t.x, t.y, 1.9)){
+          if(o === c || o.state !== 'ok' || o.target !== t) continue;
+          if(dist(o.x, o.y, t.x, t.y) < 1.9) engaged++;
         }
-      }
-      /* everybody's own arc around the target, computed once and used by both branches */
-      let fan = null;
-      if(mates > 1){
-        const spread = Math.min(TAU * 0.72, (mates - 1) * 0.62);
-        fan = Math.atan2(by, bx) + (rank / (mates - 1) - 0.5) * spread;
       }
       const cap = (t.big||1) > 1.3 ? 5 : 3;
       if(!(c.targetManual && c.faction==='player') && d < 4.5 && engaged >= cap){
@@ -8807,12 +8936,12 @@ function physics(c, dt){
         /* CIRCLE at spear-length — which is what this rule has always said and never did. It
            used to push the extra man straight back down the line he arrived on, so a queue
            stayed a queue and only got longer; the men waiting their turn were the whole of
-           the reported "everyone gets caught on allies". Now he walks round to his own arc
-           and waits on it, which is both what the comment promised and the half of the fan
-           that actually shows: the three who cannot get hold of it are the three with room
-           to go somewhere. */
-        if(fan !== null){
-          travel(c, clamp(t.x + Math.cos(fan)*2.4, 2, W-2), clamp(t.y + Math.sin(fan)*2.4, 2, H-2), dt, 0.35);
+           the reported "everyone gets caught on allies". Now he waits on the bearing of his
+           OWN slot, a stride further out than the fighting ring: the men who cannot get hold
+           of it are already spread around it, ready to step in as the front rank drops. */
+        if(c._slot && c._slot.t === t){
+          const r = slotRadius(t), wr = r + 1.5;
+          travel(c, clamp(t.x + c._slot.ux/r*wr, 2, W-2), clamp(t.y + c._slot.uy/r*wr, 2, H-2), dt, 0.35);
         } else if(d < 2.7){
           const ux = (c.x - t.x)/Math.max(0.01, d), uy = (c.y - t.y)/Math.max(0.01, d);
           travel(c, clamp(c.x + ux*1.5, 2, W-2), clamp(c.y + uy*1.5, 2, H-2), dt, 0);
@@ -8820,13 +8949,11 @@ function physics(c, dt){
         return;
       }
       const px = c.x, py = c.y;
-      let gx = t.x, gy = t.y, arrive = 0.95;
-      if(fan !== null && d > 2.2){
-        gx = t.x + Math.cos(fan) * 1.0;
-        gy = t.y + Math.sin(fan) * 1.0;
-        arrive = 0.25;
-      }
-      travel(c, gx, gy, dt, arrive);
+      /* Walk ONTO the slot, not to within a fifth of a tile of it: a slot sits at 0.9 and a
+         blade reaches 1.0, so a loose arrival tolerance parks bodies at 1.1 — a hair outside
+         the reach that would let them swing, standing there forever. */
+      if(slot) travel(c, slot.x, slot.y, dt, 0.05);
+      else travel(c, t.x, t.y, dt, 0.95);
       /* jammed against the player's walls? smash through */
       if(c.faction !== 'player' && c.faction !== 'town'){
         if(dist(px, py, c.x, c.y) < moveSpeed(c)*dt*0.15) c.stuckT += dt; else c.stuckT = 0;
@@ -11570,6 +11697,10 @@ function fireRanged(c, t, w){
   AU.shot(c.x, c.y);
   breakVeil(c, 'shoots');
   c.atkCd = (w.rof || 2.2) / (1 + c.stats.atk*0.012) * (1 + armorPen(c)*0.7);
+  /* and the legs are spoken for until it is ready again — see moveSpeed. Set HERE and not at
+     the loose, so a lance that comes up dry (above) costs nothing: no shot, no reload. */
+  c.reloadT = c.atkCd;
+  c.reloadK = w.reload || RELOAD_DRAG;
   xpGain(c, 'atk', 0.05);
   xpGain(c, 'ranged', 0.08);
   let victim = t, ff = false;
@@ -15427,16 +15558,17 @@ function update(dt){
 
 /* soft collision: nudge overlapping bodies apart (gives way under pathing pressure) */
 /* ---------- AND WHO HAS HOLD OF WHOM ----------
-   The pin (see `pinnedDown`) needs two numbers per body: is a melee-capable enemy in contact
-   with me, and is that enemy dealing with anybody else. Both fall out of the pair loop below
-   for free, which is the only reason they are computed here rather than somewhere they would
-   read better. Nothing else in the tick walks every close pair, and `charsNear` hands back one
-   shared buffer, so a second scan issued from inside `moveSpeed` would empty this one under
-   whoever was iterating it. One tick of lag on the result is deliberate and harmless — it is a
-   grapple, not a trigger. */
+   The pin (see `pinGrip`) needs three numbers per body: is a melee-capable enemy in contact
+   with me (`_pinBy`), how many hostiles are on THEM (`_contacts`), and how many are on ME
+   (`_holders`). All three fall out of the pair loop below for free, which is the only reason
+   they are computed here rather than somewhere they would read better. Nothing else in the
+   tick walks every close pair, and `charsNear` hands back one shared buffer, so a second scan
+   issued from inside `moveSpeed` — or nested inside a scan of its own — would empty this one
+   under whoever was iterating it. One tick of lag on the result is deliberate and harmless —
+   it is a grapple, not a trigger. */
 const PIN_REACH = 1.45;          /* the same reach a passing blade has */
 function separate(){
-  for(const c of chars){ c._contacts = 0; c._pinnedBy = null; }
+  for(const c of chars){ c._contacts = 0; c._holders = 0; c._pinNow = null; }
   for(const [, cell] of charGrid){
     for(let i=0;i<cell.length;i++){
       const a = cell[i];
@@ -15457,8 +15589,8 @@ function separate(){
           const aw = a.weapon ? ITEMS[a.weapon] : null, bw = b.weapon ? ITEMS[b.weapon] : null;
           a._contacts++; b._contacts++;
           /* a bow cannot hold anybody in place, and a body already down holds nothing */
-          if(!(aw && aw.range) && !a.mule && !a.noFight) b._pinnedBy = a;
-          if(!(bw && bw.range) && !b.mule && !b.noFight) a._pinnedBy = b;
+          if(!(aw && aw.range) && !a.mule && !a.noFight){ b._pinNow = a; b._holders++; }
+          if(!(bw && bw.range) && !b.mule && !b.noFight){ a._pinNow = b; a._holders++; }
         }
         const R = foes ? 0.8 : 0.6;          /* an enemy's reach is part of his body */
         if(d2 >= R*R) continue;
@@ -15486,6 +15618,21 @@ function separate(){
         if(b.moveTarget || b.attackMove || b.target){ nudge(b, uy*slide, -ux*slide); }
       }
     }
+  }
+  /* and now — with every pair counted, and not before — what the grip is actually worth.
+     `pinGrip` reads `_contacts` on the PINNER, which is not finished until the loop above is,
+     so this cannot be folded into it. One pass over the roster, no searching.
+     A tick with no contact does not end the grip: it rides on `_pinHold` while the man who
+     had you is still coming for you and still within a stride. See pinGrip. */
+  for(const c of chars){
+    if(c._pinNow){
+      c._pinBy = c._pinNow;
+      c._pinK = pinGrip(c, c._pinNow);
+      c._pinHold = PIN_HOLD;
+    } else if((c._pinHold || 0) > 0 && c._pinBy && c._pinBy.state === 'ok' &&
+              c._pinBy.target === c && dist(c._pinBy.x, c._pinBy.y, c.x, c.y) < PIN_LET_GO){
+      /* still held — `_pinK` stands as it was when the shoulders were together */
+    } else { c._pinBy = null; c._pinK = 1; c._pinHold = 0; }
   }
 }
 function nudge(c, dx, dy){
@@ -21065,7 +21212,7 @@ function routeTo(c, x, y, tf){
   if(!st){ log('No stair connects there from here.', 'bad'); return false; }
   c.wantFloor = tf;                 /* the true goal */
   c.afterStair = {x, y};
-  c.onStair = false;                /* a new order re-arms the stair — see orderFloor */
+  c.onStair = null;                 /* a new order re-arms the stair — see orderFloor */
   c.moveTarget = {x: st.x + 0.5, y: st.y + 0.5};
   return true;
 }

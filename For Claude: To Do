@@ -49,9 +49,19 @@ WHAT IS DONE SO FAR, and where the proof lives:
     bandage order through a real right-click on the canvas.
   · tools/reach.js  — what a watchtower is worth, whether a sundered cache is inside
     its own monument, and whether anybody can buy a perfect body at the circle.
-  · tools/press.js  — how a line closes and what it costs to leave one: twelve bodies
-    onto one target measured by BEARING rather than distance, and the two speed rules
-    measured against the same body with the rule switched off.
+  · tools/press.js  — how a line closes: twelve bodies onto one target measured by
+    BEARING rather than distance, and a body too close to shoot swinging rather than
+    standing there. Every soak in it is pinned to its tile each tick, because `noFight`
+    and a near-zero speed do not make a body stand still and the case that forgot was
+    measuring how long its own staging lasted.
+  · tools/flank.js  — the same report from the other side: eight onto one, a runner
+    through his own picket, two lines meeting, eight through a one-tile gate, and three
+    joining a fight already in progress. Four of its five measurements found NOTHING
+    wrong with the pathing, which is why the fix went to the picture instead.
+  · tools/kiting.js — what a shot costs the legs and what a blade costs the exit.
+    Measured in GROUND COVERED rather than in flags, because every flag in that system
+    reads correctly on the broken build; the case that looks like it is testing the draw
+    is a deliberate control that passes on every build.
   · tools/curse.js  — Malathuun's Curse, driven through the real dial: bodies laid on
     the ground and the real tick run, with a tidy field as the negative control.
   · tools/lieu.js   — a lieutenant spent all the way down its ladder and one death past
@@ -113,8 +123,22 @@ Two rules this file keeps learning the hard way, both worth reading first:
        · guns.js `theLanceLandsInPlay` — the lance fires exactly ONCE in the probe's
          window, so the assertion is a single hit roll. It landed on two streams
          (100->88, 100->84) and missed on the third. A one-shot sample is the bug.
-         STILL UNFIXED, because it is green on the stream that shipped; the same
-         treatment gunnery.js just had is what it wants when somebody touches it.
+         NOW FIXED, AND IT WENT RED EXACTLY AS PREDICTED on a parallel branch —
+         against a lance that works, one cell spent on both builds, which is the
+         tell: the weapon fired, the arrow missed, and that was the whole assertion.
+         WHAT MADE IT ONE SHOT was not the rate of fire (3.7s at atk 20, so twenty
+         seconds is five shots) but the raider — it crosses the five tiles in about
+         a second and a half, and a body inside 1.7 tiles makes the lance guard
+         instead of shoot. The probe was measuring the opening shot of a fight and
+         then a wrestle. It pins the target's TILE now, the same way rites.js had to
+         pin the ritualist's, and widens to sixty seconds.
+         AND THEN THE SECOND HALF, which the parallel branch did not hit because its
+         lance still ran on cells: with the target held still the widened window
+         fired FOURTEEN times and dealt nothing, because `foe()` hands out a tough-40
+         body and the lance does 44 — the mark was face-down for thirteen of them. A
+         soak at tough 400 gives eight shots and 43 blood, repeatable. It refuses to
+         pass at all on fewer than four shots, so it cannot quietly decay back into a
+         coin flip.
        · wanderers.js `opensOnArrival` — the walk arrives and the modal does not
          open. Note the failure text quotes a title that is still correct, because
          hiding a panel does not clear it; the display flag is the thing to read.
@@ -127,9 +151,15 @@ Two rules this file keeps learning the hard way, both worth reading first:
      cells, identical across runs, and the DRY case in the same loop is the control
      that keeps it honest: thirty seconds with no cells still does nothing at all.
 
+     ONE OF THE TWO IS NOW PAID OFF, and the advice above held exactly: a bigger
+     sample, no re-baselined number, a pinned target and a control in the same loop.
+     `wanderers.js opensOnArrival` is the one still owed — it survived this change
+     untouched, so it is still a live landmine and still wants the same treatment
+     rather than a new number.
+
      So the draw stays for now and this is written down instead. Whoever removes it
-     should expect to fix those two assertions in the same sitting, and should fix
-     them by giving each a bigger sample rather than by re-baselining a number.
+     should expect to fix that assertion in the same sitting, and should fix it by
+     giving it a bigger sample rather than by re-baselining a number.
 
 ===============================================================================
 
@@ -242,40 +272,81 @@ Two rules this file keeps learning the hard way, both worth reading first:
          arrived on. So a queue stayed a queue and only got longer. Extras now walk
          round to their own arc and wait on it, which is what the comment always
          promised, and it is most of the measured difference.
-    The fan itself: each body takes a stable place among everybody chasing the same
-    target (by id — no dice, nothing to save) and swings its approach off the GROUP's
+    THE APPROACH ITSELF WENT THROUGH TWO ANSWERS and the second one is in the build.
+    The first was a fan: each body took a stable place among everybody chasing the same
+    target (by id — no dice, nothing to save) and swung its approach off the GROUP's
     mean bearing by that much. Off the group's, not its own: fanning off your own
     bearing is a feedback loop, because turning toward the offset moves the bearing the
-    offset was measured from, and a body chases its own tail round the target. Measured
-    at three sides occupied — WORSE than changing nothing. The scan reads 6 tiles out,
-    not 2.8, because nobody is within 2.8 tiles until the queue has already formed.
-    Steering stops at 2.2 tiles so nothing circles a body it is already touching.
+    offset was measured from, and a body chases its own tail round the target — measured
+    at three sides occupied, WORSE than changing nothing.
+    A parallel branch answered the same report with a RING OF PLACES instead of an
+    angle, and it is the better answer, so it is the one here. Each body claims one of
+    eight slots around its quarry and walks to THAT. Nearest free place wins, which keeps
+    the front rank walking straight in — the ones behind fan out because the near slots
+    are already spoken for by the time they ask. A man already fighting somebody has a
+    front and a back, so slots inside the arc he is facing cost an extra tile and a half
+    of walking: a squad joining a fight in progress goes round to his flanks rather than
+    queueing in front of his blade. Held half a second at a time and stored as an OFFSET,
+    so it follows a quarry who is moving rather than aiming where he was.
+    Two things were added to that branch's version. A slot is DEAR when occupied, not
+    SHUT: rejecting a taken slot outright leaves four of twelve bodies with no slot at
+    all, and a body with no slot walks at his tile, which is the beeline this replaces —
+    measured on that branch at four sides covered with six stacked on one. Pricing
+    occupancy above the width of the whole ring means a free place always beats a shared
+    one and the overflow doubles up on the emptiest side. And the Kenshi extras now wait
+    on the bearing of their OWN slot, a stride outside the fighting ring, so the men who
+    cannot get hold of it are already spread around it rather than queued behind it.
+    Twelve onto one: six sides of eight, no more than four on any of them, nobody
+    travelling less than 7.9 tiles. Eight onto one: seven sectors, none of them stalled.
+    Three joining a fight already in progress: 3 of 3 come round off his face.
 
 [DONE] Kiting should slow down the ranged attacker. It doesn’t make sense that someone could run backwards at full speed while still firing projectiles. And catching a ranged attacker in melee should somewhat lock them down from fleeing again. (Somewhat — they should reasonably be able to escape if, say, an ally also engages that enemy.)
-    Proof in tools/press.js. The note below was right that the AI never kites,
-    and that turned out to be the useful half: NOTHING in this game fires on the move.
-    The AI branch closes OR shoots, and a player move order runs through `clearOrders`,
-    which drops the target. So there was no "firing while running" to slow down.
-    WHAT IS ACTUALLY HAPPENING IS SHOOT AND SCOOT: loose, order a move, retreat at full
-    pace, order the shot again. Standing still was already paid for — a 0.20s
-    follow-through — and the RETREAT was free, which is what reads as running backwards
-    at full speed. So the loose now leaves `shotT` on the legs, 1.15s of it, decaying:
-    a body that has just fired moves at about 60% of its own pace and is back to normal
-    by the time it could fire again. Standing and shooting is untouched, which is the
-    trade this is meant to pose.
-    THE LOCK-DOWN, and the escape clause is the better half. `pinnedDown(c)` holds a
-    body at 45% pace while a melee-capable enemy is in contact with it — and lets go the
-    moment that enemy has somebody ELSE on it. So the way out is not a timer or a dice
-    roll, it is that a friend came and gave the man holding you something to think
+    Proof in tools/kiting.js, which measures GROUND COVERED and never a flag —
+    the complaint is written in ground, and every flag read correctly on the broken
+    build. The note below was right that the AI never kites, and that turned out to be
+    the useful half: NOTHING in this game fires on the move. The AI branch closes OR
+    shoots, and a player move order runs through `clearOrders`, which drops the target.
+    So there was no "firing while running" to slow down.
+    NOR WAS THE DRAW THE HOLE, which is where a plausible fix went and came back out.
+    `physics` already plants the feet for the whole length of a windup, and a probe that
+    gives the run order on the tick the draw opens measures 0.00 tiles walked before the
+    arrow leaves. The answer is arithmetic: a bow at atk 10 is a 2.3s cycle of which the
+    rooted draw is 0.45, so a perfectly rooted archer still walks four fifths of it flat
+    out — measured at 86% of the ground the same archer covers doing nothing but running.
+    THE RELOAD IS THE ONLY PART OF THE CYCLE BIG ENOUGH TO PAY FOR THE SHOT. `reloadT`
+    runs from the loose until the weapon is ready again (the same window `atkCd` runs),
+    and holds the legs at a fraction graded per weapon — a bow is nocked half-walking at
+    0.62, a crossbow is spanned against the body at 0.50, the lance has to spin something
+    up at 0.42. An archer who keeps shooting never gets their legs back; one who stops
+    has them in a couple of seconds. Twelve seconds of hard kiting covers 68% of the
+    ground the same archer covers just running, against 86% before.
+    THE LOCK-DOWN, and the escape clause is the better half. `pinGrip(c, o)` is a scale,
+    not a switch: alone with you the man holding you has both hands on you (0.50), one
+    other body on him and most of the grip is gone (0.85), two and it is a formality
+    (0.95); a second blade on YOU tightens it again. So the way out is not a timer or a
+    dice roll, it is that a friend came and gave the man holding you something to think
     about, which makes fetching a caught archer a thing you can do rather than a stat.
-    Both numbers fall out of `separate()`, which is the only pass in the tick that
-    already walks every close pair — and it has to be there rather than in `moveSpeed`,
-    because `charsNear` hands back ONE SHARED BUFFER and a scan issued from inside
-    moveSpeed would empty the caller's list underneath it. One tick of lag on the
-    result, deliberately: it is a grapple, not a trigger.
+    IT IS DIRECTIONAL, enforced in `stepToward` and not in `moveSpeed`: closing, circling
+    at spear-length and standing your ground all cost nothing. Only leaving costs.
+    AND A GRIP IS RELEASED, NOT OUTRUN — the part that took measuring. Contact is a
+    1.45-tile test, and a body that steps out of it runs flat out on the very next tick
+    while the man holding it is mid-swing with his feet planted: the gap opens to 2.3
+    tiles in three ticks and an equal-footed chaser never closes it again. Scoped to
+    contact alone the whole grip was worth 0.7 tiles out of thirteen. So it rides for
+    0.9s past the last contact on two conditions that both mean he still has you — he is
+    still coming for YOU, and he is still within arm and a stride. Four seconds of
+    running: 13.4 tiles alone, 7.3 with a swordsman on them, 13.0 once an ally has that
+    swordsman by the throat.
+    EVERY NUMBER FALLS OUT OF `separate()`, which is the only pass in the tick that
+    already walks every close pair — and it has to be there rather than in a scan of its
+    own, because `charsNear` hands back ONE SHARED BUFFER: a scan issued from inside
+    `moveSpeed` would empty the caller's list, and a scan nested inside another empties
+    its own. (A parallel branch answered this item with a nested one. Same rule, quieter
+    failure.) One tick of lag on the result, deliberately: it is a grapple, not a trigger.
     CONTACT IS COUNTED BEFORE THE SEPARATION CULL. Bodies are pushed apart to 0.8 and a
     blade reaches 1.45, so counting after the cull would have meant nobody ever held
-    anybody. A bow cannot hold you, and neither can a mule or anything `noFight`.
+    anybody. A bow cannot hold you, and neither can a mule or anything `noFight`; and
+    nothing over 1.6 big is held by one man on its flank.
     AND THE LOOSE THREAD IS CLOSED TOO, in the commit after this one — a body holding a
     ranged weapon inside 1.7 tiles now falls through to the swing instead of standing
     there. It was found rather than remembered: guns.js went red after the changes above

@@ -1,14 +1,8 @@
 #!/usr/bin/env node
-/* HOW A LINE BEHAVES WHEN IT CLOSES, AND WHAT IT COSTS TO LEAVE ONE.
+/* HOW A LINE BEHAVES WHEN IT CLOSES ON ONE BODY.
  *
- * Two reports, and they turned out to share a page of code:
- *
- *   1. "The melee pathing system seems to have gone a bit janky. Everyone tries to beeline
- *       towards the enemy and gets caught on allies. They should attempt to flank around
- *       where possible."
- *   2. "Kiting should slow down the ranged attacker... And catching a ranged attacker in
- *       melee should somewhat lock them down from fleeing again. (Somewhat — they should
- *       reasonably be able to escape if, say, an ally also engages that enemy.)"
+ * "The melee pathing system seems to have gone a bit janky. Everyone tries to beeline towards
+ * the enemy and gets caught on allies. They should attempt to flank around where possible."
  *
  * WHAT IS MEASURED, and why each is measured the way it is:
  *
@@ -20,9 +14,22 @@
  *     its own front rank still ends up near the enemy eventually, so "did it arrive" hides
  *     the bug. What it cannot do while wedged is MOVE, so the probe watches the slowest
  *     member of the back rank and asks whether it ever got anywhere.
- *   · The two speed rules are measured against a CONTROL body standing in identical
- *     circumstances minus the one thing being tested, because `moveSpeed` is a stack of a
- *     dozen multipliers and an absolute number here would be asserting the whole stack.
+ *   · TOO CLOSE TO SHOOT IS NOT NOTHING TO DO — a lance swings, a bow keeps its guard up.
+ *     Counted as windups inside the rule's own 1.7 tiles, not as damage.
+ *
+ * WHAT USED TO BE HERE AND IS NOT ANY MORE. Cases measuring what a loose costs the legs and
+ * what a blade costs the exit lived in this file and read `moveSpeed` against a control body.
+ * That is the wrong unit: the complaint is written in GROUND COVERED, and a multiplier that
+ * only bites while somebody has hold of you cannot be read off a stationary body at all.
+ * tools/kiting.js measures both by walking them, and owns them now. A claim measured in two
+ * places drifts apart; a claim measured in the weaker of the two is worse than not measured.
+ *
+ * THE SOAK BODIES ARE PINNED EACH TICK. Every case here stands somebody in contact with a
+ * mark that is meant to hold still, and `noFight` plus a near-zero speed does not make a body
+ * hold still — it wanders, and separation shoves it. Left to drift, case 3 measured how long
+ * the staging happened to last rather than the rule: 88 frames in contact on one build and 18
+ * on the next, from a change that touched neither the bow nor the guard. Anchored, both read
+ * 120 of 120.
  *
  *   node tools/press.js [game.html]
  */
@@ -69,6 +76,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       c.state = 'ok'; c.__probe = true; chars.push(c); return c;
     };
     const run = (n) => { paused = false; for (let i = 0; i < n; i++) update(0.1); paused = true; };
+    /* a mark that is supposed to stand still, made to stand still — see the note up top */
+    const anchor = (f) => { const ax = f.x, ay = f.y; return () => { f.x = ax; f.y = ay; f.moveTarget = null; f.path = null; }; };
     const sector = (o, t) => (((Math.atan2(o.y - t.y, o.x - t.x) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * 8 | 0) % 8;
 
     /* ================== 1. TWELVE ONTO ONE ==================
@@ -153,29 +162,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! STUCK BEHIND ITS OWN SIDE (${d0.toFixed(1)} -> ${d1.toFixed(1)} tiles)`;
     }
 
-    /* ================== 3. THE LOOSE COSTS YOUR FEET ==================
-       Two identical archers. One has just fired; the other has not. Nothing else differs. */
-    {
-      wipe();
-      /* ONE BODY, NOT TWO. The first draft used a second archer as the control and it drifted
-         by 1% — `makeChar` rolls a subrace onto whatever stats it is handed, so two bodies
-         asked for identically are not identical. The only honest control for a multiplier is
-         the same body with the multiplier off. */
-      const shot = mk('Shot', 'player', gx, gy, { atk: 14, def: 8, tough: 40, ath: 9, weapon: 'w_bow' });
-      shot.shotT = 0;
-      const base = moveSpeed(shot);
-      shot.shotT = 1.15;                     /* exactly what a loose leaves behind */
-      const dragged = moveSpeed(shot);
-      shot.shotT = 0;
-      R.aLooseIsFree = Math.abs(moveSpeed(shot) - base) < 1e-9
-        ? 'the same archer, unshot, is the control'
-        : `!! THE CONTROL DRIFTED (${base.toFixed(3)} vs ${moveSpeed(shot).toFixed(3)})`;
-      R.shootingCostsGround = dragged < base * 0.85
-        ? `and one that has just loosed moves at ${(dragged / base * 100).toFixed(0)}% of that`
-        : `!! A SHOT COSTS NOTHING (${base.toFixed(2)} -> ${dragged.toFixed(2)}) — shoot and scoot is free`;
-    }
-
-    /* ================== 3b. TOO CLOSE TO SHOOT IS NOT NOTHING TO DO ==================
+    /* ================== 3. TOO CLOSE TO SHOOT IS NOT NOTHING TO DO ==================
        The other half of the same branch. A body holding a ranged weapon refuses to fire
        inside 1.7 tiles — correctly — and used to stop there, so anything that reached an
        archer got to beat it to death while it stood with its guard up. Measured through the
@@ -188,6 +175,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const thug = mk('Thug', 'bandit', gx + 0.85, gy, { atk: 6, def: 6, tough: 400, ath: 1 });
       thug.noFight = true; thug.speedMult = 0.0001;   /* it stands in contact and soaks */
       archer.target = thug; archer.targetManual = true;
+      const holdThug = anchor(thug);
       const hp0 = thug.blood;
       /* WATCH WHILE IT RUNS. The no-shoot rule is about what happens DURING the fight, and a
          windup lasts a fraction of a second — reading `archer.windup` after 12 seconds would
@@ -195,6 +183,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       let sawRanged = 0, sawMelee = 0, closest = 9;
       paused = false;
       for (let i = 0; i < 120; i++) {
+        holdThug();
         update(0.1);
         const dd = dist(archer.x, archer.y, thug.x, thug.y);
         if (dd < closest) closest = dd;
@@ -223,6 +212,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const brute = mk('Brute', 'bandit', gx + 0.85, gy + 6, { atk: 6, def: 6, tough: 400, ath: 1 });
         brute.noFight = true; brute.speedMult = 0.0001;
         bowman.target = brute; bowman.targetManual = true;
+        const holdBrute = anchor(brute);
         /* MEASURED WHERE THE RULE APPLIES, again. "The brute took no damage" is the wrong
            reading: `separate()` shoves the pair apart past 1.7 and the bowman then quite
            correctly shoots it. What must never happen is a bow SWINGING at arm's length
@@ -230,6 +220,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         let guarded = 0, bowSwings = 0;
         paused = false;
         for (let i = 0; i < 120; i++) {
+          holdBrute();
           update(0.1);
           const dd = dist(bowman.x, bowman.y, brute.x, brute.y);
           if (dd < 1.7) {
@@ -250,42 +241,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! IT IS ${sawRanged ? 'SHOOTING FROM INSIDE ITS OWN GUARD (' + sawRanged + ' draws under 1.7)' : 'NOT SWINGING EITHER'}`;
     }
 
-    /* ================== 4. HELD, AND LET GO ==================
-       The escape clause is the interesting half: it is not a timer, it is whether the body
-       holding you has somebody else on it. */
-    {
-      wipe();
-      const archer = mk('Quarry', 'player', gx, gy, { atk: 10, def: 8, tough: 40, ath: 9, weapon: 'w_bow' });
-      const holder = mk('Holder', 'bandit', gx + 1.0, gy, { atk: 18, def: 10, tough: 60, ath: 9, weapon: 'w_sword' });
-      holder.target = archer;
-      run(2);                                 /* separate() stamps the contact */
-      const free0 = (() => { const o = archer._pinnedBy; archer._pinnedBy = null; const v = moveSpeed(archer); archer._pinnedBy = o; return v; })();
-      const held = moveSpeed(archer);
-      R.caughtIsCaught = held < free0 * 0.7
-        ? `an archer with a blade on it moves at ${(held / free0 * 100).toFixed(0)}% of its own pace`
-        : `!! A BLADE IN YOUR FACE COSTS NOTHING (${free0.toFixed(2)} -> ${held.toFixed(2)})`;
-      /* now a friend arrives and takes the holder's attention */
-      const rescue = mk('Rescue', 'player', gx + 1.7, gy + 0.5, { atk: 20, def: 10, tough: 60, ath: 9, weapon: 'w_sword' });
-      rescue.target = holder;
-      run(2);
-      const afterRescue = moveSpeed(archer);
-      R.aFriendGetsYouOut = afterRescue > held * 1.5
-        ? `and once an ally engages the same body it is loose again (${(afterRescue / free0 * 100).toFixed(0)}% of pace)`
-        : `!! A RESCUE CHANGES NOTHING (${held.toFixed(2)} -> ${afterRescue.toFixed(2)}) — the pin has no way out`;
-      R.theHolderIsTheReason = (holder._contacts || 0) >= 2
-        ? `because the holder now has ${holder._contacts} of them to deal with, not one`
-        : `!! THE HOLDER NEVER NOTICED THE SECOND BODY (contacts ${holder._contacts})`;
-      wipe();
-    }
-
     return R;
   });
 
-  console.log('=== CLOSING A LINE, AND LEAVING ONE ===\n');
+  console.log('=== CLOSING A LINE ===\n');
   for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(26) + v);
   const bad = Object.values(out).map(String).filter(v => v.startsWith('!!'));
   console.log('\n' + (bad.length ? '*** ' + bad.join('\n*** ')
-    : 'A LINE SPREADS AROUND WHAT IT CLOSES ON, AND LEAVING A FIGHT COSTS SOMETHING'));
+    : 'A LINE SPREADS AROUND WHAT IT CLOSES ON'));
   if (errs.length) { console.log('errs:', errs.length); errs.slice(0, 4).forEach(e => console.log('  ' + e)); }
   await b.close();
   if (bad.length) process.exitCode = 1;
