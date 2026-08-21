@@ -99,7 +99,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         items: (chests[s.cacheIdx] && chests[s.cacheIdx].loot && chests[s.cacheIdx].loot.items)
           ? { ...chests[s.cacheIdx].loot.items } : null,
       }));
-      layDead(90, corpseSites[0].x, corpseSites[0].y);
+      /* ---------- A FIELD ON EVERY SITE, BECAUSE THE RITE PICKS THE SITE ----------
+         The note above already worked out that WHICH site answers is the game's choice, and
+         made the cache assertions find out afterwards rather than assume. `andItGoesOnEating`
+         was left behind by that fix: it needs the beast to be STANDING IN the dead, and the
+         dead were laid on site[0] only. Rise anywhere else and there is nothing within reach
+         to eat, so "does it go on growing" was really "did `pick` choose site zero" — measured
+         at ate 32 -> 33 when it did, a margin of one body, and 32 -> 32 the moment the stream
+         moved and it chose another.
+         Laying a field on every site keeps the game's choice free, which is the point, and
+         means the answer no longer depends on it. */
+      for (const s2 of corpseSites) layDead(90, s2.x, s2.y);
       /* ---------- CATCH IT AS IT STANDS UP ----------
          "Not fully grown but not nascent either" is a claim about the moment it ARRIVES, and
          the first version of this read `big` at the end of a four-day run — by which time the
@@ -125,8 +135,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       paused = true;
       const now = liveCurses();
       R.theFieldsGetUp = now.length >= 1
-        ? `ninety unclaimed dead and the ground answered: ${now[0].name}`
-        : `!! NINETY BODIES ON THE GROUND AND NOTHING STOOD UP (${corpses.length} still lying there)`;
+        ? `${corpseSites.length} fields of ninety left lying and the ground answered: ${now[0].name}`
+        : `!! ${corpseSites.length * 90} BODIES ON THE GROUND AND NOTHING STOOD UP (${corpses.length} still lying there)`;
       beast = now[0] || null;
       if (beast) {
         /* ---------- 3. NOT NASCENT, NOT FULL ---------- */
@@ -134,9 +144,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           ? `it stands up at ${bornBig.toFixed(1)}x on ${bornAte} bodies — past the Sixfold, well under the ${CAIRN_CAP}x ceiling`
           : `!! IT ARRIVED AT ${bornBig === null ? 'never' : bornBig.toFixed(1) + 'x'} (ceiling ${CAIRN_CAP}) — nascent or already finished`;
         /* and it is not finished: the ceiling is still somewhere it can get to */
-        R.andItGoesOnEating = beast.big > bornBig
-          ? `and it goes on eating what is lying there — ${bornBig.toFixed(1)}x at the rite, ${beast.big.toFixed(1)}x four days later`
-          : `!! IT NEVER GREW AFTER ARRIVING (${bornBig.toFixed(1)}x -> ${beast.big.toFixed(1)}x)`;
+        /* and it is not finished: the ceiling is still somewhere it can get to. Reported with
+           the bodies as well as the size, because `big` moves in steps and a beast that ate
+           four more without crossing one would otherwise read as a beast that ate nothing. */
+        R.andItGoesOnEating = beast.big > bornBig || (beast.ate || 0) > bornAte
+          ? `and it goes on eating what is lying there — ${bornBig.toFixed(1)}x on ${bornAte} bodies at the rite, ${beast.big.toFixed(1)}x on ${beast.ate} four days later`
+          : `!! IT NEVER GREW AFTER ARRIVING (${bornBig.toFixed(1)}x on ${bornAte} bodies -> ${beast.big.toFixed(1)}x on ${beast.ate}), standing ${Math.min(...corpses.map(b => dist(b.x, b.y, beast.x, beast.y))).toFixed(0)} tiles from the nearest body`;
         R.itIsStillACairnBeast = beast.bossKey === 'cairn' && (beast.ate || 0) > 0
           ? `and it is an ordinary Cairn Beast underneath (ate ${beast.ate}), so it still grows and still sheds`
           : `!! IT IS NOT A CAIRN BEAST (bossKey ${beast.bossKey}, ate ${beast.ate})`;

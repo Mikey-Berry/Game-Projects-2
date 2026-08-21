@@ -580,6 +580,29 @@ the truth was 45%.
   creation chips, turned four wrapped rows into forty stacked ones, and made the panel 1546px
   tall. It scrolled, so the assertion still passed; it was simply awful to use. Numbers a
   harness watches will not tell you that — look at the thing.
+- **A harness that gives two answers on one md5 is not measuring the build.** `guns.js` passed
+  and failed on files that were byte-identical, minutes apart, and five runs of the same file
+  split three to two. Every obvious explanation was checked and eliminated — world state, fog,
+  and even the PRNG seed were identical at probe start — which is what forced the real one out:
+  the RENDERER was drawing from the SIMULATION's generator. `updateDust` spawns motes from
+  inside `render()` at frame rate, and `buildCharMesh` rolled a gait offset when a body first
+  came into view, so how fast the machine painted and where the camera pointed both advanced
+  the world's dice. Measured with the game PAUSED: thirteen `rnd()` calls in two and a half
+  seconds of pure drawing. **Before hardening a flaky probe, find out whether the thing it is
+  probing is deterministic at all** — otherwise you are tuning thresholds against noise, and
+  every threshold in the repo is quietly resting on machine load.
+- **Derive it, do not roll it — especially in a function the camera calls.** The gait offset
+  only needed to be arbitrary, and `hash2(c.id, …)` is arbitrary without touching the stream.
+  It is also strictly better than the roll it replaced: a body that walks out of view and back
+  keeps the gait it had, where `rnd()` gave it a new one on every rebuild.
+- **When you make one assertion independent of a dice roll, check its neighbours.** `curse.js`
+  had already learned that WHICH sundered site answers the Curse is the game's choice, and had
+  been fixed to find out afterwards rather than assume — but only the two cache assertions were
+  fixed. `andItGoesOnEating` still needed the beast to be standing in the dead, and the dead
+  were laid on site[0] only, so it was really asking "did `pick` choose site zero" and passing
+  on a margin of ONE body (ate 32 -> 33). Laying a field on every site keeps the game's choice
+  free and moves the margin to 32 (ate 32 -> 64). A fix that stops at the assertion that went
+  red leaves its siblings loaded.
 - **A negative control that also passes means the harness is unproven, not that the bug is
   fixed.** `roads.js` found zero caravan stalls; stripping out the `travel` fallback whose
   comment names that exact failure produced zero stalls as well. So the harness guards against
