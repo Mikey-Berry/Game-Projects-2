@@ -1329,6 +1329,16 @@ const RACES = {
     blurb:'A servant that was left running until it began to want things. Does not bleed, does not age, does not sleep, and does not learn easily — it was made for one task and it is very good at that one. What is left of the trade it was built for is most of what it is.'},
   hollow:     {label:'Hollow',     xp:0.85, speed:1.0,  deathAge:62,  fertile:false, cap:100,
     blurb:'A rider in a borrowed body. Pushes the host past its limits — and takes a cut of everything the host learns. It is saving up for something.'},
+  /* ---------- THE IMPERFECT MIRROR ----------
+     A Messenger is a Watcher that learned to speak. A Mimic is something that learned to LIVE
+     HERE — it did not come to study people, it came to be among them, and it got most of the
+     way there. The three lines are three different ways of getting it slightly wrong, and the
+     wrongness is the whole of what they are: the one that is too beautiful, the one that is
+     nobody in particular, and the one that quit.
+     No mimic is a Messenger and no Messenger is a mimic, but they are made of the same stuff,
+     which is why the Fallen come apart the way a Watcher does. */
+  mimic:      {label:'Mimic',      xp:1.05, speed:1.0,  deathAge:120, fertile:false, cap:110,
+    blurb:'Something that lives alongside people and has learned to be one of them, near enough. Nobody agrees what they were before, and asking is rude. They age like a rumour and they do not breed true.'},
 };
 /* A subrace record. Everything is optional; `learn` is the one that matters.
      stats  flat additions at creation, before anything else is rolled
@@ -1448,6 +1458,30 @@ const SUBRACES = {
 };
 const SUB_NONE = {label:'', blurb:'', w:1};
 function raceOf(c){ return RACES[c.race] || RACES.human; }
+SUBRACES.mimic = {
+  /* ---------- THE ONE THAT IS TOO BEAUTIFUL ----------
+     Horns, a tail, and a colour no living skin comes in. She is not hiding any of it and never
+     has been; the point of a succubus is that people decide not to notice. */
+  succubus: {label:'Succubus', w:10, sexOnly:'f', skin:'#b96a86', fertile:true, innate:['charm'],
+    blurb:'Devil-horned and unbothered by it. Talks people round, and can carry a child by anything that walks — which is the part nobody says out loud.',
+    stats:{magic:14, medic:2, atk:-2, tough:-2},
+    learn:{magic:1.25, medic:1.15, martial:0.85, crafting:0.9}},
+  /* ---------- THE ONE THAT IS NOBODY IN PARTICULAR ----------
+     It has no face of its own to go back to. "Change form" is not a disguise it puts on, it is
+     the only thing it does — and every time it does it, whoever it was is gone. */
+  doppelganger: {label:'Doppelganger', w:8, skin:'#9d9481', innate:['shift'],
+    blurb:'Wears a face until the face becomes a problem, then wears another. A clean slate every time, and it costs exactly what a clean slate costs: nobody who knew you knows you.',
+    stats:{ranged:2, crafting:2, atk:-1},
+    learn:{ranged:1.15, crafting:1.15, martial:0.9, magic:0.95}},
+  /* ---------- THE ONE THAT QUIT ----------
+     A Messenger that put the eldritch down and built itself a body out of statuary — the gods
+     of old as men imagined them, which is a mimicry of a mimicry and exactly the joke. It will
+     not touch alchemy, and it is not modest about the rest. */
+  fallen: {label:'Fallen', w:6, sexOnly:'m', skin:'#d8cdb4', noGift:true, charismatic:true, voidDeath:true,
+    blurb:'A Messenger that walked out. Forged itself in the shape of the old gods and will not go near the arts it left behind — the fear is genuine. When one dies the void takes it back, and nothing comes home.',
+    stats:{atk:4, def:3, tough:3, martial:3, magic:-99},
+    learn:{martial:1.2, atk:1.15, magic:0.0}},
+};
 function subsFor(race){ return SUBRACES[race] || null; }
 function subOf(c){
   const t = c && SUBRACES[c.race];
@@ -1466,6 +1500,33 @@ function lineWord(c){
 function traitOf(c, key, dflt){
   const s = subOf(c), r = RACES[c.race] || RACES.human;
   return s[key] !== undefined ? s[key] : (r[key] !== undefined ? r[key] : dflt);
+}
+/* ---------- WHO CAN HAVE A CHILD, AND WITH WHAT ----------
+   `fertile` was a RACE flag read straight off the table, which is right for every line that
+   existed when it was written: a homunculus is vat-grown, a chimera does not breed true, a
+   golem is a machine. `traitOf` lets a LINE overrule its race, which the succubus needs —
+   Mimics as a race do not breed and she does.
+   AND SHE OVERRULES THE OTHER SIDE TOO, which is the actual claim: "capable of producing
+   offspring even with sterile races". So the pair is fertile if both halves are, OR if one of
+   them is her. That is deliberately not symmetric with anything else in the table and it is
+   the whole point of the line. */
+function breeds(c){ return !!traitOf(c, 'fertile', false); }
+function pairBreeds(a, b){
+  if(subIs(a, 'succubus') || subIs(b, 'succubus')) return true;
+  return breeds(a) && breeds(b);
+}
+/* ---------- WHAT A LINE IS BORN KNOWING ----------
+   Every art in this game is bought: an attunement in the right branch, a minimum in magic, and
+   often a piece of research. That is right for an art you LEARN, and wrong for one you ARE. A
+   succubus does not study the Loyalty of Dust and a doppelganger did not research changing
+   shape — those are what the body does, the way a houndkin runs.
+   So an innate art skips the gift, the attunement and the tech, and keeps everything that
+   makes it a decision: it still costs mana and it still runs a cooldown. `noGift` lines are
+   deliberately not excluded — the Fallen holds no gift and has no innate art either, so the
+   two never meet, but a line that was both would be making a coherent claim. */
+function innateArt(c, key){
+  const list = c && subOf(c).innate;
+  return !!(list && list.indexOf(key) >= 0);
 }
 function canHoldGift(race, sub){
   const r = RACES[race] || RACES.human;
@@ -1544,7 +1605,10 @@ function makeChar(name, faction, x, y, o={}){
     windup: null, staggerT: 0, flinchT: 0, castT: 0, oppCd: 0, recoverT: 0, recoverDur: 0,
     age: o.age ?? ri(18, 38), goal: null, wasChild: false, legacyTrade: null,
     race: o.race || 'human', sub: o.sub || null,
-    sex: o.sex || (rnd() < 0.5 ? 'f' : 'm'), spouse: 0, partner: 0, grief: 0, pregnant: 0, omni: !!o.omni,
+    /* A LINE MAY FIX THE SEX, and it wins over the caller: a succubus is female and a Fallen
+       is male by what they ARE, so a spawn that asked for the other one is asking for a body
+       that does not exist rather than expressing a preference. */
+    sex: _sb.sexOnly || o.sex || (rnd() < 0.5 ? 'f' : 'm'), spouse: 0, partner: 0, grief: 0, pregnant: 0, omni: !!o.omni,
     /* a golem does not bleed and has no limbs to take; a line that was built big is big */
     construct: !!(RACES[o.race] || {}).construct,
     clawDmg: 0, big: _sb.big || 1, taunt: false, structMult: 1, bindWeight: 1, shortTag: '',
@@ -5162,6 +5226,21 @@ function crime(kind, x, y, by){
   if(t.def.undeadFriendly && (kind === 'raising' || kind === 'walkdead' || kind === 'formula')) return null;
   const saw = witnessNear(x, y, t);
   if(!saw) return null;
+  /* ---------- SOMEBODY TALKS THEM ROUND ----------
+     "Charismatic: occasional store discounts, forgiveness of minor trespasses." MINOR is the
+     load-bearing word and it is read off the price the town puts on the thing rather than
+     from a second list: brawling and theft can be smoothed over, murder cannot, and the
+     threshold moves on its own if the table ever does. The Fallen has to be close enough for
+     the witness to be looking at THEM, and it is a roll rather than a rule — "occasional",
+     and a charm that always works is not a charm, it is a permit. */
+  if(spec.bounty <= 90){
+    const smoother = player().find(o => o.state === 'ok' && traitOf(o, 'charismatic', false) &&
+      dist(o.x, o.y, saw.x, saw.y) < 9);
+    if(smoother && rnd() < 0.55){
+      log(`${saw.name} saw — and ${smoother.name} was already talking. It comes to nothing.`, 'good');
+      return null;
+    }
+  }
   t.bounty = (t.bounty || 0) + spec.bounty;
   t.wanted = true;
   dropRep(t, Math.round(spec.bounty / 12));
@@ -6102,7 +6181,22 @@ function kill(c, by){
      has left to spend is legible on the body itself, in the same four colours every other
      corpse in the world is already using. Nothing new had to be invented to show it. */
   const lieuSpent = c.lieutenant && (c.lieuWear || 0) >= DECAY.length;
-  if(!c.undead || c.bossKey || (c.lieutenant && !lieuSpent)) corpses.push(c);   /* bosses always leave remains to claim */
+  /* ---------- AND SOME THINGS ARE NOT LEFT BEHIND AT ALL ----------
+     "Permadeath: they are reclaimed by the void upon death in a burst of eldritch
+     Ainzopha'arian light. No revivals or second chances."
+     There is no flag for "cannot be raised" in this game and there does not need to be one —
+     the rite needs a BODY and this leaves none. Nothing is pushed to `corpses`, so there is
+     nothing to raise, nothing to harvest, nothing to loot and nothing to bury. That is the
+     whole of the rule, enforced by absence rather than by a check somebody has to remember to
+     write in the four places that would need it. */
+  const reclaimed = traitOf(c, 'voidDeath', false);
+  if(reclaimed){
+    addSpecks(c.x, c.y - 0.5, '#eaf4ff', 26);
+    addSpecks(c.x, c.y - 0.2, '#9fd0ff', 18);
+    addFloat(c.x, c.y - 1.3, 'RECLAIMED', '#cfe8ff');
+    log(`${c.name} comes apart in a light nobody can look at. Whatever lent them that shape has taken it back, and there is nothing on the ground.`, 'bad');
+  }
+  if(!reclaimed && (!c.undead || c.bossKey || (c.lieutenant && !lieuSpent))) corpses.push(c);   /* bosses always leave remains to claim */
   else {
     if(lieuSpent) log(`${c.name} does not leave a body. Four times up off the ground is all there was in it.`, 'bad');
     if(c.faction==='player'){
@@ -12637,6 +12731,10 @@ const SPELLS = {
               concentrate:{lock:0}, hint:'target a risen ally — cloak what it is behind a face of the living'},
   charm:     {gift:'dust',        label:'LOYALTY OF DUST', cost:18, range:6, minMag:16, tier:3, tech:'dust_unwalled',
               hint:'target an enemy — turn them to your side for a short while (it may not take)'},
+  /* A DOPPELGANGER'S ONE TRICK, and it is not a combat art — it is an exit. Self-targeted, so
+     it has no range and needs nothing pointed at. See castShift for what it costs. */
+  shift:     {gift:'dust',        label:'CHANGE FORM',     cost:20, range:0, minMag:99, tier:9, instant:true,
+              hint:'wear another face — the law forgets you, and so does everyone else'},
 };
 const SQUAD_CAP = 12;   /* the living (and liches) a banner can hold */
 const BRANCHES = ['divine', 'destruction', 'dark', 'dust'];
@@ -12668,7 +12766,8 @@ function attGain(c, branch, pts){
 }
 function spellsFor(c){
   if(!c) return [];
-  return Object.entries(SPELLS).filter(([k,sp]) => (c.omni || attOf(c, sp.gift) >= (sp.tier||1)) && c.stats.magic >= sp.minMag && (!sp.lichOnly || c.lich) && (!sp.tech || research.done[sp.tech]) && (!sp.immortalOnly || c.immortal === sp.immortalOnly));
+  return Object.entries(SPELLS).filter(([k,sp]) => innateArt(c, k) ||
+    ((c.omni || attOf(c, sp.gift) >= (sp.tier||1)) && c.stats.magic >= sp.minMag && (!sp.lichOnly || c.lich) && (!sp.tech || research.done[sp.tech]) && (!sp.immortalOnly || c.immortal === sp.immortalOnly)));
 }
 let castMode = null; /* {caster, spell} */
 /* (risenN hoisted above worldgen — roaming necromancers count against it too) */
@@ -12758,12 +12857,17 @@ function marry(a, b){
 function castReady(c, key){
   const sp = SPELLS[key];
   if(!c || !sp || c.state !== 'ok') return false;
-  if(!c.omni && attOf(c, sp.gift) < (sp.tier||1)) return false;
-  if(c.stats.magic < sp.minMag) return false;
+  /* an art the body IS rather than one it learned — see innateArt. Mana and cooldown still
+     apply, because those are what stop it being free. */
+  const born = innateArt(c, key);
+  if(!born){
+    if(!c.omni && attOf(c, sp.gift) < (sp.tier||1)) return false;
+    if(c.stats.magic < sp.minMag) return false;
+    if(sp.tech && !research.done[sp.tech]) return false;
+    if(sp.immortalOnly && c.immortal !== sp.immortalOnly) return false;
+  }
   if(c.mana < sp.cost) return false;
   if(c.castCd > 0) return false;
-  if(sp.tech && !research.done[sp.tech]) return false;
-  if(sp.immortalOnly && c.immortal !== sp.immortalOnly) return false;
   /* a necromancer with a full retinue cannot bind another */
   if(key === 'raise' && risenLoad(c) + 1 > risenCap(c)) return false;
   return true;
@@ -12781,12 +12885,16 @@ function toggleConcentrationOff(){
   if(!any) log('Nobody selected is concentrating on anything.', '');
 }
 function beginCast(c, spellKey){
-  if(!c || !c.gift || c.state!=='ok') return;
+  /* AN INNATE ART DOES NOT NEED A GIFT, which both of these gates assumed. A doppelganger
+     holds no gift at all and its one trick is not a formula it studied — see innateArt. */
+  if(!c || c.state!=='ok') return;
+  if(!c.gift && !subOf(c).innate) return;
   const avail = spellsFor(c);
   if(!avail.length) return;
   const key = spellKey || avail[0][0];
   const sp = SPELLS[key];
-  if(!sp || sp.gift !== c.gift || c.stats.magic < sp.minMag) return;
+  if(!sp) return;
+  if(!innateArt(c, key) && (sp.gift !== c.gift || c.stats.magic < sp.minMag)) return;
   /* if the one you picked can't, hand it to the next who can */
   const bench = castBench(c, key);
   const caster = bench[0];
@@ -13253,6 +13361,7 @@ function resolveCastAt(c, key, wx, wy){
   const sp = SPELLS[key];
   if(!sp.instant && dist(c.x,c.y,wx,wy) > sp.range + 0.5){ log('Out of range.', 'bad'); return; }
   if(c.mana < sp.cost){ log('Not enough mana.', 'bad'); return; }
+  if(key==='shift'){ castShift(c); return; }
   if(key==='firebolt' || key==='darkbolt'){
     const foe = chars.find(o => o.state==='ok' && hostile(c,o) && dist(o.x,o.y,wx,wy) < 0.9)
              || chars.find(o => o.state==='ok' && o !== c && o.faction!=='player' && dist(o.x,o.y,wx,wy) < 0.9);
@@ -13416,6 +13525,49 @@ function castShroud(c, t){
   log(`${c.name} draws a living face over ${t.name}. To a passing eye, it breathes.`, '');
 }
 /* ---- LOYALTY OF DUST: turn an enemy, briefly, with a chance of failure ---- */
+/* ---------- WEARING ANOTHER FACE ----------
+   "Capable of shapeshifting forms at will. Good for escaping a bounty, or posing as someone
+   else. They get a fresh skin, and lose any bounty or negative consequences associated with
+   them. This also causes them to lose any relationships they might have (courting)."
+
+   THE COST IS THE POINT AND IT IS NOT THE MANA. Every town that wanted this body stops
+   wanting it, every warrant is torn up — and everyone who knew them stops knowing them. A
+   doppelganger with a spouse is a doppelganger who has decided to keep that face.
+
+   WHAT IT DOES NOT DO: it does not clear your REPUTATION with a town. A bounty is a warrant
+   out for a particular face and a new face voids it; how a town feels about the necromancer
+   walking its streets is about the necromancer, and no amount of new nose fixes that. Keeping
+   those apart is what stops this being a "delete all consequences" button.
+   The mesh is rebuilt by `colorKeyOf` noticing the new skin — the same path a change of armour
+   already takes, so nothing has to be invalidated by hand. */
+function castShift(c){
+  spendCast(c, 'shift');
+  const wasName = c.name;
+  /* a fresh face: new name, new colouring, new build. `_face0` and the cached rig go with it. */
+  c.name = pickNameFor(c.sex === 'f' ? 'f' : 'm', true) || pickName();
+  c.shiftN = (c.shiftN || 0) + 1;
+  c.skinShift = ['#c8a882', '#a8845c', '#8a6a48', '#d8c4a8', '#7a5a3c', '#b99a74'][c.shiftN % 6];
+  c.face = null;
+  /* every warrant in the world was for a face that no longer exists */
+  let cleared = 0, wanted = [];
+  for(const t of towns){
+    if(t.bounty){ cleared += t.bounty; wanted.push(t.name); t.bounty = 0; }
+    t.wanted = false;
+  }
+  /* and so does everything anybody felt about it */
+  const partner = c.spouse || c.partner;
+  if(partner){
+    const sp = chars.find(o => o.id === partner);
+    if(sp){ if(sp.spouse === c.id) sp.spouse = 0; if(sp.partner === c.id) sp.partner = 0; }
+  }
+  c.spouse = 0; c.partner = 0;
+  for(const [k] of bonds) if(k.split('|').indexOf(String(c.id)) >= 0) bonds.delete(k);
+  addSpecks(c.x, c.y - 0.4, '#cfc6b0', 18);
+  addFloat(c.x, c.y - 1.2, 'ANOTHER FACE', '#cfc6b0');
+  log(`${wasName} is not ${wasName} any more. ${c.name} walks away from it` +
+      (cleared ? `, and ${wanted.join(' and ')} ${wanted.length > 1 ? 'have' : 'has'} nobody to look for — ${cleared} in warrants void.` : '.'), 'good');
+  refreshSquadBar(); refreshCharPanel();
+}
 function castCharm(c, foe){
   spendCast(c, 'charm');
   /* a contest of the caster's art against the target's will (magic vs toughness+atk) */
@@ -14956,7 +15108,7 @@ function update(dt){
       const b = chars.find(o => o.id === a.spouse && o.state !== 'dead');
       if(!b || b.undead || b.pregnant) continue;
       if(a.id > b.id) continue;   /* roll each pair once */
-      if(!raceOf(a).fertile || !raceOf(b).fertile) continue;
+      if(!pairBreeds(a, b)) continue;   /* a succubus is the exception — see pairBreeds */
       if(a.age < 18 || a.age > 50 || b.age < 18 || b.age > 50) continue;
       if(dist(a.x,a.y,b.x,b.y) > 8) continue;
       if(rnd() < 0.02){ (rnd() < 0.5 ? a : b).pregnant = 12; }
@@ -18423,6 +18575,48 @@ function factionColor(c){
   if(c.faction==='rebel') return '#c47a2a';
   return '#b0402e';
 }
+/* ---------- THE SHAPE A THING TAKES WHEN IT DECIDES TO BE A GOD ----------
+   Shared by the Fallen (a Messenger that walked out and forged itself a body in the image of
+   the old gods) and by the Messengers themselves, because they are the same stuff and the
+   family resemblance is the point of the line. Carved musculature no living body has, a
+   laurel it awarded itself, a mantle over one shoulder — and the eyes, which are the part it
+   did not choose and cannot put down.
+   Takes its colours and its box-maker from the caller so it can sit on a humanoid rig or on a
+   gaunt's, which are built by different code with different anchors. */
+function oldGodPlate(e, c, base, shade, B, opt){
+  const o = opt || {};
+  const marble = shade(base, 1.14), vein = shade(base, 0.72);
+  const head = o.head || e.headG, spine = o.spine || e.spine;
+  const k = o.scale || 1;
+  /* THE CARVING GOES OUTSIDE THE CLOTHES. Everything on a body in this game is drawn in
+     layers and the garment is a box around the torso — a chest carved at z 0.02 is inside it
+     and invisible, which is what the first version of this did. A statue wears its own shape
+     on the outside. */
+  B(0.50*k, 0.17*k, 0.30*k, marble, 0, 0.44*k, 0.03*k, spine);         /* the shelf of the chest */
+  B(0.21*k, 0.15*k, 0.10*k, marble, -0.11*k, 0.30*k, 0.16*k, spine);   /* pectorals, proud of the shirt */
+  B(0.21*k, 0.15*k, 0.10*k, marble, 0.11*k, 0.30*k, 0.16*k, spine);
+  B(0.06*k, 0.26*k, 0.06*k, vein, 0, 0.09*k, 0.17*k, spine);           /* the line down the belly */
+  for(const sy of [0.16, 0.04])                                        /* and the ribs of it */
+    B(0.30*k, 0.035*k, 0.05*k, vein, 0, sy*k, 0.165*k, spine);
+  /* the mantle: over the left shoulder and down, the way every statue of anybody wears it */
+  const cloak = B(0.16*k, 0.46*k, 0.26*k, vein, -0.26*k, 0.34*k, -0.02*k, spine);
+  cloak.rotation.z = 0.18;
+  B(0.30*k, 0.08*k, 0.28*k, vein, -0.13*k, 0.59*k, 0, spine);          /* over the shoulder */
+  B(0.13*k, 0.22*k, 0.06*k, vein, -0.19*k, 0.44*k, 0.15*k, spine);     /* and the fold on the chest */
+  /* the laurel, which nobody gave it */
+  for(let i = 0; i < 7; i++){
+    const a = (i / 7) * Math.PI * 2;
+    const lf = B(0.045*k, 0.05*k, 0.075*k, marble,
+                 Math.sin(a) * 0.155*k, 0.30*k, Math.cos(a) * 0.155*k, head);
+    lf.rotation.y = a; lf.rotation.x = -0.35;
+  }
+  /* A HANDLE FOR THE HARNESS, and it is deliberately not the claim. What is asserted about
+     these two is that geometry actually landed on them; this only says which motif put it
+     there, so a probe can tell "the Fallen and the Messenger are the same family" apart from
+     "both of them happen to have some boxes". */
+  e.oldGod = true;
+  return {marble, vein};
+}
 function colorKeyOf(c){
   /* sex is part of the silhouette, so it belongs in the rebuild key.
      So does `kin`, and its absence was a real bug: a skeleton mage and a plain risen
@@ -18430,7 +18624,7 @@ function colorKeyOf(c){
      whichever got built first in a session handed its rig to the other through the mesh
      cache — which is why the mage's mantle appeared some runs and not others. The beast
      rigs had the same collision: elk, grazer and gravehound are all just `|b`. */
-  return factionColor(c) + '|' + (c.kin||'') + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.wisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.eater?'|E':'') + (c.soulbound?'|B':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.face||'');
+  return factionColor(c) + '|' + (c.kin||'') + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.wisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.eater?'|E':'') + (c.soulbound?'|B':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.face||'') + (c.skinShift ? '|F' + c.skinShift : '');
 }
 const SKINS = ['#8a5c34', '#6e4426', '#a06c40', '#5a3820', '#96683a'];
 const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0'];
@@ -18802,6 +18996,9 @@ function buildCharMesh(c){
        be one grey — which would have made paper, rock, clay and glass the same body wearing
        four different names. A subrace that names a skin gets it, and everything without one
        falls through to the old ladder. */
+    /* A FACE IT CHOSE OVER THE ONE ITS LINE GIVES IT. A doppelganger that has shifted is
+       wearing somebody else's colouring, and that has to beat the line's own — see castShift. */
+    : c.skinShift ? c.skinShift
     : subOf(c).skin ? subOf(c).skin
     : c.construct ? '#8a9098'
     : c.race==='homunculus' ? PALE[Math.floor(h1*PALE.length)]
@@ -19160,6 +19357,47 @@ function buildCharMesh(c){
       e.legL2 = mkStump(-0.46, -0.50);
       e.legR2 = mkStump( 0.46, -0.50);
       mkStump( 0.52, 0.00); mkStump(-0.52, 0.00);
+    } else if(c.gauntKind === 'messenger' || c.gauntKind === 'herald'){
+      /* ---------- A MESSENGER, WHICH IS WHAT A FALLEN USED TO BE ----------
+         They had no model of their own and came out wearing the generic gaunt rig, which is a
+         hunched animal — wrong for the one Watcher that stands upright and talks to you.
+         It is built as a STATUE that is not quite a person: too tall, too still, the shoulders
+         too level, and no face to speak of. `oldGodPlate` puts the carved chest, the mantle
+         and the laurel on it, and the Fallen wear exactly the same motif on a human frame —
+         which is the whole of the family resemblance. One of these walked out and made itself
+         smaller; that is the only difference the player ever needs to see.
+         Nothing here is rolled. This runs from `syncChars` at frame rate, so a `rnd()` would
+         put the world's dice back on the renderer's leash — `hash2` off the id instead. */
+      const stone = '#cfc6b4', dk3 = '#7e7566', glow = '#cfe8ff';
+      const B2 = (w, h, d, col, x, y, z, par) => obox(w, h, d, col, x, y, z, par);
+      const shade2 = (hex, k2) => '#' + new THREE.Color(hex).multiplyScalar(k2).getHexString();
+      const spine = new THREE.Group(); spine.position.set(0, 1.30, 0); g.add(spine);
+      const head  = new THREE.Group(); head.position.set(0, 2.16, 0); g.add(head);
+      e.torso = obox(0.52, 0.92, 0.34, stone, 0, 0.30, 0, spine);
+      obox(0.66, 0.12, 0.34, stone, 0, 0.66, 0, spine);                  /* shoulders, dead level */
+      obox(0.40, 0.34, 0.34, stone, 0, 0, 0, head);                      /* a head with nothing on it */
+      obox(0.30, 0.06, 0.03, dk3, 0, 0.02, 0.175, head);                 /* where a face is not */
+      for(const ex of [-0.085, 0.085]){
+        const eye = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color: 0xcfe8ff}));
+        eye.scale.set(0.055, 0.035, 0.02); eye.position.set(ex, 0.03, 0.19); head.add(eye);
+      }
+      e.head = head;
+      oldGodPlate(e, c, stone, shade2, B2, {head, spine, scale: 1.25});
+      /* arms that hang, and legs that are columns rather than joints */
+      for(const sx of [-1, 1]){
+        const arm = new THREE.Group(); arm.position.set(sx*0.40, 0.60, 0); spine.add(arm);
+        obox(0.17, 0.62, 0.19, stone, 0, -0.31, 0, arm);
+        obox(0.15, 0.44, 0.17, stone, 0, -0.74, 0.03, arm);
+        if(sx > 0) e.armR = arm; else e.armL = arm;
+      }
+      const mkCol = (sx) => {
+        const hip = new THREE.Group(); hip.position.set(sx, 1.30, 0); g.add(hip);
+        obox(0.24, 0.72, 0.26, stone, 0, -0.36, 0, hip);
+        obox(0.28, 0.10, 0.34, dk3, 0, -0.72, 0.03, hip);
+        return hip;
+      };
+      e.legL = mkCol(0.20); e.legR = mkCol(-0.20);
+      void glow;
     } else if(c.bossKey === 'sixfold'){
       /* the body hangs; the limbs arch over it and come down like the frame of a tent */
       const hide = '#3a3230', bone = '#c9bfa8';
@@ -19931,6 +20169,85 @@ function buildCharMesh(c){
       const shade = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
       const dk2 = shade(base, 0.66), lt2 = shade(base, 1.26);
       const B = (w, h, d, col, x, y, z, par) => { e.boxBody.push(obox(w, h, d, col, x, y, z, par)); return e.boxBody[e.boxBody.length-1]; };
+
+      /* ================= THE MIMICS =================
+         Three ways of not quite being a person, and each line gets the one it got wrong.
+         EVERY VARIATION IS DERIVED FROM THE BODY'S ID, never rolled. This runs inside
+         `buildCharMesh`, which the camera calls when a body first comes into view — a `rnd()`
+         here would put the simulation's dice on a leash held by the renderer, which is a bug
+         this file has already had once and does not want again. `hash2` is stable per body, so
+         a mimic that walks out of view and back is the same mimic. */
+      if(c.race === 'mimic'){
+        const h = (k) => hash2(c.id, k);
+        if(subIs(c, 'succubus')){
+          /* SHE IS NOT HIDING ANY OF IT. Horns swept back off the temples, a long tail with a
+             spade on the end, and — on rather less than half of them — wings folded down the
+             back. The membrane is her own colour taken most of the way to black, so it reads
+             as part of her rather than as something she is wearing. */
+          const horn = shade(base, 0.42);
+          const memb = '#' + new THREE.Color(base).lerp(new THREE.Color('#241018'), 0.55).getHexString();
+          for(const sx of [-1, 1]){
+            const a = B(0.05, 0.20, 0.05, horn, sx*0.10, 0.34, -0.03, e.headG);
+            a.rotation.x = 0.6; a.rotation.z = -sx * 0.28;
+            const b2 = B(0.038, 0.16, 0.038, horn, sx*0.155, 0.44, -0.13, e.headG);
+            b2.rotation.x = 1.05; b2.rotation.z = -sx * 0.34;
+            B(0.028, 0.07, 0.028, horn, sx*0.185, 0.475, -0.235, e.headG).rotation.x = 1.4;
+          }
+          /* the tail: five falling segments off the base of the spine, each a little smaller */
+          let ty = 0.02, tz = -0.22;
+          for(let i = 0; i < 5; i++){
+            const w = 0.085 - i*0.011;
+            const seg = B(w, w, 0.18, base, 0, ty, tz, e.spine);
+            seg.rotation.x = -0.55 - i*0.10;
+            ty -= 0.075; tz -= 0.085;
+          }
+          B(0.15, 0.025, 0.19, memb, 0, ty - 0.02, tz - 0.05, e.spine).rotation.x = -1.0;   /* the spade */
+          if(h(31) < 0.42){
+            /* wings, folded. Two spars and a membrane between them, hanging rather than spread:
+               a spread wing on a body that walks around a market is a silhouette, not a detail. */
+            for(const sx of [-1, 1]){
+              const sp = B(0.045, 0.46, 0.045, horn, sx*0.20, 0.30, -0.15, e.spine);
+              sp.rotation.x = -0.30; sp.rotation.z = sx * 0.20;
+              const lo = B(0.035, 0.34, 0.035, horn, sx*0.30, 0.02, -0.24, e.spine);
+              lo.rotation.x = -0.15; lo.rotation.z = sx * 0.42;
+              const mm = B(0.16, 0.42, 0.02, memb, sx*0.245, 0.16, -0.20, e.spine);
+              mm.rotation.z = sx * 0.30; mm.rotation.x = -0.24;
+            }
+          }
+        }
+        else if(subIs(c, 'doppelganger')){
+          /* NOBODY IN PARTICULAR, and the model has to say that without becoming a costume —
+             a doppelganger that stands out has failed at the one thing it does. So: no
+             ornament at all, a face left smooth where a face has features, and SEAMS. The
+             borrowed shape does not quite close at the joints, and it is a shade off true
+             everywhere, which is the sort of thing you only notice in good light. */
+          const seam = shade(base, 0.80);
+          B(0.225, 0.055, 0.02, seam, 0, 0.215, 0.145, e.headG);        /* where a brow would be */
+          B(0.02, 0.20, 0.02, seam, 0, 0.13, 0.155, e.headG);           /* a join down the middle of the face */
+          B(0.30, 0.02, 0.26, seam, 0, 0.02, 0, e.headG);               /* and one round the jaw */
+          B(0.44, 0.025, 0.26, seam, 0, 0.575, 0, e.spine);             /* the collar seam */
+          B(0.36, 0.025, 0.24, seam, 0, 0.055, 0, e.spine);             /* and the waist */
+          for(const sx of [-1, 1]){
+            B(0.115, 0.025, 0.115, seam, 0, 0.02, 0, sx < 0 ? e.elbL : e.elbR);
+            /* one shoulder sits a little higher than the other, and it is never the same one */
+            B(0.15, 0.05 + (sx > 0 ? h(7) * 0.05 : 0), 0.18, base, sx*0.28, 0.50, 0, e.spine);
+          }
+        }
+        else if(subIs(c, 'fallen')){
+          /* IT BUILT ITSELF OUT OF STATUARY — the gods of old as men imagined them, which is a
+             mimicry of a mimicry, and the joke is the whole line. Carved musculature that no
+             body has, a laurel it awarded itself, and a mantle over one shoulder.
+             The eyes are the tell and the only part it did not choose: it is still a Watcher
+             underneath, and that light is the thing it walked away from. `oldGodPlate` builds
+             the same motif on a Messenger, because they are the same stuff. */
+          const cols = oldGodPlate(e, c, base, shade, B);
+          /* THE EYES ARE THE PART IT DID NOT CHOOSE. Glow, so they are not baked flat with
+             the rest of it — a Fallen in a dark street should be two lights and a shape. */
+          for(const sx of [-1, 1])
+            mk(BOXG, ownGlow('#cfe8ff'), 0.055, 0.030, 0.02, sx*0.075, 0.175, 0.152, e.headG);
+          void cols;
+        }
+      }
 
       if(c.race === 'golem'){
         /* every golem, whatever it is made of: the joint bands that give a made thing its
@@ -23361,7 +23678,15 @@ function openVendor(v){
     const prejudiced = ['greenrest','copperhold'].includes(town.def.key) &&
       player().some(c => subIs(c, 'scaleborn') && dist(c.x, c.y, v.x, v.y) < 8);
     if(prejudiced) log(`The ${v.name.toLowerCase()} eyes the scaleborn and adjusts the prices upward.`, 'bad');
-    const prejMult = prejudiced ? 1.15 : 1;
+    /* ---------- AND THE MIRROR OF THE SAME MECHANISM ----------
+       A scaleborn at the counter puts the prices UP. A Fallen puts them down, by the same
+       trick and for the same reason: the trader is looking at somebody and deciding how they
+       feel about it. It is deliberately the small end of the scale — a tenth off is a
+       standing favour, not an economy. */
+    const charming = player().some(c => c.state === 'ok' && traitOf(c, 'charismatic', false) &&
+      dist(c.x, c.y, v.x, v.y) < 8);
+    if(charming && !prejudiced) log(`The ${v.name.toLowerCase()} decides you look like somebody worth keeping happy.`, 'good');
+    const prejMult = (prejudiced ? 1.15 : 1) * (charming ? 0.9 : 1);
     /* THE CHART. Sold by the general trade and nobody else — a weaponsmith does not survey.
        It is not stock: a town has exactly one map of its own country and sells you a copy of
        it, so this is a row of its own above the shelves rather than an ITEMS key with a count.
@@ -25564,6 +25889,7 @@ function snapshot(){
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
     immortal:c.immortal||null, wanderKey:c.wanderKey||null, wanderMet:c.wanderMet||0, wanderSeen:c.wanderSeen?{...c.wanderSeen}:null, wanderJoined:!!c.wanderJoined, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, golem:!!c.golem, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
     carryId: c.carry ? c.carry.id : null,
+    skinShift: c.skinShift || null, shiftN: c.shiftN || 0,
     bearingId: c.bearing ? c.bearing.id : null,
     carryIds: c.carryList ? c.carryList.map(b => b.id) : null,
     lich: !!c.lich, face: c.face||null, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
@@ -25930,6 +26256,7 @@ function restore(d){
     if(s.pilgrimDestI >= 0) c.pilgrimage = {dest: towns[s.pilgrimDestI], waitT: 0};
     c._mid = s.masterId; c._fid = s.followId; c._did = s.dragId; c._cid = s.carryId; c._gid = s.guardTargetId;
     c._bid = s.bearingId || null;
+    c.skinShift = s.skinShift || null; c.shiftN = s.shiftN || 0;
     c._cids = s.carryIds || null;
     byId[c.id] = c;
     return c;
