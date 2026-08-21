@@ -170,13 +170,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   /* the mesh is built by the camera, so it needs real frames — and more than one, because
      `syncChars` builds at most eight rigs a frame and will spend that budget on the world */
   const rigs = {};
-  for (const sb of ['succubus', 'doppelganger', 'fallen', '__messenger', '__human']) {
+  for (const sb of ['succubus', 'doppelganger', 'fallen', '__messenger', '__human', '__woman']) {
     await p.evaluate((sb) => {
       const { gx, gy } = window.__G;
       for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
       let c;
       if (sb === '__messenger') { c = spawnGaunt('messenger', gx, gy); if (c) c.faction = 'player'; }
       else if (sb === '__human') c = makeChar('Plain', 'player', gx, gy, { race: 'human', sub: 'dustborn' });
+      else if (sb === '__woman') c = makeChar('Plainer', 'player', gx, gy, { race: 'human', sub: 'dustborn', sex: 'f' });
       else c = makeChar(sb, 'player', gx, gy, { race: 'mimic', sub: sb });
       if (!c) { window.__C = null; return; }
       c.__probe = true;
@@ -210,6 +211,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   R.andEachOfThemCarriesItsOwn = richer.length === 3
     ? `and each of the three carries geometry a plain human does not (${plain} boxes against ${['succubus','doppelganger','fallen'].map(k => rigs[k].boxes).join('/')})`
     : `!! A LINE IS WEARING A PLAIN BODY (human ${plain}, ${['succubus','doppelganger','fallen'].map(k => k + ' ' + (rigs[k] && rigs[k].boxes)).join(', ')})`;
+  /* ---------- AND HER FACE IS THE POINT OF HER ----------
+     Measured against a plain WOMAN and not against the generic human, because `fem` already
+     buys a narrower shoulder, a wider hip and thinner limbs — comparing to a man would credit
+     the line for the silhouette every woman in the game already has. What is left over is the
+     face: lashes on the lid and under the eye, a wing at the corner, a lifted band, a white,
+     an iris, a catchlight, a lip with the corners turned up, and cheekbones. */
+  const woman = (rigs.__woman && rigs.__woman.boxes) || 0;
+  const sucBoxes = (rigs.succubus && rigs.succubus.boxes) || 0;
+  R._faces = `a plain woman is ${woman} boxes, a succubus ${sucBoxes}`;
+  R.sheHasAFaceAPlainWomanDoesNot = sucBoxes >= woman + 10
+    ? `and she carries ${sucBoxes - woman} pieces of face and horn a plain woman does not`
+    : `!! HER FACE IS NOT THERE (plain woman ${woman} boxes, succubus ${sucBoxes})`;
   R.theFallenAndTheMessengerAreKin = rigs.fallen && rigs.fallen.oldGod && rigs.__messenger && rigs.__messenger.oldGod
     ? 'and the Fallen and the Messenger wear the same motif, which is the family they share'
     : `!! THEY DO NOT SHARE THE MOTIF (fallen ${rigs.fallen && rigs.fallen.oldGod}, messenger ${rigs.__messenger && rigs.__messenger.oldGod})`;
