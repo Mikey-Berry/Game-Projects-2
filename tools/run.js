@@ -45,7 +45,7 @@ const ALL = [
   'world.js', 'host.js', 'raise.js', 'bound.js', 'descend.js', 'guns.js', 'gunnery.js', 'roads.js', 'aid.js',
   'reach.js', 'ceiling.js', 'study.js', 'carry.js', 'jail.js', 'command.js', 'menus.js', 'rites.js', 'notes.js', 'board.js', 'chores.js',
   'threads.js', 'beasts.js', 'curse.js', 'watchers.js', 'lieu.js', 'wanderers.js', 'survive.js', 'melee.js', 'press.js', 'flank.js', 'kiting.js', 'lich.js', 'heads.js',
-  'kit.js', 'wepsoak.js', 'races.js', 'mobile.js', 'touch.js', 'terrain.js', 'axes.js',
+  'kit.js', 'wepsoak.js', 'races.js', 'mobile.js', 'start.js', 'touch.js', 'terrain.js', 'axes.js',
   'civics.js',
 ];
 /* THE EDIT LOOP SET. Not "the fast ones" — the ones that would notice a broken build at all:
