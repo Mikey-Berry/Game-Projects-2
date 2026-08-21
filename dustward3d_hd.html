@@ -110,8 +110,35 @@
   #buildbar .bbtn.poor{opacity:.45}
   #buildbar .bbtn.lock{opacity:.3;pointer-events:none}
   /* overlays */
+  /* ---------- AN OVERLAY YOU CANNOT REACH THE BOTTOM OF IS A GAME YOU CANNOT START ----------
+     "Mobile view fix — right now I can't even start the game since the character creation
+     screen is too packed." Measured on three phone viewports before a line of this changed:
+     the start overlay's content is 843px tall inside a 640px box, WAKE UP sits at y=799, and
+     a tap on it times out on every one of them. Not cramped — unreachable.
+     TWO THINGS WERE WRONG AND ONLY ONE OF THEM IS OBVIOUS. The box did not scroll, which is
+     the one you would guess. The other is `justify-content:center`: a centred flex column
+     whose content is taller than the column overflows BOTH ENDS, and overflow past the START
+     edge cannot be scrolled to in any browser — the scroll range simply does not include it.
+     So adding `overflow-y:auto` on its own would have bought the bottom of the panel and lost
+     the top of it, which is a different unreachable screen.
+     The auto-margin pair is the fix for that: two zero-size flex items that soak up the free
+     space when there is any, and collapse to nothing when there is not. Content sits centred
+     on a desktop exactly as it did, and on a phone it starts at the top and scrolls, with
+     every pixel of it inside the scroll range. `overscroll-behavior` keeps a flick at the end
+     of the list from dragging the page behind it. */
+  /* ---------- AND IT HAS TO BE ON TOP OF THE GAME, WHICH ON A PHONE IT WAS NOT ----------
+     z-index was 20 against a squad bar at 35 and a touch bar at 40 — and every one of those
+     numbers is inside a `body.touch` rule, which is the whole reason this was a mobile-only
+     bug and invisible on a desktop. The squad bar is pinned to the bottom of a phone screen,
+     WAKE UP is at the bottom of the start panel, and the bar was simply in front of it:
+     `elementFromPoint` on the middle of the button came back `DIV.sqrow` inside `#squadbar`.
+     Scrolling the panel did not help, because the button was never the thing being tapped.
+     A modal is above the game or it is not a modal, so it goes above the tooltip layer too. */
   .overlay{position:absolute;inset:0;background:#0d0b09ee;display:flex;
-    flex-direction:column;align-items:center;justify-content:center;z-index:20;text-align:center}
+    flex-direction:column;align-items:center;justify-content:flex-start;
+    overflow-y:auto;overscroll-behavior:contain;padding:16px 12px;
+    z-index:70;text-align:center}
+  .overlay::before,.overlay::after{content:'';flex:0 0 auto;margin:auto}
   .overlay h1{font-size:52px;letter-spacing:14px;color:var(--bone);
     text-shadow:4px 4px 0 var(--blood);margin-bottom:4px}
   .overlay .tag{color:var(--rust);letter-spacing:4px;margin-bottom:26px;font-size:13px}
@@ -264,12 +291,40 @@ body.touch #hint{display:none}
 @media (max-width: 820px){
   #charpanel, #invpanel{max-width:46vw}
 }
+
+}
 .overlay .help{width:480px;max-height:40vh;overflow-y:auto;text-align:left;font-size:12px;line-height:1.9;
     color:var(--dust);border:1px solid var(--edge);padding:16px 20px;margin-bottom:26px;background:var(--panel)}
   .overlay .help b{color:var(--bone)}
   .overlay button{font-size:15px;padding:10px 34px;letter-spacing:3px}
   #deadoverlay{display:none}
   #deadoverlay h1{color:var(--blood);text-shadow:4px 4px 0 #000}
+  /* ---------- AND ON A PHONE IT IS ALSO TOO PACKED ----------
+     The scroll above makes the screen usable; this makes it readable. Everything here is the
+     desktop layout stated at a size that fits a 360px-wide device: a 52px title tracked out by
+     14px is 500px of DUSTWARD on its own, the help box is a FIXED 480px against a 390px screen
+     and was losing a word off each end of every line, and 12px option chips are under the 44px
+     touch target the command menu already sizes for. Nothing is hidden — a character creation
+     screen with options removed on small screens is a worse answer than one you scroll.
+     IT HAS TO COME AFTER THE RULES IT OVERRIDES. The first version of this block sat above
+     `.overlay .help`, which has identical specificity, so the desktop 480px won on every phone
+     and the help box went on overflowing exactly as before. A media query is not a bigger
+     hammer than source order.
+     AND `.ccopt` IS A BUTTON. `.overlay button{width:100%}` was meant for WAKE UP and caught
+     all forty option chips, which turned four wrapped rows into forty stacked ones and made
+     the panel 1546px tall — scrollable, and awful. The width belongs to the one button that
+     wants it, by id. */
+  @media (max-width: 560px){
+    .overlay{padding:14px 10px}
+    .overlay h1{font-size:30px;letter-spacing:5px;text-shadow:2px 2px 0 var(--blood)}
+    .overlay .tag{font-size:10px;letter-spacing:2px;margin-bottom:14px}
+    .overlay .help{width:100%;max-width:100%;max-height:26vh;font-size:11px;line-height:1.65;
+      padding:10px 12px;margin-bottom:14px}
+    #btn-start, #deadoverlay button{width:100%;max-width:320px;min-height:48px;padding:12px 20px;font-size:14px}
+    .ccrow{margin:7px auto;max-width:100%}
+    .ccrow .cclabel{font-size:10px;letter-spacing:1px}
+    .ccopt{padding:8px 10px;min-height:38px;font-size:11px;margin:2px 3px 2px 0}
+  }
   /* ---------- THE COMMAND MENU, MADE LEGIBLE ----------
      "Hard to see" was fair: a one-pixel border and a panel colour that is a near neighbour of
      the dirt it opens over, so the menu had no edge against the world behind it. It reads as
@@ -422,6 +477,28 @@ function rnd(){
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 function ri(a,b){ return a + Math.floor(rnd()*(b-a+1)); }
+/* ---------- AND A SEPARATE STREAM FOR THINGS THAT ONLY LOOK ----------
+   THE SIM IS FIXED-STEP ON PURPOSE. The frame loop runs the world at a flat 30Hz —
+   "the world thinks half as often as the screen paints, with identical math" — so that the
+   same seed gives the same game whatever the frame rate. `rnd()` is the stream that carries
+   that promise.
+   THE DUST WAS DRAWING FROM IT. `updateDust` spawns decorative motes from inside `render()`,
+   six `rnd()` calls per mote, at whatever rate the machine happens to paint. Measured: with
+   the game PAUSED, two and a half seconds of pure drawing moved the generator thirteen steps.
+   So the frame rate perturbed the simulation — a fast machine and a slow one drew different
+   numbers out of the same seed, and a save's seed did not reproduce its own world.
+   It surfaced as a harness that could not make up its mind: `guns.js` returned two different
+   verdicts on a build whose md5 had not changed, and the fingerprints diverged at the seed
+   rather than at anything the probe did.
+   Anything that only affects pixels draws from `vrnd` instead. It is the same generator on
+   its own counter, so the dust looks exactly as it did and owes the world nothing. */
+let vseed = 0x9E3779B9 | 0;
+function vrnd(){
+  vseed = (vseed + 0x6D2B79F5) | 0;
+  let t = Math.imul(vseed ^ (vseed >>> 15), 1 | vseed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
 function hash2(x,y){ let h = (x*374761393 + y*668265263) ^ 0x5bf03635;
   h = Math.imul(h ^ (h>>>13), 1274126177); return ((h ^ (h>>>16))>>>0) / 4294967295; }
 function lerp(a,b,t){ return a+(b-a)*t; }
@@ -638,9 +715,19 @@ const ITEMS = {
   w_nod:   {name:'Nodachi',       base:1500,type:'weapon', dmg:28, wt:'cut'},
   aether_cell:{name:'Aether Cell', base:220, type:'mat',
     desc:'A pre-Fall charge cell, still holding. Nobody alive knows how they were made, and nobody is making more'},
+  /* ---------- A LANCE IS A POLEARM WITH A GUN IN IT ----------
+     `melee` is the profile it fights with when something is close enough that shooting is out
+     of the question. It is NOT `dmg`: 44 is what the plasma does at nine tiles, and a weapon
+     that dealt its bolt damage as a club would quietly be the best melee weapon in the game as
+     well as the best gun. 26 and a pierce is a heavy spike on the end of a long frame — better
+     than being beaten to death holding it, worse than a real polearm in trained hands.
+     THE CELLS MOVED TO THE EMPLACEMENT (see EMPL.lance). Ammunition on the handheld made the
+     gunline an expensive annoyance and the weapon a museum piece between resupplies; the
+     emplaced Heavy is the one that is plumbed into something and throws a 72-damage bolt
+     through a column, so that is the one that eats pre-Fall charges now. */
   w_lance: {name:'Aether Lance',  base:9000,type:'weapon', dmg:44, wt:'pierce', range:9, pre:true, nullOnly:true,
-    rof:4.6, draw:0.55, lance:true, charge:true, ap:0.80,
-    desc:'A golden-age firearm that transmutes latent ether to plasma. In a gifted hand the interference cascades — the lance and the hand go together. Only the alchemically deaf can carry one.'},
+    rof:4.6, draw:0.55, lance:true, ap:0.80, reload:0.42, melee:{dmg:26, wt:'pierce'},
+    desc:'A golden-age firearm that transmutes latent ether to plasma, on a frame long enough to keep a man off you. In a gifted hand the interference cascades — the lance and the hand go together. Only the alchemically deaf can carry one.'},
   w_sever: {name:'Sundering Edge',base:9500,type:'weapon', dmg:40, wt:'cut',    pre:true},
   a_carap: {name:'Alchemic Carapace', base:11000, type:'armor', pre:true, def:.52, pen:.30},
   codex:   {name:'Transmutation Codex', base:6000, type:'tome', codex:true},
@@ -652,7 +739,14 @@ const ITEMS = {
      A hunting arrow finds a gap now and then; a crossbow bolt was invented to punch mail. */
   salt:    {name:'Salt',          base:26,  type:'trade',
     desc:'Coarse grey brine-salt off the flats. Packs a body against the rot, which is a use nobody in Saltmere mentions out loud'},
-  w_bow:   {name:'Hunting Bow',   base:260, type:'weapon', dmg:11, wt:'pierce', range:7, ap:0.20, rof:2.6, draw:0.45, bow:true},
+  /* ---------- `reload`: WHAT THE NEXT SHOT COSTS THE LEGS ----------
+     A fraction of walking speed, held for as long as the weapon is being made ready again
+     (see `reloadT`). It is not a flavour number — it is the whole answer to running backwards
+     at full speed while shooting, and it is graded by how much of the reload is done with both
+     hands and eyes down. A bow is nocked half-blind and half-walking; a crossbow has to be
+     spanned against the body; the lance has to spin something up. Anything without the field
+     falls back to RELOAD_DRAG. */
+  w_bow:   {name:'Hunting Bow',   base:260, type:'weapon', dmg:11, wt:'pierce', range:7, ap:0.20, rof:2.6, draw:0.45, bow:true, reload:0.62},
   /* ---------- GROWN, NOT CARRIED ----------
      The Marrow Archer used to cost a whole Hunting Bow, which had to be crafted at a
      Workbench from wood and fabric, hauled to the stores and consumed — six craft cycles
@@ -667,9 +761,9 @@ const ITEMS = {
      effectively no armour-piercing: worse than the bought bow, and free of the supply chain.
      `grown` keeps it out of the world's economy — it cannot be looted off the body, sold, or
      stripped, because it is part of the body. */
-  w_sinew: {name:'Sinew-Drawn Bow', base:0, type:'weapon', dmg:9, wt:'pierce', range:7, ap:0.04, rof:3.2, draw:0.62, bow:true, grown:true,
+  w_sinew: {name:'Sinew-Drawn Bow', base:0, type:'weapon', dmg:9, wt:'pierce', range:7, ap:0.04, rof:3.2, draw:0.62, bow:true, grown:true, reload:0.58,
     desc:'A stave of long bone with a sinew string, grown through the forearms of the thing that draws it. It cannot be dropped, and nothing else can pick it up.'},
-  w_xbow:  {name:'Crossbow',      base:750, type:'weapon', dmg:18, wt:'pierce', range:8, ap:0.40, rof:3.2, draw:0.30},
+  w_xbow:  {name:'Crossbow',      base:750, type:'weapon', dmg:18, wt:'pierce', range:8, ap:0.40, rof:3.2, draw:0.30, reload:0.50},
   a_rag:   {name:'Rag Shirt',     base:60,  type:'armor',  def:.08, pen:.05},
   a_lea:   {name:'Leather Jacket',base:380, type:'armor',  def:.18, pen:.14},
   a_pla:   {name:'Iron Plate',    base:1300,type:'armor',  def:.35, pen:.32},
@@ -1469,7 +1563,7 @@ function makeChar(name, faction, x, y, o={}){
     manning: null, gunT: 0,
     path: null, pathGoal: null, repathT: 0,
     rescueOf: 0,
-    hitT: 0, looseT: 0, lungeT: 0, lungeDX: 0, lungeDY: 0, lungeDur: 0, lungeK: 0,
+    hitT: 0, looseT: 0, reloadT: 0, reloadK: 0, lungeT: 0, lungeDX: 0, lungeDY: 0, lungeDur: 0, lungeK: 0,
     shoveT: 0, shoveDur: 0, shoveK: 0, shoveDX: 0, shoveDY: 0,
     undead: false, master: null,
     atkCd: 0, downT: 0, guard: o.guard||null, homeTown: o.homeTown||null,
@@ -1562,9 +1656,72 @@ function dropOneBody(c, body, at){
   refreshCharPanel();
   return true;
 }
+const RELOAD_DRAG = 0.60;   /* the default for a ranged weapon that names no `reload` of its own */
+/* ---------- CAUGHT, AND WHETHER YOU CAN LEAVE ----------
+   "Catching a ranged attacker in melee should somewhat lock them down from fleeing again.
+   Somewhat — they should reasonably be able to escape if, say, an ally also engages that
+   enemy." Both halves are here and the second is the interesting one: the way out is not a
+   dice roll or a cooldown, it is that the body holding you has somebody ELSE to worry about.
+
+   THE OPPORTUNITY STRIKE ALREADY EXISTED AND IS NOT THIS. That one makes leaving HURT, once,
+   on a cooldown; a body willing to eat the cut still walks off at full speed, which is exactly
+   what the report describes. This makes leaving SLOW. One is a cost, one is a grip, and they
+   want to stay separate.
+
+   IT IS A SCALE, NOT A SWITCH. The first version returned a boolean and a flat 0.45, so one
+   friend arriving flipped a caught archer from crawling to free in a single tick. Graded off
+   the pinner's contact count instead: alone with you they have both hands on you, one other
+   body on them and most of the grip is gone, two and it is a formality.
+
+   AND IT IS DIRECTIONAL — enforced in `stepToward`, not here. Closing, circling at spear
+   length and standing your ground all cost nothing. Only leaving costs.
+
+   A GRIP IS RELEASED, NOT OUTRUN, and this is the part that took measuring. Contact is a
+   1.45-tile test, and a body that steps out of it walks away at a dead run on the very next
+   tick — while the man holding it is mid-swing with his feet planted. Measured: the gap opens
+   to 2.3 tiles in three ticks and an equal-footed chaser never closes it again, so the whole
+   grip was worth 0.7 tiles out of thirteen. The escape has to cost about a second, and the
+   second has to keep running after the shoulders part. So `_pinHold` rides for PIN_HOLD past
+   the last contact, on two conditions that both mean he still has you: he is still coming for
+   YOU, and he is still within arm and a stride. Long enough that a chaser re-closes and the
+   hold re-arms; short enough that a clean break really is clean.
+
+   Every number it reads is stamped by `separate()`, which already walks every close pair:
+   `_pinNow` is a melee-capable hostile in contact this tick, `_contacts` is how many hostiles
+   are on THEM, `_holders` is how many are on YOU. Deriving it from that pass rather than from
+   its own neighbour search is not only cheaper, it is the only safe way to ask — `charsNear`
+   hands back one shared buffer, so a scan nested inside another scan empties the outer one
+   under whoever is walking it. */
+const PIN_HOLD = 0.9;            /* how long a grip outlives the contact that made it */
+const PIN_LET_GO = 2.6;          /* and how far he can be dragged before it is not a grip */
+function pinGrip(c, o){
+  if(!o || o.state !== 'ok' || c.state !== 'ok') return 1;
+  if((o.floor||0) !== (c.floor||0)) return 1;
+  if(c.veilT > 0) return 1;                    /* they cannot hold what they cannot see */
+  if((c.big || 1) > 1.6) return 1;             /* one man on the flank of that is a detail */
+  const relief = Math.max(0, (o._contacts || 1) - 1);
+  let k = relief >= 2 ? 0.95 : relief === 1 ? 0.85 : 0.5;
+  const held = c._holders || 1;
+  if(held > 1) k *= Math.pow(0.85, held - 1);  /* a second blade on you is a second problem */
+  return Math.max(0.3, k);
+}
 function moveSpeed(c){
   let s = 3.4 * (1 + c.stats.ath*0.012);
   s *= 1 - armorPen(c);
+  /* ---------- MAKING THE NEXT ONE READY ----------
+     Held from the loose until the weapon comes off cooldown — the same window `atkCd` runs —
+     so an archer who keeps shooting never gets their legs back, and one who stops has them
+     again in a couple of seconds.
+     THE DRAW WAS NEVER THE HOLE. `physics` already plants the feet for it ("feet planted while
+     the swing is committed"), and a probe that gives the run order on the tick the draw opens
+     measures zero tiles walked before the arrow leaves. But a bow's draw is 0.45s of a 2.3s
+     cycle: rooting it costs a fifth of the tempo and the archer walks the other four fifths
+     flat out, which measured 86% of free running. THAT is what the complaint was about, and
+     the reload window is the only part of the cycle big enough to answer it.
+     Graded per weapon (see `reload` on the ITEMS above), because how much of a reload is done
+     with both hands and the eyes down differs between a nocked arrow and a spanned crossbow.
+     See tools/kiting.js. */
+  if(c.reloadT > 0) s *= (c.reloadK || RELOAD_DRAG);
   if(c.drag) s *= 0.7;
   if(c.carry) s *= 0.8;
   if(c.carryList && c.carryList.length) s *= Math.pow(0.93, c.carryList.length);   /* a laden mule is a slow mule */
@@ -2120,7 +2277,9 @@ function swingHeft(c){ return heftOf(c) * skillEase(c); }
 function atkPower(c){
   const w = wepOf(c);
   let d;
-  if(w) d = w.dmg;
+  /* a weapon with a `melee` block is being swung, not fired — see w_lance */
+  if(w && w.range && w.melee) d = w.melee.dmg;
+  else if(w) d = w.dmg;
   else if(c.clawDmg) d = c.clawDmg;
   else if(c.undead || c.beast) d = 8;
   else d = 4 + c.stats.martial * 0.5;
@@ -2129,7 +2288,7 @@ function atkPower(c){
      must not be a damage decision. What you buy with it is impact and stagger, and what you
      pay is the seconds you spend rooted in the wind and the follow-through. Melee only — a
      bow's rate of fire is its own problem, handled where it is drawn. */
-  if(!w || !w.range) d *= Math.pow(heftOf(c), 1.04);
+  if(!w || !w.range || w.melee) d *= Math.pow(heftOf(c), 1.04);
   if(c.undead && consecratedAt(c.x, c.y)) d *= 0.78;   /* and they strike weakly on it */
   d *= 1 + c.stats[wSkillKey(c)] * 0.015;
   d *= 1 - packPenalty(c);
@@ -2825,7 +2984,7 @@ const NEWS_TONE = {
   fracture:'bad', dread:'', compact:'good', door:'bad', fallen:'bad', ruin:'bad',
   rite:'bad', lieutenant:'good', departure:'bad', betrayal:'bad',
   peace:'good', pact:'good', sealed:'good', razed:'good',
-  wanderer:'', cairn:'bad',
+  wanderer:'', cairn:'bad', curse:'bad',
 };
 function newsAge(e){
   const late = day - e.day;
@@ -3168,6 +3327,24 @@ function spawnPurge(hunt){
       c.name = hunt ? 'Paladin-Confessor' : 'Paladin-Acolyte';
     }
     chars.push(c);
+  }
+  /* ---------- AND LATE ON, SOMETHING WALKS WITH THEM ----------
+     The Purge burns people for the profane gift. A Watcher standing in its ranks is therefore
+     not a stat upgrade to the patrol, it is a fact about the Purge that the player is supposed
+     to be able to NOTICE — so it is announced, in the log if you can see it and in the news if
+     you cannot, rather than slipped quietly into the spawn. Late only, and never on the
+     ordinary patrols: this is what a hunt looks like after the Bastion has stopped being
+     careful about what it takes help from. */
+  if(hunt && day > 45 && rnd() < 0.22){
+    const p2 = findOpenNear(x, y, 4);
+    const m = spawnGaunt('messenger', p2.x, p2.y);
+    m.faction = 'purge';                 /* it is marching WITH them, not at them */
+    m.squad = sq;
+    m.nightborn = false;
+    log('There is something walking with the Paladins. It is a head taller than any of them, ' +
+        'it carries a bar of light, and none of them will look at it.', 'bad');
+    worldEvent('purge', p2.x, p2.y,
+      'A Bastion hunt went out with something in its column that was not a man, and the Confessor riding at the front did not appear to have been consulted.');
   }
   log(hunt ? 'The Bastion has marked your squad. Hunters ride out.' : 'A Paladin patrol sets out from the Bastion.', hunt ? 'bad' : '');
 }
@@ -5499,7 +5676,11 @@ function attack(a, d){
     return;
   }
   const w = wepOf(a);
-  const wt = w ? w.wt : 'blunt';
+  /* `clawWt` lets a body that fights with what it IS choose how the wound reads. Everything
+     unarmed used to be 'blunt', which is right for a fist and wrong for a Messenger holding a
+     bar of fire — and it is the whole of what makes that weapon unlootable, since there is no
+     item anywhere for anybody to take off the corpse. */
+  const wt = w ? ((w.range && w.melee) ? w.melee.wt : w.wt) : (a.clawWt || 'blunt');
   if(!w && !a.beast && !a.undead && a.stats.martial >= 15){ d.staggerT = Math.max(d.staggerT, 0.45); d.windup = null; }
   const mvA = MOVES[a.swingMove] || MOVES.slash;
   let dmg = atkPower(a) * (0.75 + rnd()*0.5) * mvA.dmg;
@@ -5906,8 +6087,22 @@ function kill(c, by){
     c.phyl.carried = false; c.phyl.x = c.x; c.phyl.y = c.y; c.phyl = null;
     log('The phylactery falls from dead hands.', 'bad');
   }
-  if(!c.undead || c.bossKey) corpses.push(c);   /* bosses always leave remains to claim */
+  /* ---------- WHAT A LIEUTENANT LEAVES ----------
+     An ordinary risen goes to dust, and that is right: it was never anybody, and there is
+     nothing on the ground afterwards worth arguing with. A LIEUTENANT is somebody — it kept
+     its name, its face, the conviction it held about you and every skill it ever earned — and
+     until now one unlucky quarrel ended all of that permanently, on a body whose whole design
+     is that death did not take the whole of them. That is the harshest rule in the game and
+     the reason a careful player never fielded one.
+     It comes off the ground now, once per rung of the decay ladder: fresh, cooling, spoiled,
+     bare bones, and then there is nothing left to call to and it goes with the rest of the
+     dust. Each raising spends a rung, so a lieutenant is somebody you can spend — and what it
+     has left to spend is legible on the body itself, in the same four colours every other
+     corpse in the world is already using. Nothing new had to be invented to show it. */
+  const lieuSpent = c.lieutenant && (c.lieuWear || 0) >= DECAY.length;
+  if(!c.undead || c.bossKey || (c.lieutenant && !lieuSpent)) corpses.push(c);   /* bosses always leave remains to claim */
   else {
+    if(lieuSpent) log(`${c.name} does not leave a body. Four times up off the ground is all there was in it.`, 'bad');
     if(c.faction==='player'){
       if(c.undead){
         /* dust to dust, kit to the wagon */
@@ -6192,8 +6387,12 @@ const UNDEAD_TYPES = {
 const EMPL = {
   turret: {name:'Crossbow Turret', range:15, dmg:24, reload:2.4, wt:'pierce', hp:170,
            pierce:1, aim:0.55, tag:'TUR'},
+  /* `cell` is what it spends per shot out of the camp stash. It used to spend nothing at all
+     while the handheld paid for every trigger pull, which was backwards twice over: the thing
+     bolted to your wall is the one with a supply line, and it is the one throwing a bolt that
+     goes through four men. */
   lance:  {name:'Heavy Aetheric Lance', range:22, dmg:72, reload:7.5, wt:'burn', hp:240,
-           pierce:4, aim:0.80, tag:'LNC', nullOnly:true, unlock:'aether_ordnance'},
+           pierce:4, aim:0.80, tag:'LNC', nullOnly:true, unlock:'aether_ordnance', cell:1},
 };
 function emplSpec(b){ return EMPL[(BUILD_TYPES[b.type] || {}).empl] || null; }
 function isEmpl(type){ return !!(BUILD_TYPES[type] && BUILD_TYPES[type].empl); }
@@ -7717,11 +7916,11 @@ function patrolTick(c, dt){
   if(!ctr){ if(rnd() < dt*0.05) log(`${c.name} has nothing to guard.`, ''); return true; }
   const foe = nearestEnemy(c, 13);
   if(foe){
-    if(!c.raised){ c.raised = true; raiseAlarm(c, foe); }
+    if(!c.alarmed){ c.alarmed = true; raiseAlarm(c, foe); }
     c.target = foe;
     return false;   /* fall through to the fight */
   }
-  c.raised = false;
+  c.alarmed = false;
   /* A watch walks its holding; it does not orbit it. The old version drove everyone around
      a fixed-radius circle, which looked wrong and marched them straight through walls.
      Now: pick an open spot somewhere inside the holding, walk there, stand a moment, repeat. */
@@ -7769,17 +7968,32 @@ function stairAt(x, y){
 }
 function useStairs(c){
   const st = stairAt(c.x, c.y);
-  if(!st){ c.onStair = false; return; }
-  if(c.onStair) return;              /* don't yo-yo while standing on it */
-  c.onStair = true;
+  if(!st){ c.onStair = null; return; }
+  /* ---------- DON'T YO-YO ON *THIS* ONE ----------
+     Taken from the parallel branch, whose reading of this is better than the one it replaces.
+     The guard was a plain boolean, which quietly means "do not use ANY stair until you have
+     stood on ordinary ground again" — a different and much wider rule than the one intended.
+     A cave mouth very often has another stair on the tile beside it, so a body walking to the
+     mouth crosses that one first: `useStairs` fires on a stair whose storeys have nothing to
+     do with the surface, `to` comes back null, nothing happens, and the flag is now set. The
+     body then steps onto the mouth itself with the guard still latched, and the order is read
+     and discarded every tick for the rest of the game. Nothing logs.
+     Remembering WHICH stair it is standing on keeps the guard doing its real job — no bouncing
+     on the one under your feet — while a different stair is a different door.
+     (The first fix here was mine and narrower: latch only when a crossing actually happens.
+     That passes the same tests, including the stair-beside-a-stair case, because a stair that
+     refuses the crossing never reaches the latch. It is strictly weaker all the same — after a
+     REAL crossing it still blocks an adjacent stair — so the identity version wins.) */
+  if(c.onStair === st) return;
   const f = c.floor || 0;
-  if(c.wantFloor === undefined || c.wantFloor === null) return;   /* not trying to change floors */
-  if(c.wantFloor === f) return;
+  if(c.wantFloor === undefined || c.wantFloor === null){ c.onStair = st; return; }
+  if(c.wantFloor === f){ c.onStair = st; return; }
   /* only cross this stair if it moves toward the goal (up when climbing, down when descending) */
   const wantUp = c.wantFloor > f;
   const to = f === st.from ? st.to : f === st.to ? st.from : null;
-  if(to === null) return;
-  if((wantUp && to <= f) || (!wantUp && to >= f)) return;   /* wrong direction: ignore this stair */
+  if(to === null){ c.onStair = st; return; }
+  if((wantUp && to <= f) || (!wantUp && to >= f)){ c.onStair = st; return; }
+  c.onStair = st;
   c.floor = to;
   c.path = null; c.pathGoal = null;
   if(c.floor === c.wantFloor){
@@ -7788,7 +8002,7 @@ function useStairs(c){
   } else {
     /* still more storeys to go — head for the next stair toward the goal, and it has to be one
        on the piece of floor we just stepped onto */
-    c.onStair = false;
+    c.onStair = null;
     const g = c.afterStair;
     const next = stairToward(c, c.floor, c.floor + (wantUp ? 1 : -1),
                             g ? g.x : c.x, g ? g.y : c.y, c.wantFloor);
@@ -7802,23 +8016,32 @@ function orderFloor(c, target, sx, sy){
   clearOrders(c);
   c.wantFloor = target;
   /* ---------- AND RE-ARM THE STAIR UNDER ITS FEET ----------
-     THE ONE-WAY TRIP. `onStair` exists so a body does not yo-yo while standing on a stair,
-     and it is set the moment a body arrives on one — including the tile it lands on after
-     crossing, because a stair is the same tile on both storeys. `useStairs` tests it BEFORE
-     it looks at `wantFloor`, so the flag outlived the order that set it: walk into a cave
-     and you are standing on the mouth with `onStair` true, and the order to go back up is
-     read and discarded every tick for the rest of the game. Nothing logs. The body simply
-     never leaves.
+     THE ONE-WAY TRIP. `onStair` remembers the stair a body is standing on so it does not
+     yo-yo across it, and it is set the moment the body arrives — including the tile it lands
+     on after crossing, because a stair is the same tile on both storeys. `useStairs` tests it
+     BEFORE it looks at `wantFloor`, so the latch outlives the order that set it: walk into a
+     cave and you are standing on the mouth with that mouth remembered, and the order to go
+     back up is read and discarded every tick for the rest of the game. Nothing logs. The body
+     simply never leaves.
      A NEW ORDER IS NOT A YO-YO. Clearing it here keeps the guard doing its actual job — no
      bouncing on an unchanged order — and lets a fresh one through. */
-  c.onStair = false;
+  c.onStair = null;
   c.moveTarget = {x: sx + 0.5, y: sy + 0.5};
 }
 function isBlocked3(c, x, y){ return isBlocked(x, y, c.floor || 0); }
 function stepToward(c, tx, ty, dt){
   const d = dist(c.x,c.y,tx,ty);
   if(d < 0.05) return true;
-  const sp = moveSpeed(c) * dt;
+  let sp = moveSpeed(c) * dt;
+  /* and whoever has hold of you gets a say in the LEAVING, and only the leaving — see pinGrip.
+     Dot the step against the line to them: below -0.2 is genuinely turning away rather than
+     circling, and only that pays. */
+  const pin = c._pinBy;
+  if(pin && pin.state === 'ok' && c._pinK < 1){
+    const px = pin.x - c.x, py = pin.y - c.y;
+    const pd = Math.hypot(px, py);
+    if(pd > 0.01 && ((tx - c.x) * px + (ty - c.y) * py) / (d * pd) < -0.2) sp *= c._pinK;
+  }
   const nx = c.x + (tx-c.x)/d * Math.min(sp, d);
   const ny = c.y + (ty-c.y)/d * Math.min(sp, d);
   if(!isBlocked3(c, nx, ny)){ c.x = nx; c.y = ny; }
@@ -7925,6 +8148,83 @@ function travel(c, x, y, dt, arrive=0.15){
     stepToward(c, x, y, dt);
   }
   return dist(c.x,c.y,x,y) <= arrive;
+}
+/* ---------- WHICH SIDE OF HIM TO STAND ON ----------
+   "Everyone tries to beeline towards the enemy and gets caught on allies. They should attempt
+   to flank around where possible."
+
+   THE FIRST HALF OF THAT WAS A WRONG DIAGNOSIS AND IT IS WORTH WRITING DOWN, because the
+   obvious fix would have been to the pathing and the pathing turned out to be fine. Measured
+   in tools/flank.js before a line of this was written: eight bodies given one order all reach
+   striking distance inside three seconds and NONE of them stalls on the way (zero ticks of
+   the approach spent going nowhere); a runner sent through his own six-man picket line pays
+   1.03x the open walk for it; two lines of six meet with two changes of mind between twelve
+   bodies; and eight ordered through a ONE-TILE gate in a wall are all through and fighting in
+   three and a half seconds. Nobody is getting caught on anybody.
+
+   What is actually wrong is the picture, and the second half of the report names it. All eight
+   walk at the same point — his tile — so they arrive as a column and stand inside each other:
+   eight bodies within one tile of the quarry, occupying five of the eight sides. That is the
+   beeline. The approach simply had no idea anybody else was making it.
+
+   So each body claims a place on a ring around its quarry and walks to THAT. Nearest free
+   place wins, which keeps the front rank walking straight in — the ones behind are the ones
+   who fan out, because the near slots are already spoken for by the time they ask.
+   And a man already fighting somebody has a front and a back: slots in the arc he is facing
+   cost extra, so a squad joining a fight in progress goes round to his flanks rather than
+   queueing up in front of his blade. The penalty is a tile and a half of walking, not a
+   prohibition — if going round is dear enough, the front is still the answer.
+
+   A FULL RING IS DEAR, NOT SHUT. Rejecting an occupied slot outright reads well and fails at
+   the one size that matters: eight slots and twelve bodies means four bodies with no slot at
+   all, and a body with no slot walks at his tile — the exact beeline this replaces. Measured
+   at twelve: four sides covered, six bodies stacked on the nearest one. Occupancy is priced
+   instead, dearer than any walk around the ring, so a free place always beats a shared one and
+   the overflow doubles up on the emptiest side rather than the closest.
+
+   Held for half a second at a time and stored as an OFFSET rather than a point, so it follows
+   a quarry who is moving instead of aiming at where he was. A slot re-chosen every frame is a
+   body that shuffles instead of arriving. */
+const SLOT_RING = [];
+for(let _s = 0; _s < 8; _s++) SLOT_RING.push([Math.cos(_s * Math.PI / 4), Math.sin(_s * Math.PI / 4)]);
+const SLOT_CROWD = 6.0;          /* dearer than the whole ring is wide: free beats shared, always */
+function slotRadius(t){ return 0.9 + Math.max(0, (t.big || 1) - 1) * 0.5; }
+function approachSlot(c, t, dt){
+  c._slotT = (c._slotT || 0) - dt;
+  if(!c._slot || c._slot.t !== t || c._slotT <= 0){
+    c._slotT = 0.5;
+    const r = slotRadius(t), f = c.floor || 0;
+    /* which way is he looking? Only meaningful if he is looking at somebody who ISN'T YOU.
+       A duel has no flank: two bodies each walking round the other's front is two bodies
+       circling each other across the field, and a line of six against a line of six is six
+       duels. Measured, before this line existed: contact took 15 seconds instead of 6, and
+       every one of them was walking a long way round a man who was turning to follow. */
+    let fx = 0, fy = 0;
+    if(t.target && t.target !== c && t.target.state === 'ok'){
+      const td = dist(t.x, t.y, t.target.x, t.target.y);
+      if(td > 0.01){ fx = (t.target.x - t.x)/td; fy = (t.target.y - t.y)/td; }
+    }
+    let best = null, bs = 1e9;
+    for(const [ux, uy] of SLOT_RING){
+      const sx = t.x + ux*r, sy = t.y + uy*r;
+      if(isBlocked(sx, sy, f)) continue;
+      let crowd = 0;
+      for(const o of charsNear(sx, sy, 0.7)){
+        if(o === c || o === t || o.state !== 'ok' || (o.floor || 0) !== f) continue;
+        if(dist(o.x, o.y, sx, sy) < 0.62) crowd++;
+      }
+      /* the walk, what it costs to share the spot, and what it costs to stand in front of a
+         man mid-swing */
+      let sc = dist(c.x, c.y, sx, sy) + crowd * SLOT_CROWD;
+      if(fx || fy){ const face = ux*fx + uy*fy; if(face > 0.64) sc += 1.5; }
+      if(sc < bs){ bs = sc; best = [ux*r, uy*r]; }
+    }
+    /* a new place to be starts a new clock — see `_slotWait` at the call site */
+    const was = c._slot;
+    c._slot = best ? {t, ux: best[0], uy: best[1]} : null;
+    if(!was || !c._slot || was.t !== t || Math.abs(was.ux - c._slot.ux) > 0.01 || Math.abs(was.uy - c._slot.uy) > 0.01) c._slotWait = 0;
+  }
+  return c._slot && c._slot.t === t ? {x: t.x + c._slot.ux, y: t.y + c._slot.uy} : null;
 }
 function clearOrders(c){
   if(concExclusive(c) && !concMobile(c)) endConcentration(c);   /* a rooted light goes out when you move; a lantern travels with you */
@@ -8122,6 +8422,8 @@ function physics(c, dt){
   if(c.lungeT > 0) c.lungeT -= dt;
   if(c.shoveT > 0) c.shoveT -= dt;
   if(c.looseT > 0) c.looseT -= dt;
+  if(c.reloadT > 0) c.reloadT -= dt;
+  if(c._pinHold > 0) c._pinHold -= dt;   /* the grip outlives the contact — see pinGrip */
   c.mana = Math.min(maxMana(c), c.mana + dt*0.5);
   if(c.dot) applyDot(c, dt);
   c.blocking = false;
@@ -8630,8 +8932,36 @@ function physics(c, dt){
       return;
     }
     if(w && w.range){
-      if(d < 1.7){ c.blocking = true; return; }        /* too close: guard, don't shoot */
-      if(d > w.range){ travel(c, t.x, t.y, dt, w.range - 0.5); return; } /* no firing on the move */
+      /* ---------- TOO CLOSE TO SHOOT IS NOT THE SAME AS NOTHING TO DO ----------
+         This was `if(d < 1.7){ c.blocking = true; return; }` and the comment on it — "too
+         close: guard, don't shoot" — is right about the first half and was the whole of the
+         behaviour. So a bowman or a lance-holder that let something reach it stood in contact
+         with its guard up and did NOTHING, forever: it would not shoot, because it is too
+         close, and it never reached the melee branch below to swing. Filed twice in the To Do
+         as "at 0.9 tiles a lance-holder neither fires nor swings", both times as belonging to
+         this branch, and it is what a probe finally walked into — a lancer at 0.92 tiles with
+         eighteen cells in the stash, an enemy on its chest and eighty-five seconds of unused
+         cooldown.
+         Not shooting stays. Standing there does not: inside reach it falls through and
+         defends itself with what it is holding, which `pickMove` already supports (a ranged
+         weapon resolves to a plain slash). Between reach and 1.7 tiles it still guards —
+         that gap is the one the old comment was actually about. */
+      if(d < 1.7){
+        c.blocking = true;
+        /* ONLY A WEAPON THAT CAN ACTUALLY FIGHT DROPS THE GUARD, and the first version of this
+           did not check — it sent EVERY ranged body into a brawl, bows included. `command.js`
+           found it within the hour and it was not subtle: a foraging band came home 5 dead of
+           5, commander included, because `blocking` is worth a great deal (it multiplies an
+           attacker's hit chance by as little as 0.30 and cuts the stagger roll nearly in half)
+           and archers had been quietly relying on it every time something reached them.
+           So guarding is still the right answer for a bow. A LANCE is a different weapon —
+           a spike on a frame long enough to keep a man off you — and for that one, and
+           anything else given a `melee` profile, standing there was always the wrong answer. */
+        if(d > 1.0 || !w.melee) return;  /* out of reach, or nothing to fight with: guard and wait */
+        /* and inside reach, with something to fight with, fall through to the swing */
+      }
+      else if(d > w.range){ travel(c, t.x, t.y, dt, w.range - 0.5); return; } /* no firing on the move */
+      else {
       /* the draw. A crossbow is already spanned and only has to be brought up; a bow has
          to be pulled and held; the lance has to spin something up that was never meant to
          be fired twice in a minute. The cost of each is paid on the other side, in rof. */
@@ -8640,26 +8970,67 @@ function physics(c, dt){
         c.windup = {t: draw, kind: 'ranged', tgt: t.id, dur: draw};
       }
       return;
+      }
     }
-    if(d > 1.0){
-      /* Kenshi rule: a body only has so many sides. Extras circle at spear-length and wait. */
-      if(!(c.targetManual && c.faction==='player') && d < 4.5){
-        const cap = (t.big||1) > 1.3 ? 5 : 3;
-        let engaged = 0;
-        for(const o of charsNear(t.x, t.y, 2.2)){
-          if(o !== c && o.state==='ok' && o.target === t && dist(o.x,o.y,t.x,t.y) < 1.9) engaged++;
-        }
-        if(engaged >= cap){
-          c.blocking = true;
-          if(d < 2.7){   /* keep spacing */
-            const ux = (c.x - t.x)/Math.max(0.01, d), uy = (c.y - t.y)/Math.max(0.01, d);
-            travel(c, clamp(c.x + ux*1.5, 2, W-2), clamp(c.y + uy*1.5, 2, H-2), dt, 0);
-          }
-          return;
+    /* ---- THE SIDE THIS ONE IS COMING AT HIM FROM ----
+       Picked here rather than inside the walk because the last half-tile is the half that
+       decides it. A body sent round to the north walks a straight line at the north slot and
+       CLIPS the man's reach on the way past — it is inside 1.0 while it is still due west of
+       him — so a strike gated on distance alone stops it there and it fights from the front
+       after all. That was an earlier version of this and it measured identically to no
+       version at all: three of three at bearing 0.83, dead in front of his blade.
+       So a body with a place to be finishes going there before it swings. Not for long:
+       a second and a bit is enough to step round a man and not enough to dance around one,
+       and when it runs out the fight happens wherever the body is standing.
+       THE CLOCK IS LATCHED, WHICH IS THE WHOLE OF IT WORKING. Clearing `_slotWait` on the
+       tick it runs out restarts it on the next one, so a body that CANNOT reach its slot —
+       hemmed in, or standing where a moving quarry keeps putting the ring — would circle for
+       a second, swing once, and circle again forever. It stays run-out until the body either
+       reaches the slot or loses the reach, and `approachSlot` restarts it when it hands out a
+       different place to stand. */
+    const slot = approachSlot(c, t, dt);
+    let circling = false;
+    if(slot && d <= 1.0){
+      if(dist(c.x, c.y, slot.x, slot.y) <= 0.45) c._slotWait = 0;                 /* standing in it: fight */
+      else if((c._slotWait = (c._slotWait || 0) + dt) < 1.2) circling = true;
+    } else if(d > 1.0) c._slotWait = 0;
+    if(d > 1.0 || circling){
+      /* ---------- AND WHETHER THERE IS ROOM FOR HIM AT ALL ----------
+         The Kenshi rule: a body only has so many sides, and the extras wait at spear-length.
+         One pass, and nothing else may scan inside it — `charsNear` hands back one shared
+         buffer and a second call would empty this one underneath us. (`approachSlot` above
+         scans too, which is why it is called before this and not inside it.) */
+      let engaged = 0;
+      if(d < 4.5){
+        for(const o of charsNear(t.x, t.y, 1.9)){
+          if(o === c || o.state !== 'ok' || o.target !== t) continue;
+          if(dist(o.x, o.y, t.x, t.y) < 1.9) engaged++;
         }
       }
+      const cap = (t.big||1) > 1.3 ? 5 : 3;
+      if(!(c.targetManual && c.faction==='player') && d < 4.5 && engaged >= cap){
+        c.blocking = true;
+        /* CIRCLE at spear-length — which is what this rule has always said and never did. It
+           used to push the extra man straight back down the line he arrived on, so a queue
+           stayed a queue and only got longer; the men waiting their turn were the whole of
+           the reported "everyone gets caught on allies". Now he waits on the bearing of his
+           OWN slot, a stride further out than the fighting ring: the men who cannot get hold
+           of it are already spread around it, ready to step in as the front rank drops. */
+        if(c._slot && c._slot.t === t){
+          const r = slotRadius(t), wr = r + 1.5;
+          travel(c, clamp(t.x + c._slot.ux/r*wr, 2, W-2), clamp(t.y + c._slot.uy/r*wr, 2, H-2), dt, 0.35);
+        } else if(d < 2.7){
+          const ux = (c.x - t.x)/Math.max(0.01, d), uy = (c.y - t.y)/Math.max(0.01, d);
+          travel(c, clamp(c.x + ux*1.5, 2, W-2), clamp(c.y + uy*1.5, 2, H-2), dt, 0);
+        }
+        return;
+      }
       const px = c.x, py = c.y;
-      travel(c, t.x, t.y, dt, 0.95);
+      /* Walk ONTO the slot, not to within a fifth of a tile of it: a slot sits at 0.9 and a
+         blade reaches 1.0, so a loose arrival tolerance parks bodies at 1.1 — a hair outside
+         the reach that would let them swing, standing there forever. */
+      if(slot) travel(c, slot.x, slot.y, dt, 0.05);
+      else travel(c, t.x, t.y, dt, 0.95);
       /* jammed against the player's walls? smash through */
       if(c.faction !== 'player' && c.faction !== 'town'){
         if(dist(px, py, c.x, c.y) < moveSpeed(c)*dt*0.15) c.stuckT += dt; else c.stuckT = 0;
@@ -8680,7 +9051,8 @@ function physics(c, dt){
          cooldown you were free to walk around during — which is why every fight in the game
          had the texture of a click contest. Now: wind, land, recover. All three scale with
          what you are holding. */
-      const mvKey = !(wepOf(c) || {}).range ? pickMove(c, t) : 'slash';
+      const wq = wepOf(c) || {};
+      const mvKey = (!wq.range || wq.melee) ? pickMove(c, t) : 'slash';
       const mv = MOVES[mvKey];
       c.swingMove = mvKey;
       /* finding a new one is worth being told about, once */
@@ -9330,25 +9702,38 @@ const DREAD_WEIGHT = {          /* base persuasive force of an event kind */
   fracture: 26, rift: 14, sixfold: 12, bloodmoon: 6, attention: 8, omen: 7,
   sack: 9, razed: 5, plague: 7, ambush: 4, camp: 3, war: 3, sundered: 10, coil: 8,
   purge: 4, rebellion: 3, conquest: 4,
+  /* A sundered site standing up is the sundered site (10) plus the thing that walked off it,
+     and it is the only event on this table that a seat can be told is somebody's FAULT. It
+     sits under the Fracture and over everything else. */
+  curse: 18,
 };
 /* trait multiplier per kind. 1.0 = it lands as written; 0 = that leader does not care. */
 const DREAD_TRAIT = {
+  /* the dead god got up out of the ground. There is no reading a pious seat cares about more. */
   pious:      {fracture:1.5, omen:1.8, bloodmoon:1.6, sundered:1.5, coil:1.5, sixfold:1.4,
-               rift:1.0, sack:0.7, war:0.4, camp:0.3, ambush:0.4, conquest:0.5},
+               rift:1.0, sack:0.7, war:0.4, camp:0.3, ambush:0.4, conquest:0.5, curse:1.9},
+  /* not a portent to them — a thing the size of a barn standing on a trade road */
   mercantile: {ambush:1.8, camp:1.6, war:1.5, sack:1.4, plague:1.3, rift:0.9,
-               omen:0.3, bloodmoon:0.3, fracture:0.8, sixfold:0.5, coil:0.4},
+               omen:0.3, bloodmoon:0.3, fracture:0.8, sixfold:0.5, coil:0.4, curse:1.1},
+  /* they discount omens and do not discount something that can be fought */
   warlike:    {sack:1.7, razed:1.6, war:1.5, rift:1.2, sixfold:1.3, purge:1.4,
-               omen:0.2, bloodmoon:0.3, fracture:0.7, coil:0.4, plague:0.6},
+               omen:0.2, bloodmoon:0.3, fracture:0.7, coil:0.4, plague:0.6, curse:1.0},
   craven:     {},   /* everything frightens them; the floor multiplier does the work */
   ironfisted: {rebellion:1.6, conquest:1.5, war:1.2, sack:1.1,
-               omen:0.2, bloodmoon:0.2, fracture:0.6, rift:0.7, sixfold:0.5, coil:0.3},
+               omen:0.2, bloodmoon:0.2, fracture:0.6, rift:0.7, sixfold:0.5, coil:0.3,
+               /* it wants a kept house; an uncleared field IS an unkept house, and it says so */
+               curse:1.3},
   /* A JUST seat is moved by what is being done to people, and not much by portents. */
   just:       {sack:1.5, razed:1.5, plague:1.4, ambush:1.3, camp:1.2, rebellion:1.2,
-               rift:1.0, omen:0.4, bloodmoon:0.4, fracture:1.0, sixfold:0.8},
+               rift:1.0, omen:0.4, bloodmoon:0.4, fracture:1.0, sixfold:0.8,
+               /* moved by what is being done to people, and this one is being done TO them */
+               curse:1.4},
   /* A CUNNING one is not frightened of anything. It is interested in which way the wind is
      going to blow, and it reads the sky itself before it reads a report of a raid. */
   cunning:    {fracture:1.4, rift:1.2, sixfold:1.2, coil:1.1, sundered:1.2, attention:1.3,
-               ambush:0.6, camp:0.5, war:0.9, omen:0.7, bloodmoon:0.6},
+               ambush:0.6, camp:0.5, war:0.9, omen:0.7, bloodmoon:0.6,
+               /* reads it as information: the ground is keeping score, and it wants to know of what */
+               curse:1.5},
 };
 /* craven hears everything and hears it loudly; ironfisted discounts all of it and wants to
    be shown a kept house instead (see the order term below) */
@@ -10119,6 +10504,34 @@ const GAUNTS = {
   /* It does not want to fight you. It wants one of you, and it will wait all night. */
   larder: {name:'Larder-Kin',   atk:16, def:26, tough:22, ath:20, big:1.1,  claw:6,
     bark:['...', '(something being folded)', '(a long, patient breath)']},
+  /* ---------- THE EYES OF AINZOPHA'AR ----------
+     Named for the warding light — the small terrible sun a divine alchemist carries and that
+     these things' own kin will not close on — and they turn it on you. That inversion is the
+     creature: the one spell in the game that keeps the dark off is also what comes out of the
+     dark at a necromancer.
+     Individually they are nothing: 0.42 across, twenty-two points of blood, a claw that barely
+     scratches. The threat is the GAZE, and the gaze is `emberrot` — a rot-fire that burns on a
+     timer rather than a blow that lands. That is the point of them, and it is deliberate: a
+     bound host's survivability comes out of `def`, which floors mitigation at 0.15 and makes
+     plate the answer to everything. A fire already burning inside a body does not care what
+     the body is wearing. They are the counter to a wall of Bone Knights, by construction. */
+  eye:    {name:"Eye of Ainzopha'ar", atk:8, def:20, tough:6, ath:16, big:0.42, claw:3,
+    bark:['(it does not blink)', '(the light behind it swells)', '(a hymn, sung wrong)']},
+  /* ---------- THE MESSENGERS ----------
+     Intelligent Watchers, and the only thing in this world hostile to you that GETS BETTER.
+     `learnMult` multiplies every `xpGain` and until now belonged solely to the MIND axis of
+     the binding circle — which is to say, to bodies you made. A Messenger has it too, so a
+     campaign that runs long enough produces one that has been practising the whole time.
+     That is the creature. The stat line below is only where it starts.
+     They carry nothing. A weapon of fire and light is an unarmed body with a heavy `clawDmg`
+     and a `clawWt` of 'burn' — which means it cannot be disarmed, cannot be looted, and cannot
+     be picked up off the ground by construction rather than by a flag saying so. */
+  messenger:{name:'Messenger',   atk:26, def:24, tough:30, ath:14, big:1.2,  claw:16,
+    bark:['SHEM. SHEM ARAK.', '(it is speaking. none of it is words.)', 'KA-ORU. KA-ORU NETH.',
+          '(the vowels arrive before the consonants)']},
+  herald: {name:'Messenger-Herald', atk:18, def:22, tough:24, ath:12, big:1.15, claw:10,
+    bark:['ORU. ORU-SHEM ANAK.', '(a sentence, and the end of it is on fire)',
+          '(it repeats itself. it is not repeating itself.)']},
 };
 /* ---------- THE MIDDEN ----------
    A Larder-Kin keeps a place. It is not a nest and nothing is built: it is a heap in the
@@ -10189,9 +10602,72 @@ function spawnGaunt(kind, x, y){
   c.big = g.big;
   c.clawDmg = g.claw;
   c.nightborn = true;            /* the dark made it; the dawn unmakes it */
+  if(g.bark) c.barks = [...g.bark];
   if(kind === 'maw') c.eatsDead = true;
+  if(kind === 'eye'){
+    /* a floating body is `beast` + a small `big` and no humanoid rig — the same way the Wisp
+       is done — and the casting is the Skeleton Mage's wiring: one art, deaf to the rest */
+    c.wisp = true;                 /* it floats, and the rig knows what that looks like */
+    c.speedMult = 0.78;
+    c.blood = 22; c.maxBlood = 22;
+    for(const k of VITAL) { c.parts[k].hp = 18; c.parts[k].max = 18; }
+    c.gift = 'divine'; c.onlyArt = 'divine';
+    c.att = {divine:2, destruction:0, dark:0, dust:0};
+    c.attXp = {divine:0, destruction:0, dark:0, dust:0};
+    c.arts = {emberrot: true};     /* the gaze. It burns on a timer, so armour is no answer. */
+    c.stats.magic = 16;
+    c.mana = rawMaxMana(c);
+    c.stance = 'ranged';           /* it holds off and looks at you */
+    c.autoFight = true;
+  }
+  if(kind === 'messenger' || kind === 'herald'){
+    /* THE ONE THING OUT THERE THAT IMPROVES. Spawned early and rarely on purpose: the whole
+       creature is the campaign it has had, and a Messenger introduced at full strength in the
+       last week is just another statline. Dawn does not collect them either — a thing that
+       learns cannot be `nightborn`, or it is unmade before it has learned anything. */
+    c.nightborn = false;
+    c.minded = true;
+    c.learnMult = kind === 'herald' ? 1.9 : 1.6;
+    c.clawWt = 'burn';             /* fire and light: unlootable because there is nothing to loot */
+    c.autoFight = true;
+    if(kind === 'herald'){
+      /* the alchemist class. `onlyArt` caps every other branch at 0, so it knows fire and can
+         never know anything else however long it lives. */
+      c.gift = 'destruction'; c.onlyArt = 'destruction';
+      c.att = {divine:0, destruction:2, dark:0, dust:0};
+      c.attXp = {divine:0, destruction:0, dark:0, dust:0};
+      c.arts = {emberrot: true};
+      c.stats.magic = 20;
+      c.mana = rawMaxMana(c);
+      c.stance = 'ranged';
+    }
+  }
   chars.push(c);
   return c;
+}
+/* ---------- A FLIGHT, NOT A BODY ----------
+   The note that specified these asked for the swarm decision to be made before anything was
+   written, because the two builds are completely different: a lot of cheap bodies, or one body
+   that renders as many. This is the first, and the reason is counter-play. One body drawn as
+   several has a single pool of blood and a single position — it cannot be thinned, cannot
+   surround anybody, and the swarm is a picture rather than a situation. Cheap bodies get all
+   of it for free: they die one at a time, they come at you from several sides because the
+   flanking work already makes them, and every system that already exists — targeting, the
+   projectile mill, the cull, the bounty board — reads them without being told anything.
+   The cost the note warned about is `charsNear`, and it is affordable: a flight is four to
+   seven bodies against a world that boots with six hundred and thirty-three. */
+function spawnEyeFlight(x, y, n){
+  const flight = {id: ++squadN, lair: {x, y, r: 14}};
+  const made = [];
+  n = n || ri(4, 7);
+  for(let i = 0; i < n; i++){
+    const a = (i / n) * Math.PI * 2;
+    const q = findOpenNear(Math.round(x + Math.cos(a) * 3), Math.round(y + Math.sin(a) * 3), 6);
+    const e = spawnGaunt('eye', q.x, q.y);
+    e.squad = flight;
+    made.push(e);
+  }
+  return made;
 }
 /* ---------- MALATHUUN'S CORPSE-SITES ----------
    Where a piece of the Sundered fell, the waste stopped being empty. The ground breeds
@@ -10229,6 +10705,11 @@ const corpseSites = [];
     };
     const cang = (s.id * 2.39996) + 1.9;      /* the monument's own turn, plus a quarter */
     const cpos = openAt(p.x + Math.cos(cang) * 11, p.y + Math.sin(cang) * 11);
+    /* WHICH CHEST IS THIS SITE'S, recorded rather than searched for later. Malathuun's Curse
+       has the site take its own grave-goods up with it, and "the chest nearest the middle" is
+       not a safe way to find them — a ruin or a camp can sit inside the same radius. An index
+       taken at the moment it is pushed cannot pick the wrong one, and it costs no draw. */
+    s.cacheIdx = chests.length;
     chests.push({x: cpos.x, y: cpos.y, opened: false, loot: {cats: 0, items: {
       sunder: ri(2, 4),
       ...(rnd() < 0.6 ? {formula_p: 1} : {formula_w: ri(1, 2)}),
@@ -10377,10 +10858,13 @@ function liveCairns(){
   cairn = cairns[0] || null;
   return cairns;
 }
-function spawnCairnBeast(force){
+function spawnCairnBeast(force, atSite, quiet){
   if(!force && liveCairns().length >= CAIRN_MAX) return null;
-  /* it forms where the dead already are: a corpse-field, well out past the last fence */
-  const site = (typeof corpseSites !== 'undefined' && corpseSites.length) ? pick(corpseSites) : null;
+  /* it forms where the dead already are: a corpse-field, well out past the last fence.
+     `atSite` names one instead of taking whichever; `quiet` withholds the ordinary notice for
+     a caller that is going to say something better. Both are for the Curse, and both leave the
+     no-argument call — which is the one worldgen and cairnTick make — byte for byte as it was. */
+  const site = atSite || ((typeof corpseSites !== 'undefined' && corpseSites.length) ? pick(corpseSites) : null);
   const q = site ? findOpenNear(site.x + ri(-6, 6), site.y + ri(-6, 6), 8)
                  : findOpenNear(ri(60, W-60), ri(60, H-60), 10);
   /* NAMED FOR WHERE IT ROSE, once there is more than one — a log with three identical
@@ -10416,7 +10900,7 @@ function spawnCairnBeast(force){
      and it is taken from the nearest TOWN rather than from the player, because a town is
      somewhere you can walk to on purpose and "west of here" is worthless once you have
      moved. */
-  worldEvent('cairn', q.x, q.y,
+  if(!quiet) worldEvent('cairn', q.x, q.y,
     `Something has stood up in one of the corpse-fields ${cairnWhere(q.x, q.y)}. Drovers say it is ` +
     'not a creature — that it is the field itself, and that it has started walking.');
   return c;
@@ -10472,6 +10956,79 @@ function cairnGrow(c){
   }
 }
 let _cairnT = 0;
+/* ============================================================ MALATHUUN'S CURSE
+   A world event, like the blood moon, except that a blood moon is weather and this is an
+   ACCUSATION. A sundered site — a place where a piece of the dead god came down — stops being
+   scenery and stands up, already most of the way grown.
+
+   WHAT FIRES IT IS YOU, and that is the whole design. The blood moon runs off the Fracture
+   clock, which is to say off time passing, and there is nothing to be done about time passing.
+   The Cairn Beast population already reads a dial the player controls — unclaimed dead lying
+   in the fields — so the Curse reads the same one and simply sets the bar much higher: an
+   ordinary beast forms at twenty-six bodies per beast already standing, and the Curse wants
+   seventy on the ground at once. That is not a tide coming in, it is a mess you made and did
+   not clear, and it is answerable: burn your dead, or the ground answers for you.
+
+   NOT NASCENT AND NOT FULL. `ate` is the one number the whole stat line is computed from, so
+   thirty-two of them makes a body around 3.5x — past the Sixfold, past anything else walking,
+   and still less than half the 8.0 ceiling a beast reaches by eating its way there. It arrives
+   as a problem rather than as a curiosity, and it can still get much worse.
+
+   IT TAKES ITS GRAVE-GOODS WITH IT. The site's fragment cache goes into the thing that stood
+   up rather than being destroyed with it: the ground is no longer lootable, which is what a
+   site that got up should mean, but nothing the player could have had is deleted — it walked
+   off, and it can be killed for. `cacheIdx` is recorded at worldgen so the right chest is
+   certain, and `chestsOpened` already rides the save, so a looted-and-walked site stays that
+   way across a reload with nothing new to store. */
+const CURSE_FODDER = 70;         /* unclaimed dead on the ground before the site answers */
+const CURSE_GAP = 6;             /* game-days between curses, so it stays an event */
+const CURSE_ATE = 32;            /* half-grown: ~3.5x, against a ceiling of 8.0 */
+const CURSE_DAY = 16;            /* not in the first fortnight; there are no fields yet */
+/* Read off the news rather than stored: `events` ride the save, so the cooldown survives a
+   reload without a new field. A curse old enough to have been pruned out of a 500-event log is
+   old enough that the gap has long since passed anyway. */
+function lastCurseDay(){
+  for(let i = events.length - 1; i >= 0; i--) if(events[i].kind === 'curse') return events[i].day;
+  return -999;
+}
+function malathuunsCurse(){
+  if(!corpseSites.length) return null;
+  /* prefer a site with its cache still in the ground — a site already stripped has nothing to
+     carry off, and the point of the thing is that it takes the reason you went there */
+  const loaded = corpseSites.filter(s => s.cacheIdx >= 0 && chests[s.cacheIdx] && !chests[s.cacheIdx].opened);
+  const site = pick(loaded.length ? loaded : corpseSites);
+  const c = spawnCairnBeast(true, site, true);
+  if(!c) return null;
+  c.ate = CURSE_ATE;
+  c._cairnSeen = 99;                                  /* no ordinary growth notice: it announces itself */
+  cairnGrow(c);
+  c._cairnSeen = Math.floor((c.big - 1.6) / 0.7);     /* but it still calls out when it grows FURTHER */
+  c.blood = c.maxBlood;
+  c.cursed = true;
+  const home = cairnTown(c.x, c.y);
+  let nm = home ? `Malathuun's Answer at ${home.name}` : "Malathuun's Answer";
+  if(chars.some(o => o !== c && o.name === nm)){
+    let n = 2;
+    while(chars.some(o => o !== c && o.name === `${nm}, the ${n}${n===2?'nd':n===3?'rd':'th'}`)) n++;
+    nm = `${nm}, the ${n}${n===2?'nd':n===3?'rd':'th'}`;
+  }
+  c.name = nm;
+  /* the ground gives up what it was holding, into the thing that got up off it */
+  const ch = site.cacheIdx >= 0 ? chests[site.cacheIdx] : null;
+  if(ch && !ch.opened){
+    ch.opened = true;
+    c.loot = (c.loot || 0) + ((ch.loot && ch.loot.cats) || 0);
+    c.dropItems = c.dropItems || {};
+    for(const k in ((ch.loot && ch.loot.items) || {})) c.dropItems[k] = (c.dropItems[k] || 0) + ch.loot.items[k];
+  }
+  worldEvent('curse', c.x, c.y,
+    `MALATHUUN'S CURSE. The sundered ground ${cairnWhere(c.x, c.y)} has got up. Where a piece of ` +
+    'the dead god came down there is now a hole, and something the size of a barn walking away from it.');
+  log(`MALATHUUN'S CURSE — ${c.name} has risen from the sundered ground ${cairnWhere(c.x, c.y)}. ` +
+      'It did not have to eat its way to that size. The fields did it for you.', 'bad');
+  AU.news();
+  return c;
+}
 function cairnTick(dt){
   if((_cairnT -= dt) > 0) return;
   _cairnT = 1.0;
@@ -10484,6 +11041,12 @@ function cairnTick(dt){
      already standing — so the late game, where the corpses are, is where they come from. */
   const fodder = corpses.reduce((n, b) => n + (cairnFood(b) ? 1 : 0), 0);
   if(live.length < CAIRN_MAX && fodder >= CAIRN_PER_BODY * (live.length + 1)) spawnCairnBeast();
+  /* ---------- AND SOMETIMES THE GROUND DOES NOT WAIT TO BE FED ----------
+     The Curse reads the same dial and sets the bar far higher — see the block above cairnTick.
+     It is allowed ONE past the ordinary ceiling, which is what makes it an event rather than a
+     fifth of the same thing; the day floor and the six-day gap keep it from becoming weather. */
+  if(day >= CURSE_DAY && fodder >= CURSE_FODDER && live.length < CAIRN_MAX + 1 &&
+     day - lastCurseDay() >= CURSE_GAP) malathuunsCurse();
   for(const c of live) cairnOne(c);
 }
 function cairnOne(c){
@@ -10889,6 +11452,35 @@ function gauntTick(dh){
   /* corpse-eaters are the commonest thing out here. The dead are the whole reason they came. */
   /* the Larder-Kin only comes once something out there has taken an interest in you —
      it is not a scavenger of the dead, it is a collector of the living. */
+  /* ---------- A FLIGHT COMES AS A FLIGHT ----------
+     The Eyes are the one thing on this table that does not arrive as a body, so they are
+     drawn before the single-body roll and return early: `spawnEyeFlight` puts four to seven
+     of them up at once and the rest of this function has nothing to say about that. Tier 2
+     and up, and rare inside it — the gaze bypasses armour, which is exactly the counter to a
+     late host and exactly the wrong thing to meet in week one. */
+  if(tier >= 2 && roll < 0.08){
+    const flight = spawnEyeFlight(x, y);
+    if(flight.length){
+      for(const e of flight) if(tier >= 2 || bloodMoon) e.hunt = anchor;
+      if(dist(flight[0].x, flight[0].y, anchor.x, anchor.y) < 34 && visAt(flight[0].x, flight[0].y) === 2)
+        log(`Lights are coming up out of the dark, and they are looking at you. ${flight.length} of them.`, 'bad');
+      return flight[0];
+    }
+  }
+  /* ---------- AND ONE THING OUT THERE IS TAKING NOTES ----------
+     A Messenger is rare at every tier and deliberately available from the FIRST — it is the
+     only hostile body in the world with `learnMult`, so what makes it frightening is the
+     campaign it has had, and one introduced late is only a stat line. Two is the ceiling: a
+     world with a dozen of these growing in it is a different game. */
+  if(roll > 0.985 && chars.filter(o => (o.gauntKind === 'messenger' || o.gauntKind === 'herald') && o.state !== 'dead').length < 2){
+    const m = spawnGaunt(rnd() < 0.35 ? 'herald' : 'messenger', x, y);
+    m.hunt = anchor;
+    if(dist(m.x, m.y, anchor.x, anchor.y) < 34 && visAt(m.x, m.y) === 2)
+      log(`Something out there is talking. It is not talking to you, and none of it is words.`, 'bad');
+    else worldEvent('attention', m.x, m.y,
+      'Drovers on the waste road heard something speaking in the dark. Not calling — speaking, in sentences, in a tongue nobody could place.');
+    return m;
+  }
   const kind = (tier >= 1 && roll < 0.14) ? 'larder'
              : (tier >= 2 && roll < 0.30) ? 'shrike'
              : roll < 0.50 ? 'maw' : roll < 0.75 ? 'stalker' : 'gaunt';
@@ -11182,6 +11774,10 @@ function fireRanged(c, t, w){
   AU.shot(c.x, c.y);
   breakVeil(c, 'shoots');
   c.atkCd = (w.rof || 2.2) / (1 + c.stats.atk*0.012) * (1 + armorPen(c)*0.7);
+  /* and the legs are spoken for until it is ready again — see moveSpeed. Set HERE and not at
+     the loose, so a lance that comes up dry (above) costs nothing: no shot, no reload. */
+  c.reloadT = c.atkCd;
+  c.reloadK = w.reload || RELOAD_DRAG;
   xpGain(c, 'atk', 0.05);
   xpGain(c, 'ranged', 0.08);
   let victim = t, ff = false;
@@ -11271,6 +11867,30 @@ function hostileToPlayer(o){
   return hostile({faction: 'player'}, o);
 }
 function emplFire(b, spec, g, t){
+  /* ---------- THE HEAVY EATS PRE-FALL CHARGES ----------
+     It used to spend nothing while the handheld paid for every trigger pull, and that was
+     backwards twice over: the thing bolted to your wall is the one with a supply line behind
+     it, and it is the one throwing a bolt that goes through four men. So the cells live here
+     now. The refusal reads like the handheld's used to, for the same reason — a weapon that
+     stops working has to say why over its own head, and the sentence has to name where cells
+     come from, or a player who does not know they are traded cannot go and buy any. */
+  if(spec.cell){
+    if(!takeItem('aether_cell', spec.cell)){
+      addFloat(b.x + 0.5, b.y - 0.6, 'NO CELL', '#8fd0ff');
+      b.cool = 2.0;                       /* do not re-ask every tick */
+      if(!b._dry){
+        b._dry = true;
+        const where = [...new Set(vendors.filter(v => v.vt === 'occult' && v.town).map(v => v.town.name))];
+        log(`The ${spec.name} is dry. Nobody alive makes Aether Cells — they are scavenged, and ` +
+            (where.length ? `the occult dealers at ${where.join(' and ')} are where they surface.`
+                          : `only a sealed redoubt still has any.`), 'bad');
+        refreshInv();
+      }
+      return;
+    }
+    b._dry = false;
+    refreshInv();
+  }
   const bx = b.x + 0.5, by = b.y + 0.5, bf = b.floor || 0;
   const tf = t.floor || 0;
   const skill = g.stats.gunnery;
@@ -11605,6 +12225,21 @@ function carryShape(r, body, rot, m){
    what nobody would argue about: nameless dead, on your ground, that no one else has a claim
    on. Townsfolk are excluded outright — auto-looting a neighbour's body would quietly earn
    you a bounty you never chose, and you would find out about it from the guards. */
+/* ---------- `raised` MEANT TWO THINGS AND DID NEITHER ----------
+   `b.raised` is read HERE, in `cartFodder`, in `cairnFood` and in the raise job's work check,
+   and in all four it means "this body has already been raised from the dead, leave it alone".
+   Nothing set it. The only writer in the file was `patrolTick`, where `c.raised` meant "this
+   watchman has raised the ALARM" — so the flag was true for exactly one population: town
+   guards who spotted an enemy, which is to say town guards immediately before they die.
+   Both halves were therefore wrong. The intended exclusion never once fired, and a guard
+   killed at his post left a body the Gravecart would not fetch, the carrion job would not
+   render, and a Cairn Beast would not eat — the commonest corpse in the world, silently
+   exempt from the entire corpse economy.
+   The alarm flag is `alarmed` now, which is what it was always about. These four reads are
+   left exactly as they are: they express an intent nobody has implemented, and making them
+   live is a design decision about whether a risen put down a second time is still material —
+   which the comment below already argues it SHOULD be. That is a decision, not a rename, so
+   it is written down rather than made in passing. */
 function carrionFodder(b){
   if(!b || b.state !== 'dead' || b.raised) return false;
   if(b.bossKey || b.vip || b.phyl) return false;              /* names, not material */
@@ -12346,6 +12981,13 @@ function decayStage(c){
   const a = corpseAge(c);
   let d = DECAY[0];
   for(const s of DECAY) if(a >= s.at) d = s;
+  /* ---------- AND NOTHING COMES BACK OUT OF THE GROUND FRESHER THAN IT WENT IN ----------
+     A lieutenant that has been raised before carries the count on `lieuWear`, and each one is
+     a rung it can never climb back up. It is a FLOOR and not a pin (which is what the brine
+     is): a twice-raised body left lying in the sun still goes on rotting past `cooling` on
+     its own. Dead bodies only — the flag rides the living lieutenant too, so that the next
+     corpse it leaves knows what it has already spent. */
+  if(c.state === 'dead' && c.lieuWear) d = DECAY[Math.min(Math.max(DECAY.indexOf(d), c.lieuWear), DECAY.length-1)];
   return d;
 }
 function decayIndex(c){ return DECAY.indexOf(decayStage(c)); }
@@ -12413,8 +13055,11 @@ function castRaise(c, body){
      was a companion", so meat grown in a house came back as a LIEUTENANT: name kept, face
      kept, conviction kept, and a slot off a cap of two or three. It never had a name to keep.
      A lieutenant is somebody who lived beside you and died; a grown cadaver is a crop. */
+  /* `!body.undead` is what stops an ordinary risen coming back as somebody. A lieutenant
+     corpse is undead AND somebody, so it needs naming here or the rite would render the one
+     body in the game that has a name into a numbered Bone Knight. */
   const isUnique = !body.beast && !body.construct && !body.grown &&
-    (!!body.bossKey || (wasYours && !body.undead && !body.mule && !body.settler));
+    (!!body.bossKey || !!body.lieutenant || (wasYours && !body.undead && !body.mule && !body.settler));
   if(isUnique){
     const lieuCap = (c.lich ? 2 : 1) + (research.done.necromancy ? 1 : 0);
     if(lieutenantsOf(c) >= lieuCap){ log(`${c.name} cannot bind another lieutenant (${lieutenantsOf(c)}/${lieuCap}).`, 'bad'); return false; }
@@ -12426,11 +13071,21 @@ function castRaise(c, body){
   const bs = body.stats;
   let r;
   if(isUnique){
-    /* a lieutenant rises as it was — name, prowess and gear intact — skeletal, and sworn to you */
+    /* A lieutenant rises as it was — name, prowess and gear intact — skeletal, and sworn to
+       you. THE SECOND TIME IT IS NOT QUITE AS IT WAS, and each time after that a little less:
+       `lieuRot` is 1.00 the first time off the ground and follows the ladder down after, so a
+       lieutenant on its fourth raising comes up at 44% of the person it was. The kit is
+       deliberately NOT stripped the way the generic branch strips a rotted risen's — a
+       lieutenant is buried with what it held and comes up wearing it, and taking that as well
+       would make the last two rungs not worth paying for. */
+    const ldk = decayStage(body), lieuRot = ldk.raise;
     r = makeChar(body.name, c.faction, body.x, body.y,
-      {atk:bs.atk, def:bs.def, tough:bs.tough, ath:bs.ath||8, magic:1, labor:4,
+      {atk:bs.atk*lieuRot, def:bs.def*lieuRot, tough:bs.tough*lieuRot, ath:bs.ath||8, magic:1, labor:4,
        weapon:body.weapon, armor:body.armor});
     r.lieutenant = true;
+    /* the count rides the living body too, so the NEXT corpse it leaves knows what it spent */
+    r.lieuWear = (body.lieuWear || 0) + 1;
+    r.rot = ldk.k;
     r.shortTag = 'LT';
     r.big = body.big || 1;
     /* the whole point of a lieutenant is that it is still them: the face, the conviction they
@@ -12440,11 +13095,19 @@ function castRaise(c, body){
     r.conviction = body.conviction || null;
     r.regard = body.regard || 0;
     r.spouse = body.spouse || 0; r.partner = body.partner || 0;
+    /* every skill it earned, at what the rot left of it — and a floor, because a lieutenant
+       that has forgotten its trade is not the same character coming back worse, it is a
+       different and duller one */
     r.stats = {...body.stats, magic: Math.max(1, body.stats.magic * 0.5)};
+    for(const k in r.stats) if(k !== 'magic') r.stats[k] = Math.max(1, Math.round(r.stats[k] * lieuRot));
     if(body.inv) r.inv = {...body.inv};
     r.pack = body.pack || null;
+    const left = DECAY.length - r.lieuWear;
     log(body.bossKey ? `${c.name} bound ${body.name} into undeath — a lieutenant rises.`
-      : `${body.name} stands up again, and knows ${c === body ? 'their own' : c.name + "'s"} name. Death did not take the whole of them.`, 'good');
+      : r.lieuWear > 1
+        ? `${body.name} comes up again — ${ldk.label}, at ${Math.round(lieuRot*100)}% of what they were. ` +
+          (left > 0 ? `${left} more time${left>1?'s':''} in them.` : 'There will not be another.')
+        : `${body.name} stands up again, and knows ${c === body ? 'their own' : c.name + "'s"} name. Death did not take the whole of them.`, 'good');
   } else {
     /* A corpse is never stronger dead than it was in life; the necromancer's skill only
        closes the gap — and what the rot has already taken, it does not give back. */
@@ -14971,7 +15634,18 @@ function update(dt){
 }
 
 /* soft collision: nudge overlapping bodies apart (gives way under pathing pressure) */
+/* ---------- AND WHO HAS HOLD OF WHOM ----------
+   The pin (see `pinGrip`) needs three numbers per body: is a melee-capable enemy in contact
+   with me (`_pinBy`), how many hostiles are on THEM (`_contacts`), and how many are on ME
+   (`_holders`). All three fall out of the pair loop below for free, which is the only reason
+   they are computed here rather than somewhere they would read better. Nothing else in the
+   tick walks every close pair, and `charsNear` hands back one shared buffer, so a second scan
+   issued from inside `moveSpeed` — or nested inside a scan of its own — would empty this one
+   under whoever was iterating it. One tick of lag on the result is deliberate and harmless —
+   it is a grapple, not a trigger. */
+const PIN_REACH = 1.45;          /* the same reach a passing blade has */
 function separate(){
+  for(const c of chars){ c._contacts = 0; c._holders = 0; c._pinNow = null; }
   for(const [, cell] of charGrid){
     for(let i=0;i<cell.length;i++){
       const a = cell[i];
@@ -14985,6 +15659,16 @@ function separate(){
         if((a.floor||0) !== (b.floor||0)) continue;      /* a storey apart is a world apart */
         const dx = b.x-a.x, dy = b.y-a.y, d2 = dx*dx+dy*dy;
         const foes = hostile(a, b);
+        /* CONTACT IS WIDER THAN OVERLAP, so this is counted before the separation cull below:
+           bodies are pushed apart to 0.8 and a blade reaches further than that, so culling
+           first would have meant nobody was ever holding anybody. */
+        if(foes && d2 < PIN_REACH*PIN_REACH && a.state === 'ok' && b.state === 'ok'){
+          const aw = a.weapon ? ITEMS[a.weapon] : null, bw = b.weapon ? ITEMS[b.weapon] : null;
+          a._contacts++; b._contacts++;
+          /* a bow cannot hold anybody in place, and a body already down holds nothing */
+          if(!(aw && aw.range) && !a.mule && !a.noFight){ b._pinNow = a; b._holders++; }
+          if(!(bw && bw.range) && !b.mule && !b.noFight){ a._pinNow = b; a._holders++; }
+        }
         const R = foes ? 0.8 : 0.6;          /* an enemy's reach is part of his body */
         if(d2 >= R*R) continue;
         if(d2 < 0.0004){
@@ -14995,14 +15679,37 @@ function separate(){
         const ux = dx/d, uy = dy/d;
         nudge(a, -ux*push, -uy*push);
         nudge(b,  ux*push,  uy*push);
-        /* a mover blocked by a hostile body slides around it rather than grinding forever */
-        if(foes){
-          const slide = push * 0.55;
-          if(a.moveTarget || a.attackMove){ nudge(a, -uy*slide, ux*slide); }
-          if(b.moveTarget || b.attackMove){ nudge(b, uy*slide, -ux*slide); }
-        }
+        /* ---------- AND A BODY WITH SOMEWHERE TO BE GOES ROUND, NOT THROUGH ----------
+           This slide existed and fired in neither of the two cases that actually jam a line.
+           It asked `foes`, so a body shouldered into the back of its OWN side ground straight
+           into them — and an ally is far and away the more common thing to be stuck behind,
+           because allies are the ones all walking at the same enemy. And it asked for
+           `moveTarget` or `attackMove`, which a body closing on `c.target` has NEITHER of:
+           the chase is driven off `target` alone, so the one body most likely to be shoving
+           through a crowd was the one body excluded from going around it. That pair of gaps
+           is the reported "everyone beelines and gets caught on allies".
+           Allies slide apart more gently than enemies do: a shield wall that comes undone the
+           moment somebody wants past is a worse failure than one that jostles. */
+        const slide = push * (foes ? 0.55 : 0.42);
+        if(a.moveTarget || a.attackMove || a.target){ nudge(a, -uy*slide, ux*slide); }
+        if(b.moveTarget || b.attackMove || b.target){ nudge(b, uy*slide, -ux*slide); }
       }
     }
+  }
+  /* and now — with every pair counted, and not before — what the grip is actually worth.
+     `pinGrip` reads `_contacts` on the PINNER, which is not finished until the loop above is,
+     so this cannot be folded into it. One pass over the roster, no searching.
+     A tick with no contact does not end the grip: it rides on `_pinHold` while the man who
+     had you is still coming for you and still within a stride. See pinGrip. */
+  for(const c of chars){
+    if(c._pinNow){
+      c._pinBy = c._pinNow;
+      c._pinK = pinGrip(c, c._pinNow);
+      c._pinHold = PIN_HOLD;
+    } else if((c._pinHold || 0) > 0 && c._pinBy && c._pinBy.state === 'ok' &&
+              c._pinBy.target === c && dist(c._pinBy.x, c._pinBy.y, c.x, c.y) < PIN_LET_GO){
+      /* still held — `_pinK` stands as it was when the shoulders were together */
+    } else { c._pinBy = null; c._pinK = 1; c._pinHold = 0; }
   }
 }
 function nudge(c, dx, dy){
@@ -16172,13 +16879,21 @@ const HELMFIT = {
 };
 /* Who is wearing one. Deliberately narrow: this is not an armour slot and it is not something
    the player equips — it is two specific kinds of body that should be recognisable across a
-   field, and everything else keeps the head it had. */
-function helmOf(c){
+   field, and everything else keeps the head it had.
+   `helmOf` NAMED A BAKED MESH AND NOW NAMES NOTHING. Both helms are built out of boxes in
+   `buildCharMesh` (search HELMKIND), because the report was that the imported ones were not
+   working out and a faceless white shell has no texture in it to begin with — it is a shape
+   and two colours. The function is kept, and kept as the single decision point, because the
+   rest of the file asks it who is wearing what and that was always the right shape. */
+const SIGIL_BRONZE = '#9a7434';      /* recolour this for a transmutation immortal; nothing else changes */
+const SIGIL_BRONZE_DK = '#6f5222';
+function helmKind(c){
   if(!c || c.undead || c.beast) return null;
-  if(c.bossKey === 'sigil') return 'runic';
-  if(c.faction === 'redoubt' && c.race === 'homunculus') return 'alch';
+  if(c.bossKey === 'sigil') return 'sigil';
+  if(c.faction === 'redoubt' && c.race === 'homunculus') return 'redoubt';
   return null;
 }
+function helmOf(c){ return helmKind(c); }
 /* ---------- AND THE TWO AUTHORED WEAPONS ----------
    `s` is the weapon's LENGTH in rig units, because the baker normalises every model into a
    unit box on its longest axis — so this is the one number that decides whether the thing
@@ -18152,7 +18867,48 @@ function buildCharMesh(c){
     m.scale.set(sx, sy, sz); m.position.set(x, y, z);
     if(rx) m.rotation.x = rx; m.castShadow = true; parent.add(m); return m;
   };
-  const e = {g, mats, phase: rnd()*10, lastX: c.x, lastY: c.y, colorKey: colorKeyOf(c), rotY: 0};
+  /* ---------- THE SIGIL-BOUND'S ARMET ----------
+     A SEPARATE BUILDER RATHER THAN A FEW MORE LINES IN THE GARMENT CHAIN, because it is eleven
+     boxes and because a recoloured version for a transmutation immortal should be one call.
+     WORTH KNOWING, since the first version of this got it wrong: he takes the ORDINARY HUMANOID
+     RIG. The war-automaton branch reads `c.construct` and looks like his, but it sits inside
+     `if(c.beast)` and he is not a beast — and `helmKind` refuses a beast outright, so an armet
+     hung off that branch could never have been reached. Measured, after building it in the
+     wrong place: headG 0.62, head box 0.24, which is the humanoid skull and not the
+     automaton's 0.12.
+     The parts that make an armet an armet rather than a bucket: a rounded skull, a comb along
+     it, cheek pieces closing at the chin, a visor with a real slit, and a tail at the neck.
+     The etching is INLAY — thin dark strips let into the bronze — because "covered in
+     alchemical etching" with no texture map has to be geometry or it is nothing.
+     `SIGIL_BRONZE` is a constant so a recoloured one for a transmutation immortal is one line
+     and not a second helmet. */
+  const buildArmet = (e, parent, keep) => {
+    const rec = (o) => { (e.helmParts = e.helmParts || []).push(o); return o; };
+    const b = SIGIL_BRONZE, dk = SIGIL_BRONZE_DK, etch = '#3a2c18';
+    const ob = (w,h,d,col,x,y,z) => rec(obox(w,h,d,col,x,y,z,parent));
+    ob(0.35, 0.26, 0.35, b,  0, 0.30, 0.01);              /* the skull */
+    ob(0.07, 0.10, 0.36, dk, 0, 0.44, 0.01);              /* the comb */
+    ob(0.31, 0.13, 0.30, b,  0, 0.14, 0.03);              /* cheek pieces, closed */
+    ob(0.33, 0.09, 0.06, dk, 0, 0.27, 0.18);              /* the visor */
+    ob(0.24, 0.022, 0.02, '#120c06', 0, 0.28, 0.215);     /* and its sight slit */
+    ob(0.20, 0.07, 0.10, b,  0, 0.16, 0.19);              /* the bevor, up over the chin */
+    ob(0.30, 0.10, 0.10, dk, 0, 0.19, -0.17);             /* the tail */
+    ob(0.355, 0.018, 0.355, etch, 0, 0.385, 0.01);        /* the etching, let in */
+    ob(0.355, 0.014, 0.355, etch, 0, 0.335, 0.01);
+    ob(0.315, 0.012, 0.315, etch, 0, 0.115, 0.03);
+    rec(mk(BOXG, ownGlow('#c8a04c'), 0.05, 0.05, 0.02, 0, 0.365, 0.185, parent));
+    return keep;
+  };
+  /* ---------- THE GAIT OFFSET IS DERIVED, NOT ROLLED ----------
+     `phase` only stops a crowd bobbing in lockstep, so it wants to be arbitrary — but it was
+     `rnd()`, and this function runs from `syncChars` when a body first comes into view. That
+     put the SIMULATION's generator on a leash held by the camera: how many rigs got built this
+     frame, and therefore how far the stream advanced, depended on where you were looking and
+     how fast the machine painted. Measured at ten draws in three seconds of a PAUSED game.
+     `hash2` off the body's id is arbitrary in exactly the way this needs, and it is also
+     STABLE: a body that walks out of view and back keeps the gait it had, where a fresh roll
+     gave it a new one on every rebuild. See the note on `vrnd`. */
+  const e = {g, mats, phase: hash2(c.id, 977) * 10, lastX: c.x, lastY: c.y, colorKey: colorKeyOf(c), rotY: 0};
   /* no two builds quite alike */
   const fem = !c.beast && !c.construct && c.sex === 'f';
   /* the difference is skeletal, not decorative: narrower shoulders, wider pelvis,
@@ -18194,7 +18950,7 @@ function buildCharMesh(c){
         e.spineBits.push(r2);
       }
       e.sigil = mk(CYLG, ownGlow(cord), 0.50, 0.012, 0.50, 0, -0.74, 0, e.float);
-      e.servitor = true;                 /* floats and bobs by the same rules */
+      e.floats = true;                   /* floats and bobs by the same rules — see the note there */
     } else if(c.wisp){
       /* A WHISP: a held reaction in a shell. No skull, no frame, nothing that was ever alive
          — a lantern-glass sphere with the light sitting inside it and three bone splinters
@@ -18223,7 +18979,7 @@ function buildCharMesh(c){
         e.spineBits.push(b2);
       }
       e.sigil = mk(CYLG, ownGlow(lamp), 0.44, 0.012, 0.44, 0, -0.66, 0, e.float);
-      e.servitor = true;                 /* it floats and bobs by the same rules */
+      e.floats = true;                   /* it floats and bobs by the same rules — see the note there */
     } else if(c.servitor){
       /* A BOUND SERVITOR: a skull and nothing under it. The jaw hangs a finger's width free of
          the cranium — there is no hinge, only the binding — and three splinters of vertebra
@@ -18253,7 +19009,7 @@ function buildCharMesh(c){
       }
       /* the sigil it was bound with, still turning under it */
       e.sigil = mk(CYLG, ownGlow(lamp), 0.30, 0.012, 0.30, 0, -0.86, 0, e.float);
-      e.servitor = true;
+      e.floats = true;
     } else if(c.brood){
       /* ---------- BROOD-OF-THE-DOOR ----------
          The design is the pose, not the creature: this is a thing with its SHOULDERS in the
@@ -19698,6 +20454,46 @@ function buildCharMesh(c){
       }
       e.hood = lichPart('hood', e.headG, mats, false);   /* the one authored part worth keeping */
     }
+    /* ---------- THE TWO BUILT HELMS ----------
+       These were baked GLB and are boxes now, which is the whole of the fix. The report was
+       "the helmet textures are just not working out" and the honest answer is that a faceless
+       white shell has no texture in it — it is a shape and two colours, and a box rig renders
+       that better than an imported mesh scaled to fit a skull it was not modelled for. The
+       previous work went the other way, re-cutting and squaring the import; this replaces it.
+       Everything here hangs on `e.headG` and goes in BEFORE `bakeBoxes()`, so it merges into
+       the same buffers as every other garment and costs no extra draw call. The plain head
+       underneath is simply covered: the shell is 0.35 across a 0.30 skull and comes down past
+       the jaw, which is what a helmet does, and means no visibility juggling.
+       HELMKIND is the one place that decides who wears what — the same job `helmOf` did. */
+    const _helm = helmKind(c);
+    /* KEPT SO IT CAN BE MEASURED. The boxes are merged into shared buffers by `bakeBoxes`, so
+       there is no single helm mesh to take a bounding box off any more — but the proxies hold
+       the real transforms, and tools/kit.js asserts that this helm is square and the size of a
+       head. A feature whose only proof was a screenshot would lose that on the way from a
+       baked mesh to boxes, which is the wrong direction. */
+    const _hp = (o) => { (e.helmParts = e.helmParts || []).push(o); return o; };
+    if(_helm === 'redoubt'){
+      /* FACELESS, AND THE POINT IS THAT THERE IS NO VISOR. A stormtrooper reads as a face
+         because of the slit; take the slit away and you have to give the eye something else to
+         land on, or it is an egg. So: a hard brow ridge, a cheek taper, and a sensor cluster
+         where a face would be — asymmetric, because a made thing whose sensors are arranged
+         for a job rather than for a face is far more unsettling than a symmetrical mask. */
+      const shell = '#e6e4dc', shade = '#c9c6bb', lens = WC.aether;
+      _hp(obox(0.35, 0.30, 0.34, shell, 0, 0.27, 0.01, e.headG));          /* the shell */
+      _hp(obox(0.33, 0.09, 0.31, shell, 0, 0.11, 0.02, e.headG));          /* the jaw, closed */
+      _hp(obox(0.36, 0.05, 0.35, shade, 0, 0.40, 0.01, e.headG));          /* the crown seam */
+      _hp(obox(0.30, 0.07, 0.03, shade, 0, 0.30, 0.18, e.headG));          /* a brow ridge, not a slit */
+      /* the sensors: three lenses, off centre, and one of them larger */
+      _hp(mk(BOXG, ownGlow(lens), 0.055, 0.055, 0.02, -0.07, 0.29, 0.185, e.headG));
+      _hp(mk(BOXG, ownGlow(lens), 0.035, 0.035, 0.02,  0.04, 0.30, 0.185, e.headG));
+      _hp(mk(BOXG, ownGlow(lens), 0.028, 0.028, 0.02,  0.10, 0.26, 0.185, e.headG));
+      _hp(obox(0.07, 0.10, 0.05, shade, 0, 0.16, 0.17, e.headG));          /* the filter, where a mouth is not */
+      _hp(obox(0.05, 0.05, 0.14, shade, -0.17, 0.22, 0.04, e.headG));      /* intake, left side only */
+    } else if(_helm === 'sigil'){
+      /* the same helmet the automaton branch builds, for the case where somebody carrying
+         `bossKey: 'sigil'` ever takes the humanoid rig — one builder, so they cannot drift */
+      buildArmet(e, e.headG);
+    }
     if(c.pack==='pack_s') obox(0.32, 0.4, 0.22, '#6b5a40', 0, 0.24, -0.28, e.spine);
     if(c.pack==='pack_l'){ obox(0.46, 0.64, 0.3, '#4a3b2c', 0, 0.26, -0.34, e.spine); obox(0.4, 0.11, 0.26, '#8a7048', 0, 0.62, -0.34, e.spine); }
     if(c.faction==='purge' || c.faction==='exile'){
@@ -19752,13 +20548,11 @@ function buildCharMesh(c){
     if(e.head) e.head.visible = false;
     e.sculptHead = headPart(_hk, e.headG, e.mats);
   }
-  /* AND A HELMET, on the same terms and after the same bake. A named face wins — if somebody
-     ever has both, the person is the point and the kit is not. */
-  else if(helmOf(c) && e.headG){
-    for(const ch of [...e.headG.children]) ch.visible = false;
-    if(e.head) e.head.visible = false;
-    e.helm = helmPart(helmOf(c), e.headG, e.mats);
-  }
+  /* AND A HELMET — WHICH IS NO LONGER ATTACHED HERE. Both helms are boxes now and went in
+     with the other garments, before `bakeBoxes`, so they are already in the merged buffers by
+     the time this runs. Hiding the head's children here would take the helm with them, and
+     attaching a baked one would stand a second helmet inside the first. A named face still
+     wins over a helm, and that is the branch above; this one has nothing left to do. */
   return e;
 }
 function syncChars(dt){
@@ -19830,11 +20624,12 @@ function syncChars(dt){
       if(c.beast && !c.construct && c.gauntKind !== 'larder') e.g.rotation.set(0, e.rotY, Math.PI/2);
       else e.g.rotation.set(-Math.PI/2, e.rotY, 0);
       e.g.position.y = gy + 0.3;
-      if(e.servitor){
-        /* whatever held it up has stopped. It is a skull on the ground now, jaw fallen open. */
+      if(e.floats){
+        /* whatever held it up has stopped. It is on the ground now, and if it had a jaw the
+           jaw has fallen open. */
         e.float.position.y = 0.2;
         e.float.rotation.set(0, 0, 0);
-        P(e.jaw, 'x', 0.5, 6);
+        if(e.jaw) P(e.jaw, 'x', 0.5, 6);
         for(const b2 of e.spineBits) b2.rotation.x = 0;
         e.sigil.visible = false;
       }
@@ -19845,9 +20640,24 @@ function syncChars(dt){
         e.kneeL.rotation.x = 0.3; e.kneeR.rotation.x = 0.15;
         e.spine.rotation.x = 0;
       }
-    } else if(e.servitor){
-      /* it does not walk. It hangs at reading height and drifts, and the loose parts of it
-         lag behind the turn — which is most of what sells the thing as floating. */
+    } else if(e.floats){
+      /* ---------- IT DOES NOT WALK ----------
+         It hangs at reading height and drifts, and the loose parts of it lag behind the turn,
+         which is most of what sells the thing as floating.
+         THE FLAG USED TO BE CALLED `e.servitor` AND THAT CRASHED THE GAME. Three rigs set it —
+         the Bound Servitor, the Soulbound and the Wisp — and every one of them meant the same
+         honest thing by it: "I hang on an `e.float` group, bob me". This branch read it as the
+         other thing the name can mean, "I am a bound servitor, so I have a skull with a jaw on
+         it", and went straight to `e.jaw.rotation`. A Servitor builds a jaw. A Soulbound is a
+         blank wax figure with a bar of dark where a face is not, and a Wisp is a lamp in a
+         glass shell; neither has ever had one. So summoning either threw
+         `Cannot read properties of undefined` out of the render loop on the first frame it was
+         visible — not on the rite, on the DRAW, which is why it reads as the game crashing
+         rather than as the summon failing.
+         Renamed to what all three actually mean, and the jaw is asked for rather than assumed.
+         This is the `raised` bug again — one flag, two meanings, and the reader picked the
+         wrong one — and it is the second time in this file. When a flag is set by three rigs
+         and named after one of them, that is the bug, not a naming quibble. */
       e.g.rotation.set(0, e.rotY, 0);
       e.sigil.visible = true;
       const now = Date.now();
@@ -19855,9 +20665,10 @@ function syncChars(dt){
       e.float.position.y = skullRide(c) + Math.sin(e.phase) * 0.07;
       e.float.rotation.z = Math.sin(now * 0.0007) * 0.06;
       e.float.rotation.x = (moving ? 0.10 : 0) + Math.sin(now * 0.0009) * 0.03;
-      /* the jaw works when it has something to say, and hangs slack when it does not */
+      /* the jaw works when it has something to say, and hangs slack when it does not — on the
+         one of these three rigs that has a jaw at all */
       const talking = !!c.bubble;
-      P(e.jaw, 'x', talking ? 0.22 + Math.sin(now * 0.018) * 0.16 : 0.05, 10);
+      if(e.jaw) P(e.jaw, 'x', talking ? 0.22 + Math.sin(now * 0.018) * 0.16 : 0.05, 10);
       for(let i = 0; i < e.spineBits.length; i++)
         e.spineBits[i].rotation.x = Math.sin(e.phase - i * 0.7) * (0.10 + i * 0.05);
       e.sigil.rotation.y += dt * 0.9;
@@ -20504,7 +21315,7 @@ function routeTo(c, x, y, tf){
   if(!st){ log('No stair connects there from here.', 'bad'); return false; }
   c.wantFloor = tf;                 /* the true goal */
   c.afterStair = {x, y};
-  c.onStair = false;                /* a new order re-arms the stair — see orderFloor */
+  c.onStair = null;                 /* a new order re-arms the stair — see orderFloor */
   c.moveTarget = {x: st.x + 0.5, y: st.y + 0.5};
   return true;
 }
@@ -21019,9 +21830,10 @@ function updateDust(rdt){
   const moteCap = weather.storm > 0 ? 130 : 36;
   while(dustMotes.length < moteCap){
     dustMotes.push({
-      x: camX + (rnd()-0.5)*span, y: camY + (rnd()-0.5)*span,
-      h: 0.3 + rnd()*2.2, life: 3 + rnd()*4, t: 0,
-      vx: 0.6 + rnd()*0.8, vy: (rnd()-0.5)*0.3,
+      /* vrnd, not rnd: this runs inside render() at frame rate — see the note on vrnd */
+      x: camX + (vrnd()-0.5)*span, y: camY + (vrnd()-0.5)*span,
+      h: 0.3 + vrnd()*2.2, life: 3 + vrnd()*4, t: 0,
+      vx: 0.6 + vrnd()*0.8, vy: (vrnd()-0.5)*0.3,
     });
   }
   for(let i=dustMotes.length-1; i>=0; i--){
@@ -24559,10 +25371,10 @@ function snapshot(){
        burnt mantle and its ember, the Bone Knight came back thin, the archer came back
        thick. Saving one string fixes the whole roster. */
     kin:c.kin||null,
-    clawDmg:c.clawDmg, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
+    clawDmg:c.clawDmg, clawWt:c.clawWt||null, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
     servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, eater:!!c.eater, harvestBonus:c.harvestBonus??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, boundTold:!!c.boundTold,
-    salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null,
+    salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null, lieuWear:c.lieuWear||0,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
     bindWeight:c.bindWeight, shortTag:c.shortTag,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
@@ -24851,7 +25663,7 @@ function restore(d){
       const cv = caves.find(x => x.id === c.caveId);
       if(cv && cv.rooms) c.homeRoom = cv.rooms.find(rm => rm.id === s.roomId) || c.homeRoom;
     } c.floor = s.floor || 0; c.captured = !!s.captured;
-    c.clawDmg = s.clawDmg || 0; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.eatsDead = !!s.eatsDead;
+    c.clawDmg = s.clawDmg || 0; c.clawWt = s.clawWt || null; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.eatsDead = !!s.eatsDead;
     c.structMult = s.structMult || 1; c.bindWeight = s.bindWeight || 1; c.shortTag = s.shortTag || '';
     c.servitor = !!s.servitor; c.minded = !!s.minded; c.crafted = !!s.crafted; c.autoFight = !!s.autoFight;
     /* re-derived rather than stored: it is a pure function of the atk that came back with the
@@ -24869,7 +25681,7 @@ function restore(d){
     c.markT = s.markT || 0; c.heat = s.heat || 0; c.mustered = !!s.mustered;
     if(s.ate != null) c.ate = s.ate;
     c.shape = s.shape ? {...s.shape} : null; c.shapeName = s.shapeName || null; c.kills = s.kills || 0;
-    c.salted = !!s.salted; c.saltedAt = s.saltedAt ?? null; c.rot = s.rot || null;
+    c.salted = !!s.salted; c.saltedAt = s.saltedAt ?? null; c.rot = s.rot || null; c.lieuWear = s.lieuWear || 0;
     if(s.knit != null) c.knit = s.knit;
     if(s.natArmor) c.natArmor = {...s.natArmor};
     if(s.noise != null) c.noise = s.noise;

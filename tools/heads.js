@@ -231,8 +231,9 @@ const WHO = [
       return { c, e: charMeshes.get(c.id) };
     };
     /* the rule itself, before any geometry */
-    R.whoWearsOne = (helmOf({ bossKey: 'sigil' }) === 'runic'
-                  && helmOf({ faction: 'redoubt', race: 'homunculus' }) === 'alch'
+    /* the keys are the creatures now rather than the bakes they used to name */
+    R.whoWearsOne = (helmOf({ bossKey: 'sigil' }) === 'sigil'
+                  && helmOf({ faction: 'redoubt', race: 'homunculus' }) === 'redoubt'
                   && !helmOf({ faction: 'town' })
                   && !helmOf({ faction: 'redoubt', race: 'homunculus', undead: true }))
       ? 'the Sigil-Bound and the redoubt soldiers, and nobody else'
@@ -245,20 +246,41 @@ const WHO = [
       ? `${window.__helmedAtBoot} bodies in a fresh world are wearing one`
       : '!! NOBODY IN A FRESH WORLD MATCHES THE HELMET RULE';
     const bad = [];
-    for (const [lbl, setup] of [['runic', c => { c.bossKey = 'sigil'; c.big = 1.35; c.construct = true; }],
-                                ['alch',  c => { c.faction = 'redoubt'; c.race = 'homunculus'; }]]) {
+    /* ---------- THE HELMS ARE BOXES NOW, AND THE CLAIMS MOVED WITH THEM ----------
+       There is no `e.helm` any more: both helms are built out of `obox` and merged into the
+       body's own buffers by `bakeBoxes`, so no separate helmet mesh survives to measure. The
+       proxies keep the real transforms, so the span comes off `e.helmParts`.
+       ONE CLAIM CHANGED IN KIND and is worth being explicit about. The baked helm REPLACED the
+       box head — everything under it was hidden. A built one COVERS it instead, which is what
+       a helmet does and what makes the neck read properly, so "nothing shows through" is now
+       the wrong question and "does it enclose the skull" is the right one. */
+    for (const [lbl, setup] of [['sigil', c => { c.bossKey = 'sigil'; c.big = 1.35; c.construct = true; }],
+                                ['redoubt', c => { c.faction = 'redoubt'; c.race = 'homunculus'; }]]) {
       const { c, e } = mk(setup);
-      if (!e || !e.helm) { bad.push(lbl + ' HAS NO HELMET MESH'); continue; }
-      const left = [...e.headG.children].filter(ch => ch.visible && ch !== e.helm).length;
-      if (left) bad.push(`${left} BOX HEAD PARTS SHOW THROUGH THE ${lbl.toUpperCase()} HELM`);
-      /* head-sized, measured against a box head on the same rig rather than against a number */
+      if (!e || !e.helmParts || !e.helmParts.length) { bad.push(lbl + ' HAS NO HELMET BUILT'); continue; }
+      const box = new THREE.Box3();
+      for (const o of e.helmParts) {
+        const h = new THREE.Vector3(o.scale.x / 2, o.scale.y / 2, o.scale.z / 2);
+        box.expandByPoint(new THREE.Vector3().copy(o.position).sub(h));
+        box.expandByPoint(new THREE.Vector3().copy(o.position).add(h));
+      }
+      /* it has to swallow the skull, or the head pokes out of its own helmet */
+      if (e.head) {
+        const hh = new THREE.Vector3(e.head.scale.x / 2, e.head.scale.y / 2, e.head.scale.z / 2);
+        const hi = new THREE.Vector3().copy(e.head.position).sub(hh);
+        const ha = new THREE.Vector3().copy(e.head.position).add(hh);
+        const covers = box.min.x <= hi.x + 0.01 && box.max.x >= ha.x - 0.01
+                    && box.min.y <= hi.y + 0.01 && box.max.y >= ha.y - 0.01;
+        if (!covers) bad.push(`THE ${lbl.toUpperCase()} HELM DOES NOT ENCLOSE THE SKULL`);
+      }
+      /* head-sized, measured against the body on the same rig rather than against a number */
       e.g.updateWorldMatrix(true, true);
-      const hb = new THREE.Box3().setFromObject(e.helm);
       const bb = new THREE.Box3().setFromObject(e.g);
-      const ratio = (hb.max.y - hb.min.y) / (bb.max.y - bb.min.y);
-      if (!(ratio > 0.13 && ratio < 0.42)) bad.push(`${lbl} IS ${(ratio * 100).toFixed(0)}% OF THE BODY`);
+      const scl = new THREE.Vector3(); e.g.getWorldScale(scl);
+      const ratio = ((box.max.y - box.min.y) * scl.y) / (bb.max.y - bb.min.y);
+      if (!(ratio > 0.10 && ratio < 0.42)) bad.push(`${lbl} IS ${(ratio * 100).toFixed(0)}% OF THE BODY`);
     }
-    R.helmetsFit = bad.length ? '!! ' + bad.join('; ') : 'both helms replace the whole box head and are head-sized';
+    R.helmetsFit = bad.length ? '!! ' + bad.join('; ') : 'both helms enclose the box head and are head-sized';
     /* ONE GEOMETRY FOR EVERY WEARER — a redoubt garrison is a dozen of them */
     {
       chars.length = 0;
@@ -270,10 +292,21 @@ const WHO = [
         c.race = 'homunculus'; c.state = 'ok'; chars.push(c); born.push(c);
       }
       for (let i = 0; i < 40; i++) syncChars(0.05);
-      const geos = new Set();
-      for (const c of born) { const e = charMeshes.get(c.id); if (e && e.helm) geos.add(e.helm.geometry); }
-      R.oneHelmet = geos.size === 1 ? 'and a garrison of them shares one geometry'
-        : `!! ${geos.size} SEPARATE HELMET GEOMETRIES FOR ${born.length} SOLDIERS`;
+      /* THE OLD CLAIM WAS "one geometry shared by the garrison", which was about a baked mesh
+         being cached rather than re-imported per body. A built helm cannot have that fault: it
+         is boxes, merged into each body's own buffers, so there is no helmet geometry to
+         duplicate in the first place. What is still worth pinning is that every soldier gets
+         the SAME helmet — a per-body roll would show up here as differing part counts. */
+      const counts = new Set(), missing = [];
+      for (const c of born) {
+        const e = charMeshes.get(c.id);
+        if (!e || !e.helmParts) { missing.push(c.name); continue; }
+        counts.add(e.helmParts.length);
+        if (e.helm) missing.push(c.name + ' STILL HAS A BAKED HELM MESH');
+      }
+      R.oneHelmet = (!missing.length && counts.size === 1)
+        ? `and a garrison of ${born.length} all get the same ${[...counts][0]}-box helm, merged into their own buffers`
+        : `!! GARRISON HELMS DISAGREE (counts ${[...counts].join('/') || 'none'}${missing.length ? '; ' + missing.join(', ') : ''})`;
     }
     return R;
   }).catch(e => ({ helmBlock: '!! THREW: ' + String(e).slice(0, 140) }));

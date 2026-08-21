@@ -207,11 +207,33 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.theLanceRefusesAGiftedHand = (!emplUsableBy(lan, gifted) && emplUsableBy(lan, deaf))
         ? 'the cascade holds — a gifted hand may not touch it, an alchemically deaf one may'
         : `!! THE LANCE'S ONE RULE IS BROKEN (gifted ${emplUsableBy(lan, gifted)}, deaf ${emplUsableBy(lan, deaf)})`;
+      stash.aether_cell = 20;
+      const lanCells0 = stash.aether_cell;
       crewedAt = 0; run(25, deaf);
       R.andTheDeafHandFiresIt = (lan.shots > 0 && crewedAt > 0)
         ? `${lan.shots} shots off the emplaced lance, and the mark is ${foe.state}`
-        : `!! THE EMPLACED LANCE DOES NOTHING (shots ${lan.shots}, crewed ${crewedAt} frames)`;
-      R.andItSpendsNoCells = 'the emplacement runs off the camp, not off pre-Fall charges — no cell is taken';
+        : `!! THE EMPLACED LANCE DOES NOTHING (shots ${lan.shots}, crewed ${crewedAt} frames, cells ${stash.aether_cell})`;
+      /* THIS USED TO BE A HARDCODED STRING — `R.andItSpendsNoCells = 'the emplacement runs off
+         the camp...'` — which is to say it asserted nothing at all and passed forever. It is a
+         real reading now, and it reads the opposite way, because the charges moved here from
+         the handheld: the thing bolted to your wall is the one with a supply line behind it. */
+      R.andTheHeavyEatsCells = stash.aether_cell < lanCells0
+        ? `and it spends pre-Fall charges doing it — ${lanCells0} -> ${stash.aether_cell} across ${lan.shots} bolts`
+        : `!! THE HEAVY FIRES FOR FREE (cells still ${stash.aether_cell} after ${lan.shots} bolts)`;
+      /* A FRESH MARK FIRST. The fed phase above put five 72-damage bolts into the last one, so
+         by now there is nothing on the field — and an emplacement with no target never reaches
+         `emplFire`, never asks for a cell, and therefore never says it is dry. The assertion
+         then reads "0 more bolts, said nothing", which is a probe reporting silence it caused
+         itself. This is the same lesson tools/README.md already carries about `guns.js`; I
+         walked into it from the other side. */
+      stash.aether_cell = 0;
+      const dryShots = lan.shots;
+      mark('Mark2', gx + 8, gy);
+      logs.length = 0;
+      crewedAt = 0; run(25, deaf);
+      R.andADryHeavyHoldsItsFire = lan.shots === dryShots && logs.some(l => /is dry/.test(l) && /scavenged/.test(l))
+        ? 'and on an empty stash it stops, and says where cells come from'
+        : `!! A DRY HEAVY KEEPS SHOOTING (${lan.shots - dryShots} more bolts, said ${logs.find(l => /dry/.test(l)) || 'nothing'})`;
     }
 
     /* ============ 7. AETHER CELLS EXIST IN THE WORLD'S TRADE ============ */
@@ -250,14 +272,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         foe.noFight = true;
         const b0 = foe.blood;
         run(30);
+        /* BOTH STASHES NOW READ THE SAME WAY, which is the point: the handheld stopped being
+           ammunition-fed when the charges moved to the emplacement. Ammunition on the weapon
+           your people carry made the gunline an expensive annoyance and left it a museum piece
+           between resupplies. An empty stash must therefore change NOTHING about it. */
         if (label === 'dry') {
-          R.aDryLanceSaysWhereCellsComeFrom = (foe.blood === b0 && logs.some(l => /lance is dry/.test(l) && /scavenged/.test(l) && /(Dustport|Hollowmere|occult dealers)/.test(l)))
-            ? `it fires nothing and names the trade: "${logs.find(l => /lance is dry/.test(l)).slice(0, 120)}…"`
-            : `!! A DRY LANCE IS UNEXPLAINED (blood ${b0}->${Math.round(foe.blood)}, said ${logs.find(l => /dry/.test(l)) || 'nothing'})`;
+          R.anEmptyStashDoesNotStopTheHandheld = foe.blood < b0 && stash.aether_cell === 0
+            ? `with nothing in the stash at all it still fires — the mark drops from ${Math.round(b0)} to ${Math.round(foe.blood)}`
+            : `!! THE HANDHELD IS STILL AMMUNITION-FED (blood ${b0}->${Math.round(foe.blood)}, said ${logs.find(l => /dry/.test(l)) || 'nothing'})`;
         } else {
-          R.aChargedLanceFires = (foe.blood < b0 && stash.aether_cell < cells)
-            ? `it fires — the mark drops from ${Math.round(b0)} to ${Math.round(foe.blood)} blood and ${cells - stash.aether_cell} cells are spent`
-            : `!! A CHARGED LANCE STILL FIRES NOTHING (blood ${b0}->${Math.round(foe.blood)}, cells ${cells}->${stash.aether_cell})`;
+          R.aChargedLanceSpendsNothing = (foe.blood < b0 && stash.aether_cell === cells)
+            ? `and with twenty in the stash it fires without touching one (${cells} -> ${stash.aether_cell})`
+            : `!! THE HANDHELD IS STILL EATING CELLS (blood ${b0}->${Math.round(foe.blood)}, cells ${cells}->${stash.aether_cell})`;
         }
       }
     }

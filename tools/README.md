@@ -76,6 +76,10 @@ the truth was 45%.
 | `chores.js` | Three chores that existed but could not be reached. **Wall runs**: that one gesture stakes out a straight, contiguous, axis-locked line of walls; that every tile of it is still an ordinary 1x1 blueprint (decks, emplacement mounts, siege damage and the upkeep tally all look a wall up by its exact tile, so a wider footprint would break eleven other things); that a 500-tile drag is capped; that a run costs full price per tile; and that a run into a mountainside refuses **once** rather than six times. **The harvest job**: that HARVEST is in the JOB menu and choosing it sets the job, that four bodies get looted and then rendered down by the real `physics` tick, and — the whole safety story — that it refuses townsfolk, anyone with a home town, your own fallen, named lieutenants, VIPs, a body somebody is carrying and one the necromancer has already picked, and earns you no bounty you did not choose. **The ledger**: that a bounty can be settled at the bar as well as the Leader's desk, that the three doors are priced in order (Leader 1.5x < same-town bar 1.8x < courier 2.5x), that the watch stands down mid-arrest and lets go of the man they were walking to a cell, and that a bar in a town that does *not* want you will send the coin on — the only door reachable when the town that wants you is the one you cannot walk into. The harvest block also pins the give-up: the *nearer* of two bodies is made unreachable by replacing `travel`, and the job has to set it aside and clear the further one instead. Without that timer the nearest-corpse scan re-picks the stranded body every two seconds and a hand set to HARVEST walks at a cliff for the rest of the run, which in play reads as the job simply not working. |
 | `survive.js` | How people actually die, and how much room there is between going down and being gone. Runs twelve even six-a-side fights and then takes the **real** casualties they left and lets them lie — untended, and with one bandage on the worst wound. This is the probe behind the survivability change: it found that an even fight kills nobody outright and then every single one of the fallen bleeds out where they lie, in about one game hour, which at `HOUR_SEC` 8 is nine real seconds between "X is down" and "X is dead" — and that a bandage saved 7 of 49. It also measures interposition (a bodyguard on the line must catch some blows and one standing behind the ward must catch none), and guards against the opposite failure: both sides must still fall at roughly the same rate, or the tweak has become a shield. Its own first version knocked people down by hand with sixty small cuts, which piles up five times the bleeding a real exchange leaves, and was measuring its own choice of damage size. Fight first, then measure the casualties. |
 | `melee.js` | Two notes about how a fight behaves. **Target fixation**: stages a runner, a quarry ten tiles off and a picket line of six in between, and counts the passing cuts taken on the approach and whether the line is ever dealt with. This is the probe behind the `retaliate` fix — the old rule ignored being hit by anybody at all while any living quarry sat within *twelve tiles*, which is not "engaged", it is a third of the way across a battle. Also checks the other side of it: an order on clear ground is still carried out, and an order interrupted by a knife resumes once the knife is down. **Move variety**: what `pickMove` actually returns at novice and adept skill and in a crowd, that no single stroke is more than half of all swings, that being surrounded genuinely reaches for the wide strokes, and — the one that matters for the picture — that the arc handed to the animator is the same key the blow resolved with. Its own first version counted every jab across the whole run rather than the approach, reported 40, and was measuring the length of the fight instead of the recklessness of the charge; its second asserted that a right-clicked target is reached *through* a picket line, which is the bug restated as a test. |
+| `flank.js` | How a squad gets to a fight, from the report "everyone tries to beeline towards the enemy and gets caught on allies — they should attempt to flank around where possible". **The first half of that was a wrong diagnosis and the probe is worth keeping mostly for having said so.** Four stagings went looking for the stall and none of it exists: eight bodies given one order all reach striking distance inside three seconds with *zero* ticks of the approach spent going nowhere; a runner sent through his own six-man picket line pays 1.03x the open walk for it; two lines of six meet with two changes of mind between twelve bodies; and eight ordered through a **one-tile gate** in a wall are all through and fighting in three and a half seconds. Nobody was getting caught on anybody, and the pathing needed nothing. What was actually wrong was the picture: all eight walked at the same point — his tile — and arrived as a column standing inside each other, eight bodies within one tile of the quarry on five of the eight sides. So the assertions are about **sides and bearings**, not speed: seven of eight sectors occupied after, five before; and three men joining a fight somebody else is already holding must come round off the quarry's face, which fails 0/3 on the build before at bearings of 0.81, 0.83, 0.87 to his nose. The other four measurements stay in as guards, because a flanking rule is exactly the kind of change that would break them. Two traps of its own, both written into the file: the quarry has to be **pinned to its tile** every tick or a crowd arriving shoves it and the probe measures a moving fight (the same lesson `rites.js` learned); and a bearing taken at first contact reads 0.83 for a body that goes on to fight from the north, because walking round to the north side clips the man's reach on the way past — the honest moment is the first **windup**, when the body has stopped choosing. |
+| `kiting.js` | What a shot costs the legs, and what a blade costs the exit. Written for "kiting should slow down the ranged attacker" and "catching a ranged attacker in melee should somewhat lock them down from fleeing". **It measures ground covered, never a flag**, because the complaint is written in ground and because the flags all read correctly on the broken build. The hunt it records is the useful part: the obvious theory was a seam between the branch that opens a draw and the one that looses it, since `clearOrders` never touches `c.windup` — and there is no seam. `ai()` returns immediately for anything player-faction, so `physics` drives orders and combat together, and it already returns for the whole length of a windup. Traced tick by tick, an archer given the run order on the tick the draw opens walks **0.000 tiles** before the arrow leaves. Case 1 is what survived that hunt and it passes on every build on purpose — it is the control that says the draw really is rooted, which is the premise the rest of the file rests on. The real answer was arithmetic: a bow is a 2.3s cycle of which the rooted draw is 0.45, so a perfectly rooted archer still walks four fifths of it flat out, measured at **86% of the ground the same archer covers doing nothing but running**. Hence the reload drag, and hence 68% after. The grip half runs the same four seconds three ways — alone, with a swordsman on them, and with a swordsman on them whom an ally has by the throat — and gets 13.4 / 7.3 / 13.0 tiles. It is also the file that proved a grip has to outlive the contact that made it: with the grip scoped to the 1.45-tile contact test alone the same three runs read 13.4 / 12.7 / 13.4, because the archer steps out of contact on the second tick and an equal-footed chaser never closes again. |
+| `bound.js` | Every kind the Binding Circle can make, DRAWN — alive, and again lying on the ground. Written for "summoning a wisp crashes the game" and deliberately not written for the wisp: the wisp was one of three rigs raising the same flag, and a probe that summoned a wisp would have gone green over whatever else shared it. **The crash is in the draw, not in the rite**, which is the whole design of the file: `craftUndead` returns true, the body is in `chars`, the materials are spent — every state assertion you could write about the summon passes, and the exception comes out of the pose machine on the next frame. It asserts the CONTRACT rather than the symptom: anything flagged to be posed by the float rule must carry every part that rule dereferences without asking (`float`, `sigil`, `spineBits`), because a future rig raising that flag without one of them is the same crash under a new name. Two traps of its own, both written into the file: the making loop clears each summon out of `chars` before the next rite so the binding does not fill up, which leaves every body but the last OUT of the world where `syncChars` cannot see it — and a body with no rig is never posed, so the draw checks went green over an empty frame until `everyRigIsActuallyBuilt` was added to catch exactly that; and an exception thrown inside `render()` reaches Playwright's `pageerror` channel rather than the evaluate's return value, so a probe reading only its own `try/catch` reports a clean run while the console fills with the crash. |
+| `start.js` | Can a finger start this game? Written for "I can't even start the game since the character creation screen is too packed" — which turned out to be UNREACHABLE rather than cramped: 843px of panel inside a 640px box, WAKE UP at y=799, and a tap that did nothing on any phone. Four assertions because **three separate faults shared the symptom** and fixing any one alone still leaves an unstartable game: the panel did not scroll; `justify-content:center` on a flex column overflows *both* ends and overflow past the START edge is outside the scroll range in every browser (so adding `overflow-y:auto` alone buys the bottom and loses the top — the top is asserted separately, and it is the half most likely to be "simplified" back out); and the squad bar, at z-index 35 in a `body.touch` rule, sat in front of the button, which is why scrolling never helped and why a desktop never showed it. Its own trap, and a sharp one: **`locator.tap()` cannot hit this page.** It reports "visible, enabled and stable", says "done scrolling", then hangs on its own hit-target retry against a canvas that repaints every frame — while `touchscreen.tap()` at the identical coordinate starts the game. Taking that red at face value would have been the probe blaming the game for its own failure; asserting on a scripted `.click()` instead would have been worse, since that bypasses layout and passes just as happily on a button parked off the bottom of the screen. It dispatches a real touch at the middle of the button and checks occlusion separately with `elementFromPoint`. |
 | `moves.js` | **Visual.** One row per MOVE, which is a different question from `swing.js`'s one row per weapon: that one shows a nodachi and a katana swinging at different speeds, this one shows whether the six strokes read as six strokes. It replaces `window.pickMove` from the page (a top-level function declaration in a classic script is a property of `window`) and forces each key in turn. It is what showed that slash, overhead and thrust — 85% of every swing at low skill — all wound up with the blade straight over the head, which is exactly "I only ever see the overhead swipe": the numbers said the strokes were varied, and the numbers were right and irrelevant. `node tools/moves.js w_kat out.png [slash,thrust,...]` |
 | `races.js` | Races and the lines inside them. A subrace is four mechanisms wearing one name — starting stats, a per-skill learning rate, damage-type vulnerability, and overrides for speed, lifespan, skill ceiling and whether the line can hold a gift — and every one of them is the kind of thing that can be declared in a table, read perfectly, and never once reach the sim. So none of it is read off the table: experience goes through the real `xpGain` and the two bodies are compared after 400 points, damage goes through the real `mitigate`, speed through `moveSpeed`. It also pins the migration — a body carrying `race:'scaleborn'` out of a pre-rework save must come back as a chimera of the scaleborn line and not as a human. Diagnosing its first red run turned up the actual bug: `makeChar` rolled the line off the raw `o.race`, and almost nothing in this world is created with an explicit race, so townsfolk, guards, bandits and children all became raceless humans with no line at all. The feature existed in the character creator and nowhere in the game. |
 | `corpses.js` | How long a corpse actually lasts in real minutes at each game speed, how many things are competing for it, and what a body is worth once you have one. Answers "am I imagining that bodies vanish too fast" with a number. |
@@ -389,6 +393,65 @@ the truth was 45%.
   earlier, successful open, because hiding a panel does not clear it. The message read as though
   the right panel was open when the panel was closed. Assert on the thing that changes
   (`display`), and do not quote a field that persists across the state you are reporting.
+- **A flaky harness is a hypothesis, not a verdict.** `descend.js` passed a full suite and failed
+  the next one on the same file, which is the shape of a load flake and was not one. `useStairs`
+  set its anti-yo-yo latch (`onStair`) BEFORE checking whether the body was trying to change
+  floors at all — so a body that merely stood on a stair tile latched itself, and if it never
+  stepped off, every later order to descend was read and discarded. It only bites when the
+  arrival lands on a tick where `wantFloor` is not set yet, which is why it came and went.
+- **A boolean where an identity belongs is a wider rule than the one you meant.** Two branches
+  fixed that latch independently and the difference between the two answers is the lesson. Moving
+  the latch to where the crossing happens is correct and passes every test, including a stair
+  standing next to a stair — a stair that refuses the crossing never reaches the latch. But
+  `onStair = true` still means "do not use ANY stair until you have stood on ordinary ground
+  again", so after a REAL crossing it goes on blocking the stair next door, and a cave mouth
+  very often has one. Remembering WHICH stair (`onStair = st`) says the thing that was actually
+  meant — no bouncing on the one under your feet, a different stair is a different door — and is
+  strictly stronger. When two fixes both go green, ask which one states the rule.
+- **A rebuild is where a geometric guarantee goes missing.** Both helms moved from baked meshes
+  to boxes, and `e.helm` — the thing two harnesses measured — stopped existing. The temptation
+  is to delete the assertions along with the mesh. What they were about (square, bigger than the
+  skull, one helmet per garrison) survives the rebuild perfectly well; only the handle changed,
+  to `e.helmParts`. Move the claim to the new handle. One claim genuinely changed in KIND and
+  says so in the file: a baked helm REPLACED the head, a built one COVERS it, so "nothing shows
+  through" became "does it enclose the skull".
+- **Snapshot the moment you are making a claim about.** `curse.js` asserts that Malathuun's
+  Curse arrives "not fully grown but not nascent either" — and read the beast's size at the END
+  of a four-day run, by which time it had eaten the ninety corpses that summoned it and stood at
+  7.1x against a ceiling of 8. It read 3.6x the first time only because that run happened to end
+  before it finished its meal. The probe was measuring the appetite, not the arrival. If the
+  claim is about a moment, step the world and catch that moment; the growth afterwards is a
+  second, separate assertion — and worth having, since it is the thing that broke the first one.
+  **And the fix went in for the size and not for the tile, which is the same fault twice in one
+  block.** "It rose from sundered ground" is also a claim about a moment; the probe read the
+  beast's position after four more game days of it hunting and reported 26 tiles from the
+  nearest site for a thing that is spawned ON a site by construction. It went red on a change to
+  how bodies walk to a fight — which moved the beast and touched nothing about the rite. When you
+  find one assertion reading the wrong moment, check its neighbours in the same block: they were
+  written by the same hand on the same afternoon.
+- **A threshold pinned to one build's exact arrangement fails on the next unrelated change.**
+  `press.js` asserted that no more than THREE of twelve bodies end up in one eighth of the
+  circle, because the build in front of it measured two. Three revisions later the same fixed
+  behaviour measured 2, 3 and 4 while the number that actually matters — sides occupied — went
+  6, 7, 7. The assertion went red for a lance change that had nothing to do with flanking. Set
+  the line where it SEPARATES the bug from the fix (the queue puts seven there) and leave room,
+  rather than where the current build happens to sit.
+- **`R.x = 'some string'` is not an assertion.** `gunnery.js` carried
+  `R.andItSpendsNoCells = 'the emplacement runs off the camp...'` — a hardcoded sentence with no
+  reading behind it, printing a green line forever and testing nothing. It survived a rewrite of
+  the thing it claimed to describe. If a line cannot fail, delete it or give it a number.
+- **Measure a rule only where the rule applies.** `press.js` asserts that a body holding a bow
+  does not shoot inside 1.7 tiles, and the first version counted every draw over the whole run:
+  24 violations, for a body that never once loosed inside its own guard. `separate()` pushes
+  hostile bodies apart and keeps shoving, so a probe staged in contact drifts back out past the
+  threshold and is then perfectly entitled to shoot. The assertion was measuring the separation.
+  Sample the condition and the rule in the same tick.
+- **A harness going red after an unrelated change is sometimes the harness finding your
+  backlog.** `guns.js` failed after a combat-AI commit that had nothing to do with lances. It
+  was not flake and not the commit: the new timing walked the lancer into a documented dead end
+  — inside 1.7 tiles it would not shoot, and it never reached the melee branch to swing — that
+  had been filed twice in the To Do and never hit. Before blaming the change or the harness,
+  read what state the probe actually ended in.
 - **When a duration comes in under what the constants allow, the feature is not what broke.**
   `rites.js` reported "AT MAGIC 150 THE RITE IS OVER IN 39s" on a build whose `RITE_WORK` (120)
   and rate cap (2.0) were byte for byte the ones that measured 60s the day before. 120 at a hard
@@ -402,9 +465,20 @@ the truth was 45%.
   measuring a rite that had been pushed out from under its own caster. If a comment says a body
   is held still, hold all of it.
 - **A single shot is not a measurement.** Both lance-damage assertions in this repo rode on one
-  roll. `guns.js` fires exactly ONCE inside its window: it landed on two worldgen streams and
-  missed on a third, which reads as "THE LANCE DOES NO DAMAGE IN PLAY" and is really a coin
-  coming up tails. `gunnery.js` watched six seconds, which catches the weapon mid-windup — two
+  roll, and both have now been widened after each duly went red on a build that was working.
+  `guns.js` fired exactly ONCE inside its window: it landed on two worldgen streams and missed
+  on a third, which reads as "THE LANCE DOES NO DAMAGE IN PLAY" and is really a coin coming up
+  tails. The reason it was one shot is worth keeping, because it was not the rate of fire —
+  3.7s at atk 20 means twenty seconds is five shots. It was the raider, which crosses the five
+  tiles in about a second and a half, after which a body inside 1.7 tiles makes the lance guard
+  instead of shoot: the probe was measuring the opening shot of a fight and then a wrestle.
+  **Pin whatever is turning your window into a footrace** — the raider's tile here, the same way
+  `rites.js` had to pin the ritualist's. And then pin the second thing: with the raider held
+  still the same window fired fourteen times and dealt nothing, because `foe()` hands out a
+  tough-40 body and the lance does 44, so the mark was face-down for thirteen of them. A soak at
+  tough 400 gives eight shots and 43 blood, repeatable. The assertion now refuses to pass on
+  fewer than four shots, so it cannot silently decay back into a coin flip.
+  `gunnery.js` watched six seconds, which catches the weapon mid-windup — two
   cells spent for a graze of 0.4 blood, one rounding step from failing on every run, and it duly
   failed one suite run in three. Widened to thirty seconds it is 100 -> 42 on seven cells and
   identical every time. Give the thing room to happen several times; do not re-baseline the
@@ -417,6 +491,118 @@ the truth was 45%.
   drops from 100 to 100 blood" as its SUCCESS string, because `Math.round` turned 99.6 into 100.
   The assertion was passing on four tenths of a point and the message gave no hint of it. Print
   enough precision that a near-miss looks like one.
+- **Path length, not net displacement.** The first version of `kiting.js` measured `|x - x0|`
+  and reported 9.2 tiles for a kite that had in fact run most of forty. A kiting archer walks
+  BACK into range between shots, so the two directions cancel and the number flatters the build
+  by a factor of four. If the question is "how much ground did that cost", accumulate the ground
+  per tick. The same file had the disease in miniature a second time: a case that counted a flat
+  1.4 seconds around a shot, including the tiles walked AFTER the loose, when the archer is
+  entitled to run — it read 3.7 tiles on the broken build and 2.4 on the fixed one, two numbers
+  that were both measuring the wrong thing and looked like the same answer. **Bound the window to
+  the event, not to a convenient span around it.**
+- **A snapshot of an intermittent state reads as the state being absent.** `kiting.js` sampled
+  its melee-grip factor once, two ticks after the order, and got 1.00 for a case the ground
+  measurement in the very same run proved was being slowed — the separation pass had shoved the
+  two bodies apart that exact frame, and the chase closed again a moment later. A grip that comes
+  and goes is still a grip. Take the extreme over the run (here the minimum) rather than the
+  value at some arbitrary instant, or the diagnostic will contradict the measurement and one of
+  them will be believed.
+- **Check the fix against the measurement before keeping it.** The first change written for the
+  kiting item was a guard that planted the feet during a windup, from a theory about a seam
+  between two functions. It was plausible, it was cheap, and the probe measured it at exactly
+  zero: `physics` already enforced that rule, and `ai()` — the function the theory was built on —
+  returns immediately for every player unit. It came back out. A change that provably moves no
+  number is not free; it is regression risk carried for nothing.
+- **A body that is supposed to stand still does not stand still.** `press.js` stages a soak with
+  `noFight` and a near-zero speed multiplier and expects it to sit in contact for twelve seconds.
+  It wanders, and the separation pass shoves it, and it was out of the measured band inside two
+  seconds — so `aBowKeepsItsGuard` counted 88 frames in contact on one build and 18 on the next,
+  from a change that touched neither the bow nor the guard, and the threshold sat between the
+  two. **The count was measuring how long the staging happened to last, not the rule.** Pinned to
+  its tile every tick the same case reads 120 of 120 on both builds. `noFight` is not `nailed to
+  the floor`; if the case needs a body held, hold it, the way `kiting.js` and `flank.js` do.
+- **A scan nested inside a scan of the same buffer is a silent wrong answer.** `charsNear` hands
+  back one module-level array. A proposed grip rule walked the neighbours of a body and, inside
+  that loop, asked for the neighbours of each one — which empties the list the outer `for...of`
+  is walking and refills it with somebody else's neighbours, so the outer loop finishes over the
+  wrong set with no error and no zero. The same class of bug had already been found once, in a
+  burst that damaged nobody. Either `.slice()` the outer list, or get the numbers from the pass
+  that already walks every close pair — `separate()` here, which is both cheaper and impossible
+  to nest wrongly.
+- **A green assertion over an empty frame.** `bound.js` reported "every one of the 11 draws
+  standing up" on a run where **not one of them had a rig at all**. `syncChars` builds at most
+  eight meshes a frame and only walks bodies that are in `chars`, and the probe had spliced its
+  own summons out between rites — so `render()` returned cleanly because it had nothing to
+  draw, and "no exception" was read as "drew fine". The check that saved it was added on
+  suspicion and not after a failure: assert the PRECONDITION your measurement rests on, in the
+  same file, so it goes red when the staging stops staging. Anything of the form "X did not
+  throw" needs a companion assertion that X ran at all.
+- **An exception in a render loop does not come back through your evaluate.** The same file's
+  crash surfaces inside `render()`, which the animation loop also calls. A probe that wraps its
+  own call in `try/catch` and reports the result will print a clean run while the page throws
+  every frame. Read Playwright's `pageerror` channel as well, and fail on it.
+- **Fix the contract, not the two things that broke it.** The wisp crash was one pose branch
+  helping itself to a jaw that only one of three rigs builds. Naming the two broken rigs in the
+  harness would have pinned the symptom; what is asserted instead is that anything posed by the
+  float rule carries every part that rule dereferences. The next rig to raise that flag without
+  a `sigil` fails on the way in rather than in a player's session.
+- **A branch behind a condition that cannot be true is invisible exactly like a missing one.**
+  The Soulbound's whole authored mesh — a blank wax figure hung in three turning rings of
+  binding — sits inside `if(c.beast)`, and its summon is the one of the three float rigs that
+  never sets `beast`. It has never been drawn, and nothing logs, and it went unreported through
+  every playthrough because a humanoid rig is a perfectly plausible thing to see. This is the
+  second one of these in this repo (the armet was built into the war-automaton branch, which
+  `helmKind` refuses). **When an asset looks wrong in play, check that its branch runs before
+  checking what it builds.**
+- **A budget file is not a "does it work" file, and one can be green while the other would be
+  scarlet.** `tools/mobile.js` measures triangles, draw calls, save size and touch-target
+  counts at a phone viewport, and it passed every run while the game could not be started on a
+  phone at all — because it never opens the start screen and never taps anything, and its
+  "mobile UI not started" list is deliberately non-failing so an unfinished port does not block
+  every commit. Both of those choices are right for that file. The lesson is that they leave a
+  claim uncovered, and the fix is another file that fails, not a louder one that does not.
+  **Ask what a green suite would still let you ship.**
+- **`locator.tap()` can fail on a page that is working.** Against a canvas repainting every
+  frame it reports "visible, enabled and stable", says "done scrolling", and then hangs on its
+  own hit-target retry without ever dispatching — while `page.touchscreen.tap()` at the exact
+  same coordinate does the job. Reading that timeout as a product bug is the probe blaming the
+  game for its own failure. The tempting alternative is worse: a scripted `element.click()`
+  bypasses layout entirely and passes just as happily on a button parked off the bottom of the
+  screen, which is the very bug under test. Dispatch a real input at a coordinate you derived
+  from layout, and assert separately — with `elementFromPoint` — that the coordinate belongs to
+  the thing you meant to hit.
+- **A media query is not a bigger hammer than source order.** The phone block for the start
+  screen was written above the rules it overrides. Same specificity, so the desktop `width:480px`
+  won on every phone and the panel went on overflowing exactly as before — with the media query
+  right there in the file, plainly correct, and doing nothing.
+- **Check what else answers to the selector you just widened.** `.overlay button{width:100%}`
+  was written for one button. `.ccopt` is a `<button>` too, so it caught all forty character
+  creation chips, turned four wrapped rows into forty stacked ones, and made the panel 1546px
+  tall. It scrolled, so the assertion still passed; it was simply awful to use. Numbers a
+  harness watches will not tell you that — look at the thing.
+- **A harness that gives two answers on one md5 is not measuring the build.** `guns.js` passed
+  and failed on files that were byte-identical, minutes apart, and five runs of the same file
+  split three to two. Every obvious explanation was checked and eliminated — world state, fog,
+  and even the PRNG seed were identical at probe start — which is what forced the real one out:
+  the RENDERER was drawing from the SIMULATION's generator. `updateDust` spawns motes from
+  inside `render()` at frame rate, and `buildCharMesh` rolled a gait offset when a body first
+  came into view, so how fast the machine painted and where the camera pointed both advanced
+  the world's dice. Measured with the game PAUSED: thirteen `rnd()` calls in two and a half
+  seconds of pure drawing. **Before hardening a flaky probe, find out whether the thing it is
+  probing is deterministic at all** — otherwise you are tuning thresholds against noise, and
+  every threshold in the repo is quietly resting on machine load.
+- **Derive it, do not roll it — especially in a function the camera calls.** The gait offset
+  only needed to be arbitrary, and `hash2(c.id, …)` is arbitrary without touching the stream.
+  It is also strictly better than the roll it replaced: a body that walks out of view and back
+  keeps the gait it had, where `rnd()` gave it a new one on every rebuild.
+- **When you make one assertion independent of a dice roll, check its neighbours.** `curse.js`
+  had already learned that WHICH sundered site answers the Curse is the game's choice, and had
+  been fixed to find out afterwards rather than assume — but only the two cache assertions were
+  fixed. `andItGoesOnEating` still needed the beast to be standing in the dead, and the dead
+  were laid on site[0] only, so it was really asking "did `pick` choose site zero" and passing
+  on a margin of ONE body (ate 32 -> 33). Laying a field on every site keeps the game's choice
+  free and moves the margin to 32 (ate 32 -> 64). A fix that stops at the assertion that went
+  red leaves its siblings loaded.
 - **A negative control that also passes means the harness is unproven, not that the bug is
   fixed.** `roads.js` found zero caravan stalls; stripping out the `travel` fallback whose
   comment names that exact failure produced zero stalls as well. So the harness guards against

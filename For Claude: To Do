@@ -49,6 +49,26 @@ WHAT IS DONE SO FAR, and where the proof lives:
     bandage order through a real right-click on the canvas.
   · tools/reach.js  — what a watchtower is worth, whether a sundered cache is inside
     its own monument, and whether anybody can buy a perfect body at the circle.
+  · tools/press.js  — how a line closes: twelve bodies onto one target measured by
+    BEARING rather than distance, and a body too close to shoot swinging rather than
+    standing there. Every soak in it is pinned to its tile each tick, because `noFight`
+    and a near-zero speed do not make a body stand still and the case that forgot was
+    measuring how long its own staging lasted.
+  · tools/flank.js  — the same report from the other side: eight onto one, a runner
+    through his own picket, two lines meeting, eight through a one-tile gate, and three
+    joining a fight already in progress. Four of its five measurements found NOTHING
+    wrong with the pathing, which is why the fix went to the picture instead.
+  · tools/kiting.js — what a shot costs the legs and what a blade costs the exit.
+    Measured in GROUND COVERED rather than in flags, because every flag in that system
+    reads correctly on the broken build; the case that looks like it is testing the draw
+    is a deliberate control that passes on every build.
+  · tools/curse.js  — Malathuun's Curse, driven through the real dial: bodies laid on
+    the ground and the real tick run, with a tidy field as the negative control.
+  · tools/lieu.js   — a lieutenant spent all the way down its ladder and one death past
+    the end of it, driven through the real `kill` and the real `castRaise`.
+  · tools/watchers.js — the Eyes and the Messengers: the gaze measured against a PAIRED
+    body in plate and bare, and the learning against another Messenger with the
+    multiplier switched off.
   · tools/rites.js  — the Last Rite as a scene: not "is it longer" but whether what
     it summons crosses the ground in time to be fought at the circle.
   · tools/menus.js  — where the command menu lands, at three window sizes. The bug
@@ -103,8 +123,22 @@ Two rules this file keeps learning the hard way, both worth reading first:
        · guns.js `theLanceLandsInPlay` — the lance fires exactly ONCE in the probe's
          window, so the assertion is a single hit roll. It landed on two streams
          (100->88, 100->84) and missed on the third. A one-shot sample is the bug.
-         STILL UNFIXED, because it is green on the stream that shipped; the same
-         treatment gunnery.js just had is what it wants when somebody touches it.
+         NOW FIXED, AND IT WENT RED EXACTLY AS PREDICTED on a parallel branch —
+         against a lance that works, one cell spent on both builds, which is the
+         tell: the weapon fired, the arrow missed, and that was the whole assertion.
+         WHAT MADE IT ONE SHOT was not the rate of fire (3.7s at atk 20, so twenty
+         seconds is five shots) but the raider — it crosses the five tiles in about
+         a second and a half, and a body inside 1.7 tiles makes the lance guard
+         instead of shoot. The probe was measuring the opening shot of a fight and
+         then a wrestle. It pins the target's TILE now, the same way rites.js had to
+         pin the ritualist's, and widens to sixty seconds.
+         AND THEN THE SECOND HALF, which the parallel branch did not hit because its
+         lance still ran on cells: with the target held still the widened window
+         fired FOURTEEN times and dealt nothing, because `foe()` hands out a tough-40
+         body and the lance does 44 — the mark was face-down for thirteen of them. A
+         soak at tough 400 gives eight shots and 43 blood, repeatable. It refuses to
+         pass at all on fewer than four shots, so it cannot quietly decay back into a
+         coin flip.
        · wanderers.js `opensOnArrival` — the walk arrives and the modal does not
          open. Note the failure text quotes a title that is still correct, because
          hiding a panel does not clear it; the display flag is the thing to read.
@@ -117,9 +151,15 @@ Two rules this file keeps learning the hard way, both worth reading first:
      cells, identical across runs, and the DRY case in the same loop is the control
      that keeps it honest: thirty seconds with no cells still does nothing at all.
 
+     ONE OF THE TWO IS NOW PAID OFF, and the advice above held exactly: a bigger
+     sample, no re-baselined number, a pinned target and a control in the same loop.
+     `wanderers.js opensOnArrival` is the one still owed — it survived this change
+     untouched, so it is still a live landmine and still wants the same treatment
+     rather than a new number.
+
      So the draw stays for now and this is written down instead. Whoever removes it
-     should expect to fix those two assertions in the same sitting, and should fix
-     them by giving each a bigger sample rather than by re-baselining a number.
+     should expect to fix that assertion in the same sitting, and should fix it by
+     giving it a bigger sample rather than by re-baselining a number.
 
 ===============================================================================
 
@@ -208,25 +248,111 @@ Two rules this file keeps learning the hard way, both worth reading first:
     MEDIC stance walks past a bleeding stranger, and still picks up one of your own
     bleeding in the same spot. `fieldSurgeon` works the commander's band only.
 
-[OPEN] The melee pathing system seems to have gone a bit janky. Everyone tries to beeline towards the enemy and gets caught on allies. They should attempt to flank around where possible. (Could be an unintended side effect of the “walling” effect we built to prevent enemies from beelining through allies to attack mages etc.)
-    NOT STARTED.
+[DONE] The melee pathing system seems to have gone a bit janky. Everyone tries to beeline towards the enemy and gets caught on allies. They should attempt to flank around where possible. (Could be an unintended side effect of the “walling” effect we built to prevent enemies from beelining through allies to attack mages etc.)
+    Your guess was close: not the walling effect, but the slide that was
+    supposed to keep it from jamming. Proof in tools/press.js — 7 of its 11 assertions
+    fail on the build before this one.
+    MEASURED FIRST, because "janky" is not a number. Twelve bodies sent at one target
+    from the same side, then counted by BEARING rather than by distance — six bodies
+    standing 1.2 tiles away can be a neat ring or a heap on one side and only the
+    bearings tell them apart. Old build: SEVEN of the twelve ended up in one eighth of
+    the circle, three sides occupied out of eight, the tail trailing back to 4.5 tiles.
+    New: two per side at worst, seven sides of eight, everybody inside 2.5.
+    THREE CAUSES, and the first two are one line each.
+      1. `separate()` had a slide that lets a blocked body go round rather than grind —
+         and it asked `foes`, so it never fired for a body stuck behind its OWN side.
+         An ally is the far more common thing to be stuck behind, because allies are
+         the ones all walking at the same enemy.
+      2. The same slide asked for `moveTarget || attackMove`. A body closing on
+         `c.target` has NEITHER — the chase runs off `target` alone — so the one body
+         most likely to be shoving through a crowd was the one excluded from going
+         around it.
+      3. THE REAL ONE. "Extras circle at spear-length and wait" is what the Kenshi cap
+         comment says, and the code pushed the extra man straight back down the line he
+         arrived on. So a queue stayed a queue and only got longer. Extras now walk
+         round to their own arc and wait on it, which is what the comment always
+         promised, and it is most of the measured difference.
+    THE APPROACH ITSELF WENT THROUGH TWO ANSWERS and the second one is in the build.
+    The first was a fan: each body took a stable place among everybody chasing the same
+    target (by id — no dice, nothing to save) and swung its approach off the GROUP's
+    mean bearing by that much. Off the group's, not its own: fanning off your own
+    bearing is a feedback loop, because turning toward the offset moves the bearing the
+    offset was measured from, and a body chases its own tail round the target — measured
+    at three sides occupied, WORSE than changing nothing.
+    A parallel branch answered the same report with a RING OF PLACES instead of an
+    angle, and it is the better answer, so it is the one here. Each body claims one of
+    eight slots around its quarry and walks to THAT. Nearest free place wins, which keeps
+    the front rank walking straight in — the ones behind fan out because the near slots
+    are already spoken for by the time they ask. A man already fighting somebody has a
+    front and a back, so slots inside the arc he is facing cost an extra tile and a half
+    of walking: a squad joining a fight in progress goes round to his flanks rather than
+    queueing in front of his blade. Held half a second at a time and stored as an OFFSET,
+    so it follows a quarry who is moving rather than aiming where he was.
+    Two things were added to that branch's version. A slot is DEAR when occupied, not
+    SHUT: rejecting a taken slot outright leaves four of twelve bodies with no slot at
+    all, and a body with no slot walks at his tile, which is the beeline this replaces —
+    measured on that branch at four sides covered with six stacked on one. Pricing
+    occupancy above the width of the whole ring means a free place always beats a shared
+    one and the overflow doubles up on the emptiest side. And the Kenshi extras now wait
+    on the bearing of their OWN slot, a stride outside the fighting ring, so the men who
+    cannot get hold of it are already spread around it rather than queued behind it.
+    Twelve onto one: six sides of eight, no more than four on any of them, nobody
+    travelling less than 7.9 tiles. Eight onto one: seven sectors, none of them stalled.
+    Three joining a fight already in progress: 3 of 3 come round off his face.
 
-[OPEN] Kiting should slow down the ranged attacker. It doesn’t make sense that someone could run backwards at full speed while still firing projectiles. And catching a ranged attacker in melee should somewhat lock them down from fleeing again. (Somewhat — they should reasonably be able to escape if, say, an ally also engages that enemy.)
-    NOT STARTED, and start by looking at who is actually doing the kiting, because the
-    AUTO-FIGHT path already refuses to do it. The ranged branch (~line 8283) reads:
-    `if(d > w.range){ travel(...); return; }` with the comment "no firing on the move", then
-    stands still and opens a `c.windup` of `w.draw` seconds. So an AI archer closes OR shoots,
-    never both. Whatever is kiting is therefore doing it around this branch — a player move
-    order, or `attackMove` — so the fix probably belongs where a move order interacts with
-    `windup`, not in this branch. Confirm which before writing anything.
-    The same branch already half-answers the second half: `if(d < 1.7){ c.blocking = true;
-    return; }` — "too close: guard, don't shoot" — so a body in melee ALREADY cannot fire. What
-    is missing is that nothing stops it walking away. A disengage cost wants to live near
-    `oppCd` (the opportunity-attack cooldown already on every body) rather than as a new
-    system, and the "unless an ally is also engaged" clause has a ready-made counter: the
-    engagement loop at ~line 8300 already counts bodies within 1.9 tiles of a target for the
-    Kenshi side-cap. Read that count instead of writing a second one.
-
+[DONE] Kiting should slow down the ranged attacker. It doesn’t make sense that someone could run backwards at full speed while still firing projectiles. And catching a ranged attacker in melee should somewhat lock them down from fleeing again. (Somewhat — they should reasonably be able to escape if, say, an ally also engages that enemy.)
+    Proof in tools/kiting.js, which measures GROUND COVERED and never a flag —
+    the complaint is written in ground, and every flag read correctly on the broken
+    build. The note below was right that the AI never kites, and that turned out to be
+    the useful half: NOTHING in this game fires on the move. The AI branch closes OR
+    shoots, and a player move order runs through `clearOrders`, which drops the target.
+    So there was no "firing while running" to slow down.
+    NOR WAS THE DRAW THE HOLE, which is where a plausible fix went and came back out.
+    `physics` already plants the feet for the whole length of a windup, and a probe that
+    gives the run order on the tick the draw opens measures 0.00 tiles walked before the
+    arrow leaves. The answer is arithmetic: a bow at atk 10 is a 2.3s cycle of which the
+    rooted draw is 0.45, so a perfectly rooted archer still walks four fifths of it flat
+    out — measured at 86% of the ground the same archer covers doing nothing but running.
+    THE RELOAD IS THE ONLY PART OF THE CYCLE BIG ENOUGH TO PAY FOR THE SHOT. `reloadT`
+    runs from the loose until the weapon is ready again (the same window `atkCd` runs),
+    and holds the legs at a fraction graded per weapon — a bow is nocked half-walking at
+    0.62, a crossbow is spanned against the body at 0.50, the lance has to spin something
+    up at 0.42. An archer who keeps shooting never gets their legs back; one who stops
+    has them in a couple of seconds. Twelve seconds of hard kiting covers 68% of the
+    ground the same archer covers just running, against 86% before.
+    THE LOCK-DOWN, and the escape clause is the better half. `pinGrip(c, o)` is a scale,
+    not a switch: alone with you the man holding you has both hands on you (0.50), one
+    other body on him and most of the grip is gone (0.85), two and it is a formality
+    (0.95); a second blade on YOU tightens it again. So the way out is not a timer or a
+    dice roll, it is that a friend came and gave the man holding you something to think
+    about, which makes fetching a caught archer a thing you can do rather than a stat.
+    IT IS DIRECTIONAL, enforced in `stepToward` and not in `moveSpeed`: closing, circling
+    at spear-length and standing your ground all cost nothing. Only leaving costs.
+    AND A GRIP IS RELEASED, NOT OUTRUN — the part that took measuring. Contact is a
+    1.45-tile test, and a body that steps out of it runs flat out on the very next tick
+    while the man holding it is mid-swing with his feet planted: the gap opens to 2.3
+    tiles in three ticks and an equal-footed chaser never closes it again. Scoped to
+    contact alone the whole grip was worth 0.7 tiles out of thirteen. So it rides for
+    0.9s past the last contact on two conditions that both mean he still has you — he is
+    still coming for YOU, and he is still within arm and a stride. Four seconds of
+    running: 13.4 tiles alone, 7.3 with a swordsman on them, 13.0 once an ally has that
+    swordsman by the throat.
+    EVERY NUMBER FALLS OUT OF `separate()`, which is the only pass in the tick that
+    already walks every close pair — and it has to be there rather than in a scan of its
+    own, because `charsNear` hands back ONE SHARED BUFFER: a scan issued from inside
+    `moveSpeed` would empty the caller's list, and a scan nested inside another empties
+    its own. (A parallel branch answered this item with a nested one. Same rule, quieter
+    failure.) One tick of lag on the result, deliberately: it is a grapple, not a trigger.
+    CONTACT IS COUNTED BEFORE THE SEPARATION CULL. Bodies are pushed apart to 0.8 and a
+    blade reaches 1.45, so counting after the cull would have meant nobody ever held
+    anybody. A bow cannot hold you, and neither can a mule or anything `noFight`; and
+    nothing over 1.6 big is held by one man on its flank.
+    AND THE LOOSE THREAD IS CLOSED TOO, in the commit after this one — a body holding a
+    ranged weapon inside 1.7 tiles now falls through to the swing instead of standing
+    there. It was found rather than remembered: guns.js went red after the changes above
+    shifted the timing, and the diagnostic read `d=0.92`, eighteen cells in the stash, an
+    enemy on its chest and eighty-five seconds of unused cooldown. Filed twice as "the
+    same branch", and it was.
 [DONE] Skeleton versions of Chimeras would be nice to have so that they don’t take the default human skeleton after being raised up. (Especially for lieutenants.)
     Built as part of the raise-mechanic rework below; the two were one job.
     The cause was not `kin` at all — it is that the chimera geometry lives in TWO
@@ -303,11 +429,48 @@ Two rules this file keeps learning the hard way, both worth reading first:
     notice; that is asserted separately, because closing this door on everybody
     would have been the easy wrong fix.
 
-[OPEN] Perhaps we can re-use the "ladder" of corpse degradation in a few more creative ways. For example, undead lieutenants leave a corpse behind the first few times they die, but every time you rez them after that, they degrade in quality. A fully rotten corpse finally just dissipates. But this at least gives lieutenants a chance to contribute and come back if they get smacked around in combat.
-    NOT STARTED. The ladder is `decayStage`/`ROT_LIMB` (fresh, cooling,
-    spoiled, bones) and `rot` already rides the save and already drives both the
-    body's build and its colour, so the machinery for this exists.
-
+[DONE] Perhaps we can re-use the "ladder" of corpse degradation in a few more creative ways. For example, undead lieutenants leave a corpse behind the first few times they die, but every time you rez them after that, they degrade in quality. A fully rotten corpse finally just dissipates. But this at least gives lieutenants a chance to contribute and come back if they get smacked around in combat.
+    Proof in tools/lieu.js — 5 of its 9 assertions fail on the build before it.
+    The note was right that the machinery existed. What it did not say is that the rule
+    it was up against was `if(!c.undead || c.bossKey) corpses.push(c)`: an undead that is
+    not a boss left NOTHING. So a lieutenant — the one body in the game that keeps its
+    name, its face, the conviction it held about you and every skill it earned — was
+    deleted outright by one unlucky quarrel, which is the harshest rule in the game and
+    the reason a careful player never fielded one.
+    Now it comes off the ground once per rung: fresh, cooling, spoiled, bare bones, and
+    then there is nothing left to call to. Measured end to end: atk 40 alive, then 40,
+    34, 22 across three returns, and gone on the fourth death.
+    HOW IT IS DONE, and it is all existing machinery. `lieuWear` counts the raisings and
+    `decayStage` reads it as a FLOOR rather than a pin — the brine is the pin — so a
+    twice-raised body left lying in the sun still rots past `cooling` on its own. That
+    one line is the whole degradation: everything downstream already reads `decayStage`
+    for what a body raises into, what it is worth harvested and what colour it is, so a
+    lieutenant on its third life is visibly a worse body in the same four colours every
+    other corpse in the world already uses. Nothing new had to be drawn.
+    `isUnique` needed `|| !!body.lieutenant`, because the clause that makes somebody a
+    lieutenant tests `!body.undead` — which is what stops an ordinary risen coming back
+    as a person, and would have rendered the one named body in the game into a numbered
+    Bone Knight.
+    THE KIT IS DELIBERATELY NOT STRIPPED the way a rotted generic risen's is. A lieutenant
+    is buried with what it held and comes up wearing it; taking the gear as well would
+    make the last two rungs not worth paying for.
+    AND A SEPARATE BUG FOUND STANDING NEXT TO IT, fixed here because it is the same
+    machinery: `raised` was read in four places (`carrionFodder`, `cartFodder`,
+    `cairnFood`, and the raise job's work check) all meaning "already raised from the
+    dead" — and written in exactly ONE place, `patrolTick`, where it meant "this watchman
+    has raised the ALARM". So the intended exclusion never once fired, and the flag was
+    true for precisely one population: guards who had spotted an enemy, which is to say
+    guards immediately before they die. The commonest corpse in the world was silently
+    exempt from the entire corpse economy — no Gravecart, no carrion job, no Cairn Beast.
+    The alarm flag is `alarmed` now. THE FOUR READS ARE LEFT ALONE ON PURPOSE: they
+    express an intent nobody implemented, and turning them on is a design call about
+    whether a risen put down a second time is still material — which `carrionFodder`'s
+    own comment already argues it should be. That is a decision, not a rename.
+    NO NEW WORLDGEN DRAW: 633 bodies and 7 towns on both builds.
+    ONE THING THE HARNESS CAUGHT ABOUT ITSELF, kept in the file: `andThenItIsGone` first
+    read "did it dissipate", which was TRUE on the broken build — a lieutenant that left
+    no body at all dissipated on its first death. Green on exactly the bug it was written
+    for. It has to see the ladder run out, not merely end.
 [DONE] For some reason, the Gravehound uses a redoubt automaton skin/texture. Which is cute but confusing. (Probably from when we changed the redoubt creatures from animal texture to real automotons.)
     Neither guess in the note above was right, and the measurement is worth
     keeping. It was NOT the cache — the keys do not collide — and it was NOT `const K
@@ -401,14 +564,43 @@ Two rules this file keeps learning the hard way, both worth reading first:
     draws, and any new draw in worldgen moves every body placed after it. Three
     harnesses have been broken by that mechanism; it is not worth a chest.
 
-[OPEN] The helmet textures (for the Sigil-bound and the Redoubt soldiers) are just not working out really well. I think it’s best if you build out and make some unique, custom textures for them. My image for the Redoubt soldiers was faceless, white helmets. Like stormtroopers but with no visible visor – all alchemical sensors. For the Sigil-Bound, my idea for his helmet was a bronzed medieval armet, covered in alchemical etching. (Honestly I think the Sigil-Bound deserves an entire MODEL that’s unique to him, given his immortality and armor body. And we can use recolored versions for transmutation immortals if I ever get any.)
-    NOT STARTED, and note this supersedes the GLB helmet work from last
-    session — that re-cut and squared the imported alchemy helm, and this asks for
-    BUILT helmets instead (boxes and vertex colour, like every other garment), which
-    is a different and probably better job: a faceless white shell needs no texture
-    at all. HELMFIT now takes per-axis `sx/sy/sz`, and `helmOf(c)` is the one place
-    that decides who wears what.
-
+[DONE] The helmet textures (for the Sigil-bound and the Redoubt soldiers) are just not working out really well. I think it’s best if you build out and make some unique, custom textures for them. My image for the Redoubt soldiers was faceless, white helmets. Like stormtroopers but with no visible visor – all alchemical sensors. For the Sigil-Bound, my idea for his helmet was a bronzed medieval armet, covered in alchemical etching. (Honestly I think the Sigil-Bound deserves an entire MODEL that’s unique to him, given his immortality and armor body. And we can use recolored versions for transmutation immortals if I ever get any.)
+    Both are BOXES AND VERTEX COLOUR now, which is the whole of the fix and is what
+    the note above predicted: you asked for custom textures and the honest answer is
+    that a faceless white shell has no texture in it — it is a shape and two colours,
+    and the box rig draws that better than an import scaled to fit a skull it was not
+    modelled for. The GLB path this replaces is left in the file but is no longer
+    reached; see the note on `helmOf`.
+    THE REDOUBT SHELL is nine boxes: a shell, a closed jaw, a crown seam, a brow ridge
+    that is deliberately NOT a slit, a filter where a mouth is not, and a side intake.
+    The sensors are three lenses and they are ASYMMETRIC — one large, two small, none
+    of them centred. A made thing whose sensors are arranged for a job rather than for
+    a face is considerably more unsettling than a symmetrical mask, and symmetry was
+    the thing that would have made it read as a face again.
+    THE ARMET is eleven: skull, comb, cheek pieces closed at the chin, a visor with a
+    real sight slit, a bevor up over the chin, a neck tail, and three bands of dark
+    INLAY for the etching — inlay rather than a drawn line, because "covered in
+    alchemical etching" with no texture map has to be geometry or it is nothing.
+    `SIGIL_BRONZE` is a constant, so the recoloured version for a transmutation
+    immortal you mentioned is one line and not a second helmet.
+    A THING I GOT WRONG AND HAD TO MEASURE. I built the armet into the war-automaton
+    branch first, on the reasoning that he is a `construct` and that branch reads
+    `c.construct` — and wrote a confident comment about him having worn the Warden's
+    head. He never did. That branch sits inside `if(c.beast)`, he is not a beast, and
+    `helmKind` refuses a beast outright, so an armet hung there could not have been
+    reached at all. Measured on the built rig: headG 0.62 and head box 0.24, which is
+    the humanoid skull, not the automaton's 0.12. He takes the ordinary humanoid rig.
+    STILL OPEN, and it is the parenthesis in your note rather than the item: he does
+    not have a MODEL of his own. He has his own head now and reads as himself from a
+    distance, but the body under it is the standard humanoid at 1.35. That is a bigger
+    job than a helmet and wants its own item.
+    tools/kit.js carries the proof and the picture, which is right for this one: the
+    assertions are that the shell is square, sits over a 0.31 skull, and has no face
+    opening, and that the armet does have a sight slit — so the two cannot quietly
+    become the same helmet in different colours. Both fail on the build before this.
+    The sheet it renders now stages the Sigil-Bound as the construct he is; it was
+    photographing a plain human before, so the armet never appeared in the one place
+    it exists to be judged.
 [DONE] I did a full playthrough and never saw our new giant corpse eater monster guy. Make sure he spawns properly.
     It always spawned — the arithmetic was just hopeless. One neutral
     animal, standing up 515 tiles from the player in a world 1440 across, announced
@@ -423,29 +615,47 @@ Two rules this file keeps learning the hard way, both worth reading first:
     housekeeping the difficulty dial. All of them ride the save; old saves with a
     single beast load fine and start growing a population from there.
 
-[OPEN] Malathuun’s Curse: a world event, like the blood moon. A sundered site… stands up.
+[DONE] Malathuun’s Curse: a world event, like the blood moon. A sundered site… stands up.
        (A carrion beast spawns somewhere in the world, not fully grown but not nascent either.)
-    NOT STARTED, and almost all of the machinery is already sitting there waiting for it.
-    `spawnCairnBeast(force)` ALREADY takes a force flag that skips the CAIRN_MAX check, and it
-    ALREADY prefers to rise at a `corpseSites` entry — which is to say, at a sundered site.
-    So the spawn half of this is one call.
-    "Not fully grown but not nascent either" is a solved problem too: `c.ate` is the single
-    number the whole stat line is computed from, and `cairnGrow(c)` recomputes big, blood,
-    claw, tough, atk, pace and noise from it. Set `ate` to a mid value before calling
-    `cairnGrow` and you get exactly the half-grown thing you are describing, with no new stats
-    and nothing extra to save — the comment on `cairnGrow` says a save only has to store `ate`.
-    The EVENT half is the part that does not exist. `worldEvent(kind, x, y, text)` is the entry
-    point and there is already a `cairn:'bad'` tone registered for it. What a new kind needs is
-    an entry in DREAD_WEIGHT (bloodmoon sits at 6, sundered at 10 — this probably wants to be
-    heavier than both) and a line in each DREAD_TRAIT row, or leaders will have no opinion
-    about it. A pious seat should care a great deal.
-    Two things worth deciding before building: whether the site is CONSUMED (a sundered site
-    that stood up should probably stop being lootable, and the loot-visibility item below is
-    already about those sites), and whether the curse fires off the Fracture clock like the
-    blood moon does or off something the player did. The second is more interesting — the
-    Cairn Beast population already keys off unclaimed corpses, so the player's own
-    housekeeping is an established dial for this creature and the curse could read the same one.
-
+    Proof in tools/curse.js — 6 of its 13 assertions fail on the build before it.
+    The note below was right that the spawn half was nearly free, and right about which
+    half was missing. Both decisions it flagged are settled, and here is which way:
+    WHAT FIRES IT IS YOU. Not the Fracture clock. A blood moon runs off time passing and
+    there is nothing to be done about time passing, whereas the Cairn Beast population
+    already reads a dial the player controls — unclaimed dead lying in the fields. The
+    Curse reads the SAME dial and sets the bar far higher: an ordinary beast forms at 26
+    bodies per beast already standing, the Curse wants 70 on the ground at once, with a
+    day floor of 16 and six game-days between. That makes it a mess you made and did not
+    clear rather than weather, and it is answerable: burn your dead.
+    THE SITE IS SPENT, AND NOTHING IS DELETED. The cache goes INTO the thing that stood
+    up instead of being destroyed with it — the ground stops being lootable, which is
+    what a site that got up should mean, but the reason you were going there walked off
+    and can be killed for. `s.cacheIdx` is recorded at worldgen (no draw — see below) so
+    the right chest is certain, and `chestsOpened` already rides the save, so a spent
+    site stays spent across a reload with nothing new to store.
+    HALF-GROWN IS `ate` AND NOTHING ELSE, exactly as the note said: 32 of them puts it at
+    about 3.6x — past the Sixfold, past anything else walking, and well under the 8.0x a
+    beast reaches by eating its way there. It is an ordinary Cairn Beast underneath, so
+    it still grows, still sheds, still rides the save on one number.
+    THE EVENT HALF, which is what did not exist: `curse` is in NEWS_TONE, in DREAD_WEIGHT
+    at 18 (over sundered's 10 and the blood moon's 6, under the Fracture's 26) and in all
+    six DREAD_TRAIT rows, because a kind missing from those rows is a kind no leader has
+    an opinion about. Pious at 1.9 — the dead god got up out of the ground. Ironfisted at
+    1.3, which is the one worth explaining: that seat discounts every portent and wants
+    to be shown a kept house, and an uncleared field IS an unkept house.
+    NO NEW WORLDGEN DRAW, checked rather than assumed — 633 bodies and 7 towns on both
+    builds. `cacheIdx` is an array index taken at push time and `lastCurseDay()` reads the
+    saved event log rather than storing a new field, so the save shape is unchanged too.
+    AND ONE THING THE HARNESS GOT WRONG ABOUT ITSELF, kept because it is the useful half:
+    "arrives half-grown" was read at the END of a four-day run, by which point the beast had
+    eaten the ninety bodies that summoned it and stood at 7.1x of a possible 8. It passed
+    the first time at 3.6x purely because that run ended mid-meal. It snapshots the tick it
+    stands up now (3.5x on 32 bodies, as designed), and the growth afterwards became its own
+    assertion rather than a confound.
+    WORTH KNOWING FOR THE HARNESS: it drives the dial rather than calling the function,
+    because a probe that calls `malathuunsCurse()` has tested the spawn and not the
+    design. The tidy-field control runs FIRST and is the reason the positive means
+    anything — six days with nothing on the ground and the sites stay sites.
 [DONE] On a similar note, I RARELY see packs of dust hounds anymore. I guess native fauna is getting wiped out by something? Not sure.
     Bandits, slavers and hounds shared ONE ceiling of 22. Outlaws hold
     ground — they sit in camps, nothing hunts them, they accumulate — while a wild
@@ -545,9 +755,15 @@ Two rules this file keeps learning the hard way, both worth reading first:
     And a dry lance now floats NO CELL over the body the way an overheating one floats OVERHEAT,
     and names the towns where cells surface — read off `vendors` rather than hardcoded, so the
     sentence cannot go stale.
-    NOT TOUCHED, and worth a look another day: the cell price (base 220) and the emplaced lance,
-    which spends no cells at all — it runs off the camp. That asymmetry may be right (an
-    emplacement is plumbed into something) or may be an oversight; it is a balance call, not a bug.
+    SETTLED LATER, and the other way round from the guess here. The asymmetry was an
+    oversight, and the fix is to INVERT it rather than to even it up: the handheld spends
+    nothing at all now and the emplaced Heavy eats a cell a shot. Ammunition on the weapon
+    your people carry made the gunline an expensive annoyance and left it a museum piece
+    between resupplies — while the thing bolted to your wall, which is the one with a supply
+    line behind it and the one throwing a 72-damage bolt through four men, fired for free.
+    The whole supply chain built here is kept and simply moved: the dealers, the ceiling,
+    the sentence that names which towns trade them. The cell PRICE (base 220) is still
+    untouched and still a balance call.
     ALSO NOT TOUCHED: at 0.9 tiles a lance-holder neither fires (correctly — "too close: guard,
     don't shoot") nor swings. That belongs with the kiting item above, which is about the same
     branch.
@@ -869,48 +1085,328 @@ been started.  Both are Watcher-kin and both want the GAUNTS table, which is the
 one place a new hostile body is cheap to add: a row of stats plus a `claw`, a
 `big` and barks, and `spawnGaunt(kind, x, y)` does the rest.
 
-[OPEN] Eyes of Ainzopha’ar: swarms of floating eyes. Their gaze lights heretics aflame with holy fire. (Ranged enemy, incorporates destruction alchemy.)
-    NOT STARTED. The name is already load-bearing lore — AINZOPHA'AR'S LIGHT is the divine
-    warding spell, the small terrible sun that gaunts will not approach. Something named for
-    that carrying holy fire against YOU is a good inversion and should probably be written to
-    read as one.
-    Mechanically the closest thing that exists is the Wisp: `beast` + a small `big` + no
-    humanoid rig, which is how a floating body is already done. For the gaze, note the
-    Skeleton Mage is the existing pattern for a body that casts and only casts — `gift`,
-    `onlyArt`, an `arts` map and `stance:'ranged'` — so an Eye is roughly a hostile Wisp body
-    with the Mage's casting wiring. `emberrot` (EMBERS OF AVARICE, a fire that keeps burning)
-    is the obvious art and already exists.
-    SWARM is the part to think hardest about, because it is the part the game does not have.
-    Everything hostile currently spawns as individuals with a squad id. A swarm that behaves as
-    one thing is either a lot of cheap bodies (watch the `charsNear` cost and the squad-bar
-    collision the log-lift item was about) or one body that renders as many. Decide which
-    before writing anything — they are completely different builds.
-    Balance note: read the binding-circle findings above first. A ranged enemy that ignores
-    armour is exactly the counter to a host whose survivability comes from `def` flooring
-    everything at 0.15, so this creature is a real lever on the necromancy balance problem and
-    should be designed with that in mind rather than by accident.
+[DONE] Eyes of Ainzopha’ar: swarms of floating eyes. Their gaze lights heretics aflame with holy fire. (Ranged enemy, incorporates destruction alchemy.)
+    Proof in tools/watchers.js. THE SWARM DECISION, which the note said to make
+    before writing anything: A LOT OF CHEAP BODIES, not one body drawn several times.
+    The reason is counter-play. One body rendered as many has a single pool of blood
+    and a single position — it cannot be thinned, cannot surround anybody, and the
+    swarm is a picture rather than a situation. Cheap bodies get all of it for free:
+    they die one at a time, they come at you from several sides because the flanking
+    work already makes them do that, and every system that exists — targeting, the
+    projectile mill, the dawn cull, the bounty board — reads them with nothing added.
+    The cost the note warned about is `charsNear`, and it is affordable: a flight is
+    four to seven bodies against a world that boots with six hundred and thirty-three.
+    `spawnEyeFlight` puts them up sharing one squad.
+    THE INVERSION IS THE CREATURE. They are named for the warding light — the small
+    terrible sun their own kin will not close on — and they turn it on you. Each one is
+    0.42x across with 22 blood and a claw of 3; the threat is the GAZE, which is
+    `emberrot`, a rot-fire on a timer rather than a blow that lands.
+    AND THAT IS THE BALANCE LEVER THE NOTE ASKED FOR, and it needed no new code at all:
+    `applyDot` already passes `raw` to applyDamage with the comment "a fire already
+    burning on the skin is past the plate". Measured on two identical bodies, one in
+    plate and one bare: 43 points of wound against 45. The armour bought nothing. That
+    is the intended counter to a host whose survivability comes out of `def`.
+    Spawned at tide 2 and up, and rare inside it — armour-blind is the right thing to
+    meet late and the wrong thing to meet in week one.
 
-[OPEN] Messengers: intelligent Watchers, speaking an ancient tongue no one understands or remembers. Variable stats, capable of learning and growing, and they come in multiple varieties — alchemist and warrior classes. They do not use technology, relying on latent eldritch power to wield weapons composed of fire and light. (Their weapons are not lootable, but unique to them.) Late game, some walk among the Paladins.
-    NOT STARTED. This one is more interesting than it looks because "capable of learning and
-    growing" is a thing the game already simulates and currently gives to nobody hostile:
-    `learnMult` on a body multiplies every `xpGain`, and the MIND shaping axis is the only
-    thing that sets it. Put `learnMult` on a Messenger and it genuinely gets better over a
-    long campaign, which no other enemy in the world does. That, not the stat line, is the
-    creature — and it means they should be spawned EARLY and rarely so there is time for it
-    to happen, rather than being introduced at full strength late.
-    Existing pieces to build on:
-      - `gauntKind` for what they are; they should count as Watchers for the cull/news tables
-        (CULL_FOES already maps gaunt -> 'watchers').
-      - `onlyArt` for the alchemist class — attCap already returns 3 for the one art and 0 for
-        the rest, so a Messenger that knows fire and can never know anything else is free.
-      - Unlootable weapons: `dropItems` is the drop table and a body with no `weapon` but a
-        `clawDmg` already fights with what it is rather than what it carries. A weapon of fire
-        and light is most cheaply an unarmed body with a high claw and a `wt` of 'burn', which
-        also means it can never be disarmed or looted by construction rather than by a flag.
-      - "Some walk among the Paladins": the Purge is the `purge` faction and already spawns
-        Paladins at the Bastion and in roaming bands. A Messenger placed in those spawns is a
-        faction line, not a new system — but note the Purge burns people for the profane gift,
-        so a Watcher standing in their ranks is a story beat and should probably be something
-        the player can notice and react to rather than a silent stat upgrade.
-    The ancient tongue: `barks` is already per-body and already used for the Redoubt units.
-    Untranslated speech costs nothing and is the cheapest characterful thing on this list.
+[DONE] Messengers: intelligent Watchers, speaking an ancient tongue no one understands or remembers. Variable stats, capable of learning and growing, and they come in multiple varieties — alchemist and warrior classes. They do not use technology, relying on latent eldritch power to wield weapons composed of fire and light. (Their weapons are not lootable, but unique to them.) Late game, some walk among the Paladins.
+    Proof in tools/watchers.js. The note was right that the creature is `learnMult`
+    and not the stat line: measured at 1.60x the gain of an identical Messenger with the
+    multiplier switched off, on identical experience. Nothing else hostile in the world
+    has it, which is the whole point — a campaign that runs long enough produces one
+    that has been practising the entire time.
+    SO THEY SPAWN EARLY AND RARELY: available from the first tide rather than gated
+    late, capped at two alive, and `nightborn = false` because a thing that learns
+    cannot be collected by the dawn or it is unmade before it has learned anything.
+    Two varieties. The warrior is unarmed with a claw of 16; the Herald is `onlyArt`
+    destruction with `emberrot`, which caps every other branch at zero however long it
+    lives. Both talk, in `barks`, and none of it is words.
+    FIRE AND LIGHT NEEDED ONE NEW FIELD. `clawWt` — everything unarmed landed as
+    'blunt', which is right for a fist and wrong for a bar of light. It is also the
+    whole of what makes the weapon unlootable: there is no item on the body, so there is
+    nothing to disarm and nothing to pick up, by construction rather than by a flag.
+    AND THEY WALK WITH THE PALADINS, on hunts only, after day 45, at 22%. The Purge
+    burns people for the profane gift, so a Watcher in its column is a fact about the
+    Purge rather than a stat upgrade — it is announced in the log if you can see it and
+    in the news if you cannot, because the note was right that this should be something
+    the player can notice and react to.
+    TWO THINGS THE HARNESS GOT WRONG ABOUT ITSELF FIRST, both kept in the file:
+      · The gaze was measured in BLOOD and reported one point of loss for a fire that
+        had done fifty. `applyDot` damages a PART; blood is what bleeds out afterwards.
+      · The learning was measured against an ordinary Gaunt and reported the Messenger
+        learning SLOWER — `xpGain` yields less the higher a stat already is, and a
+        Messenger starts at atk 26 against a Gaunt's 22, so the starting line swamped
+        the effect. Then, with a proper control, both came out at exactly 74.0 gained,
+        because 200 points of experience maxes anything against a ceiling of 100. A
+        multiplier on the RATE is invisible once everything involved has finished.
+
+
+[DONE] (Found while diagnosing a red suite, not reported from play.) The renderer drew from
+       the simulation's generator, so frame rate and camera perturbed the world.
+    Proof in the determinism of the sim itself: three runs of 600 ticks now give
+    byte-identical world fingerprints and identical seeds, where before they did not.
+    HOW IT SURFACED. guns.js returned two different verdicts on a game file whose
+    md5 had not changed — five runs of one build split three to two. World state,
+    fog and even the seed were identical at probe start, which is what forced the
+    real cause out: `updateDust` spawns decorative motes from inside `render()`,
+    six `rnd()` calls a mote, at whatever rate the machine paints; and
+    `buildCharMesh` rolled its gait offset with `rnd()` when a body first came
+    into view. Measured with the game PAUSED: thirteen draws in two and a half
+    seconds of pure drawing.
+    THE SIM IS FIXED-STEP ON PURPOSE — "the world thinks half as often as the
+    screen paints, with identical math" — so this broke a promise the code makes
+    in its own comment. Dust now draws from `vrnd`, a second counter on the same
+    generator. The gait offset is derived from the body's id through `hash2`,
+    which is both off the stream and STABLE: a body that leaves view and comes
+    back keeps its gait rather than re-rolling it.
+    WORLDGEN IS UNTOUCHED, checked rather than assumed — the first 600 bodies
+    hash identically across the two builds, as do the town and stair counts.
+    WHAT DID MOVE, and it is worth knowing: the last three bodies are the
+    player's own starting companions, and they are rolled after the menu has been
+    on screen. On the old build that meant HOW LONG YOU LOOKED AT THE CHARACTER
+    CREATION SCREEN decided who you started with. A new game on the same seed now
+    gives the same three every time — different three from before.
+
+===============================================================================
+NEW BATCH — twenty-four items, filed as reported and not yet investigated.
+Nothing below has been measured. Where a line names a function or a harness it
+is a starting point that was checked to exist, not a diagnosis.
+
+READ THIS FIRST, because two items in this batch are the same shape and it is
+the house rule seen from the other side. Rule 1 says a harness that passes on
+the broken build proves nothing. These two say a harness can pass on a build
+that is GREEN AND UNPLAYABLE, because it measured the mechanism and the player
+was reporting the experience:
+  · descend.js `theViewFollowsItDown` passes. It reads `activeFloor` after a
+    real `render()` — which proves the renderer knows what storey to draw and
+    says nothing about whether the camera goes there, or whether the mountain
+    over your head eats the click that would select the body under it. The
+    report is that caves are "effectively unplayable". Both can be true.
+  · origin.js drives Lyre's trail end to end and passes. It proves the trail
+    can be FOLLOWED. Nothing in it asks whether there is anything to DO when
+    you arrive, and the report is that there is not.
+When an item in this batch touches a system that already has a green harness,
+assume the harness is measuring something narrower than the complaint, and go
+and read what it actually asserts before believing it.
+
+===============================================================================
+
+[OPEN] Bandaging works when it's a "neutral" faction, but not for enemies. I would prefer the bandage option to be under the right-click menu, along with execute, pick up, etc... This would be the most elegant solution, I believe.
+    NOT STARTED. Two halves and the second one is the request: the menu is built
+    in `showCtxMenu`, and aid.js already drives a bandage through a real
+    right-click on the canvas, so the surface and the test both exist. Whether
+    the enemy case is a missing menu entry or a refusal further in is unmeasured.
+
+[OPEN] Friendly fire by ranged allies onto escort mission people sometimes makes them turn hostile, and actually counts as an attack against that whole city. For one, this should be accepted as a simple reality of battle by NPCs and not an intentional attack. Second, the town should not instantly turn against me — they would need a witness to properly deliver the news. We have the bones of that mechanic built, so we just need to incorporate it properly.
+    NOT STARTED. `fireRanged` already knows a stray shot is a stray shot — it
+    sets an `ff` flag on the projectile when the victim is on the caster's own
+    side — so the information the first half needs is already at the point of
+    impact and is being thrown away downstream. The witness half wants a read of
+    what the existing news/witness machinery actually is before anything is
+    built on top of it.
+
+[OPEN] Speaking of escort missions, they pay INSANELY well when it's very far away. This is good as they are indeed the riskiest mission type, but their pay dwarfs every other. I think the solution is both to lower escort rewards a tad and also increase the reward for other mission types. (Sometimes it's literally just more profitable to sell the item they are asking for at their local market than to do the hand-in quest.)
+    NOT STARTED. The parenthesis is the sharper bug and is checkable on its own:
+    a fetch reward that is under the local sale price of the fetched item is a
+    quest that is strictly worse than ignoring it, and that comparison can be
+    made against the real market rather than by feel.
+
+[OPEN] On the Eyes enemy, since they are a swarm, I fear that they will bloat the corpse count of the world. Perhaps each individual eye only counts as a quarter of a corpse for this reason, giving an appropriate amount of mortal remains when harvested and not triggering Cairn Beasts too much.
+    NOT STARTED, and this is a prediction rather than a sighting — worth
+    measuring before it is fixed, since the Eyes were only just built and
+    `spawnEyeFlight` decides how many come at once.
+    THREE CONSUMERS OF "A CORPSE" WOULD ALL HAVE TO AGREE, which is the reason
+    this is not one number: `kill` pushes to `corpses`, harvesting reads a body
+    for Mortal Remains, and Malathuun's Curse counts unclaimed dead against
+    CURSE_FODDER (70). A quarter-weight that only one of the three honours is
+    worse than none.
+
+[OPEN] Magic skill grows fairly quickly. I think this is an old call of mine that simply having undead followers should train magic, but I'm realizing this makes it far too easy to train the skill without really doing anything.
+    NOT STARTED. Note this is a reversal of an earlier decision by the same
+    hand, so the thing to find is the passive `xpGain` on 'magic' keyed to
+    followers rather than to casting, and the question is what replaces it —
+    a caster who never trains by casting is the opposite failure.
+
+[OPEN] Visuals for redoubts and multi-story buildings - right now they are see-through even if none of my squad are inside.
+    NOT STARTED.
+
+[OPEN] Add the ability to mark things on the map for myself personally. (Maybe a mini-icon next to the map itself, then click to add.)
+    NOT STARTED. New feature, no existing surface known to fold it into.
+
+[DONE] Mobile view fix — right now I can't even start the game since the character creation screen is too packed.
+    Proof in tools/start.js, which fails FOUR ways on the build before this one.
+    NOT PACKED — UNREACHABLE. Measured before anything changed: the start panel's
+    content stood 843px tall inside a 640px box, WAKE UP sat at y=799, and a tap
+    on it did nothing on any phone viewport tried.
+    THREE SEPARATE FAULTS SHARED THE ONE SYMPTOM, and fixing any one alone still
+    leaves an unstartable game, which is why each has its own assertion:
+      1. The panel did not scroll. Content taller than the box, `overflow:visible`.
+         The obvious one.
+      2. `justify-content:center` on a flex column overflows BOTH ENDS, and
+         overflow past the START edge is outside the scroll range in every
+         browser. So `overflow-y:auto` on its own buys the bottom of the panel
+         and loses the top — a different unreachable screen. The fix is the
+         auto-margin pair: two zero-size flex items that soak up free space when
+         there is any and collapse to nothing when there is not. Desktop is
+         centred exactly as before; a phone starts at the top and scrolls.
+      3. THE SQUAD BAR WAS IN FRONT OF THE BUTTON. `.overlay` was z-index 20
+         against a squad bar at 35 and a touch bar at 40 — and every one of those
+         numbers lives in a `body.touch` rule, which is the whole reason this was
+         invisible on a desktop. `elementFromPoint` on the middle of WAKE UP came
+         back `DIV.sqrow` inside `#squadbar`. Scrolling never helped because the
+         button was never the thing being tapped. A modal goes above the game.
+    AND THEN IT IS ALSO TOO PACKED, which is the part the note actually said. A
+    52px title tracked out by 14px is 500px of DUSTWARD on a 360px screen; the
+    help box is a FIXED 480px and was losing a word off each end of every line.
+    A `max-width:560px` block states the same layout at a size that fits. Nothing
+    is hidden: a creation screen with options removed on small screens is a worse
+    answer than one you scroll.
+    TWO MISTAKES IN THAT BLOCK, BOTH CAUGHT BY LOOKING AT IT. It was written
+    ABOVE the rules it overrides — identical specificity, so source order decided
+    and the desktop 480px went on winning on every phone. And `.ccopt` is a
+    `<button>`, so `.overlay button{width:100%}` — meant for WAKE UP — caught all
+    forty option chips and turned four wrapped rows into forty stacked ones, at
+    which point the panel was 1546px tall: scrollable, and awful. Scoped to
+    `#btn-start` it is 1150px.
+    WHY mobile.js WAS GREEN THROUGH ALL OF IT, and this is the useful part: that
+    file is a BUDGET — triangles, draw calls, save size, how many touch targets
+    are under 44px. It never opens the start screen and never taps anything, and
+    its "mobile UI not started" list is deliberately non-failing so an unfinished
+    port does not block every commit. The one claim that has to hold — you can
+    get INTO the game — had no file that would go red for it. Now it does.
+
+[OPEN] Constant alerts on "the tree is felled" or the stone is mined out is getting exhausting and it blocks the view for more important updates. Same with stray shots hitting allies – that's fine for MY troops, but I don't need to know every instance in the world happening.
+    NOT STARTED. Both halves are the same rule and it is not "log less": it is
+    that the log has no notion of WHOSE business a line is. The stray-shot case
+    already carries the distinction it needs (the projectile knows its caster's
+    faction); the felling case wants a general answer, because a world-scale
+    sim writing every routine success into a player-scale log will keep
+    producing this item under new names.
+
+[OPEN] Some creatures (especially gaunts/sixfold/etc) tend to be REALLY hard to right-click, especially after they're knocked unconscious. It's almost a guessing game of where to click because it doesn't seem consistent with the body itself.
+    NOT STARTED. "Not consistent with the body itself" is the diagnosis worth
+    testing first: if the pick radius is a constant while `big` and the downed
+    pose are not, the hit target and the thing on screen come apart exactly
+    where reported.
+
+[OPEN] While it is now possible to go explore caves under mountains, the camera does not follow. And it becomes impossible to select anyone underneath the mountain as the geometry appears to block clicking on them/dragging a box over them. So cave segments are still effectively unplayable.
+    NOT STARTED. See the note at the top of this batch: descend.js proves the
+    STOREY follows (`activeFloor` after a real `render()`), which is a different
+    claim from either of the two made here. Three separate things are reported —
+    the camera, single-click selection, and box-drag selection — and they may
+    not have one cause.
+
+[DONE] Summoning a wisp crashes the game as of right now.
+    Proof in tools/bound.js, which fails three ways on the build before this one.
+    THE CRASH IS IN THE DRAW, NOT IN THE RITE, and that is why nothing about the
+    summon looked wrong. `craftUndead` returns true, the body is in `chars`, the
+    materials are spent — every assertion you could write about the rite passes.
+    The mesh is built and posed on the next FRAME, and `syncChars` walks into
+    `P(e.jaw, 'x', ...)` on a rig that has no jaw. `Cannot read properties of
+    undefined (reading 'rotation')` comes out of the render loop, which takes the
+    whole frame with it: that is the game stopping, not the summon failing.
+    ONE FLAG, TWO MEANINGS, WHICH IS THE `raised` BUG AGAIN. Three mesh branches
+    set `e.servitor = true`, and all three meant the honest thing by it — "I hang
+    on an `e.float` group, bob me". The pose machine read it as the other thing
+    the name can mean, "I am a Bound Servitor, so I have a skull with a jaw on
+    it". A Servitor builds a jaw. A Wisp is a lamp in a glass shell and never
+    had one. Renamed to `e.floats`, which is what all three actually mean, and
+    the jaw is asked for rather than assumed.
+    BOTH BRANCHES WERE LIVE. The alive pose drops the jaw when it talks and the
+    downed pose drops it when the thing stops; both reached for it with the same
+    non-justification, and the harness catches both separately.
+    A PREDICTION THAT WAS WRONG, KEPT BECAUSE IT FOUND SOMETHING ELSE — see the
+    item below.
+
+[OPEN] The Soulbound's authored mesh has never once been drawn. (Found by tools/bound.js
+       while fixing the wisp crash — not reported from play.)
+    The wisp fix predicted a second crash: the Soulbound raises the same flag
+    from a branch that also builds no jaw, so it should have died in the same
+    line. It does not, and the reason is worse than the crash.
+    THE BRANCH IS UNREACHABLE. `buildCharMesh` dispatches the three float rigs
+    inside `if(c.beast){ ... }`, and the Soulbound's summon (`craftUndead` under
+    `kind === 'soulbound'`) is the one of the three that never sets `u.beast`.
+    The Wisp sets it, the Servitor sets it, the Soulbound does not. So a
+    Soulbound comes out wearing the ordinary humanoid rig, and the thing its
+    branch describes — a small blank wax figure with no face and no feet, hung in
+    the air inside three turning rings of its master's binding, with a bar of
+    dark where a face is not — has never appeared on screen. Measured: it builds
+    no `float` group at all.
+    THIS IS THE ARMET AGAIN (see the helmet work), and it is worth saying twice:
+    an authored asset behind a condition that cannot be true is invisible in
+    exactly the way a missing asset is, and nothing logs.
+    NOT FIXED HERE, DELIBERATELY, because the one-word version is a gameplay
+    change and not a visual one. `c.beast` is read in a dozen places — armour and
+    weapon layers are skipped for beasts, the crawling check, the downed pose's
+    limb block, `hasMind` — so setting it would quietly change what a Soulbound
+    is as well as what it looks like. The alternative is to lift the dispatch out
+    of the `beast` gate, which is visual only but then leaves the `!c.beast` pose
+    blocks reaching for limbs the float rig does not build: the same crash, moved.
+    Whoever takes this should decide which of the two the Soulbound IS first, and
+    tools/bound.js will hold them to it — it already draws every bound kind alive
+    and downed, so either answer has to survive both.
+
+[OPEN] There should be a building that makes fabric. Currently there seems to be no way to make it. If necessary, we should create a new form of raw material to process into cloth.
+    NOT STARTED. Check first whether fabric is genuinely unmakeable or merely
+    unbuyable — the item exists and is consumed (the Hunting Bow needs it), so
+    a dead-ended supply chain is the claim to verify.
+
+[OPEN] The watchtower barely increases sight range. It's hardly worth building at this point.
+    NOT STARTED. reach.js already measures what a watchtower is worth and
+    passes, so this is a BALANCE report against a number the suite is happy
+    with — the harness pins that the tower does something, not that the
+    something is worth the build.
+
+[OPEN] The "patrol" JOB (not the command) makes them move about a bit janky. Overall it works very well, but everyone moves super twitchy and fast. There's no methodical calmness to it. (I do appreciate it over the weird circle that it used to do, but this is a bit too chaotic for an organized base. We need to find an ideal middle ground.)
+    NOT STARTED. `patrolTick`. Explicitly a middle ground and not a revert —
+    the previous behaviour is named as worse, so whatever replaces this has to
+    beat both.
+
+[OPEN] The "flesh" job seems to serve both purposes of shaping quickflesh into corpses for necromancy AND for shaping greenfruit/cloth into quickflesh… We need to decide on one or the other. I opt for creating a new job, "charnel" for shaping quickflesh into corpses, as that seems the most clear.
+    NOT STARTED. The call is already made in the note: split, and the new job is
+    CHARNEL for quickflesh into corpses. FLESH keeps the greenfruit/cloth into
+    quickflesh half. Existing saves have bodies carrying the old job.
+
+[OPEN] I've noticed that raising certain enemies who have been dead for a while (like army soldiers) tends to raise them without their armor/weapons. While their corpse quality should lower, they should keep the armor/weapons they had upon their death. (Perhaps rusty or lower quality equipment if they have been dead for a while.)
+    NOT STARTED. Worth establishing which of two things is happening before
+    touching `castRaise`: the kit is stripped at the raise, or the kit was
+    already gone off the corpse by the time the rite ran. Those have different
+    fixes and only one of them is in the rite.
+
+[OPEN] There is no option to talk to Lyre. I right click her and it simply says she is not hostile and I can ctrl+right click to attack anyway. Pretty disappointing end to a long quest.
+    NOT STARTED. See the note at the top of this batch — origin.js drives the
+    whole trail and passes, because it asks whether she can be FOUND. The
+    payoff was never in scope. Same right-click menu as the bandage item, and
+    the two probably want doing together.
+
+[OPEN] There needs to be some sort of cooldown for raids/paladin patrols against my outpost. I get that there is a lot against me in the world, but right now it just feels like I'm constantly playing on the defense to survive and struggling to catch my breath.
+    NOT STARTED. Pacing, not difficulty — the ask is for breathing room between
+    pressures, not for weaker ones, and several independent systems can each
+    send something at the outpost. A cooldown on one of them moves the problem.
+
+[OPEN] In general, it feels like the range band to help out allies is a bit short. As in, medics don't act unless the ally is really close, and friendly allies don't help out in battles unless they are really close. We should expand this radius.
+    NOT STARTED. Two different radii reported as one feeling; measure both
+    before changing either.
+
+[OPEN] I cannot pick up downed escort mission people. That would be helpful to do – not just for enemies, but being able to pick up "neutral" npcs. (Of course jailing them or something should be illegal/kidnapping, but to get them to safety, that should be acceptable.) Then I can save them from when they, say, walk right into a Sixfold mid-escort.
+    NOT STARTED. The carry machinery exists and carry.js covers it; the note
+    also draws the line for the follow-on rule itself — carrying a neutral to
+    safety is fine, carrying one to a cell is kidnapping. That is a rule about
+    the DESTINATION, not about the pick-up, which is the useful half of it.
+
+[OPEN] Speaking of jailing… there is currently no jail building that the player can build.
+    NOT STARTED. The jail mechanism exists on bodies (`jailedAt`, `jailT`,
+    `arrestTarget`) and jail.js covers it. What is missing is a player-side
+    building, so this is a gap in the build menu rather than in the system.
+
+[OPEN] Sometimes escort missions fail to deliver upon the payment if I'm a few days late to return. Which is a really sucky feeling after a long and painful mission.
+    NOT STARTED. Find out whether the payout is EXPIRING or the contract is
+    being dropped — a deadline that silently voids the reward is a different
+    bug from a contract that stops existing, and only one of them is arguably
+    intended.
+
+[OPEN] You said that I could right click to organize individual units in the squad, but that is currently impossible. Right-clicking unit tabs does nothing.
+    NOT STARTED, and note this one is a CLAIM MADE BY A PREVIOUS SESSION that
+    turned out not to be true in play. Whatever is built here, the harness has
+    to drive a real right-click on a real squad tab, because the last thing
+    that said this worked was not measuring the tab.

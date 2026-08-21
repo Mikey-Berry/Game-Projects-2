@@ -26,7 +26,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
   await p.waitForTimeout(3000);
-  await p.evaluate(() => document.getElementById('btn-start').click());
+  /* ---------- START IT AND STOP IT IN THE SAME BREATH ----------
+     THIS FILE WAS NON-DETERMINISTIC AND IT WAS THIS LINE. `click()` and then three seconds of
+     `waitForTimeout` lets the world run free for however many frames the machine manages in
+     three seconds — which is not a fixed number, and is markedly lower when a 49-harness suite
+     is loading the box. Every body in the world is therefore somewhere slightly different by
+     the time the probe starts staging, and the numbers downstream inherit it.
+     Measured, on ONE build with an unchanged md5: three consecutive runs gave "5 bolts, dry
+     Heavy holds its fire" twice and "3 bolts, dry Heavy fires anyway" once. The assertion was
+     reporting the machine's load, and it had been doing it since long before the changes it
+     eventually went red on. Pausing in the same evaluate as the click leaves no frames at all
+     between the two, so every run starts from the identical world. */
+  await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(3000);
 
   const out = await p.evaluate(() => {
@@ -72,7 +83,38 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       chars.push(c);
       return c;
     };
+    /* a weapon that stops working has to SAY why, so the sentence has to be catchable */
+    const logs = [];
+    const _log = log; window.log = (m, k) => { logs.push(String(m)); return _log(m, k); };
     const run = (n) => { paused = false; for (let i = 0; i < n; i++) update(0.1); paused = true; };
+    /* run, and hold the named bodies on their tiles while it runs. Seventy seconds is a long
+       time to leave a raider standing in the open: it wanders off the arc being measured, and
+       the emplacement's shot count becomes a fact about where the raider went. */
+    const runPinned = (n, bodies) => {
+      const at = bodies.map(c => ({ c, x: c.x, y: c.y }));
+      paused = false;
+      for (let i = 0; i < n; i++) {
+        for (const a of at) { a.c.x = a.x; a.c.y = a.y; a.c.moveTarget = null; a.c.path = null; }
+        update(0.1);
+      }
+      paused = true;
+    };
+    /* ---------- AND THE GROUND REALLY IS EMPTY ----------
+       The search above says "open ground well away from anything that would join in" and only
+       ever checked the TERRAIN. Wanderers, hunting parties and anything driven out of a town
+       are none of them terrain, and over seventy seconds of simulation one of them reaching
+       the staged raider is the difference between "the dry Heavy held its fire" and "something
+       shot my control". Enforce what the comment already promised. */
+    const clearGround = (r) => {
+      let n = 0;
+      for (let i = chars.length - 1; i >= 0; i--) {
+        const c = chars[i];
+        if (c.__probe) continue;
+        if (dist(c.x, c.y, gx, gy) < r) { chars.splice(i, 1); n++; }
+      }
+      return n;
+    };
+    R._groundIsClear = `${clearGround(45)} bodies moved off the measuring ground`;
 
     /* ================== 1. THE TURRET ================== */
     {
@@ -139,11 +181,31 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.theLanceTakesTheDeaf = emplUsableBy(t, deaf)
         ? 'while the alchemically deaf may hold it'
         : '!! THE LANCE REFUSES EVERYBODY, WHICH IS WHY IT LOOKS BROKEN';
+      /* ---------- THE HEAVY IS THE ONE THAT EATS CELLS NOW ----------
+         It used to spend nothing at all while the handheld paid for every trigger pull. Dry
+         first, because a weapon that fires on an empty stash makes the whole supply line
+         decorative, and a dry emplacement is now a thing a player can actually build. */
+      stash.aether_cell = 0;
+      const f0 = foe(gx + 8, gy);
+      logs.length = 0;
+      runPinned(200, [f0]);
+      R.aDryHeavyHoldsItsFire = (t.shots || 0) === 0 && f0.blood === 100
+        ? 'with an empty stash the Heavy will not fire at all'
+        : `!! A DRY HEAVY FIRES ANYWAY (${t.shots} bolts) — the charge rule does nothing`;
+      R.aDryHeavySaysWhereCellsComeFrom = logs.some(l => /Heavy Aetheric Lance is dry/.test(l) && /scavenged/.test(l) && /(Dustport|Hollowmere|occult dealers|redoubt)/.test(l))
+        ? `and it says why, and where they come from: "${(logs.find(l => /is dry/.test(l)) || '').slice(0, 92)}…"`
+        : `!! A DRY HEAVY IS UNEXPLAINED (said ${logs.find(l => /dry/.test(l)) || 'nothing'})`;
+      /* now feed it */
+      stash.aether_cell = 20;
+      const cells0 = stash.aether_cell;
       const f = foe(gx + 8, gy);
-      run(500);
+      runPinned(500, [f]);
       R.theEmplacedLanceFires = (t.shots || 0) > 0
-        ? `it fires — ${t.shots} bolts, and the raider is at ${Math.max(0, f.blood).toFixed(0)} blood`
-        : `!! THE EMPLACED LANCE NEVER FIRES (gunner ${t.gunnerId}, cool ${(t.cool || 0).toFixed(1)})`;
+        ? `fed, it fires — ${t.shots} bolts, and the raider is at ${Math.max(0, f.blood).toFixed(0)} blood`
+        : `!! THE EMPLACED LANCE NEVER FIRES (gunner ${t.gunnerId}, cool ${(t.cool || 0).toFixed(1)}, cells ${stash.aether_cell})`;
+      R.andTheHeavySpendsCells = stash.aether_cell < cells0
+        ? `and it spends them doing it — ${cells0} -> ${stash.aether_cell} for ${t.shots} bolts`
+        : `!! THE HEAVY FIRES FOR FREE (cells still ${stash.aether_cell})`;
     }
 
     /* ================== 3. THE HANDHELD LANCE ================== */
@@ -161,24 +223,72 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.theLanceIsCarryable = !ITEMS.w_lance.nullOnly || !c.gift
         ? 'an ungifted hand may carry the Aether Lance'
         : '!! THE LANCE CANNOT BE CARRIED AT ALL';
-      const dry = lanceFire(c, w);
-      R.aDryLanceRefuses = dry === false
-        ? 'with no cells in the stash it will not fire, which is the design'
-        : '!! A DRY LANCE FIRES ANYWAY — THE CHARGE RULE DOES NOTHING';
-      stash.aether_cell = 20;
-      c._lanceDry = false; c.heat = 0;
+      /* ---------- AND THE HANDHELD IS NOT AMMUNITION-FED ANY MORE ----------
+         Ammunition on the thing your people carry made the gunline an expensive annoyance and
+         the weapon a museum piece between resupplies. The charges moved to the emplacement,
+         which is where the supply line belongs. Asserted with an EMPTY stash, because "it
+         fires" is worth nothing if the probe left cells lying about. */
       const cells0 = stash.aether_cell;
-      const wet = lanceFire(c, w);
-      R.aChargedLanceFires = wet === true && stash.aether_cell === cells0 - 1
-        ? `with cells in the stash it fires and spends one (${cells0} -> ${stash.aether_cell})`
-        : `!! A CHARGED LANCE STILL WILL NOT FIRE (returned ${wet}, cells ${cells0} -> ${stash.aether_cell})`;
-      /* and through the real attack path, not just the helper */
+      const dry = lanceFire(c, w);
+      R.theHandheldNeedsNoAmmunition = dry === true && stash.aether_cell === cells0
+        ? `it fires on an empty stash and spends nothing (${cells0} -> ${stash.aether_cell})`
+        : `!! THE HANDHELD STILL WANTS FEEDING (returned ${dry}, cells ${cells0} -> ${stash.aether_cell})`;
+      c._lanceDry = false; c.heat = 0;
+      /* ---------- AND THROUGH THE REAL ATTACK PATH, NOT JUST THE HELPER ----------
+         THIS WAS A COIN FLIP AND IS NOW A BURST, which is the treatment gunnery.js already had
+         for the same disease. The old version ran 20 seconds against a raider free to walk and
+         asserted on what was, in practice, a single hit roll — so it read "THE LANCE DOES NO
+         DAMAGE IN PLAY" whenever anything upstream moved the worldgen stream by one draw, a
+         failure that says nothing whatever about the lance. What made it one shot is not the
+         rate of fire (3.7s at atk 20, so 20 seconds is five shots) but the raider: it crosses
+         the five tiles in about a second and a half, and a body inside 1.7 tiles makes the
+         lance stop shooting and start swinging. The probe was measuring the first shot of a
+         fight and then a wrestle.
+         PIN THE RAIDER'S TILE, the same way rites.js had to pin the ritualist's — the point
+         here is the weapon, not the footrace — and let it fire a good handful of times. The
+         windups are counted so a window that fires nothing says so rather than reading as a
+         miss, which is the failure the old one could not tell apart from the real bug. */
       c.atkCd = 0; c.heat = 0;
-      const hp0 = f.blood, cells1 = stash.aether_cell;
-      run(200);
-      R.theLanceLandsInPlay = f.blood < hp0 || f.state !== 'ok'
-        ? `and in play it actually hits — the raider drops from ${hp0} to ${Math.max(0, f.blood).toFixed(0)}, ${cells1 - stash.aether_cell} cells spent`
-        : `!! THE LANCE DOES NO DAMAGE IN PLAY (cells spent ${cells1 - stash.aether_cell}, atkCd ${c.atkCd.toFixed(2)})`;
+      /* A WALL, NOT AN OPPONENT. The raider `foe()` hands out is tough 40 against a 44-damage
+         lance: it goes down on the third hit and the burst ends there, which is the single hit
+         roll coming back in disguise. This one soaks. */
+      const soak = makeChar('Butt', 'bandit', gx + 5, gy, { atk: 6, def: 8, tough: 400, ath: 1 });
+      soak.__probe = true; soak.autoFight = false; soak.noFight = true; soak.speedMult = 0.0001;
+      chars.push(soak);
+      f.x = gx + 14; f.y = gy + 14;                  /* the old target out of the way entirely */
+      c.target = soak; c.targetManual = true;
+      const hp0 = soak.blood, cells1 = stash.aether_cell;
+      /* THE SHOT IS READ OFF `atkCd` JUMPING, not off a windup being open on the frame the
+         probe happens to look, and not off the raider's blood — a pool that drains over the
+         following seconds and rounds a real hit up to "100 -> 100" on the way past.
+         `fireRanged` is the only thing that resets that cooldown, so a jump IS a loose.
+         SIXTY SECONDS AND NOT FORTY, because the lance cooks: heat past the frame's tolerance
+         burns the hand and the wielder stops to cool. Forty seconds got three shots out of a
+         weapon that nominally fires every 3.7, which is the overheat working, not a stall —
+         but three is one away from the floor this assertion sets, and a measurement standing
+         on its own threshold is the fragile thing this rewrite was for. */
+      let shots = 0, prevCd = c.atkCd, dealt = 0;
+      paused = false;
+      for (let i = 0; i < 600; i++) {
+        /* pinned, because the point here is the weapon and not a footrace: a body that closes
+           to inside 1.7 tiles makes the lance stop shooting and start swinging, and the probe
+           would then be measuring the first shot of a fight and then a wrestle */
+        soak.x = gx + 5; soak.y = gy; soak.moveTarget = null; soak.path = null;
+        update(0.1);
+        if (c.atkCd > prevCd + 0.5) shots++;
+        prevCd = c.atkCd;
+      }
+      dealt = hp0 - soak.blood;
+      paused = true;
+      R.theLanceLandsInPlay = shots < 4
+        ? `!! ONLY ${shots} SHOTS IN 60s — THIS IS BACK TO BEING A SINGLE HIT ROLL, NOT A MEASUREMENT`
+        : dealt > 0 || soak.state !== 'ok'
+          ? `and in play it actually hits — ${shots} shots put ${dealt.toFixed(0)} blood through the mark`
+          : `!! THE LANCE DOES NO DAMAGE IN PLAY OVER ${shots} SHOTS (atkCd ${c.atkCd.toFixed(2)})`;
+      /* and it still costs the camp nothing to do it — the charges live on the emplacement */
+      R.andItStillSpendsNoCells = stash.aether_cell === cells1
+        ? `and sixty seconds of it spends not one cell (${cells1} -> ${stash.aether_cell})`
+        : `!! THE HANDHELD DRANK ${cells1 - stash.aether_cell} CELLS IN PLAY`;
       /* the overheat is the cost that makes it interesting; it must actually bite */
       c.heat = 0; stash.aether_cell = 200;
       for (let i = 0; i < 12; i++) lanceFire(c, w);
