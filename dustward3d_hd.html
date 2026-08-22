@@ -5294,8 +5294,9 @@ const CRIMES = {
 };
 /* Nobody is wanted for what nobody saw. A crime needs an eye on it — a guard, or a
    townsperson close enough and alive enough to carry the tale. */
-function witnessNear(x, y, t, r){
+function witnessNear(x, y, t, r, skip){
   for(const o of charsNear(x, y, r || 11)){
+    if(o === skip) continue;                    /* the one it happened TO is not a bystander */
     if(o.state !== 'ok' || o.faction !== 'town') continue;
     if(o.homeTown && o.homeTown !== t) continue;
     if(dist(o.x, o.y, x, y) > (r || 11)) continue;
@@ -6029,7 +6030,26 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
   /* bosses shrug off NPC scraps — their fights are reserved for you */
   if(d.bossKey && a && a.faction !== 'player') dmg *= 0.15;
   if(a && a.faction==='player' && d.faction==='town' && d.homeTown){
-    dropRep(d.homeTown, 4);
+    /* ---------- AND THE TOWN HAS TO HEAR ABOUT IT FROM SOMEBODY ----------
+       This cost four standing with the victim's whole city on every blow, wherever in the
+       world it landed, whoever was or was not looking — so a stray arrow forty tiles down an
+       empty road was an incident in a city nobody in it could have known about.
+       Two gates, and both of them already existed elsewhere in this file. `incid` says it was
+       an accident, which `crime` and the `provoked` rule below both already honour. And
+       `witnessNear` is the rule the crime system has always run on — "nobody is wanted for
+       what nobody saw" — which until now applied to the BOUNTY and not to the standing, so
+       the town could not arrest you for something it was furious about.
+       An accident still costs nothing. A deliberate blow with an eye on it costs what it
+       always did. */
+    /* AND THE VICTIM IS NOT A BYSTANDER. `applyDamage` runs this branch BEFORE the blow is
+       applied, so the person being shot is still `state === 'ok'` and was matching as their
+       own witness — which made the gate vacuous for anyone caught alone, whatever happened to
+       them a line later. Skipping them is also the reading the report asks for: a witness is
+       somebody who carries the tale, and the man on the ground is not carrying anything.
+       `crime` deliberately keeps the old rule and still counts the victim, because a BOUNTY
+       is a thing the injured party can go and file. What a town THINKS of you is what its
+       people saw. Those are different questions and this is the one about standing. */
+    if(!incid && witnessNear(d.x, d.y, d.homeTown, 0, d)) dropRep(d.homeTown, 4);
     if(d.civ && !incid){
       deed('civkill', 1, d.homeTown);   /* a stray cleave is not a choice; this was */
       /* A man may be knocked down in a tavern and the town shrugs; the same blow with a
@@ -14902,7 +14922,17 @@ function updateProjectiles(dt){
         addFloat(p.target.x, p.target.y-0.9, 'miss', '#9c8a6e');
         AU.whiff(p.target.x, p.target.y, false);
       } else {
-        applyDamage(p.caster, p.target, pickPart(), p.dmg, p.wt, loud, false, false, p.ap);
+        /* ---------- A STRAY SHOT IS AN ACCIDENT, AND THE ARROW KNOWS IT ----------
+           `p.ff` is set at the moment of loosing, by `fireRanged`, when a bolt meant for one
+           body goes into somebody tangled up with them. The seventh argument here is `incid`
+           — "incidental" — and everything downstream already reads it correctly: a body is
+           not `provoked` by an accident, and a townsperson's death is not a `civkill` if
+           nobody chose it. The pyromancy splash four lines down has always passed `true`.
+           This call passed `false` unconditionally, so the one piece of information the whole
+           chain needed was computed, carried the length of the flight, and dropped on arrival.
+           Reported as: allies' stray arrows turning an escort ward hostile and counting as an
+           attack on their whole city. */
+        applyDamage(p.caster, p.target, pickPart(), p.dmg, p.wt, loud, !!p.ff, false, p.ap);
         if(p.mark && p.target.state !== 'dead'){
           p.target.markT = MARK_TIME;
           addFloat(p.target.x, p.target.y-1.2, 'MARKED', '#a970e8');
