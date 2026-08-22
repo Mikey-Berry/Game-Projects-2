@@ -21983,18 +21983,63 @@ const _plane = new THREE.Plane(new THREE.Vector3(0,1,0), 0);
 const _hit = new THREE.Vector3();
 const _planeUp = new THREE.Plane(new THREE.Vector3(0,1,0), 0);
 const _hitUp = new THREE.Vector3();
-/* does this click land on an upper deck? Ray the storey plane and check for boards underfoot.
-   Neighbors count too — ground undulates and fingers are not scalpels. */
-function elevatedHit(px, py){
+/* ---------- WHERE A CLICK LANDS ON A GIVEN STOREY ----------
+   Ray the storey's plane and check for boards underfoot. Neighbours count too — ground
+   undulates and fingers are not scalpels.
+   THIS USED TO BE FLOOR 1 AND ONLY FLOOR 1, hardcoded to `-FLOOR_H`, from when the only
+   storey that was not the ground was a rampart. Caves are NEGATIVE floors — a warren runs 0,
+   -1, -2, -3 — and `decks` holds their tiles exactly the way it holds a rampart's, so the
+   same test works underground the moment it stops assuming which way is up.
+   Reported as: "it becomes impossible to select anyone underneath the mountain as the
+   geometry appears to block clicking on them". It is not the geometry blocking anything.
+   `screenToWorld` marches the TERRAIN and stops at the first solid thing the ray meets, which
+   for a body three storeys under a mountain is the mountain. The click was resolving to a
+   spot on the hillside, correctly, and nothing was looking anywhere else. */
+function storeyHit(px, py, f){
+  if(!f) return null;
   _ray.setFromCamera({x: px/viewW()*2-1, y: -(py/viewH()*2-1)}, camera);
-  _planeUp.constant = -FLOOR_H;      /* plane y = FLOOR_H (plane eq: n·p + c = 0) */
-  const pt = _ray.ray.intersectPlane(_planeUp, _hitUp);
+  /* ---------- A STOREY SITS ON THE GROUND IT WAS DUG INTO ----------
+     `charY` is `groundY(x, y) + floorY(f)`, so the surface a body on storey f actually stands
+     on is the TERRAIN's height plus the storey offset — not the storey offset alone. A
+     rampart got away with the simplification because walls stand on flat ground; a cave under
+     a mountain does not, and the plane came out wherever sea level would have been. Measured
+     under one mountain: the hit landed 1.7 tiles from a body standing right at the cursor,
+     which is outside every catchment in the file.
+     Two passes: intersect the flat guess, read the terrain where that lands, and intersect
+     again at the corrected height. One correction is plenty for ground this size — the second
+     pass moves the answer by tiles, a third would move it by inches. */
+  _planeUp.constant = -floorY(f);
+  let pt = _ray.ray.intersectPlane(_planeUp, _hitUp);
   if(!pt) return null;
+  /* ITERATE, because one correction is not enough on a slope. The terrain height is sampled
+     WHERE THE LAST GUESS LANDED, so on the flank of a mountain — which is the only place
+     caves are — the first correction moves the answer far enough that the height it was based
+     on is already wrong. Two passes left it 1.7 tiles out from a body under the cursor; four
+     settle to within a few hundredths, and this runs on a click rather than on a frame. */
+  for(let i = 0; i < 4; i++){
+    const c2 = -(groundY(pt.x, pt.z) + floorY(f));
+    if(Math.abs(c2 - _planeUp.constant) < 0.01) break;
+    _planeUp.constant = c2;
+    const np = _ray.ray.intersectPlane(_planeUp, _hitUp);
+    if(!np) break;
+    pt = np;
+  }
   const tx = Math.floor(pt.x), ty = Math.floor(pt.z);
+  /* TWO ANSWERS, because the callers want different ones. A MOVE ORDER wants the middle of a
+     tile that actually exists, and the neighbour scan is there to be forgiving about which —
+     ground undulates and fingers are not scalpels. PICKING A BODY wants the exact point the
+     ray crossed the floor, because snapping to a tile centre throws away up to a tile, and a
+     tile is more than the whole catchment a body is picked with. Measured: the snapped answer
+     sat 0.93 from a body standing at the cursor, against 0.8 to pick it. */
   for(const [dx, dy] of [[0,0],[1,0],[-1,0],[0,1],[0,-1]]){
-    if(decks.has(bkey(tx + dx, ty + dy, 1))) return {x: tx + dx + 0.5, y: ty + dy + 0.5};
+    if(decks.has(bkey(tx + dx, ty + dy, f)))
+      return {x: pt.x, y: pt.z, f, sx: tx + dx + 0.5, sy: ty + dy + 0.5};
   }
   return null;
+}
+function elevatedHit(px, py){
+  const h = storeyHit(px, py, 1);
+  return h ? {x: h.sx, y: h.sy, f: 1} : null;
 }
 /* ---------- WHICH FLOOR OF WHAT: THE DECK A TILE BELONGS TO ----------
    `decks` is one flat set of every upper-storey tile in the world, so "is there floor under
@@ -22718,7 +22763,15 @@ function drawDust(){
 let lastRenderT = performance.now();
 function render(){
   const now = performance.now();
-  activeFloor = selected.length ? (selected[0].floor || 0) : 0;
+  /* ---------- AND DESELECTING DOES NOT SEND YOU BACK TO THE SURFACE ----------
+     This was `selected.length ? ... : 0`, so clearing the selection snapped the view to the
+     ground — which underground means the storey you are standing in stops being the storey
+     you are looking at, and the squad you just deselected can no longer be clicked on. That
+     is most of "impossible to select anyone underneath the mountain": one empty click and the
+     cave was gone.
+     Sticky instead. It follows the selection whenever there is one, and holds where it was
+     when there is not, so it is self-correcting the moment you pick anybody up. */
+  if(selected.length) activeFloor = selected[0].floor || 0;
   /* on a blood moon the night is not dark. It is lit, and that is worse. */
   if(bloodMoon && isNight()){
     moon.color.setHex(0x8a1e18);
@@ -22751,8 +22804,15 @@ function render(){
   if(!camInit){ camSX = camX; camSY = camY; camInit = true; }
   camSX += (camX - camSX) * Math.min(1, rdt*7);
   camSY += (camY - camSY) * Math.min(1, rdt*7);
-  /* the eye rises with the squad: selected units on a wall lift the anchor a storey */
-  const selFloor = selected.length && selected.some(s2 => s2.state !== 'dead' && (s2.floor || 0) > 0) ? 1 : 0;
+  /* ---------- THE EYE GOES WHERE THE SQUAD GOES, DOWN AS WELL AS UP ----------
+     This was `selected.some(s => (s.floor || 0) > 0) ? 1 : 0` — a yes/no about being UPSTAIRS,
+     written when the only storey above the ground was a rampart and there was nothing below
+     it. Caves are negative floors, so a squad three storeys under a mountain scored 0 and the
+     camera stayed at the surface looking at rock. Reported as "the camera does not follow".
+     Read the actual storey instead. A dead body in the selection does not vote, since a squad
+     that lost somebody upstairs should not be dragged after the corpse. */
+  const selLive = selected.find(s2 => s2.state !== 'dead') || selected[0];
+  const selFloor = selLive ? (selLive.floor || 0) : 0;
   camFY = camFY === undefined ? 0 : camFY;
   camFY += (floorY(selFloor) - camFY) * Math.min(1, rdt * 5);
   const focusY = Math.max(0, groundY(camSX, camSY)) + 0.8 + camFY;
@@ -25687,9 +25747,13 @@ cv.addEventListener('mousedown', e => {
     const v = vendors.find(v => dist(v.x,v.y,wx,wy) < 1.0);
     if(v){ clearOrders(movers[0]); movers[0].tradeTarget = v; return; }
     /* plain move, slight spread — and the click knows which storey it meant */
-    const lift = elevatedHit(e.clientX, e.clientY);
-    const tf = lift ? 1 : 0;
-    const tx2 = lift ? lift.x : wx, ty2 = lift ? lift.y : wy;
+    /* the storey you are LOOKING at first — which underground is the only one that answers
+       at all — and a rampart after that, so pointing your ground squad at a wall still sends
+       them up it. */
+    const lift = storeyHit(e.clientX, e.clientY, activeFloor) || elevatedHit(e.clientX, e.clientY);
+    const tf = lift ? lift.f : 0;
+    /* the snapped tile: a move order should name a piece of floor that exists */
+    const tx2 = lift ? (lift.sx ?? lift.x) : wx, ty2 = lift ? (lift.sy ?? lift.y) : wy;
     movers.forEach((m,i) => {
       clearOrders(m);
       routeTo(m, tx2 + (i%3-1)*0.7, ty2 + (Math.floor(i/3))*0.7, tf);
@@ -26329,17 +26393,31 @@ addEventListener('mouseup', e => {
   if(e.button !== 0){ return; }
   if(!dragStart) return;
   if(dragRect){
+    /* ---------- A BODY IS DRAWN AT ITS OWN STOREY, SO PROJECT IT THERE ----------
+       `groundY(c.x, c.y) + 0.9` puts every body on the SURFACE for the purposes of the box,
+       whatever floor it is really on — so a squad in a cave projected onto the hillside above
+       them and a drag-box drawn around where they actually appear caught nothing. The same
+       bug hides a squad standing on a rampart. `charY` is the function that already knows,
+       and is what everything else in the renderer uses. */
     const inRect = c => {
-      const p = w2s(c.x, c.y, groundY(c.x,c.y)+0.9);
+      const p = w2s(c.x, c.y, charY(c) + 0.9);
       return p && p.x >= dragRect.x && p.x <= dragRect.x+dragRect.w && p.y >= dragRect.y && p.y <= dragRect.y+dragRect.h;
     };
     const grabbed = chars.filter(c => c.faction==='player' && c.state!=='dead' && inRect(c));
     if(dragStart.shift){ for(const g of grabbed) if(!selected.includes(g)) selected.push(g); }
     else selected = grabbed;
   } else {
-    const mp2 = screenToWorld(dragStart.sx, dragStart.sy);
+    /* underground, the terrain march answers with the mountain overhead — ask the storey
+       plane first, and fall back to the ground when there is no floor under the cursor */
+    const lift2 = storeyHit(dragStart.sx, dragStart.sy, activeFloor);
+    const mp2 = lift2 || screenToWorld(dragStart.sx, dragStart.sy);
     const wx = mp2.x, wy = mp2.y;
-    const hit = chars.find(c => c.faction==='player' && c.state!=='dead' && bodyHit(c, wx, wy, 0.8));
+    /* NEAREST, not first-in-the-array. `find` hands back whichever of two overlapping bodies
+       the spawn order happened to put first — which was survivable when every catchment was
+       0.8 of a tile and is not now that they scale with the size of the body. The neutral
+       branch below has always sorted; this one never did. */
+    const hit = chars.filter(c => c.faction==='player' && c.state!=='dead' && bodyHit(c, wx, wy, 0.8))
+      .sort((a2, b2) => bodyGap(a2, wx, wy) - bodyGap(b2, wx, wy))[0];
     if(hit){ if(dragStart.shift){ if(!selected.includes(hit)) selected.push(hit); } else selected = [hit]; }
     else {
       /* a look is free: left-click anyone in sight to learn who they are */
