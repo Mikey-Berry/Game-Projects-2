@@ -951,6 +951,36 @@ for(const k of Object.keys(ITEMS)){
   }
   ITEMS[k].tierOf = k; ITEMS[k].tier = 'n';
 }
+/* ---------- WHAT A BODY LAY IN, IT COMES UP WEARING ----------
+   Reported: "raising certain enemies who have been dead for a while (like army soldiers)
+   tends to raise them without their armor/weapons. While their corpse quality should lower,
+   they should keep the armor/weapons they had upon their death. (Perhaps rusty or lower
+   quality equipment if they have been dead for a while.)"
+
+   It was a deliberate strip, not a loss — `castRaise` had `if(rot < 0.7) r.armor = null` and
+   `if(rot < 0.5) r.weapon = null`, and the DECAY ladder puts `spoiled` at 0.66 and `bones` at
+   0.44. So a body five days dead stood up with no armour and one eleven days dead with
+   nothing at all, on purpose, under a comment reasoning that there is nothing holding a
+   jacket to a skeleton. The report overrules that, and it is a better call: the kit is most of
+   why you go to the trouble of a battlefield.
+
+   AND "RUSTY OR LOWER QUALITY" IS ALREADY IN THE GAME. Every weapon and armour exists in four
+   grades — Crude, plain, Fine, Masterwork — priced, tinted in the mesh, and named. So the rot
+   walks the kit DOWN THAT LADDER instead of deleting it: a spoiled body's gear drops a grade,
+   a bare-bones body's two. Nothing new to author, nothing new to explain, and a Masterwork
+   blade off a long-dead captain is still worth crossing a field for.
+   Uniques do not weather — they have no `tierOf` and no rung to fall to, which is what makes
+   them uniques. */
+const KIT_LADDER = ['c', 'n', 'f', 'm'];
+function weathered(key, steps){
+  if(!key || !steps || !ITEMS[key] || !ITEMS[key].tierOf) return key || null;
+  const base = ITEMS[key].tierOf;
+  const i = KIT_LADDER.indexOf(ITEMS[key].tier || 'n');
+  if(i < 0) return key;
+  const t = KIT_LADDER[Math.max(0, i - steps)];
+  /* the plain grade IS the base key — there is no `_n` variant to ask for */
+  return t === 'n' ? base : base + '_' + t;
+}
 /* a maker's hands decide the grade; fortune has a small say */
 function rollQuality(skill){
   if(rnd() < 0.04) return null;                          /* ruined on the anvil */
@@ -13446,10 +13476,18 @@ function castRaise(c, body){
     /* what rotted off does not come back on: by the time it is bare bones there is nothing
        holding a jacket to it, and the blood it stands up with is what is left */
     r.rot = dk.k;
-    if(rot < 0.7){ r.armor = null; r.pack = null; }
-    if(rot < 0.5){ r.weapon = null; r.inv = null; }
+    /* WORN KIT COMES UP WITH IT, THE WORSE FOR LYING OUT — see the ladder up by TIERS. What
+       was loose in its hands or its pockets still does not: a pack is not fastened to
+       anything, and that half of the old rule was never what the report was about. */
+    const wear = Math.max(0, decayIndex(body) - 1);
+    if(wear){ r.armor = weathered(r.armor, wear); r.weapon = weathered(r.weapon, wear); }
+    if(rot < 0.7) r.pack = null;
+    if(rot < 0.5) r.inv = null;
     if(dk.k !== 'fresh') r.name = (dk.k === 'bones' ? 'Bone-picked ' : dk.k === 'spoiled' ? 'Rotted ' : '') + r.name;
-    log(`${c.name} raised ${dk.k === 'fresh' ? 'the dead' : 'a ' + dk.label + ' body'}${body.looted || rot < 0.5 ? '' : ' — kit and all'}. ` +
+    const kitNote = body.looted || (!r.weapon && !r.armor) ? ''
+      : wear ? ` — kit and all, ${wear > 1 ? 'and the years have been hard on it' : 'the worse for lying out'}`
+             : ' — kit and all';
+    log(`${c.name} raised ${dk.k === 'fresh' ? 'the dead' : 'a ' + dk.label + ' body'}${kitNote}. ` +
         `${dk.k === 'fresh' ? '' : `It comes up at ${Math.round(rot*100)}% of what it was.`}`, 'good');
   }
   bumpNotice(isUnique ? 2.8 : 1.15);   /* undeath is a parlour trick of the Old Ones. They hear it performed. */
