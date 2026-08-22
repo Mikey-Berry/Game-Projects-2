@@ -896,6 +896,16 @@ the truth was 45%.
   traveller you shot who lives will of course tell their town; there is no unwitnessed case
   while the victim is on their feet. Restaging it as a felling blow with nobody left standing
   made the assertion describe a rule somebody would actually want.
+- **A probe that reaches past the door will confirm the room behind it is furnished.**
+  `jail.js` called `placeStructure('cell', ...)` directly and proved the whole prisoner system
+  worked — while the Holding Cell was missing from `BUILD_CATS` and could not be built by
+  anybody. `rightclick.js` aimed at a body's feet and proved the menus worked while every
+  large creature was unclickable. Both are the same mistake: the probe used an entrance the
+  player does not have. When a harness sets up state through an internal function, ask what
+  the player's route to that state is, and assert THAT exists too.
+- **For any table the player picks from, assert the round trip in both directions.** Every
+  buildable must be offered, and nothing offered may fail to exist. One line each, and the
+  next stranded entry fails on its own instead of waiting to be reported.
 
 ## HOW LONG THE SUITE TAKES, AND WHY
 
