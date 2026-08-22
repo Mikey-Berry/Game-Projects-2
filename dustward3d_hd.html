@@ -8054,27 +8054,63 @@ function patrolTick(c, dt){
     return false;   /* fall through to the fight */
   }
   c.alarmed = false;
-  /* A watch walks its holding; it does not orbit it. The old version drove everyone around
-     a fixed-radius circle, which looked wrong and marched them straight through walls.
-     Now: pick an open spot somewhere inside the holding, walk there, stand a moment, repeat. */
-  c.patrolT = (c.patrolT || 0) - dt;
-  const arrived = c.patrolSpot && dist(c.x, c.y, c.patrolSpot.x, c.patrolSpot.y) < 1.8;
-  if(!c.patrolSpot || arrived || c.patrolT <= 0){
-    if(arrived && c.patrolT > 0){ c.patrolT = 0; }           /* stand and look around a beat */
-    if(c.patrolT <= 0){
-      let spot = null;
-      for(let tries = 0; tries < 12 && !spot; tries++){
-        /* sqrt keeps the draw even across the disc instead of clumping at the middle */
-        const a = rnd() * Math.PI * 2, rr = Math.sqrt(rnd()) * ctr.r;
-        const nx = clamp(ctr.x + Math.cos(a) * rr, 2, W-3);
-        const ny = clamp(ctr.y + Math.sin(a) * rr, 2, H-3);
-        if(!isBlocked(nx, ny, c.floor || 0)) spot = {x: nx, y: ny};
-      }
-      c.patrolSpot = spot || {x: ctr.x, y: ctr.y};
-      c.patrolT = 5 + rnd() * 7;      /* how long before it picks somewhere new regardless */
-    }
+  /* ---------- A WATCH WALKS ITS HOLDING ----------
+     Reported: "everyone moves super twitchy and fast. There's no methodical calmness to it.
+     I do appreciate it over the weird circle it used to do, but this is a bit too chaotic for
+     an organized base." So: a middle ground, explicitly not a revert. Three things were
+     wrong, and none of them was the pace — `travel`'s last argument is an ARRIVAL RADIUS and
+     not a speed, so a patrolling body has always walked at exactly the speed everything else
+     walks at. What read as fast was a body changing its mind every few seconds.
+
+     THE PAUSE NEVER HAPPENED. The old code set `patrolT = 0` on arrival with a comment
+     saying "stand and look around a beat", and then the very next line asked `if(patrolT <=
+     0)` and picked a new spot in the SAME TICK. Two ifs back to back, so the beat had no
+     duration at all. A watchman arrived somewhere and left again in the same frame, forever.
+
+     THE LEG WAS ABANDONED MID-WALK. `patrolT` was 5 to 12 seconds and it re-picked the
+     destination when it ran out whether or not the body had got anywhere. Across a holding
+     twenty tiles across that is most legs, so the walk was a body turning to a new bearing
+     every few seconds without ever arriving at anything. That is the twitch.
+
+     AND THE SPOTS WERE SCATTERED. A uniform draw across the disc means consecutive waypoints
+     are unrelated, so half of them are a reversal. A watch that crosses its own holding
+     corner to corner is not walking a beat, it is pacing a cage.
+
+     Now: keep going the same way ROUND. Each body holds a bearing and a direction of travel
+     and steps it on by half a radian or so, drawing the radius from the outer half of the
+     holding — a meandering circuit rather than a fixed-radius orbit, which is the middle the
+     report asked for. A blocked draw rotates FURTHER round rather than jumping somewhere
+     else, so a wall pushes the beat along instead of scattering it. And a leg is abandoned
+     when it stops making progress, which is the honest answer to a waypoint behind a wall —
+     a short clock was answering that question by breaking every other leg too. */
+  if((c.patrolHold = (c.patrolHold || 0) - dt) > 0){ c.path = null; return true; }
+  if(c.patrolSpot && dist(c.x, c.y, c.patrolSpot.x, c.patrolSpot.y) < 1.5){
+    c.patrolSpot = null; c.path = null;
+    c.patrolHold = 2.4 + rnd() * 3.2;      /* stood at a corner of the yard, looking */
+    return true;
   }
-  travel(c, c.patrolSpot.x, c.patrolSpot.y, dt, 1.4);
+  c.patrolT = (c.patrolT || 0) - dt;
+  if(c.patrolSpot){
+    /* making no ground for three and a half seconds is stuck, whatever the clock says */
+    const d = dist(c.x, c.y, c.patrolSpot.x, c.patrolSpot.y);
+    if(c.patrolLast === undefined || d < c.patrolLast - 0.3){ c.patrolLast = d; c.patrolStuck = 0; }
+    else if((c.patrolStuck = (c.patrolStuck || 0) + dt) > 3.5) c.patrolT = 0;
+  }
+  if(!c.patrolSpot || c.patrolT <= 0){
+    if(c.patrolAng === undefined){ c.patrolAng = rnd() * Math.PI * 2; c.patrolDir = rnd() < 0.5 ? 1 : -1; }
+    let spot = null;
+    for(let tries = 0; tries < 10 && !spot; tries++){
+      const a = c.patrolAng + c.patrolDir * (0.5 + rnd() * 0.45 + tries * 0.4);
+      const rr = ctr.r * (0.5 + rnd() * 0.45);
+      const nx = clamp(ctr.x + Math.cos(a) * rr, 2, W-3);
+      const ny = clamp(ctr.y + Math.sin(a) * rr, 2, H-3);
+      if(!isBlocked(nx, ny, c.floor || 0)){ spot = {x: nx, y: ny}; c.patrolAng = a; }
+    }
+    c.patrolSpot = spot || {x: ctr.x, y: ctr.y};
+    c.patrolT = 24 + rnd() * 10;    /* long enough that a leg gets walked, not a twitch clock */
+    c.patrolLast = undefined; c.patrolStuck = 0; c.path = null;
+  }
+  travel(c, c.patrolSpot.x, c.patrolSpot.y, dt, 1.2);
   return true;
 }
 /* one watchman shouting brings the rest */

@@ -44,7 +44,7 @@ const ALL = [
   'boot.js', 'origin.js', 'towncheck.js', 'fight.js', 'roundtrip.js', 'save.js', 'walls.js',
   'world.js', 'host.js', 'raise.js', 'bound.js', 'descend.js', 'guns.js', 'arrow.js', 'gunnery.js', 'roads.js', 'aid.js',
   'reach.js', 'ceiling.js', 'study.js', 'carry.js', 'jail.js', 'command.js', 'menus.js', 'rightclick.js', 'clicks.js', 'rites.js', 'notes.js', 'board.js', 'chores.js',
-  'threads.js', 'beasts.js', 'curse.js', 'watchers.js', 'lieu.js', 'wanderers.js', 'survive.js', 'melee.js', 'press.js', 'flank.js', 'kiting.js', 'lich.js', 'heads.js',
+  'threads.js', 'beasts.js', 'curse.js', 'watchers.js', 'lieu.js', 'wanderers.js', 'survive.js', 'melee.js', 'press.js', 'patrol.js', 'flank.js', 'kiting.js', 'lich.js', 'heads.js',
   'kit.js', 'wepsoak.js', 'races.js', 'mimics.js', 'mobile.js', 'start.js', 'touch.js', 'terrain.js', 'axes.js',
   'civics.js',
 ];
