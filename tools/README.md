@@ -781,8 +781,14 @@ re-measure after fixing those four.
   · `npm run check:fast` — six harnesses that would notice a broken build at all (boot, save,
     roundtrip, fight, towncheck, races). 104s instead of ~15 minutes, for the edit loop.
   · `npm run check` — the serial chain, unchanged, for a push.
-  · Run the full suite ONCE, at the end. Running it two or three times inside one sitting is
-    the largest avoidable cost there is, and running two at once invalidates both.
+  · Run the full suite ONCE, at the END OF A DESIGN SESSION, and only when asked for. Standing
+    instruction from the owner of this project, and it is the right call: the chain is ~30
+    minutes of wall clock, and running it after each batch spends most of a session watching
+    it rather than building. Running two at once invalidates both.
+  · DURING a session, run the harnesses the change actually touches — usually the new one plus
+    the two or three named in the table above for the systems involved. That is seconds, not
+    half an hour, and it catches nearly everything a full chain would. The full chain is for
+    the things it alone can see: a change in one system quietly moving another.
   · roads.js was 233s — twenty-two percent of the suite in the file whose negative control
     passed. Halved to 112s after checking what the halving costs: still thirteen legs, both
     stall checks intact.
