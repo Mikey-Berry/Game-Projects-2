@@ -8436,7 +8436,15 @@ function jobHasWork(c, j){
     case 'build':  return blueprints.length > 0;
     case 'raise':  return corpses.some(b => b.state === 'dead' && !b.raised) && risenLoad(c) < risenCap(c);
     case 'carrion': return corpses.some(carrionFodder);
-    case 'flesh':  return pBuilds.some(b => (FLESH[b.type] || b.type === 'vat'));
+    /* ---------- TWO TRADES THAT WERE ONE WORD ----------
+       FLESH used to mean both halves of the chain: coaxing quickflesh out of greenfruit and
+       cloth at a vat, AND shaping that quickflesh into bodies at a Charnel House. One job
+       name for the two ends of a production line, so a camp with both could not put a hand on
+       one without putting them on the other. Split, on the call in the ledger: FLESH is the
+       VATS — making the stuff — and CHARNEL is the houses, which is what the houses are
+       called and therefore the word that needs no explaining. */
+    case 'flesh':  return pBuilds.some(b => b.type === 'vat');
+    case 'charnel': return pBuilds.some(b => FLESH[b.type]);
     case 'farm':   return pBuilds.some(b => b.type === 'farm');
     case 'craft':  return pBuilds.some(b => b.type === 'workbench' || b.type === 'forge');
     case 'research': return mindedDead(c) && pBuilds.some(b => b.type === 'r_bench');
@@ -9674,13 +9682,17 @@ function physics(c, dt){
           }
         }
       }
-    } else if(ej==='flesh'){
-      const house = pBuilds.filter(b => (FLESH[b.type] || b.type==='vat') && !b.off)
+    } else if(ej==='flesh' || ej==='charnel'){
+      /* the same walk, over a different set of buildings. FLESH stands at the vats; CHARNEL
+         stands at the houses. `tended` is stamped on everything of the right kind within
+         reach, so one hand keeps a row of them rather than one apiece. */
+      const wants = ej==='flesh' ? (b => b.type==='vat') : (b => !!FLESH[b.type]);
+      const house = pBuilds.filter(b => wants(b) && !b.off)
         .sort((a,b2) => dist(a.x,a.y,c.x,c.y) - dist(b2.x,b2.y,c.x,c.y))[0];
       if(house){
         if(dist(c.x, c.y, house.x+1, house.y+1) > 2.6) travel(c, house.x+1, house.y+3.4, dt, 0.4);
         else {
-          for(const b of pBuilds) if((FLESH[b.type] || b.type==='vat') && dist(c.x,c.y,b.x+1,b.y+1) < 3.2) b.tended = true;
+          for(const b of pBuilds) if(wants(b) && dist(c.x,c.y,b.x+1,b.y+1) < 3.2) b.tended = true;
           c._working = 0.5; if(rnd() < dt*0.06) xpGain(c, 'labor', 0.3);
           if(rnd() < dt*0.5) addSpecks(c.x, c.y - 0.6, '#8a5a4a', 2);   /* the work is visible, and unpleasant */
         }
@@ -9769,7 +9781,7 @@ function harvestFlesh(){
     const f = FLESH[b.type];
     if(!f) continue;
     if(b.off) continue;   /* shut down — it will not eat your flesh stores behind your back */
-    if(!b.tended){ starved++; continue; }   /* the house wants hands. FLESH job, or Ctrl+right-click it. */
+    if(!b.tended){ starved++; continue; }   /* the house wants hands. CHARNEL job, or Ctrl+right-click it. */
     b.tended = false;
     /* deeper rites quicken the growth in every house you keep */
     const want = f.n + (research.done.ossuary_rites && b.type==='charnel' ? 1 : 0);
@@ -23054,7 +23066,7 @@ function refreshCharPanel(){
   jr.innerHTML = '<span style="color:var(--dust);font-size:10px">JOB</span>';
   const JOBS = [
     [null,'NONE'], ['wood','WOOD'], ['stone','STONE'], ['fish','FISH'], ['farm','TEND'],
-    ['build','BUILD'], ['flesh','FLESH'], ['raise','RAISE'], ['carrion','HARVEST'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
+    ['build','BUILD'], ['flesh','FLESH'], ['charnel','CHARNEL'], ['raise','RAISE'], ['carrion','HARVEST'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
   ];
   /* ---------- THE TRADES THAT WANT SOMEBODY HOME BEHIND THE EYES ----------
      STUDY and CRAFT were filtered by `mindedDead` and GUNNERY was not, although `emplGunner`
@@ -25440,7 +25452,10 @@ cv.addEventListener('mousedown', e => {
       }
       const pb = pBuilds.find(b => wx >= b.x - 0.3 && wx <= b.x + b.w + 0.3 && wy >= b.y - 0.3 && wy <= b.y + b.h + 0.3);
       if(pb){
-        const JOB_OF = {r_bench:'research', farm:'farm', charnel:'flesh', ossuary:'flesh', vat:'flesh'};
+        /* right-clicking a building offers the job that tends IT, so this table is the one
+           place the split has to be exactly right — a Charnel House offering FLESH would send
+           the hand to the vats and leave the house cold. */
+        const JOB_OF = {r_bench:'research', farm:'farm', charnel:'charnel', ossuary:'charnel', vat:'flesh'};
         const items = [];
         const bj = JOB_OF[pb.type];
         if(bj && movers.length) items.push({label:`ASSIGN ${movers.length > 1 ? movers.length + ' UNITS' : movers[0].name.toUpperCase()}: ${bj.toUpperCase()}`, fn:()=>{
@@ -26682,6 +26697,15 @@ function restore(d){
   computeVision();   /* a loaded squad stands somewhere new; light it before the first frame */
   if(typeof syncDecorFog === 'function') syncDecorFog();
   log('Game loaded.', 'good');
+  /* ---------- A SAVE FROM BEFORE THE FLESH JOB SPLIT ----------
+     FLESH used to tend the vats AND the Charnel Houses. It now tends the vats only, so a save
+     where somebody was put on FLESH to keep the houses running comes back with cold houses
+     and no error anywhere. Guessing which of the two ends that hand was for is not possible
+     and not worth faking: say so once, plainly, and let the player decide. Only when it
+     actually applies — a camp with houses in it and nobody set to them. */
+  if(pBuilds.some(b2 => FLESH[b2.type]) && !player().some(c2 => c2.job === 'charnel' || c2.job2 === 'charnel'))
+    log('Shaping bodies in a Charnel House is its own job now — CHARNEL. FLESH keeps the vats. '
+      + 'Nobody is set to it.', 'bad');
 }
 /* ============================================================ PACKING A SAVE
    A save of a grown world is about 1.9 MB of JSON, against a browser-storage budget of
