@@ -18099,7 +18099,7 @@ let activeFloor = 0;   /* the storey you are looking at — decks above it turn 
 function makeDynGroup(sigFn, buildFn){
   const g = new THREE.Group(); scene.add(g);
   let sig = null;
-  return () => {
+  const fn = () => {
     const s2 = sigFn();
     if(s2 === sig) return;
     sig = s2;
@@ -18108,6 +18108,7 @@ function makeDynGroup(sigFn, buildFn){
     buildFn(g);
     flushBoxBatch(g);
   };
+  return fn;
 }
 /* Malathuun's remains: one colossal piece per site. Ribs like a burned cathedral,
    a skull you could camp inside, a hand still reaching. Bone at this scale is architecture. */
@@ -18397,7 +18398,10 @@ const syncPBuilds = makeDynGroup(
      whole camp. Quantise to eight octants: the weapon visibly swings, and the group rebuilds
      when it crosses a boundary rather than on every degree of every frame. */
   () => pBuilds.map(b => b.type + b.x + ',' + b.y + ',' + (b.hp|0)
-        + (b.facing !== undefined ? ',' + Math.round(b.facing / (Math.PI/4)) + (b.gunnerId ? 'M' : '') : ''))
+        + (b.facing !== undefined ? ',' + Math.round(b.facing / (Math.PI/4)) + (b.gunnerId ? 'M' : '') : '')
+        /* a tower's deck turns to glass only while one of yours is under it, so walking in
+           has to rebuild the group — otherwise the floor stays solid over your own head */
+        + (b.type === 'tower' ? ':' + occupiedBits(b.x, b.y, b.x + b.w - 1, b.y + b.h - 1, 0.5) : ''))
         .join('|') + '#' + activeFloor,
   (g) => {
     for(const b of pBuilds){
@@ -18409,10 +18413,13 @@ const syncPBuilds = makeDynGroup(
           if(i===b.x+1 && j===b.y+2) continue;             /* the door */
           box(g, 0.95, FLOOR_H, 0.95, '#5c5040', i+0.5, y + FLOOR_H/2, j+0.5);
         }
-        /* the deck. Standing below it, you need to see through it. */
+        /* THE DECK. Standing below it you need to see through it — and only then. This was
+           `activeFloor < 1`, which is true whenever the camera is not up the tower, so every
+           watchtower you ever built had a glass floor from the moment it went up. */
+        const under = !!occupiedFloors(b.x, b.y, b.x + b.w - 1, b.y + b.h - 1, 0.5)[0];
         const deck = new THREE.Mesh(new THREE.BoxGeometry(3, 0.25, 3),
           new THREE.MeshLambertMaterial({color:0x7a6a52,
-            transparent: activeFloor < 1, opacity: activeFloor < 1 ? 0.32 : 1, depthWrite: !!(activeFloor >= 1)}));
+            transparent: under, opacity: under ? 0.32 : 1, depthWrite: !under}));
         deck.position.set(cxp, y + FLOOR_H, czp);
         deck.receiveShadow = true;
         g.add(deck);
@@ -18519,8 +18526,10 @@ function syncRoofs(){
 /* a staircase nobody can see is not a staircase */
 const syncRedoubts = makeDynGroup(
   () => 'rd' + redoubts.length + ':' + activeFloor + ':' + middens.filter(m=>m.found).length + ':' + caves.length + ':' +
-        (selected.length ? selected : chars).filter(c => c.faction==='player' && c.state!=='dead')
-          .reduce((a,c)=>a|(1<<(c.floor||0)), 0),
+        /* PER REDOUBT, not one bitmask for the whole world — the old key could not tell
+           "somebody is on floor 1 of THIS complex" from "somebody is on floor 1 of a rampart
+           two hundred tiles away", which is exactly the distinction the opacity now turns on */
+        redoubts.map(rd => { const b = redoubtBounds(rd); return occupiedBits(b._bx, b._by, b._bX, b._bY, 1.5); }).join(','),
   (g) => {
     /* a midden: a heap of what has been taken. Nothing is built here. */
     for(const m of middens){
@@ -18589,11 +18598,18 @@ const syncRedoubts = makeDynGroup(
       if(rd.deep){
         /* an upper storey is only made see-through when one of YOUR people is up there —
            otherwise it reads as a solid building, roof and all. */
-        const occ = {};
-        for(const c of selected.length ? selected : chars){
-          if(c.faction === 'player' && c.state !== 'dead') occ[c.floor || 0] = true;
-        }
-        const floorOpen = ff => ff === 0 || occ[ff];
+        /* THE COMMENT ABOVE WAS ALREADY RIGHT AND THE CODE DID NOT IMPLEMENT IT. `occ` was
+           built from every player body in the world, so one hand standing on a rampart at
+           home opened the upper storeys of every redoubt on the map. Ask about THIS one. */
+        const bb = redoubtBounds(rd);
+        const occ = occupiedFloors(bb._bx, bb._by, bb._bX, bb._bY, 1.5);
+        /* ---------- AND IF NOBODY IS IN IT, NOTHING IS GHOSTED ----------
+           The rule underneath is right and worth keeping: ghost the storeys you are NOT
+           standing on, so they do not hide the one you are. But with an empty `occ` EVERY
+           storey qualifies, which is why an empty redoubt was a glass box — the rule was
+           being asked a question that only makes sense once somebody is inside. */
+        const anyInside = Object.keys(occ).length > 0;
+        const floorOpen = ff => !anyInside || ff === 0 || occ[ff];
         /* a real complex: draw its explicit walls (per floor) and floor plates */
         for(const w of rd.walls){
           const y = groundY(w.x + 0.5, w.y + 0.5);
@@ -18631,10 +18647,13 @@ const syncRedoubts = makeDynGroup(
         const y = groundY(wx + 0.5, wy + 0.5);
         /* poured alchemical concrete, still standing, still grey */
         box(g, 0.98, FLOOR_H, 0.98, '#50565c', wx + 0.5, y + FLOOR_H/2, wy + 0.5);
-        /* the firing deck runs the whole parapet */
-        const up = inside && activeFloor >= 1;
+        /* THE FIRING DECK runs the whole parapet, and it is BOARDS unless you are underneath
+           it. `inside && activeFloor >= 1` made it solid only while you were standing on it,
+           so a redoubt nobody had ever entered showed its deck as glass — the last of the four
+           places that asked a weaker question than the citadel's. */
+        const solid = !inside || activeFloor >= 1;
         box(g, 1, 0.22, 1, '#5e646a', wx + 0.5, y + FLOOR_H, wy + 0.5, false,
-            {opacity: up ? 1 : 0.34});
+            {opacity: solid ? 1 : 0.34});
       }
     }
   }
@@ -18769,20 +18788,69 @@ const syncCamps = makeDynGroup(
     }
   }
 );
+/* ---------- WHOSE BUILDING IS OPEN, AND WHY ----------
+   Reported: "visuals for redoubts and multi-story buildings — right now they are see-through
+   even if none of my squad are inside."
+   The Bastion's citadel has always had this right, and says so: "stand outside and it is a
+   black tower. Step through the door and it opens like a diagram." It tests whether one of
+   YOUR SELECTED BODIES is within the footprint. Three other places wanted the same thing and
+   asked a weaker question instead — a redoubt asked whether any of your people were on that
+   FLOOR NUMBER anywhere in the world, so somebody standing on your camp's rampart opened
+   every redoubt on the map; and the town ramparts and your own watchtower asked only whether
+   the camera was on the ground, which it nearly always is.
+   `occupiedFloors(x0, y0, x1, y1)` is the citadel's question, generalised: which storeys of
+   THIS footprint have one of yours in them. `bits` is the same thing packed for a sync key,
+   since a group that does not rebuild when you walk through the door is a building that stays
+   shut behind you. */
+function occupiedFloors(x0, y0, x1, y1, pad){
+  const p = pad === undefined ? 0.5 : pad;
+  const out = {};
+  for(const c of (selected.length ? selected : [])){
+    if(c.faction !== 'player' || c.state === 'dead') continue;
+    if(c.x < x0 - p || c.x > x1 + p || c.y < y0 - p || c.y > y1 + p) continue;
+    out[c.floor || 0] = true;
+  }
+  return out;
+}
+function occupiedBits(x0, y0, x1, y1, pad){
+  const o = occupiedFloors(x0, y0, x1, y1, pad);
+  let b = 0;
+  for(const k in o) b |= 1 << (Number(k) + 4);   /* +4 so cellars pack cleanly, as bkey does */
+  return b;
+}
+/* the bounds of a redoubt, off its own wall tiles, worked out once */
+function redoubtBounds(rd){
+  if(rd._bx === undefined){
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    for(const w of rd.walls || []){ x0 = Math.min(x0, w.x); y0 = Math.min(y0, w.y); x1 = Math.max(x1, w.x); y1 = Math.max(y1, w.y); }
+    rd._bx = x0; rd._by = y0; rd._bX = x1; rd._bY = y1;
+  }
+  return rd;
+}
 /* storeys fade as you climb — so this group must rebuild when the active floor changes */
 const syncVertical = makeDynGroup(
   () => {
     const cit = buildings.find(b => b.citadel);
     const inside = cit ? selected.some(c => c.state !== 'dead' &&
       c.x >= cit.x - 0.5 && c.x <= cit.x + cit.w + 0.5 && c.y >= cit.y - 0.5 && c.y <= cit.y + cit.h + 0.5) : false;
-    return 'v' + activeFloor + ':' + (inside ? 'in' : 'out') + ':' + buildings.length + ':' + towns.reduce((n,t)=>n+(t.walls?t.walls.length:0),0);
+    /* and which towns have one of yours inside their walls, since that is now what decides
+       whether their ramparts are glass */
+    const inTowns = towns.map(t => (t.walls && t.walls.length && selected.some(c => c.faction === 'player' &&
+      c.state !== 'dead' && (c.floor || 0) < 1 && dist(c.x, c.y, t.x, t.y) < (t.def.wall ? t.def.wall.r : 12) + 2)) ? '1' : '0').join('');
+    return 'v' + activeFloor + ':' + (inside ? 'in' : 'out') + ':' + buildings.length + ':' + towns.reduce((n,t)=>n+(t.walls?t.walls.length:0),0) + ':' + inTowns;
   },
   (g) => {
-    /* rampart decks: solid when you're up there, glass when you're not */
+    /* ---------- RAMPART DECKS: GLASS ONLY WHEN SOMEBODY OF YOURS IS UNDER THEM ----------
+       `activeFloor >= 1` made every wall in every town on the map transparent whenever the
+       camera was on the ground, which is nearly always — a town you have never visited read
+       as a ring of glass. You want to see through a rampart when your own people are inside
+       the walls it encloses and you cannot otherwise see them; from outside it is masonry. */
     for(const t of towns){
       if(!t.walls || !t.walls.length) continue;
-      const up = activeFloor >= 1;
-      const deckOp = up ? 1 : 0.28;
+      const wr = (t.def.wall ? t.def.wall.r : 12) + 2;
+      const mineInside = selected.some(c => c.faction === 'player' && c.state !== 'dead' &&
+        (c.floor || 0) < 1 && dist(c.x, c.y, t.x, t.y) < wr);
+      const deckOp = (activeFloor >= 1 || !mineInside) ? 1 : 0.28;
       for(const wl of t.walls){
         const y = groundY(wl.x+0.5, wl.y+0.5);
         box(g, 1, 0.2, 1, '#6f6555', wl.x+0.5, y + FLOOR_H, wl.y+0.5, false, {opacity: deckOp});
