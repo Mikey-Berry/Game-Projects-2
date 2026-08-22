@@ -268,8 +268,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     }, sb);
     for (let i = 0; i < 6; i++) await p.evaluate(() => new Promise(r => requestAnimationFrame(() => r(1))));
     rigs[sb] = await p.evaluate(() => {
-      for (let i = 0; i < 8; i++) { try { render(); } catch (e) { return { err: e.message }; } }
-      const e = window.__C != null ? charMeshes.get(window.__C) : null;
+      /* ---------- RENDER UNTIL THE RIG IS THERE, NOT A FIXED NUMBER OF TIMES ----------
+         `syncChars` builds at most EIGHT rigs a frame and spends that budget on the world
+         first, so a fixed count of frames is a bet on how busy the machine is. Alone it won
+         every time; inside a 63-harness suite it lost, and this file reported "SHE IS ON THE
+         STOCK FRAME" about a body whose mesh simply had not been built yet — the measurement
+         read the defaults. `bound.js` had already written this lesson down and this file did
+         not use it. Poll, with a bound, and one more frame after it arrives so the pose has
+         run on it. */
+      const mine = () => (window.__C != null ? charMeshes.get(window.__C) : null);
+      let e = null;
+      for (let i = 0; i < 40 && !e; i++) {
+        try { render(); } catch (er) { return { err: er.message }; }
+        e = mine();
+      }
+      if (e) { try { render(); } catch (er) { return { err: er.message }; } e = mine(); }
       if (!e) return { none: true };
       return { boxes: (e.boxBody || []).length, oldGod: !!e.oldGod, head: !!(e.headG || e.head),
                hide: e.hide || null, sx: +(e.baseSX || 0).toFixed(4), sy: +(e.baseSY || 0).toFixed(4) };
@@ -308,11 +321,44 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
      own has to move again ON TOP of that — and it has to move the FRAME rather than add boxes,
      or the arms, legs and clothing stay hung on the old skeleton. Read off the rig's own scale,
      which is what every other box on the body is multiplied by. */
-  const w2 = rigs.__woman || {}, s2 = rigs.succubus || {};
-  R._frames = `a plain woman ${w2.sx}x${w2.sy}, a succubus ${s2.sx}x${s2.sy}`;
-  R.herFrameIsHerOwn = s2.sy && w2.sy && s2.sy > w2.sy * 1.02 && s2.sx !== w2.sx
-    ? `and she is built on a frame of her own — taller and narrower than the woman beside her (${w2.sy} against ${s2.sy})`
-    : `!! SHE IS ON THE STOCK FRAME (woman ${w2.sx}x${w2.sy}, succubus ${s2.sx}x${s2.sy})`;
+  /* ---------- ONE OF EACH IS NOT A MEASUREMENT ----------
+     `baseSX` is `(0.90 + h3 * 0.12) * build.sx`, where `h3` is a per-body hash — so every
+     body carries a random spread of up to 0.12, and the succubus's build moves the frame by
+     0.08. THE NOISE IS BIGGER THAN THE SIGNAL. Comparing one succubus against one woman
+     therefore passes or fails on which two ids they happened to get, which is why this went
+     red the moment worldgen shifted and read like a load flake: measured on the failing run,
+     woman 0.9255x0.9453 against succubus 1.0116x0.9548, both perfectly correct bodies.
+     Average a dozen of each instead. The spread cancels, the build does not. */
+  const frames = await p.evaluate(() => {
+    const { gx, gy } = window.__G;
+    for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+    const made = { woman: [], succubus: [] };
+    for (let i = 0; i < 12; i++) {
+      const w = makeChar('W' + i, 'player', gx + (i % 4), gy + Math.floor(i / 4), { race: 'human', sub: 'dustborn', sex: 'f' });
+      const s2 = makeChar('S' + i, 'player', gx + 6 + (i % 4), gy + Math.floor(i / 4), { race: 'mimic', sub: 'succubus' });
+      for (const c of [w, s2]) { c.__probe = true; c.state = 'ok'; if (chars.indexOf(c) < 0) chars.push(c); }
+      made.woman.push(w.id); made.succubus.push(s2.id);
+    }
+    /* render until every one of the twenty-four has a rig — `syncChars` builds eight a frame
+       and spends that budget on the world first */
+    const all = [...made.woman, ...made.succubus];
+    for (let i = 0; i < 80; i++) {
+      if (all.every(id => charMeshes.get(id))) break;
+      try { render(); } catch (e) { return { err: e.message }; }
+    }
+    const mean = (ids, k) => {
+      const v = ids.map(id => (charMeshes.get(id) || {})[k]).filter(x => typeof x === 'number' && x > 0);
+      return v.length ? { n: v.length, m: +(v.reduce((a2, b2) => a2 + b2, 0) / v.length).toFixed(4) } : { n: 0, m: 0 };
+    };
+    return { wx: mean(made.woman, 'baseSX'), wy: mean(made.woman, 'baseSY'),
+             sx: mean(made.succubus, 'baseSX'), sy: mean(made.succubus, 'baseSY') };
+  });
+  R._frames = frames.err ? '!! ' + frames.err
+    : `over ${frames.wx.n} of each: a plain woman ${frames.wx.m}x${frames.wy.m}, a succubus ${frames.sx.m}x${frames.sy.m}`;
+  R.herFrameIsHerOwn = (!frames.err && frames.wx.n >= 8 && frames.sx.n >= 8 &&
+                        frames.sy.m > frames.wy.m * 1.02 && frames.sx.m < frames.wx.m * 0.99)
+    ? `and she is built on a frame of her own — taller and narrower than the women beside her, averaged over ${frames.sx.n} of each`
+    : `!! SHE IS ON THE STOCK FRAME (woman ${frames.wx.m}x${frames.wy.m} over ${frames.wx.n}, succubus ${frames.sx.m}x${frames.sy.m} over ${frames.sx.n})`;
   R.theFallenAndTheMessengerAreKin = rigs.fallen && rigs.fallen.oldGod && rigs.__messenger && rigs.__messenger.oldGod
     ? 'and the Fallen and the Messenger wear the same motif, which is the family they share'
     : `!! THEY DO NOT SHARE THE MOTIF (fallen ${rigs.fallen && rigs.fallen.oldGod}, messenger ${rigs.__messenger && rigs.__messenger.oldGod})`;

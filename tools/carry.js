@@ -37,7 +37,9 @@ const GAME = 'file://' + gamePath(process.argv[2]);
     p.on('pageerror',e=>console.log('ERR '+e.message.slice(0,200)));
     await p.goto(GAME,{waitUntil:'load'});
     await p.waitForTimeout(2500);
-    await p.evaluate(()=>document.getElementById('btn-start').click());
+    /* start and stop in the same breath — see the note in tools/README.md. Every frame
+       between the click and the staging is a frame the machine chose, not the probe. */
+    await p.evaluate(()=>{ document.getElementById('btn-start').click(); paused = true; });
     await p.waitForTimeout(2500);
     return p;
   };
@@ -139,7 +141,9 @@ const GAME = 'file://' + gamePath(process.argv[2]);
     m.on('pageerror',e=>console.log('ERR '+e.message.slice(0,200)));
     await m.goto(GAME,{waitUntil:'load', timeout:90000});
     await m.waitForTimeout(2500);
-    await m.evaluate(()=>document.getElementById('btn-start').click());
+    /* start and stop in the same breath — see the note in tools/README.md. Every frame
+       between the click and the staging is a frame the machine chose, not the probe. */
+    await m.evaluate(()=>{ document.getElementById('btn-start').click(); paused = true; });
     await m.waitForTimeout(3000);
     /* reachable the way a phone user reaches it: the gear, not a topbar button that is hidden */
     await m.evaluate(()=>document.getElementById('tb-menu').click());

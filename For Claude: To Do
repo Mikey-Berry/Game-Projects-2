@@ -1284,16 +1284,52 @@ one place a new hostile body is cheap to add: a row of stats plus a `claw`, a
     re-baselined — which is a session's work on its own and should not ride along inside an
     unrelated change. Frozen so far: guns.js, flank.js, mimics.js, rightclick.js.
 
-[OPEN] Seed Mimics into the world population — they "live alongside humans" and at the moment
+[DONE] Seed Mimics into the world population — they "live alongside humans" and at the moment
        they exist only as a race the player can choose.
-    NOT STARTED, and it is a RULE 2 CHANGE, which is the whole reason it is filed separately.
-    `rollNpcRace` is a threshold ladder spending exactly one `rnd()`. Adding a mimic band keeps
-    that count the same, but it changes WHICH race some rolls produce — and `rollSub` is only
-    called for races that have lines, so a body that used to come out `hollow` (no lines) and
-    now comes out `mimic` (three) consumes an extra draw and moves everything placed after it.
-    Expect the worldgen fingerprint to change and expect harnesses to go red. Diagnose them;
-    do not re-baseline them. tools/mimics.js should gain a case for the population once they
-    are in it — how many, and that a Fallen in a town is rare enough to be a thing you notice.
+    Done, and the rule-2 warning turned out to be a bigger prize than the
+    feature. THE FINGERPRINT DID NOT MOVE — not until I chose to move it.
+    Two seeds. `rollNpcRace` gains a mimic band CARVED OUT OF THE HUMAN SHARE,
+    so no roll that used to give a homunculus, a hollow, a chimera or a golem
+    gives anything different; that covers leaders, recruits, camps, warbands,
+    orphans and settlers. And ordinary TOWNSFOLK, who never called that roller
+    at all and are the population the line is actually about — chosen from
+    `hash2` of where they stand rather than from a draw, the escape the renderer
+    already uses to keep its dust off the simulation's stream. Measured over
+    21,000 clustered samples: 7.6%, lines at 39/33/28 against an intended
+    42/33/25. Live: 9 mimics among 633, 1.4% of everything walking, 2 Fallen.
+    THREE SHORT-CIRCUITS WERE CLOSING THE STREAM EARLY, and each was a live
+    hazard for anybody adding a race later:
+      · `sex: _sb.sexOnly || o.sex || rnd()` skipped the draw for a sex-locked
+        line — and Mimics are the first lines in the game to have one;
+      · `if(SUBRACES[o.race] && !o.sub) o.sub = rollSub(...)` skipped it for any
+        caller that names a line, which several already did;
+      · and the townsfolk loop's `!mim && ... && rnd() < 0.2` skipped it in
+        exactly the two towns with race overrides — a hole I put there myself
+        while fixing the other two, caught by the fingerprint: eighteen people
+        gone from a world of 633.
+    A fourth was the one the note predicted: `rollSub` returned BEFORE its draw
+    for a race with no lines, so a hollow cost 3 numbers against everyone else's
+    4. Closing it moves worldgen once, deliberately (places edbef36c -> f716bd4e,
+    towns unchanged), and completes the rule: building a body costs the same
+    whatever the body is.
+    tools/mimics.js gains the population case and, more usefully, THE INVARIANT —
+    a harness cannot diff two builds at runtime, but it can insist every kind of
+    body costs the same number of draws to build. All four holes fail that line.
+    THE SUITE WENT RED THREE TIMES AND NONE OF IT WAS THIS. races.js, mimics.js
+    and touch.js failed; all three passed alone; all three were probe faults that
+    a shifted world exposed. Diagnosed, not re-baselined:
+      · races.js called `syncChars` twice and called it a build — it builds at
+        most eight rigs a frame and spends that budget on the world first. Polls
+        now. `run.js` names races.js as one of the four that go red under
+        concurrency; this is why.
+      · mimics.js compared ONE succubus against ONE woman on a quantity carrying
+        a per-body random spread of 0.12 against a build difference of 0.08 —
+        the noise was bigger than the signal, and it passed or failed on which
+        two ids they happened to get. Averages twelve of each now.
+      · touch.js kept a hand-copy of the game's pick radius (`dist(...) < 1.6`)
+        to decide whether a patch of ground was empty. Picking now scales with
+        the size of the body, so a creature 2.5 tiles away passed the filter and
+        still won the tap. It asks `bodyHit` itself now.
 
 ===============================================================================
 NEW BATCH — twenty-four items, filed as reported and not yet investigated.
