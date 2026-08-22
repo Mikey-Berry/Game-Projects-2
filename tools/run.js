@@ -42,7 +42,7 @@ const path = require('path');
    it rewrites game.html and must finish before anything reads it. */
 const ALL = [
   'boot.js', 'origin.js', 'towncheck.js', 'fight.js', 'roundtrip.js', 'save.js', 'walls.js',
-  'world.js', 'host.js', 'raise.js', 'kitrot.js', 'bound.js', 'descend.js', 'guns.js', 'arrow.js', 'gunnery.js', 'roads.js', 'aid.js',
+  'world.js', 'host.js', 'raise.js', 'kitrot.js', 'craftwork.js', 'bound.js', 'descend.js', 'guns.js', 'arrow.js', 'gunnery.js', 'roads.js', 'aid.js',
   'reach.js', 'ceiling.js', 'study.js', 'carry.js', 'jail.js', 'command.js', 'menus.js', 'rightclick.js', 'clicks.js', 'rites.js', 'notes.js', 'board.js', 'chores.js', 'charnel.js', 'cloth.js',
   'threads.js', 'beasts.js', 'curse.js', 'siege.js', 'watchers.js', 'lieu.js', 'wanderers.js', 'survive.js', 'melee.js', 'press.js', 'patrol.js', 'flank.js', 'kiting.js', 'lich.js', 'heads.js',
   'kit.js', 'wepsoak.js', 'races.js', 'mimics.js', 'mobile.js', 'start.js', 'touch.js', 'terrain.js', 'axes.js',
