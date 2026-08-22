@@ -661,14 +661,19 @@ function decorAt(x,y){
 }
 let hideNodeInstance = () => {};   /* wired up by the renderer */
 let showNodeInstance = () => {};
-function useNode(x,y){
+/* `by` is whoever swung. A tree coming down on the far side of the map is a thing that
+   happened, not a thing to tell the player about: every town in the world works its own wood
+   and stone all day, and all of it used to arrive in a seven-line feed. Your own people's
+   work is reported; the world's is not. */
+function useNode(x,y,by){
   const raw = rawDecorAt(x,y);
   if(!raw || !NODE_CAP[raw]) return;
   const k = x+','+y;
   nodeUses.set(k, (nodeUses.get(k)||0) + 1);
   if(nodeDepleted(x,y)){
     hideNodeInstance(k);
-    log(raw==='tree' ? 'The tree is felled.' : raw==='rock' ? 'The stone is mined out.' : 'The vein is worked out — for now.', '');
+    if(by && by.faction === 'player')
+      log(raw==='tree' ? 'The tree is felled.' : raw==='rock' ? 'The stone is mined out.' : 'The vein is worked out — for now.', '');
   }
 }
 /* the land heals: cut stumps sprout again, and no vein is ever truly finished */
@@ -4529,11 +4534,39 @@ function threadDone(key, step){
   log(`${t.title.toUpperCase()}, DONE — ${t.step}`, 'good');
 }
 function threadsOpen(){ return threads.filter(t => !t.done).length; }
+/* a line fades to a murmur rather than vanishing, and a line that gets bumped starts its
+   nine seconds over — otherwise the fifth felled tree arrives already grey. */
+function logFade(d){
+  if(d._fade) clearTimeout(d._fade);
+  d.style.transition = ''; d.style.opacity = '1';
+  d._fade = setTimeout(()=>{ d.style.transition='opacity 2s'; d.style.opacity='0.35'; }, 9000);
+}
+/* ---------- THE SAME LINE AGAIN IS A COUNT, NOT NEWS ----------
+   The feed holds seven lines. Five labourers clearing a grove write five identical notices
+   and shove everything that mattered off the bottom of it, and the player spends the fight
+   watching trees fall. A repeat of the line ALREADY AT THE BOTTOM therefore bumps a tally on
+   that line instead of taking a slot of its own — one entry reading x5, in the feed and in
+   the chronicle both.
+   ONLY THE BOTTOM LINE. Two different notices alternating are two different notices; folding
+   those together would lose the order things happened in, and the order things happened in is
+   the one thing a log is for. */
 function log(msg, cls=''){
-  const d = document.createElement('div'); d.className = 'm '+cls; d.textContent = msg;
-  logEl.appendChild(d);
-  while(logEl.children.length > 7) logEl.removeChild(logEl.firstChild);
-  setTimeout(()=>{ d.style.transition='opacity 2s'; d.style.opacity='0.35'; }, 9000);
+  const last = logEl.lastElementChild;
+  if(last && last._raw === msg && last.className === 'm '+cls){
+    const k = (last._n || 1) + 1;
+    last._n = k;
+    last.textContent = msg + '  \u00d7' + k;
+    logFade(last);
+    /* and the record carries the count rather than five copies of the sentence */
+    const e = chronicle[chronicle.length - 1];
+    if(e && e.m === msg && e.c === cls){ e.n = k; return; }
+  } else {
+    const d = document.createElement('div'); d.className = 'm '+cls; d.textContent = msg;
+    d._raw = msg;
+    logEl.appendChild(d);
+    while(logEl.children.length > 7) logEl.removeChild(logEl.firstChild);
+    logFade(d);
+  }
   /* stamp with the in-world day and hour, keep a bounded history */
   if(typeof day !== 'undefined'){
     chronicle.push({d: day, h: hour, m: msg, c: cls});
@@ -4690,7 +4723,7 @@ function openChronicles(){
       const m = document.createElement('span');
       /* --ink is the page background; on the panel it read as black on black */
       m.style.color = e.c==='bad' ? '#e07a5f' : e.c==='good' ? '#a3c47a' : 'var(--bone)';
-      m.textContent = e.m;
+      m.textContent = e.m + (e.n > 1 ? '  \u00d7' + e.n : '');
       row.appendChild(t); row.appendChild(m); body.appendChild(row);
     }
   };
@@ -8698,7 +8731,7 @@ function physics(c, dt){
         const ntx = Math.floor(g.sx), nty = Math.floor(g.sy);
         const raw = rawDecorAt(ntx, nty);
         if(raw && NODE_CAP[raw]){
-          useNode(ntx, nty);
+          useNode(ntx, nty, c);
           if(nodeDepleted(ntx, nty)) c.gather = null;   /* every stone source is a node now, and every node runs out */
         }
       }
@@ -8930,7 +8963,13 @@ function physics(c, dt){
      their own fights (the skeleton mage) — never medics, and never a servitor */
   if(!c.target && !c.manning && !c.mule && !c.drag && c.stance!=='medic' && !boundForAWeapon(c) &&
      (c.attackMove || c.stance==='tank' || c.autoFight || (!mindedDead(c) && !c.mule))){
-    const e = nearestEnemy(c, 7);
+    /* HOW FAR A FIGHT REACHES. Seven tiles is close enough to be stabbed and not close
+       enough to be a battle: a line of your own people would stand and watch a scrap eleven
+       tiles off because nobody in it had walked into their circle yet. Ten is what the town
+       levies and the roaming bands have always used (see the AI target pick), so this is the
+       squad being given the same eyes as everybody else rather than a new rule. Sightline
+       still gates it — nearestEnemy walks the line, and a wall is still a wall. */
+    const e = nearestEnemy(c, 10);
     if(e){ c.target = e; c.targetManual = false; }
   }
   /* medics keep their distance from trouble */
@@ -8940,7 +8979,9 @@ function physics(c, dt){
   }
   /* medic stance: patch people up without being told (even mid attack-move) */
   if(!c.target && c.stance==='medic' && !c.moveTarget && (!c.undead || c.lich)){
-    let pat = null, pd = 12;
+    /* and a medic looks further than the fight does, or the man who needs them is always
+       one step past the edge of their attention */
+    let pat = null, pd = 16;
     for(const o of chars){
       if(o.faction !== c.faction || o.undead || o.state==='dead') continue;
       if(o.state !== 'down' && totalBleed(o) < 0.1) continue;
@@ -9562,7 +9603,9 @@ function physics(c, dt){
       } else {
         const dk = decayStage(body);
         const n = harvestCorpse(body, true, c);
-        log(`${c.name} renders down a ${dk.label} body — ${n} Mortal Remains.`, 'good');
+        log(n > 0 ? `${c.name} renders down a ${dk.label} body — ${n} Mortal Remains.`
+                  : `${c.name} clears away a ${dk.label} body. There was nothing in it worth keeping.`,
+            n > 0 ? 'good' : '');
         c.carrBody = null; c.carrScanT = 0;
         xpGain(c, 'labor', 0.4);
         AU.build && AU.build(c.x, c.y);
@@ -10766,6 +10809,7 @@ function spawnGaunt(kind, x, y){
     c.mana = rawMaxMana(c);
     c.stance = 'ranged';           /* it holds off and looks at you */
     c.autoFight = true;
+    c.corpseWorth = 0.25;          /* four of them make one body; see bodyWorth */
   }
   if(kind === 'messenger' || kind === 'herald'){
     /* THE ONE THING OUT THERE THAT IMPROVES. Spawned early and rarely on purpose: the whole
@@ -11068,6 +11112,15 @@ function cairnFood(b){
   return !!b && b.state === 'dead' && !b.raised && !b.bossKey && !b.vip && !b.phyl
       && !chars.some(o => o.carry === b || (o.carryList && o.carryList.includes(b)));
 }
+/* ---------- HOW MUCH OF A BODY A BODY IS ----------
+   Everything on this ground has counted as one corpse because everything on this ground was
+   one person. Then a flight of Eyes became six or seven kills in a single engagement, each
+   leaving a body, each rendering down like a man and each feeding the ground like a man — so
+   one swarm put a quarter of a Cairn Beast in the fields by itself and filled the stores
+   besides. They are a quarter of a body and now they say so. One number, read by both of the
+   things that count corpses: what the ground eats, and what the knife gets out of it.
+   Unset means one, so every other body in the game is untouched. */
+function bodyWorth(b){ return b && b.corpseWorth != null ? b.corpseWorth : 1; }
 /* Everything the stat line is made of, recomputed from one number. Kept in one place so the
    body cannot drift out of step with the count — and so a save only has to store `ate`. */
 function cairnGrow(c){
@@ -11186,7 +11239,7 @@ function cairnTick(dt){
      get up. It only counts bodies a beast would actually eat, so a tidy graveyard of named
      dead never conjures anything, and it needs a real pile — twenty-six of them per beast
      already standing — so the late game, where the corpses are, is where they come from. */
-  const fodder = corpses.reduce((n, b) => n + (cairnFood(b) ? 1 : 0), 0);
+  const fodder = corpses.reduce((n, b) => n + (cairnFood(b) ? bodyWorth(b) : 0), 0);
   if(live.length < CAIRN_MAX && fodder >= CAIRN_PER_BODY * (live.length + 1)) spawnCairnBeast();
   /* ---------- AND SOMETIMES THE GROUND DOES NOT WAIT TO BE FED ----------
      The Curse reads the same dial and sets the bar far higher — see the block above cairnTick.
@@ -11205,15 +11258,19 @@ function cairnOne(c){
     if(!cairnFood(b)) continue;
     if(dist(b.x, b.y, c.x, c.y) > 1.4 + c.big * 0.9) continue;
     /* everything it ever ate comes back out of it when it goes down */
+    const w = bodyWorth(b);
     c.dropItems = c.dropItems || {};
-    c.dropItems.remains = (c.dropItems.remains || 0) + 1;
+    /* a quarter of a body is a quarter of what comes back out of it, held as a fraction until
+       it adds up to something whole — four Eyes make one Mortal Remains, not four */
+    c._remFrac = (c._remFrac || 0) + w;
+    while(c._remFrac >= 1){ c._remFrac -= 1; c.dropItems.remains = (c.dropItems.remains || 0) + 1; }
     if(b.loot) c.loot = (c.loot || 0) + b.loot;
     if(b.weapon) c.dropItems[b.weapon] = (c.dropItems[b.weapon] || 0) + 1;
     if(b.armor) c.dropItems[b.armor] = (c.dropItems[b.armor] || 0) + 1;
     corpses.splice(i, 1);
     const xi = chars.indexOf(b); if(xi >= 0) chars.splice(xi, 1);
-    c.ate = (c.ate || 0) + 1;
-    ate++;
+    c.ate = (c.ate || 0) + w;   /* the size it grows to, by weight of body and not by count */
+    ate++;                      /* what it says out loud, by count — it swallowed a thing */
     addSpecks(c.x, c.y - 0.4, '#6a5a4a', 4);
   }
   if(ate){
@@ -12525,6 +12582,16 @@ function harvestCorpse(t, quiet, by){
      yield, which is correct: this is the creature's edge, not a global buff. */
   let n = Math.max(1, dk.remains - (rnd() < 0.4 ? 0 : 1));
   if(by && by.harvestBonus) n += by.harvestBonus;
+  /* and a quarter-body renders down to a quarter of that. A fresh Eye comes out at one; one
+     that has been lying in the sun comes out at nothing, and the knife says so rather than
+     reporting a harvest of zero. The body is still cleared — there was just nothing in it. */
+  n = Math.round(n * bodyWorth(t));
+  if(n <= 0){
+    const c0 = corpses.indexOf(t); if(c0>=0) corpses.splice(c0,1);
+    const x0 = chars.indexOf(t);   if(x0>=0) chars.splice(x0,1);
+    log('There is not enough left of it to render.', '');
+    return 0;
+  }
   addItem('remains', n);
   rememberRemains(t, n, dk);
   if(dk.k === 'fresh' && rnd() < 0.35) addItem('vflesh', 1);
@@ -14660,9 +14727,25 @@ function updateProjectiles(dt){
           addFloat(p.target.x, p.target.y-1.2, 'MARKED', '#a970e8');
         }
         if(p.arrow) AU.thud(p.target.x, p.target.y);   /* the arrival, not the loosing */
-        applyDamage(p.caster, p.target, pickPart(), p.dmg, p.wt, loud);
+        /* ---------- ONE ARROW, ONE WOUND ----------
+           There were TWO applyDamage calls in this branch and both of them ran. The armour
+           pass replaced the original line with an armour-piercing one; the audio pass was
+           written against a copy of the file from before that, and when it landed it brought
+           the old line back in beside the new one. Nothing here reads as wrong at a glance —
+           the two calls sat eleven lines apart with a sound cue and the `mark` block between
+           them — and a simulation gives no error for hitting a man twice. Every arrow, bolt
+           and lance shot in the game has been landing double ever since, once through armour
+           and once around it, which is most of why ranged felt the way it did.
+           THE LESSON IS THE STALE BASE, not the duplicate. A change authored against an old
+           copy of a single-file game silently re-introduces every line it did not know had
+           moved, and the diff looks like an addition because that is what it is. */
         if(p.ff){
-          log(`${p.caster.name}'s stray shot hit ${p.target.name}!`, 'bad');
+          /* AND ONLY THE ONES THAT ARE MINE. A stray arrow loosed on the far side of the map
+             is a thing that happened, not news — two town levies clipping each other used to
+             take a slot in a seven-line feed. `loud` is computed above and already means
+             exactly this: somebody in it is yours. The shout over the body is not gated; it
+             is world texture, and you only see it if you are there to see it. */
+          if(loud) log(`${p.caster.name}'s stray shot hit ${p.target.name}!`, 'bad');
           say(p.target, 'WATCH IT!');
         }
         if(p.bolt){
@@ -25981,7 +26064,7 @@ function snapshot(){
        thick. Saving one string fixes the whole roster. */
     kin:c.kin||null,
     clawDmg:c.clawDmg, clawWt:c.clawWt||null, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
-    servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, eater:!!c.eater, harvestBonus:c.harvestBonus??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
+    servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, eater:!!c.eater, harvestBonus:c.harvestBonus??null, corpseWorth:c.corpseWorth??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, boundTold:!!c.boundTold,
     salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null, lieuWear:c.lieuWear||0,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
@@ -26291,6 +26374,9 @@ function restore(d){
     c.onlyArt = s.onlyArt || null; c.speedMult = s.speedMult || 0;
     c.markT = s.markT || 0; c.heat = s.heat || 0; c.mustered = !!s.mustered;
     if(s.ate != null) c.ate = s.ate;
+    /* a body worth a quarter of a body has to still be worth a quarter after a reload, or a
+       saved swarm turns back into a field of whole men the moment the game is opened again */
+    if(s.corpseWorth != null) c.corpseWorth = s.corpseWorth;
     c.shape = s.shape ? {...s.shape} : null; c.shapeName = s.shapeName || null; c.kills = s.kills || 0;
     c.salted = !!s.salted; c.saltedAt = s.saltedAt ?? null; c.rot = s.rot || null; c.lieuWear = s.lieuWear || 0;
     if(s.knit != null) c.knit = s.knit;
