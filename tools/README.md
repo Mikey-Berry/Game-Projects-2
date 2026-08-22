@@ -582,6 +582,19 @@ the truth was 45%.
   creation chips, turned four wrapped rows into forty stacked ones, and made the panel 1546px
   tall. It scrolled, so the assertion still passed; it was simply awful to use. Numbers a
   harness watches will not tell you that — look at the thing.
+- **`click(); waitForTimeout(n)` hands the machine's load a vote.** Almost every file here
+  starts the game and then waits a couple of seconds before staging anything, and in that
+  window the world RUNS — for however many sim steps the box manages, which is not a fixed
+  number and drops sharply when a 51-harness suite is loading it. Every body ends up somewhere
+  slightly different and the measurements inherit it. `guns.js` and `flank.js` have both been
+  caught by this now: flank returned `worstDetour` 1.67, 1.67, 1.09 and `switches` 1, 1, 0 over
+  three runs of ONE unchanged build. The fix is one line — pause in the same evaluate as the
+  click, so no frames run between them — and after it, three runs are identical.
+  **It bites a case that touches the live world**, which is why the other fifty files have got
+  away with it: a probe that stages its own bodies on empty waste and measures only those does
+  not care where the townsfolk got to. Four files are frozen (`guns`, `flank`, `mimics`,
+  `rightclick`); the rest are not, and the one-line fix is what to reach for the moment one of
+  them starts disagreeing with itself.
 - **A harness that gives two answers on one md5 is not measuring the build.** `guns.js` passed
   and failed on files that were byte-identical, minutes apart, and five runs of the same file
   split three to two. Every obvious explanation was checked and eliminated — world state, fog,
