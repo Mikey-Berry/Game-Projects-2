@@ -2990,6 +2990,33 @@ function relGet(i,j){ return rel[relKey(i,j)] ?? 0; }
 function relSet(i,j,v){ rel[relKey(i,j)] = clamp(v, -100, 100); }
 /* the Paladin Bastion: their territory, avoidable if you keep your distance */
 let bastion = null, purgeWrath = 0, menaceFlag = false, hostSize = 0;
+/* ============================================================ ONE CLOCK AT YOUR GATE
+   Reported: "there needs to be some sort of cooldown for raids/paladin patrols against my
+   outpost. I get that there is a lot against me in the world, but right now it just feels
+   like I'm constantly playing on the defense to survive and struggling to catch my breath."
+
+   THE ASK IS PACING, NOT DIFFICULTY — breathing room between pressures, not weaker ones. And
+   the reason a cooldown on any ONE of them does not work is that four independent things
+   dispatch at your gate and none of them knows the others exist:
+
+     · bandits, at a flat 25% a day the moment you own three buildings, with no gate of any
+       kind on it — two and a half raids a fortnight, forever;
+     · a Purge patrol, daily, whenever the standing count is under the cap;
+     · an Inquisitor, on wrath and its own fifteen-day clock;
+     · and the hunt, which fires on wrath crossing nine — INCLUDING FROM INSIDE `kill`, so
+       beating off a patrol could summon the hunt in the same breath, mid-fight.
+
+   Cap any one and the other three still stack. So they share a clock: whatever comes owes the
+   next thing a stretch of quiet, sized by what it was. Nothing here weakens anything — when a
+   pressure is allowed, it arrives at full strength, and every system's own rules (wrath, the
+   patrol cap, the Inquisitor's fortnight) still apply on top. All this does is stop them
+   landing on each other. And it is deliberately blind to how big your host is: the systems
+   already scale their INTENSITY with `hostSize`, and pacing is the one thing that should not
+   get worse for having built something. */
+let siegeQuietUntil = -99;
+const SIEGE_QUIET = {raid: 4, patrol: 4, inquest: 6, hunt: 8};
+function siegeClear(){ return day >= siegeQuietUntil; }
+function siegeSent(kind){ siegeQuietUntil = day + (SIEGE_QUIET[kind] || 4); }
 let noticed = 0;      /* every formula worked is a hand raised in a dark room */
 let noticeTier = 0;   /* 0 unnoticed · 1 watched · 2 attended · 3 SEEN */
 const NOTICE_TIERS = [
@@ -6153,7 +6180,9 @@ function kill(c, by){
   if(c.bossKey && by && by.faction==='player') log(`${c.name} has fallen.`, 'good');
   if(by && by.faction==='player' && c.faction==='purge'){
     purgeWrath++;
-    if(purgeWrath >= 9 && !purgeHuntActive()){ purgeWrath = 0; spawnPurge(true); }
+    /* the hunt could land in the middle of the fight that earned it — wrath keeps its count
+       and the hunt comes when the ground is quiet enough for it to mean something */
+    if(purgeWrath >= 9 && !purgeHuntActive() && siegeClear()){ purgeWrath = 0; siegeSent('hunt'); spawnPurge(true); }
   }
   if(c.phantom){ dispelPhantom(c); return; }   /* struck true: the figure comes apart into dust */
   if(c.swag && (c.swag.gold > 0 || Object.keys(c.swag.items).length)){
@@ -15055,7 +15084,9 @@ function update(dt){
          and the wrath that summons an Inquest builds faster the larger you get. */
       const deadArmy = chars.filter(c => c.faction==='player' && c.undead && c.state!=='dead').length;
       const patrolCap = 2 + Math.floor(Math.max(0, hostSize - 5) / 5);
-      if(menaceFlag && purgePatrolCount() < patrolCap && rnd() < clamp(0.45 + hostSize*0.012, 0.45, 0.85)) spawnPurge(false);
+      if(menaceFlag && siegeClear() && purgePatrolCount() < patrolCap && rnd() < clamp(0.45 + hostSize*0.012, 0.45, 0.85)){
+        siegeSent('patrol'); spawnPurge(false);
+      }
       /* ---------- HOW OFTEN THE WHITE BANNER COMES ----------
          Reported from play: "they come WAY too often — I barely have time to prepare for
          anything." The arithmetic said the same. Eight risen is a modest host and it used to
@@ -15067,8 +15098,10 @@ function update(dt){
          the host is small, so disbanding is a real answer instead of a slow one. */
       if(hostSize >= 14) purgeWrath += (hostSize >= 26 ? 2 : 1);
       else purgeWrath = Math.max(0, purgeWrath - 2);
-      if(purgeWrath >= 4 && purgeWrath < 9 && day - lastInquestDay > 15 && !chars.some(c => c.inquisitor)) spawnInquest();
-      if(purgeWrath >= 9 && !purgeHuntActive()){ purgeWrath = 0; spawnPurge(true); }
+      if(purgeWrath >= 4 && purgeWrath < 9 && day - lastInquestDay > 15 && !chars.some(c => c.inquisitor) && siegeClear()){
+        siegeSent('inquest'); spawnInquest();
+      }
+      if(purgeWrath >= 9 && !purgeHuntActive() && siegeClear()){ purgeWrath = 0; siegeSent('hunt'); spawnPurge(true); }
     }
     spreadNews();    /* the roads carry yesterday's news one town further */
     /* ---------- the ruler's desk, attended daily ---------- */
@@ -15525,7 +15558,8 @@ function update(dt){
     /* a new drifter takes to the road now and then */
     if(chars.filter(c => c.faction==='drifter' && c.state!=='dead').length < 6 && rnd() < 0.4) spawnDrifter();
     /* wealth draws raiders: outposts get besieged */
-    if(pBuilds.length >= 3 && rnd() < 0.25){
+    if(pBuilds.length >= 3 && siegeClear() && rnd() < 0.25){
+      siegeSent('raid');
       spawnHostileSquad('bandit');
       const raiders = chars.filter(c => c.faction==='bandit' && c.squad && c.squad.id===squadN);
       if(raiders.length){
@@ -26233,7 +26267,7 @@ function snapshot(){
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen},
-    rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, coilShrine, coilExposed, coilStruck,
+    rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, siegeQuietUntil, coilShrine, coilExposed, coilStruck,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
     camps: camps.map(c => ({id:c.id, x:c.x, y:c.y, fac:c.fac, cap:c.cap, tents:c.tents})),
     bonds: [...bonds.entries()],
@@ -26644,6 +26678,8 @@ function restore(d){
   nodeUses.clear();
   if(d.nodeUses) for(const [k,v] of d.nodeUses){ nodeUses.set(k, v); if(nodeDepleted(...k.split(',').map(Number))) hideNodeInstance(k); }
   purgeWrath = d.purgeWrath || 0; lastInquestDay = d.lastInquestDay ?? -99;
+  /* a save from before the shared clock has no quiet owed, which is the right answer for it */
+  siegeQuietUntil = d.siegeQuietUntil ?? -99;
   coilShrine = d.coilShrine || coilShrine; coilExposed = !!d.coilExposed; coilStruck = !!d.coilStruck;
   blueprints.length = 0; for(const b of (d.blueprints || [])) blueprints.push({...b, need: {...b.need}, got: {...b.got}});
   events = Array.isArray(d.events) ? d.events : []; eventN = d.eventN || 0; playerKnown = d.playerKnown || {};
