@@ -862,6 +862,24 @@ the truth was 45%.
   second assertion, and it belongs in the harness as a control that stays green on both
   builds. Removing a mechanic is easy to over-do, and the file should be able to fail in that
   direction too.
+- **Balance complaints are arithmetic — roll a few hundred and look at the distribution.**
+  "Escorts pay insanely well" is not testable one job at a time, and it does not need to be
+  felt. Rolling 420 of each kind across every town gave median purses of 230 / 980 / **12,402**
+  and named the cause in the same breath: linear distance on a map 1440 across. Assert the
+  SPREAD, with a floor as well as a ceiling — "escorts pay too much" fixed too hard becomes
+  "escorts are not worth the risk", which is the same complaint upside down.
+- **Price a guarantee against the real system, not against a constant that usually satisfies
+  it.** A supply job paid `base * 0.75` per item, which beats the local sale price for most
+  goods and loses to it for iron, where a high base and a high town multiplier compound. 37 of
+  420 jobs were strictly worse than ignoring the quest. Pricing off `priceSell` with a premium
+  makes the property structural: it cannot come apart when somebody adds an expensive item or
+  retunes a town multiplier.
+- **When one function guards a case and another one two hundred lines away does not, the
+  second one wins.** `contractTick` deliberately exempted a delivered contract from expiry —
+  right instinct, written down, correct. `refreshBoard` filtered the same jobs on the raw date
+  and took them off the board anyway, so the purse vanished from under a protection that was
+  working perfectly. When you find a deliberate exemption, grep for every other place that
+  filters the same collection.
 
 ## HOW LONG THE SUITE TAKES, AND WHY
 

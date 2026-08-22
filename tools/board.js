@@ -329,6 +329,109 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       }
     }
 
+
+    /* ============================================================ WHAT THE WORK IS WORTH
+       "Escort missions pay INSANELY well when it's very far away. This is good as they are
+       indeed the riskiest mission type, but their pay dwarfs every other. (Sometimes it's
+       literally just more profitable to sell the item they are asking for at their local
+       market than to do the hand-in quest.)"
+
+       Both halves are arithmetic, so both are measurable rather than felt. Roll a great many
+       of each kind across every town and look at the distribution — one job's purse says
+       nothing, and the complaint is about the SPREAD. */
+    {
+      const by = { supply: [], cull: [], escort: [] };
+      let worseThanSelling = 0, supplyRolls = 0;
+      const worst = [];
+      for (const t2 of towns) for (let i = 0; i < 60; i++)
+        for (const k of ['supply', 'cull', 'escort']) {
+          const j = rollBoardJob(t2, k);
+          if (!j) continue;
+          by[j.kind].push(j.gold);
+          if (j.kind === 'supply') {
+            supplyRolls++;
+            const sale = priceSell(t2, j.item) * j.n;
+            if (j.gold < sale) { worseThanSelling++; if (worst.length < 3) worst.push(`${j.n} ${j.item} pays ${j.gold}, sells for ${sale}`); }
+          }
+        }
+      const med = (a2) => { const b2 = a2.slice().sort((x, y) => x - y); return b2[b2.length >> 1]; };
+      const mSup = med(by.supply), mCull = med(by.cull), mEsc = med(by.escort);
+      R.purses = `median purse — supply ${mSup}, bounty ${mCull}, escort ${mEsc}`;
+
+      /* ---------- A HAND-IN MUST BEAT A SALE ----------
+         A fetch reward under the local sale price of the fetched item is a quest strictly
+         worse than ignoring it. On the build before this, 37 of 420 rolled supply jobs were
+         — every one of them iron, where a high base price and a high town multiplier together
+         beat a flat fraction of base. */
+      R.aHandInBeatsASale = worseThanSelling === 0
+        ? `and not one of ${supplyRolls} supply jobs pays less than selling the goods to the same town`
+        : `!! ${worseThanSelling} OF ${supplyRolls} SUPPLY JOBS PAY LESS THAN SELLING: ${worst.join('; ')}`;
+
+      /* ---------- THE RISKIEST JOB PAYS BEST ----------
+         Kept as a floor as well as a ceiling: the fix for "escorts pay too much" must not
+         become "escorts are not worth the risk", which is the same complaint upside down. */
+      R.theEscortStillPaysBest = mEsc > mCull
+        ? `an escort is still the best purse on the board — ${(mEsc / mCull).toFixed(1)}x a nest bounty`
+        : `!! THE RISKIEST JOB NO LONGER PAYS BEST (escort ${mEsc}, bounty ${mCull})`;
+      /* ---------- BUT IT DOES NOT DWARF THE BOARD ----------
+         Before: escort 12402 against a bounty's 980 and a supply run's 230 — twelve times the
+         one and fifty-four times the other, so nothing else on the post was worth reading. */
+      R.butItDoesNotDwarfTheBoard = (mEsc < mCull * 4 && mEsc < mSup * 15)
+        ? `and the rest of the board is still worth reading — ${(mEsc / mSup).toFixed(0)}x a supply run, not fifty`
+        : `!! ESCORT DWARFS THE BOARD (${(mEsc / mCull).toFixed(1)}x a bounty, ${(mEsc / mSup).toFixed(0)}x a supply run)`;
+    }
+
+    /* ============================================================ AND YOU GET PAID FOR IT
+       "Sometimes escort missions fail to deliver upon the payment if I'm a few days late to
+       return. Which is a really sucky feeling after a long and painful mission."
+
+       Two expiry rules disagreed. `contractTick` deliberately exempts an arrived contract, so
+       the contract survived; `refreshBoard` filtered on `day <= j.expires` alone, so the job
+       came off the BOARD and the walk back to collect found nothing nailed up. The tick
+       protected it and the board tore it down. */
+    {
+      const t2 = towns[0];
+      /* THE CLOCK STARTS WHEN YOU ACCEPT. It used to be stamped when the job was ROLLED, so a
+         notice nailed up for nine of its twelve days handed you three. */
+      const j = rollBoardJob(t2, 'supply');
+      j.expires = day + 1;
+      t2.board = t2.board || { day: day, jobs: [] };
+      t2.board.jobs.push(j);
+      takeContract(t2, j);
+      R.theClockStartsOnAccepting = j.expires >= day + CONTRACT_DAYS
+        ? `taking a job re-stamps its deadline — ${j.expires - day} days from now, not from whenever it was posted`
+        : `!! A JUST-ACCEPTED JOB EXPIRES IN ${j.expires - day} DAY(S)`;
+
+      /* AND A JOB YOU HAVE FINISHED IS OWED ITS PURSE WHENEVER YOU TURN UP. */
+      addItem(j.item, j.n + 2);
+      const wasDone = contractDone(j);
+      j.expires = day - 3;                         /* days late, and the work already done */
+      const dayWas = day;
+      contractTick(1 / 30);
+      refreshBoard(t2, true);
+      const stillListed = t2.board.jobs.includes(j);
+      const stillLive = contracts.includes(j) && !j.failed;
+      day = dayWas;
+      R.finished = `work done: ${wasDone}; three days past the deadline — on the board: ${stillListed}, still live: ${stillLive}`;
+      R.aFinishedJobIsStillOwed = (wasDone && stillListed && stillLive)
+        ? 'and a job whose work is already done survives its deadline on both the board and the ledger — you can always walk back for the purse'
+        : `!! A FINISHED JOB WAS VOIDED FOR BEING LATE (listed ${stillListed}, live ${stillLive})`;
+
+      /* the control: an UNfinished job past its date is still allowed to go stale, or the
+         deadline stops meaning anything at all */
+      const k2 = rollBoardJob(t2, 'supply');
+      k2.item = 'crown'; k2.n = 99;                /* nothing the stores can satisfy */
+      t2.board.jobs.push(k2);
+      takeContract(t2, k2);
+      k2.expires = day - 3;
+      contractTick(1 / 30);
+      R.butAnUnfinishedOneStillGoesStale = !contracts.includes(k2)
+        ? 'while a job you never did still goes stale on time — the deadline still means something'
+        : '!! AN UNFINISHED JOB SURVIVED ITS DEADLINE';
+      const bi = t2.board.jobs.indexOf(j); if (bi >= 0) t2.board.jobs.splice(bi, 1);
+      const ci = contracts.indexOf(j); if (ci >= 0) contracts.splice(ci, 1);
+    }
+
     return R;
   });
 
@@ -438,7 +541,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     : `!! THE POST IS MARKED ACROSS THE WHOLE MAP (${seen.diffFar} pixels with nobody in sight of it)`;
 
   console.log('=== THE POST ===\n');
-  for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(16) + v);
+  for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(34) + v);
   const bad = Object.values(out).map(String).filter(v => v.startsWith('!!'));
   console.log('\n' + (bad.length ? '*** ' + bad.join('\n*** ') : 'THERE IS WORK IN TOWN, AND SOMEBODY TO KEEP ALIVE'));
   if (errs.length) { console.log('errs:', errs.length); errs.slice(0, 5).forEach(e => console.log('  ' + e)); }
