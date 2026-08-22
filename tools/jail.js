@@ -107,6 +107,31 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     R.invReturned = h2 && (h2.inv || {}).remains === 3 ? 'goods back' : 'GOODS LOST';
     /* --- 9. YOUR cells: seize, hold, and the whole thing through a save --- */
     const camp = { x: t.x + 40, y: t.y + 40 };
+    /* ---------- AND THE PLAYER HAS TO BE ABLE TO PUT ONE UP ----------
+       Reported: "there is currently no jail building that the player can build." Everything
+       below this line worked perfectly and always had — because it reaches straight for
+       `placeStructure`, which is not the door the player uses. The Holding Cell had a costed
+       BUILD_TYPES entry, a placement branch and a careful teardown, and was simply absent from
+       BUILD_CATS, so it never appeared in the build bar. This file proved the mechanism while
+       the feature was unreachable.
+       The general form is the one worth keeping: every buildable thing must be OFFERED. At the
+       time of writing 27 of 28 were, and the missing one is what got reported. */
+    {
+      const listed = new Set();
+      for (const [, keys] of BUILD_CATS) for (const k of keys) listed.add(k);
+      const unlisted = Object.keys(BUILD_TYPES).filter(k => !listed.has(k));
+      R.cellIsInTheBuildBar = listed.has('cell')
+        ? `the ${BUILD_TYPES.cell.name} is offered in the build bar for ${costText(buildCost('cell'))}`
+        : '!! THE HOLDING CELL EXISTS AND IS NOT IN THE BUILD MENU — IT CANNOT BE BUILT';
+      R.everyBuildingIsOffered = unlisted.length === 0
+        ? `and every one of the ${Object.keys(BUILD_TYPES).length} build types is reachable from the menu`
+        : `!! ${unlisted.length} BUILD TYPE(S) EXIST AND CANNOT BE BUILT: ${unlisted.join(', ')}`;
+      /* and a phantom entry in the menu is the same defect from the other side */
+      const phantom = [...listed].filter(k => !BUILD_TYPES[k]);
+      R.andNothingIsOfferedThatDoesNotExist = phantom.length === 0
+        ? 'and nothing is offered that does not exist'
+        : `!! THE BUILD MENU OFFERS ${phantom.join(', ')}, WHICH IS NOT A BUILDING`;
+    }
     const pb = placeStructure('cell', Math.round(camp.x), Math.round(camp.y));
     R.playerCellMade = cells.filter(c => c.kind === 'player').length;
     const vic = makeChar('Captive', 'bandit', camp.x + 1, camp.y, { atk: 20, def: 15, tough: 20 });
@@ -327,7 +352,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
   console.log('=== ' + (process.argv[2] || 'game.html') + ' ===\n');
   for (const [k, v] of Object.entries(out)) {
-    console.log('  ' + k.padEnd(18) + (typeof v === 'object' ? JSON.stringify(v) : v));
+    console.log('  ' + k.padEnd(36) + (typeof v === 'object' ? JSON.stringify(v) : v));
   }
   /* Any SHOUTED phrase in a value is a failure marker — an allow-list of known failure
      words let "ESCAPED WHILE WATCHED" through as a pass. */

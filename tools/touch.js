@@ -229,7 +229,17 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
            empty, which is what the test always meant. */
         const w = screenToWorld(x, y);
         if(!w || isBlocked(w.x, w.y)) continue;
-        if(chars.some(c => c.state !== 'dead' && dist(c.x, c.y, w.x, w.y) < 1.6)) continue;
+        /* ---------- ASK THE GAME'S OWN QUESTION, NOT A COPY OF IT ----------
+           This was `dist(c.x, c.y, w.x, w.y) < 1.6` — a hand-kept copy of a rule the game
+           owns, and it drifted the moment the game's changed. Picking is now `bodyHit`, whose
+           catchment GROWS WITH THE BODY (a Sixfold reaches 2.7 tiles, a Cairn Beast further)
+           and which accepts either a body's feet or the point a click aimed at its middle
+           lands on. So a creature 2.5 tiles away passed this filter and still won the tap,
+           and the file reported the touch layer dead about a game that was behaving exactly
+           as designed.
+           A generous base on top, because several branches of the handler use different radii
+           and this point has to be clear of all of them. */
+        if(chars.some(c => c.state !== 'dead' && bodyHit(c, w.x, w.y, 2.2))) continue;
         return {x: Math.round(x), y: Math.round(y)};
       }
       return null;
@@ -327,7 +337,15 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
       return attackMoveMode ? '' : '!! THE ATTACK BUTTON DID NOT RE-ARM';
     }, openPt);
     await tap(p, openPt.x, openPt.y);
-    await p.waitForTimeout(400);
+    /* ---------- WAIT FOR THE ORDER, NOT FOR THE CLOCK ----------
+       The block above already stopped the world for the other half of this. A fixed 400ms
+       after a synthetic tap is still a bet on how long the machine takes to deliver three
+       touch events and run a handler; poll for the outcome with a generous ceiling instead.
+       It costs nothing when the tap lands promptly, which is every time on an idle box. */
+    await p.waitForFunction(() => {
+      const me = chars.find(c => c.id === window.__me);
+      return !!(me && me.attackMove);
+    }, null, { timeout: 5000 }).catch(() => {});
     R.attackAtGround = armed2 || await p.evaluate(() => {
       const me = chars.find(c => c.id === window.__me);
       const r = me.attackMove ? 'and tapping open ground is an advance-and-fight'

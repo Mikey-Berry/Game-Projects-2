@@ -32,7 +32,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
   await p.waitForTimeout(3000);
-  await p.evaluate(() => document.getElementById('btn-start').click());
+  /* START AND STOP IN THE SAME BREATH. A click followed by a wait lets the world run for
+     however many frames the machine manages, which is not a fixed number and drops when a
+     sixty-harness suite is loading the box — so every body is somewhere slightly different
+     by the time this probe stages anything, and the numbers below inherit it. Measured on
+     one unchanged build before this was applied here: flank.js gave 1.67 / 1.67 / 1.09 over
+     three runs, and guns.js split three-to-two on an md5 that had not moved. Pausing inside
+     the same evaluate leaves no frames at all between the two. Every file below sets
+     `paused` for itself anyway; this only removes the window before its first statement. */
+  await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(3000);
 
   const frame = () => p.evaluate(() => new Promise(r => requestAnimationFrame(() => r())));
@@ -174,6 +182,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       document.getElementById('game').dispatchEvent(new MouseEvent('mousedown', {
         clientX: q.x, clientY: q.y, button: 2, buttons: 2, bubbles: true, cancelable: true,
       }));
+      /* ---------- AND THEN THROUGH THE MENU, BECAUSE THERE ARE TWO THINGS TO WANT NOW ----------
+         This click used to fire the bandage order straight off the branch, which was right
+         while stopping the bleeding was the only thing you could do to a stranger on the
+         ground. A body you can now also PICK UP and carry out has to be asked about, so the
+         branch opens a menu. The claim this file makes is unchanged — a stranger CAN be
+         ordered tended — so it drives the surface the player actually drives rather than
+         being re-baselined onto the old one. If the entry is missing the click below finds
+         nothing and the assertion fails, which is the correct answer. */
+      const el = document.getElementById('ctxmenu');
+      if(el && getComputedStyle(el).display !== 'none'){
+        const btn = [...el.querySelectorAll('button')].find(x => /^TEND/.test(x.textContent));
+        window.__aidMenu = [...el.querySelectorAll('button')].map(x => x.textContent).join(' | ');
+        if(btn) btn.click();
+      } else window.__aidMenu = '(no menu)';
       return true;
     };
     R.__stage = {gx, gy};
@@ -192,7 +214,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const hurt = chars.find(c => c.name === 'Escortee');
     R.aStrangerCanBeOrderedTended = doc.healTarget === hurt
       ? `${doc.name} is sent to ${hurt.name} — a body that is not yours and not on your side`
-      : `!! RIGHT-CLICKING A DOWNED STRANGER GIVES NO ORDER (healTarget ${doc.healTarget && doc.healTarget.name})`;
+      : `!! RIGHT-CLICKING A DOWNED STRANGER GIVES NO ORDER (healTarget ${doc.healTarget && doc.healTarget.name}, menu ${window.__aidMenu})`;
 
     const bl0 = hurt.parts.chest.bleed;
     paused = false;

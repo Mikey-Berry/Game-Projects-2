@@ -205,9 +205,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const sig = (o) => {
         const c = makeChar('X', 'player', 600, 600, Object.assign({ sex: 'm' }, o));
         c.state = 'ok'; c.dir = 0; chars.push(c); born.push(c);
-        syncChars(0.05); syncChars(0.05);
-        const e = charMeshes.get(c.id);
+        /* ---------- SYNC UNTIL THE RIG IS THERE, NOT TWICE ----------
+           `syncChars` builds at most EIGHT rigs a frame and spends that budget on the world
+           first, so two calls is a bet on how busy the machine is. Alone it won every time;
+           inside a 63-harness suite it lost and this file reported "golem/clay BUILT NO BODY"
+           about a body that was simply one frame behind. `run.js` names races.js as one of
+           the four that go red under concurrency, and this is why. `bound.js` wrote the
+           lesson down first. */
+        let e = null;
+        for (let i = 0; i < 40 && !e; i++) { syncChars(0.05); e = charMeshes.get(c.id); }
         if (!e) return null;
+        syncChars(0.05);
         e.g.updateWorldMatrix(true, true);
         let tris = 0, lo = 1e9, hi = -1e9, wide = 0, col = 0, shape = 0;
         e.g.traverse(m => {

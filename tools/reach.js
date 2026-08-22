@@ -30,7 +30,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
   await p.waitForTimeout(3000);
-  await p.evaluate(() => document.getElementById('btn-start').click());
+  /* START AND STOP IN THE SAME BREATH. A click followed by a wait lets the world run for
+     however many frames the machine manages, which is not a fixed number and drops when a
+     sixty-harness suite is loading the box — so every body is somewhere slightly different
+     by the time this probe stages anything, and the numbers below inherit it. Measured on
+     one unchanged build before this was applied here: flank.js gave 1.67 / 1.67 / 1.09 over
+     three runs, and guns.js split three-to-two on an md5 that had not moved. Pausing inside
+     the same evaluate leaves no frames at all between the two. Every file below sets
+     `paused` for itself anyway; this only removes the window before its first statement. */
+  await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(3000);
 
   const out = await p.evaluate(() => {
@@ -76,16 +84,44 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       ? `a watchtower opens ${withTower - withShed} more tiles than a shack on the same ground`
       : `!! A WATCHTOWER SEES NO FURTHER THAN A SHACK (${withShed} vs ${withTower} tiles)`;
 
-    /* and a body ON the deck adds its own storey on top of the building's */
+    /* ---------- AND THE QUESTION A PLAYER ACTUALLY ASKS ----------
+       "The watchtower barely increases sight range. It's hardly worth building." The
+       tower-against-a-shack number above is real and it passed, and it is not what anybody
+       wants to know. Nobody builds a tower INSTEAD of a shack on empty ground — they build it
+       where their people already are, and the thing they feel is what it shows them that they
+       could not already see. So measure the MARGINAL gain: a lookout standing on the ground,
+       and then the same lookout with a tower over them. */
+    wipe(); computeVision();
     const look = makeChar('Lookout', 'player', gx + 1.5, gy + 1.5, { atk: 4, def: 4, tough: 8, ath: 6 });
     look.__probe = true; chars.push(look);
     look.floor = 0; computeVision();
-    const fromGround = seenTiles();
+    const bare = seenTiles();
+
+    const twr2 = { type: 'tower', x: gx, y: gy, w: 3, h: 3, floor: 0, hp: 200, maxHp: 200, progress: 1, __probe: true };
+    pBuilds.push(twr2);
+    computeVision();
+    const empty = seenTiles();
     look.floor = 1; computeVision();
-    const fromDeck = seenTiles();
-    R.theDeckIsWorthClimbing = fromDeck > fromGround
-      ? `and standing on the deck is worth another ${fromDeck - fromGround} tiles over standing beside it`
-      : `!! THE SECOND STOREY SHOWS YOU NOTHING (${fromGround} on the ground, ${fromDeck} on the deck)`;
+    const manned = seenTiles();
+
+    R.sight = `a lookout on open ground sees ${bare} tiles · with an empty tower ${empty} · standing on its deck ${manned}`;
+    /* An empty tower over your own camp adds a thin ring and always did; that is not a defect,
+       it is what an empty tower is. It must still add something, or the building does nothing
+       at all when nobody is up it. */
+    R.anEmptyTowerStillWatchesItsGround = empty > bare
+      ? `an empty tower over your own people is worth ${empty - bare} tiles they did not have`
+      : `!! AN EMPTY TOWER SHOWS YOU NOTHING NEW (${bare} vs ${empty})`;
+    /* And the build has to be worth making. A mountain shoulder — the best view in the game
+       that costs nothing but a climb — is 48 tiles; a tower with somebody in it has to beat
+       what its own lookout sees standing in the mud by a margin you can see on the map, not
+       by a four-tile ring. Half again as much ground is the bar. */
+    R.andAMannedOneIsWorthTheStone = manned > bare * 1.5
+      ? `and putting somebody on the deck is worth ${manned - bare} more — ${(manned / bare).toFixed(2)}x the ground they had`
+      : `!! A MANNED WATCHTOWER IS BARELY WORTH BUILDING (${bare} on the ground, ${manned} on the deck, ${(manned / bare).toFixed(2)}x)`;
+    /* the lookout is what makes the difference, not the masonry */
+    R.andItIsTheLookoutThatDoesIt = manned > empty
+      ? `and it is the body up there that does it — ${manned - empty} tiles over the same tower standing empty`
+      : `!! A LOOKOUT ON THE DECK ADDS NOTHING OVER AN EMPTY TOWER (${empty} vs ${manned})`;
     wipe();
     computeVision();
 
@@ -172,7 +208,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   });
 
   console.log('=== SIGHT, CACHES, AND THE SHAPING CEILING ===\n');
-  for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(30) + v);
+  for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(34) + v);
   const bad = Object.values(out).map(String).filter(v => v.startsWith('!!'));
   console.log('\n' + (bad.length ? '*** ' + bad.join('\n*** ')
     : 'THE TOWER SEES, THE CACHES ARE FINDABLE, AND NOBODY GETS A PERFECT BODY'));
