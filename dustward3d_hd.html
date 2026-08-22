@@ -342,6 +342,13 @@ body.touch #hint{display:none}
   #ctxmenu button:hover{background:var(--panel2);color:var(--warn)}
   #minimap{position:absolute;top:44px;right:10px;border:1px solid var(--edge);
     image-rendering:pixelated;opacity:.9}
+  /* the pin sits under the map's left corner, which is the only free edge it has — the top
+     is the toolbar and the right is the screen */
+  #mm-mark{position:absolute;top:176px;right:140px;z-index:12;
+    background:var(--panel);color:var(--dust);border:1px solid var(--edge);
+    font:10px monospace;letter-spacing:.5px;padding:3px 7px;cursor:pointer}
+  #mm-mark.on{color:var(--warn);border-color:var(--warn)}
+  body.touch #mm-mark{display:none}
   #hint{position:absolute;top:44px;left:10px;font-size:11px;color:var(--dust);
     text-shadow:0 1px 2px #000;line-height:1.6}
   /* tooltips: the game had four native title= attributes in thirteen thousand lines, and
@@ -362,6 +369,7 @@ body.touch #hint{display:none}
 <canvas id="game"></canvas>
 <canvas id="overlay"></canvas>
 <canvas id="minimap" width="128" height="128"></canvas>
+<button id="mm-mark" title="Mark the map. Click the map to drop a pin; click a pin to lift it.">PIN</button>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
 <div class="hud" id="topbar">
@@ -22960,6 +22968,17 @@ function renderMinimap(){
     mmcx.fillRect(c.x*128/W-1, c.y*128/H-1, 2, 2);
   }
   mmcx.drawImage(mmFog, 0, 0);
+  /* YOUR OWN PINS GO ON AFTER THE FOG TOO — see the note by `marks`. A hollow ring rather
+     than a blob, so it reads as something drawn ON the map instead of something standing on
+     the ground, and never hides a body underneath it. */
+  for(const m of marks){
+    const px = m.x*128/W, py = m.y*128/H;
+    mmcx.strokeStyle = '#141008'; mmcx.lineWidth = 3;
+    mmcx.beginPath(); mmcx.arc(px, py, 3.2, 0, Math.PI*2); mmcx.stroke();
+    mmcx.strokeStyle = '#7fd4c8'; mmcx.lineWidth = 1.4;
+    mmcx.beginPath(); mmcx.arc(px, py, 3.2, 0, Math.PI*2); mmcx.stroke();
+    mmcx.fillStyle = '#7fd4c8'; mmcx.fillRect(px - 0.5, py - 0.5, 1, 1);
+  }
   /* THE WARD GOES ON AFTER THE FOG. Everything else on this map is drawn under it and is
      therefore invisible on ground you have not walked — which is exactly the ground an escort
      wanders off onto. You agreed to walk this person somewhere; you know where they are. */
@@ -24676,7 +24695,7 @@ $('btn-help').onclick = () => {
     <b style="color:var(--bone)">CONTROLS</b><br>
     Left click / drag: select · shift adds · <b>S</b> whole squad · <b>1–5</b> control groups (shift+digit sets)<br>
     Right click: move · attack · treat ally · loot/harvest corpse (menu) · rest in bed · trade · gather (trees, rock, water) · use workstation<br>
-    <b>A</b> attack-move · <b>C</b>/<b>V</b> cast spells · <b>B</b> build · <b>SPACE</b> pause · <b>F</b> re-follow camera · <b>ARROWS</b> pan · minimap click jumps<br>
+    <b>A</b> attack-move · <b>C</b>/<b>V</b> cast spells · <b>B</b> build · <b>SPACE</b> pause · <b>F</b> re-follow camera · <b>ARROWS</b> pan · minimap click jumps · <b>PIN</b> beside the map, then click it to mark a place (right-click a pin to lift it)<br>
     <b>CTRL+right-click</b> force-attack anyone · <b>ALT+right-click</b> examine · <b>hold ALT</b> shows building signs and drop tags ·
     <b>G</b> then click an ally: bodyguard order (undead default to guarding their master; any move order clears it) ·
     double-click a squad portrait to jump the camera there<br><br>
@@ -24781,12 +24800,58 @@ addEventListener('keyup', e => { if(e.code in panKeys) panKeys[e.code] = false; 
 addEventListener('blur', () => { altHeld = false; });
 /* minimap click jumps the camera */
 mmcv.style.cursor = 'pointer';
+/* ============================================================ MARKS OF YOUR OWN
+   "Add the ability to mark things on the map for myself personally. (Maybe a mini-icon next
+   to the map itself, then click to add.)"
+
+   Built as asked: a pin beside the map arms it, a click on the map drops one, a click on a
+   pin lifts it again. Deliberately NOT a quest marker and deliberately not clever — it holds
+   no text, points at nothing, and knows nothing about the world. It is where you decided
+   something was, which is a thing the game has never let you write down.
+   THEY DRAW OVER THE FOG, like the escort ward and for the same reason: the whole use of a
+   pin is remembering ground you are not standing on, and half of that ground is dark. */
+const marks = [];
+const MARK_MAX = 24;                 /* a map covered in pins is a map you cannot read */
+let markMode = false;
+function setMarkMode(on){
+  markMode = on;
+  const b = document.getElementById('mm-mark');
+  if(b) b.className = on ? 'on' : '';
+}
+/* the pin nearest a point on the map, within a few tiles, or null */
+function markNear(wx, wy){
+  let best = null, bd = W / 28;      /* a few pixels of minimap, whatever the world's size */
+  for(const m of marks){
+    const d = dist(m.x, m.y, wx, wy);
+    if(d < bd){ bd = d; best = m; }
+  }
+  return best;
+}
+{
+  const b = document.getElementById('mm-mark');
+  if(b) b.onclick = () => setMarkMode(!markMode);
+}
 mmcv.addEventListener('mousedown', e => {
   const r = mmcv.getBoundingClientRect();
-  camX = (e.clientX - r.left) / r.width * W;
-  camY = (e.clientY - r.top) / r.height * H;
+  const mx = (e.clientX - r.left) / r.width * W;
+  const my = (e.clientY - r.top) / r.height * H;
+  /* ARMED, OR RIGHT-CLICKED: the map is a notebook rather than a way of jumping the camera.
+     Right-click works without arming, because lifting a pin you can see is the one action
+     that needs no mode at all. */
+  if(markMode || e.button === 2){
+    e.preventDefault();
+    const hit = markNear(mx, my);
+    if(hit){ marks.splice(marks.indexOf(hit), 1); log('Pin lifted.', ''); }
+    else if(e.button === 2){ /* nothing there to lift */ }
+    else if(marks.length >= MARK_MAX) log(`That is ${MARK_MAX} pins. Lift one first.`, 'bad');
+    else { marks.push({x: mx, y: my}); log(`Marked — ${wayTo(mx, my)}.`, ''); }
+    return;
+  }
+  camX = mx;
+  camY = my;
   camFollow = false;
 });
+mmcv.addEventListener('contextmenu', e => e.preventDefault());
 cv.addEventListener('mousemove', e => {
   if(panDrag){
     const dx = e.clientX - panDrag.sx, dy = e.clientY - panDrag.sy;
@@ -26589,6 +26654,8 @@ function snapshot(){
     townWalls: towns.map(t => t.walls.map(w => ({x:w.x, y:w.y, hp:w.hp}))),
     squadGroups: squadGroups.map(g => ({name:g.name, open:g.open})),
     middens: middens.map(m => ({id:m.id, x:m.x, y:m.y, found:m.found})),
+    /* pins are notes the player wrote; losing them on a reload would be the whole feature */
+    marks: marks.map(m => ({x: m.x, y: m.y})),
     caves: caves.map(cv => ({id:cv.id, x:cv.x, y:cv.y, mouth:cv.mouth, depth:cv.depth,
       rooms:cv.rooms, doors:cv.doors, vault:cv.vault})),
     chronicle: chronicle.slice(-500),
@@ -26975,6 +27042,8 @@ function restore(d){
   purgeWrath = d.purgeWrath || 0; lastInquestDay = d.lastInquestDay ?? -99;
   /* a save from before the shared clock has no quiet owed, which is the right answer for it */
   siegeQuietUntil = d.siegeQuietUntil ?? -99;
+  marks.length = 0;
+  for(const m of (d.marks || [])) marks.push({x: m.x, y: m.y});
   coilShrine = d.coilShrine || coilShrine; coilExposed = !!d.coilExposed; coilStruck = !!d.coilStruck;
   blueprints.length = 0; for(const b of (d.blueprints || [])) blueprints.push({...b, need: {...b.need}, got: {...b.got}});
   events = Array.isArray(d.events) ? d.events : []; eventN = d.eventN || 0; playerKnown = d.playerKnown || {};
