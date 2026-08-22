@@ -192,7 +192,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       for (let i = 0; i < 8; i++) { try { render(); } catch (e) { return { err: e.message }; } }
       const e = window.__C != null ? charMeshes.get(window.__C) : null;
       if (!e) return { none: true };
-      return { boxes: (e.boxBody || []).length, oldGod: !!e.oldGod, head: !!(e.headG || e.head) };
+      return { boxes: (e.boxBody || []).length, oldGod: !!e.oldGod, head: !!(e.headG || e.head),
+               hide: e.hide || null, sx: +(e.baseSX || 0).toFixed(4), sy: +(e.baseSY || 0).toFixed(4) };
     });
   }
 
@@ -223,6 +224,16 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   R.sheHasAFaceAPlainWomanDoesNot = sucBoxes >= woman + 10
     ? `and she carries ${sucBoxes - woman} pieces of face and horn a plain woman does not`
     : `!! HER FACE IS NOT THERE (plain woman ${woman} boxes, succubus ${sucBoxes})`;
+  /* ---------- AND THE FRAME UNDER IT ----------
+     `fem` already buys every woman a narrower shoulder and a wider pelvis, so a figure of her
+     own has to move again ON TOP of that — and it has to move the FRAME rather than add boxes,
+     or the arms, legs and clothing stay hung on the old skeleton. Read off the rig's own scale,
+     which is what every other box on the body is multiplied by. */
+  const w2 = rigs.__woman || {}, s2 = rigs.succubus || {};
+  R._frames = `a plain woman ${w2.sx}x${w2.sy}, a succubus ${s2.sx}x${s2.sy}`;
+  R.herFrameIsHerOwn = s2.sy && w2.sy && s2.sy > w2.sy * 1.02 && s2.sx !== w2.sx
+    ? `and she is built on a frame of her own — taller and narrower than the woman beside her (${w2.sy} against ${s2.sy})`
+    : `!! SHE IS ON THE STOCK FRAME (woman ${w2.sx}x${w2.sy}, succubus ${s2.sx}x${s2.sy})`;
   R.theFallenAndTheMessengerAreKin = rigs.fallen && rigs.fallen.oldGod && rigs.__messenger && rigs.__messenger.oldGod
     ? 'and the Fallen and the Messenger wear the same motif, which is the family they share'
     : `!! THEY DO NOT SHARE THE MOTIF (fallen ${rigs.fallen && rigs.fallen.oldGod}, messenger ${rigs.__messenger && rigs.__messenger.oldGod})`;
@@ -230,6 +241,34 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     ? 'and a plain human does not, so the motif is a mark and not a default'
     : '!! EVERY BODY WEARS THE MOTIF — the marker means nothing';
   delete R.hasMimic; delete R.opts;
+
+  /* ---------- AND SHE IS NOT ALWAYS THE SAME COLOUR ----------
+     A line with one `skin` gives every body in it the same hide, which is right for a rock
+     golem and wrong for anything meant to read as a person — four succubi standing together
+     were four identical pink women. Asked of the RESOLVED colour the model was built from, not
+     of the table: a palette nothing reads is a palette that changes nothing on screen. */
+  const hides = await p.evaluate(async () => {
+    const { gx, gy } = window.__G;
+    const seen = [];
+    for (let i = 0; i < 10; i++) {
+      for (let k = chars.length - 1; k >= 0; k--) if (chars[k].__probe) chars.splice(k, 1);
+      const c = makeChar('S' + i, 'player', gx, gy, { race: 'mimic', sub: 'succubus' });
+      c.__probe = true; chars.push(c);
+      camX = camSX = c.x; camY = camSY = c.y; camDist = camDistTarget = 8;
+      camPitch = camPitchT = 0.4; camYaw = camYawT = 0; camFollow = false;
+      paused = false; update(0.1); paused = true;
+      for (let r = 0; r < 10; r++) { try { render(); } catch (e) { return { err: e.message }; } }
+      const e2 = charMeshes.get(c.id);
+      if (e2 && e2.hide) seen.push(e2.hide);
+    }
+    for (let k = chars.length - 1; k >= 0; k--) if (chars[k].__probe) chars.splice(k, 1);
+    return { seen };
+  });
+  const distinct = hides.seen ? [...new Set(hides.seen)] : [];
+  R._hides = distinct.length ? `${hides.seen.length} of them wore ${distinct.length} different hides: ${distinct.join(' ')}` : JSON.stringify(hides);
+  R.sheComesInMoreThanOneColour = distinct.length >= 3
+    ? `and ten of them are not one colour — ${distinct.length} different hides came up, chalk through soot`
+    : `!! THEY ARE ALL THE SAME COLOUR (${distinct.length} distinct in ${hides.seen ? hides.seen.length : 0})`;
 
   console.log('=== THE MIMICS ===\n');
   for (const [k, v] of Object.entries(R)) console.log('  ' + (k.startsWith('_') ? ('· ' + k.slice(1)).padEnd(34) : k.padEnd(34)) + v);

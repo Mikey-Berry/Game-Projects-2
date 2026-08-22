@@ -1462,7 +1462,11 @@ SUBRACES.mimic = {
   /* ---------- THE ONE THAT IS TOO BEAUTIFUL ----------
      Horns, a tail, and a colour no living skin comes in. She is not hiding any of it and never
      has been; the point of a succubus is that people decide not to notice. */
-  succubus: {label:'Succubus', w:10, sexOnly:'f', skin:'#b96a86', fertile:true, innate:['charm'],
+  /* Rose, ash, soot, violet, dusk and ember. Not one of them is a colour a person comes in,
+     which is the point — she is not passing for human, people are choosing not to notice. */
+  succubus: {label:'Succubus', w:10, sexOnly:'f', fertile:true, innate:['charm'],
+    skins:['#b96a86', '#e6dcd8', '#332b33', '#8a5aa0', '#6a4a6e', '#c2513f'],
+    build:{sh:0.92, hip:1.14, ch:1.06, limb:0.94, sy:1.05},
     blurb:'Devil-horned and unbothered by it. Talks people round, and can carry a child by anything that walks — which is the part nobody says out loud.',
     stats:{magic:14, medic:2, atk:-2, tough:-2},
     learn:{magic:1.25, medic:1.15, martial:0.85, crafting:0.9}},
@@ -18999,6 +19003,13 @@ function buildCharMesh(c){
     /* A FACE IT CHOSE OVER THE ONE ITS LINE GIVES IT. A doppelganger that has shifted is
        wearing somebody else's colouring, and that has to beat the line's own — see castShift. */
     : c.skinShift ? c.skinShift
+    /* ---------- A LINE MAY NAME A PALETTE, NOT ONE COLOUR ----------
+       `skin` gives every body in a line the same hide, which is right for a rock golem and
+       wrong for anything that is supposed to be a person: four succubi standing together were
+       four identical pink women. `skins` is picked per body off the same hash the rest of the
+       colouring uses, so a line can have a range and still be recognisably one line. */
+    : (subOf(c).skins && subOf(c).skins.length)
+      ? subOf(c).skins[Math.floor(h1 * subOf(c).skins.length) % subOf(c).skins.length]
     : subOf(c).skin ? subOf(c).skin
     : c.construct ? '#8a9098'
     : c.race==='homunculus' ? PALE[Math.floor(h1*PALE.length)]
@@ -19159,13 +19170,19 @@ function buildCharMesh(c){
   const fem = !c.beast && !c.construct && c.sex === 'f';
   /* the difference is skeletal, not decorative: narrower shoulders, wider pelvis,
      a shorter torso over longer legs, and a little less height overall */
-  e.baseSX = c.beast ? 1 : (fem ? 0.90 : 0.94) + h3*0.12;
-  e.baseSY = c.beast ? 1 : (fem ? 0.89 : 0.92) + h1*0.14;
+  /* ---------- AND A LINE MAY STATE ITS OWN FRAME ----------
+     `fem` buys the skeletal difference every woman in the game has — narrower shoulders, wider
+     pelvis, shorter torso over longer legs. A LINE can move those again on top of it, which is
+     the only honest way to give one of them a figure of its own: reshaping her with extra boxes
+     in the line block would leave the arms, legs and garment still hung on the old frame. */
+  const BLD = (!c.beast && !c.construct && subOf(c).build) || null;
+  e.baseSX = c.beast ? 1 : ((fem ? 0.90 : 0.94) + h3*0.12) * ((BLD && BLD.sx) || 1);
+  e.baseSY = c.beast ? 1 : ((fem ? 0.89 : 0.92) + h1*0.14) * ((BLD && BLD.sy) || 1);
   /* the risen are not people with grey skin on: they are what is left when the rest goes */
   const risen = !!c.undead && !c.lich && !c.beast && !c.construct;
-  const SH = fem ? 0.82 : 1;        /* shoulder width */
-  const HIP = fem ? 1.16 : 1;       /* pelvis width */
-  const CH = fem ? 0.90 : 1;        /* chest breadth */
+  const SH = (fem ? 0.82 : 1) * ((BLD && BLD.sh) || 1);        /* shoulder width */
+  const HIP = (fem ? 1.16 : 1) * ((BLD && BLD.hip) || 1);      /* pelvis width */
+  const CH = (fem ? 0.90 : 1) * ((BLD && BLD.ch) || 1);        /* chest breadth */
   /* what a risen was bound FOR shows in the frame: a brute is built thick, an archer lean */
   const kin = risen ? (c.kin || null) : null;
   const kinLimb = kin === 'brute' ? 1.55 : kin === 'colossus' ? 1.9
@@ -19174,7 +19191,7 @@ function buildCharMesh(c){
      it, something scraped off a month-old field is a frame with a rag hung on it. */
   const ROT_LIMB = {fresh:1.22, cooling:1.06, spoiled:0.92, bones:0.78};
   const rotLimb = (risen && c.rot && ROT_LIMB[c.rot]) ? ROT_LIMB[c.rot] : 1;
-  const LIMB = (fem ? 0.88 : 1) * (risen ? 0.66 * kinLimb * rotLimb : 1);   /* limb thickness — bone is thin */
+  const LIMB = (fem ? 0.88 : 1) * ((BLD && BLD.limb) || 1) * (risen ? 0.66 * kinLimb * rotLimb : 1);   /* limb thickness — bone is thin */
   if(c.beast){
     if(c.soulbound){
       /* A SIMULACRUM: a small blank figure with no face and no feet, hung in the air inside a
@@ -20179,13 +20196,24 @@ function buildCharMesh(c){
          a mimic that walks out of view and back is the same mimic. */
       if(c.race === 'mimic'){
         const h = (k) => hash2(c.id, k);
+        /* the hide this body actually resolved to, recorded so a probe can ask whether a line
+           with a PALETTE really produces a range — see `skins` on the subrace */
+        e.hide = base;
         if(subIs(c, 'succubus')){
           /* SHE IS NOT HIDING ANY OF IT. Horns swept back off the temples, a long tail with a
              spade on the end, and — on rather less than half of them — wings folded down the
              back. The membrane is her own colour taken most of the way to black, so it reads
              as part of her rather than as something she is wearing. */
-          const horn = shade(base, 0.42);
-          const memb = '#' + new THREE.Color(base).lerp(new THREE.Color('#241018'), 0.55).getHexString();
+          /* ---------- EVERY MARK ON HER HAS TO SURVIVE HER OWN HIDE ----------
+             Her skin runs from chalk to soot, and every detail on this body was derived by
+             DARKENING it — which is invisible on the soot one. Read the luminance once and
+             push the other way when the hide is dark: pale horns, a pale lash, a lip lifted
+             instead of deepened. Same shapes, opposite direction. */
+          const _b = new THREE.Color(base);
+          const darkHide = (_b.r*0.299 + _b.g*0.587 + _b.b*0.114) < 0.34;
+          const away = (hex, amt) => '#' + new THREE.Color(base).lerp(new THREE.Color(hex), amt).getHexString();
+          const horn = darkHide ? away('#e4dad0', 0.62) : shade(base, 0.42);
+          const memb = darkHide ? away('#d8c8d4', 0.34) : away('#241018', 0.55);
           for(const sx of [-1, 1]){
             const a = B(0.05, 0.20, 0.05, horn, sx*0.10, 0.34, -0.03, e.headG);
             a.rotation.x = 0.6; a.rotation.z = -sx * 0.28;
@@ -20214,9 +20242,9 @@ function buildCharMesh(c){
              corner. The wing is the part that survives being twelve pixels tall.
              AND THE SMILE IS GEOMETRY, not a texture: a fuller lip with the corners lifted and
              turned up. A mouth that is one flat bar reads as a line whatever colour it is. */
-          const lash = '#1b1016';
-          const lip  = '#' + new THREE.Color(base).lerp(new THREE.Color('#8d2044'), 0.58).getHexString();
-          const rouge = '#' + new THREE.Color(base).lerp(new THREE.Color('#e58aa4'), 0.30).getHexString();
+          const lash = darkHide ? '#f0e6ec' : '#1b1016';
+          const lip  = darkHide ? away('#e2687f', 0.62) : away('#8d2044', 0.58);
+          const rouge = away('#e58aa4', darkHide ? 0.26 : 0.30);
           /* THE LASH HAS TO HUG THE EYE. The first version sat a thick bar at y 0.293, a clear
              gap above the eye and above the generic shadow band — and a dark rectangle floating
              over each eye with a lighter strip between reads as SPECTACLES, which is not the
@@ -20232,7 +20260,7 @@ function buildCharMesh(c){
              Each layer sits a fraction further out than the last (band .155, white .1585, iris
              .1615, light .1645, lash .1665) because the face is a stack and anything level
              with what it is drawn over will z-fight instead of covering it. */
-          const band = '#' + new THREE.Color(base).lerp(new THREE.Color('#efe0d8'), 0.30).getHexString();
+          const band = away('#efe0d8', darkHide ? 0.44 : 0.30);
           const IRIS = ['#c8a23a', '#8f5fd0', '#3f8f8a', '#b8452f'];
           const iris = IRIS[Math.floor(h(53) * IRIS.length) % IRIS.length];
           B(0.238, 0.054, 0.021, band, 0, 0.265, 0.155, e.headG);
@@ -20249,6 +20277,12 @@ function buildCharMesh(c){
           B(0.098, 0.032, 0.022, lip, 0, 0.169, 0.160, e.headG);             /* a mouth with something to it */
           B(0.062, 0.014, 0.022, '#' + new THREE.Color(lip).lerp(new THREE.Color('#ffd8e2'), 0.40).getHexString(),
             0, 0.178, 0.162, e.headG);                                       /* the light on the upper lip */
+          /* AND THE FIGURE IS THE FRAME, NOT BOXES ON TOP OF IT. The first version of this
+             stated the waist and hip here as three skin-coloured slabs, and they came out
+             wider than the garment they were meant to sit under — four women in barrels. The
+             body is a stack of layers and the shape belongs at the BOTTOM of it, in `build` on
+             the line, where the arms, legs, torso and clothing all read it. See the note on
+             BLD up at the top of buildCharMesh. */
           for(const sx of [-1, 1]){
             const cor = B(0.034, 0.022, 0.022, lip, sx*0.058, 0.181, 0.159, e.headG);
             cor.rotation.z = sx * 0.62;                                      /* turned up — the smile */
