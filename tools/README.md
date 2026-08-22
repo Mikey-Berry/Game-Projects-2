@@ -955,6 +955,36 @@ the truth was 45%.
   minimap has always jumped the camera. A pin mode that hijacked the click would pass every
   assertion about pins and quietly break the thing the map was for, so "an unarmed click still
   jumps" and "an armed click does not also jump" are both in the file.
+- **A `||` chain that ends in `rnd()` is a determinism bug waiting for its first user.**
+  `sex: _sb.sexOnly || o.sex || (rnd() < 0.5 ? 'f' : 'm')` never spent the draw for a line
+  that dictates its own sex — which cost nothing until Mimics became the first lines that do.
+  Three more of the same shape were found in an afternoon: `if(SUBRACES[o.race] && !o.sub)
+  o.sub = rollSub(...)`, `rollSub`'s own `if(!t) return null` ahead of its draw, and a
+  `!mim && ... && rnd() < 0.2` I wrote myself while fixing the other two. **Spend the number,
+  then decide.** The invariant is testable directly and now is: every kind of body must cost
+  the same number of draws to build.
+- **The fingerprint is the instrument.** Hash every body's position and identity after
+  worldgen and compare across a change. It caught a hoisted draw that left every body standing
+  in exactly the same place while changing who they all were (same count, different order),
+  and it caught eighteen people vanishing from a world of 633 when one branch short-circuited.
+  Neither was visible from the code, and no harness asserted on either.
+- **Poll until it is built; do not count frames.** `syncChars` builds at most eight rigs a
+  frame and spends that budget on the world first, so any fixed number of `render()` or
+  `syncChars()` calls is a bet on how busy the box is. `races.js` bet two and `mimics.js` bet
+  eight; both won alone and lost inside a 63-harness suite. `bound.js` had already written this
+  down, and both files were sitting next to it.
+- **One sample of a noisy quantity is not a measurement.** `mimics.js` compared ONE succubus
+  against ONE woman on `baseSX`, which is `(0.90 + h3 * 0.12) * build.sx` — a per-body spread
+  of 0.12 against a build difference of 0.08. The noise was bigger than the signal, so the
+  assertion passed or failed on which two ids the pair happened to get, and it read as a load
+  flake for months. Average enough of each that the spread cancels, and say in the output how
+  many you averaged.
+- **Never keep a hand-copy of a rule the game owns.** `touch.js` decided whether a patch of
+  ground was empty with `dist(c, w) < 1.6`, a copy of the pick radius. When picking changed to
+  scale with the size of the body, a creature two and a half tiles away passed the probe's
+  filter and still won the tap — and the file reported the touch layer dead about a game
+  behaving exactly as designed. Call `bodyHit` itself. A copied constant is correct exactly
+  until somebody improves the original.
 
 ## HOW LONG THE SUITE TAKES, AND WHY
 
@@ -988,6 +1018,14 @@ re-measure after fixing those four.
 
   · `npm run check:fast` — six harnesses that would notice a broken build at all (boot, save,
     roundtrip, fight, towncheck, races). 104s instead of ~15 minutes, for the edit loop.
+  · **The start-click freeze is applied to the 25 suite harnesses that already manage `paused`
+    for themselves.** A click followed by a `waitForTimeout` lets the world run for however
+    many frames the machine manages — not a fixed number, and markedly fewer when a
+    sixty-harness suite is loading the box — so every body is somewhere slightly different by
+    the time the probe stages anything. Pausing inside the same `evaluate` as the click leaves
+    no frames between the two. The 21 harnesses that never touch `paused` are deliberately NOT
+    swept: they rely on the world running for their whole duration, and freezing them would
+    measure a dead world, which is a different job and wants a different fix.
   · `npm run check` — the serial chain, unchanged, for a push.
   · Run the full suite ONCE, at the END OF A DESIGN SESSION, and only when asked for. Standing
     instruction from the owner of this project, and it is the right call: the chain is ~30
