@@ -164,6 +164,85 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* ---------- 8. AND THE BODIES ---------- */
     R._where = `staged on open waste at ${gx},${gy}`;
     window.__G = { gx, gy };
+
+    /* ============================================================ AND THEY LIVE HERE
+       "A catch-all term for the mysterious beings who live alongside humans and have learned
+       to be one with them." They existed only as a race the player could choose, so the
+       defining fact about them — that they are already among people — was the one thing the
+       world did not say. Now a fraction of every town's ordinary residents are mimics.
+       Counted off the LIVE POPULATION rather than off the roller, because a band in
+       `rollNpcRace` that no worldgen path calls is a band nobody ever meets. */
+    {
+      const mim = chars.filter(c => c.race === 'mimic' && c.state !== 'dead');
+      const inTowns = mim.filter(c => c.civ || c.homeTown);
+      const lines = {};
+      for (const c of mim) lines[c.sub || '(none)'] = (lines[c.sub || '(none)'] || 0) + 1;
+      R._population = `${mim.length} mimics in a world of ${chars.length} — ` +
+        Object.entries(lines).map(([k, v]) => `${v} ${k}`).join(', ');
+      R.theyLiveAmongPeople = inTowns.length > 0
+        ? `${inTowns.length} of them are ordinary residents of a town, which is the whole idea of them`
+        : '!! NO MIMIC LIVES IN ANY TOWN — they exist only where the player can pick one';
+      /* AND EVERY ONE CARRIES A LINE. A body with `race:'mimic'` and no `sub` is a mimic with
+         none of what makes one — no charm, no shift, no permadeath — and nothing would say so. */
+      R.andEveryOneIsSomething = mim.length > 0 && !lines['(none)']
+        ? 'and every one of them is a succubus, a doppelganger or a Fallen rather than a mimic of no line'
+        : `!! ${lines['(none)'] || 0} MIMIC(S) CARRY NO LINE AT ALL`;
+      /* RARE ENOUGH TO BE A THING YOU NOTICE, which the ledger asked for by name. A band, not
+         a floor: a world with fifty of them is not a secret, and one with none is not a race. */
+      const share = mim.length / chars.length;
+      R._share = `${(share * 100).toFixed(1)}% of everything walking`;
+      R.andRareEnoughToNotice = (mim.length >= 3 && share < 0.06)
+        ? `and they are ${(share * 100).toFixed(1)}% of the world — enough to meet, few enough that meeting one is a thing that happened to you`
+        : `!! ${mim.length} MIMICS IS ${(share * 100).toFixed(1)}% OF THE WORLD`;
+      const fallen = mim.filter(c => c.sub === 'fallen').length;
+      R.andTheFallenIsRarest = fallen >= 1 && fallen <= mim.length * 0.55
+        ? `and ${fallen} of them are Fallen — the rarest line, and the one that cannot be raised`
+        : `!! ${fallen} OF ${mim.length} MIMICS ARE FALLEN`;
+    }
+
+    /* ============================================================ AND SEEDING THEM MOVED NOTHING
+       This was filed as a rule-2 change — "expect the worldgen fingerprint to change and
+       expect harnesses to go red" — and it does not, because three short-circuits were closed
+       first. THE INVARIANT IS THE ASSERTION, since a harness cannot diff two builds at
+       runtime: `makeChar` must spend the SAME NUMBER OF RANDOM NUMBERS whatever race, line or
+       sex it is handed. Where that is not true, naming a line at a call site silently shortens
+       the stream and moves every body placed afterwards.
+       All three holes were real and all three were found this way. `sex: _sb.sexOnly || o.sex
+       || rnd()` skipped the draw for any sex-locked line. `if(SUBRACES[o.race] && !o.sub)`
+       skipped it for any caller that named a line — which was already true of every existing
+       caller, not just Mimics. And the townsfolk loop's `!mim && ... && rnd() < 0.2` skipped
+       it in exactly the two towns that have race overrides. Measured before the fixes: 4
+       numbers for a plain townsman against 3 for one handed a line, and eighteen people gone
+       from a world of 633. */
+    {
+      const real = rnd;
+      const draws = (fn) => { let n = 0; rnd = function(){ n++; return real(); };
+                              try { fn(); } finally { rnd = real; } return n; };
+      const base = { atk: 3, def: 4, tough: 5, ath: 6 };
+      const at = { x: gx, y: gy };
+      const counts = {};
+      const made = [];
+      const one = (label, extra) => {
+        counts[label] = draws(() => { const c = makeChar('Draw Probe', 'town', at.x, at.y, { ...base, ...extra });
+                                      c.__probe = true; made.push(c); });
+      };
+      one('plain', {});
+      one('named line', { race: 'human', sub: 'dustborn' });
+      one('mimic succubus', { race: 'mimic', sub: 'succubus' });   /* female-only */
+      one('mimic fallen', { race: 'mimic', sub: 'fallen' });       /* male-only */
+      one('mimic doppelganger', { race: 'mimic', sub: 'doppelganger' });
+      one('hollow (no lines)', { race: 'hollow' });
+      one('golem', { race: 'golem' });
+      const vals = Object.values(counts);
+      const same = vals.every(v => v === vals[0]);
+      R._draws = Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(' · ');
+      R.buildingABodyCostsTheSame = same
+        ? `every kind of body costs the same ${vals[0]} numbers to build, so naming a race or a line cannot move the world`
+        : `!! MAKING A BODY COSTS A DIFFERENT NUMBER OF DRAWS BY KIND — ${R._draws}`;
+      for (const c of made) { const i = chars.indexOf(c); if (i >= 0) chars.splice(i, 1); }
+    }
+
+
     return R;
   });
 

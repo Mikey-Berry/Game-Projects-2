@@ -1587,11 +1587,47 @@ function canHoldGift(race, sub){
   if(!r.noGift) return true;
   return !!(s && s.gift);          /* a line that kept the art it was made with */
 }
+/* the line wins over the roll, and the roll is spent regardless — see `sex:` in makeChar */
+function sexOf(sb, rolled){ return sb.sexOnly || rolled; }
+/* ---------- THE ONES ALREADY AMONG THE TOWNSFOLK ----------
+   `rollNpcRace` serves leaders, recruits, camps, warbands, orphans and settlers — and NOT the
+   ordinary townsfolk, who are human by default. Which is the one population "they live
+   alongside humans and have learned to be one with them" is actually about.
+   DERIVED FROM WHERE THEY STAND, not from a draw. Adding an `rnd()` per townsperson would
+   spend five hundred numbers that were not spent before and move every body placed after the
+   first town — the rule-2 hazard this was filed under. `hash2` is the same escape the renderer
+   already uses to keep its dust off the simulation's stream: seed-stable, position-stable,
+   and free. The world comes out byte-identical except for who these few people turn out to be.
+   ONE IN THIRTY, which puts a handful in a world of six hundred. The Fallen is a sixth of the
+   mimic weight, so there are usually one or two anywhere on the map. */
+const MIMIC_AMONG_US = 0.08;
+function mimicAt(x, y){ return hash2(Math.round(x * 4) * 2246822519 + 5051, Math.round(y * 4) * 27644437 - 8807) < MIMIC_AMONG_US; }
+function mimicLineAt(x, y){
+  const t = SUBRACES.mimic, keys = Object.keys(t);
+  let tot = 0; for(const k of keys) tot += (t[k].w || 1);
+  /* THE INPUTS HAVE TO BE DECORRELATED FROM THE POSITION. Townsfolk cluster within a few
+     tiles of a town centre, so neighbouring coordinates fed straight in produce neighbouring
+     hashes and the weighted walk below lands in the same band over and over — measured, the
+     Fallen came up 5 times in 9 on a sixth of the weight. Spreading the inputs first fixes
+     the correlation without costing anything. */
+  let r = hash2(Math.round(x * 4) * 2654435761 + 7717, Math.round(y * 4) * 40503 - 3313) * tot;
+  for(const k of keys){ r -= (t[k].w || 1); if(r <= 0) return k; }
+  return keys[0];
+}
+/* ---------- ONE NUMBER, WHETHER OR NOT THERE IS A LINE TO CHOOSE ----------
+   `if(!t) return null` BEFORE the draw meant a race with no lines cost one number less than
+   every race that has them — measured, a hollow was 3 draws against everybody else's 4. That
+   is the hazard the Mimics work was filed under, in its original form: move a roll across the
+   hollow/not-hollow boundary and every body placed afterwards shifts. Seeding Mimics dodged it
+   by carving their band out of the HUMAN share, but the next person adding a race would not
+   know to, and the trap would still be here.
+   Spend it first and decide after, so building a body costs the same whatever the body is. */
 function rollSub(race){
+  const r0 = rnd();
   const t = SUBRACES[race]; if(!t) return null;
   const keys = Object.keys(t);
   let tot = 0; for(const k of keys) tot += (t[k].w || 1);
-  let r = rnd() * tot;
+  let r = r0 * tot;
   for(const k of keys){ r -= (t[k].w || 1); if(r <= 0) return k; }
   return keys[0];
 }
@@ -1617,7 +1653,16 @@ function makeChar(name, faction, x, y, o={}){
      race for and to nobody else, which is a feature that exists in the character creator and
      nowhere in the game. */
   if(!o.race) o.race = 'human';
-  if(SUBRACES[o.race] && !o.sub) o.sub = rollSub(o.race);
+  /* ---------- THE LINE IS ROLLED WHETHER OR NOT IT IS NEEDED ----------
+     `if(SUBRACES[o.race] && !o.sub) o.sub = rollSub(...)` spends one number for a body whose
+     line is being decided here and NONE for one that arrived with a line already chosen — so
+     naming a line at the call site quietly shortens the stream by one and moves every body
+     placed after it. Measured while seeding Mimics into the towns: `makeChar` spent 4 numbers
+     for a plain townsman and 3 for one handed an explicit line, and eighteen people vanished
+     from a world of six hundred and thirty-three. It is not about Mimics at all — the same
+     hole was under every existing caller that names a line, and it will be under the next one.
+     Spend it either way and keep the answer only when there is nothing better. */
+  { const _line = rollSub(o.race); if(!o.sub && _line) o.sub = _line; }
   const _sb = (SUBRACES[o.race] || {})[o.sub] || SUB_NONE;
   /* the subrace's flat gifts land BEFORE anything else, so a caller that asked for a specific
      number still gets that number plus what the line is worth, not instead of it */
@@ -1654,8 +1699,22 @@ function makeChar(name, faction, x, y, o={}){
     race: o.race || 'human', sub: o.sub || null,
     /* A LINE MAY FIX THE SEX, and it wins over the caller: a succubus is female and a Fallen
        is male by what they ARE, so a spawn that asked for the other one is asking for a body
-       that does not exist rather than expressing a preference. */
-    sex: _sb.sexOnly || o.sex || (rnd() < 0.5 ? 'f' : 'm'), spouse: 0, partner: 0, grief: 0, pregnant: 0, omni: !!o.omni,
+       that does not exist rather than expressing a preference.
+       BUT THE DRAW HAS TO HAPPEN EITHER WAY. Written as `_sb.sexOnly || o.sex || (rnd() ...)`
+       the roll is SHORT-CIRCUITED AWAY for any line that dictates its own sex — so seeding
+       such a line into worldgen consumes one fewer number per body and shifts every body
+       placed after it. That is rule 2 in this file's notes, and it would have bitten the
+       moment Mimics entered the population.
+       `sexOf` takes the rolled value as an ARGUMENT, which forces it to be evaluated before
+       the choice is made. Two things about the shape are deliberate: the draw is still skipped
+       when the caller named a sex outright, because that is exactly where it was always
+       skipped and moving it would shift the world for no reason; and it happens HERE, in the
+       middle of the object literal, because a draw hoisted three lines up is the same number
+       of draws in a different order and every consumer after it gets a different one. That
+       version was written first and moved the whole population while leaving every body
+       standing in the same place — which is the confusing half of this hazard. */
+    sex: o.sex ? (_sb.sexOnly || o.sex) : sexOf(_sb, rnd() < 0.5 ? 'f' : 'm'),
+    spouse: 0, partner: 0, grief: 0, pregnant: 0, omni: !!o.omni,
     /* a golem does not bleed and has no limbs to take; a line that was built big is big */
     construct: !!(RACES[o.race] || {}).construct,
     clawDmg: 0, big: _sb.big || 1, taunt: false, structMult: 1, bindWeight: 1, shortTag: '',
@@ -2544,13 +2603,24 @@ for(const t of towns){
   const TRADE_SET = townTrades(t);
   for(let i=0; i<(t.def.civs||4); i++){
     const p = findOpenNear(t.x + ri(-5,5), t.y + ri(-5,5), 4);
-    const c = makeChar(pickName(true), 'town', p.x, p.y, {atk:3, def:4, tough:5, ath:6});
+    /* and a few of the neighbours are not neighbours — see `mimicAt`. Decided BEFORE the body
+       is built, unlike the two lines below it, because a mimic's line fixes its sex and half
+       its nature and cannot be stapled on afterwards. */
+    const mim = mimicAt(p.x, p.y);
+    const base = {atk:3, def:4, tough:5, ath:6};
+    const c = makeChar(pickName(true), 'town', p.x, p.y,
+      mim ? {...base, race:'mimic', sub: mimicLineAt(p.x, p.y)} : base);
     c.civ = true; c.homeTown = t; c.civT = rnd()*10;
     c.trade = TRADE_SET[i % TRADE_SET.length];
     c.tradeSkill = ri(6, 34);
     c.age = ri(18, 56);
-    if(t.def.key==='copperhold' && rnd() < 0.2) c.race = 'homunculus';
-    if(t.def.undeadFriendly && rnd() < 0.15) c.race = 'hollow';
+    /* THE DRAW COMES BEFORE THE `!mim`, and the order is the whole point. Written as
+       `!mim && ... && rnd() < 0.2` the roll is short-circuited away for a mimic, which spends
+       one fewer number in exactly the towns that have these overrides — the same hazard as
+       the sex roll and the line roll above, reintroduced by hand while fixing them. It cost
+       eighteen people out of six hundred and thirty-three before the fingerprint caught it. */
+    if(t.def.key==='copperhold' && rnd() < 0.2 && !mim) c.race = 'homunculus';
+    if(t.def.undeadFriendly && rnd() < 0.15 && !mim) c.race = 'hollow';
     chars.push(c);
   }
   /* and the young, watching, learning */
@@ -4396,6 +4466,22 @@ function rollNpcRace(){
   if(r < 0.14) return 'hollow';
   if(r < 0.28) return 'chimera';
   if(r < 0.295) return 'golem';
+  /* ---------- AND THE ONES LIVING ALONGSIDE ----------
+     "A catch-all term for the mysterious beings who live alongside humans and have learned to
+     be one with them." They existed only as a race the player could choose, which made the
+     defining fact about them — that they are already here, among people, unnoticed — the one
+     thing the world did not say.
+     THE BAND IS CARVED OUT OF THE HUMAN SHARE, on purpose. Every other threshold above is
+     untouched, so no roll that used to produce a homunculus, a hollow, a chimera or a golem
+     produces anything different now; only some of what would have been human is not. That
+     keeps the change to one race's population instead of five, and it is why the world's
+     BODIES DO NOT MOVE: `rollSub` spends one number for a human and one for a mimic, and the
+     sex draw is spent either way (see `sexOf`), so the stream is the same length as before.
+     FOUR PERCENT OF THE ROLL, which is far less than four percent of the world — most of the
+     population is spawned through paths that never call this. In practice it puts a handful in
+     a world of six hundred, and the Fallen, at a sixth of the mimic weight, is about one. That
+     is the intent: rare enough that meeting one is a thing that happened to you. */
+  if(r < 0.335) return 'mimic';
   return 'human';
 }
 /* the recruiting line and the wilds both roll a LINE with the race, so two Ironscar bruisers
