@@ -3983,6 +3983,9 @@ const BOSS_BARKS = {
   grazer: ['*a low rumble shakes the ground*'],
   ash: ['Keep your dead from my sight.', 'I burned my order. Bones burn easier.'],
   marshal: ['You stand in the Bastion. Mind your manners.', 'Every necromancer thinks they\'ll be the first to breach these walls.'],
+  /* it does not talk. It is not a Watcher and it is not a person — it is an animal the size
+     of a hall, and what comes out of it is weather. */
+  wyrm: ['*the air over it goes hot*', '*a sound like a quarry falling in*', '*it draws a very long breath*'],
 };
 function bossSpot(minTown, minStart){
   for(let tries=0; tries<6000; tries++){
@@ -4687,6 +4690,57 @@ function spawnImmortals(){
     rv.loot = ri(100, 250);
     rv.follow = bar;
     chars.push(rv);
+  }
+  /* ---------- THE WYRMS ----------
+     "Imperfect dragons with both ranged and sweeping melee attacks. Quite rare to encounter
+     but powerful and known to hoard vast amounts of gold."
+
+     IMPERFECT is the word the whole creature is built out of. The Scaleborn are dragon-blooded
+     and everybody knows it; a wyrm is what the same work looks like when it did not come out
+     right — the wings are there and they do not carry it, the throat still lights and the
+     thing has to be close to use it. It is not a species, it is a failed attempt that lived,
+     and there are two of them left in the world.
+
+     TWO, AND A LONG WAY OUT. Rarity is the point and it is worth spelling out what rarity
+     costs: a wyrm you meet on the road on day three is a wall, not an encounter. `bossSpot`
+     is asked for ground sixty tiles from any town and a hundred and ten from where you start,
+     which is far enough that finding one is a decision.
+
+     AND THE GOLD IS WHY YOU GO. Nine to sixteen thousand on the body — several times the Red
+     Baroness, who is the richest thing in the game up to now — because a hoard that is worth
+     less than the trip is not a hoard, it is a purse. */
+  for(let wi = 0; wi < 2; wi++){
+    p = bossSpot(60, 110);
+    squadN++;
+    const wy = makeChar('A Wyrm', 'fauna', p.x, p.y,
+      {atk:46, def:34, tough:60, ath:5, armr:40});
+    wy.beast = true;
+    /* NEUTRAL, AND EXTREMELY SERIOUS ABOUT IT. It is not hunting anybody. It is lying on a
+       great deal of gold, and it has views about company. */
+    wy.neutral = true;
+    wy.bossKey = 'wyrm'; wy.kin = 'wyrm';
+    /* THE SAME SCALE AS THE GRAZER, ON PURPOSE. The bulk of a wyrm is meant to come out of
+       its PROPORTIONS and not out of a bigger number in front of the same rig — and `big`
+       is not decoration, it is fed into reach, pick radius and walking speed. At 2.6 it came
+       out thirteen and a half tiles nose to tail, which is longer than most buildings in the
+       game and reads as a bug rather than as a dragon. */
+    wy.big = 2.2;
+    wy.clawDmg = 34; wy.clawWt = 'cut';
+    wy.blood = 620; wy.maxBlood = 620;
+    wy.taunt = true;
+    wy.speedMult = 0.82;              /* it is not fast. It does not need to be. */
+    wy.corpseWorth = 4;               /* there is a great deal of it */
+    /* the tail and the shoulder, which is most of what kills people: everything in front of
+       it inside three and a half tiles, not just whatever it happened to be looking at */
+    wy.sweep = {arc: 1.45, reach: 3.4, mult: 0.62, max: 5};
+    /* and the throat. Nine tiles, and it will not use it on something already in its teeth. */
+    wy.breath = {range: 9, half: 1.5, dmg: 30, wt: 'burn', cd: 7};
+    wy.breathCd = 3;
+    wy.guard = {x: p.x, y: p.y};
+    wy.lair = {x: p.x, y: p.y, r: 16};
+    wy.loot = ri(9000, 16000);
+    wy.dropItems = {hide_lev: ri(8,12), remains: ri(4,7), tome: 1};
+    chars.push(wy);
   }
 })();
 spawnImmortals();
@@ -6381,8 +6435,89 @@ function attack(a, d){
   const pk = pickPart();
   const part = d.parts[pk];
   /* a driven point finds the gap a swung edge cannot */
-  if(part.severed){ return applyDamage(a, d, 'chest', dmg, wt, isPlayerFight, false, false, mvA.ap || 0); }
-  applyDamage(a, d, pk, dmg, wt, isPlayerFight, false, false, mvA.ap || 0);
+  if(part.severed) applyDamage(a, d, 'chest', dmg, wt, isPlayerFight, false, false, mvA.ap || 0);
+  else applyDamage(a, d, pk, dmg, wt, isPlayerFight, false, false, mvA.ap || 0);
+  if(a.sweep) sweepAfter(a, d, wt, dmg);
+}
+/* ---------- WHAT A THING THAT BIG DOES TO A LINE OF MEN ----------
+   The cleave that catches bystanders is gated `if(wpn && !wpn.range)` — it comes off the
+   WEAPON. Everything that fights with what it is (`clawDmg`) therefore struck exactly one
+   body per blow, however large it was, so a wyrm and a dust hound had the same footprint in
+   a melee and the only difference was the number on the wound. Six men could stand shoulder
+   to shoulder in front of a house-sized animal and take it in turns.
+
+   `sweep` is that same idea for things with no weapon in their hands, and it reads the same
+   three numbers a MOVE does: how wide the arc is, how far it reaches, and how much of the
+   blow the bystanders take. Nothing has one by default. */
+function sweepAfter(a, tgt, wt, dmg){
+  const sw = a.sweep;
+  const aim = Math.atan2(tgt.y - a.y, tgt.x - a.x);
+  let struck = 0;
+  for(const o of charsNear(a.x, a.y, sw.reach + 0.4)){
+    if(struck >= (sw.max || 4)) break;
+    if(o === a || o === tgt || o.state !== 'ok') continue;
+    if((o.floor||0) !== (a.floor||0)) continue;
+    if(dist(a.x, a.y, o.x, o.y) > sw.reach) continue;
+    if(!hostile(a, o)) continue;
+    let ang = Math.atan2(o.y - a.y, o.x - a.x) - aim;
+    while(ang > Math.PI) ang -= Math.PI*2;
+    while(ang < -Math.PI) ang += Math.PI*2;
+    if(Math.abs(ang) > sw.arc) continue;
+    applyDamage(a, o, pickPart(), dmg * (sw.mult || 0.6), wt, a.faction==='player' || o.faction==='player', true);
+    o.staggerT = Math.max(o.staggerT, 0.35);
+    retaliate(o, a);
+    struck++;
+  }
+  if(struck) addSpecks(a.x + Math.cos(aim)*sw.reach*0.5, a.y + Math.sin(aim)*sw.reach*0.5 - 0.2, '#a8977c', 4 + struck*2);
+}
+/* ---------- AND WHAT IT DOES AT NINE TILES ----------
+   A line of fire down a bearing, and everything standing in it pays. Deliberately a LINE and
+   not a disc: it is a thing breathing, so it has a direction, and stepping out of it is the
+   answer. `breath` is a record on the body — {range, half, dmg, wt, cd} — so nothing but a
+   wyrm has one and anything could. */
+function breatheAt(c, tx, ty){
+  const b = c.breath; if(!b) return 0;
+  const ax = tx - c.x, ay = ty - c.y;
+  const al = Math.max(0.01, Math.hypot(ax, ay));
+  const ux = ax/al, uy = ay/al;
+  let hit = 0;
+  for(const o of chars){
+    if(o === c || o.state === 'dead') continue;
+    if((o.floor||0) !== (c.floor||0)) continue;
+    if(!hostile(c, o)) continue;
+    const dx = o.x - c.x, dy = o.y - c.y;
+    const along = dx*ux + dy*uy;
+    if(along < 0.5 || along > b.range) continue;
+    /* the cone widens with distance, the way a breath does */
+    const off = Math.abs(-dx*uy + dy*ux);
+    if(off > b.half * (0.35 + along / b.range)) continue;
+    applyDamage(c, o, pickPart(), b.dmg * (0.8 + vrnd()*0.4), b.wt || 'burn',
+                c.faction==='player' || o.faction==='player', true);
+    if(!o.dot || o.dot.dps < 4) o.dot = {t: 4, tick: 1, dps: 4, src: c};
+    hit++;
+  }
+  for(let i = 1; i <= Math.round(b.range); i++){
+    const t = i / b.range;
+    addSpecks(c.x + ux*i, c.y + uy*i - 0.2, i < 3 ? '#ffd07a' : '#ff8a3a', 2 + Math.round(t*3));
+  }
+  AU.cast(c.x, c.y, 'destruction');
+  c.breathCd = b.cd;
+  return hit;
+}
+/* the decision to use it, taken once per physics step for anything that has one */
+function breathTick(c, dt){
+  const b = c.breath; if(!b || c.state !== 'ok') return false;
+  if((c.breathCd = (c.breathCd || 0) - dt) > 0) return false;
+  const t = c.target;
+  if(!t || t.state === 'dead' || (t.floor||0) !== (c.floor||0)) return false;
+  const d = dist(c.x, c.y, t.x, t.y);
+  /* it does not breathe on something already in its teeth — that is what the teeth are for */
+  if(d < 2.6 || d > b.range) return false;
+  if(losBlocked(c.x, c.y, t.x, t.y, c.floor||0)) return false;
+  const n = breatheAt(c, t.x, t.y);
+  if(n && (c.faction === 'player' || t.faction === 'player'))
+    log(`${c.name} opens its throat. ${n === 1 ? 'One of them is' : n + ' of them are'} standing in it.`, 'bad');
+  return true;
 }
 /* ---------- WHAT THE ARMOUR IS MADE OF, AND WHAT IS COMING AT IT ----------
    Armour used to be a single `def` number, and it was consulted only by attack(). Every
@@ -9170,6 +9305,10 @@ function physics(c, dt){
      a host called at dusk goes at dusk and not at midnight. */
   if(c.tempT > 0 && (c.tempT -= dt / HOUR_SEC) <= 0){ crumble(c); return; }
   if(c.state !== 'ok'){ c.windup = null; c.recoverT = 0; return; }
+  /* AND SOME THINGS DO NOT NEED TO REACH YOU. Asked before the swing scheduler, because a
+     breath is not a swing: it is not rooted by a windup and it does not want to be gated
+     behind one. Only bodies carrying a `breath` record pay anything for this line. */
+  if(c.breath) breathTick(c, dt);
   /* a committed swing: rooted, then it lands — or whiffs if the target slipped away */
   if(c.windup){
     if(c.staggerT > 0){ c.windup = null; c.recoverT = 0; c.swingMove = null; }   /* reeling is not recovering */
@@ -20723,6 +20862,12 @@ function buildCharMesh(c){
       mule:    {len:0.95, hgt:0.45, wid:0.50, stand:0.50, headF:0.55, headY:0.62, headSz:0.32, legT:0.14},
       /* longer than a mule and lower, because the whole animal is a load-bed */
       cart:    {len:1.35, hgt:0.34, wid:0.58, stand:0.46, headF:0.82, headY:0.50, headSz:0.26, legT:0.13},
+      /* LONG AND LOW AND WRONG. The grazer is the other big quadruped here and it is a
+         BARREL — height and width in the same proportion, a bull the size of a house. A wyrm
+         has to read differently at the same distance or it is the grazer in a new colour, so
+         it goes the other way on every number: half again the length, a body no taller than a
+         mule's, and a head carried well forward on a neck instead of sitting on the shoulders. */
+      wyrm:    {len:2.10, hgt:0.62, wid:0.72, stand:0.66, headF:1.40, headY:1.05, headSz:0.34, legT:0.20},
     };
     const S = SPEC[K] || SPEC.hound;
     if(boneBeast){
@@ -20743,7 +20888,65 @@ function buildCharMesh(c){
     } else {
       e.torso = obox(S.wid, S.hgt, S.len, beastCol, 0, S.stand + S.hgt*0.1, 0);
     }
-    if(K === 'grazer'){
+    if(K === 'wyrm'){
+      /* ---------- AN IMPERFECT DRAGON ----------
+         Four things carry it and none of them is the body: the NECK, which puts the head out
+         past the shoulders where nothing else in the game keeps its head; the WEDGE SKULL with
+         a jaw under it; the WINGS, folded and too small, which is the whole of what `imperfect`
+         means here; and a TAIL longer than the animal, which is also the melee sweep, so the
+         silhouette and the thing that kills you are the same object.
+         Built off `beastCol` like every other quadruped, so a dead one still comes up bone. */
+      const plate = shade(beastCol, 0.84), dark = shade(beastCol, 0.62), horn = '#cfc4a8';
+      /* the spine ridge, shoulders to hips */
+      for(let i = 0; i < 7; i++){
+        const t = i/6, z = S.len*(0.44 - t*0.90);
+        obox(0.07, 0.16 + Math.sin(t*Math.PI)*0.13, 0.10, dark, 0, S.stand + S.hgt*0.62 + Math.sin(t*Math.PI)*0.05, z);
+      }
+      /* the neck: four segments walking the head forward and up */
+      for(let i = 0; i < 4; i++){
+        const t = i/3;
+        obox(0.30 - t*0.09, 0.28 - t*0.06, 0.30, plate,
+             0, S.stand + S.hgt*0.55 + t*0.36, S.len*0.42 + t*0.36);
+      }
+      /* the skull, and what is in it */
+      e.head = obox(S.headSz*1.15, S.headSz*0.86, S.headSz*1.9, plate, 0, S.headY, S.headF);
+      obox(S.headSz*0.95, S.headSz*0.34, S.headSz*1.5, dark, 0, S.headY - S.headSz*0.50, S.headF + 0.10);   /* the jaw */
+      for(const sx of [-1, 1]){
+        obox(0.055, 0.055, 0.05, '#ff9a3a', sx*S.headSz*0.40, S.headY + S.headSz*0.22, S.headF + S.headSz*0.55);  /* the eye, lit */
+        const hn = obox(0.075, 0.075, 0.34, horn, sx*S.headSz*0.46, S.headY + S.headSz*0.36, S.headF - 0.16);      /* horns, swept back */
+        hn.rotation.set(0.55, 0, sx*0.22);
+        for(let i = 0; i < 3; i++)
+          obox(0.035, 0.075, 0.05, horn, sx*S.headSz*0.30, S.headY - S.headSz*0.30, S.headF + 0.18 + i*0.16);      /* teeth */
+      }
+      /* THE WINGS, AND THEY DO NOT WORK. Folded hard against the ribs and plainly too small
+         for the animal — the one piece of geometry that has to say `imperfect` on its own. */
+      for(const sx of [-1, 1]){
+        const sh = new THREE.Group();
+        sh.position.set(sx*S.wid*0.46, S.stand + S.hgt*0.55, S.len*0.22); g.add(sh);
+        sh.rotation.set(0.34, sx*0.62, sx*0.40);
+        obox(0.075, 0.075, 0.66, dark, 0, 0, -0.32, sh);                       /* the leading spar */
+        const mem = obox(0.045, 0.40, 0.58, shade(beastCol, 0.72), 0, -0.19, -0.28, sh);
+        mem.rotation.x = -0.16;
+        const low = new THREE.Group();
+        low.position.set(0, 0, -0.62); sh.add(low);
+        low.rotation.set(0, sx*0.80, 0);
+        obox(0.06, 0.06, 0.44, dark, 0, 0, -0.22, low);                        /* the fold */
+        obox(0.04, 0.30, 0.40, shade(beastCol, 0.72), 0, -0.14, -0.20, low);
+      }
+      /* the tail: six segments off the hips, dropping, and longer than the animal */
+      e.tail = [];
+      { let par = g;
+        for(let i = 0; i < 5; i++){
+          const seg = new THREE.Group();
+          seg.position.set(0, i === 0 ? S.stand + S.hgt*0.20 : 0, i === 0 ? -S.len*0.46 : -0.28);
+          par.add(seg);
+          obox(0.30 - i*0.045, 0.28 - i*0.040, 0.30, plate, 0, 0, -0.15, seg);
+          if(i < 4) obox(0.05, 0.13 - i*0.02, 0.06, dark, 0, (0.16 - i*0.02), -0.15, seg);   /* the ridge runs on */
+          e.tail.push(seg); par = seg;
+        }
+        e.tail[0].rotation.x = 0.26;
+        e.tailLift = -0.30; }
+    } else if(K === 'grazer'){
       /* the bulk is the point: a hump over the shoulders and a broad flat skull */
       obox(S.wid*0.86, 0.42, S.len*0.44, beastCol, 0, S.stand + S.hgt*0.55, -0.16);
       e.head = obox(S.headSz*1.5, S.headSz*0.68, S.headSz*1.25, beastCol, 0, S.headY, S.headF);
@@ -20780,6 +20983,11 @@ function buildCharMesh(c){
       const hip = new THREE.Group(); hip.position.set(sx, S.stand, sz); g.add(hip);
       obox(S.legT, S.stand, S.legT, legCol, 0, -S.stand/2, 0, hip);
       if(K === 'grazer') obox(S.legT*1.3, 0.14, S.legT*1.4, legCol, 0, -S.stand + 0.07, 0.02, hip);
+      if(K === 'wyrm'){
+        obox(S.legT*1.45, 0.13, S.legT*1.7, legCol, 0, -S.stand + 0.065, 0.06, hip);          /* the foot */
+        for(let i = -1; i <= 1; i++)
+          obox(0.045, 0.045, 0.13, '#cfc4a8', i*0.075, -S.stand + 0.055, 0.19, hip);          /* and the claws on it */
+      }
       return hip;
     };
     const lx = S.wid*0.42, lz = S.len*0.34;
