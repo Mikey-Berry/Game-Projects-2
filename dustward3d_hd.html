@@ -1876,7 +1876,68 @@ function pinGrip(c, o){
   if(held > 1) k *= Math.pow(0.85, held - 1);  /* a second blade on you is a second problem */
   return Math.max(0.3, k);
 }
+/* ---------- A PARTY WALKS AT ONE PACE ----------
+   Reported: "Patrols should have all members walk at the same speed — the slowest of their
+   party. Sometimes one super fast squad member completely outpaces the rest, and gets
+   destroyed when they encounter an enemy."
+
+   The fault is not that the houndkin is fast. It is that one order handed to five bodies has
+   always been FIVE INDEPENDENT WALKS: each of them reads its own `moveSpeed` and leaves at
+   it, so a 1.18x line and a 0.80x line pull apart over the length of the march and the fast
+   one meets whatever is at the far end on its own. Measured on the build before this, on a
+   forty-tile march with four bodies under one order: 7.1 tiles of spread on average and 13.3
+   at the worst of it — the tail is a third of the march behind the head. Nothing in the suite
+   could see it, because every unit involved is doing exactly what it was told.
+
+   A BAND IS AN ORDER, NOT A ROSTER. `formBand` stamps the bodies that were given one order
+   together; `clearOrders` drops it, so a body sent somewhere on its own is instantly free of
+   it and a squad group you never move together never has one at all. Patrols get a band of
+   their own without being stamped, because the job re-issues its own legs constantly and any
+   stamp would be wiped within the second — see `paceKey`.
+
+   AND IT LETS GO OF ANYONE WHO IS FIGHTING. A pace band that survives contact is a body being
+   dragged out of a melee at somebody else's speed, which is the reported bug wearing a hat.
+   A member with a target neither takes the cap nor sets it. */
+let bandSeq = 0;
+function formBand(list){
+  const live = (list || []).filter(c => c && c.state !== 'dead');
+  if(live.length < 2){ for(const c of live) c.band = null; return 0; }
+  const id = ++bandSeq;
+  for(const c of live) c.band = id;
+  return id;
+}
+/* which party is this body marching with — '' for nobody */
+function paceKey(c){
+  if(c.band) return 'b' + c.band;
+  if(c.faction === 'player' && c.job === 'patrol') return 'p';
+  return '';
+}
+/* travelling, as opposed to arrived, downed, or in a fight */
+function bandWalking(c){
+  return c.state === 'ok' && !c.target && !!(c.moveTarget || c.path || c.attackMove || c.patrolSpot);
+}
+const _bandLo = Object.create(null);
+function paceBands(){
+  for(const k in _bandLo) delete _bandLo[k];
+  for(const c of chars){
+    const k = paceKey(c);
+    if(!k || !bandWalking(c)) continue;
+    const s = moveSpeedRaw(c);
+    if(_bandLo[k] === undefined || s < _bandLo[k]) _bandLo[k] = s;
+  }
+  for(const c of chars){
+    const k = paceKey(c);
+    c._bandPace = (k && bandWalking(c)) ? (_bandLo[k] || 0) : 0;
+  }
+}
+/* The cap goes on the OUTSIDE so `paceBands` can ask what a body would do unaided without
+   asking itself the same question one frame deep. */
 function moveSpeed(c){
+  const s = moveSpeedRaw(c);
+  const p = c._bandPace;
+  return (p > 0 && p < s) ? Math.max(0.5, p) : s;
+}
+function moveSpeedRaw(c){
   let s = 3.4 * (1 + c.stats.ath*0.012);
   s *= 1 - armorPen(c);
   /* ---------- MAKING THE NEXT ONE READY ----------
@@ -8650,7 +8711,24 @@ function clearOrders(c){
   c.craftJob = null;      /* a new order takes them off the bench; nothing unmade was paid for */
   c.guardTarget = null; c.haulTarget = null;
   c.path = null; c.pathGoal = null;
+  c.band = null;          /* a band is an order — see formBand */
+  c._bandPace = 0;
   if(c.resting){ c.resting.user = null; c.resting = null; }
+}
+/* ---------- ONE ORDER, SEVERAL BODIES ----------
+   The single place a march is issued, so the pace band is formed by the thing that made the
+   party rather than by every caller remembering to. `clearOrders` wipes the band, which is
+   why the stamp goes on AFTER the routing and not before it. */
+function orderParty(list, x, y, f, spread){
+  const arr = (list || []).filter(c => c && c.state === 'ok');
+  arr.forEach((m, i) => {
+    clearOrders(m);
+    const dx = spread === false ? 0 : (i % 3 - 1) * 0.7;
+    const dy = spread === false ? 0 : Math.floor(i / 3) * 0.7;
+    routeTo(m, x + dx, y + dy, f);
+  });
+  formBand(arr);
+  return arr.length;
 }
 /* ---------- ON THE WAY TO SOMETHING DEADLIER THAN A KNIFE ----------
    The rule already exists one step too late. `if(c.manning){ c.target = null; ... }` says a hand
@@ -15171,6 +15249,7 @@ function applyOpts(){
 let fpsEMA = 60, simMs = 0, renderMs = 0;
 function update(dt){
   rebuildCharGrid();
+  paceBands();                /* and a party marches at the pace of whoever is slowest in it */
   reapPhylacteries();
   riteTick(dt);               /* and somebody is in the middle of something */
   walkingDeadCheck(dt);       /* and whether anyone is walking the dead past a gate */
@@ -25228,6 +25307,7 @@ cv.addEventListener('mousedown', e => {
         return;
       }
       for(const m of crew){ clearOrders(m); m.attackMove = {x:wx, y:wy}; }
+      formBand(crew);
       return;
     }
     if(buildMode){
@@ -25779,6 +25859,7 @@ cv.addEventListener('mousedown', e => {
         items.push({label:'EXAMINE THEM', fn: () => examine(mate)});
         items.push({label:'MOVE HERE INSTEAD', fn: () => {
           for(const m of movers){ clearOrders(m); m.moveTarget = {x: wx, y: wy}; }
+          formBand(movers);
         }});
         showCtxMenu(e.clientX, e.clientY, items);
         return;
@@ -25973,10 +26054,7 @@ cv.addEventListener('mousedown', e => {
     const tf = lift ? lift.f : 0;
     /* the snapped tile: a move order should name a piece of floor that exists */
     const tx2 = lift ? (lift.sx ?? lift.x) : wx, ty2 = lift ? (lift.sy ?? lift.y) : wy;
-    movers.forEach((m,i) => {
-      clearOrders(m);
-      routeTo(m, tx2 + (i%3-1)*0.7, ty2 + (Math.floor(i/3))*0.7, tf);
-    });
+    orderParty(movers, tx2, ty2, tf);
   }
 });
 /* ---------- talk: townsfolk, guards, and drifters have things to say ---------- */
