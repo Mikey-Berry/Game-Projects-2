@@ -3163,10 +3163,94 @@ function voiceOf(c){
   if(!c) return 'person';
   if(c.lich) return 'lich';
   if(c.gauntKind || c.faction === 'gaunt') return 'gaunt';
+  /* A WISP IS NOT A RISEN MAN. Wisps, servitors and bone-carts are all `beast` AND `undead`
+     AND `minded` — the mind is there so the thing can follow an order, which is not the same
+     as there being anybody in it. Asked before the undead branch, and a raised hound lands
+     here too, which is correct: it is a dead animal and it sounds like one. */
+  if(c.beast) return c.undead ? 'husk' : 'beast';
   if(c.undead) return c.lieutenant ? 'lieutenant' : 'risen';
-  if(c.beast) return 'beast';
   return 'person';
 }
+/* ---------- A BUBBLE MUST NEVER MOVE THE SIMULATION ----------
+   `pick` spends the world's seeded stream, so which of three lines a body shouted decided
+   what the next arrow did. That was already true of every bark in the file and it is a bad
+   trade for nothing: a bubble is presentation, nothing downstream reads which line came out,
+   and the only cost of getting it wrong is a whole run of combat diverging on a speech
+   bubble. `vrnd` is the renderer's counter — until now it drew nothing but dust motes — and
+   it is the right stream for anything that is only ever looked at. */
+function vpick(a){ return a[(vrnd() * a.length) | 0]; }
+/* ---------- WHAT COMES OUT OF A BODY THAT HAS JUST LOST AN ARM ----------
+   Reported: "Sometimes friendly fire or limb loss produces a general response not really
+   fitting for the character. (Like a gaunt screaming after losing a limb.) Perhaps gaunts
+   could even use accented characters or Unicode-type letters to represent their eldritch
+   noises."
+
+   Five places in the file said one thing to the whole world. `say(d, 'AAAGH!')` on severance
+   had no test of any kind on it, so it was reached by gaunts, dust hounds, skeletons,
+   servitors and liches alike — a Watcher losing a limb screamed a human scream, in English,
+   in capitals.
+
+   Gaunt noise is written in Latin-1 only, deliberately: the bubble is drawn with canvas
+   `fillText` at 10px monospace and a codepoint the fallback font has never heard of comes out
+   as a box. Everything here is in the block every font on earth ships — and none of it carries
+   human punctuation either, which the first draft did and which read as a man with a stutter
+   rather than as a noise. tools/pain.js holds both halves. */
+const SPEAKS = new Set(['person', 'lieutenant', 'lich']);
+const BARK = {
+  /* a limb came off */
+  sever: {
+    person:     ['AAAGH!', 'MY ARM —', 'AAH — AAH —', 'IT IS OFF —'],
+    lieutenant: ['That was mine.', 'Noted.', 'It did not hurt. It should have.'],
+    risen:      ['...it came away.', '...that was attached.', '*a dry snap*'],
+    lich:       ['Inconvenient.', 'I shall want that back.', 'You may keep it.'],
+    husk:       ['*a dry clatter*', '*rattles*'],
+    beast:      ['*shrieks*', '*a wet yelp*'],
+    gaunt:      ['HRÄÄKK', 'ÖÖGHH', 'SSKRÆÆ', 'ÞRRKÞ'],
+  },
+  /* one of your own just put something through you */
+  ff: {
+    person:     ['WATCH IT!', 'THAT WAS ME!', 'EYES, damn you!'],
+    lieutenant: ['That was one of ours. Me.', 'Aim.'],
+    risen:      ['...that was me.', '*turns its head*'],
+    lich:       ['I felt that, which is remarkable. Do not do it again.'],
+    husk:       ['*rattles*'],
+    beast:      ['*yelps*'],
+    gaunt:      ['ÑNNGH', 'ÞRRK ÞRRK'],
+  },
+  /* something is out there */
+  alarm: {
+    person:     ['ALARM!', 'To arms!', 'Something in the dark!'],
+    lieutenant: ['Something is out there. Move.', 'Up. Now.'],
+    risen:      ['...something comes.', '*it points*'],
+    lich:       ['We have company. I would rather you dealt with it.'],
+    husk:       ['*rattles hard*'],
+    beast:      ['*bays*'],
+    gaunt:      ['ÏÏÏSS', 'AÄÄÄH'],
+  },
+  /* standing in front of somebody on purpose */
+  shield: {
+    person:     ['Behind me.', 'Not while I stand.', 'Get back.'],
+    lieutenant: ['Behind me. I can afford it.', 'Get back. I am already dead.'],
+    risen:      ['...behind.', '*steps in front*'],
+    lich:       ['Stand behind me. I am the more durable object.'],
+  },
+  /* taking somebody alive */
+  seize: {
+    person:     ['On your feet.', 'You are coming with me.', "That's enough out of you."],
+    lieutenant: ['On your feet. Do not make this worse.'],
+    risen:      ['Up.', '*takes hold*'],
+    lich:       ['You are coming with me. You will find I do not tire.'],
+  },
+};
+function barkFor(c, kind){
+  const t = BARK[kind]; if(!t) return null;
+  const v = voiceOf(c);
+  /* No entry is SILENCE, not a fallback, for anything that does not have words. A thing with
+     nothing to say about losing an arm says nothing about losing an arm. */
+  const pool = t[v] || (SPEAKS.has(v) ? t.person : null);
+  return (pool && pool.length) ? vpick(pool) : null;
+}
+function sayAs(c, kind){ const l = barkFor(c, kind); if(l){ say(c, l); return true; } return false; }
 /* Held up by somebody else's will. Present tense, because there is not much else left. */
 const RISEN_TALK = [
   'The binding holds.',
@@ -3247,6 +3331,10 @@ function squadBark(c){
      be good' is the exact line the report was about. */
   if(v === 'lieutenant') return pick(LIEUTENANT_TALK);
   if(v === 'risen') return pick(RISEN_TALK);
+  /* A WISP IS `minded`, WHICH IS HOW IT GOT IN HERE. The idle loop's gate asks for a mind and
+     a wisp has one — enough to follow somebody, which is not enough to hold a view about the
+     larder. Everything without words leaves with nothing. */
+  if(!SPEAKS.has(v)) return null;
   /* the situation gets first refusal, but not every time: a squad that only ever narrates
      the larder never tells you what it thinks of you, and that was the whole point of them */
   if(rnd() < 0.7){ const s = situationBark(c); if(s) return s; }
@@ -6105,7 +6193,7 @@ function attack(a, d){
     if(shield){
       addFloat(d.x, d.y - 1.0, 'shielded', '#8fb5d4');
       if(!shield.target){ shield.target = a; shield.targetManual = false; }
-      if(rnd() < 0.12) say(shield, pick(['Behind me.', 'Not while I stand.', 'Get back.']));
+      if(rnd() < 0.12) sayAs(shield, 'shield');
       shieldDepth++;
       try { attack(a, shield); } finally { shieldDepth--; }
       return;
@@ -6375,7 +6463,7 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
   if(!d.construct && !VITAL.has(pk) && wt==='cut' && part.hp < -45 * (d.knit || 1) && !part.severed && rnd() < .3 * (d.knit || 1)){
     part.severed = true; part.pros = false; part.bleed += 3;
     AU.sever(d.x, d.y);
-    say(d, 'AAAGH!');
+    sayAs(d, 'sever');
     if(loud) log(`${d.name}'s ${pk} was CUT OFF!`, 'bad');
   }
   if(VITAL.has(pk) && part.hp <= -50){ kill(d, a); return; }
@@ -8552,7 +8640,7 @@ function patrolTick(c, dt){
 }
 /* one watchman shouting brings the rest */
 function raiseAlarm(by, foe){
-  say(by, pick(['ALARM!', 'To arms!', 'Something in the dark!']));
+  sayAs(by, 'alarm');
   let n = 0;
   for(const o of player()){
     if(o === by || o.state !== 'ok' || o.target) continue;
@@ -9819,7 +9907,7 @@ function physics(c, dt){
         o.faction === 'player' && dist(c.x, c.y, o.x, o.y) < 5);
       if(dp && freeCell(c.homeTown)){
         c.drag = dp; dp.captured = true; c.target = null; c.arrestTarget = null; c.haulT = 0;
-        say(c, pick(['On your feet.', 'You are coming with me.', "That's enough out of you."]));
+        sayAs(c, 'seize');
         return;
       }
       if(c.arrestTarget && chars.includes(c.arrestTarget) && c.arrestTarget.state === 'ok'){
@@ -9855,7 +9943,7 @@ function physics(c, dt){
     else if(!c.drag){
       if(v.state !== 'down'){ c.seizeTarget = null; }
       else if(dist(c.x, c.y, v.x, v.y) > 1.4){ travel(c, v.x, v.y, dt, 0.9); return; }
-      else { c.drag = v; v.captured = true; say(c, 'Up. You are coming with us.'); return; }
+      else { c.drag = v; v.captured = true; sayAs(c, 'seize'); return; }
     } else {
       const cell = cells.find(cl => cl.kind === 'player' && !cl.holds);
       if(!cell){
@@ -15276,7 +15364,7 @@ function updateProjectiles(dt){
              exactly this: somebody in it is yours. The shout over the body is not gated; it
              is world texture, and you only see it if you are there to see it. */
           if(loud) log(`${p.caster.name}'s stray shot hit ${p.target.name}!`, 'bad');
-          say(p.target, 'WATCH IT!');
+          sayAs(p.target, 'ff');
         }
         if(p.bolt){
           addSpecks(p.target.x, p.target.y-0.5, '#ff8a3a', 7);
