@@ -322,13 +322,24 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
      or the arms, legs and clothing stay hung on the old skeleton. Read off the rig's own scale,
      which is what every other box on the body is multiplied by. */
   /* ---------- ONE OF EACH IS NOT A MEASUREMENT ----------
-     `baseSX` is `(0.90 + h3 * 0.12) * build.sx`, where `h3` is a per-body hash — so every
-     body carries a random spread of up to 0.12, and the succubus's build moves the frame by
-     0.08. THE NOISE IS BIGGER THAN THE SIGNAL. Comparing one succubus against one woman
+     `baseSY` is `(0.89 + h1 * 0.14) * build.sy`, where `h1` is a per-body hash — so every
+     body carries a random spread of up to 0.14, and the succubus's build moves the frame by
+     0.05. THE NOISE IS BIGGER THAN THE SIGNAL. Comparing one succubus against one woman
      therefore passes or fails on which two ids they happened to get, which is why this went
      red the moment worldgen shifted and read like a load flake: measured on the failing run,
      woman 0.9255x0.9453 against succubus 1.0116x0.9548, both perfectly correct bodies.
-     Average a dozen of each instead. The spread cancels, the build does not. */
+     Average a dozen of each instead. The spread cancels, the build does not.
+
+     AND `baseSX` WAS NEVER THE NARROW HALF. The old version of this asked for
+     `sx < wx * 0.99` beside the height test, and passed for a year by a margin of 0.001 —
+     because the succubus build carries `sy` and does NOT carry `sx`, so her `baseSX` is drawn
+     from exactly the same distribution a plain woman's is. That clause was measuring hash
+     noise and nothing else, and the first worldgen shift that moved the ids turned it red on
+     a build where nothing about her had changed. The narrowing is real but it lives in `sh`,
+     which is not stored on the rig record at all — it is spent moving the SHOULDER ANCHORS,
+     so that is where it is read from now: the distance between the two arm groups, which is
+     `0.82 * build.sh` for her and `0.82` for the woman beside her. A geometric fact with no
+     noise on it. */
   const frames = await p.evaluate(() => {
     const { gx, gy } = window.__G;
     for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
@@ -350,15 +361,27 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const v = ids.map(id => (charMeshes.get(id) || {})[k]).filter(x => typeof x === 'number' && x > 0);
       return v.length ? { n: v.length, m: +(v.reduce((a2, b2) => a2 + b2, 0) / v.length).toFixed(4) } : { n: 0, m: 0 };
     };
+    /* the shoulder anchors, in the rig's own local units — `SH` is spent placing these */
+    const shoulder = (ids) => {
+      const v = ids.map(id => {
+        const e = charMeshes.get(id);
+        if (!e || !e.armL || !e.armR) return null;
+        return Math.abs(e.armR.position.x - e.armL.position.x);
+      }).filter(x => typeof x === 'number' && x > 0);
+      return v.length ? { n: v.length, m: +(v.reduce((a2, b2) => a2 + b2, 0) / v.length).toFixed(4) } : { n: 0, m: 0 };
+    };
     return { wx: mean(made.woman, 'baseSX'), wy: mean(made.woman, 'baseSY'),
-             sx: mean(made.succubus, 'baseSX'), sy: mean(made.succubus, 'baseSY') };
+             sx: mean(made.succubus, 'baseSX'), sy: mean(made.succubus, 'baseSY'),
+             wsh: shoulder(made.woman), ssh: shoulder(made.succubus) };
   });
   R._frames = frames.err ? '!! ' + frames.err
-    : `over ${frames.wx.n} of each: a plain woman ${frames.wx.m}x${frames.wy.m}, a succubus ${frames.sx.m}x${frames.sy.m}`;
-  R.herFrameIsHerOwn = (!frames.err && frames.wx.n >= 8 && frames.sx.n >= 8 &&
-                        frames.sy.m > frames.wy.m * 1.02 && frames.sx.m < frames.wx.m * 0.99)
-    ? `and she is built on a frame of her own — taller and narrower than the women beside her, averaged over ${frames.sx.n} of each`
-    : `!! SHE IS ON THE STOCK FRAME (woman ${frames.wx.m}x${frames.wy.m} over ${frames.wx.n}, succubus ${frames.sx.m}x${frames.sy.m} over ${frames.sx.n})`;
+    : `over ${frames.wx.n} of each: a plain woman ${frames.wx.m}x${frames.wy.m} on ${frames.wsh.m} shoulders, ` +
+      `a succubus ${frames.sx.m}x${frames.sy.m} on ${frames.ssh.m}`;
+  R.herFrameIsHerOwn = (!frames.err && frames.wx.n >= 8 && frames.sx.n >= 8 && frames.ssh.n >= 8 &&
+                        frames.sy.m > frames.wy.m * 1.02 && frames.ssh.m < frames.wsh.m * 0.97)
+    ? `and she is built on a frame of her own — ${((frames.sy.m/frames.wy.m - 1)*100).toFixed(1)}% taller over ` +
+      `${((1 - frames.ssh.m/frames.wsh.m)*100).toFixed(1)}% narrower shoulders than the women beside her, averaged over ${frames.sx.n} of each`
+    : `!! SHE IS ON THE STOCK FRAME (woman ${frames.wy.m} tall on ${frames.wsh.m} shoulders, succubus ${frames.sy.m} on ${frames.ssh.m}, over ${frames.sx.n} of each)`;
   R.theFallenAndTheMessengerAreKin = rigs.fallen && rigs.fallen.oldGod && rigs.__messenger && rigs.__messenger.oldGod
     ? 'and the Fallen and the Messenger wear the same motif, which is the family they share'
     : `!! THEY DO NOT SHARE THE MOTIF (fallen ${rigs.fallen && rigs.fallen.oldGod}, messenger ${rigs.__messenger && rigs.__messenger.oldGod})`;

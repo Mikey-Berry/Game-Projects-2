@@ -47,6 +47,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       if (o && typeof o === 'object') Object.values(o).forEach(eat);
     };
     eat(CONV_TALK); eat(SITU_TALK);
+    /* AND WHAT IT IS LIKE TO BE THE THING YOU ARE. Added with the race dialogue, and it goes
+       in the LIVING set on purpose: a risen chimera does not have views about breeding either,
+       so these lines have to be as far out of reach for a corpse as the ones about the larder.
+       Guarded, because the build before the register work has neither table. */
+    if (typeof RACE_TALK === 'object') eat(RACE_TALK);
+    if (typeof MIMIC_TALK === 'object') eat(MIMIC_TALK);
     R.livingLines = `${living.size} lines are written for the living`;
 
     const born = [];
