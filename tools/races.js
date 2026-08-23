@@ -193,6 +193,35 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       clean();
     }
 
+    /* ---------- 7b. TWO LINES WERE CUT, AND A SAVE THAT HAS THEM SAYS SO ----------
+       Reported: "Subraces to cut: Thinblood — seems pointless and redundant. Cellar-line —
+       boring."
+
+       A cut line is not just an absence from a table. `subOf` hands back SUB_NONE for a key
+       nobody defines, which means an old save's Thinblood alchemist loads WITHOUT ERROR and
+       silently stops being anything: no label, no learn rates, no skin, no mesh. It reads as
+       a corrupt save rather than as a line that was retired, so the second half of the cut is
+       that the bodies land somewhere. Both halves are checked, because a build that deletes
+       the table entry and nothing else passes the first one. */
+    {
+      R.linesCut = (!(SUBRACES.chimera || {}).thinblood && !(SUBRACES.homunculus || {}).cellarline)
+        ? 'the Thinblood and the Cellar-line are not in the table any more'
+        : `!! A CUT LINE IS STILL ROLLABLE (${(SUBRACES.chimera||{}).thinblood ? 'thinblood ' : ''}${(SUBRACES.homunculus||{}).cellarline ? 'cellarline' : ''})`;
+
+      const a = mk({ race: 'chimera', sub: 'houndkin' });
+      const bH = mk({ race: 'homunculus', sub: 'vatborn' });
+      const snap2 = JSON.parse(JSON.stringify(snapshot()));
+      snap2.chars.find(x => x.id === a.id).sub = 'thinblood';
+      snap2.chars.find(x => x.id === bH.id).sub = 'cellarline';
+      restore(snap2);
+      const ba = chars.find(x => x.id === a.id), bb = chars.find(x => x.id === bH.id);
+      const lbl = (c) => (c && subOf(c).label) || '';
+      R.andACutLineLandsSomewhere = (ba && ba.sub === 'scaleborn' && bb && bb.sub === 'vatborn')
+        ? `and a save carrying them comes back as ${lbl(ba)} and ${lbl(bb)} — not as a body with no line at all`
+        : `!! A CUT LINE LOADED AS ${ba ? ba.sub + '/' + (lbl(ba) || 'NO LABEL') : 'NOTHING'} AND ${bb ? bb.sub + '/' + (lbl(bb) || 'NO LABEL') : 'NOTHING'}`;
+      clean();
+    }
+
     /* ---------- 8. AND EVERY LINE IS A DIFFERENT BODY ----------
        A subrace can be given a skin colour in one line of a table and look, in that table,
        like a finished piece of work — and this is exactly what had happened. Four golems
