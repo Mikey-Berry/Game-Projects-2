@@ -23510,10 +23510,38 @@ function aimHeight(c){
    up and back along +(sin yaw, cos yaw) from what it is looking at, so the ray carries on
    away from the eye — the drift is along -(sin yaw, cos yaw). */
 function aimGround(c, out){
-  const k = aimHeight(c) / Math.max(0.08, Math.tan(camPitch));
+  /* ---------- AND THE GROUND IT LANDS ON IS NOT FLAT ----------
+     This was `h / tan(pitch)` and nothing else, which is the displacement a ray covers falling
+     `h` over LEVEL ground. `storeyHit` — the other half of the same question — already
+     iterates against the terrain, and its own comment says why: "a cave under a mountain does
+     not [stand on flat ground], and the plane came out wherever sea level would have been."
+     The correction went into one of the two and not the other, so the two halves agreed
+     exactly as long as the body stood somewhere flat.
+
+     Measured when a worldgen shift moved a probe's cave from level ground onto a mountain
+     flank: a click aimed dead centre at a body three storeys down resolved 1.9 tiles away,
+     this returned a correction of 0.6, and the 1.3 left over is wider than any catchment in
+     the file — the body could not be selected at all. Nothing about picking had changed; the
+     terrain under the test had.
+
+     The ray has to fall the body's height PLUS however far the ground has dropped away over
+     the distance it travels: `k * tan(pitch) = h + (groundY(body) - groundY(landing))`. Solved
+     by the same fixed-point `storeyHit` uses, and for the same reason — the height it is
+     corrected against is sampled where the last guess landed, so on a slope one pass is not
+     enough. Three settle it; this runs on a click, not on a frame. */
+  const h = aimHeight(c);
+  const t = Math.max(0.08, Math.tan(camPitch));
+  const sx = -Math.sin(camYaw), sy = -Math.cos(camYaw);
+  const g0 = groundY(c.x, c.y);
+  let k = h / t;
+  for(let i = 0; i < 3; i++){
+    const nk = clamp((h + (g0 - groundY(c.x + sx*k, c.y + sy*k))) / t, 0, 40);
+    if(Math.abs(nk - k) < 0.01){ k = nk; break; }
+    k = nk;
+  }
   const o = out || {x: 0, y: 0};
-  o.x = c.x - Math.sin(camYaw) * k;
-  o.y = c.y - Math.cos(camYaw) * k;
+  o.x = c.x + sx * k;
+  o.y = c.y + sy * k;
   return o;
 }
 const _aimTmp = {x: 0, y: 0};
@@ -26535,6 +26563,33 @@ cv.addEventListener('mousedown', e => {
     const liveNear = chars.filter(c => c.state!=='dead' && bodyHit(c, wx, wy, 0.8))
       .sort((a,b) => bodyGap(a, wx, wy) - bodyGap(b, wx, wy))[0];
     const corpseFirst = corpseNear && (!liveNear || bodyGap(corpseNear, wx, wy) < bodyGap(liveNear, wx, wy));
+    /* ---------- SOMEBODY ALREADY OVER ONE OF YOUR SHOULDERS ----------
+       FIRST, and the word matters. This used to sit two hundred lines down, above the ENEMY
+       branch, on the reasoning that a body being carried is still whatever faction it was and
+       would otherwise be offered EXECUTE on a person you are in the middle of rescuing. True,
+       and not far enough up: a carried body stands at the BEARER'S OWN POSITION, so the
+       squadmate branch and the friendly-local branch — both of which come first — are looking
+       at two bodies on one tile and the click goes to whichever of the pair sorts nearer.
+       That is a coin flip on a sub-tile difference, and it flipped: a click on somebody over
+       your shoulder started offering GUARD and COURT and there was no way left to put them
+       down at all.
+       The first question about a body somebody is holding is what to do with the holding, and
+       nothing else on that tile can be more specific than that. */
+    {
+      const borne = chars.find(o => o.borneBy && o.borneBy.faction === 'player' &&
+        o.state !== 'dead' && bodyHit(o, wx, wy, 0.9));
+      if(borne){
+        const bearer = borne.borneBy;
+        showCtxMenu(e.clientX, e.clientY, [
+          {label:`SET ${borne.name.toUpperCase()} DOWN`, fn:()=>{
+            bearer.bearing = null; borne.borneBy = null;
+            log(`${bearer.name} sets ${borne.name} down.`, '');
+          }},
+          {label:`${bearer.name.toUpperCase()} IS CARRYING THEM`, fn:()=>{}},
+        ]);
+        return;
+      }
+    }
     /* ---------- SOMEBODY WITH SOMETHING TO SAY, CHECKED FIRST ----------
        This used to sit three hundred lines below, and two separate branches above it ate the
        click before it ever got here. The generic townsperson check found scholars (they are
@@ -26766,26 +26821,6 @@ cv.addEventListener('mousedown', e => {
           {label: 'DISINTEGRATE' + (maimed ? ' (' + maimed + ' limbs gone)' : ''),
            fn: () => { disintegrate(nec, mine); }},
           {label: 'LEAVE IT', fn: () => {}}]);
-        return;
-      }
-    }
-    /* ---------- SOMEBODY ALREADY OVER ONE OF YOUR SHOULDERS ----------
-       Checked before the enemy branch, because a body being carried is still whatever faction
-       it was and would otherwise be offered EXECUTE by the branch below — on a person you are
-       in the middle of rescuing. The same reasoning the corpse-carry branch already uses: the
-       first question about a body somebody is holding is what to do with the holding. */
-    {
-      const borne = chars.find(o => o.borneBy && o.borneBy.faction === 'player' &&
-        o.state !== 'dead' && bodyHit(o, wx, wy, 0.9));
-      if(borne){
-        const bearer = borne.borneBy;
-        showCtxMenu(e.clientX, e.clientY, [
-          {label:`SET ${borne.name.toUpperCase()} DOWN`, fn:()=>{
-            bearer.bearing = null; borne.borneBy = null;
-            log(`${bearer.name} sets ${borne.name} down.`, '');
-          }},
-          {label:`${bearer.name.toUpperCase()} IS CARRYING THEM`, fn:()=>{}},
-        ]);
         return;
       }
     }

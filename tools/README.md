@@ -1032,6 +1032,28 @@ the truth was 45%.
   body OUT of the rule that was about to make it hostile, and a `fauna` with neither flag is
   hostile to nobody at all. `wyrm.js` reported a breath that caught nothing, about a breath
   that works.
+- **`blood = 1e6` does not mean unkillable.** `updateState` drops anybody whose VITAL PARTS
+  are at or below zero, whatever is in the veins — and `physics` calls `clearOrders` on a body
+  going down, which wipes the order under test. `melee.js` spent a year reading whether its
+  runner happened to switch target before it was knocked out. Raise the parts with the blood.
+- **A body staged with no race rolls a LINE, and a line carries stats.** Salt-cured is +3 tough
+  +3 armour, Ironscar-bred is +3 atk +3 blades, and `xpGain` reads the line's per-skill `learn`
+  as well. `survive.js`, `melee.js` and `watchers.js` all let that into a measurement and all
+  three went red the day fourteen bodies were added to worldgen a thousand lines above them, on
+  builds where nothing they test had changed. Pin `race`/`sub` — Dustborn has no bonuses and no
+  gaps — or level the pair by hand.
+- **A probe whose subject may not exist is not a probe.** `names.js` asked its golem question of
+  whatever golems worldgen happened to produce, and golems are 1.8% of what walks: one on the
+  first run, none on the second, and it reported "THERE ARE NO GOLEMS TO CHECK" about a naming
+  convention that works. Ask the mechanism directly and report the world as colour.
+- **Check what a file actually prints before counting it.** `cave.js` does not use the `***`
+  summary line the other harnesses do, so `grep -c '^\*\*\*'` returned zero for three
+  consecutive FAILING runs and they were read as passes — which sent the next hour looking for
+  a load flake that was a real defect sitting still.
+- **A yes/no cannot tell you it passed with nothing to spare.** `cave.js` asserted only that a
+  click selected the body, and it had been doing that with a residual of 0.32 tiles against a
+  catchment it blew through at 1.32. Print the margin and the thing that moves it — the slope,
+  here — and drift shows up as a number creeping rather than as an assertion flipping.
 - **A bubble must not move the simulation.** Every bark in the game spent `rnd()`, the world's
   seeded stream, so which of three lines a body shouted decided what the next arrow did — a
   whole run of combat able to diverge on a speech bubble. Nothing downstream reads which line

@@ -87,8 +87,24 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        screen coordinate below is projected through that camera, so a click aimed with `w2s`
        and then measured a moment later was aimed through one camera and checked against
        another — the answers disagreed by a tile and a half and the file reported a picking
-       failure that was really its own impatience. Wait for it to land. */
-    paused = false; await new Promise(r => setTimeout(r, 4000)); paused = true;
+       failure that was really its own impatience. Wait for it to land.
+       AND WAIT FOR IT TO STOP MOVING, NOT FOR A CLOCK TO RUN OUT. Four seconds is enough on
+       an idle box and a bet on a busy one, where the same wall clock buys a fraction of the
+       frames. The lerp is asymptotic, so any distance you accept is a distance you stop
+       inside, and a fifth of a world unit is a tile of horizontal error once the ground-plane
+       hit test divides it by tan(pitch) — enough for a click aimed dead centre to land on
+       empty dirt. Stopped is the only threshold here that means anything. */
+    paused = false;
+    {
+      await new Promise(r => setTimeout(r, 3000));   /* the world settles as well as the eye */
+      let tries = 0, last = camFY;
+      while (tries++ < 90) {
+        await new Promise(r => setTimeout(r, 120));
+        if (Math.abs(camFY - last) < 0.002) break;
+        last = camFY;
+      }
+    }
+    paused = true;
 
     R.storey = `activeFloor ${activeFloor}, camera anchor camFY ${camFY.toFixed(2)}, a storey is ${FLOOR_H}`;
     R.theStoreyFollows = activeFloor === spot.f
@@ -112,6 +128,25 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const cv = document.getElementById('game');
         cv.dispatchEvent(new MouseEvent('mousedown', { clientX: q.x, clientY: q.y, button: 0, buttons: 1, bubbles: true, cancelable: true }));
         window.dispatchEvent(new MouseEvent('mouseup', { clientX: q.x, clientY: q.y, button: 0, bubbles: true, cancelable: true }));
+      }
+      /* ---------- AND SAY HOW FAR OUT IT WAS, AND HOW STEEP THE GROUND IS ----------
+         `aClickPicksThemUp` is a yes/no, and a yes/no cannot tell you it passed with nothing
+         to spare. This file went red when a worldgen shift moved its cave from level ground
+         onto a mountain flank and the residual went from 0.32 tiles to 1.32 — wider than any
+         catchment here — because the terrain correction had been put into `storeyHit` and not
+         into `aimGround`. Printing the gap and the local slope means the next time it drifts,
+         it drifts visibly instead of flipping. */
+      {
+        const lift = storeyHit(q.x, q.y, activeFloor);
+        const g = (a, b2) => groundY(a, b2);
+        const slope = Math.max(Math.abs(g(hand.x + 2, hand.y) - g(hand.x - 2, hand.y)),
+                               Math.abs(g(hand.x, hand.y + 2) - g(hand.x, hand.y - 2))) / 4;
+        R.aim2 = lift
+          ? `the click resolves ${bodyGap(hand, lift.x, lift.y).toFixed(2)} tiles from them, on ground falling ${slope.toFixed(2)} per tile`
+          : '!! THE CLICK RESOLVED ONTO NO STOREY AT ALL';
+        R.andTheSlopeDoesNotMoveIt = !lift || bodyGap(hand, lift.x, lift.y) < 0.8
+          ? 'and the slope under them does not move where the click lands'
+          : `!! ON A SLOPE OF ${slope.toFixed(2)} A CENTRED CLICK RESOLVES ${bodyGap(hand, lift.x, lift.y).toFixed(2)} TILES OFF`;
       }
       R.aClickPicksThemUp = selected.includes(hand)
         ? 'clicking where they are drawn selects them, three storeys under a mountain'
@@ -185,7 +220,19 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       camX = camSX = gx; camY = camSY = gy;
       /* the anchor LERPS, and it is coming back from thirteen tiles underground — long
          enough to arrive, or this measures the journey rather than the destination */
-      paused = false; await new Promise(r => setTimeout(r, 4000)); paused = true;
+      /* polled for the same reason as the descent above: a fixed wait measures the journey
+         rather than the destination the moment the box is busy */
+      paused = false;
+      {
+        await new Promise(r => setTimeout(r, 3000));
+        let tries = 0, last = camFY;
+        while (tries++ < 90) {
+          await new Promise(r => setTimeout(r, 120));
+          if (Math.abs(camFY - last) < 0.002) break;
+          last = camFY;
+        }
+      }
+      paused = true;
       selected = [];
       const q = w2s(surf.x, surf.y, charY(surf) + 0.9);
       const cv = document.getElementById('game');

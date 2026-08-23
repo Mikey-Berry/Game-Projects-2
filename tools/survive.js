@@ -37,7 +37,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        way, and `splice(indexOf(x), 1)` on an absent element deletes the LAST element of the
        array instead — which in an earlier harness quietly deleted the player's own body. */
     const born = [];
-    const mk = (f, o, x, y) => { const c = makeChar('P', f, x, y, o); c.state = 'ok'; chars.push(c); born.push(c); return c; };
+    /* ---------- PIN THE LINE, OR THE ROLL IS PART OF THE MEASUREMENT ----------
+       `makeChar` with no race rolls a human subrace, and a line changes how hard somebody is
+       to kill — Salt-cured is +3 tough +3 armour, Grave-bred is neither. A hundred and
+       forty-four bodies through a twelve-round skirmish is a different mix of those every time
+       the world's PRNG stream moves, and this file went red at 48% against a 50% floor on a
+       build where nothing about bleeding had changed: 16 of 43 died before, 25 of 48 after,
+       both of them correct. Dustborn has no bonuses and no gaps, which is what a question
+       about the BLEED MODEL wants under it. */
+    const mk = (f, o, x, y) => { const c = makeChar('P', f, x, y, Object.assign({ race: 'human', sub: 'dustborn' }, o)); c.state = 'ok'; chars.push(c); born.push(c); return c; };
     const clean = () => { for (const c of born) { const i = chars.indexOf(c); if (i >= 0) chars.splice(i, 1); } born.length = 0; };
 
     /* ---------- 1. THE SKIRMISH: six of yours against six of theirs ----------

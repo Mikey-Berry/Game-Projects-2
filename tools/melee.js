@@ -36,7 +36,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const born = [];
     /* makeChar does not push to `chars`; anything that pushes must remove itself, and
        splice(indexOf(x), 1) on an absent element deletes the LAST element instead. */
-    const mk = (f, o, x, y) => { const c = makeChar('X', f, x, y, o); c.state = 'ok'; chars.push(c); born.push(c); return c; };
+    /* ---------- PIN THE LINE, OR THE ROLL IS PART OF THE MEASUREMENT ----------
+       `makeChar` with no race rolls a human subrace, and a line carries stats: Ironscar-bred
+       is +3 atk +3 blades, Orchard-bred is -1 atk. Six of those on each side is a different
+       fight every time the world's PRNG stream moves — this file went red the day fourteen
+       bodies were added to worldgen a thousand lines above it, on a build where nothing about
+       melee had changed at all. Dustborn is the line with no bonuses and no gaps, which is the
+       only honest control for a question about the COMBAT and not about the draw. */
+    const mk = (f, o, x, y) => { const c = makeChar('X', f, x, y, Object.assign({ race: 'human', sub: 'dustborn' }, o)); c.state = 'ok'; chars.push(c); born.push(c); return c; };
     const clean = () => { for (const c of born) { const i = chars.indexOf(c); if (i >= 0) chars.splice(i, 1); } born.length = 0; };
 
     /* open ground, or the picket line ends up inside a wall and nobody meets anybody */
@@ -51,16 +58,32 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        A runner, a quarry ten tiles away, and six hostiles standing between them. Count the
        passing cuts the runner takes and whether it ever turns on anybody. */
     const charge = (manual) => {
+      /* ---------- BLOOD IS NOT THE ONLY WAY TO GO DOWN ----------
+         `blood = 1e6` was meant to make these bodies unkillable so the file could count cuts
+         instead of deaths, and it does not: `updateState` drops anybody whose VITAL PARTS are
+         at or below zero, whatever is in the veins. Six katana-armed bandits put the runner on
+         the ground in about ninety ticks, `physics` calls `clearOrders` on a body going down —
+         which wipes the order this whole case is about — and the loop then skips it forever
+         because it is no longer 'ok'. So `orderNotSuicide` was reading whether the runner
+         happened to switch target BEFORE it was knocked out, which is a coin flip on a chaotic
+         seven-hundred-tick fight: it flipped the day fourteen bodies were added to worldgen a
+         thousand lines above, on a build where nothing about melee had changed.
+         The parts go up with the blood. Now the fight runs to the end and the question is the
+         one in the assertion. */
+      const unkillable = (c) => {
+        c.blood = c.maxBlood = 1e6;
+        for (const k of PARTS) { c.parts[k].max = 1e6; c.parts[k].hp = 1e6; }
+      };
       const runner = mk('player', { atk: 18, def: 14, tough: 14, ath: 10, blades: 20 }, S.x, S.y);
       runner.weapon = 'w_kat'; runner.armor = 'a_lea';
-      runner.blood = runner.maxBlood = 1e6;          /* we are counting cuts, not deaths */
+      unkillable(runner);                            /* we are counting cuts, not deaths */
       const quarry = mk('bandit', { atk: 4, def: 8, tough: 40, ath: 2 }, S.x + 10, S.y);
-      quarry.blood = quarry.maxBlood = 1e6;
+      unkillable(quarry);
       const line = [];
       for (let i = 0; i < 6; i++) {
         const o = mk('bandit', { atk: 16, def: 12, tough: 12, ath: 8, blades: 15 },
           S.x + 4 + (i % 2) * 0.9, S.y - 2.5 + i * 1.0);
-        o.weapon = 'w_kat'; o.blood = o.maxBlood = 1e6;
+        o.weapon = 'w_kat'; unkillable(o);
         line.push(o);
       }
       runner.target = quarry; runner.targetManual = manual;

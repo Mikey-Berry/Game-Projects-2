@@ -91,13 +91,26 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        The clearest case in the report and the one worth naming out loud: a golem was never
        given a name, it was given a LABEL by an owner who has been dead for centuries. */
     {
-      const gs = byRace.golem || [];
+      /* ---------- A GOLEM MAY SIMPLY NOT EXIST TODAY ----------
+       Golems are 1.8% of what walks (races.js measures it), so whether one turns up in a given
+       world is a coin flip — one on the first run of this file and none on the second, which
+       reported "THERE ARE NO GOLEMS TO CHECK" about a naming convention that works perfectly.
+       A probe whose subject may not exist is not a probe. So the CLAIM is asked of the namer
+       directly, twelve times, and whatever golems the world happens to be carrying are
+       reported beside it as colour rather than as the test. */
       const pool = ownPool('golem');
-      const ok = pool && gs.length > 0 && gs.every(c => pool.has(given(c.name)));
-      const human = gs.filter(c => humanGiven.has(given(c.name)));
-      R.andAGolemsNameIsALabel = ok
-        ? `and ${gs.length} golems are called things like "${gs.slice(0, 2).map(c => c.name).join('", "')}"`
-        : `!! ${human.length}/${gs.length} GOLEMS HAVE HUMAN GIVEN NAMES${gs.length ? ' e.g. "' + gs[0].name + '"' : ' (AND THERE ARE NO GOLEMS TO CHECK)'}`;
+      const made = [];
+      for (let i = 0; i < 12; i++) made.push(pickNameFor(i % 2 ? 'f' : 'm', true, 'golem'));
+      const wrong = pool ? made.filter(n => !pool.has(given(n))) : made;
+      const gs = byRace.golem || [];
+      R.andAGolemsNameIsALabel = wrong.length === 0
+        ? `and twelve golems out of the namer are called things like "${made.slice(0, 2).join('", "')}"` +
+          (gs.length ? ` — and the ${gs.length} in this world are ${gs.map(c => '"' + c.name + '"').join(', ')}` : ' (this world happens to have none walking about)')
+        : `!! ${wrong.length}/12 GOLEM NAMES CAME OUT OF SOMEBODY ELSE'S POOL: ${wrong.slice(0, 3).join(', ')}`;
+      /* and none of them is a human given name, which is the actual complaint */
+      R.andNotOneOfThemIsBoskDrybones = made.every(n => !humanGiven.has(given(n)))
+        ? 'and not one of the twelve is a name a person in this world would answer to'
+        : `!! A GOLEM IS CALLED ${made.find(n => humanGiven.has(given(n)))}`;
     }
 
     /* ---------- 4. AND A TOWN LEADER IS NAMED FOR WHAT IT IS ----------
