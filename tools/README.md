@@ -97,6 +97,14 @@ the truth was 45%.
 | `moves.js` | **Visual.** One row per MOVE, which is a different question from `swing.js`'s one row per weapon: that one shows a nodachi and a katana swinging at different speeds, this one shows whether the six strokes read as six strokes. It replaces `window.pickMove` from the page (a top-level function declaration in a classic script is a property of `window`) and forces each key in turn. It is what showed that slash, overhead and thrust — 85% of every swing at low skill — all wound up with the blade straight over the head, which is exactly "I only ever see the overhead swipe": the numbers said the strokes were varied, and the numbers were right and irrelevant. `node tools/moves.js w_kat out.png [slash,thrust,...]` |
 | `races.js` | Races and the lines inside them. A subrace is four mechanisms wearing one name — starting stats, a per-skill learning rate, damage-type vulnerability, and overrides for speed, lifespan, skill ceiling and whether the line can hold a gift — and every one of them is the kind of thing that can be declared in a table, read perfectly, and never once reach the sim. So none of it is read off the table: experience goes through the real `xpGain` and the two bodies are compared after 400 points, damage goes through the real `mitigate`, speed through `moveSpeed`. It also pins the migration — a body carrying `race:'scaleborn'` out of a pre-rework save must come back as a chimera of the scaleborn line and not as a human. Diagnosing its first red run turned up the actual bug: `makeChar` rolled the line off the raw `o.race`, and almost nothing in this world is created with an explicit race, so townsfolk, guards, bandits and children all became raceless humans with no line at all. The feature existed in the character creator and nowhere in the game. |
 | `corpses.js` | How long a corpse actually lasts in real minutes at each game speed, how many things are competing for it, and what a body is worth once you have one. Answers "am I imagining that bodies vanish too fast" with a number. |
+| `pace.js` | Whether a party given ONE order arrives as a party. One order handed to five bodies was five independent walks — measured at 7.1 tiles of spread on average and 13.3 at the worst on a forty-tile march, so the fast one met whatever was at the far end alone. Nothing in the suite could see it because every unit involved was doing precisely what it was told. It asserts BOTH halves, because pacing everybody to nearly zero is the cheap way to pass the first: the party holds together (1.6 tiles) **and** the march still takes the slowest member's honest time (14s against 13s) rather than a crawl. Three controls that only do real work once the band exists — a lone body is never slowed, a body in contact walks at its own speed (a pace band that survives contact is the reported bug wearing a hat), and a body sent off on its own leaves the band. |
+| `voices.js` | Who is allowed to say what. A harness cannot judge whether a line is in character; what it CAN do is refuse to let one table be read by two kinds of body. Every string written for the living is flattened into a set, then four hundred barks are drawn from a soul-bound risen, a lieutenant and a lich and checked against it — 1200 of 1200 came out of the living tables on the build before. A fourth assertion stops the cheap fix of one shared undead pool, because a lich and a stitched cadaver do not sound alike, and two controls hold the other end: the living are untouched, and a risen with nobody in it is still refused the floor. |
+| `pain.js` | What comes out of a body that has just lost an arm — measured at the site, with a real stalker, a real cut and whatever ends up in the bubble, rather than by reading a table. `say(d, 'AAAGH!')` sat in the severance branch of `applyDamage` with no test of any kind on it, so a Watcher screamed a human scream in English in capitals. It also holds the two things that would make the fix cosmetic: the eldritch noise has to RENDER (the bubble is canvas `fillText` at 10px monospace and an unknown codepoint draws as a box, so every gaunt glyph is checked against Latin-1), and a thing with no words has to say nothing rather than fall back to the human line. Plus one assertion with nothing to do with the report: **a speech bubble must not move the simulation** — 200 barks for zero movement of `seed`. |
+| `names.js` | Whose name it is. Measured in a live world off the bodies worldgen actually built, because the fault was never in the namer: the race was rolled AFTER the name in three places and patched on afterwards in a fourth, so a golem was called Bosk Drybones and every homunculus in Copperhold had a family name. It also pins the invariant this file has been bitten by four times — **building a body costs the same number of draws whatever the body is** — directly off `seed` rather than off a fingerprint: fifty full names cost the same on all six races and a bare given name costs less. Two probe faults are written into it: `Warden`/`Pauper` are ROLE LABELS deliberately shared, and one-name people are supposed to collide; and a probe that reads only the streets meets three homunculi and no golems at all, because worldgen puts the made races behind a bar waiting to be paid. |
+| `hosts.js` | The two spells that step around the binding — Old Bones and Mass Reanimation — and what they cost INSTEAD, which is the only interesting question about them. "Does it raise something" is not a test; a spell that raises free and keeps free is the end of the dark art's entire cost model and would read as nothing but a bigger army. So: the clock actually runs out (24 game-hours, and nothing left to harvest — a working that ran out is not a death), the head room is actually taken (65% of the pool, and letting go dismisses them), the rite can actually be interrupted, and neither puts a permanent host on the binding. That last one found the real bug: `risenLoad` sums `(x.bindWeight || 1)` and both spells set it to 0, so twenty propped bodies read as twenty slots off a ceiling of seven — the whole cost model inverted, invisible to any outcome test. |
+| `wyrm.js` | An imperfect dragon, and the three claims about it that could quietly be false while the creature worked perfectly well. The sweep is the one that had to be BUILT: the cleave that catches bystanders is gated `if(wpn && !wpn.range)` — it comes off the weapon — so everything in the game that fights with what it IS struck one body per blow however large it was, and six men could stand shoulder to shoulder in front of a house-sized animal and take it in turns. Measured **by difference**: twelve blows at one man in a rank of five reach five of them with the sweep and one without, because an absolute number passes on any build where the thing merely hits hard. The breath is checked as a LINE (two bodies outside the bearing take nothing, so stepping aside is the answer), rarity as distance and not just count, the hoard against the richest thing already in the game, and the rig against the grazer's. Three probe faults in it, all named in the file: `neutral = false` takes a body OUT of the rule that would have made it hostile; `syncChars` builds rigs for what is on screen and nothing else; and a size bound that passed by 2% is not a bound. |
+| `guild.js` | The Mercenary's Guild, and specifically the one clause that makes it a guild rather than a gang. A faction is almost impossible to add WRONG in a way anything notices — the yard stands, the people are in it, the screen opens — so the weight is on **never against each other**: two towns at war, both paying the same organisation, and every lever that could put the two contingents on opposite sides pulled in turn, including `provoked`, which is how a neutral becomes an enemy everywhere else in this game. The control is the other half — they still go for the enemy's ordinary watch, since a charter that made them harmless would pass all of it. Licensing had to be able to PRODUCE the situation it forbids, which took a second pass: a town at war fights in two places and they are different factions, so both contingents in one faction could never meet and the rule would have held vacuously. |
+| `trades.js` | Whether a town looks like it is doing something. The economy worked perfectly, which was the problem: a bookkeeping pass over people standing anywhere, run at the DAY ROLLOVER — midnight. Measured on the build before: 3 of 64 shifts in a working day and none anywhere near a workplace, because there were no workplaces. It checks that the places exist and are recognisable (each prop unique in the world), that every trade has somewhere to be and the outdoor ones are outdoors, that people GO, and that the making happens there in daylight. The control is the important one and it is asserted **exactly rather than statistically**: shifts against worker-days (0.62 against the 0.70 the productive roll has always paid), because counting SHELVES moves by a third on plague and war alone — 232 units on one build and 163 on the other, both perfectly correct. |
 
 ### Balance
 
@@ -985,6 +993,51 @@ the truth was 45%.
   filter and still won the tap — and the file reported the touch layer dead about a game
   behaving exactly as designed. Call `bodyHit` itself. A copied constant is correct exactly
   until somebody improves the original.
+- **A hand-copied LIST is the same fault as a hand-copied constant.** `raise.js` carried
+  `['houndkin', 'oxbound', 'thinblood', 'scaleborn']` and went red the day one of those lines
+  was cut — reporting "A RAISED CHIMERA LOSES ITS LINE" about a line that no longer exists,
+  which is a probe telling you about itself. `Object.keys(SUBRACES.chimera)`.
+- **A margin of 2% is not a bound.** `wyrm.js` first passed its own size check at 11.75 against
+  a ceiling of 12, and `mimics.js` had passed `sx < wx * 0.99` by 0.001 for a year on a clause
+  that was measuring nothing at all. If the number the probe reports sits inside a hair of the
+  threshold, either the threshold is wrong or the thing is. Move one until there is real air
+  between them, and say in the output how much.
+- **Measure what the game stores, not what the table says.** The succubus `build` carries `sy`
+  and does NOT carry `sx`, so her `baseSX` is drawn from exactly the same distribution a plain
+  woman's is — the clause asserting she was narrower had never once measured narrowness. The
+  narrowing is real and lives in `sh`, which is never stored on the rig at all: it is spent
+  placing the SHOULDER ANCHORS. Reading those gives 8.0% on every build with no noise on it.
+- **`x || 1` is a trap the moment 0 becomes a legal value.** `risenLoad` sums
+  `(x.bindWeight || 1)`, and both temporary-host spells set `bindWeight = 0` — so twenty
+  propped bodies read as twenty slots off a ceiling of seven, inverting the whole cost model
+  of the dark art. No outcome test could see it: the army works, the spell works, the ceiling
+  is simply gone. Fixed by asking the question that was actually being asked (`propped`) at the
+  three places the ceiling lives, rather than by chasing `|| 1` through eleven call sites.
+- **A rule the situation cannot arise for is not a rule.** The Guild's charter — a guild oath
+  never fights a guild oath — held perfectly in the first draft of `guild.js` because both
+  licensed contingents were faction `town` and `hostile()` returns false on the first line for
+  two of the same faction. A town at war fights in TWO places and they are different factions;
+  until one company marched and the other held its gate, the assertion was true and empty.
+- **`HOUR_SEC` is 8.** 240 real seconds is thirty game-hours, not four minutes of town life.
+  `trades.js` ran a town past dusk and through the next midnight and then asked why nobody was
+  at work. Any probe that reasons about the CLOCK — working hours, a day's wage, a spell that
+  lasts three days — has to convert.
+- **A probe that puts a crowd on one tile is measuring `separate`, not the feature.**
+  `trades.js` pointed eight smiths at one doorway; they arrived, were shoved back out past
+  their own post radius, walked back, and were shoved out again forever. The game was right and
+  the design was wrong, and the fix belonged in the game: each of them gets its own square
+  metre, drawn off its id so it is the same one every morning.
+- **`provoked`, not `neutral = false`.** `hostile()` reads the two as a pair — "a neutral that
+  has been started holds the grudge against the player" — so clearing the neutral flag takes a
+  body OUT of the rule that was about to make it hostile, and a `fauna` with neither flag is
+  hostile to nobody at all. `wyrm.js` reported a breath that caught nothing, about a breath
+  that works.
+- **A bubble must not move the simulation.** Every bark in the game spent `rnd()`, the world's
+  seeded stream, so which of three lines a body shouted decided what the next arrow did — a
+  whole run of combat able to diverge on a speech bubble. Nothing downstream reads which line
+  came out, so nothing downstream should pay for it: `vpick` draws on `vrnd`, the renderer's
+  counter, which until then drew nothing but dust motes. `pain.js` asserts it at 200 barks for
+  zero movement of `seed`.
 
 ## HOW LONG THE SUITE TAKES, AND WHY
 
