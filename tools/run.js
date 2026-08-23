@@ -44,7 +44,7 @@ const ALL = [
   'boot.js', 'origin.js', 'towncheck.js', 'fight.js', 'roundtrip.js', 'save.js', 'walls.js',
   'world.js', 'host.js', 'raise.js', 'kitrot.js', 'craftwork.js', 'bound.js', 'descend.js', 'cave.js', 'opaque.js', 'guns.js', 'arrow.js', 'gunnery.js', 'roads.js', 'aid.js',
   'reach.js', 'ceiling.js', 'study.js', 'carry.js', 'jail.js', 'mishap.js', 'command.js', 'menus.js', 'rightclick.js', 'clicks.js', 'rites.js', 'notes.js', 'board.js', 'chores.js', 'charnel.js', 'cloth.js',
-  'threads.js', 'beasts.js', 'curse.js', 'siege.js', 'watchers.js', 'lieu.js', 'wanderers.js', 'survive.js', 'melee.js', 'press.js', 'patrol.js', 'pace.js', 'flank.js', 'kiting.js', 'lich.js', 'heads.js',
+  'threads.js', 'beasts.js', 'curse.js', 'siege.js', 'watchers.js', 'lieu.js', 'wanderers.js', 'survive.js', 'melee.js', 'press.js', 'patrol.js', 'pace.js', 'flank.js', 'kiting.js', 'lich.js', 'voices.js', 'heads.js',
   'kit.js', 'wepsoak.js', 'races.js', 'mimics.js', 'pins.js', 'mobile.js', 'start.js', 'touch.js', 'terrain.js', 'axes.js',
   'civics.js',
 ];

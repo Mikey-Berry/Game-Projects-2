@@ -2820,7 +2820,17 @@ function deed(kind, mag, where){
     const after = regardBand(c.regard);
     if(after.key !== before.key && after.tell){
       log(`${c.name} ${after.tell}.`, after.at < 0 ? 'bad' : 'good');
-      if(after.at <= -60 || after.at >= 60) say(c, after.at < 0 ? '...' : 'I am with you.');
+      if(after.at <= -60 || after.at >= 60){
+        /* THE TURNING POINT, IN THE RIGHT VOICE. 'I am with you' out of a stitched cadaver is
+           the report in one line. */
+        const vv = voiceOf(c);
+        say(c, after.at < 0
+          ? (vv === 'lich' ? 'I am revising my estimate of you.' : '...')
+          : vv === 'lich' ? 'I have decided about you. That is not a thing I do often.'
+          : vv === 'lieutenant' ? 'I would have followed you warm, too.'
+          : vv === 'risen' ? 'I hold. I keep holding.'
+          : 'I am with you.');
+      }
     }
   }
 }
@@ -2849,7 +2859,10 @@ function regardTick(){
       if(v <= -60 && !c.boundTold){
         c.boundTold = true;
         log(`${c.name} would leave you if leaving were something it could do.`, 'bad');
-        say(c, 'You made me. That is the whole of it.');
+        /* NOBODY MADE A LICH. It made itself, and it stays because the arrangement still
+           suits it — which is a different grievance and has to sound like one. */
+        say(c, c.lich ? 'I stay because it suits me. Do not mistake that for anything else.'
+                      : 'You made me. That is the whole of it.');
       }
       if(v > -35) c.boundTold = false;
       continue;
@@ -3102,7 +3115,7 @@ function situationsFor(c){
   if(risen >= 5 && risen > mine - risen) out.push('manyRisen');
   return out;
 }
-function situationBark(c){
+function situationBark(c, table){
   const hits = situationsFor(c);
   if(!hits.length) return null;
   /* the most pressing first, but not deterministically — a squad that always says the same
@@ -3110,14 +3123,130 @@ function situationBark(c){
   hits.sort((a, b) => SITU_ORDER.indexOf(a) - SITU_ORDER.indexOf(b));
   const top = hits.slice(0, 2).filter(k => k !== c.lastSitu);
   const key = (top.length ? pick(top) : hits[0]);
-  const tab = SITU_TALK[key]; if(!tab) return null;
+  const tab = (table || SITU_TALK)[key]; if(!tab) return null;
   const own = tab[c.conviction];
   const pool = (own && own.length && rnd() < 0.6) ? own : tab.any;
   if(!pool || !pool.length) return null;
   c.lastSitu = key;
   return pick(pool);
 }
+/* ============================================================ WHO IS TALKING
+   ---------- THE REGISTER, AND WHY IT IS NOT THE STAT ----------
+   Reported: "Some undead speak as regular party members. Intelligence should not necessarily
+   have them to that level — at the very least the lines should be double checked and
+   confirmed as realistic when coming from undead. (Liches are an exception — although they
+   should have some unique dialogue too.)"
+
+   The gate was `if(c.undead && !c.lich && !c.lieutenant && !c.minded) continue;` — the right
+   instinct, and it stopped exactly one thing: a nameless skeleton chatting. Everything it let
+   through then read the SAME TABLES a living recruit reads, so a soul-bound risen told you it
+   could not remember the last thing it ate, that it did not come out here for the money, and
+   that it had set more bones this month than in the two years before it. Every one of those
+   lines is fine. None of them is sayable by a corpse.
+
+   Having a mind is not the same as having a life, which is the whole of the correction. There
+   are four registers now and they are four different things to be:
+
+     person      the living. What was already written.
+     risen       held together by somebody else's will, and knows it. Fragments, present
+                 tense, no opinions about wages or mothers. It is not stupid. It is thin.
+     lieutenant  was somebody, remembers being somebody, and the feeling that went with the
+                 memory is gone. Whole sentences, flat.
+     lich        the exception the report asks for. The intellect came through intact and the
+                 rest was put down on purpose, so this one talks better than anybody living
+                 and about entirely different things.
+
+   `voiceOf` is shared with the pain and friendly-fire barks — one body has one voice, and a
+   thing that cannot say 'I did not come out here for the money' cannot scream 'AAAGH!'
+   either. */
+function voiceOf(c){
+  if(!c) return 'person';
+  if(c.lich) return 'lich';
+  if(c.gauntKind || c.faction === 'gaunt') return 'gaunt';
+  if(c.undead) return c.lieutenant ? 'lieutenant' : 'risen';
+  if(c.beast) return 'beast';
+  return 'person';
+}
+/* Held up by somebody else's will. Present tense, because there is not much else left. */
+const RISEN_TALK = [
+  'The binding holds.',
+  'I am still here. That is the whole report.',
+  '...I was told to. So I did.',
+  'It does not hurt. I keep checking.',
+  'The hands work. Ask the hands.',
+  'I had the word for this a moment ago.',
+  'Cold. Or not cold. One of the two.',
+  'Something of me is still walking toward a door.',
+  '...whose hands are these.',
+  'You said stand. I am standing.',
+  'I remember a room. Not which room.',
+  'Tell me again and I will do it again.',
+  'There was a name. It was mine.',
+  'I do not sleep. I stop.',
+  'The rot is at the elbow. I am telling you, not complaining.',
+  'I do not mind the dark. There is nothing in me for it to get at.',
+];
+/* Somebody who lived beside you and died. The memories came back whole and the feeling that
+   went with them did not, which is a worse thing than forgetting and reads as calm. */
+const LIEUTENANT_TALK = [
+  'I remember dying. It was quicker than I expected.',
+  'I know what I am. You do not have to work up to it.',
+  'I was better at this when I was warm.',
+  'The face in the water is not the one I had.',
+  'Ask me anything from before. It is all still filed.',
+  'I do not resent it. I have checked. There is nothing in there to resent with.',
+  'I kept my own name. It is the only thing I asked for.',
+  'You called me back. I have decided not to hold it against you.',
+  'They buried me properly. Somebody went to the trouble.',
+  'I remember caring about that. I remember it the way you remember weather.',
+  'Do not thank me. I am not being kind. I am doing a thing.',
+  'I could put a blade through the man I was and not blink. That is the part that would have frightened him.',
+];
+/* THE EXCEPTION. A lich gave up warmth, sleep and the taste of bread and kept everything
+   else, so it is the best-spoken thing in your camp and none of what it says is about today. */
+const LICH_TALK = {
+  warm: ['You are the most interesting thing to happen to me in a very long time. Do not waste it.',
+         'I have outlived four kingdoms and not one of them was this entertaining.',
+         'I do not need you. I have decided to want this, which is rarer and worth considerably more.'],
+  ok:   ['I gave up warmth, sleep and the taste of bread. I would do it again before breakfast, if I still had breakfast.',
+         'Time is the only currency I hold in quantity. Ask me for some.',
+         'The dead are not sad. They are finished. I am neither.',
+         'I remember being frightened of all this. I remember it clearly and I cannot reproduce it.',
+         'Everyone I ever argued with has been wrong for two hundred years and cannot be told.',
+         'I keep the mind and put down the rest. People hear that and assume the mind was the cheap half.'],
+  bad:  ['You are being careless, and I am the one who has to be here afterwards.',
+         'I have watched better than you make exactly this mistake. I did not warn them either.',
+         'I will still be standing here when this is finished. Consider what that means for you.'],
+  awful:['My phylactery is not in this camp. I mention it only so that we understand each other.',
+         'I have been patient for two centuries. I can be patient about you.',
+         'You are a chapter. I have had chapters before.'],
+};
+/* and the handful of situations a lich would actually remark on. Everything else falls
+   through to the lines above, which is correct — it does not starve and it is not hurt. */
+const LICH_SITU = {
+  raised:    {any:['The rite is sound. Inelegant, but sound.',
+                   'Another one up. They do not mind, whatever the devout tell you.']},
+  manyRisen: {any:['You are keeping a great many of them. There is an arithmetic to this you have not asked me about.']},
+  lost:      {any:['They are gone. I could fetch them back. You would not care for what came.']},
+  fought:    {any:['Nothing in that was new to me. Take it as neither praise nor insult.']},
+  gaunt:     {any:['I know what those are. I knew before the Church invented a politer word for it.']},
+  down:      {any:['Somebody is in the dirt. I am told this is the moment one is meant to move.']},
+  hurt:      {any:['A piece of me is broken. It will keep. Everything about me keeps.']},
+};
 function squadBark(c){
+  const v = voiceOf(c);
+  if(v === 'lich'){
+    /* the situational overlay is thinner than a living squad's on purpose — most of what a
+       lich has to say is not about this week */
+    if(rnd() < 0.5){ const s = situationBark(c, LICH_SITU); if(s) return s; }
+    const pool = LICH_TALK[convBand(c.regard || 0)] || LICH_TALK.ok;
+    return pick(pool);
+  }
+  /* No situational table for the risen at all. Half of SITU_TALK is the larder and the other
+     half is a wound, and a corpse has no view on either — 'I need this looked at, soon would
+     be good' is the exact line the report was about. */
+  if(v === 'lieutenant') return pick(LIEUTENANT_TALK);
+  if(v === 'risen') return pick(RISEN_TALK);
   /* the situation gets first refusal, but not every time: a squad that only ever narrates
      the larder never tells you what it thinks of you, and that was the whole point of them */
   if(rnd() < 0.7){ const s = situationBark(c); if(s) return s; }
