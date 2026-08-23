@@ -3659,6 +3659,83 @@ function spreadNews(){
     }
   }
 }
+/* ============================================================ THE MERCENARY'S GUILD
+   "Right now, I see a lot of random wanderers — dust mages, destruction alchemists, and
+   necromancers wander the wastes freely. The mercenary's guild is a place where they unite
+   under one banner, taking jobs freely. The organization itself is neutral by design, but may
+   license out soldiers to individual cities for warfare, though never against each other. On
+   the map, they have their own little bastion similar to the paladins, and players can hire a
+   crew for big jobs if needed. (Paid per day, maybe?)"
+
+   THE GUILD IS THE ANSWER TO A QUESTION THE MAP WAS ALREADY ASKING. There were nine or ten
+   very dangerous people walking the roads alone — flamewrights, dusters, grave-robbers — and
+   nothing connecting any of them. A yard with a banner over it is what people like that do
+   about a world with no law in it, and it costs nothing to believe.
+
+   NEUTRAL BY DESIGN, AND THE DESIGN IS ONE RULE: a guild oath never fights a guild oath.
+   That is what makes the licensing possible — Ironscar can hire a company and so can
+   Copperhold, and when the two armies meet the guild contingents stand and look at each
+   other. It is also the only part of this that could be quietly untrue while everything else
+   worked, so it is the thing tools/guild.js measures hardest.
+
+   AND YOU PAY THEM DAILY, which is the whole difference between a guild crew and a recruit.
+   A recruit is somebody who joined; a crew is somebody who is being paid, and the moment the
+   payment stops they walk back to the hall and the Guild remembers. */
+let guild = null;                       /* {x, y, walls:[], rep} */
+let guildRep = 0;                       /* -100..100, what the Guild makes of you */
+const GUILD_R = 22;
+/* the daily rate for one blade, before standing. Deliberately steep against a recruit's
+   one-off fee: a crew is for a job, not for a career. */
+const GUILD_DAY = 120;
+function guildRate(mult){
+  /* standing is a discount and never a surcharge — a Guild that charges you more for being
+     unreliable is a Guild that has decided not to work with you, which is what refusal is
+     for. */
+  return Math.round(GUILD_DAY * (mult || 1) * (1 - clamp(guildRep, 0, 100) / 250));
+}
+function guildCrew(){ return chars.filter(c => c.guildHire && c.state !== 'dead' && c.faction === 'player'); }
+function guildWageDue(){ return guildCrew().reduce((s, c) => s + (c.wage || 0), 0); }
+/* THE OATH. Anybody the Guild put in the field carries it — your crew, and the contingents it
+   licenses to the towns — and `hostile` reads it before anything else. */
+function guildOath(c){ return !!(c && (c.guildHire || c.guildLicensed || c.faction === 'guild')); }
+/* ---------- WHAT A CITY BUYS WHEN IT GOES TO WAR ----------
+   A contingent under licence: it wears the town's colours, marches with the town's levy, and
+   carries the oath — so `hostile` will not put it against the contingent the other side hired.
+   Declared here rather than beside the war tick because worldgen is a long way above that and
+   a `const` in its temporal dead zone takes the whole script with it. */
+function licenseCompany(town, against, marching){
+  if(!guild || !town) return 0;
+  const n = ri(2, 4);
+  const made = [];
+  const ti = towns.indexOf(town), ai = against ? towns.indexOf(against) : -1;
+  /* ---------- WHERE A LICENSED COMPANY ACTUALLY STANDS ----------
+     A town at war does its fighting in TWO places and they are different factions: the levy
+     that marches is `warband`, the watch that holds the wall is `town`. A contingent put only
+     in the second could never meet the other side's contingent at all, which would make the
+     whole charter unfalsifiable — the rule would hold because the situation could not arise.
+     So a company marches if the town is sending an army and holds the gate otherwise. */
+  for(let i = 0; i < n; i++){
+    const p = findOpenNear(town.x + ri(-6, 6), town.y + ri(-6, 6), 5);
+    const lvl = ri(18, 26);
+    const c = makeChar(pickName(true), marching ? 'warband' : 'town', p.x, p.y,
+      {atk:lvl, def:lvl, tough:lvl-2, ath:6, armr:24, guard: marching ? null : {x:p.x, y:p.y},
+       weapon: i === 0 ? 'w_xbow' : rnd()<0.5 ? 'w_kat' : 'w_sw', armor:'a_lea'});
+    c.homeTown = town;
+    c.merc = true;
+    c.guildLicensed = true;      /* the oath travels with them — see hostile() */
+    c.licensedAgainst = against || null;
+    if(marching){
+      c.warF = ti; c.warT = ai;
+      c.armyEnds = day + 10;
+      if(against) c.attackMove = {x: against.x, y: against.y};
+    }
+    c.loot = ri(60, 160);
+    chars.push(c); made.push(c);
+  }
+  worldEvent('guild', town.x, town.y,
+    `${town.name} has taken a company off the Guild's books. Somebody in that yard is being paid by both sides of this.`);
+  return made.length;
+}
 const BASTION_R = 32;     /* territory radius: intruding necromancers get hunted */
 (function placeBastion(){
   let tries = 0;
@@ -3710,6 +3787,79 @@ const BASTION_R = 32;     /* territory radius: intruding necromancers get hunted
       g.loot = ri(150,300);
       chars.push(g);
     }
+  }
+})();
+/* ---------- THE GUILD YARD ----------
+   Deliberately NOT the Bastion. The Bastion is a fortress with a gate and an order behind it;
+   this is a walled YARD with the gate standing open, because the Guild is not defending
+   anything — it is a place to be found. Sited away from the Bastion as well as from the towns,
+   since the two of them being neighbours would be a story neither of them is having. */
+(function placeGuild(){
+  let tries = 0;
+  while(!guild && tries++ < 8000){
+    const x = ri(20, W-20), y = ri(20, H-20);
+    if(!areaClear(x-6, y-6, 12, 12)) continue;
+    if(towns.some(t => dist(t.x,t.y,x,y) < 55)) continue;
+    if(bastion && dist(bastion.x, bastion.y, x, y) < 90) continue;
+    if(dist(startTown.x, startTown.y, x, y) < 55) continue;
+    guild = {x, y, walls:[]};
+    /* a low ring with the south side open — a yard, not a keep */
+    for(let i=-6;i<=6;i++) for(let j=-6;j<=6;j++){
+      if(Math.abs(i)!==6 && Math.abs(j)!==6) continue;
+      if(j===6 && Math.abs(i) <= 2) continue;              /* the gate, and it is wide */
+      const bx = x+i, by = y+j;
+      if(tileAt(bx,by)!==3){ blocked.add(bkey(bx,by)); guild.walls.push({x:bx, y:by, hp:420, maxHp:420}); }
+    }
+    placeBuilding(x-3, y-5, 6, 4, 'GUILD HALL', null);
+    /* THE REGISTRAR IS A VENDOR, which is not a shortcut — it is the right shape. Every
+       approach-and-open path in the game already runs through `tradeTarget`, so hiring a crew
+       uses the same walk, the same range check and the same modal plumbing as buying a hammer,
+       and none of it had to be written twice. */
+    const reg = makeChar('The Registrar', 'guild', x - 0.5, y - 1.4,
+      {atk:14, def:18, tough:18, ath:5, magic:8, armor:'a_lea', armr:20});
+    reg.neutral = true; reg.guildmaster = true; reg.guard = {x: x-0.5, y: y-1.4};
+    chars.push(reg);
+    vendors.push({x: x - 0.5, y: y - 0.6, vt: 'guild', town: null, name: 'The Registrar'});
+    /* ---------- THE ONES WHO CAME IN OFF THE ROAD ----------
+       The same three archetypes that were walking the wastes alone, and one plain company of
+       blades. This is the whole fiction in one loop: they are not new people, they are the
+       people who were already out there, standing in a yard. */
+    const roster = [];
+    for(let i=0;i<3;i++){
+      const q = findOpenNear(x + ri(-4,4), y + ri(-3,3), 4);
+      const c = makeChar(pickName(true), 'guild', q.x, q.y,
+        {atk:ri(18,26), def:ri(16,24), tough:ri(16,22), ath:6, magic:ri(18,26),
+         weapon: rnd()<0.5 ? 'w_kat' : 'w_sw', armor:'a_lea', armr:18});
+      makeFlamewright(c); c.neutral = true; c.guard = {x:q.x, y:q.y};
+      chars.push(c); roster.push(c);
+    }
+    for(let i=0;i<2;i++){
+      const q = findOpenNear(x + ri(-4,4), y + ri(-3,3), 4);
+      const c = makeChar(pickName(true), 'guild', q.x, q.y,
+        {atk:ri(12,18), def:ri(16,22), tough:ri(12,16), ath:8, magic:ri(20,28),
+         weapon:'w_dag', armor:'a_rag'});
+      makeDuster(c); c.neutral = true; c.guard = {x:q.x, y:q.y};
+      chars.push(c); roster.push(c);
+    }
+    for(let i=0;i<2;i++){
+      const q = findOpenNear(x + ri(-4,4), y + ri(-3,3), 4);
+      const c = makeChar(pickName(true), 'guild', q.x, q.y,
+        {atk:10, def:12, tough:12, ath:5, magic: ri(16, 26), gift:'dark', armor:'a_rag'});
+      c.npcNecro = true; c.mana = 60; c.neutral = true; c.guard = {x:q.x, y:q.y};
+      chars.push(c); roster.push(c);
+    }
+    for(let i=0;i<6;i++){
+      const q = findOpenNear(x + ri(-5,5), y + ri(-4,4), 4);
+      const lvl = ri(16, 24);
+      const c = makeChar(pickName(true), 'guild', q.x, q.y,
+        {atk:lvl, def:lvl, tough:lvl-2, ath:6, armr:22, guard:{x:q.x, y:q.y},
+         weapon: i < 2 ? 'w_xbow' : rnd()<0.5 ? 'w_kat' : 'w_sw', armor:'a_lea'});
+      c.neutral = true; c.merc = true;
+      c.loot = ri(60, 160);
+      chars.push(c); roster.push(c);
+    }
+    chests.push({x:x-0.5, y:y-3.6, opened:false,
+      loot:{cats:ri(150,350), items:{bandage:4, copper:3, w_xbow:1}}});
   }
 })();
 
@@ -4564,7 +4714,7 @@ function openScholar(sc, who){
       hr.innerHTML = `<span class="tn">Take them with you <span style="color:var(--dust)">MAG ${Math.floor(sc.stats.magic)}${sc.gift ? ' · ✦ ' + sc.gift : ''} · med ${Math.floor(sc.stats.medic)}</span></span>`;
       const hb = document.createElement('button');
       hb.textContent = `HIRE ${fee}g`;
-      hb.disabled = cats < fee || player().filter(u => (!u.undead || u.lich) && !u.settler).length >= SQUAD_CAP;
+      hb.disabled = cats < fee || bannerLoad() >= SQUAD_CAP;
       hb.onclick = () => {
         if(cats < fee) return;
         cats -= fee;
@@ -5068,6 +5218,7 @@ const baseBeds = beds.map(b => ({...b}));
    which makes loading idempotent instead of one-way. */
 const baseTownWalls = towns.map(t => t.walls.map(w => ({...w})));
 const baseBastionWalls = bastion ? bastion.walls.map(w => ({...w})) : [];
+const baseGuildWalls = guild ? guild.walls.map(w => ({...w})) : [];
 
 /* hostile squads roam the map */
 function spawnHostileSquad(kind){
@@ -7854,6 +8005,15 @@ function pierceNeutral(n, o){
 function hostile(a, b){
   if(a.faction === b.faction) return false;
   if(a.vt || b.vt) return false;
+  /* ---------- A GUILD OATH NEVER FIGHTS A GUILD OATH ----------
+     Asked FIRST, above every other enmity in this function, because that is what "never
+     against each other" means. Ironscar can license a company and so can Copperhold, and when
+     the two armies meet the guild contingents stand and look at each other while the levies
+     go at it around them. It holds against provocation, against the purge, against a war
+     declaration and against you: there is no path through the rest of this function that can
+     put two oaths on opposite sides, which is the whole of the Guild's neutrality expressed
+     as one line. */
+  if(guildOath(a) && guildOath(b)) return false;
   /* an immortal in your debt will not raise a hand to you */
   if((a.immortal && a.friendly && b.faction === 'player') || (b.immortal && b.friendly && a.faction === 'player')) return false;
   /* the redoubt garrison has one order, nine generations old, and it is still following it */
@@ -12295,7 +12455,7 @@ function spawnWanderers(){
    the act cannot drift apart: the reason shown is the reason enforced. */
 function wandererGate(c){
   const w = wandererDef(c.wanderKey); if(!w) return {ok:false, why:'nothing to say'};
-  if(player().filter(u => (!u.undead || u.lich) && !u.settler).length >= SQUAD_CAP)
+  if(bannerLoad() >= SQUAD_CAP)
     return {ok:false, why:`the banner is full (${SQUAD_CAP})`};
   if(w.want === 'fine')
     return cats >= w.fine ? {ok:true, label:`PAY WHAT HE OWES (${w.fine}g)`}
@@ -13695,6 +13855,15 @@ const SPELLS = {
               hint:'a long rite, standing still — everything dead around you gets up for three days, and holding them takes most of your head'},
 };
 const SQUAD_CAP = 12;   /* the living (and liches) a banner can hold */
+/* ---------- WHO IS ACTUALLY UNDER THE BANNER ----------
+   Five places asked this question and three of them asked it slightly differently — two
+   counted settlers and one did not — so the cap you hit depended on which door you walked
+   through. One function now, and it excludes a GUILD CREW: those are somebody else's people
+   on loan, being paid by the day, and counting them against the banner would make hiring a
+   company a worse way of hiring a recruit, which is the one thing the feature must not be. */
+function bannerLoad(){
+  return player().filter(u => (!u.undead || u.lich) && !u.settler && !u.guildHire).length;
+}
 const BRANCHES = ['divine', 'destruction', 'dark', 'dust'];
 const ATT_THRESH = [100, 300, 700];   /* to initiate, to adept, to master */
 function attOf(c, b){ return (c.att && c.att[b]) || 0; }
@@ -15977,6 +16146,7 @@ function update(dt){
   hour += dh;
   if(hour >= 24){
     hour -= 24; day++;
+    guildPayday();           /* the Guild is paid at dawn or it goes home at dawn */
     bountyDecay();
     wandererDayTick();       /* she is on a different road today, which is the point of her */
     /* a broken shrine is not broken forever. They come back and set the stone, unless
@@ -16274,7 +16444,7 @@ function update(dt){
       if(c.pregnant > 0){
         c.pregnant--;
         if(c.pregnant === 0 && c.state !== 'dead'){
-          if(player().filter(u => (!u.undead || u.lich) && !u.settler).length >= SQUAD_CAP && c.faction==='player'){
+          if(bannerLoad() >= SQUAD_CAP && c.faction==='player'){
             c.pregnant = 3;   /* the world waits for room */
             continue;
           }
@@ -16482,6 +16652,23 @@ function update(dt){
         worldEvent('war', a.x, a.y, `${a.name} has declared war on ${b.name}. ${a.leader ? a.leader.title+' '+a.leader.name : 'Its ruler'} musters the host.`);
         spawnArmy(i, b);
         if(rnd() < 0.5) spawnArmy(j, a);
+        /* ---------- AND THE GUILD TAKES BOTH SIDES OF IT ----------
+           This is the licensing the report asks for, and the reason it is worth having is
+           that it can produce the one situation the charter is about: two towns at war, both
+           of them paying the same organisation, and the two contingents standing in the same
+           field refusing to touch each other. The levies do the fighting. That is the joke
+           and it is also the recruiting pitch.
+           Both draws are ALWAYS SPENT — written as `if(rich && rnd() < x)` the roll is
+           short-circuited away for a poor town, which is the same PRNG hazard this file has
+           been bitten by four times. */
+        for(const [side, foe, marching] of [[a, b, true], [b, a, false]]){
+          const r0 = rnd();
+          if(!guild) continue;
+          if(side.sacked > 0) continue;
+          if(r0 > 0.55) continue;
+          /* the aggressor's company marches with its host; the defender's holds its gate */
+          licenseCompany(side, foe, marching);
+        }
       }
     }
     /* wars burn out or end in a sack */
@@ -16961,7 +17148,14 @@ function update(dt){
     if(c.necroScanT > 0) continue;
     c.necroScanT = 3;
     if(risenCount(c) >= 3) continue;
-    const hm = c.roamNecro ? c : c.homeTown;
+    /* ---------- WHOSE GROUND IS THIS ONE WORKING? ----------
+       `c.homeTown` for a town's gravekeeper, ITSELF for a roamer whose graveyard is the road,
+       and the yard for the Guild's own — they took the work indoors and did not stop doing it.
+       And a null guard, because an `npcNecro` with none of the three was a hard crash inside
+       the world tick: it read `hm.x` off nothing and took the whole frame with it, which is
+       what a guild necromancer standing in a hall with no `homeTown` did on the first run. */
+    const hm = c.roamNecro ? c : (c.homeTown || (c.faction === 'guild' ? guild : null));
+    if(!hm) continue;
     let body = null, bd = 1e9;
     for(const b of corpses){
       if(chars.some(o => o.carry === b)) continue;
@@ -23857,6 +24051,10 @@ function renderMinimap(){
   if(slaverCamp && visAt(slaverCamp.x, slaverCamp.y)){ mmcx.fillStyle='#a05040'; mmcx.fillRect(slaverCamp.x*128/W-2, slaverCamp.y*128/H-2, 4, 4); }
   if(bastion && visAt(bastion.x, bastion.y)){
     mmcx.fillStyle = '#f0ead8'; mmcx.fillRect(bastion.x*128/W-2, bastion.y*128/H-2, 4, 4);
+    /* AND THE YARD, which has to be findable or the whole faction is a room nobody enters.
+       Smaller and a different colour: the Bastion is a threat you are told about, the Guild
+       is a place you go. */
+    if(guild){ mmcx.fillStyle = '#c8a86a'; mmcx.fillRect(guild.x*128/W-2, guild.y*128/H-2, 3, 3); }
     if(menaceFlag){
       mmcx.strokeStyle = 'rgba(240,234,216,0.5)';
       mmcx.beginPath(); mmcx.arc(bastion.x*128/W, bastion.y*128/H, BASTION_R*128/W, 0, Math.PI*2); mmcx.stroke();
@@ -25200,8 +25398,157 @@ function openInventory(c){
   };
   render();
 }
+/* ============================================================ HIRING A CREW
+   The difference between a crew and a recruit is the whole point of the Guild and it is one
+   word: WAGE. A recruit is somebody who joined you and has a conviction about it; a crew is
+   somebody being paid, and the day the payment stops they walk back to the yard. Nothing
+   about them belongs to you.
+
+   Three companies rather than a list of individuals, because you are hiring a CONTRACT and
+   not shopping for people — the Guild decides who it sends. */
+const GUILD_COMPANIES = [
+  {key:'blades', label:'A COMPANY OF BLADES', n:4, mult:1.0, rep:0,
+    blurb:'Four hands who will stand where you put them. No arts, no opinions, no questions.'},
+  {key:'mixed',  label:'A MIXED COMPANY',     n:5, mult:1.6, rep:15,
+    blurb:'Three blades and two of the lettered — a flamewright and a duster. The Guild does not send these to strangers.'},
+  {key:'heavy',  label:'THE LONG CONTRACT',   n:7, mult:2.2, rep:40,
+    blurb:'Seven, and one of them has raised the dead for a living. What the Guild sends when the job is the kind nobody comes back from.'},
+];
+function guildCompanyCost(co){ return guildRate(co.mult) * co.n; }
+function makeGuildHand(kind, x, y){
+  const q = findOpenNear(x, y, 3);
+  let c;
+  if(kind === 'flame'){
+    c = makeChar(pickName(true), 'player', q.x, q.y,
+      {atk:ri(18,26), def:ri(16,24), tough:ri(16,22), ath:6, magic:ri(18,26),
+       weapon: rnd()<0.5 ? 'w_kat' : 'w_sw', armor:'a_lea', armr:18});
+    makeFlamewright(c);
+  } else if(kind === 'dust'){
+    c = makeChar(pickName(true), 'player', q.x, q.y,
+      {atk:ri(12,18), def:ri(16,22), tough:ri(12,16), ath:8, magic:ri(20,28),
+       weapon:'w_dag', armor:'a_rag'});
+    makeDuster(c);
+  } else if(kind === 'dark'){
+    c = makeChar(pickName(true), 'player', q.x, q.y,
+      {atk:10, def:14, tough:14, ath:5, magic: ri(18, 28), gift:'dark', armor:'a_rag'});
+    c.mana = 60;
+  } else {
+    const lvl = ri(16, 24);
+    c = makeChar(pickName(true), 'player', q.x, q.y,
+      {atk:lvl, def:lvl, tough:lvl-2, ath:6, armr:22,
+       weapon: rnd()<0.35 ? 'w_xbow' : rnd()<0.5 ? 'w_kat' : 'w_sw', armor:'a_lea'});
+  }
+  c.merc = true;
+  c.guildHire = true;
+  /* THEY DO NOT FILL THE BANNER. `SQUAD_CAP` is what a banner can hold — people who are
+     yours. A crew is somebody else's people, on loan, and counting them against the cap would
+     make the whole feature a worse way of hiring a recruit. */
+  c.settler = false;
+  return c;
+}
+function hireGuildCompany(co, x, y){
+  const cost = guildCompanyCost(co);
+  if(guildRep < co.rep){ log(`The Guild will not put ${co.label.toLowerCase()} in your hands yet. (standing ${Math.round(guildRep)}/${co.rep})`, 'bad'); return false; }
+  if(cats < cost){ log(`The first day is due up front — ${cost} gold.`, 'bad'); return false; }
+  cats -= cost;
+  const roll = co.key === 'blades' ? ['blade','blade','blade','blade']
+             : co.key === 'mixed'  ? ['blade','blade','blade','flame','dust']
+             : ['blade','blade','blade','blade','flame','dust','dark'];
+  const rate = guildRate(co.mult);
+  const made = [];
+  for(const k of roll){
+    const c = makeGuildHand(k, x, y);
+    c.wage = rate;
+    chars.push(c); made.push(c);
+  }
+  /* one order, one band — they arrived together and they march together */
+  if(typeof formBand === 'function') formBand(made);
+  log(`${made.length} of the Guild fall in. ${cost} gold for the first day; ${guildWageDue()} a day after that.`, 'good');
+  refreshTop(); refreshSquadBar();
+  return true;
+}
+/* ---------- AND THE DAY THE MONEY STOPS ----------
+   Called at the day rollover. There is no grace period and no debt: either the purse covers
+   the whole payroll or the whole payroll walks, because a crew that stays on half wages is a
+   crew that has decided something about you, and this lot have not decided anything. */
+function guildPayday(){
+  const crew = guildCrew();
+  if(!crew.length) return;
+  const due = guildWageDue();
+  if(cats >= due){
+    cats -= due;
+    guildRep = clamp(guildRep + 2 + crew.length * 0.4, -100, 100);
+    log(`The Guild is paid — ${due} gold for ${crew.length}.`, '');
+    refreshTop();
+    return;
+  }
+  guildRep = clamp(guildRep - 25, -100, 100);
+  log(`You cannot make the Guild's payroll (${due} due, ${Math.floor(cats)} in the purse). They walk.`, 'bad');
+  for(const c of crew) releaseGuildHand(c, true);
+  refreshTop(); refreshSquadBar();
+}
+function releaseGuildHand(c, walked){
+  c.guildHire = false; c.wage = 0;
+  c.faction = 'guild';
+  c.neutral = true; c.provoked = false;
+  c.target = null; c.band = null;
+  clearOrders(c);
+  selected = selected.filter(o => o !== c);
+  /* the long walk back to the yard, which is a thing the player gets to watch */
+  if(guild) c.moveTarget = {x: guild.x, y: guild.y + 5};
+  if(!walked) log(`${c.name} is released from contract and starts back for the yard.`, '');
+}
+function openGuild(v){
+  openModal('THE MERCENARY\'S GUILD', 'Neutral by charter. They take jobs, they do not take sides, and they are paid by the day.');
+  const body = $('modalbody');
+  const render = () => {
+    body.innerHTML = '';
+    const head = document.createElement('div');
+    head.style.cssText = 'color:var(--dust);margin-bottom:8px;line-height:1.5';
+    const crew = guildCrew();
+    head.innerHTML = `Standing with the Guild: <b style="color:${guildRep < 0 ? '#c4674a' : '#8fb56a'}">${Math.round(guildRep)}</b>` +
+      (crew.length ? ` &middot; you have <b>${crew.length}</b> of theirs in the field at <b>${guildWageDue()}</b> gold a day.`
+                   : ' &middot; nobody of theirs is with you.') +
+      `<br>They will work for anyone. They will not work against their own — a company in your line and a company in the other one will not raise a hand to each other.`;
+    body.appendChild(head);
+    const h = document.createElement('div');
+    h.style.cssText = 'margin:10px 0 4px;color:var(--warn);letter-spacing:2px';
+    h.textContent = 'CONTRACTS'; body.appendChild(h);
+    GUILD_COMPANIES.forEach((co, i) => {
+      const row = document.createElement('div'); row.className = 'trow';
+      const cost = guildCompanyCost(co);
+      const locked = guildRep < co.rep;
+      row.innerHTML = `<span class="tn">${co.label} <span style="color:var(--dust)">${co.n} hands &middot; ${guildRate(co.mult)}g each per day` +
+        (locked ? ` &middot; <span style="color:#c4674a">needs standing ${co.rep}</span>` : '') + `</span>` +
+        `<br><span style="color:var(--dust);font-size:11px">${co.blurb}</span></span>` +
+        `<button data-co="${i}"${locked ? ' disabled' : ''}>TAKE ON ${cost}g</button>`;
+      body.appendChild(row);
+    });
+    if(crew.length){
+      const h2 = document.createElement('div');
+      h2.style.cssText = 'margin:10px 0 4px;color:var(--warn);letter-spacing:2px';
+      h2.textContent = 'UNDER CONTRACT'; body.appendChild(h2);
+      for(const c of crew){
+        const row = document.createElement('div'); row.className = 'trow';
+        row.innerHTML = `<span class="tn">${c.name} <span style="color:var(--dust)">${c.wage}g a day</span></span>` +
+          `<button data-let="${c.id}">RELEASE</button>`;
+        body.appendChild(row);
+      }
+    }
+    body.querySelectorAll('[data-co]').forEach(b => b.onclick = () => {
+      if(hireGuildCompany(GUILD_COMPANIES[+b.dataset.co], v.x, v.y + 1.5)) render();
+    });
+    body.querySelectorAll('[data-let]').forEach(b => b.onclick = () => {
+      const c = chars.find(o => o.id === +b.dataset.let);
+      if(c) releaseGuildHand(c, false);
+      refreshSquadBar(); render();
+    });
+  };
+  render();
+}
 function openVendor(v){
   if(v.mobile) return openCaravanTrade(v.mobile);
+  if(v.vt === 'guild') return openGuild(v);
   if(v.vt === 'bar'){  /* barkeeps are pragmatic — fines spend fine */
     v.bubble = {text: v.town.rep < -50 ? 'Make it quick.' : pick(["What'll it be?","Drink or work?"]), t:3};
     return openBar(v);
@@ -25410,7 +25757,7 @@ function openBar(v){
       oh.textContent = 'ORPHANAGE'; body.appendChild(oh);
       const o = town.orphan;
       const couple = squadCouple();
-      const full = player().filter(c=>(!c.undead||c.lich) && !c.settler).length >= SQUAD_CAP;
+      const full = bannerLoad() >= SQUAD_CAP;
       const note = !couple ? 'a wed couple must adopt' : full ? 'squad full' : '';
       const raceLbl = (RACES[o.race] ? RACES[o.race].label : 'Human');
       const row = document.createElement('div'); row.className='trow';
@@ -25422,7 +25769,7 @@ function openBar(v){
       const o = town.orphan; if(!o) return;
       const couple = squadCouple();
       if(!couple){ log('Only a wed couple may take in a child.', 'bad'); return; }
-      if(player().filter(c=>(!c.undead||c.lich) && !c.settler).length >= SQUAD_CAP){ log(`Squad is full (${SQUAD_CAP}).`, 'bad'); return; }
+      if(bannerLoad() >= SQUAD_CAP){ log(`Squad is full (${SQUAD_CAP}).`, 'bad'); return; }
       if(cats < o.fee){ refuse('Not enough gold.'); return; }
       cats -= o.fee;
       const p = findOpenNear(v.x, v.y+1, 2);
@@ -25455,7 +25802,7 @@ function openBar(v){
     });
     body.querySelectorAll('[data-hire]').forEach(b => b.onclick = () => {
       const i = +b.dataset.hire, r = town.recruits[i];
-      if(player().filter(c=>!c.undead || c.lich).length >= SQUAD_CAP){ log(`Squad is full (${SQUAD_CAP}).`, 'bad'); return; }
+      if(bannerLoad() >= SQUAD_CAP){ log(`Squad is full (${SQUAD_CAP}).`, 'bad'); return; }
       if(cats < r.cost){ refuse('Not enough gold.'); return; }
       cats -= r.cost;
       town.recruits.splice(i,1);
@@ -26200,7 +26547,7 @@ cv.addEventListener('mousedown', e => {
             showCtxMenu(e.clientX, e.clientY, [
               {label:'TALK', fn:()=>talkTo(local)},
               {label:'TAKE THEM IN', fn:()=>{
-                if(player().filter(c=>!c.undead || c.lich).length >= SQUAD_CAP){ log(`Squad is full (${SQUAD_CAP}).`, 'bad'); return; }
+                if(bannerLoad() >= SQUAD_CAP){ log(`Squad is full (${SQUAD_CAP}).`, 'bad'); return; }
                 local.faction = 'player'; local.civ = false; local.homeTown = null;
                 local.wasChild = true;
                 log(`${local.name}, aged ${Math.floor(local.age)}, has nowhere else. They're with you now.`, 'good');
@@ -27520,6 +27867,7 @@ function snapshot(){
     /* somebody you were paid to keep alive, and who they were walking to */
     vip: !!c.vip, escortTo: c.escortTo ?? null, escortId: c.escortId || 0, attendant: !!c.attendant,
     npcNecro: !!c.npcNecro, lieutenant: !!c.lieutenant, civ: !!c.civ, merc: !!c.merc,
+    guildHire: !!c.guildHire, guildLicensed: !!c.guildLicensed, guildmaster: !!c.guildmaster, wage: c.wage||0,
     inv: {...c.inv}, pack: c.pack, mule: !!c.mule, fleeOnHit: !!c.fleeOnHit,
     eater: !!c.eater, warF: c.warF, warT: c.warT, campId: c.campId, rebelOf: c.rebelOf,
     sick: c.sick||0, armyEnds: c.armyEnds||0, trade: c.trade||null, tradeSkill: c.tradeSkill||0,
@@ -27534,7 +27882,7 @@ function snapshot(){
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen},
-    rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, siegeQuietUntil, coilShrine, coilExposed, coilStruck,
+    rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], coilShrine, coilExposed, coilStruck,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
     camps: camps.map(c => ({id:c.id, x:c.x, y:c.y, fac:c.fac, cap:c.cap, tents:c.tents})),
     bonds: [...bonds.entries()],
@@ -27700,6 +28048,7 @@ function restore(d){
   };
   towns.forEach((t, ti) => applyWalls(t.walls, baseTownWalls[ti], d.townWalls ? (d.townWalls[ti] || []) : null));
   if(bastion) applyWalls(bastion.walls, baseBastionWalls, d.bastionWalls || null);
+  if(guild) applyWalls(guild.walls, baseGuildWalls, d.guildWalls || null);
   middens.length = 0;
   if(Array.isArray(d.middens)) for(const m of d.middens) middens.push({id:m.id, x:m.x, y:m.y, found:!!m.found, held:[]});
   if(Array.isArray(d.caves)){
@@ -27870,6 +28219,7 @@ function restore(d){
     c.att = s.att || {divine:0, destruction:0, dark:0, dust:0, ...((s.gift && s.race!=='chimera') ? {[s.gift]: 2} : {})};
     c.attXp = s.attXp || {divine:0, destruction:0, dark:0, dust:0};
     c.npcNecro = !!s.npcNecro; c.lieutenant = !!s.lieutenant; c.civ = !!s.civ; c.merc = !!s.merc;
+    c.guildHire = !!s.guildHire; c.guildLicensed = !!s.guildLicensed; c.guildmaster = !!s.guildmaster; c.wage = s.wage || 0;
     c.vip = !!s.vip; c.escortTo = s.escortTo ?? null; c.escortId = s.escortId || 0; c.attendant = !!s.attendant;
     c.inv = s.inv || {}; c.pack = s.pack || null; c.mule = !!s.mule; c.fleeOnHit = !!s.fleeOnHit;
     c.eater = !!s.eater; c.warF = s.warF ?? -1; c.warT = s.warT ?? -1;
@@ -27955,6 +28305,7 @@ function restore(d){
   purgeWrath = d.purgeWrath || 0; lastInquestDay = d.lastInquestDay ?? -99;
   /* a save from before the shared clock has no quiet owed, which is the right answer for it */
   siegeQuietUntil = d.siegeQuietUntil ?? -99;
+  guildRep = d.guildRep ?? 0;
   marks.length = 0;
   for(const m of (d.marks || [])) marks.push({x: m.x, y: m.y});
   coilShrine = d.coilShrine || coilShrine; coilExposed = !!d.coilExposed; coilStruck = !!d.coilStruck;
