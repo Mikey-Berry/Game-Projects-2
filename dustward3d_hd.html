@@ -9164,6 +9164,11 @@ function physics(c, dt){
     }
   }
   if(c.phantom && (c.phantomT -= dt) <= 0){ dispelPhantom(c); return; }
+  /* ---------- WHAT WAS ONLY EVER PROPPED UP ----------
+     `tempT` is in HOURS, not seconds, because both spells that set it are measured in days
+     and a day is HOUR_SEC * 24 of real time. Counted here rather than at the day rollover so
+     a host called at dusk goes at dusk and not at midnight. */
+  if(c.tempT > 0 && (c.tempT -= dt / HOUR_SEC) <= 0){ crumble(c); return; }
   if(c.state !== 'ok'){ c.windup = null; c.recoverT = 0; return; }
   /* a committed swing: rooted, then it lands — or whiffs if the target slipped away */
   if(c.windup){
@@ -13360,7 +13365,10 @@ function bindStrain(c){
    from the dead of a bandit camp pays nothing at all, and only the bench charges rent. */
 const UPKEEP_PER_WEIGHT = 0.25;      /* remains per day, per point of bind weight */
 function upkeepBodies(){
-  return chars.filter(c => c.faction === 'player' && c.undead && c.crafted && !c.lich && c.state !== 'dead');
+  /* A PROPPED BODY IS NOT FED. Upkeep is what a bound host costs you in remains, and neither
+     of the temporary hosts is bound — they are held up by a working with a clock on it, and
+     billing for their groceries would be charging twice for the same day. */
+  return chars.filter(c => c.faction === 'player' && c.undead && c.crafted && !c.propped && !c.lich && c.state !== 'dead');
 }
 function upkeepDue(){
   return upkeepBodies().reduce((s, c) => s + (c.bindWeight || 1), 0) * UPKEEP_PER_WEIGHT;
@@ -13423,7 +13431,7 @@ function leashTick(){
 function refreshBindStrain(){
   const load = new Map();
   for(const x of chars){
-    if(!x.undead || x.lieutenant || x.state === 'dead' || !x.master) continue;
+    if(!x.undead || x.lieutenant || x.propped || x.state === 'dead' || !x.master) continue;
     load.set(x.master, (load.get(x.master) || 0) + (x.bindWeight || 1));
   }
   for(const c of chars){
@@ -13463,6 +13471,12 @@ function concentrationTick(c, dt){
 }
 /* per-spell upkeep while concentrating. Most just hold; the shroud has to keep the mask on. */
 function concentrationUpkeep(c, key, dt){
+  if(key === 'massraise'){
+    /* the lock is for HOLDING them. When the last one is gone — killed, or three days up —
+       there is nothing left to hold and the caster gets their head back. */
+    if(!massHostOf(c).length) endConcentration(c);
+    return;
+  }
   if(key === 'shroud'){
     /* the shroud drops if its subject dies or wanders out of the caster's reach */
     if(!c.shroudTarget || c.shroudTarget.state === 'dead'){   /* holds at any distance — only concentration and the subject's life matter */
@@ -13472,6 +13486,10 @@ function concentrationUpkeep(c, key, dt){
 }
 /* cleanup when a concentration ends, whatever the cause */
 function onConcentrationEnd(c, key){
+  /* LETTING GO IS DISMISSING THEM, and that is the release valve rather than a punishment:
+     the spell is a decision to spend three days as a smaller caster with a bigger army, and
+     the player has to be able to end it early and get their pool back. */
+  if(key === 'massraise'){ for(const u of massHostOf(c)) crumble(u); }
   if(key === 'shroud' && c.shroudTarget){ c.shroudTarget.shrouded = null; c.shroudTarget = null; }
   if(key === 'firebrand'){ c.weaponFlame = false; }
   if(key === 'hallow'){ c.weaponHallow = false; }
@@ -13521,6 +13539,21 @@ const SPELLS = {
      it has no range and needs nothing pointed at. See castShift for what it costs. */
   shift:     {gift:'dust',        label:'CHANGE FORM',     cost:20, range:0, minMag:99, tier:9, instant:true,
               hint:'wear another face — the law forgets you, and so does everyone else'},
+  /* ---- TWO WAYS OF NOT PAYING FOR A HOST ----
+     The binding is the whole economy of the dark art: a necromancer's ceiling is how many of
+     the dead they can hold in their head at once, and everything else — the soulbound, the
+     research, the lich — is bought against it. Both of these deliberately step around it, and
+     both charge for the privilege in a different currency, because a spell that raises for
+     free and keeps for free is the end of the ceiling.
+       OLD BONES pays in TIME. Nothing is bound; what comes up is propped upright by a
+     working that is already failing, and it is gone in a day.
+       MASS REANIMATION pays in HEAD ROOM, continuously, for as long as the host stands —
+     see the `concentrate` lock, which is the largest in the game by a wide margin. */
+  oldbones:  {gift:'dark',        label:'OLD BONES',  cost:16, range:6, minMag:10, tier:2,
+              hint:'target open ground — call up what is already under it (one day, then it goes)'},
+  massraise: {gift:'dark',        label:'MASS REANIMATION', cost:34, range:0, minMag:22, tier:3, instant:true, self:true,
+              concentrate:{lock:0.65, exclusive:false, mobile:true},
+              hint:'a long rite, standing still — everything dead around you gets up for three days, and holding them takes most of your head'},
 };
 const SQUAD_CAP = 12;   /* the living (and liches) a banner can hold */
 const BRANCHES = ['divine', 'destruction', 'dark', 'dust'];
@@ -13700,7 +13733,15 @@ function risenCount(caster){
   return chars.filter(x => x.undead && !x.lieutenant && x.state!=='dead' && x.master===caster).length;
 }
 function risenLoad(caster){
-  return chars.filter(x => x.undead && !x.lieutenant && x.state!=='dead' && x.master===caster)
+  /* ---------- `bindWeight || 1` IS A TRAP AND A PROPPED BODY WEIGHS ZERO ----------
+     Old Bones and Mass Reanimation both set `bindWeight = 0` — nothing about them is carried
+     in anybody's head — and `0 || 1` puts every one of them straight back on the binding.
+     Measured when the harness first ran: twenty mass-raised bodies read as twenty slots off a
+     ceiling of seven, which is the entire cost model of the dark art quietly inverted.
+     Excluded by the flag rather than by fixing the fallback in eleven places, because
+     `propped` is what the question actually is: is this body BOUND, or is it standing up
+     because a working says so. */
+  return chars.filter(x => x.undead && !x.lieutenant && !x.propped && x.state!=='dead' && x.master===caster)
     .reduce((s,x) => s + (x.bindWeight||1), 0);
 }
 function lieutenantsOf(caster){
@@ -13792,6 +13833,19 @@ function dispelPhantom(c){
   c.state = 'dead';
   const ci = chars.indexOf(c); if(ci >= 0) chars.splice(ci, 1);
   selected = selected.filter(s => s !== c);
+}
+/* ---------- IT DOES NOT DIE. IT STOPS. ----------
+   Deliberately NOT `kill()`: a thing held up by a working that has run out leaves no corpse,
+   which is the whole difference between this and a raise. There is nothing to harvest, nothing
+   to raise a second time, and no death for the squad to have a view about — `kill` posts to
+   the deed ledger and moves everyone's regard, and a host you were always going to lose on
+   schedule is not a loss. */
+function crumble(c){
+  addSpecks(c.x, c.y - 0.5, '#b3aa96', 10);
+  c.state = 'dead';
+  const ci = chars.indexOf(c); if(ci >= 0) chars.splice(ci, 1);
+  selected = selected.filter(s2 => s2 !== c);
+  refreshSquadBar();
 }
 /* ---------- DARKBOLT, RECONSIDERED ----------
    It was a tier-1 spell at minMag 1 costing five mana that scaled 8 + 0.8*magic with no
@@ -13951,7 +14005,14 @@ function saltBody(c){
   refreshInv();
   return true;
 }
-function castRaise(c, body){
+/* `o` is how the two host spells borrow this without becoming a second copy of it:
+     o.free   the binding is not paid — nothing here counts against risenCap
+     o.temp   hours the body stands before it crumbles
+     o.quiet  the caller pays the mana and answers to the town, once, for the whole working
+   Returns the risen itself on success (still truthy for every existing caller) so a caller
+   raising twenty of them can stamp all twenty. */
+function castRaise(c, body, o){
+  o = o || {};
   /* Consecrated ground refuses the call outright. This is the whole reason to break a
      shrine, and the reason a shrine is worth standing: a necromancer cannot work inside
      somebody's walls until the stone is down. */
@@ -14002,9 +14063,14 @@ function castRaise(c, body){
   /* `!body.undead` is what stops an ordinary risen coming back as somebody. A lieutenant
      corpse is undead AND somebody, so it needs naming here or the rite would render the one
      body in the game that has a name into a numbered Bone Knight. */
-  const isUnique = !body.beast && !body.construct && !body.grown &&
+  const isUnique = !o.free && !body.beast && !body.construct && !body.grown &&
     (!!body.bossKey || !!body.lieutenant || (wasYours && !body.undead && !body.mule && !body.settler));
-  if(isUnique){
+  if(o.free){
+    /* NOTHING IS BOUND HERE. A body propped up for a day or three is not carried in anybody's
+       head, so it neither takes a slot nor is refused for want of one — and it must not come
+       back as a LIEUTENANT either, because a lieutenant is a person you keep and this is not
+       something you keep. */
+  } else if(isUnique){
     const lieuCap = (c.lich ? 2 : 1) + (research.done.necromancy ? 1 : 0);
     if(lieutenantsOf(c) >= lieuCap){ log(`${c.name} cannot bind another lieutenant (${lieutenantsOf(c)}/${lieuCap}).`, 'bad'); return false; }
   } else if(risenLoad(c) + 1 > risenCap(c)){
@@ -14121,9 +14187,12 @@ function castRaise(c, body){
     r.blood = r.maxBlood = Math.max(18, Math.round(70 * (0.55 + rr * 0.45)));
   }
   r.guardTarget = c;
+  if(o.free){ r.bindWeight = 0; r.propped = true; }
+  if(o.temp > 0) r.tempT = o.temp;
   chars.push(r);
   say(r, '...rrh...');
   addSpecks(body.x, body.y-0.5, '#8a6ab5', 8);
+  if(o.quiet){ refreshSquadBar(); return r; }
   /* necromancy is a crime under town law (the player's problem, not NPCs') */
   const t = c.faction==='player' ? towns.find(t => !t.def.undeadFriendly && !t.playerRuled && dist(c.x, c.y, t.x, t.y) < 16) : null;
   if(t){
@@ -14139,8 +14208,147 @@ function castRaise(c, body){
   }
   refreshSquadBar();
   spendCast(c, 'raise');
+  return r;
+}
+/* ============================================================ OLD BONES
+   "Reanimates a small group of temporary undead soldiers from long dead bones. They only last
+   one day while the old magic holds them together, but are useful in a pinch."
+
+   The one raise in the game that needs no corpse. Nine generations of the Fracture and one
+   golden age before it put a great deal into this ground, and none of it is identifiable any
+   more — what comes up is a frame with a rag on it and no idea who it was. That is why they
+   are cheap, why they are weak, and why they do not last: the working that lifts them was
+   not made by the caster, it is what is LEFT of somebody else's, and it is already failing.
+
+   Deliberately no cap and no binding. What stops this being free is that you get one day out
+   of it and cannot bank them: cast it before the fight or waste it. */
+const BONE_HOURS = 24;                 /* a day, in the game's hours — see tempT */
+function boneSoldiers(c){ return Math.min(5, 2 + Math.floor(c.stats.magic / 12)); }
+function castOldBones(c, wx, wy){
+  const holy = consecratedAt(wx, wy);
+  if(holy){
+    if(!holy.told){
+      holy.told = true;
+      log(holy.town ? `The ground here is ${holy.town.name}'s, and it is holding. Break the shrine stone first.`
+                    : 'The ground here is hallowed. Nothing under it will answer.', 'bad');
+    }
+    addFloat(c.x, c.y - 1.2, 'HALLOWED', '#e8dcc4');
+    return false;
+  }
+  crime('raising', c.x, c.y, c);
+  const n = boneSoldiers(c);
+  let up = 0;
+  for(let i = 0; i < n; i++){
+    const q = findOpenNear(Math.round(wx + ri(-2, 2)), Math.round(wy + ri(-2, 2)), 4);
+    /* NOT `castRaise` — there is no corpse to pass it. The body is built here, and built
+       thin: this is the weakest thing a dark caster can put on a field and it is meant to be.
+       `rot:'bones'` is what the rig reads to build a bare frame rather than a fresh cadaver. */
+    const u = makeChar('Old Bones', c.faction, q.x, q.y,
+      {atk: 3 + Math.floor(c.stats.magic / 14), def: 2, tough: 4, ath: 5, labor: 2, magic: 1,
+       weapon: vrnd() < 0.5 ? 'w_club' : null});
+    u.undead = true; u.crafted = true; u.beast = false;
+    u.master = c; u.faction = c.faction;
+    u.rot = 'bones'; u.kin = 'bone';
+    u.propped = true; u.bindWeight = 0;      /* nothing is bound: see the SPELLS comment */
+    u.tempT = BONE_HOURS;
+    u.hunger = 100; u.blood = 34; u.maxBlood = 34;
+    for(const k of VITAL){ u.parts[k].hp = 40; u.parts[k].max = 40; }
+    u.autoFight = true;
+    u.shortTag = 'OB' + (++risenN);
+    u.guardTarget = c;
+    u.floor = c.floor || 0;
+    chars.push(u);
+    addSpecks(q.x, q.y - 0.4, '#b3aa96', 7);
+    up++;
+  }
+  log(up ? `${up} of something older than anybody's grandmother comes up out of the dirt. It has a day in it.`
+         : 'Nothing under this ground answers.', up ? 'good' : 'bad');
+  xpGain(c, 'magic', 0.5);
+  refreshSquadBar();
+  spendCast(c, 'oldbones');
+  return up > 0;
+}
+/* ============================================================ MASS REANIMATION
+   "Raise all dead creatures in a large radius. They last three days, but consume the majority
+   of the caster's concentration. The casting itself is also an extensive, time-consuming
+   ritual."
+
+   Three separate costs, and all three are load-bearing:
+     · THE RITE. Rooted, defenceless, and long. Built on the same shape as the Last Rite —
+       work accrues at a rate CAPPED by magic, so skill shortens the vigil rather than
+       deleting it. An uncapped multiplier on a fixed job is how the Last Rite ended up being
+       six and a half seconds long, and that lesson is not going to be relearned here.
+     · THE HEAD ROOM. 65% of the caster's pool is locked for as long as the host stands —
+       the largest concentration lock in the game, against the warding's 1.0-but-exclusive and
+       the burning edge's 0.5. A necromancer who has done this is not casting much else.
+     · THE CLOCK. Three days, then the whole host goes at once.
+   Letting the concentration go dismisses them, which is the release valve and is meant to be
+   used: the spell is a decision to spend three days as a smaller caster with a bigger army. */
+const MASS_RADIUS = 14;
+const MASS_HOURS = 72;                 /* three days */
+const MASS_WORK = 90;
+const MASS_RATE_CAP = 2.0;
+let theRaising = null;                 /* {caster, x, y, work, t} */
+function massRaisable(c, b){
+  if(!b || b.state !== 'dead' && b.undead) return false;
+  if(isWatcherBody(b) || isMachineBody(b)) return false;
+  if(consecratedAt(b.x, b.y)) return false;
+  if((b.floor || 0) !== (c.floor || 0)) return false;
+  return dist(b.x, b.y, c.x, c.y) <= MASS_RADIUS;
+}
+function beginMassRaise(c){
+  if(theRaising){ log('One rite of that size at a time.', 'bad'); return false; }
+  const near = corpses.filter(b => massRaisable(c, b)).length;
+  if(!near){ log('There is nothing dead enough within reach to be worth the standing.', 'bad'); return false; }
+  theRaising = {caster: c, x: c.x, y: c.y, work: 0, t: 0};
+  clearOrders(c);
+  c.riting = true;
+  log(`${c.name} opens a general reanimation over ${near} of the dead. They cannot move or defend themselves while it runs.`, 'bad');
+  say(c, 'Do not let anything reach me.');
+  spendCast(c, 'massraise');
   return true;
 }
+function massRaiseTick(dt){
+  const r = theRaising; if(!r) return;
+  const c = r.caster;
+  if(c.state !== 'ok' || !chars.includes(c)){ collapseRaising(`${c.name} went down`); return; }
+  if(dist(c.x, c.y, r.x, r.y) > 2.5){ collapseRaising(`${c.name} was driven off the working`); return; }
+  c.mana = Math.max(0, c.mana - dt * 0.6);
+  r.work += dt * Math.min(MASS_RATE_CAP, 1 + c.stats.magic * 0.03);
+  r.t += dt;
+  bumpNotice(dt * 0.5);
+  if(vrnd() < dt * 5) addSpecks(r.x + (vrnd()-0.5)*8, r.y + (vrnd()-0.5)*8, '#8a6ab5', 3);
+  if(r.work >= MASS_WORK) completeMassRaise();
+}
+function collapseRaising(why){
+  const r = theRaising; if(!r) return;
+  theRaising = null;
+  r.caster.riting = false;
+  log(`The general reanimation collapses — ${why}. The mana is spent either way.`, 'bad');
+}
+function completeMassRaise(){
+  const r = theRaising; if(!r) return;
+  const c = r.caster;
+  theRaising = null;
+  c.riting = false;
+  /* SNAPSHOT THE LIST BEFORE RAISING ANYTHING. `castRaise` splices out of `corpses`, so
+     filtering and raising in the same pass walks a shrinking array and skips every other
+     body — the classic, and it would have looked like the radius being half what it says. */
+  const list = corpses.filter(b => massRaisable(c, b));
+  let up = 0;
+  for(const b of list) if(castRaise(c, b, {free: true, temp: MASS_HOURS, quiet: true})) up++;
+  if(!up){ log('Nothing answered. Whatever is lying here is past calling.', 'bad'); return; }
+  startConcentration(c, 'massraise', SPELLS.massraise.concentrate.lock,
+                     SPELLS.massraise.concentrate.exclusive, SPELLS.massraise.concentrate.mobile);
+  addSpecks(c.x, c.y - 0.5, '#8a6ab5', 30);
+  log(`${up} of the dead stand up together. ${c.name} will be holding most of that in their head for three days.`, 'good');
+  /* one working, one answer to the town, however many bodies got up */
+  const t = c.faction === 'player' ? towns.find(t2 => !t2.def.undeadFriendly && !t2.playerRuled && dist(c.x, c.y, t2.x, t2.y) < 16) : null;
+  if(t){ dropRep(t, 60); log(`${t.name} watched you empty its ground. (-60 standing)`, 'bad'); }
+  attGain(c, 'dark', 6);
+  refreshSquadBar();
+}
+function massHostOf(c){ return chars.filter(x => x.master === c && x.tempT > 0 && x.state !== 'dead'); }
 function resolveCast(wx, wy){
   const key = castMode.spell;
   /* whoever is still able, in the order you selected them */
@@ -14196,6 +14404,11 @@ function resolveCastAt(c, key, wx, wy){
   } else if(key==='phantom'){
     if(isBlocked(Math.round(wx), Math.round(wy))){ log('The dust needs open ground to stand on.', 'bad'); return; }
     castPhantom(c, wx, wy);
+  } else if(key==='oldbones'){
+    if(isBlocked(Math.round(wx), Math.round(wy), c.floor||0)){ log('There is no ground there to call out of.', 'bad'); return; }
+    castOldBones(c, wx, wy);
+  } else if(key==='massraise'){
+    beginMassRaise(c);
   } else if(key==='cindernova'){
     castCinderNova(c);
   } else if(key==='deathgrip'){
@@ -15603,6 +15816,7 @@ function update(dt){
   paceBands();                /* and a party marches at the pace of whoever is slowest in it */
   reapPhylacteries();
   riteTick(dt);               /* and somebody is in the middle of something */
+  massRaiseTick(dt);          /* and somebody else is standing very still over a lot of the dead */
   walkingDeadCheck(dt);       /* and whether anyone is walking the dead past a gate */
   wantedCheck(dt);            /* and whether the watch has recognised anybody */
   rescueTick(dt);             /* and whether anyone is coming for what you took */
@@ -27085,7 +27299,7 @@ function snapshot(){
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, boundTold:!!c.boundTold,
     salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null, lieuWear:c.lieuWear||0,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
-    bindWeight:c.bindWeight, shortTag:c.shortTag,
+    bindWeight:c.bindWeight, shortTag:c.shortTag, tempT:c.tempT??null, propped:!!c.propped,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
     immortal:c.immortal||null, wanderKey:c.wanderKey||null, wanderMet:c.wanderMet||0, wanderSeen:c.wanderSeen?{...c.wanderSeen}:null, wanderJoined:!!c.wanderJoined, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, golem:!!c.golem, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
@@ -27377,7 +27591,13 @@ function restore(d){
       if(cv && cv.rooms) c.homeRoom = cv.rooms.find(rm => rm.id === s.roomId) || c.homeRoom;
     } c.floor = s.floor || 0; c.captured = !!s.captured;
     c.clawDmg = s.clawDmg || 0; c.clawWt = s.clawWt || null; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.eatsDead = !!s.eatsDead;
-    c.structMult = s.structMult || 1; c.bindWeight = s.bindWeight || 1; c.shortTag = s.shortTag || '';
+    c.structMult = s.structMult || 1; c.shortTag = s.shortTag || '';
+    /* `|| 1` IS WRONG FOR A PROPPED BODY. Old Bones and Mass Reanimation both set
+       `bindWeight = 0` — nothing about them is carried in anybody's head — and `0 || 1` puts
+       every one of them back on the binding on load, which would silently overflow a
+       necromancer's ceiling the first time a save was reopened. */
+    c.bindWeight = s.bindWeight ?? 1;
+    c.tempT = s.tempT ?? null; c.propped = !!s.propped;
     c.servitor = !!s.servitor; c.minded = !!s.minded; c.crafted = !!s.crafted; c.autoFight = !!s.autoFight;
     /* re-derived rather than stored: it is a pure function of the atk that came back with the
        body, so storing it would only give it a way to disagree with itself */

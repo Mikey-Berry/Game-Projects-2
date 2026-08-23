@@ -265,7 +265,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     /* ==================== 5. THE CHIMERA LINES KEEP THEIR BONES ==================== */
     {
-      const lines = ['houndkin', 'oxbound', 'thinblood', 'scaleborn'];
+      /* READ THE TABLE, DO NOT COPY IT. This was a hand-written list of the four chimera
+         lines and it went red the day one of them was cut — reporting "a raised chimera loses
+         its line" about a line that no longer exists, which is a probe telling you about
+         itself. Every line the race actually has, whatever that turns out to be. */
+      const lines = Object.keys(SUBRACES.chimera || {});
       const seen = {};
       let plain = null;
       for (const sub of lines) {
