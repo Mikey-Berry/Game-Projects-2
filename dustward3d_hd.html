@@ -1292,6 +1292,22 @@ function placeTownAt(def, cx0, cy0){
     ironscar:   'DEBT HOUSE',      /* nobody leaves Ironscar paid up */
     fallowend:  'CHARM HOUSE',     /* every lintel hung with old charms */
   };
+  /* ---------- WHERE THE WORK ACTUALLY HAPPENS ----------
+     Reported: "While I get that cities have their own economies, it's kind of invisible at
+     the moment. I want to see when the craftsman makes something, or the harvesters
+     gathering. Maybe even adding actual building models (furnace, weavers, etc.) to the city
+     for their people to use."
+
+     A town's shelves were stocked by a bookkeeping pass that ran once a day over a list of
+     people who happened to be standing anywhere. Every trade in the game existed and none of
+     it had a PLACE, so there was nothing to walk past and nothing to watch. Three buildings —
+     one for the fire, one for the cloth, one for the drink — and everything else in the list
+     already had somewhere it belonged and simply was not using it. */
+  plan.push(
+    [-18, 10, 5, 4, null, 'FORGE'],      /* the smith's, and the one furnace in town */
+    [ 12,-17, 5, 4, null, 'WEAVERY'],    /* the crafter's loom */
+    [  6, 14, 5, 4, null, 'BREWHOUSE'],  /* and where the fruit goes */
+  );
   if(SIGNATURE[def.key]) plan.push([-17,-12, 5, 4, null, SIGNATURE[def.key]]);
   if(def.key==='copperhold') plan.push([12,3,6,5,'robotics','ROBOTICS']);
   if(def.key==='dustport') plan.push([11,7,5,4,'occult','THE LOW ROOM']);
@@ -16489,60 +16505,28 @@ function update(dt){
       }
     }
     hostUpkeep();
-    /* ---- every shelf is stocked by someone's hands ---- */
+    /* ---- every shelf is stocked by someone's hands, and now you can watch it happen ---- */
     for(const t of towns){
       if(!t.stock) continue;
       if(t.plague > 0 || t.sacked > 0) continue;   /* nobody works through ruin */
-      const st = t.stock;
-      const put = (k, n=1) => st[k] = (st[k]||0) + n;
-      const take = (k, n=1) => { if((st[k]||0) < n) return false; st[k] -= n; return true; };
       for(const c of chars){
         if(!c.civ || c.homeTown !== t || c.state !== 'ok' || !c.trade) continue;
-        if(rnd() > 0.7) continue;   /* not every day is productive */
-        c.tradeSkill = Math.min(60, c.tradeSkill + 0.06);
-        const sk = c.tradeSkill;
-        switch(c.trade){
-          case 'farmer': put('fruit', 1 + Math.floor(sk/12)); break;
-          case 'fisher': put('fish', 1 + Math.floor(sk/14)); break;
-          case 'hunter': put('meat', 1 + Math.floor(sk/16)); if(rnd()<0.5) put('hide'); if(rnd()<0.55) put('wood', 1 + Math.floor(sk/22)); break;
-          /* ---------- WHAT THE GROUND HAS ----------
-             Every miner in the world brought up copper, and every smith spent copper, so no
-             shelf anywhere ever held iron ore, coal or bar iron — which made the endgame
-             door, priced in iron, impossible to close by trade. Ironscar is an open PIT and
-             its entire lore is iron; it mines iron. Everyone else turns some up. */
-          case 'miner': {
-            const pit = t.def.key === 'ironscar';
-            if(pit || rnd() < 0.22) put('iron_ore', 1 + Math.floor(sk/15));
-            else put('copper', 1 + Math.floor(sk/15));
-            if(pit || rnd() < 0.30) put('coal', 1 + Math.floor(sk/22));
-            put('stone');
-            break;
-          }
-          case 'brewer': if(take('fruit', 2)){ put('rum', 1 + (sk>25?1:0)); } break;
-          case 'crafter':
-            if(rnd()<0.5 && take('hide')){ put('fabric', 2); }
-            else if(take('fabric')){ put('bandage', 1 + (sk>20?1:0)); }
-            else put('mats');
-            break;
-          case 'smith': {
-            /* A SMELTER FIRST. Ore and coal into bar iron is where the world's iron comes
-               from — without this the ore the miners now raise would pile up unsmelted and
-               the only iron in the game would still be whatever the player smelted himself. */
-            if((st.iron_ore||0) >= 2 && (st.coal||0) >= 2 && rnd() < 0.55){
-              take('iron_ore', 2); take('coal', 2);
-              put('iron', 1 + (sk > 30 ? 1 : 0));
-              break;
-            }
-            if(!take('copper', 2)) break;
-            const q = rollQuality(sk);
-            if(q === null) break;   /* slag day */
-            const out = rnd() < 0.6 ? pick(['w_club','w_rkat','w_kat']) : pick(['a_rag','a_lea']);
-            put(tierKey(out, q));
-            break;
-          }
-        }
+        /* ---------- THE SHIFT THAT NEVER HAPPENED AT THE BENCH ----------
+           Yesterday's, if they never reached their post — a town you have not visited in
+           forty days must not be a town that has not eaten in forty days. Silent, because
+           there is nobody standing over it. */
+        if(c.workOwed) workShift(t, c);
+        /* and today's, drawn HERE so it costs the same one number per worker per day it
+           always did. `workShift` spends it at the post if they get there. */
+        c.workOwed = rnd() <= 0.7;   /* not every day is productive */
       }
-      /* merchants refurbish stock while the town still has working hands (already skipped if plague/sacked) */
+      /* merchants refurbish stock while the town still has working hands (already skipped if
+         plague/sacked). `st` and `put` used to be the production loop's own bindings; that
+         loop moved out into `workShift`, so this block gets its own — and it is deliberately
+         SILENT, because a merchant topping up the yard is not somebody making something and
+         a float over an empty street would be lying about where it came from. */
+      const st = t.stock;
+      const put = (k, n=1) => { st[k] = (st[k]||0) + n; return n; };
       if(chars.some(c => c.civ && c.homeTown===t && c.state==='ok')){
         /* a trading town keeps a real yard of building stock, not a token pile */
         const merc = t.leader && t.leader.trait === 'mercantile';
@@ -17050,12 +17034,43 @@ function update(dt){
     const line = squadBark(c);
     if(line) say(c, line);
   }
-  /* townsfolk go about their day: wander, pause, gossip in pairs */
+  /* townsfolk go about their day: wander, pause, gossip in pairs — and WORK, which they
+     never did anywhere in particular before. See tradePost. */
   if(wtick) for(const c of chars){
     if(!c.civ || c.state !== 'ok' || c.target || c.fleeT > 0 || c.moveTarget) continue;   /* an errand in progress isn't interrupted by idle wandering */
     c.civT -= wdt;
     if(c.civT > 0) continue;
     const t = c.homeTown;
+    /* ---------- A TRADE WITH SOMEWHERE TO BE ----------
+       Between seven and six they are at their post: the smith at the furnace, the weaver at
+       the loom, the miner at the seam, the hunter out past the fences. Before this every
+       trade in the game was a string on a person who then wandered the plaza like everybody
+       else, so a town of thirty craftsmen looked exactly like a town of thirty idlers and
+       the entire economy happened somewhere off the side of the screen. */
+    if(t && c.trade && hour >= 7 && hour < 18){
+      const post = tradePost(c, t);
+      if(post){
+        const d = dist(c.x, c.y, post.x, post.y);
+        if(d > (post.near || 2.4)){
+          const sp = (post.near || 2.4) * 0.55;
+          c.moveTarget = {x: post.x + (vrnd()-0.5)*sp*2, y: post.y + (vrnd()-0.5)*sp*2};
+          /* A SHORT LEASH ON THE WAY IN. The idle wander re-decides every twelve to
+             twenty-two seconds, which is right for somebody with nowhere to be and far too
+             slow for somebody walking to work — at that cadence half the town was still on
+             its way at noon. Somebody heading somewhere checks in every few seconds. */
+          c.civT = 4 + rnd()*4;
+          continue;
+        }
+        /* stood at it, doing it — the pause is short so they shuffle about the bench rather
+           than standing to attention */
+        c.atPost = true;
+        c.civT = 5 + rnd()*7;
+        if(c.workOwed) workShift(t, c);      /* and this is the moment the report is about */
+        else if(vrnd() < 0.30) say(c, vpick(TRADE_TALK[c.trade] || TRADE_TALK.crafter));
+        continue;
+      }
+    }
+    c.atPost = false;
     /* gossip if a neighbor is close */
     const pal = chars.find(o => o !== c && o.civ && o.state==='ok' && dist(o.x,o.y,c.x,c.y) < 2);
     if(pal && rnd() < 0.5){
@@ -18872,6 +18887,12 @@ const BUILD_STYLE = {
   'CURING HOUSE':   {pitch: 0,    wallH: 2.2, kind: 'craft',   prop: 'crates'},
   'DEBT HOUSE':     {pitch: 0,    wallH: 2.4, kind: 'martial', prop: 'spears'},
   'CHARM HOUSE':    {pitch: 0.90, wallH: 2.0, kind: 'occult',  prop: 'stones'},
+  /* the three workplaces. Each gets a prop of its own rather than borrowing one, because the
+     point of them is being recognisable from across a plaza — a weavery with a crate outside
+     it is a storehouse. */
+  'FORGE':          {pitch: 0.35, wallH: 2.1, kind: 'craft',   prop: 'furnace'},
+  'WEAVERY':        {pitch: 0.66, wallH: 2.1, kind: 'craft',   prop: 'loom'},
+  'BREWHOUSE':      {pitch: 0.50, wallH: 2.3, kind: 'craft',   prop: 'vats'},
 };
 const BUILD_DEFAULT = {pitch: 0, wallH: 2.2, kind: 'home', prop: 'chimney'};
 /* Each town's own hand. wall/roof/trim are the palette; the flags are the local habit. */
@@ -19033,6 +19054,62 @@ function palette(t){
               b.x + 0.7 + i2*0.45, y + wallH*0.5 + (1.1+i2*0.35)/2, b.y + 0.6);
         box(g, 1.1, 0.5, 0.3, P.trimDk, cxp, y + wallH + 0.2, b.y + 0.5, false);
         break;
+      case 'furnace': {
+        /* SQUAT, OUTSIDE, AND LIT. The armoury's forge is a stack through the roof — a hint
+           that there is a fire somewhere inside. This one stands in the yard where you can
+           walk up to it: a stone drum with its mouth open, a fuel heap, and a bellows. */
+        const fx = doorX - 1.4, fz = doorZ + 1.5;
+        box(g, 1.15, 1.30, 1.15, P.wallDk, fx, y + 0.65, fz);
+        box(g, 1.32, 0.16, 1.32, P.floor,  fx, y + 1.36, fz);                  /* the lip */
+        box(g, 0.62, 0.52, 0.10, '#c4543a', fx, y + 0.60, fz + 0.60, false);   /* the mouth, open */
+        box(g, 0.34, 0.10, 0.34, '#ffb03a', fx, y + 1.46, fz, false);          /* and what is coming off the top */
+        const stH = (ridgeY - y) - 0.4;
+        box(g, 0.44, stH, 0.44, P.wallDk, fx, y + 1.44 + stH/2, fz - 0.1);     /* the flue */
+        /* the bellows, on a frame beside it */
+        box(g, 0.16, 0.62, 0.16, P.trimDk, fx + 0.95, y + 0.31, fz);
+        box(g, 0.70, 0.26, 0.44, P.trim,   fx + 1.05, y + 0.72, fz, false);
+        /* fuel, heaped where a fuel heap goes */
+        for(let i2 = 0; i2 < 4; i2++)
+          box(g, 0.30, 0.24, 0.30, '#2b2622',
+              fx - 1.05 - (i2%2)*0.28, y + 0.12 + Math.floor(i2/2)*0.22, fz + 0.30 - (i2%2)*0.34);
+        /* and the anvil the fire is for */
+        box(g, 0.34, 0.40, 0.22, P.trimDk, fx + 0.2, y + 0.20, fz + 1.55);
+        box(g, 0.66, 0.20, 0.34, P.trimDk, fx + 0.2, y + 0.50, fz + 1.55, false);
+        break;
+      }
+      case 'loom': {
+        /* AN UPRIGHT FRAME WITH THE WARP STILL ON IT. Two posts, a top beam, a row of threads
+           and the cloth beam at the bottom — read from the side, which is how you will see it
+           walking past. The bolts leaning against the wall are what says weavery rather than
+           scaffolding. */
+        const lx = doorX - 0.4, lz = doorZ + 1.35;
+        for(const sx of [-1, 1]) box(g, 0.14, 2.05, 0.14, P.trimDk, lx + sx*0.85, y + 1.02, lz);
+        box(g, 1.95, 0.16, 0.18, P.trimDk, lx, y + 2.02, lz, false);           /* top beam */
+        box(g, 1.95, 0.20, 0.24, P.trimDk, lx, y + 0.42, lz, false);           /* cloth beam */
+        for(let i2 = 0; i2 < 9; i2++)                                          /* the warp */
+          box(g, 0.035, 1.45, 0.035, P.accent, lx - 0.72 + i2*0.18, y + 1.24, lz, false);
+        box(g, 1.80, 0.34, 0.20, P.accent, lx, y + 0.66, lz + 0.06, false);    /* what is woven so far */
+        /* bolts, stacked against the wall */
+        for(let i2 = 0; i2 < 3; i2++)
+          box(g, 0.24, 0.24, 1.05, i2 % 2 ? P.accent : P.trim,
+              b.x + 0.7 + i2*0.30, y + 0.12 + i2*0.02, b.y + b.h - 1.1);
+        break;
+      }
+      case 'vats': {
+        /* THREE OPEN TUBS AND A RACK OF BOTTLES. Open on top, because a closed barrel is a
+           crate and this has to read as something with liquid in it from above, which is the
+           angle this game is played at. */
+        for(let i2 = 0; i2 < 3; i2++){
+          const vx = b.x + 1.0 + (i2 % 2) * 1.5, vz = doorZ + 1.1 + Math.floor(i2/2) * 1.4;
+          box(g, 1.05, 0.86, 1.05, P.trimDk, vx, y + 0.43, vz);
+          box(g, 0.86, 0.10, 0.86, '#6a4a2c', vx, y + 0.84, vz, false);        /* what is in it */
+          box(g, 1.14, 0.10, 1.14, P.trim,   vx, y + 0.30, vz, false);         /* the hoop */
+        }
+        box(g, 1.5, 0.10, 0.42, P.trimDk, cxp, y + 0.95, b.y + 0.7, false);    /* the rack */
+        for(let i2 = 0; i2 < 5; i2++)
+          box(g, 0.14, 0.36, 0.14, P.accent, cxp - 0.55 + i2*0.28, y + 1.18, b.y + 0.7);
+        break;
+      }
       case 'steps':
         for(let i2 = 0; i2 < 3; i2++)
           box(g, 1.6, 0.18, 0.5, P.wallDk, doorX - 0.5, y - 0.09 - i2*0.18, doorZ + 0.5 + i2*0.5, false);
@@ -27154,6 +27231,171 @@ function compassFrom(x0, y0, x1, y1){
   const i = Math.round(((a + Math.PI) / (Math.PI/4))) % 8;
   return [ 'west','northwest','north','northeast','east','southeast','south','southwest'][i];
 }
+/* ============================================================ WHERE THE WORK HAPPENS
+   Two halves of one report: a trade needs somewhere to be, and the thing it produces needs to
+   be visible at the moment it is produced.
+
+   THE POST. A building for the indoor trades and a piece of GROUND for the rest — a miner
+   belongs at the seam and a hunter belongs past the fences, and sending either of them to
+   stand in a shed would be the same mistake as leaving them on the plaza. Cached on the body,
+   because it is a scan over buildings and ore fields and it does not change.
+   `null` means "no post": a trade this town has no building for falls back to wandering,
+   which is the right answer and not a failure. */
+const TRADE_BUILDING = {
+  smith:   ['FORGE', 'ARMOURY'],
+  crafter: ['WEAVERY', 'NET LOFT'],
+  brewer:  ['BREWHOUSE', 'BAR'],
+  farmer:  ['ORCHARD HOUSE', 'GRANARY'],
+  fisher:  ['NET LOFT', 'CURING HOUSE'],
+};
+function tradePost(c, t){
+  if(c._post !== undefined && c._postT === t) return c._post;
+  c._postT = t;
+  c._post = null;
+  if(!t) return null;
+  const want = TRADE_BUILDING[c.trade];
+  if(want){
+    for(const lbl of want){
+      const b = buildings.find(x => x.town === t && x.label === lbl);
+      if(b){
+        /* ---------- EIGHT SMITHS CANNOT STAND IN ONE DOORWAY ----------
+           Copperhold has eight of them and one forge. Pointing all eight at the same tile put
+           eight bodies inside each other, and `separate` then shoved them back out past the
+           radius that counts as being at work — so they arrived, were pushed off, walked back,
+           and were pushed off again, forever. Each gets its own square metre of the yard,
+           drawn off its id so it is the SAME square metre every morning: a bench somebody
+           stands at is a bench, and a bench they are shuffled around at random is a queue. */
+        const a = hash2(c.id * 17 + 1, c.id * 11 + 7) * Math.PI * 2;
+        const rr = 0.7 + hash2(c.id * 5 + 2, c.id * 3 + 9) * 1.5;
+        c._post = {x: b.door.x + 1 + Math.cos(a) * rr, y: b.door.y + 1.8 + Math.sin(a) * rr,
+                   kind: 'bench', near: 2.4};
+        return c._post;
+      }
+    }
+  }
+  /* ---- and the ones whose work is outdoors ---- */
+  if(c.trade === 'miner'){
+    let best = null, bd = 1e9;
+    for(const f of oreFields){ const d = dist(f.x, f.y, t.x, t.y); if(d < bd){ bd = d; best = f; } }
+    /* ---------- THE PITHEAD, NOT THE FAR END OF THE SEAM ----------
+       The first version sent every miner to the CENTRE of the ore field, which sits thirty to
+       fifty tiles outside the wall — measured, and they never arrived: 12, 31, 37 and 44 tiles
+       short at three in the afternoon, having spent the whole day walking cross-country and
+       through a gate. A town does not empty half its population into the wilderness every
+       morning; it digs at a head just outside the wall and the workings run from there toward
+       the vein. So: the town's own bearing on the seam, a few tiles past the fences, where you
+       can see them from the rampart.
+       `near` is the radius that counts as being at it, and it is per-post for exactly this
+       reason — two and a half tiles is right for a bench and absurd for a pit. */
+    if(best){
+      const a = Math.atan2(best.y - t.y, best.x - t.x);
+      const rr = Math.min(bd, (t.clearR || 15) + 4);
+      const q = findOpenNear(Math.round(t.x + Math.cos(a) * rr), Math.round(t.y + Math.sin(a) * rr), 7);
+      if(q){ c._post = {x: q.x, y: q.y, kind: 'seam', near: 4}; return c._post; }
+    }
+  }
+  if(c.trade === 'hunter' || c.trade === 'farmer' || c.trade === 'fisher'){
+    /* past the fences, on the town's own bearing — a fixed spot per person so the same
+       hunter walks out to the same piece of ground every morning, which is what a beat is */
+    const r = (t.clearR || 15) + (c.trade === 'hunter' ? 6 : 2);
+    const a = hash2(c.id * 13 + 5, c.id * 7 + 3) * Math.PI * 2;
+    const q = findOpenNear(Math.round(t.x + Math.cos(a) * r), Math.round(t.y + Math.sin(a) * r), 6);
+    if(q){ c._post = {x: q.x, y: q.y, kind: 'field', near: 4}; return c._post; }
+  }
+  return c._post;
+}
+/* ---------- ONE SHIFT OF SOMEBODY'S TRADE ----------
+   Lifted verbatim out of the midnight bookkeeping pass, and lifted for one reason: the pass
+   ran at the DAY ROLLOVER, which is midnight, when the whole town is asleep. There is no
+   version of "I want to see the craftsman make something" that survives the making happening
+   at three in the morning over a body walking home.
+
+   So the ledger and the moment are separated. The draw that decides whether today is
+   productive still happens once per worker per day at the rollover — same number of numbers,
+   same throughput — and it leaves an OWED SHIFT on the body. If they reach their post between
+   seven and six it is spent there, in daylight, with a float over their head. If they never
+   get there (no post, driven off, or you are nowhere near) the next rollover spends it
+   silently, which is what kept the shelves stocked before any of this existed.
+
+   `put` and `take` close over the worker so the float lands on the hands that did it. */
+function workShift(t, c){
+  if(!t || !t.stock || !c || !c.trade) return false;
+  c.workOwed = false;
+  const st = t.stock;
+  const put = (k, n=1) => { st[k] = (st[k]||0) + n; showWork(c, k, n); return n; };
+  const take = (k, n=1) => { if((st[k]||0) < n) return false; st[k] -= n; return true; };
+  c.tradeSkill = Math.min(60, (c.tradeSkill || 0) + 0.06);
+  const sk = c.tradeSkill;
+  switch(c.trade){
+    case 'farmer': put('fruit', 1 + Math.floor(sk/12)); break;
+    case 'fisher': put('fish', 1 + Math.floor(sk/14)); break;
+    case 'hunter': put('meat', 1 + Math.floor(sk/16)); if(rnd()<0.5) put('hide'); if(rnd()<0.55) put('wood', 1 + Math.floor(sk/22)); break;
+    /* ---------- WHAT THE GROUND HAS ----------
+       Every miner in the world brought up copper, and every smith spent copper, so no shelf
+       anywhere ever held iron ore, coal or bar iron — which made the endgame door, priced in
+       iron, impossible to close by trade. Ironscar is an open PIT and its entire lore is
+       iron; it mines iron. Everyone else turns some up. */
+    case 'miner': {
+      const pit = t.def.key === 'ironscar';
+      if(pit || rnd() < 0.22) put('iron_ore', 1 + Math.floor(sk/15));
+      else put('copper', 1 + Math.floor(sk/15));
+      if(pit || rnd() < 0.30) put('coal', 1 + Math.floor(sk/22));
+      put('stone');
+      break;
+    }
+    case 'brewer': if(take('fruit', 2)){ put('rum', 1 + (sk>25?1:0)); } break;
+    case 'crafter':
+      if(rnd()<0.5 && take('hide')){ put('fabric', 2); }
+      else if(take('fabric')){ put('bandage', 1 + (sk>20?1:0)); }
+      else put('mats');
+      break;
+    case 'smith': {
+      /* A SMELTER FIRST. Ore and coal into bar iron is where the world's iron comes from —
+         without this the ore the miners now raise would pile up unsmelted and the only iron
+         in the game would still be whatever the player smelted himself. */
+      if((st.iron_ore||0) >= 2 && (st.coal||0) >= 2 && rnd() < 0.55){
+        take('iron_ore', 2); take('coal', 2);
+        put('iron', 1 + (sk > 30 ? 1 : 0));
+        break;
+      }
+      if(!take('copper', 2)) break;
+      const q = rollQuality(sk);
+      if(q === null) break;   /* slag day */
+      const out = rnd() < 0.6 ? pick(['w_club','w_rkat','w_kat']) : pick(['a_rag','a_lea']);
+      put(tierKey(out, q));
+      break;
+    }
+    default: return false;
+  }
+  return true;
+}
+/* ---------- AND WHAT IT LOOKS LIKE WHEN SOMETHING IS MADE ----------
+   The float and the specks go over the WORKER, not over the town centre, because the whole
+   complaint is that you could not see who was doing it. Gated twice: the cheap camera box
+   first, so a hundred towns off-screen cost one subtraction each, then real visibility. */
+const WORK_COL = {
+  fruit:'#8aa04a', fish:'#7a8a90', meat:'#a05a4a', hide:'#8a6a48', wood:'#6b5a3c',
+  iron_ore:'#8a7a6a', copper:'#c98a3a', coal:'#3a3630', stone:'#8c8272', iron:'#9aa2a8',
+  rum:'#c4884a', fabric:'#c8b070', bandage:'#e8dcc4', mats:'#a89e8c',
+};
+function showWork(c, k, n){
+  if(!c || !n) return;
+  if(Math.abs(c.x - camX) + Math.abs(c.y - camY) > 34) return;
+  if(visAt(c.x, c.y) !== 2) return;
+  const it = ITEMS[k];
+  addFloat(c.x, c.y - 1.1, `+${n} ${it ? it.name : k}`, WORK_COL[k] || '#c8bda6');
+  addSpecks(c.x, c.y - 0.3, WORK_COL[k] || '#c8bda6', 3 + Math.min(4, n));
+}
+/* what somebody says with their hands full. Off the renderer's stream — see vpick. */
+const TRADE_TALK = {
+  smith:   ['*the hammer, and then the hammer again*', 'Bar\'s not hot enough. It never is.', 'Copper in, copper out. That is the whole of it.'],
+  crafter: ['*the shuttle goes across*', 'Two hides makes a bolt. Nobody believes me.', 'Hands know it better than I do by now.'],
+  brewer:  ['*a tub gets a stir*', 'Give it four days and do not lift the lid.', 'It is not good. It is drinkable, which is a different word.'],
+  farmer:  ['*bent over the row*', 'Ground gives what it gives.', 'Ninth generation working this same dirt.'],
+  fisher:  ['*the net comes up*', 'Nets came up light again.', 'Water gives nothing away for free.'],
+  hunter:  ['*very still, watching the treeline*', 'Something big went through here.', 'Track first. Shoot after.'],
+  miner:   ['*the pick, into the seam*', 'Vein runs deeper than they told us.', 'Ore or nothing, and mostly nothing.'],
+};
 /* ---------- what the world says, and what it actually knows ----------
    Everyone says 'the Fracture'. Commoners say 'magic'; the lettered say 'alchemy'.
    Commoners say 'gaunts'; the lettered say 'Watchers'. A bare handful know the source
