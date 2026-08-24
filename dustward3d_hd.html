@@ -2430,8 +2430,16 @@ function rebuildLich(carrier, circle){
 /* ---------- personal backpacks, sharing, unequip, drops ---------- */
 function invCount(c, k){ return (c.inv && c.inv[k]) || 0; }
 function invTake(c, k, n=1){ if(invCount(c,k) < n) return false; c.inv[k]-=n; if(c.inv[k]<=0) delete c.inv[k]; return true; }
+/* ---------- KIT THAT IS PART OF THE BODY ----------
+   A temporary undead is handed a weapon by the working that stood it up, and that weapon is
+   not an object in the world's economy — it came out of nothing and it goes back to nothing.
+   Every door a piece of gear can leave a body by is closed on it: unequip, hand over, stash,
+   drop, and the reclaim-on-death in `kill`. One flag, five doors, because a farm only needs
+   one of them left open. */
+function kitLocked(c){ return !!(c && c.kitBound); }
 function unequipSlot(c, slot){
   const k = c[slot]; if(!k) return false;
+  if(kitLocked(c)){ log(`${c.name} does not put that down. It came up with the rest of it.`, 'bad'); return false; }
   c[slot] = null; invAdd(c, k, 1);   /* unequip never blocks — over-cap only slows you */
   return true;
 }
@@ -2445,11 +2453,13 @@ function nearestSquadmate(c, maxD=6){
   return best;
 }
 function giveItem(from, to, k, n=1){
+  if(kitLocked(from)) return false;
   if(!to || invCount(from,k) < n) return false;
   invTake(from,k,n); invAdd(to,k,n); return true;
 }
 function makeDrop(x, y, items){ const d = {x, y, items:{...items}}; drops.push(d); return d; }
 function dropFromInv(c, k, n=1){
+  if(kitLocked(c)) return false;
   if(!invTake(c,k,n)) return false;
   let pile = drops.find(d => Math.abs(d.x-c.x)<0.6 && Math.abs(d.y-c.y)<0.6);
   if(!pile) pile = makeDrop(c.x, c.y, {});
@@ -7138,7 +7148,17 @@ function kill(c, by){
   else {
     if(lieuSpent) log(`${c.name} does not leave a body. Four times up off the ground is all there was in it.`, 'bad');
     if(c.faction==='player'){
-      if(c.undead){
+      if(c.kitBound){
+        /* ---------- WHAT THE WORKING LENT IT, THE WORKING TAKES BACK ----------
+           Reported: "their items return to the stash, which is basically a recipe for infinite
+           item farming." It is: the branch below returns a dead risen's kit to the wagon, which
+           is exactly right for a corpse you dressed out of your own stores and exactly wrong
+           for a body whose weapon was MINTED BY THE SPELL. Measured on the build before: one
+           cast of Old Bones put two clubs in the stash, for sixteen mana, repeatable.
+           A bound kit is not lost, it never existed as an object — so it goes here, and it is
+           refused at every other door a piece of gear can leave a body by (see `kitBound`). */
+        c.weapon = null; c.armor = null; c.pack = null; c.inv = {};
+      } else if(c.undead){
         /* dust to dust, kit to the wagon */
         let returned = 0;
         for(const slot of ['weapon','armor','pack']){ if(c[slot]){ stash[c[slot]] = (stash[c[slot]]||0)+1; c[slot]=null; returned++; } }
@@ -14567,15 +14587,34 @@ function castOldBones(c, wx, wy){
     /* NOT `castRaise` — there is no corpse to pass it. The body is built here, and built
        thin: this is the weakest thing a dark caster can put on a field and it is meant to be.
        `rot:'bones'` is what the rig reads to build a bare frame rather than a fresh cadaver. */
+    /* ---------- AND IT HAS TO CARRY SOMETHING ----------
+       "While they should be equipped with weapons, these should crumble with them (the cost
+       of the necromantic magic fading.)" A club, a plank, a rusted blade — whatever was in the
+       ground with them. `kitBound` is what makes that safe: see the flag's own note. */
     const u = makeChar('Old Bones', c.faction, q.x, q.y,
       {atk: 3 + Math.floor(c.stats.magic / 14), def: 2, tough: 4, ath: 5, labor: 2, magic: 1,
-       weapon: vrnd() < 0.5 ? 'w_club' : null});
+       weapon: vpick(['w_club', 'w_plank', 'w_club', 'w_rkat'])});
     u.undead = true; u.crafted = true; u.beast = false;
     u.master = c; u.faction = c.faction;
     u.rot = 'bones'; u.kin = 'bone';
     u.propped = true; u.bindWeight = 0;      /* nothing is bound: see the SPELLS comment */
+    u.kitBound = true;                       /* and nothing it holds outlives it */
     u.tempT = BONE_HOURS;
-    u.hunger = 100; u.blood = 34; u.maxBlood = 34;
+    u.hunger = 100;
+    /* ---------- THE COLLAPSE FLOOR IS A FLAT 40 AND THIS WAS 34 ----------
+       Reported: "Skeletons from the Old Bones spell crumble to dust almost instantly after
+       summoning, rendering them effectively useless." Measured: killed at tick 7 of the first
+       second, by `updateState`, whose own line is `c.blood < downAt` with `downAt` a flat 40
+       for anything that is not a hollow or a chimera. A pool of 34 is BELOW ITS OWN COLLAPSE
+       THRESHOLD, so the body was in the down branch on the first tick it was ever ticked, and
+       an undead in that branch goes straight to `kill` — printing "crumbled to dust", which is
+       the report word for word.
+       The servitor's own comment, two hundred lines from here, says this exact thing: "the
+       collapse threshold is a flat 40 for everything that walks, so a pool under that would
+       crumble the instant it was bound." It was written down and I put 34 in anyway.
+       Frailty is spent on the FRAME, not the pool: 48 leaves eight points of grace and the
+       thin vitals below do the rest — two solid blows anywhere that matters and it is gone. */
+    u.blood = 48; u.maxBlood = 48;
     for(const k of VITAL){ u.parts[k].hp = 40; u.parts[k].max = 40; }
     u.autoFight = true;
     u.shortTag = 'OB' + (++risenN);
@@ -24316,7 +24355,7 @@ function refreshTop(){
   }
 }
 const STANCE_ICONS = {melee:'⚔', ranged:'➶', medic:'✚', tank:'⛨', hold:'⊞'};
-const _defGrpLiving = {open: true}, _defGrpRisen = {open: true};
+const _defGrpLiving = {open: true}, _defGrpRisen = {open: true}, _defGrpPropped = {open: true};
 /* ---- SQUAD GROUPS: folders you make and unmake, so a hundred risen stay readable ----
    A body belongs to at most one group (c.grp = name). Everything ungrouped falls into the
    two default folders, LIVING and RISEN, which cannot be deleted. */
@@ -24344,7 +24383,16 @@ function refreshSquadBar(){
   const bar = $('squadbar'); bar.innerHTML = '';
   const mine = chars.filter(c => c.faction==='player');
   const living = mine.filter(c => (!c.undead || c.lich) && !c.grp);
-  const risen  = mine.filter(c => c.undead && !c.lich && c.state!=='dead' && !c.grp);
+  /* ---------- WHAT IS BOUND AND WHAT IS ONLY PROPPED UP ----------
+     "To be clear, these temporary undead should NOT count towards the total under the
+     necromancer's control." They never did — `risenLoad`, `bindLoads` and `upkeepBodies` all
+     skip `propped` — but the bar showed them in the RISEN folder beside the bound host, which
+     is where a player reads their total from. The arithmetic was right and the READOUT was
+     the thing making the claim. Their own folder, with the clock on it, because a host you
+     are about to lose reads differently from one you are keeping. */
+  const risen  = mine.filter(c => c.undead && !c.lich && !c.propped && c.state!=='dead' && !c.grp);
+  const propped = mine.filter(c => c.undead && c.propped && c.state!=='dead' && !c.grp);
+  const proppedLeft = propped.length ? Math.max(...propped.map(c => c.tempT || 0)) : 0;
   const makePort = (c, mini) => {
     const d = document.createElement('div');
     /* `.threat` only while the body is still standing: once it is down, `.down` is the fact
@@ -24449,6 +24497,8 @@ function refreshSquadBar(){
   /* and the two that always exist */
   drawGroup('LIVING', living, {state: _defGrpLiving, name: null, mini: false, always: true});
   drawGroup('RISEN',  risen,  {state: _defGrpRisen,  name: null, mini: true,  always: risen.length > 0});
+  drawGroup(`PROPPED · ${proppedLeft >= 1 ? Math.round(proppedLeft) + 'h' : '<1h'} LEFT`, propped,
+            {state: _defGrpPropped, name: null, mini: true, always: propped.length > 0});
   liftLogAboveSquad();
 }
 /* ---------- THE LOG SITS ON TOP OF THE SQUAD, NOT UNDER IT ----------

@@ -101,6 +101,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.andNothingOfItIsBound = risenLoad(n) === before
         ? `and the binding did not move — still ${risenLoad(n)}/${cap} with ${host.length} of them standing`
         : `!! ${host.length} PROPPED BODIES TOOK ${risenLoad(n) - before} SLOTS OFF THE BINDING`;
+      /* AND EVERY OTHER PLACE THE HOST IS COUNTED. "These temporary undead should NOT count
+         towards the total under the necromancer's control" — and the player reads that total
+         off three different numbers, not one. `bindLoads` stamps the strain, `upkeepBodies`
+         bills the larder. Only `hostSize` counts them, deliberately: twenty of the dead
+         walking beside you is twenty as far as the world is concerned. */
+      refreshBindStrain();
+      R.andNorIsItStrainOrUpkeep = (!(n._bindW > 0) && !upkeepBodies().some(u => u.propped))
+        ? `and neither the strain (${n._bindW || 0}) nor the larder counts them`
+        : `!! STRAIN ${n._bindW} AND ${upkeepBodies().filter(u => u.propped).length} OF THEM ON UPKEEP`;
 
       /* AND THE DAY ACTUALLY RUNS OUT. The one thing that makes it fair, and the one thing an
          outcome test would never notice — an army that never leaves just looks like an army. */
@@ -120,6 +129,60 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.andItLeavesNothingToHarvest = corpses.filter(x => x.__probe || x.name === 'Old Bones').length === 0
         ? 'and it left no bodies behind — a working that runs out is not a death'
         : `!! IT LEFT ${corpses.filter(x => x.__probe || x.name === 'Old Bones').length} HARVESTABLE CORPSE(S)`;
+    }
+
+    /* ---------- AND IT SURVIVES BEING TICKED AT ALL ----------
+       Reported: "Skeletons from the Old Bones spell crumble to dust almost instantly after
+       summoning, rendering them effectively useless." The case above drives `physics` by hand
+       and never saw it, because the thing that killed them lives in `bodyTick`: `updateState`
+       collapses anybody whose blood is under a FLAT 40, the bodies were poured with 34, and an
+       undead in the collapse branch goes straight to `kill`. They were dead inside a quarter
+       of a second, having never once been alive. Run the REAL `update` and count survivors. */
+    {
+      wipe();
+      const n = nec(30);
+      castOldBones(n, n.x + 2, n.y);
+      const ids = mineOf(n).map(u => u.id);
+      const DT = 1 / 30;
+      for (let i = 0; i < 30 * 4; i++) update(DT);
+      const up = ids.filter(id => chars.some(x => x.id === id && x.state !== 'dead')).length;
+      R.andTheyDoNotCrumbleOnTheSpot = (ids.length >= 2 && up === ids.length)
+        ? `and all ${up} of them are still standing four seconds later — the pool clears the collapse floor`
+        : `!! ${ids.length - up}/${ids.length} CRUMBLED WITHIN FOUR SECONDS OF BEING CALLED UP`;
+
+      /* ---------- AND WHAT THEY CARRY IS NOT AN ITEM SOURCE ----------
+         "Their items return to the stash, which is basically a recipe for infinite item
+         farming." It was: `kill` returns a dead player-undead's kit to the wagon, which is
+         right for a corpse you dressed and wrong for a weapon the spell minted. Measured on
+         the build before: one cast put two clubs in the stash, for sixteen mana, repeatable.
+         Asked as a DIFFERENCE across a cast-and-kill cycle, because the stash is not empty. */
+      const armed = ids.map(id => chars.find(x => x.id === id)).filter(u => u && u.weapon);
+      R.andTheyComeUpArmed = armed.length === ids.length
+        ? `and every one of them came up holding something (${[...new Set(armed.map(u => ITEMS[u.weapon].name))].join(', ')})`
+        : `!! ONLY ${armed.length}/${ids.length} OF THEM CARRY A WEAPON`;
+      const before = JSON.stringify(stash);
+      for (const id of ids) { const u = chars.find(x => x.id === id); if (u) kill(u, null); }
+      R.andTheKitGoesWithThem = JSON.stringify(stash) === before
+        ? 'and killing the lot of them put nothing at all in the wagon — the working takes back what it lent'
+        : `!! THE STASH MOVED WHEN THEY DIED: ${before.slice(0, 90)} → ${JSON.stringify(stash).slice(0, 90)}`;
+
+      /* AND THE PLAYER CANNOT SIMPLY TAKE IT OFF THEM, which is the same farm through a
+         different door — five doors, and a farm only needs one of them left open. */
+      wipe();
+      const n2 = nec(30);
+      castOldBones(n2, n2.x + 2, n2.y);
+      const one = mineOf(n2).find(u => u.weapon);
+      const mate = player().find(u => u.state === 'ok' && !u.propped);
+      const s0 = JSON.stringify(stash);
+      const doors = one ? [
+        unequipSlot(one, 'weapon'),
+        (one.inv = { w_club: 1 }, giveItem(one, mate, 'w_club', 1)),
+        dropFromInv(one, 'w_club', 1),
+      ] : [true];
+      R.andNoDoorLetsItOff = (one && doors.every(x => x === false) && JSON.stringify(stash) === s0 && one.weapon)
+        ? 'and unequip, hand-over and drop are all refused — the kit is part of the body'
+        : `!! A DOOR IS OPEN: unequip ${doors[0]}, give ${doors[1]}, drop ${doors[2]}`;
+      wipe();
     }
 
     /* ================= MASS REANIMATION ================= */
