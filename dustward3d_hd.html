@@ -1090,6 +1090,13 @@ const towns = [], buildings = [], vendors = [], beds = [], drops = [], phylacter
    placed and the whole script died on the spot: "Cannot access 'cells' before
    initialization", which takes the game with it rather than failing quietly. */
 const cells = [], shrines = [];
+/* ---------- WHAT THE ORDER LEAVES STANDING ----------
+   "They can also execute by putting them on a pole and lighting it on fire, leaving it as a
+   warning sign (and permanently altering the world — we need more of that in general.)"
+   A pyre is not an event, it is a THING: it goes into the world at the moment of the burning
+   and it is still there fifty days later, on the road, with a name on it. Declared up here
+   beside `cells` because worldgen sites the pyre ground and the render walks the list. */
+const pyres = [];   /* {x, y, name, day} */
 /* ---------- CONSECRATED GROUND ----------
    A SHRINE appeared exactly twice in this whole file: once in the town plan and once in the
    roof table. It was a roof. Meanwhile `hallow` already meant "anathema to the dead" — but
@@ -3767,22 +3774,49 @@ const BASTION_R = 32;     /* territory radius: intruding necromancers get hunted
   let tries = 0;
   while(!bastion && tries++ < 8000){
     const x = ri(20, W-20), y = ri(20, H-20);
-    if(!areaClear(x-7, y-7, 14, 14)) continue;
+    if(!areaClear(x-13, y-13, 26, 26)) continue;   /* the ring is 25 across — see below */
     if(towns.some(t => dist(t.x,t.y,x,y) < 70)) continue;
     if(dist(startTown.x, startTown.y, x, y) < 100) continue;
     bastion = {x, y, walls:[]};
-    /* square wall ring, gate at the south — a fortress, not a fence */
-    for(let i=-8;i<=8;i++) for(let j=-8;j<=8;j++){
-      if(Math.abs(i)!==8 && Math.abs(j)!==8) continue;
-      if(j===8 && (i===0 || i===1)) continue;   /* gate */
+    /* ---------- A FORTRESS THE SIZE OF WHAT IT DOES ----------
+       Reported: "neutral faction bases should be bigger. The Paladin Bastion needs to be
+       expanded to include a bigger jail for those they suspect of heresy."
+       It was seventeen tiles across with a keep, two barracks and ten men in it — a waypoint
+       with a wall round it. The Order is the second power in this world and the only one that
+       takes people away, and it had nowhere to put them. Twenty-five across now, with a GAOL
+       that is the point of the expansion, a chapel, a storehouse, and enough of the Order
+       inside it that walking in is a decision. */
+    const R = 12;
+    for(let i=-R;i<=R;i++) for(let j=-R;j<=R;j++){
+      if(Math.abs(i)!==R && Math.abs(j)!==R) continue;
+      if(j===R && Math.abs(i) <= 1) continue;   /* gate */
       const bx = x+i, by = y+j;
       if(tileAt(bx,by)!==3){ blocked.add(bkey(bx,by)); bastion.walls.push({x:bx, y:by, hp:800, maxHp:800}); }
     }
     /* the keep: an explorable hall at the heart of the Bastion */
-    placeBuilding(x-3, y-6, 6, 5, 'KEEP', null);
+    placeBuilding(x-4, y-10, 8, 6, 'KEEP', null);
     /* twin barracks flank the yard — room for the Order to actually sleep */
-    placeBuilding(x-7, y+1, 5, 4, 'BARRACKS', null);
-    placeBuilding(x+2, y+1, 5, 4, 'BARRACKS', null);
+    placeBuilding(x-11, y+2, 5, 4, 'BARRACKS', null);
+    placeBuilding(x+6,  y+2, 5, 4, 'BARRACKS', null);
+    placeBuilding(x-11, y-6, 5, 4, 'SHRINE', null);        /* where they say the words */
+    placeBuilding(x-5,  y+7, 7, 4, 'STOREHOUSE', null);
+    /* ---------- AND THE PART THEY DO NOT PUT ON THE MAP ----------
+       Six cells along the back wall of a house with bars on it. `kind:'purge'` so nothing that
+       reaches for a TOWN cell finds one of these by accident — the Order's gaol answers to the
+       Order, and the Question is not the watch. */
+    {
+      const gb = placeBuilding(x+3, y-3, 7, 5, 'GAOL', null);
+      bastion.gaol = gb;
+      for(let i=0;i<6;i++)
+        cells.push({x: gb.x + 1.2 + (i % 3) * 1.6, y: gb.y + 1.3 + Math.floor(i / 3) * 1.5,
+                    town: null, holds: 0, kind: 'purge', hp: 700, maxHp: 700});
+      bastion.gaolPost = {x: gb.x + 3.5, y: gb.y + 5.6};
+    }
+    /* ---------- THE PYRE GROUND ----------
+       Outside the gate, where the road comes up, because the point of it is being seen from
+       the road. Empty at worldgen: what stands here is what the Order has done, and the world
+       keeps it. See `pyres`. */
+    bastion.pyre = {x, y: y + R + 3};
     for(let g2=0; g2<4; g2++){
       const side = g2 % 2 === 0 ? -4.5 : 4.5;
       const gp = {x: x + side, y: y + 2.8 + (g2 < 2 ? 0 : -1.2)};
@@ -3803,9 +3837,9 @@ const BASTION_R = 32;     /* territory radius: intruding necromancers get hunted
     gm.loot = ri(800, 1400);
     gm.dropItems = {tome:1};
     chars.push(gm);
-    /* garrison */
-    for(let k=0;k<5;k++){
-      const p = findOpenNear(x, y, 3.5);
+    /* garrison — a fortress this size with ten men in it is a stage set */
+    for(let k=0;k<16;k++){
+      const p = findOpenNear(x + ri(-8, 8), y + ri(-8, 8), 5);
       const lvl = ri(28,34);
       const g = makeChar('Paladin', 'purge', p.x, p.y,
         {atk:lvl, def:lvl, tough:lvl-4, ath:6, armr:45, guard:{x:p.x, y:p.y},
@@ -3824,19 +3858,36 @@ const BASTION_R = 32;     /* territory radius: intruding necromancers get hunted
   let tries = 0;
   while(!guild && tries++ < 8000){
     const x = ri(20, W-20), y = ri(20, H-20);
-    if(!areaClear(x-6, y-6, 12, 12)) continue;
+    if(!areaClear(x-13, y-13, 26, 26)) continue;   /* the yard is 25 across — see below */
     if(towns.some(t => dist(t.x,t.y,x,y) < 55)) continue;
     if(bastion && dist(bastion.x, bastion.y, x, y) < 90) continue;
     if(dist(startTown.x, startTown.y, x, y) < 55) continue;
     guild = {x, y, walls:[]};
-    /* a low ring with the south side open — a yard, not a keep */
-    for(let i=-6;i<=6;i++) for(let j=-6;j<=6;j++){
-      if(Math.abs(i)!==6 && Math.abs(j)!==6) continue;
-      if(j===6 && Math.abs(i) <= 2) continue;              /* the gate, and it is wide */
+    /* ---------- A SMALL CITY, NOT A YARD ----------
+       Reported: "The merc guild should also have a bigger base and essentially operate as a
+       small city, since right now they just have a bunch of dudes sitting around doing
+       nothing." Both halves are fair. Thirteen tiles across with one hall in it was a
+       courtyard; and a company that eats, drinks, repairs its kit and sleeps somewhere needs
+       the buildings that do those things or it is a diorama.
+       Twenty-five across now, with the gate still standing wide — that has not changed and it
+       is the whole difference from the Bastion. A fortress has a gate you get past. This has a
+       gate you walk through. */
+    const GR = 12;
+    for(let i=-GR;i<=GR;i++) for(let j=-GR;j<=GR;j++){
+      if(Math.abs(i)!==GR && Math.abs(j)!==GR) continue;
+      if(j===GR && Math.abs(i) <= 3) continue;             /* the gate, and it is wide */
       const bx = x+i, by = y+j;
       if(tileAt(bx,by)!==3){ blocked.add(bkey(bx,by)); guild.walls.push({x:bx, y:by, hp:420, maxHp:420}); }
     }
-    placeBuilding(x-3, y-5, 6, 4, 'GUILD HALL', null);
+    placeBuilding(x-4, y-9, 8, 5, 'GUILD HALL', null);
+    /* the things a company needs, which is the difference between a base and a bivouac */
+    placeBuilding(x-11, y-2, 6, 4, 'BARRACKS', null);
+    placeBuilding(x+5,  y-2, 6, 4, 'BARRACKS', null);
+    placeBuilding(x-11, y+5, 6, 4, 'BAR', null);
+    placeBuilding(x+5,  y+5, 6, 4, 'STOREHOUSE', null);
+    placeBuilding(x-3,  y+6, 6, 4, 'FORGE', null);         /* somebody has to mend the kit */
+    /* and a drill yard, which is what all those people are doing when they are not hired */
+    guild.yard = {x, y: y + 1};
     /* THE REGISTRAR IS A VENDOR, which is not a shortcut — it is the right shape. Every
        approach-and-open path in the game already runs through `tradeTarget`, so hiring a crew
        uses the same walk, the same range check and the same modal plumbing as buying a hammer,
@@ -3874,16 +3925,34 @@ const BASTION_R = 32;     /* territory radius: intruding necromancers get hunted
       c.npcNecro = true; c.mana = 60; c.neutral = true; c.guard = {x:q.x, y:q.y};
       chars.push(c); roster.push(c);
     }
-    for(let i=0;i<6;i++){
-      const q = findOpenNear(x + ri(-5,5), y + ri(-4,4), 4);
+    for(let i=0;i<18;i++){
+      const q = findOpenNear(x + ri(-9,9), y + ri(-8,8), 5);
       const lvl = ri(16, 24);
       const c = makeChar(pickName(true), 'guild', q.x, q.y,
         {atk:lvl, def:lvl, tough:lvl-2, ath:6, armr:22, guard:{x:q.x, y:q.y},
-         weapon: i < 2 ? 'w_xbow' : rnd()<0.5 ? 'w_kat' : 'w_sw', armor:'a_lea'});
+         weapon: i < 5 ? 'w_xbow' : rnd()<0.5 ? 'w_kat' : 'w_sw', armor:'a_lea'});
       c.neutral = true; c.merc = true;
       c.loot = ri(60, 160);
       chars.push(c); roster.push(c);
     }
+    /* ---------- AND PEOPLE WHO ARE NOT FOR HIRE ----------
+       A base that is only soldiers is a barracks. The Guild feeds and mends eighteen blades,
+       and the hands that do that are the thing that makes it read as a place where people
+       live rather than a place where people wait. They carry trades, so `workShift` puts them
+       to work in the forge and the bar the same way it does a townsman — the visible-economy
+       pass does not care whose walls it is inside. */
+    for(let i=0;i<7;i++){
+      const q = findOpenNear(x + ri(-8,8), y + ri(-8,8), 5);
+      const c = makeChar(pickName(true), 'guild', q.x, q.y, {atk:3, def:4, tough:5, ath:6});
+      c.neutral = true; c.civ = true;
+      c.trade = ['smith','crafter','brewer','smith','crafter','brewer','farmer'][i];
+      c.guildFolk = true;
+      c.tradeSkill = ri(10, 34);
+      c.age = ri(19, 54);
+      c.civT = rnd() * 10;
+      chars.push(c); roster.push(c);
+    }
+    vendors.push({x: x - 8, y: y + 7.6, vt: 'bar', town: null, name: 'Guild Barkeep'});
     chests.push({x:x-0.5, y:y-3.6, opened:false,
       loot:{cats:ri(150,350), items:{bandage:4, copper:3, w_xbow:1}}});
   }
@@ -4025,6 +4094,125 @@ function spawnInquest(){
     chars.push(c);
   }
   log('An Inquisitor has left the Bastion under a white banner. They are coming to your fires — to talk, first.', 'bad');
+}
+/* ============================================================ THE QUESTION
+   "Paladins should drag off citizens suspected of necromancy. ... Perhaps they capture and
+   execute heretics at a set schedule (a week after capture or something) — creating an
+   interesting opportunity to possibly escape. They can also execute by putting them on a pole
+   and lighting it on fire, leaving it as a warning sign (and permanently altering the world)."
+
+   THE ORDER ALREADY HAD A THEORY AND NO PRACTICE. It hunts YOU, on `purgeWrath`, and that is
+   the whole of what it does — so a faction whose entire premise is that it burns people for
+   the gift had never once taken anybody. The world was told about the Purge and never shown
+   it.
+
+   Three pieces, and the middle one is the point:
+     · a SEIZURE. A patrol that passes a town where the dead have been walking takes somebody
+       away. Not the player — a local, and usually the wrong local, which is the whole horror
+       of an inquisition and costs nothing to model honestly.
+     · a WEEK IN A CELL. Long enough to hear about it, cross the map, and do something. That
+       window is the feature; an execution that resolves the instant it is decided is a log
+       line, not an opportunity.
+     · a PYRE, which stays. The world is permanently one stake heavier and it has a name on it.
+   Rescue is not scripted. The gaol is a building with cells in it and the door works the way
+   every other door in this game works. */
+const BURN_DAYS = 7;
+function bastionCell(){ return cells.find(cl => cl.kind === 'purge' && !cl.holds); }
+/* who the Order takes. NEVER a player unit — that is what the hunt is for, and a system that
+   could quietly delete one of yours in a cell across the map is a different feature. */
+function suspectNear(t){
+  if(!t) return null;
+  const pool = chars.filter(c => c.civ && c.homeTown === t && c.state === 'ok' && !c.jailedAt &&
+                                 c.faction === 'town' && !(c.isLeader >= 0));
+  if(!pool.length) return null;
+  /* a cultist is likelier to be taken than a baker, and a baker is still taken — the Order is
+     not right, it is CERTAIN, and those are different things */
+  const marked = pool.filter(c => c.coil);
+  return (marked.length && rnd() < 0.45) ? pick(marked) : pick(pool);
+}
+function seizeSuspect(t){
+  if(!bastion) return null;
+  const cell = bastionCell();
+  if(!cell) return null;
+  const s2 = suspectNear(t);
+  if(!s2) return null;
+  stripKit(s2);
+  jail(s2, cell, BURN_DAYS);
+  s2.heretic = true;
+  s2.burnDay = day + BURN_DAYS;
+  s2.faction = 'town';
+  worldEvent('purge', t.x, t.y,
+    `The Order took ${s2.name} out of ${t.name} in the night. The charge is the profane gift. They have seven days.`);
+  log(`Paladins have taken ${s2.name} of ${t.name}. They will burn at the Bastion in ${BURN_DAYS} days unless somebody reaches them.`, 'bad');
+  AU.news();
+  return s2;
+}
+/* the stake, and what it leaves. Called at the burn date, and once more by hand if the player
+   is standing there to watch — the world does not care whether anybody came. */
+function burnHeretic(c){
+  const at = (bastion && bastion.pyre) || {x: c.x, y: c.y};
+  const p2 = findOpenNear(Math.round(at.x + ri(-3, 3)), Math.round(at.y + ri(-1, 1)), 4) || at;
+  pyres.push({x: p2.x, y: p2.y, name: c.name, day});
+  if(c.jailedAt){ c.jailedAt.holds = 0; c.jailedAt = null; }
+  c.heretic = false; c.burnDay = 0;
+  c.x = p2.x; c.y = p2.y;
+  addSpecks(p2.x, p2.y - 0.4, '#ff8a3a', 26);
+  kill(c, null);
+  worldEvent('purge', p2.x, p2.y,
+    `${c.name} burned at the Bastion gate. The Order leaves the pole standing, which is the point of the pole.`);
+  log(`${c.name} has been burned at the Bastion. The stake is still standing.`, 'bad');
+  AU.news();
+}
+/* the day tick: the Order takes, holds, and burns on time */
+function questionTick(){
+  if(!bastion) return;
+  /* ---- the burnings that are due ---- */
+  for(const c of [...chars]){
+    if(!c.heretic || c.state === 'dead') continue;
+    if(!c.jailedAt){ c.heretic = false; continue; }       /* somebody got them out */
+    if(day >= (c.burnDay || 0)) burnHeretic(c);
+    else if(c.burnDay - day === 1)
+      worldEvent('purge', bastion.x, bastion.y, `They are building a fire at the Bastion gate. ${c.name} burns tomorrow.`);
+  }
+  /* ---- and a new one, from a town where the dead have been walking ---- */
+  if(!bastionCell()) return;
+  const t = towns.find(t2 => !t2.def.undeadFriendly && !t2.sacked && (t2.necroSeen || 0) > 0);
+  const roll = rnd();
+  /* SUSPICION IS NOT PROOF and the roll runs either way, so a world where nobody has raised
+     anything still sees the Order take the occasional unlucky person. That is the faction. */
+  if(t && roll < 0.30){ t.necroSeen = Math.max(0, (t.necroSeen || 0) - 1); seizeSuspect(t); return; }
+  if(roll > 0.965){
+    const any = pick(towns.filter(t2 => !t2.def.undeadFriendly && !t2.sacked));
+    if(any) seizeSuspect(any);
+  }
+}
+/* ---------- AND SOMETHING WALKS IN THE YARD ----------
+   Reported: "I don't see the Messengers hanging around with the Paladins. Not sure if that's
+   because of not advancing far enough yet (only on day 40) or a genuine glitch."
+   PACING, and worth saying exactly how much: the only place a Messenger could appear beside
+   the Order was `spawnPurge(hunt)`, gated on `day > 45` AND on the dispatch being a HUNT
+   rather than a patrol AND on a 22% roll — and a hunt needs `purgeWrath >= 9`, which resets
+   to zero each time one goes out. Compounded, that is one sighting every forty to seventy
+   days after day 45, on a column you have to physically intercept. On day 40 the answer is
+   simply "not yet", and on day 90 the answer would probably still have been "not yet".
+   So there is a PLACE to see it now, which is what "hanging around with" means: after day 45
+   one takes up residence in the Bastion yard and stands there. Still capped at two Messengers
+   in the world; still announced, because a Watcher inside the Order's own walls is the fact
+   the Purge exists to make impossible. */
+function bastionGuestTick(){
+  if(!bastion || day <= 45) return;
+  if(chars.some(c => c.bastionGuest && c.state !== 'dead')) return;
+  if(chars.filter(o => (o.gauntKind === 'messenger' || o.gauntKind === 'herald') && o.state !== 'dead').length >= 2) return;
+  if(rnd() > 0.14) return;
+  const q = findOpenNear(bastion.x + ri(-5, 5), bastion.y + ri(-4, 4), 5);
+  const m = spawnGaunt('messenger', q.x, q.y);
+  if(!m) return;
+  m.faction = 'purge'; m.nightborn = false; m.bastionGuest = true;
+  m.guard = {x: q.x, y: q.y};
+  worldEvent('purge', bastion.x, bastion.y,
+    'Something is living inside the Bastion. It stands in the yard where the Order drills and none of them will cross in front of it.');
+  log('There is a Watcher standing in the Bastion yard. The Order walks around it.', 'bad');
+  AU.news();
 }
 function inquestTick(){
   const iq = chars.find(c => c.inquisitor && c.state === 'ok');
@@ -11979,21 +12167,40 @@ const corpseSites = [];
    is not on any map, and practice. Not worship. Practice. */
 let coilShrine = null;
 let coilExposed = false;
+/* DECLARED ABOVE THE SEEDER, not below it. `seedCoil` is an IIFE that runs while the module is
+   still executing, and a `let` further down the file is in its temporal dead zone when it
+   does — which throws from a line that has nothing to do with the cult. */
+let coilN = 0;
 (function seedCoil(){
   const p = bossSpot(28, 40);
   if(!p) return;
   coilShrine = {x: p.x, y: p.y};
-  /* the cells: ordinary civilians, marked in secret */
-  let planted = 0;
+  /* ---------- THE CELLS ----------
+     "The five ouroboros cult members selected at world start should be added to — five is way
+     too few, and their subtle workings should be expanded upon."
+     Five was one per town and a hard `break`, so the seventh living god's entire following in
+     the world was five people who met at a stone and did press-ups. A CELL is three to five,
+     because a cell of one is a person with a secret and the word means something else.
+     Twenty-odd across six towns, which is about one in thirty of the population — quiet
+     enough to be quiet and large enough to be a fact. */
   const hosts = towns.filter(t => t.def.key !== 'hollowmere');
+  let planted = 0;
   for(const t of hosts){
-    if(planted >= 5) break;
     const civs = chars.filter(c => c.civ && c.homeTown === t && c.age >= 20 && c.state !== 'dead');
-    if(!civs.length) continue;
-    const m = pick(civs);
-    m.coil = true;
-    planted++;
+    if(civs.length < 4) continue;
+    const n = Math.min(civs.length - 2, ri(3, 5));
+    const pool = [...civs];
+    for(let i = 0; i < n; i++){
+      const m = pool.splice(ri(0, pool.length - 1), 1)[0];
+      if(!m) break;
+      m.coil = true;
+      /* they are not all the same rank. A SPEAKER holds the cell together, and killing one
+         is a different event from killing a member — see coilTick. */
+      if(i === 0) m.coilSpeaker = true;
+      planted++;
+    }
   }
+  coilN = planted;
 })();
 /* the meeting: on some nights the quiet people walk to the stone */
 let coilMeetNight = false;
@@ -12024,6 +12231,60 @@ function coilTick(){
       for(const m of members){ if(m.coilOut){ m.coilOut = false; m.civT = rnd() * 4; if(m.homeTown) m.moveTarget = {x: m.homeTown.x + ri(-3, 3), y: m.homeTown.y + ri(-3, 3)}; } }
     }
   }
+  /* ---------- THE SUBTLE WORKINGS ----------
+     "their subtle workings should be expanded upon." One assassination at a fixed world
+     condition was the whole of it — a single scripted beat that most runs never reach.
+     What a cell that trains in the dark actually does, in order of how loudly:
+       · it RECRUITS. A member with nobody watching talks to a neighbour, and the neighbour
+         starts going out at night. This is why five was never going to be enough on its own:
+         the number has to be able to move.
+       · it BUYS the watch. A town with a deep enough cell finds its guards looking the other
+         way, which the player feels as a town that stops caring what you do in it.
+       · and when the world is busy, it acts. That part is unchanged.
+     Everything here runs at the DAY level, quietly, and only announces itself when the player
+     is close enough to see it or a seat falls. */
+  if(_coilDay !== day){
+    _coilDay = day;
+    /* ---------- A CELL OUTLIVES ITS SPEAKER ----------
+       `suspectNear` prefers the marked, so the Order burning a cultist is likelier than
+       chance to burn the one who does the talking — and without this the cell it belonged to
+       goes silent forever, which makes the Bastion's fire quietly load-bearing for whether
+       the cult can grow at all. It goes quiet for a WEEK and then somebody else stands up. */
+    for(const t2 of towns){
+      const cell = members.filter(m => m.homeTown === t2);
+      if(cell.length < 2 || cell.some(m => m.coilSpeaker)) continue;
+      if(t2.coilQuiet === undefined) t2.coilQuiet = day + 7;
+      if(day < t2.coilQuiet) continue;
+      t2.coilQuiet = undefined;
+      const heir = cell.reduce((a, b2) => (b2.stats.def > a.stats.def ? b2 : a), cell[0]);
+      heir.coilSpeaker = true;
+      if(coilExposed) log(`Somebody new has started keeping the hours in ${t2.name}. The stone still gets visitors.`, '');
+    }
+    const speakers = members.filter(m => m.coilSpeaker);
+    /* recruitment: slow, and it needs somebody to do the talking */
+    if(speakers.length && members.length < 40 && rnd() < 0.34){
+      const sp = pick(speakers);
+      const t2 = sp.homeTown;
+      const near = t2 ? chars.filter(c => c.civ && c.homeTown === t2 && !c.coil && c.state === 'ok' && c.age >= 18) : [];
+      if(near.length){
+        const conv = pick(near);
+        conv.coil = true;
+        coilN++;
+        if(coilExposed && player().some(o => o.state !== 'dead' && dist(o.x, o.y, conv.x, conv.y) < 14))
+          log(`${conv.name} of ${t2.name} has started walking out after dark. You know where to.`, '');
+      }
+    }
+    /* the watch looks away: a town whose cell is deep enough stops enforcing */
+    for(const t2 of towns){
+      const cell = members.filter(m => m.homeTown === t2).length;
+      const deep = cell >= 4;
+      if(deep && !t2.coilHeld){
+        t2.coilHeld = true;
+        worldEvent('coil', t2.x, t2.y,
+          `${t2.name}'s watch has stopped asking questions. Nobody can say when it started.`);
+      } else if(!deep && t2.coilHeld) t2.coilHeld = false;
+    }
+  }
   /* when the world burns hot enough, a cell acts: war is their sacrament */
   const wars = towns.filter(t => t.warWith).length / 2;
   if(wars >= 2 && !coilStruck && members.length){
@@ -12038,6 +12299,7 @@ function coilTick(){
   }
 }
 let coilStruck = false;
+let _coilDay = -1;
 /* ---------- DEEP-WASTE FAUNA ----------
    Not everything out there came through a tear. Some of it just grew where nothing
    should, and got on with the business of eating. */
@@ -14545,8 +14807,15 @@ function castRaise(c, body, o){
     if(guardSees || daylight){
       const pious = t.leader && t.leader.trait === 'pious';
       dropRep(t, pious ? 45 : 30);
+      t.necroSeen = (t.necroSeen || 0) + 1;
       log(`You were seen raising the dead in ${t.name}! (-${pious ? 45 : 30} standing${pious ? ' — the ' + t.leader.title + ' calls it sacrilege' : ''})`, 'bad');
     } else {
+      /* ---------- NOBODY SAW YOU, WHICH IS NOT THE SAME AS NOBODY NOTICING ----------
+         The town wakes up to a grave open and a set of footprints, and the Order comes and
+         takes one of ITS OWN for it. That is the whole of an inquisition and it costs one
+         counter: `necroSeen` is the town's suspicion, spent by `questionTick` when a patrol
+         next comes through. Getting away with it cleanly is how somebody else burns. */
+      t.necroSeen = (t.necroSeen || 0) + 1;
       log('Raised under cover of night. No one saw.', '');
     }
   }
@@ -16202,6 +16471,8 @@ function update(dt){
   if(hour >= 24){
     hour -= 24; day++;
     guildPayday();           /* the Guild is paid at dawn or it goes home at dawn */
+    questionTick();          /* and the Order takes, holds, and burns on time */
+    bastionGuestTick();      /* and something may have moved into the yard */
     bountyDecay();
     wandererDayTick();       /* she is on a different road today, which is the point of her */
     /* a broken shrine is not broken forever. They come back and set the stone, unless
@@ -17080,6 +17351,18 @@ function update(dt){
     c.civT -= wdt;
     if(c.civT > 0) continue;
     const t = c.homeTown;
+    /* ---------- A CIVILIAN WITH NO TOWN ----------
+       Every civ in the world had a `homeTown` until the Guild grew cooks and smiths, and this
+       loop reads `t.x` four lines down without asking. It threw inside `update` and took the
+       whole frame with it — the same shape as the guild necromancer reading `hm.x` off
+       nothing, which is twice now that adding people somewhere that is not a town has found a
+       place assuming everybody lives in one. They keep to their own ground instead. */
+    if(!t){
+      const home = c.guard || {x: c.x, y: c.y};
+      c.moveTarget = {x: home.x + ri(-4, 4), y: home.y + ri(-4, 4)};
+      c.civT = 8 + rnd() * 16;
+      continue;
+    }
     /* ---------- A TRADE WITH SOMEWHERE TO BE ----------
        Between seven and six they are at their post: the smith at the furnace, the weaver at
        the loom, the miner at the seam, the hunter out past the fences. Before this every
@@ -19322,6 +19605,44 @@ const syncWells = makeDynGroup(
       const beam = new THREE.Mesh(BOXG, wood);
       beam.scale.set(1.5, 0.12, 0.12); beam.position.set(wx, gy2 + 1.5, wy);
       g.add(beam);
+    }
+  });
+/* ---------- THE STAKES, WHICH DO NOT COME DOWN ----------
+   "leaving it as a warning sign (and permanently altering the world — we need more of that in
+   general.)" A charred pole and a ring of ash, at the Bastion gate, one per person the Order
+   has burned. The signature is the COUNT, so a new one appears the moment it is set and
+   nothing is rebuilt in between. */
+const syncPyres = makeDynGroup(
+  () => 'pyres' + pyres.length,
+  g => {
+    if(!pyres.length) return;
+    const char = new THREE.MeshLambertMaterial({color: 0x2b2622});
+    const ash  = new THREE.MeshLambertMaterial({color: 0x6b6154});
+    const bone = new THREE.MeshLambertMaterial({color: 0xcfc4a8});
+    for(const py of pyres){
+      const gy2 = groundY(py.x, py.y);
+      const disc = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.25, 0.06, 10), ash);
+      disc.position.set(py.x, gy2 + 0.03, py.y); g.add(disc);
+      const pole = new THREE.Mesh(BOXG, char);
+      pole.scale.set(0.22, 2.6, 0.22); pole.position.set(py.x, gy2 + 1.3, py.y);
+      pole.castShadow = true; g.add(pole);
+      /* the crossbar they tie the arms to, and what is left hanging on it */
+      const bar = new THREE.Mesh(BOXG, char);
+      bar.scale.set(1.15, 0.16, 0.16); bar.position.set(py.x, gy2 + 1.95, py.y); g.add(bar);
+      for(const sx of [-0.34, 0.34]){
+        const rib = new THREE.Mesh(BOXG, bone);
+        rib.scale.set(0.09, 0.5, 0.09); rib.position.set(py.x + sx, gy2 + 1.55, py.y); g.add(rib);
+      }
+      const skull = new THREE.Mesh(BOXG, bone);
+      skull.scale.set(0.3, 0.3, 0.28); skull.position.set(py.x, gy2 + 2.12, py.y); g.add(skull);
+      /* the faggots at the base, half burnt */
+      for(let i = 0; i < 5; i++){
+        const a = (i / 5) * Math.PI * 2 + hash2(py.x + i, py.y) * 2;
+        const st = new THREE.Mesh(BOXG, char);
+        st.scale.set(0.1, 0.1, 0.7);
+        st.position.set(py.x + Math.cos(a) * 0.5, gy2 + 0.14, py.y + Math.sin(a) * 0.5);
+        st.rotation.y = a; g.add(st);
+      }
     }
   });
 const syncSundered = makeDynGroup(
@@ -24182,7 +24503,7 @@ function render(){
   camera.lookAt(camSX, focusY, camSY);
   updateSky();
   water.position.y = -0.22 + Math.sin(now*0.001)*0.03;
-  syncPBuilds(); syncBlueprints(); syncSundered(); syncWells(); syncBastion(); syncChests(); syncBeds(); syncTownWalls(); syncCamps(); syncSlaverCamp(); syncRoofs(); syncVertical(); syncRifts(); syncStairs(); syncRedoubts();
+  syncPBuilds(); syncBlueprints(); syncSundered(); syncWells(); syncPyres(); syncBastion(); syncChests(); syncBeds(); syncTownWalls(); syncCamps(); syncSlaverCamp(); syncRoofs(); syncVertical(); syncRifts(); syncStairs(); syncRedoubts();
   if(fogDirty) redrawFog();
   syncChars(rdt);
   updateDust(rdt);
@@ -25742,7 +26063,9 @@ function openVendor(v){
   if(v.mobile) return openCaravanTrade(v.mobile);
   if(v.vt === 'guild') return openGuild(v);
   if(v.vt === 'bar'){  /* barkeeps are pragmatic — fines spend fine */
-    v.bubble = {text: v.town.rep < -50 ? 'Make it quick.' : pick(["What'll it be?","Drink or work?"]), t:3};
+    /* AND THE GUILD'S BAR HAS NO TOWN BEHIND IT. `v.town` was never null before the yard grew
+       one, and every line in `openBar` that reads a reputation would have thrown on it. */
+    v.bubble = {text: (v.town && v.town.rep < -50) ? 'Make it quick.' : pick(["What'll it be?","Drink or work?"]), t:3};
     return openBar(v);
   }
   if(v.town && v.town.rep < -50){
@@ -27374,6 +27697,21 @@ function tradePost(c, t){
   if(c._post !== undefined && c._postT === t) return c._post;
   c._postT = t;
   c._post = null;
+  /* ---------- AND THE GUILD KEEPS ITS OWN HANDS ----------
+     Its buildings are placed with no town behind them, so the lookup below cannot find them
+     by walking a town's list. They are the only townless FORGE and BAR in the world, which is
+     what makes this safe to ask for directly rather than by proximity. */
+  if(!t && c.guildFolk && guild){
+    const want = {smith: 'FORGE', crafter: 'FORGE', brewer: 'BAR', farmer: 'STOREHOUSE'}[c.trade];
+    const b = want && buildings.find(x => !x.town && x.label === want && dist(x.x, x.y, guild.x, guild.y) < 20);
+    if(b){
+      const a = hash2(c.id * 17 + 1, c.id * 11 + 7) * Math.PI * 2;
+      const rr = 0.7 + hash2(c.id * 5 + 2, c.id * 3 + 9) * 1.5;
+      c._post = {x: b.door.x + 1 + Math.cos(a) * rr, y: b.door.y + 1.8 + Math.sin(a) * rr,
+                 kind: 'bench', near: 2.4};
+    }
+    return c._post;
+  }
   if(!t) return null;
   const want = TRADE_BUILDING[c.trade];
   if(want){
@@ -28226,15 +28564,16 @@ function snapshot(){
     skinShift: c.skinShift || null, shiftN: c.shiftN || 0,
     bearingId: c.bearing ? c.bearing.id : null,
     carryIds: c.carryList ? c.carryList.map(b => b.id) : null,
-    lich: !!c.lich, face: c.face||null, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
+    lich: !!c.lich, face: c.face||null, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, coilSpeaker: !!c.coilSpeaker, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
     guardTargetId: c.guardTarget ? c.guardTarget.id : null,
     /* somebody you were paid to keep alive, and who they were walking to */
     vip: !!c.vip, escortTo: c.escortTo ?? null, escortId: c.escortId || 0, attendant: !!c.attendant,
     npcNecro: !!c.npcNecro, lieutenant: !!c.lieutenant, civ: !!c.civ, merc: !!c.merc,
     guildHire: !!c.guildHire, guildLicensed: !!c.guildLicensed, guildmaster: !!c.guildmaster, wage: c.wage||0,
+    heretic: !!c.heretic, burnDay: c.burnDay||0, bastionGuest: !!c.bastionGuest,
     inv: {...c.inv}, pack: c.pack, mule: !!c.mule, fleeOnHit: !!c.fleeOnHit,
     eater: !!c.eater, warF: c.warF, warT: c.warT, campId: c.campId, rebelOf: c.rebelOf,
-    sick: c.sick||0, armyEnds: c.armyEnds||0, trade: c.trade||null, tradeSkill: c.tradeSkill||0,
+    sick: c.sick||0, armyEnds: c.armyEnds||0, trade: c.trade||null, tradeSkill: c.tradeSkill||0, guildFolk: !!c.guildFolk,
     isLeader: c.isLeader ?? -1, captain: !!c.captain, omni: !!c.omni,
     npcNecro: !!c.npcNecro, roamNecro: !!c.roamNecro, rebel: !!c.rebel,
     age: c.age, goal: c.goal, wasChild: !!c.wasChild, legacyTrade: c.legacyTrade||null,
@@ -28246,7 +28585,7 @@ function snapshot(){
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen},
-    rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], coilShrine, coilExposed, coilStruck,
+    rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], pyres: pyres.map(q=>({x:q.x, y:q.y, name:q.name, day:q.day})), necroSeen: towns.map(t=>t.necroSeen||0), coilHeld: towns.map(t=>!!t.coilHeld), coilShrine, coilExposed, coilStruck, coilN,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
     camps: camps.map(c => ({id:c.id, x:c.x, y:c.y, fac:c.fac, cap:c.cap, tents:c.tents})),
     bonds: [...bonds.entries()],
@@ -28579,17 +28918,18 @@ function restore(d){
       const rd = redoubts.find(x => x.id === c.redoubtDeep);
       if(rd && rd.rooms) c.homeRoom = rd.rooms.find(rm => rm.id === c.roomId) || null;
     }
-    c.lich = !!s.lich; c.face = s.face||null; c.hollowTier = s.hollowTier||0; c.nascent = !!s.nascent; c.xpDebt = s.xpDebt||null; c.settler = !!s.settler; c.chain = s.chain||null; c.coil = !!s.coil; c.pCaravan = s.pCaravan||0;
+    c.lich = !!s.lich; c.face = s.face||null; c.hollowTier = s.hollowTier||0; c.nascent = !!s.nascent; c.xpDebt = s.xpDebt||null; c.settler = !!s.settler; c.chain = s.chain||null; c.coil = !!s.coil; c.coilSpeaker = !!s.coilSpeaker; c.pCaravan = s.pCaravan||0;
     c.att = s.att || {divine:0, destruction:0, dark:0, dust:0, ...((s.gift && s.race!=='chimera') ? {[s.gift]: 2} : {})};
     c.attXp = s.attXp || {divine:0, destruction:0, dark:0, dust:0};
     c.npcNecro = !!s.npcNecro; c.lieutenant = !!s.lieutenant; c.civ = !!s.civ; c.merc = !!s.merc;
     c.guildHire = !!s.guildHire; c.guildLicensed = !!s.guildLicensed; c.guildmaster = !!s.guildmaster; c.wage = s.wage || 0;
+    c.heretic = !!s.heretic; c.burnDay = s.burnDay || 0; c.bastionGuest = !!s.bastionGuest;
     c.vip = !!s.vip; c.escortTo = s.escortTo ?? null; c.escortId = s.escortId || 0; c.attendant = !!s.attendant;
     c.inv = s.inv || {}; c.pack = s.pack || null; c.mule = !!s.mule; c.fleeOnHit = !!s.fleeOnHit;
     c.eater = !!s.eater; c.warF = s.warF ?? -1; c.warT = s.warT ?? -1;
     c.campId = s.campId ?? -1; c.rebelOf = s.rebelOf ?? -1;
     c.sick = s.sick || 0; c.armyEnds = s.armyEnds || 0;
-    c.trade = s.trade || null; c.tradeSkill = s.tradeSkill || 0;
+    c.trade = s.trade || null; c.tradeSkill = s.tradeSkill || 0; c.guildFolk = !!s.guildFolk;
     c.isLeader = s.isLeader ?? -1; c.captain = !!s.captain; c.omni = !!s.omni;
     c.npcNecro = !!s.npcNecro; c.roamNecro = !!s.roamNecro; c.rebel = !!s.rebel;
     c.age = s.age ?? ri(18,38); c.goal = s.goal || null;
@@ -28670,9 +29010,15 @@ function restore(d){
   /* a save from before the shared clock has no quiet owed, which is the right answer for it */
   siegeQuietUntil = d.siegeQuietUntil ?? -99;
   guildRep = d.guildRep ?? 0;
+  /* THE STAKES COME BACK. A permanent alteration to the world that does not survive a save is
+     not permanent, it is a session decoration. */
+  pyres.length = 0;
+  if(Array.isArray(d.pyres)) for(const q of d.pyres) pyres.push({x:q.x, y:q.y, name:q.name, day:q.day});
+  towns.forEach((t, i) => t.necroSeen = (d.necroSeen && d.necroSeen[i]) || 0);
+  towns.forEach((t, i) => t.coilHeld = !!(d.coilHeld && d.coilHeld[i]));
   marks.length = 0;
   for(const m of (d.marks || [])) marks.push({x: m.x, y: m.y});
-  coilShrine = d.coilShrine || coilShrine; coilExposed = !!d.coilExposed; coilStruck = !!d.coilStruck;
+  coilShrine = d.coilShrine || coilShrine; coilExposed = !!d.coilExposed; coilStruck = !!d.coilStruck; coilN = d.coilN ?? coilN;
   blueprints.length = 0; for(const b of (d.blueprints || [])) blueprints.push({...b, need: {...b.need}, got: {...b.got}});
   events = Array.isArray(d.events) ? d.events : []; eventN = d.eventN || 0; playerKnown = d.playerKnown || {};
   bastionWarned = false;

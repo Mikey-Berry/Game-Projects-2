@@ -104,6 +104,7 @@ the truth was 45%.
 | `hosts.js` | The two spells that step around the binding — Old Bones and Mass Reanimation — and what they cost INSTEAD, which is the only interesting question about them. "Does it raise something" is not a test; a spell that raises free and keeps free is the end of the dark art's entire cost model and would read as nothing but a bigger army. So: the clock actually runs out (24 game-hours, and nothing left to harvest — a working that ran out is not a death), the head room is actually taken (65% of the pool, and letting go dismisses them), the rite can actually be interrupted, and neither puts a permanent host on the binding. That last one found the real bug: `risenLoad` sums `(x.bindWeight || 1)` and both spells set it to 0, so twenty propped bodies read as twenty slots off a ceiling of seven — the whole cost model inverted, invisible to any outcome test. |
 | `wyrm.js` | An imperfect dragon, and the three claims about it that could quietly be false while the creature worked perfectly well. The sweep is the one that had to be BUILT: the cleave that catches bystanders is gated `if(wpn && !wpn.range)` — it comes off the weapon — so everything in the game that fights with what it IS struck one body per blow however large it was, and six men could stand shoulder to shoulder in front of a house-sized animal and take it in turns. Measured **by difference**: twelve blows at one man in a rank of five reach five of them with the sweep and one without, because an absolute number passes on any build where the thing merely hits hard. The breath is checked as a LINE (two bodies outside the bearing take nothing, so stepping aside is the answer), rarity as distance and not just count, the hoard against the richest thing already in the game, and the rig against the grazer's. Three probe faults in it, all named in the file: `neutral = false` takes a body OUT of the rule that would have made it hostile; `syncChars` builds rigs for what is on screen and nothing else; and a size bound that passed by 2% is not a bound. |
 | `guild.js` | The Mercenary's Guild, and specifically the one clause that makes it a guild rather than a gang. A faction is almost impossible to add WRONG in a way anything notices — the yard stands, the people are in it, the screen opens — so the weight is on **never against each other**: two towns at war, both paying the same organisation, and every lever that could put the two contingents on opposite sides pulled in turn, including `provoked`, which is how a neutral becomes an enemy everywhere else in this game. The control is the other half — they still go for the enemy's ordinary watch, since a charter that made them harmless would pass all of it. Licensing had to be able to PRODUCE the situation it forbids, which took a second pass: a town at war fights in two places and they are different factions, so both contingents in one faction could never meet and the rule would have held vacuously. |
+| `purge.js` | The three things in the world that are not a town and not your problem, and which between them did almost nothing. Weight is on the **sequence**, because every step of it can be true while the one after it is not: seized, held, held for a WEEK, burned on the day, and a stake left standing with a name on it. The week is the feature — an execution that resolves the moment it is decided is a log line, so BOTH halves are asserted (nothing happens for six days; on the seventh it does), plus that walking them out of the cell actually ends it. The save round-trip earns its line on its own: "permanently altering the world" that does not survive a reload reads identically in play until the day you reload. Two vacuous greens were closed here after the fact — forty draws that never picked a player unit is free when the pool is EMPTY, and `0 of 0 hands have a bench` clears any percentage floor you like — so both now require the measurement to have happened. Every block is fenced in a `guard()`, because a harness that throws on the build before the feature dies at the first missing name and reports nothing about the other seven claims. |
 | `trades.js` | Whether a town looks like it is doing something. The economy worked perfectly, which was the problem: a bookkeeping pass over people standing anywhere, run at the DAY ROLLOVER — midnight. Measured on the build before: 3 of 64 shifts in a working day and none anywhere near a workplace, because there were no workplaces. It checks that the places exist and are recognisable (each prop unique in the world), that every trade has somewhere to be and the outdoor ones are outdoors, that people GO, and that the making happens there in daylight. The control is the important one and it is asserted **exactly rather than statistically**: shifts against worker-days (0.62 against the 0.70 the productive roll has always paid), because counting SHELVES moves by a third on plague and war alone — 232 units on one build and 163 on the other, both perfectly correct. |
 
 ### Balance
@@ -1014,6 +1015,31 @@ the truth was 45%.
   of the dark art. No outcome test could see it: the army works, the spell works, the ceiling
   is simply gone. Fixed by asking the question that was actually being asked (`propped`) at the
   three places the ceiling lives, rather than by chasing `|| 1` through eleven call sites.
+- **A sentinel is not a boolean, and `-1` is truthy.** `isLeader` defaults to `-1` and every
+  other site in the file tests `c.isLeader >= 0`. `suspectNear` filtered with `!c.isLeader`,
+  which is false for every non-leader in the world — the pool went 23 → 0 and the Paladins
+  took nobody. It cost a whole run to find because the *adjacent* assertion went GREEN on it:
+  "forty draws never once landed on one of your own" is free when forty draws land on nobody
+  at all. **A probe that counts a bad outcome must also count that the outcome had a chance to
+  happen** — assert the draws, not just the misses. Same shape as `0 of 0 hands have a bench`,
+  which clears any percentage floor.
+- **Read the green lines too.** The run said "5 of them speaking for a cell" where six cells
+  were seeded, and that one digit was a real design fault: `suspectNear` prefers the marked, so
+  the Order is likelier than chance to burn the cultist who does the talking, and a cell with
+  no speaker can never recruit again. The Bastion's fire was quietly load-bearing for whether
+  the cult could grow. Nothing was red. The number just did not match the seed.
+- **Anything a feature writes on a body has to be in `snapshot`/`restore`, and only a
+  round-trip finds the ones you forgot.** Three went missing in one pass — `coilSpeaker`,
+  `guildFolk`, `coilHeld` — and every one of them is invisible until a reload, at which point
+  the cult stops recruiting and the Guild's seven tradespeople forget where they work. The
+  save was written for the field the feature is *about* (`coil`) and not the fields that make
+  it *behave*.
+- **Fence every block in a harness for a new feature.** An unfenced probe run against the
+  build before the feature dies at the first `ReferenceError` and reports nothing about the
+  other seven claims, so the A/B is a stack trace instead of a list. `guard(keys, fn)` records
+  the ReferenceError as a red — which is what it is — and lets the rest run. Gate only the
+  claims that genuinely depend on an earlier step; `purge.js` bailed out of six independent
+  assertions behind `if (!held) return R`.
 - **A rule the situation cannot arise for is not a rule.** The Guild's charter — a guild oath
   never fights a guild oath — held perfectly in the first draft of `guild.js` because both
   licensed contingents were faction `town` and `hostile()` returns false on the first line for
