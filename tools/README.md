@@ -1019,6 +1019,23 @@ the truth was 45%.
   of the dark art. No outcome test could see it: the army works, the spell works, the ceiling
   is simply gone. Fixed by asking the question that was actually being asked (`propped`) at the
   three places the ceiling lives, rather than by chasing `|| 1` through eleven call sites.
+- **Check the denominator is made of trials.** `survive.js` reported interposition as a share
+  of 400 *swings*, but `attack` returns early on cooldown, on a miss and on a stagger, so most
+  of them never reached the code being measured. The same unmodified guard read 10% on one
+  build and 4% on another — four standard deviations apart if n really were 400, and ordinary
+  noise once you count the blows that landed. Against a real denominator it is 2% on every
+  build tested. **A rate whose denominator includes no-ops is not a rate.**
+- **Measure the PRNG sensitivity before blaming the diff.** Burning 0, 1, 7, 33 and 101 draws
+  before an otherwise identical experiment on one unchanged build moved a survival share
+  through 54, 63, 57, 63, 57 — nine points at n≈120. Any bound inside that spread is a coin,
+  and a batch that shifts worldgen will flip it while touching nothing the assertion is about.
+  Burning draws is a two-line experiment and it is the fastest way to tell a real regression
+  from a relocated one.
+- **A suite is a stopwatch as well as a test.** The confirming run took 3987s against the
+  first run's 2846 — 40% slower on a byte-identical build — and two harnesses that sleep to
+  advance the world went red purely on that. Compare the per-harness times before reading a
+  red line as a regression: `mimics.js` 72s → 102s across the same two runs said more than the
+  failure did.
 - **A statistic over twenty-one bodies is not a measurement, it is a coin.** `trades.js`
   counted one town's tradespeople against a 60% bar — a threshold of thirteen people — and the
   figure walked 17 → 13 → 12 across a batch that changed nothing about work. Proved by
