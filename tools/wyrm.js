@@ -195,7 +195,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       c.beast = true; c.kin = kin; c.big = big; c.state = 'ok'; c.dir = 0; c.__probe = true;
       chars.push(c); born.push(c); return c;
     };
-    const w = mk('wyrm', 2.6), g = mk('grazer', 2.2), h = mk('hound', 1);
+    /* READ `big` OFF THE ANIMAL THE GAME MADE. It was hard-coded at 2.6 here while the
+       spawner sets 2.2, so every number below described a wyrm 18% larger than any wyrm in
+       the world — including the length bound, which is the one assertion in the file whose
+       whole job is to say the creature has not got absurd. A staged body must be staged the
+       way the game stages it or the measurement is of nothing. */
+    const real = chars.find(c => c.kin === 'wyrm');
+    const w = mk('wyrm', real ? real.big : 2.2), g = mk('grazer', 2.2), h = mk('hound', 1);
     /* ---------- SYNC UNTIL THE RIG IS THERE, NOT A FIXED NUMBER OF TIMES ----------
        `syncChars` builds at most eight rigs a frame and spends that budget on the world
        first. races.js and bound.js both learned this the hard way — a fixed count wins alone
@@ -216,7 +222,40 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         tris += g2.index ? g2.index.count / 3 : g2.attributes.position.count / 3;
       });
       const bx = new THREE.Box3().setFromObject(e.g);
-      out[k] = { tris, len: +(bx.max.z - bx.min.z).toFixed(2), hgt: +(bx.max.y - bx.min.y).toFixed(2), wid: +(bx.max.x - bx.min.x).toFixed(2) };
+      /* where the SKULL is, and where the back is. `e.head` and `e.torso` keep real meshes of
+         their own (bakeBoxes puts them in `solo`), which is the only reason this is askable. */
+      let headY = null, backY = null;
+      if(e.head){ const p2 = new THREE.Vector3(); e.head.getWorldPosition(p2); headY = +(p2.y - bx.min.y).toFixed(2); }
+      if(e.torso){ backY = +(new THREE.Box3().setFromObject(e.torso).max.y - bx.min.y).toFixed(2); }
+      /* AND WHETHER THE TWO SIDES MATCH. Every beast in this file is built in ±sx pairs, so
+         the rig is symmetric by construction — until something is built out of a chain of
+         Euler angles, where negating two of three does not always mirror and one wing comes
+         out in a different pose from the other. Cheap, and it is the failure mode. */
+      let asym = 0, sampled = 0;
+      {
+        /* IN THE BODY'S OWN FRAME, AND EVERY VERTEX. A first draft took every third vertex in
+           WORLD space and reported 430 of 576 unmirrored on a body that is symmetric by
+           construction — two mistakes with the same shape. Sampling a subset means a vertex's
+           partner is usually not in the set to be found; and `x` is only the left-right axis
+           once the rig's own rotation is taken back out. */
+        const inv = new THREE.Matrix4().copy(e.g.matrixWorld).invert();
+        const pts = new Set(), q = (v) => Math.round(v * 24);
+        e.g.traverse(m => {
+          if(!m.isMesh || !m.geometry || !m.geometry.attributes.position) return;
+          const a = m.geometry.attributes.position;
+          for(let i = 0; i < a.count; i++){
+            const v = new THREE.Vector3().fromBufferAttribute(a, i).applyMatrix4(m.matrixWorld).applyMatrix4(inv);
+            pts.add(q(v.x) + ',' + q(v.y) + ',' + q(v.z)); sampled++;
+          }
+        });
+        for(const key of pts){
+          const [x, y, z] = key.split(',');
+          if(Math.abs(+x) <= 1) continue;                    /* on the centreline, no partner to have */
+          if(!pts.has((-(+x)) + ',' + y + ',' + z)) asym++;
+        }
+      }
+      out[k] = { tris, len: +(bx.max.z - bx.min.z).toFixed(2), hgt: +(bx.max.y - bx.min.y).toFixed(2),
+                 wid: +(bx.max.x - bx.min.x).toFixed(2), headY, backY, asym, sampled };
     }
     for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
     return out;
@@ -226,10 +265,30 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     R.andItBuildsABodyOfItsOwn = '!! THE RIG DID NOT BUILD (' + (rigs.err || 'no mesh') + ')';
   } else {
     const w = rigs.wyrm, g = rigs.grazer;
-    R._rigs = `wyrm ${w.tris}t ${w.len}L x ${w.hgt}H · grazer ${g.tris}t ${g.len}L x ${g.hgt}H · hound ${rigs.hound && rigs.hound.tris}t`;
-    R.andItBuildsABodyOfItsOwn = (w.tris > g.tris * 1.3 && w.len / w.hgt > g.len / g.hgt * 1.2)
-      ? `and it is not the grazer in a new colour — ${w.tris} triangles against ${g.tris}, and long and low (${(w.len / w.hgt).toFixed(2)}) where the grazer is a barrel (${(g.len / g.hgt).toFixed(2)})`
-      : `!! THE WYRM IS THE GRAZER RIG (${w.tris}t vs ${g.tris}t, ratio ${(w.len / w.hgt).toFixed(2)} vs ${(g.len / g.hgt).toFixed(2)})`;
+    R._rigs = `wyrm ${w.tris}t ${w.len}L x ${w.hgt}H (head ${w.headY}, back ${w.backY}) · grazer ${g.tris}t ${g.len}L x ${g.hgt}H · hound ${rigs.hound && rigs.hound.tris}t`;
+    /* NOT THE GRAZER IN A NEW COLOUR, and the axis that separates them CHANGED.
+       "Wyrms should be bigger." The first pass answered that with LENGTH and got a
+       crocodile — and this assertion agreed with it, demanding the wyrm be longer relative
+       to its height than the grazer is, which is a bound that rewards exactly the silhouette
+       that was reported as wrong. (It was also passing by 0.001 at the end, and a bound you
+       clear by a thousandth is a coincidence.) The separation now lives where the size does:
+       the wyrm STANDS, half again the grazer's height, and CARRIES ITS HEAD ABOVE ITS BACK,
+       which nothing else on four legs in this game does. */
+    R.andItBuildsABodyOfItsOwn = (w.tris > g.tris * 1.3 && w.hgt > g.hgt * 1.4)
+      ? `and it is not the grazer in a new colour — ${w.tris} triangles against ${g.tris}, and it stands ${w.hgt} against the grazer's ${g.hgt}`
+      : `!! THE WYRM IS THE GRAZER RIG (${w.tris}t vs ${g.tris}t, ${w.hgt}H vs ${g.hgt}H)`;
+    R.andItCarriesItsHeadUp = (w.headY !== null && w.backY !== null && w.headY > w.backY * 1.12)
+      ? `and the skull rides at ${w.headY} over a back at ${w.backY} — a raised neck, not a head slung off the shoulders`
+      : `!! THE HEAD IS AT ${w.headY} AND THE BACK IS AT ${w.backY}`;
+    /* THE WINGS ARE A PICTURE AND THIS FILE CANNOT SEE ONE. bakeBoxes merges every box on the
+       animal into one geometry, so there is no wing to isolate and measure, and "the wing
+       reads as a wing" was never going to be a number — it is judged on the contact sheet in
+       tools/wyrmpix.js, the same way the Mimic faces are judged in tools/mimicpix.js.
+       What IS mechanical is the failure the rebuild was for: a wing built as a chain of Euler
+       angles that does not mirror. */
+    R.andBothSidesMatch = (w.asym === 0)
+      ? `and the two sides are the same body — ${w.sampled} vertices, every one off the centreline has its partner`
+      : `!! ${w.asym} VERTICES HAVE NO MIRROR (of ${w.sampled})`;
     /* AND GIANT IS NOT THE SAME AS ABSURD, which is a real bound and not a tidy one: `big`
        feeds reach, pick radius and walking speed as well as scale, and the first draft came
        out thirteen and a half tiles nose to tail — longer than most buildings in the game,
@@ -245,7 +304,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   console.log('');
   console.log(bad.length || errs.length
     ? `IT IS NOT A DRAGON YET (${bad.length + errs.length})`
-    : 'SOMETHING LONG AND LOW IS LYING ON A GREAT DEAL OF GOLD');
+    : 'SOMETHING VERY LARGE IS LYING ON A GREAT DEAL OF GOLD');
   await b.close();
   process.exit(bad.length || errs.length ? 1 : 0);
 })();
