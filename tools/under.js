@@ -196,6 +196,32 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! ${denizens} DENIZENS, ${finds} FINDS`;
     });
 
+    /* ---------- 6b. AND IT IS STILL THERE AFTER A SAVE ----------
+       REASONING IS NOT MEASURING. The argument that the undercroft survives a reload is sound
+       — `restore` never clears `decks`, and the tiles the tunnels carve open are dropped from
+       `baseBlocked` as well as from `blocked` — and the same kind of argument was sound about
+       `coilSpeaker`, `guildFolk` and `coilHeld`, all three of which were missing from the save
+       and invisible until somebody reloaded. A world regenerated from the seed and then
+       patched is exactly where a floor can quietly grow back. */
+    guard(['andItSurvivesASave'], () => {
+      const openAt = () => {
+        let n = 0;
+        for (const k of decks) { if (Math.floor(k / FLOOR_SPAN) - 4 === F && !blocked.has(k)) n++; }
+        return n;
+      };
+      const before = openAt();
+      const probe = U.halls.map(h => bkey(Math.round(h.x), Math.round(h.y), F));
+      const standingBefore = probe.filter(k => decks.has(k) && !blocked.has(k)).length;
+      restore(JSON.parse(JSON.stringify(snapshot())));
+      const after = openAt();
+      const standingAfter = probe.filter(k => decks.has(k) && !blocked.has(k)).length;
+      /* the shafts are stairs, and a stair the reload forgot is an underworld with no way in */
+      const ways = stairs.filter(st => st.from === 0 && st.to <= F).length;
+      R.andItSurvivesASave = (after >= before * 0.99 && standingAfter === standingBefore && ways >= 20)
+        ? `and it comes back off a save — ${after} open tiles against ${before}, all ${standingAfter} hall floors still there, ${ways} ways down`
+        : `!! ${before} OPEN TILES WENT IN AND ${after} CAME BACK (halls ${standingBefore}→${standingAfter}, ways down ${ways})`;
+    });
+
     /* ---------- 7. AND THE SURFACE DID NOT MOVE ----------
        THE CONTROL, and it is the one that matters most here: this change altered `floorY`,
        which every storey in the game reads — ramparts, tower decks, redoubt floors. If a
