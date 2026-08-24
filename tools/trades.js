@@ -103,20 +103,35 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          next midnight and then asked why nobody was at work. And a miner's post is the ore
          field, which is thirty to fifty tiles outside the wall: half a working day of walking
          is the honest answer for a pit and this window has to allow for it. */
+      /* ---------- ACROSS EVERY TOWN, NOT ONE OF THEM ----------
+         This counted ONE town's twenty-one hands against a 60% bar, which is a threshold of
+         thirteen bodies — and the number lands on 12, 12, 13 on the SAME build, so the
+         assertion was decided by one person's afternoon. It flipped this suite red on a batch
+         that changed nothing about work: the build before it has the identical trade mix
+         (9 smiths, 4 miners, 4 brewers, 4 crafters) and the identical midnight fallback rate
+         (42% against 43%), and the daylight figure alone swings seven points run to run.
+         The fault was the SAMPLE, so the fix is the sample. Seven towns and a hundred and
+         fifty hands is the same claim measured where it holds still. */
       hour = 7;
       const DT = 1 / 30;
       for (let i = 0; i < 30 * HOUR_SEC * 8; i++) update(DT);
-      const at = folk.filter(c => {
-        const post = (typeof tradePost === 'function') ? tradePost(c, t) : null;
-        /* the post's own idea of "at it" — a bench is a doorway, a seam is a field */
+      const atOf = (c, tt) => {
+        const post = (typeof tradePost === 'function') ? tradePost(c, tt) : null;
         /* the post's own radius plus a body's worth of shuffle: at any instant a few of them
            are walking round the bench rather than standing at it, and a probe that demands
            everybody frozen on their mark is measuring a photograph, not a working day. */
-        return post && dist(c.x, c.y, post.x, post.y) < (post.near || 2.4) + 3.5;
-      }).length;
-      R.andTheyGoToWork = (folk.length >= 4 && at >= Math.ceil(folk.length * 0.6))
-        ? `${at} of ${t.name}'s ${folk.length} tradespeople are at their post by mid-afternoon`
-        : `!! ONLY ${at}/${folk.length} OF THEM ARE ANYWHERE NEAR THEIR WORK`;
+        return !!post && dist(c.x, c.y, post.x, post.y) < (post.near || 2.4) + 3.5;
+      };
+      let at = 0, all = 0;
+      for (const tt of towns) {
+        for (const c of chars) {
+          if (!c.civ || c.homeTown !== tt || !c.trade || c.state !== 'ok') continue;
+          all++; if (atOf(c, tt)) at++;
+        }
+      }
+      R.andTheyGoToWork = (all >= 40 && at >= Math.ceil(all * 0.6))
+        ? `${at} of the world's ${all} tradespeople are at their post by mid-afternoon`
+        : `!! ONLY ${at}/${all} OF THEM ARE ANYWHERE NEAR THEIR WORK`;
     }
 
     /* ---------- 4. AND THE MAKING HAPPENS THERE, IN DAYLIGHT ----------
@@ -128,10 +143,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const t = towns.find(t2 => t2.def.key === 'copperhold') || towns[0];
       const seen = [];
       const real = workShift;
+      /* every town's shifts, for the reason written out above — one town's forty shifts put
+         the daylight share anywhere between 57% and 65% on the same build */
       window.workShift = (tt, cc) => {
         const r = real(tt, cc);
-        if (r && tt === t) seen.push({ hour, kind: (typeof tradePost === 'function' && tradePost(cc, tt) || {}).kind || null,
-                                       at: (typeof tradePost === 'function' && tradePost(cc, tt)) ? dist(cc.x, cc.y, tradePost(cc, tt).x, tradePost(cc, tt).y) : 99 });
+        if (r) seen.push({ hour, own: tt === t,
+                           at: (typeof tradePost === 'function' && tradePost(cc, tt)) ? dist(cc.x, cc.y, tradePost(cc, tt).x, tradePost(cc, tt).y) : 99 });
         return r;
       };
       const DT = 1 / 30;
@@ -139,9 +156,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       window.workShift = real;
       const day7to18 = seen.filter(x => x.hour >= 7 && x.hour < 18).length;
       const atPost = seen.filter(x => x.at < 6.5).length;
+      /* the throughput invariant stays on ONE town on purpose — it is an exact ratio against
+         that town's own hands, and mixing seven towns' populations into it would blur the one
+         number in this file that is not allowed to be statistical */
+      const own = seen.filter(x => x.own).length;
       const hands = chars.filter(c => c.civ && c.homeTown === t && c.trade && c.state === 'ok').length;
-      const perHandDay = seen.length / Math.max(1, hands * 4);
-      R.work = `${seen.length} shifts over four days from ${t.name}'s ${hands} hands — ${perHandDay.toFixed(2)} a hand a day`;
+      const perHandDay = own / Math.max(1, hands * 4);
+      R.work = `${own} shifts over four days from ${t.name}'s ${hands} hands — ${perHandDay.toFixed(2)} a hand a day; ${seen.length} across every town`;
       /* ---------- THE THROUGHPUT INVARIANT, EXACTLY ----------
          The old code did ONE shift per worker per productive day and the productive roll was
          `rnd() > 0.7 ? skip : work`. Splitting the ledger from the moment must not touch that,
@@ -151,10 +172,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.andEveryHandWorksOneShiftADay = (perHandDay > 0.55 && perHandDay < 0.85)
         ? `and that is ${perHandDay.toFixed(2)} against the 0.70 the productive roll has always paid out — the ledger did not move, only the moment did`
         : `!! ${perHandDay.toFixed(2)} SHIFTS A HAND A DAY AGAINST AN EXPECTED 0.70`;
-      R.andTheMakingIsInDaylight = (seen.length >= 12 && day7to18 >= seen.length * 0.6)
+      R.andTheMakingIsInDaylight = (seen.length >= 120 && day7to18 >= seen.length * 0.6)
         ? `and ${day7to18} of ${seen.length} of them happened between seven and six — not at midnight over a body walking home`
         : `!! ONLY ${day7to18}/${seen.length} SHIFTS HAPPENED IN WORKING HOURS`;
-      R.andItHappensAtTheBench = (seen.length >= 12 && atPost >= seen.length * 0.5)
+      R.andItHappensAtTheBench = (seen.length >= 120 && atPost >= seen.length * 0.5)
         ? `and ${atPost} of them were worked standing at the post itself`
         : `!! ONLY ${atPost}/${seen.length} SHIFTS WERE WORKED ANYWHERE NEAR A POST`;
     } else {

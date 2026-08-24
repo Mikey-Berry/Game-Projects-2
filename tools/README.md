@@ -1019,6 +1019,24 @@ the truth was 45%.
   of the dark art. No outcome test could see it: the army works, the spell works, the ceiling
   is simply gone. Fixed by asking the question that was actually being asked (`propped`) at the
   three places the ceiling lives, rather than by chasing `|| 1` through eleven call sites.
+- **A statistic over twenty-one bodies is not a measurement, it is a coin.** `trades.js`
+  counted one town's tradespeople against a 60% bar — a threshold of thirteen people — and the
+  figure walked 17 → 13 → 12 across a batch that changed nothing about work. Proved by
+  measuring the thing the assertion is actually about on both builds: identical trade mix,
+  identical midnight-fallback rate (42% against 43%). A worldgen PRNG shift does not change
+  behaviour, it relocates individuals, and a small sample cannot tell those apart. **Widen the
+  sample, not the bound** — seven towns and 139 hands lands at 72% with margin and repeats
+  exactly.
+- **Never assert exact equality on a number the game moves on purpose.** `f0.blood === 100`
+  read two and a half game-hours of hunger as gunfire (measured: 99/100, nothing within
+  twenty-five tiles). It had been green only because the arithmetic used to land the other side
+  of a tick. Bound it by what the feature would do — a Heavy's bolt is worth far more than five
+  blood — and the assertion survives the world drifting under it.
+- **One failure string must not cover two causes.** The same probe printed "A DRY HEAVY FIRES
+  ANYWAY (0 bolts)" — a sentence that cannot be true — because the firing check and the control
+  check shared a message. A red line that describes the wrong failure sends you into the
+  feature when the fault is in the staging. Split them, and have the probe report what else was
+  on the measuring ground.
 - **A fixed-point iteration is not an algorithm, it is a hope.** `storeyHit` and `aimGround`
   both re-sampled the terrain where the last guess landed, four times and three times. That
   converges at `slope / tan(pitch)` — a third of the error a pass on the hillside a cave is dug

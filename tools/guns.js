@@ -189,9 +189,30 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const f0 = foe(gx + 8, gy);
       logs.length = 0;
       runPinned(200, [f0]);
-      R.aDryHeavyHoldsItsFire = (t.shots || 0) === 0 && f0.blood === 100
-        ? 'with an empty stash the Heavy will not fire at all'
-        : `!! A DRY HEAVY FIRES ANYWAY (${t.shots} bolts) — the charge rule does nothing`;
+      /* ---------- AND SAY WHO ELSE WAS THERE ----------
+         This assertion has two halves and they fail for opposite reasons: the Heavy firing is
+         a charge-rule bug, and the raider losing blood while it fired NOTHING is somebody
+         else's arrow. The message only ever named the first, so a run that failed on the
+         control read as a regression in the feature. `clearGround` runs once at staging and
+         twenty seconds is long enough for something to walk back in. */
+      const intruders = chars.filter(c => !c.__probe && c.state !== 'dead' &&
+                                          (c.floor || 0) === (f0.floor || 0) && dist(c.x, c.y, f0.x, f0.y) < 25)
+                             .map(c => `${c.name}/${c.faction}@${dist(c.x, c.y, f0.x, f0.y).toFixed(0)}`);
+      R._whoElseWasThere = intruders.length
+        ? `${intruders.length} on the measuring ground: ${intruders.slice(0, 6).join(', ')}`
+        : 'nothing but the control on the measuring ground';
+      /* THE CONTROL'S BLOOD IS NOT A CONSTANT. `=== 100` was an exact-equality test on a
+         number the game moves on purpose: two hundred steps of 0.1s is twenty seconds, and
+         `HOUR_SEC` is 8, so the raider stands in the open for TWO AND A HALF GAME-HOURS and
+         loses a point to hunger and weather. Measured at 99/100 with nothing else within
+         twenty-five tiles — the assertion was reading ordinary attrition as gunfire, and it
+         had been passing only because the arithmetic used to land the other side of a tick.
+         A bolt from a Heavy is worth far more than five, so five is the bound. */
+      R.aDryHeavyHoldsItsFire = (t.shots || 0) > 0
+        ? `!! A DRY HEAVY FIRES ANYWAY (${t.shots} bolts) — the charge rule does nothing`
+        : f0.blood > 95
+          ? `with an empty stash the Heavy will not fire at all (the raider is at ${f0.blood.toFixed(0)}, having stood outside for two and a half hours)`
+          : `!! THE HEAVY FIRED NOTHING BUT THE CONTROL LOST ${(100 - f0.blood).toFixed(0)} BLOOD — something else was shooting`;
       R.aDryHeavySaysWhereCellsComeFrom = logs.some(l => /Heavy Aetheric Lance is dry/.test(l) && /scavenged/.test(l) && /(Dustport|Hollowmere|occult dealers|redoubt)/.test(l))
         ? `and it says why, and where they come from: "${(logs.find(l => /is dry/.test(l)) || '').slice(0, 92)}…"`
         : `!! A DRY HEAVY IS UNEXPLAINED (said ${logs.find(l => /dry/.test(l)) || 'nothing'})`;
