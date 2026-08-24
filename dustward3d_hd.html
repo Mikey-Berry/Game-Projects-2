@@ -580,7 +580,16 @@ const stairs = [];
 const FLOOR_H = 3.4;            /* world units between storeys */
 const FLOOR_SPAN = W * H;
 function bkey(x, y, f = 0){ return (f + 4) * FLOOR_SPAN + y * W + x; }   /* +4 so cellars key cleanly */
-function floorY(f){ return (f || 0) * FLOOR_H; }
+/* ---------- AND DOWN IS NOT ONE STEP ----------
+   "the 'floor transfer' should be taken FAR more extreme (think an elevator lol)".
+   Storeys UP are storeys: a rampart is one floor over the yard and that is what a rampart is.
+   Storeys DOWN were the same 3.4 units, so the whole underworld sat in a crawlspace directly
+   beneath the grass and a descent read as stepping into a cellar. The undercroft drops
+   UNDER_DROP below the surface in one go — about seven storeys — and the warrens below it
+   space out from there normally. Nothing about the floor NUMBERS changes, so every `bkey`,
+   every `decks` lookup and every stair still works exactly as it did; only the height does. */
+const UNDER_DROP = 22;
+function floorY(f){ const n = f || 0; return n >= 0 ? n * FLOOR_H : -UNDER_DROP + (n + 1) * FLOOR_H; }
 function charY(c){ return groundY(c.x, c.y) + floorY(c.floor); }
 const decks = new Set();        /* tiles that have solid ground on an upper floor */
 /* Every mutation of `decks` bumps an epoch, so anything that CACHES a question about upper-floor
@@ -18322,6 +18331,175 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
   let made = 0;
   for(const m of pool){ if(made >= want) break; if(placeCave(m)) made++; }
 })();
+/* ============================================================ THE UNDERCROFT
+   "The 'cave under mountains' system is still terribly broken. I'm starting to think the
+    'floor transfer' should be taken FAR more extreme (think an elevator lol) and an entirely
+    NEW area built 100% underneath the entire map, not just under these single mountains."
+
+   WHAT WAS ACTUALLY THERE, measured rather than guessed: seven warrens, 4,015 tiles of floor
+   between them across a 1440x1440 world, and 1.7% OF THE MAP within forty tiles of a mouth.
+   Ninety-eight percent of the world had nothing whatsoever underneath it. "Under the
+   mountains" was not a description of a feature, it was the extent of one.
+
+   AND IT CANNOT BE A SOLID FLOOR. Two million tiles is not a Set and it is not a draw call;
+   more to the point, a solid basement under a continent is not a cave, it is a car park. What
+   spans a map is a NETWORK — halls where the rock allowed it, joined by tunnels, with a great
+   deal of solid stone in between. That is also what the movement code already wants:
+   `isBlocked` returns true for any tile on a non-zero floor that is not in `decks`, so the
+   stone costs nothing to have. Only the carved parts exist.
+
+   A LATTICE, JITTERED. Halls on a coarse grid so the network is guaranteed CONNECTED and
+   guaranteed to reach every corner — you can walk from under one sea to under the other —
+   with the positions knocked about enough that it does not read as a grid when you are
+   standing in it. Every hall joins its right and its lower neighbour, which is a spanning
+   structure with loops in it rather than a tree: a wrong turn down here should cost you
+   time, not strand you.
+
+   AND THE WARRENS HANG OFF IT. The undercroft is floor -1, which is the floor every cave
+   mouth already drops onto — so the seven warrens are no longer seven sealed pockets, they
+   are the deep ends of one place, and their vaults are at the bottom of it. Carved AFTER the
+   caves, and the carve opens rock, so a tunnel that runs into a warren's wall breaks into it.
+   The tunnels were here first. */
+const UNDER = -1;
+const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24, ms: 0};
+(function digUndercroft(){
+  const _t0 = (typeof performance !== 'undefined' ? performance.now() : 0);
+  const U = undercroft, B = U.bucket;
+  /* the spatial index. 55,000 floor tiles is nothing to hold and everything to DRAW, and the
+     renderer must never walk the whole network to find the corner of it you are standing in.
+     Bucketed once, here, at the only moment the shape is known. */
+  const put = (x, y) => {
+    if(x < 2 || y < 2 || x >= W-2 || y >= H-2) return;
+    const k = bkey(x, y, UNDER);
+    if(decks.has(k) && !blocked.has(k)) return;              /* already open */
+    decks.add(k);
+    /* the tunnels are older than anything dug into them, so they cut. `baseBlocked` is taken
+       long before this runs and `restore` rebuilds `blocked` from it — patch both or the
+       stone grows back on the first reload. */
+    blocked.delete(k); baseBlocked.delete(k);
+    const bk = (Math.floor(y/B) * 4096) + Math.floor(x/B);
+    let a = U.grid.get(bk); if(!a){ a = []; U.grid.set(bk, a); }
+    a.push(y * W + x);
+    U.tiles++;
+  };
+  const disc = (cx, cy, r) => {
+    const ri2 = Math.ceil(r);
+    for(let j = -ri2; j <= ri2; j++) for(let i = -ri2; i <= ri2; i++)
+      if(i*i + j*j <= r*r) put(cx + i, cy + j);
+  };
+  /* a tunnel: three wide, and it WANDERS. A straight line between two halls is a corridor in
+     a building; the wobble is a couple of tiles and it is the whole difference between a
+     tunnel and a hallway. */
+  const bore = (ax, ay, bx, by) => {
+    const dx = bx - ax, dy = by - ay;
+    const n = Math.max(Math.abs(dx), Math.abs(dy));
+    if(!n) return;
+    const amp = 3 + rnd() * 5, ph = rnd() * Math.PI * 2, per = 0.9 + rnd() * 1.4;
+    const nx = -dy / n, ny = dx / n;                          /* the perpendicular */
+    for(let s2 = 0; s2 <= n; s2++){
+      const t = s2 / n;
+      const off = Math.sin(ph + t * Math.PI * 2 * per) * amp * Math.sin(t * Math.PI);
+      const px = Math.round(ax + dx * t + nx * off), py = Math.round(ay + dy * t + ny * off);
+      disc(px, py, 1.6);
+    }
+  };
+
+  /* ---------- THE LATTICE ---------- */
+  /* SPANNING THE MAP, not tiling the middle of it. The first cut laid the lattice out from a
+     fixed margin at a fixed spacing and stopped when it ran out of room, which left a
+     hundred-and-forty-tile band all the way round the world with nothing under it — 79% cover
+     where the whole point of the exercise is the word EVERY. The first and last nodes sit ON
+     the margin now and the spacing is whatever divides the rest, so the network reaches the
+     corners by construction rather than by luck. */
+  const MARGIN = 58, S = 168;
+  const NX = Math.max(2, Math.round((W - MARGIN*2) / S) + 1), NY = Math.max(2, Math.round((H - MARGIN*2) / S) + 1);
+  const SX = (W - MARGIN*2) / (NX - 1), SY = (H - MARGIN*2) / (NY - 1);
+  const node = [];
+  for(let j = 0; j < NY; j++){
+    node[j] = [];
+    for(let i = 0; i < NX; i++){
+      const hx = clamp(Math.round(MARGIN + i*SX + ri(-34, 34)), 12, W-13);
+      const hy = clamp(Math.round(MARGIN + j*SY + ri(-34, 34)), 12, H-13);
+      node[j][i] = {x: hx, y: hy, i, j};
+    }
+  }
+  /* halls first, so a tunnel arriving late cannot wall one off */
+  for(let j = 0; j < NY; j++) for(let i = 0; i < NX; i++){
+    const nd = node[j][i];
+    const r = 5 + rnd() * 5;
+    disc(nd.x, nd.y, r);
+    /* most halls have a smaller one budded off them, which is what stops every junction in
+       the world being one circle */
+    if(rnd() < 0.62){
+      const a = rnd() * Math.PI * 2, d2 = r + 3 + rnd() * 7;
+      const ox = Math.round(nd.x + Math.cos(a) * d2), oy = Math.round(nd.y + Math.sin(a) * d2);
+      disc(ox, oy, 3 + rnd() * 3);
+      bore(nd.x, nd.y, ox, oy);
+    }
+    nd.r = r;
+    U.halls.push(nd);
+  }
+  /* then the joins: right and down. Every hall reaches every other hall. */
+  for(let j = 0; j < NY; j++) for(let i = 0; i < NX; i++){
+    const nd = node[j][i];
+    if(i + 1 < NX) bore(nd.x, nd.y, node[j][i+1].x, node[j][i+1].y);
+    if(j + 1 < NY) bore(nd.x, nd.y, node[j+1][i].x, node[j+1][i].y);
+  }
+  /* and the warrens are joined to the nearest hall, so the seven pockets become the deep
+     ends of one place instead of seven sealed rooms with a ladder each */
+  for(const cv of caves){
+    let best = null, bd = 1e9;
+    for(const h of U.halls){ const d2 = dist(h.x, h.y, cv.mouth.x, cv.mouth.y); if(d2 < bd){ bd = d2; best = h; } }
+    if(!best) continue;
+    disc(cv.mouth.x, cv.mouth.y, 2.4);
+    bore(cv.mouth.x, cv.mouth.y, best.x, best.y);
+    /* a tunnel that broke into a chamber must not still have rock drawn standing in it */
+    cv.walls = cv.walls.filter(w => w.f !== UNDER || blocked.has(bkey(w.x, w.y, UNDER)));
+  }
+
+  /* ---------- THE SHAFTS ----------
+     The elevator. One stair, `from: 0, to: -1`, which the transfer code already handles
+     generically — a body walks onto the plate and arrives twenty-two units under the world in
+     one action instead of taking four staircases in sequence. They go on every other hall so
+     that wherever you are on the surface there is a way down within a hundred tiles or so,
+     which is the other half of "under the entire map": a place you cannot get into from where
+     you are standing is not under you in any sense that matters. */
+  for(const h of U.halls){
+    let sp = null;
+    for(let tries = 0; tries < 30 && !sp; tries++){
+      const q = findOpenNear(clamp(h.x + ri(-5, 5), 4, W-5), clamp(h.y + ri(-5, 5), 4, H-5), 6);
+      if(q && !isBlocked(q.x, q.y, 0) && tileAt(q.x, q.y) !== 3 && decks.has(bkey(Math.floor(q.x), Math.floor(q.y), UNDER))) sp = q;
+    }
+    if(!sp) continue;
+    const sx = Math.floor(sp.x), sy = Math.floor(sp.y);
+    if(stairAt(sx, sy)) continue;
+    stairs.push({x: sx, y: sy, from: 0, to: UNDER, shaft: true});
+    U.shafts.push({x: sx, y: sy, hall: h});
+  }
+  /* ---------- AND SOMETHING LIVES DOWN THERE ----------
+     Not in every hall. A network you can cross is worth having on its own, and a monster in
+     every room turns a place into a corridor of encounters — which is what the warrens
+     already are, and they are still down there being exactly that. */
+  for(const h of U.halls){
+    if(rnd() > 0.42) continue;
+    const n = ri(2, 4);
+    for(let k = 0; k < n; k++){
+      const q = findOpenNear(h.x + ri(-3, 3), h.y + ri(-3, 3), 3);
+      const c = spawnGaunt(pick(['stalker', 'maw', 'gaunt', 'shrike']), q.x, q.y);
+      if(!c) continue;
+      c.floor = UNDER; c.guard = {x: h.x, y: h.y}; c.caveDweller = true; c.undercroft = true;
+    }
+  }
+  /* and a reason to be here that is not a monster: the halls are OLD, and people left things
+     in them. Modest — the vaults at the bottom of the warrens are still the prize. */
+  for(const h of U.halls){
+    if(rnd() > 0.30) continue;
+    chests.push({x: h.x + ri(-2, 2), y: h.y + ri(-2, 2), opened: false, floor: UNDER,
+      loot: {cats: ri(60, 260), items: {remains: ri(1, 3), ...(rnd() < 0.34 ? {c_ingot: ri(2, 5)} : {}),
+             ...(rnd() < 0.18 ? {tome: 1} : {})}}});
+  }
+  U.ms = (typeof performance !== 'undefined' ? performance.now() : 0) - _t0;
+})();
 function heightAt(wx, wy){
   const x = clamp(wx, 0, W-0.001), y = clamp(wy, 0, H-0.001);
   const ix = Math.floor(x), iy = Math.floor(y), fx = x-ix, fy = y-iy;
@@ -20106,8 +20284,129 @@ function syncRoofs(){
   }
 }
 /* a staircase nobody can see is not a staircase */
+/* ---------- DRAWING SEVENTY-FIVE THOUSAND TILES OF TUNNEL ----------
+   You do not. The existing cave renderer draws every room tile of every LIT FLOOR, which is
+   fine for a warren of a thousand tiles in a sealed pocket and impossible for one floor that
+   spans a continent: standing anywhere underground would ask for the whole network.
+   So this group is CAMERA-LOCAL, and the bucket index built during the dig is what makes that
+   cheap — the renderer never walks the network to find the piece you are standing in, it asks
+   for the twenty-five buckets around the camera and gets them by key. The signature carries
+   the camera's bucket, so crossing one rebuilds and nothing else does.
+   AND THE RIM IS WHAT MAKES IT A CAVE. A floor plate with nothing around it is a grey path in
+   the dark; a block of rock on every open tile that has stone beside it is a tunnel. Same
+   pass, one neighbour test. */
+const syncUndercroft = makeDynGroup(
+  () => {
+    const B = undercroft.bucket;
+    const anyDown = chars.some(c => c.faction === 'player' && c.state !== 'dead' && (c.floor || 0) === UNDER);
+    /* `camSX/camSY`, NOT `camX/camY`. The pair the game aims at and the pair the camera is
+       actually AT are different numbers — the second chases the first and can be eighty tiles
+       behind it while the view is still moving. Keying the group on the target drew the
+       buckets under a place the camera was on its way to, which at a walking pace is a tunnel
+       that stays dark until you stop. `camera.lookAt` uses the smoothed pair; so does this. */
+    return 'uc' + activeFloor + ':' + (anyDown ? 1 : 0) + ':' +
+           Math.floor(camSX / B) + ',' + Math.floor(camSY / B) + ':' + undercroft.shafts.length;
+  },
+  (g) => {
+    /* ---------- THE HEADFRAMES, ALWAYS ----------
+       These are the whole answer to "how do I get down", so they are landmarks and they are
+       drawn from wherever you are standing. A timber frame over a black hole, tall enough to
+       see across a field: the elevator, made a thing you can point at. */
+    for(const sh of undercroft.shafts){
+      const gy = groundY(sh.x + 0.5, sh.y + 0.5);
+      const cxs = sh.x + 0.5, czs = sh.y + 0.5;
+      box(g, 1.5, 0.16, 1.5, '#2a2118', cxs, gy + 0.08, czs, false, {receive: true});   /* the collar */
+      const hole = new THREE.Mesh(new THREE.CircleGeometry(0.52, 12),
+        new THREE.MeshBasicMaterial({color: 0x000000}));
+      hole.rotation.x = -Math.PI/2;
+      hole.position.set(cxs, gy + 0.18, czs);
+      g.add(hole);
+      for(const [ox, oz] of [[-0.6,-0.6],[0.6,-0.6],[-0.6,0.6],[0.6,0.6]]){
+        const leg = box(g, 0.14, 2.6, 0.14, '#4a3a26', cxs + ox*1.02, gy + 1.3, czs + oz*1.02);
+        if(leg) leg.rotation.set(ox ? 0 : 0, 0, 0);
+      }
+      box(g, 1.7, 0.16, 0.16, '#4a3a26', cxs, gy + 2.6, czs - 0.6);                     /* the head */
+      box(g, 1.7, 0.16, 0.16, '#4a3a26', cxs, gy + 2.6, czs + 0.6);
+      box(g, 0.16, 0.16, 1.4, '#4a3a26', cxs, gy + 2.7, czs);
+      box(g, 0.5, 0.5, 0.5, '#5a4630', cxs, gy + 2.4, czs);                             /* the winding drum */
+      box(g, 0.06, 2.2, 0.06, '#7a6a52', cxs, gy + 1.5, czs);                           /* and the rope down it */
+    }
+    /* ---------- AND THE FLOOR YOU ARE STANDING ON ---------- */
+    if(activeFloor !== UNDER) return;
+    const B = undercroft.bucket, R = 2;
+    const bx0 = Math.floor(camSX / B), by0 = Math.floor(camSY / B);
+    const lit = new Set();
+    for(let j = -R; j <= R; j++) for(let i = -R; i <= R; i++){
+      const a = undercroft.grid.get((by0 + j) * 4096 + (bx0 + i));
+      if(a) for(const t of a) lit.add(t);
+    }
+    /* ---------- AND IT IS EMITTED IN RUNS, NOT IN TILES ----------
+       A tile at a time is 14,000 floor tiles and 60,000 rock blocks in the window around a
+       hall, which `flushBoxBatch` then merges into geometry a vertex at a time: measured at
+       660ms A FRAME while panning, with the RENDER itself at 11ms. The whole cost was building
+       the mesh, not drawing it.
+       One box per horizontal RUN instead. A hall row collapses from twenty-four boxes to one
+       and a tunnel row to one. The run breaks when the ground under it has moved more than a
+       third of a unit, because a cave floor sits on `groundY + floorY(f)` — the same surface
+       `charY` puts bodies on — so a plate that ignored the terrain would have people standing
+       in it on a hillside. Flat ground gets long plates, a slope gets short ones, and the
+       floor is under their feet either way. */
+    const fy = floorY(UNDER);
+    let mnX = 1e9, mxX = -1e9, mnY = 1e9, mxY = -1e9;
+    for(const t of lit){
+      const x = t % W, y = (t - x) / W;
+      if(x < mnX) mnX = x; if(x > mxX) mxX = x;
+      if(y < mnY) mnY = y; if(y > mxY) mxY = y;
+    }
+    if(mxX < mnX) return;
+    /* the rock: every tile beside an open one that is not itself open */
+    const rock = new Set();
+    for(const t of lit){
+      const x = t % W, y = (t - x) / W;
+      for(const [dx, dz] of [[1,0],[-1,0],[0,1],[0,-1]]){
+        const nx = x + dx, ny = y + dz, nt = ny * W + nx;
+        if(lit.has(nt)) continue;
+        if(decks.has(bkey(nx, ny, UNDER)) && !blocked.has(bkey(nx, ny, UNDER))) continue;
+        rock.add(nt);
+      }
+    }
+    const runs = (set, y, x0, x1, cap, emit) => {
+      let x = x0;
+      while(x <= x1){
+        if(!set.has(y * W + x)){ x++; continue; }
+        let x2 = x, lo = Infinity, hi = -Infinity;
+        while(x2 <= x1 && x2 - x < cap && set.has(y * W + x2)){
+          const gh = groundY(x2 + 0.5, y + 0.5);
+          const nlo = Math.min(lo, gh), nhi = Math.max(hi, gh);
+          if(nhi - nlo > 0.34) break;
+          lo = nlo; hi = nhi; x2++;
+        }
+        emit(x, x2 - x, (lo + hi) * 0.5);
+        x = x2;
+      }
+    };
+    /* the floor takes long runs — a flat plate has no silhouette to lose. The ROCK does not:
+       merged the same way it came out as smooth slabs a hall wide, which reads as masonry
+       rather than as stone. Capped at five and jogged in height off `hash2`, so the wall has a
+       broken top edge again at a twentieth of the boxes it took to draw it a tile at a time. */
+    for(let y = mnY; y <= mxY; y++){
+      runs(lit, y, mnX, mxX, 64, (x, n, gy) =>
+        box(g, n, 0.2, 1, '#3a3038', x + n/2, gy + fy, y + 0.5, false, {receive: true}));
+    }
+    for(let y = mnY - 1; y <= mxY + 1; y++){
+      runs(rock, y, mnX - 1, mxX + 1, 5, (x, n, gy) => {
+        const hgt = FLOOR_H * (0.72 + hash2(x * 7 + y, y * 13 + x) * 0.55);
+        box(g, n, hgt, 0.98, '#2e2830', x + n/2, gy + fy + hgt*0.5 - 0.1, y + 0.5);
+      });
+    }
+  });
 const syncRedoubts = makeDynGroup(
   () => 'rd' + redoubts.length + ':' + activeFloor + ':' + middens.filter(m=>m.found).length + ':' + caves.length + ':' +
+        /* PER CAVE TOO, and for the same reason as the redoubts below: which warren has one of
+           yours in it, not merely which storey somebody is on somewhere in the world. */
+        caves.map(cv => chars.filter(c => c.faction === 'player' && c.state !== 'dead' && (c.floor||0) < 0 &&
+                                          dist(c.x, c.y, cv.mouth.x, cv.mouth.y) < 70)
+                             .map(c => c.floor).sort().join('')).join('/') + ':' +
         /* PER REDOUBT, not one bitmask for the whole world — the old key could not tell
            "somebody is on floor 1 of THIS complex" from "somebody is on floor 1 of a rampart
            two hundred tiles away", which is exactly the distinction the opacity now turns on */
@@ -20151,9 +20450,16 @@ const syncRedoubts = makeDynGroup(
       hole.rotation.x = -Math.PI/2;
       hole.position.set(cv.mouth.x + 0.5, my + 0.14, cv.mouth.y + 0.5);
       g.add(hole);
-      /* which cave floors hold one of your people right now */
+      /* ---------- WHICH FLOORS OF *THIS* CAVE ----------
+       Every player body below ground used to light every warren in the world on that storey,
+       which was harmless while a cave floor was a sealed pocket under one mountain and each
+       warren had its own -1. It is not harmless now: floor -1 IS the undercroft and it runs
+       under everything, so standing anywhere underground turned all seven warrens into an
+       x-ray. Same fault `syncRedoubts` already carries a note about — ask about THIS one. */
       const occ = {};
-      for(const c of chars) if(c.faction === 'player' && c.state !== 'dead' && (c.floor||0) < 0) occ[c.floor] = true;
+      for(const c of chars)
+        if(c.faction === 'player' && c.state !== 'dead' && (c.floor||0) < 0 &&
+           dist(c.x, c.y, cv.mouth.x, cv.mouth.y) < 70) occ[c.floor] = true;
       for(const rm of cv.rooms){
         if(!occ[rm.f]) continue;                       /* unlit tunnels stay dark */
         const fy = floorY(rm.f);
@@ -23803,22 +24109,34 @@ function storeyHit(px, py, f){
      Two passes: intersect the flat guess, read the terrain where that lands, and intersect
      again at the corrected height. One correction is plenty for ground this size — the second
      pass moves the answer by tiles, a third would move it by inches. */
-  _planeUp.constant = -floorY(f);
-  let pt = _ray.ray.intersectPlane(_planeUp, _hitUp);
-  if(!pt) return null;
-  /* ITERATE, because one correction is not enough on a slope. The terrain height is sampled
-     WHERE THE LAST GUESS LANDED, so on the flank of a mountain — which is the only place
-     caves are — the first correction moves the answer far enough that the height it was based
-     on is already wrong. Two passes left it 1.7 tiles out from a body under the cursor; four
-     settle to within a few hundredths, and this runs on a click rather than on a frame. */
-  for(let i = 0; i < 4; i++){
-    const c2 = -(groundY(pt.x, pt.z) + floorY(f));
-    if(Math.abs(c2 - _planeUp.constant) < 0.01) break;
-    _planeUp.constant = c2;
-    const np = _ray.ray.intersectPlane(_planeUp, _hitUp);
-    if(!np) break;
-    pt = np;
+  /* ---------- BISECTION, NOT A FIXED POINT ----------
+     What was here re-intersected a plane whose height was sampled where the last guess landed,
+     four times. That is a fixed-point iteration and its convergence rate is
+     SLOPE / tan(pitch) — so on the 0.86-per-tile flank a cave is dug into it removes about a
+     third of the error a pass, four passes leave a fifth of wherever it started, and if the
+     camera is ever pitched shallower than the hillside it does not converge at all. It was
+     landing 0.47 tiles out and passing a 0.8 catchment, which is not passing, it is luck; the
+     moment the underworld moved deeper the initial error grew and the same four passes left
+     4.49 tiles and the body could not be clicked.
+     March the ray instead. `g(s)` is how far the ray is ABOVE the storey's surface at distance
+     s: positive at the eye, negative once it is through the floor, so the crossing is bracketed
+     and bisection finds it at a rate that has nothing to do with the terrain. Forty halvings of
+     a 600-unit bracket is exact for anything this game can measure, and it runs on a click. */
+  const ro = _ray.ray.origin, rd = _ray.ray.direction;
+  const gAt = (s2) => {
+    const x = ro.x + rd.x*s2, z = ro.z + rd.z*s2;
+    return (ro.y + rd.y*s2) - (groundY(x, z) + floorY(f));
+  };
+  if(gAt(0) <= 0) return null;                       /* the eye is already under this storey */
+  let lo = 0, hi = 4;
+  while(hi < 900 && gAt(hi) > 0) hi *= 2;
+  if(gAt(hi) > 0) return null;                       /* the ray never comes down through it */
+  for(let i = 0; i < 40; i++){
+    const mid = (lo + hi) * 0.5;
+    if(gAt(mid) > 0) lo = mid; else hi = mid;
   }
+  const s3 = (lo + hi) * 0.5;
+  const pt = _hitUp.set(ro.x + rd.x*s3, ro.y + rd.y*s3, ro.z + rd.z*s3);
   const tx = Math.floor(pt.x), ty = Math.floor(pt.z);
   /* TWO ANSWERS, because the callers want different ones. A MOVE ORDER wants the middle of a
      tile that actually exists, and the neighbour scan is there to be forgiving about which —
@@ -24069,15 +24387,23 @@ function aimGround(c, out){
      by the same fixed-point `storeyHit` uses, and for the same reason — the height it is
      corrected against is sampled where the last guess landed, so on a slope one pass is not
      enough. Three settle it; this runs on a click, not on a frame. */
+  /* AND BISECTED, for the reason written out in `storeyHit`: this is the same fixed point
+     with the same convergence rate, and the two halves of one question must not disagree
+     about the answer. `r(k)` is how far the ray is above the floor k tiles out — it starts
+     positive at the body and goes negative once the hillside has fallen away past it. */
   const h = aimHeight(c);
   const t = Math.max(0.08, Math.tan(camPitch));
   const sx = -Math.sin(camYaw), sy = -Math.cos(camYaw);
   const g0 = groundY(c.x, c.y);
-  let k = h / t;
-  for(let i = 0; i < 3; i++){
-    const nk = clamp((h + (g0 - groundY(c.x + sx*k, c.y + sy*k))) / t, 0, 40);
-    if(Math.abs(nk - k) < 0.01){ k = nk; break; }
-    k = nk;
+  const r = (k2) => (h + g0 - k2*t) - groundY(c.x + sx*k2, c.y + sy*k2);
+  let k = 0;
+  if(r(0) > 0){
+    let lo = 0, hi = 1;
+    while(hi < 64 && r(hi) > 0) hi *= 2;
+    if(r(hi) <= 0){
+      for(let i = 0; i < 34; i++){ const mid = (lo + hi) * 0.5; if(r(mid) > 0) lo = mid; else hi = mid; }
+      k = (lo + hi) * 0.5;
+    } else k = clamp(h / t, 0, 40);
   }
   const o = out || {x: 0, y: 0};
   o.x = c.x + sx * k;
@@ -24648,7 +24974,7 @@ function render(){
   camera.lookAt(camSX, focusY, camSY);
   updateSky();
   water.position.y = -0.22 + Math.sin(now*0.001)*0.03;
-  syncPBuilds(); syncBlueprints(); syncSundered(); syncWells(); syncPyres(); syncBastion(); syncChests(); syncBeds(); syncTownWalls(); syncCamps(); syncSlaverCamp(); syncRoofs(); syncVertical(); syncRifts(); syncStairs(); syncRedoubts();
+  syncPBuilds(); syncBlueprints(); syncSundered(); syncWells(); syncPyres(); syncBastion(); syncChests(); syncBeds(); syncTownWalls(); syncCamps(); syncSlaverCamp(); syncRoofs(); syncVertical(); syncRifts(); syncStairs(); syncUndercroft(); syncRedoubts();
   if(fogDirty) redrawFog();
   syncChars(rdt);
   updateDust(rdt);

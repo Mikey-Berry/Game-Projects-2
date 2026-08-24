@@ -2901,3 +2901,73 @@ Albedo, and a fallen named Rubido.)
     two assertions on each gate — shut on a fresh world, and open once the
     condition it names is true — and it produces that condition the way the game
     produces it rather than by setting the flag.
+
+[DONE] The "cave under mountains" system is still terribly broken. I'm starting
+to think the "floor transfer" should be taken FAR more extreme (think an
+elevator lol) and an entirely NEW area built 100% underneath the entire map,
+not just under these single mountains.
+    Proof in tools/under.js (7 red on the build before, 0 after), the pictures
+    in tools/underpix.js, and cave.js, which went red on this change and is now
+    green at a third of the residual it used to pass with.
+    THE EXTENT, MEASURED. Seven warrens, 4,015 tiles of floor between them
+    across a 1440x1440 world, and 1.7% OF THE MAP within forty tiles of a mouth.
+    "Under the mountains" was not a description of the feature, it was the size
+    of it — ninety-eight percent of the world had nothing whatsoever underneath
+    it. It is 93.5% now, on the same measure.
+    AND IT CANNOT BE A SOLID FLOOR. Two million tiles is not a Set and it is not
+    a draw call, and a basement under a continent is a car park, not a cave.
+    What spans a map is a NETWORK: halls where the rock allowed it, tunnels
+    between them, and a great deal of stone in between. The movement code
+    already wanted exactly that — `isBlocked` returns true for any tile on a
+    non-zero floor that is not in `decks`, so the stone is free and only the
+    carved parts exist. 94,000 tiles of floor against 4,015.
+    A LATTICE, AND IT SPANS RATHER THAN TILES. Halls on a jittered grid, each
+    joined to its right and lower neighbour — a structure with loops in it, so a
+    wrong turn costs time instead of stranding you. The first cut laid it out
+    from a fixed margin at a fixed spacing and stopped when it ran out of room,
+    which left a 140-tile band round the whole world with nothing under it: 79%,
+    and the entire point of the exercise is the word EVERY. The first and last
+    nodes sit on the margin now.
+    THE ELEVATOR IS TWO THINGS. `floorY` was `f * FLOOR_H` in both directions,
+    so the whole underworld sat in a crawlspace 3.4 units under the grass and a
+    descent read as stepping into a cellar. Down is UNDER_DROP now — twenty-two
+    units, six and a half storeys, in one go — with the warrens spacing out
+    normally below that. And the transfer is ONE crossing: a shaft is a stair
+    with `from: 0, to: -1`, which `useStairs` already handled generically, so
+    the four staircases in sequence became one step onto a plate. 88 ways down
+    against 7, and the furthest corner of the map is 126 tiles from one instead
+    of 536.
+    AND THE WARRENS ARE THE DEEP END OF IT, not seven sealed pockets beside it.
+    Floor -1 is the floor every cave mouth already dropped onto, so the
+    undercroft IS their top storey; the tunnels are carved after the caves and
+    the carve opens rock, because the tunnels were there first.
+    WHAT THIS BROKE, AND IT WAS WORTH FINDING. `cave.js` went red the moment the
+    floor moved deeper: a centred click on a body three storeys down resolved
+    4.49 tiles away and the body could not be selected. Both halves of that
+    question — `storeyHit` and `aimGround` — were FIXED-POINT ITERATIONS, and
+    the convergence rate of a fixed point here is SLOPE / tan(pitch): on the
+    0.86-per-tile flank a cave is dug into, each pass removes about a third of
+    the error, four passes leave a fifth of wherever they started, and if the
+    camera is ever pitched shallower than the hillside it does not converge at
+    all. It had been landing 0.47 tiles out against a 0.8 catchment, which is
+    not passing, it is luck. Both are bisections now — bracket the crossing and
+    halve it forty times — and the residual is 0.16 on the same slope. That is
+    a better answer than the one this change broke.
+    AND THE RENDERER IS CAMERA-LOCAL, which it had to be: the existing cave
+    renderer draws every tile of every LIT FLOOR, which is fine for a sealed
+    pocket and impossible for a floor that spans a continent. The bucket index
+    built during the dig means it never walks the network — it asks for the
+    twenty-five buckets around the camera by key. Tiles are emitted in RUNS
+    rather than one at a time, and the runs break when the ground under them has
+    moved, because a cave floor sits on `groundY + floorY(f)` and a plate that
+    ignored the terrain would have people standing inside it on a hillside.
+    Measured at 1.6-7.2ms a rebuild, against `syncRedoubts` at 8.6.
+    AND THE X-RAY. Every player body below ground used to light every warren in
+    the world on that storey — harmless when each warren had its own private -1,
+    and an x-ray of all seven the moment -1 became one continuous floor. Asked
+    per cave now, which is the fault `syncRedoubts` already carries a note about.
+    COST, SAID PLAINLY: 38.5 fps on the surface against 37.6 before, boot
+    unchanged, and 31.7 fps standing in the undercroft with 103 things living in
+    it. `floorY` is the one function every storey in the game reads, so the
+    harness spends its last assertion on the control: a rampart is still one
+    storey up and a third storey is still three.
