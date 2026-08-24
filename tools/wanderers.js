@@ -361,6 +361,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const spots = [];
   for (let run = 0; run < 2; run++) {
     const p2 = await b.newPage({ viewport: { width: 800, height: 600 } });
+    /* ---------- THIRTY SECONDS IS NOT ENOUGH TO OPEN THIS DOCUMENT ----------
+       Playwright's default navigation timeout is 30s and the game is a 2.1MB page that runs
+       the whole of worldgen before `load` fires. This file opens THREE worlds, so it pays that
+       cost three times, and on a loaded machine it is the only harness in the suite that can
+       fail without a single assertion going red — the run dies on `page.goto` and the summary
+       says "wanderers.js" as if the wanderers were the problem. Caught once at 118s passing
+       and once at 74s throwing, on the same build, while the suite as a whole was running 40%
+       slower than its previous pass. Give the document time to open. */
+    p2.setDefaultNavigationTimeout(180000);
     await p2.goto('file://' + gamePath(process.argv[2]) + '?seed=' + (run + 7), { waitUntil: 'load' });
     await p2.waitForTimeout(2500);
     await p2.evaluate(() => document.getElementById('btn-start').click());
