@@ -1019,6 +1019,21 @@ the truth was 45%.
   of the dark art. No outcome test could see it: the army works, the spell works, the ceiling
   is simply gone. Fixed by asking the question that was actually being asked (`propped`) at the
   three places the ceiling lives, rather than by chasing `|| 1` through eleven call sites.
+- **Reset the STAGING, not just the wounds.** A bodyguard probe reset blood, parts, stagger
+  and state between swings — and never position. Every blow the guard caught knocked it back,
+  so it drifted 56 tiles from its ward and 1359 of 2000 swings failed the distance gate. Worse,
+  the ward eventually died (parts fail whatever the blood is) and `kill` runs `releaseTargets`,
+  which clears `guardTarget` — ending interposition permanently, at a moment set by the PRNG.
+  That was the whole of a "10% on one build, 4% on another". Pinned and re-stated, the real
+  rate is 39%. **Ask what the loop carries forward, not just what it visibly resets.**
+- **Pause in the same evaluate as the click.** Starting the game and then sleeping before you
+  pause leaves the world running live for seconds — hundreds of frames, each spending an
+  unpredictable number of `rnd()` draws — so the stream position at first measurement depends
+  on machine speed and on how many bodies the world holds. One harness read 43% and 59% on the
+  same build, and 43/56/58 across three builds, entirely from this. Closing it made three
+  consecutive runs identical to the digit. Roughly forty files still click without pausing;
+  most are fine (the visual and performance ones want it running), but any file that sleeps,
+  then pauses, then measures something statistical is carrying it.
 - **Check the denominator is made of trials.** `survive.js` reported interposition as a share
   of 400 *swings*, but `attack` returns early on cooldown, on a miss and on a stagger, so most
   of them never reached the code being measured. The same unmodified guard read 10% on one
