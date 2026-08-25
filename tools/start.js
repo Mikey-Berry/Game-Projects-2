@@ -65,6 +65,36 @@ const PHONES = [
     await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
     await p.waitForTimeout(2500);
 
+    /* ---------- WALK THE CREATOR THE WAY A THUMB DOES ----------
+       The creator is a step flow now, and WAKE UP only appears on the last step — so a
+       load-time measurement of it reports a 0px button that is `display:none`, which is true
+       and is not the question. The question this file has always asked is whether a PLAYER ON
+       A PHONE CAN GET INTO THE GAME, so it taps NEXT with a real finger until the start button
+       appears, and measures the nav buttons on the way. That is strictly more than it checked
+       before: every step has to be finger-drivable, not just the one button on the first
+       screen. Capped, so a flow that never ends fails instead of hanging. */
+    const navHits = [];
+    for (let step = 0; step < 8; step++) {
+      const nav = await p.evaluate(() => {
+        const st = document.getElementById('btn-start');
+        if (st && getComputedStyle(st).display !== 'none') return { done: true };
+        const nx = document.getElementById('cc-next');
+        if (!nx || getComputedStyle(nx).display === 'none') return { done: true };
+        nx.scrollIntoView({ block: 'center' });
+        const r = nx.getBoundingClientRect();
+        return {
+          done: false, minHit: Math.min(Math.round(r.width), Math.round(r.height)),
+          at: (r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth)
+            ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } : null,
+        };
+      });
+      if (nav.done) break;
+      navHits.push(nav.minHit);
+      if (!nav.at) { navHits.push(0); break; }      /* off screen: unreachable, and it will show */
+      await p.touchscreen.tap(nav.at.x, nav.at.y);
+      await p.waitForTimeout(120);
+    }
+
     const geom = await p.evaluate(() => {
       const o = document.getElementById('startoverlay'), s = document.getElementById('btn-start');
       if (!o || !s) return { fatal: !o ? 'no #startoverlay' : 'no #btn-start' };
@@ -110,7 +140,7 @@ const PHONES = [
         });
       }
     }
-    rows.push({ vp, geom, started, errs });
+    rows.push({ vp, geom, started, errs, navHits });
     await p.close();
   }
 
@@ -148,6 +178,12 @@ const PHONES = [
 
     /* a button you can hit. The command menu already sizes for 44px; so should the one door
        into the game. */
+    /* and every NEXT on the way to it had to be hittable too */
+    const badNav = rows.filter(r => r.navHits.length && Math.min(...r.navHits) < 44);
+    R._theWalk = rows.map(r => `${r.vp.n} ${r.navHits.length} step${r.navHits.length === 1 ? '' : 's'}`).join(' · ');
+    R.andEveryStepIsDrivableByThumb = badNav.length === 0
+      ? `and every step of the creator can be driven with a finger — ${rows[0].navHits.length} taps to the start button, all of them 44px or better`
+      : `!! A STEP BUTTON IS TOO SMALL OR OFF SCREEN ON ${badNav.map(r => r.vp.n + ' (' + Math.min(...r.navHits) + 'px)').join('; ')}`;
     const small = rows.filter(r => r.geom.minHit < 44);
     R.andItIsBigEnoughToHit = small.length === 0
       ? `and it is at least 44px on its short side everywhere (smallest ${Math.min(...rows.map(r => r.geom.minHit))}px)`
