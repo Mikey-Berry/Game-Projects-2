@@ -1887,7 +1887,7 @@ function takeBody(c, body){
   if(!body || body.state !== 'dead') return false;
   /* Carrying a corpse out of a town is the signature crime of this trade, and until now it
      was free. The town has to be able to see you do it. */
-  if(c.faction === 'player') crime('graverob', body.x, body.y, c);
+  if(c.faction === 'player') crime('graverob', body.x, body.y, c, body.floor || 0);
   if(carried(c) >= carryCap(c)){ log(`${c.name} has their hands full.`, 'bad'); return false; }
   if(c.mule){
     c.carryList = c.carryList || [];
@@ -2064,7 +2064,7 @@ function moveSpeedRaw(c){
   if(c.carryList && c.carryList.length) s *= Math.pow(0.93, c.carryList.length);   /* a laden mule is a slow mule */
   if(c.frayed) s *= 1 - 0.35 * (c.frayT || 0);
   if(c.phyl) s *= 0.92;   /* it is heavier than it looks */
-  if(weather.storm > 0) s *= 0.85;
+  if(weather.storm > 0 && (c.floor || 0) >= 0) s *= 0.85;   /* a storm does not blow underground */
   s *= traitOf(c, 'speed', 1);        /* the line overrides the race: an ox-bound chimera is not a houndkin */
   if(c.race==='hollow' && c.blood < 60) s *= 1.1;   /* the rider spurs the host */
   const ld = invWeight(c) / Math.max(1, invCap(c));
@@ -6280,13 +6280,24 @@ const CRIMES = {
 };
 /* Nobody is wanted for what nobody saw. A crime needs an eye on it — a guard, or a
    townsperson close enough and alive enough to carry the tale. */
-function witnessNear(x, y, t, r, skip){
+/* ---------- AND A WITNESS ON ANOTHER STOREY IS NOT A WITNESS ----------
+   Reported: "walking undead UNDER a town still counts as walking the undead THROUGH the town,
+   giving me a bounty." `townAt` is a rectangle and knows nothing about storeys, so the moment
+   there was a continuous floor beneath the whole map, every town in the world acquired a
+   basement it could still see into. The fix belongs HERE rather than in the one offence that
+   was reported, because every crime in the table runs through this function: the question a
+   crime asks is "did anybody SEE", and somebody twenty-two units of rock above you did not.
+   `losBlocked` was already being handed a hard-coded 0 for the floor, which is the same
+   assumption written down a second time. */
+function witnessNear(x, y, t, r, skip, f){
+  const fl = f || 0;
   for(const o of charsNear(x, y, r || 11)){
     if(o === skip) continue;                    /* the one it happened TO is not a bystander */
     if(o.state !== 'ok' || o.faction !== 'town') continue;
+    if((o.floor || 0) !== fl) continue;         /* a storey apart is a world apart */
     if(o.homeTown && o.homeTown !== t) continue;
     if(dist(o.x, o.y, x, y) > (r || 11)) continue;
-    if(!losBlocked(o.x, o.y, x, y, 0)) return o;
+    if(!losBlocked(o.x, o.y, x, y, fl)) return o;
   }
   return null;
 }
@@ -6298,14 +6309,17 @@ function townAt(x, y){
   return null;
 }
 /* Register an offence. Returns the town that wants you for it, or null if nobody saw. */
-function crime(kind, x, y, by){
+function crime(kind, x, y, by, f){
   const spec = CRIMES[kind]; if(!spec) return null;
+  /* the storey it happened on. Defaults to whoever did it, which is right for every offence
+     whose position IS the offender's; the ones where it is not pass it explicitly. */
+  const fl = f !== undefined ? f : ((by && by.floor) || 0);
   const t = townAt(x, y); if(!t) return null;
   if(t.playerRuled) return null;                 /* your own town does not arrest you */
   if(by && by.faction !== 'player') return null;
   /* the undead-friendly places did not care before and do not start now */
   if(t.def.undeadFriendly && (kind === 'raising' || kind === 'walkdead' || kind === 'formula')) return null;
-  const saw = witnessNear(x, y, t);
+  const saw = witnessNear(x, y, t, 0, null, fl);
   if(!saw) return null;
   /* ---------- SOMEBODY TALKS THEM ROUND ----------
      "Charismatic: occasional store discounts, forgiveness of minor trespasses." MINOR is the
@@ -6592,11 +6606,16 @@ function walkingDeadCheck(dt){
   contrabandCheck();
   for(const c of chars){
     if(c.faction !== 'player' || !c.undead || c.state !== 'ok') continue;
+    /* UNDER THE TOWN IS NOT THROUGH THE TOWN. A tunnel that happens to run beneath the walls
+       is not a procession past the gate, and the whole point of the undercroft is that it goes
+       under everything — so without this every town in the world became a place you could be
+       fined for crossing while twenty-two units of rock deep. */
+    if((c.floor || 0) !== 0) continue;
     const t = townAt(c.x, c.y);
     if(!t || t.playerRuled || t.def.undeadFriendly) continue;
     const r = (t.def.wall ? t.def.wall.r : 20);
     if(Math.abs(c.x - t.x) > r || Math.abs(c.y - t.y) > r) continue;   /* inside the ring */
-    if(crime('walkdead', c.x, c.y, chars.find(o => o.faction === 'player' && !o.undead) || null)) return;
+    if(crime('walkdead', c.x, c.y, chars.find(o => o.faction === 'player' && !o.undead) || null, 0)) return;
   }
 }
 /* ---------- WHAT A PRISONER IS FOR ----------
@@ -7116,12 +7135,12 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
        `crime` deliberately keeps the old rule and still counts the victim, because a BOUNTY
        is a thing the injured party can go and file. What a town THINKS of you is what its
        people saw. Those are different questions and this is the one about standing. */
-    if(!incid && witnessNear(d.x, d.y, d.homeTown, 0, d)) dropRep(d.homeTown, 4);
+    if(!incid && witnessNear(d.x, d.y, d.homeTown, 0, d, d.floor || 0)) dropRep(d.homeTown, 4);
     if(d.civ && !incid){
       deed('civkill', 1, d.homeTown);   /* a stray cleave is not a choice; this was */
       /* A man may be knocked down in a tavern and the town shrugs; the same blow with a
          blade in your hand is assault. Fists start a brawl, not a war. */
-      crime(d.state === 'dead' ? 'murder' : (wepOf(a) ? 'assault' : 'brawl'), d.x, d.y, a);
+      crime(d.state === 'dead' ? 'murder' : (wepOf(a) ? 'assault' : 'brawl'), d.x, d.y, a, d.floor || 0);
     }
   }
   /* `provoked` is a grudge held against YOU specifically — so only your own deliberate blow
@@ -13886,7 +13905,7 @@ function carrionFodder(b){
 function lootCorpse(t, quiet, by){
   const log = quiet ? (() => {}) : outerLog;
   /* going through the pockets of somebody's neighbour, in front of the neighbours */
-  if(t && (t.faction === 'town' || t.homeTown)) crime('theft', t.x, t.y, player()[0] || null);
+  if(t && (t.faction === 'town' || t.homeTown)) crime('theft', t.x, t.y, player()[0] || null, t.floor || 0);
   if(t.looted){ return harvestCorpse(t, quiet, by); }
   t.looted = true;
   let got = [];
@@ -17719,9 +17738,33 @@ function separate(){
            is the reported "everyone beelines and gets caught on allies".
            Allies slide apart more gently than enemies do: a shield wall that comes undone the
            moment somebody wants past is a worse failure than one that jostles. */
+        /* ---------- AND IT GOES ROUND THE SIDE THAT GETS IT THERE ----------
+           Reported: "allies start rotating around each other in a glitchy spiral circle, and
+           never reach their destination." This picked a FIXED perpendicular — `a` along
+           (-uy, ux) and `b` along exactly the opposite — which is a couple, and a couple is a
+           rotation. Any two bodies with somewhere to be that touched went into orbit around
+           their midpoint and stayed there. Measured on five bodies sent to one tile: 3.2 full
+           turns in twenty-five seconds, and a player sends a squad to one tile constantly.
+           The slide never asked the one question that makes it a slide rather than a spin —
+           WHICH WAY IS THE GOAL. Take the perpendicular whose sign makes progress toward it,
+           and two bodies walking the same way now step the same way instead of winding each
+           other up; two walking INTO each other still pick opposite sides and pass, which is
+           what the fixed version got right by accident.
+           And a body that has arrived has nowhere to be: below a stride from its goal it
+           settles rather than jockeying, which is what turned a crowd at a destination into a
+           permanent carousel. */
         const slide = push * (foes ? 0.55 : 0.42);
-        if(a.moveTarget || a.attackMove || a.target){ nudge(a, -uy*slide, ux*slide); }
-        if(b.moveTarget || b.attackMove || b.target){ nudge(b, uy*slide, -ux*slide); }
+        const goalOf = (u) => u.moveTarget || u.attackMove || (u.target ? u.target : null);
+        const sidestep = (u, sx, sy) => {
+          const g2 = goalOf(u); if(!g2) return;
+          const gx = g2.x - u.x, gy = g2.y - u.y;
+          if(gx*gx + gy*gy < 1.44) return;                 /* close enough: stand still */
+          const dot = gx*sx + gy*sy;
+          const k = dot >= 0 ? 1 : -1;
+          nudge(u, sx*slide*k, sy*slide*k);
+        };
+        sidestep(a, -uy, ux);
+        sidestep(b, uy, -ux);
       }
     }
   }
@@ -18038,6 +18081,7 @@ scene.add(rim); scene.add(rim.target);
 scene.fog = new THREE.Fog(0x8f8878, 34, 142);
 scene.background = new THREE.Color(0xd8c8a8);
 const dayCol = {sky:new THREE.Color(0x8a8271), dawn:new THREE.Color(0x9c6f4f), night:new THREE.Color(0x080a12), storm:new THREE.Color(0x554b40)};
+const caveCol = new THREE.Color(0x0c0a10);   /* no sky down there, and no weather either */
 /* the sun you can look at */
 function radialTex(inner, outer){
   const c = document.createElement('canvas'); c.width = 128; c.height = 128;
@@ -18142,6 +18186,28 @@ function updateSky(){
     m.opacity += (hazeBase - m.opacity) * 0.02;
     m.color.copy(c).multiplyScalar(1.25);
     if(m.map && m.map.offset) m.map.offset.x += m._drift * 0.016 * (weather.storm > 0 ? 4 : 1);
+  }
+  /* ---------- AND NONE OF IT REACHES THE UNDERCROFT ----------
+     "Weather/night/day should only affect the upper layer and only be visible while
+     travelling overland." Every line above describes a SKY, and there is no sky twenty-two
+     units down — so a dust storm was drifting haze through solid rock and midnight was
+     dimming a tunnel that has never seen the sun.
+     Overridden WHOLESALE rather than gated line by line, because the rule is not "less
+     weather down there", it is "none": one branch at the end, the surface untouched above it,
+     and nothing to keep in step the next time a sky effect is added. The light that replaces
+     it is flat and sourceless, which is what light underground is. */
+  if(activeFloor < 0){
+    scene.background.copy(caveCol);
+    scene.fog.color.copy(caveCol);
+    scene.fog.near = 20; scene.fog.far = 82;
+    sun.intensity = 0; moon.intensity = 0;
+    hemi.intensity = 0.62;
+    rim.intensity = 0.20; rim.color.setHSL(0.60, 0.18, 0.45);
+    sunSprite.material.opacity = 0;
+    moonSprite.material.opacity = 0;
+    starMat.opacity = 0;
+    windowMat.opacity = 0;
+    for(const m of hazeMats) m.opacity += (0 - m.opacity) * 0.25;
   }
 }
 

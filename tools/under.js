@@ -254,6 +254,74 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! ${before} OPEN TILES WENT IN AND ${after} CAME BACK (halls ${standingBefore}→${standingAfter}, ways down ${ways})`;
     });
 
+    /* ---------- 6d. UNDER A TOWN IS NOT THROUGH A TOWN ----------
+       Reported: "walking undead UNDER a town still counts as walking the undead THROUGH the
+       town, giving me a bounty." `townAt` is a rectangle and knows nothing about storeys, so
+       the moment there was a floor beneath the whole map every town acquired a basement it
+       could still see into.
+       BOTH HALVES, because a fix that simply stopped the offence firing would pass the first
+       one on its own: the same undead on the same tile, once twenty-two units down and once on
+       the grass, and only the second is a crime. */
+    guard(['underIsNotThrough', 'andOnTheGrassItStillIs'], () => {
+      const t = towns.find(t2 => !t2.def.undeadFriendly && !t2.sacked && !t2.playerRuled);
+      if(!t){ R.underIsNotThrough = '!! NO TOWN TO OFFEND'; return; }
+      const born = [];
+      const stage = (fl) => {
+        for(const c of born){ const i = chars.indexOf(c); if(i >= 0) chars.splice(i, 1); }
+        born.length = 0;
+        t.bounty = 0; t.wanted = false;
+        /* somebody of yours alive to be blamed, and a townsman standing there to see it */
+        const live = makeChar('Necromancer', 'player', t.x + 2, t.y + 2, {atk:5, def:5, tough:5});
+        live.state = 'ok'; live.floor = fl; chars.push(live); born.push(live);
+        const saw = makeChar('Townsman', 'town', t.x + 0.6, t.y + 0.6, {atk:5, def:5, tough:5});
+        saw.state = 'ok'; saw.homeTown = t; saw.floor = fl; chars.push(saw); born.push(saw);
+        const u = makeChar('Risen', 'player', t.x, t.y, {atk:5, def:5, tough:5});
+        u.undead = true; u.state = 'ok'; u.floor = fl; chars.push(u); born.push(u);
+        /* REBUILD THE GRID. `witnessNear` goes through `charsNear`, which reads `charGrid`,
+           which `update` maintains — so a probe that stages bodies and calls the check
+           directly is asking a spatial index that has never heard of them, and the control
+           reports "nobody saw" about a townsman standing on the tile. */
+        rebuildCharGrid();
+        _walkDeadT = 0;
+        walkingDeadCheck(0.1);
+        return t.bounty || 0;
+      };
+      const under = stage(F);
+      const over = stage(0);
+      for(const c of born){ const i = chars.indexOf(c); if(i >= 0) chars.splice(i, 1); }
+      t.bounty = 0; t.wanted = false;
+      R.underIsNotThrough = under === 0
+        ? `and a risen walking under ${t.name} is not walking through it — no bounty`
+        : `!! A BOUNTY OF ${under} FOR BEING UNDERGROUND`;
+      R.andOnTheGrassItStillIs = over > 0
+        ? `while the same body on the same tile at ground level costs you ${over} — the offence still exists`
+        : '!! WALKING THE DEAD THROUGH A TOWN IS NO LONGER A CRIME AT ALL';
+    });
+
+    /* ---------- 6e. AND THE WEATHER STAYS UP TOP ----------
+       "Weather/night/day should only affect the upper layer and only be visible while
+       travelling overland." Same shape of test and for the same reason: suppressing the sky
+       everywhere would pass the underground half and ruin the game above it. */
+    guard(['noWeatherDownThere', 'andTheSkyStillWorksUpTop'], () => {
+      const wasStorm = weather.storm, wasFloor = activeFloor, wasHour = hour;
+      const read = (fl, hr) => {
+        activeFloor = fl; hour = hr; weather.storm = 8;
+        updateSky();
+        return {bg: scene.background.getHex(), sun: +sun.intensity.toFixed(3),
+                stars: +starMat.opacity.toFixed(3), far: Math.round(scene.fog.far)};
+      };
+      const deep = read(F, 12);            /* noon, in a dust storm, underground */
+      const up   = read(0, 12);            /* the same noon and the same storm, overland */
+      const night = read(0, 1);            /* and midnight overland */
+      weather.storm = wasStorm; activeFloor = wasFloor; hour = wasHour; updateSky();
+      R.noWeatherDownThere = (deep.sun === 0 && deep.stars === 0 && deep.bg !== up.bg)
+        ? `and a dust storm at noon does not reach the undercroft — no sun, no stars, its own dark`
+        : `!! UNDERGROUND STILL HAS WEATHER (sun ${deep.sun}, stars ${deep.stars}, bg ${deep.bg.toString(16)} vs ${up.bg.toString(16)})`;
+      R.andTheSkyStillWorksUpTop = (up.sun > 0.5 && night.sun < up.sun && night.bg !== up.bg)
+        ? `while overland noon is still lit (${up.sun}) and midnight is still dark (${night.sun}) — the surface kept its sky`
+        : `!! THE SURFACE LOST ITS SKY TOO (noon sun ${up.sun}, midnight sun ${night.sun})`;
+    });
+
     /* ---------- 7. AND THE SURFACE DID NOT MOVE ----------
        THE CONTROL, and it is the one that matters most here: this change altered `floorY`,
        which every storey in the game reads — ramparts, tower decks, redoubt floors. If a
