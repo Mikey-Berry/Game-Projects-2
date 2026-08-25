@@ -4557,7 +4557,13 @@ function placeCave(mtn){
   const cave = {id: caves.length + 1, x: mouth.x, y: mouth.y, mouth, depth,
                 walls: [], rooms: [], doors: [], floors: depth, mtnId: mtn ? 1 : 0};
 
-  const wall = (wx, wy, fl) => { if(wx>1&&wy>1&&wx<W-1&&wy<H-1){ blocked.add(bkey(wx, wy, fl)); cave.walls.push({x:wx, y:wy, f:fl}); } };
+  /* ---------- AND THE ROCK HAS TO BE IN `baseBlocked` ----------
+     `baseBlocked` is the world AS GENERATED and `restore` rebuilds `blocked` from it — but it
+     is captured thousands of lines above, long before `seedCaves` runs, so every wall this
+     generator raised was dropped on the first reload and a warren that was a set of chambers
+     before you saved was open floor afterwards. The mountains hit exactly this and patch both
+     sets; so does the undercroft. So does this now. */
+  const wall = (wx, wy, fl) => { if(wx>1&&wy>1&&wx<W-1&&wy<H-1){ const k = bkey(wx, wy, fl); blocked.add(k); baseBlocked.add(k); cave.walls.push({x:wx, y:wy, f:fl}); } };
   const deck = (wx, wy, fl) => { decks.add(bkey(wx, wy, fl)); };
   /* ---------- A STAIR TILE HAS TO BE FLOOR ON BOTH SIDES ----------
      `deck` alone does not make one. It adds the tile to `decks` — "there is something to
@@ -4569,7 +4575,8 @@ function placeCave(mtn){
      draw a block of rock standing in the stairwell. */
   const carve = (wx, wy, fl) => {
     deck(wx, wy, fl);
-    blocked.delete(bkey(wx, wy, fl));
+    const k = bkey(wx, wy, fl);
+    blocked.delete(k); baseBlocked.delete(k);      /* opened here is opened after a reload too */
     cave.walls = cave.walls.filter(w => !(w.x === wx && w.y === wy && w.f === fl));
   };
 
@@ -4586,7 +4593,8 @@ function placeCave(mtn){
     const door = {x: dx2, y: dy2};
     for(let i = ax; i <= bx; i++){ if(!(i===door.x && ay===door.y)) wall(i, ay, fl); if(!(i===door.x && by===door.y)) wall(i, by, fl); }
     for(let j = ay; j <= by; j++){ if(!(ax===door.x && j===door.y)) wall(ax, j, fl); if(!(bx===door.x && j===door.y)) wall(bx, j, fl); }
-    blocked.delete(bkey(door.x, door.y, fl)); deck(door.x, door.y, fl);
+    blocked.delete(bkey(door.x, door.y, fl)); baseBlocked.delete(bkey(door.x, door.y, fl));
+    deck(door.x, door.y, fl);
     cave.walls = cave.walls.filter(w => !(w.x===door.x && w.y===door.y && w.f===fl));
     const rm = {x0:ax, y0:ay, x1:bx, y1:by, f:fl, cx, cy, door, id:cave.rooms.length};
     cave.doors.push({x:door.x, y:door.y, f:fl, roomId:rm.id, open:false});
@@ -4670,6 +4678,27 @@ function placeCave(mtn){
   caves.push(cave);
   worldEvent('cave', mouth.x, mouth.y, 'A mouth opens in the rock at the mountain\'s foot. Something has been using it. The air that comes out is wrong.');
   return cave;
+}
+/* ---------- AND THE ROCK YOU CAN SEE, AFTER A RELOAD ----------
+   `cave.walls` is the renderer's list and nothing else reads it, so it is not worth the save
+   space — a warren carries thousands of tiles. It is also entirely derivable: a chamber's wall
+   is the ring around its room, minus whatever was carved through it for a door or a stair, and
+   `blocked` knows which of those is still standing. Rebuild it from the rooms, which ARE saved.
+   Without this the collision comes back correct and the caves render as open floor, which is
+   the more confusing half of the same bug. */
+function rebuildCaveWalls(cv){
+  cv.walls = [];
+  const seen = new Set();
+  const put = (x, y, f) => {
+    const k = bkey(x, y, f);
+    if(seen.has(k) || !blocked.has(k)) return;
+    seen.add(k); cv.walls.push({x, y, f});
+  };
+  for(const rm of cv.rooms || []){
+    for(let i = rm.x0; i <= rm.x1; i++){ put(i, rm.y0, rm.f); put(i, rm.y1, rm.f); }
+    for(let j = rm.y0; j <= rm.y1; j++){ put(rm.x0, j, rm.f); put(rm.x1, j, rm.f); }
+  }
+  return cv.walls.length;
 }
 function placeRedoubt(){
   const p = bossSpot(40, 55);
@@ -29229,6 +29258,9 @@ function restore(d){
     caves.length = 0;
     for(const cv of d.caves) caves.push({id:cv.id, x:cv.x, y:cv.y, mouth:cv.mouth, depth:cv.depth,
       rooms:cv.rooms||[], doors:cv.doors||[], vault:cv.vault, walls:[]});
+    /* `walls: []` was not a placeholder, it was the bug: the renderer draws this list and
+       nothing refilled it, so every warren came back off a save with its rock invisible. */
+    for(const cv of caves) rebuildCaveWalls(cv);
   }
   squadGroups.length = 0;
   if(Array.isArray(d.squadGroups)) for(const g of d.squadGroups) squadGroups.push({name:g.name, open:g.open !== false});

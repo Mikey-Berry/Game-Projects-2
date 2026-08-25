@@ -1019,6 +1019,17 @@ the truth was 45%.
   of the dark art. No outcome test could see it: the army works, the spell works, the ceiling
   is simply gone. Fixed by asking the question that was actually being asked (`propped`) at the
   three places the ceiling lives, rather than by chasing `|| 1` through eleven call sites.
+- **Anything generated after `baseBlocked` is taken must patch it too.** It is the world AS
+  GENERATED and `restore` rebuilds `blocked` from it — so a generator that runs later (caves,
+  at line 18327, against a snapshot taken at 5457) writes walls that exist only until the first
+  reload. 1759 tiles of chamber wall to zero. The mountains already carried a comment about
+  this and the caves still had it; when you add worldgen, check which side of that line it
+  falls on. A save round-trip assertion that is exact rather than "within a percent" is what
+  surfaced it — the slack was hiding 404 tiles.
+- **Order the round-trips.** Two probes in one file that each call `restore` are not
+  independent: measured second, the warren check read "ROCK 0 → 0" because the earlier
+  round-trip had already eaten the walls on a broken build — a red line about something that
+  was solid when the run started. Put the pristine-world measurement first.
 - **Reset the STAGING, not just the wounds.** A bodyguard probe reset blood, parts, stagger
   and state between swings — and never position. Every blow the guard caught knocked it back,
   so it drifted 56 tiles from its ward and 1359 of 2000 swings failed the distance gate. Worse,

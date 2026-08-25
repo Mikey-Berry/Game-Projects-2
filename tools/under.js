@@ -196,6 +196,38 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! ${denizens} DENIZENS, ${finds} FINDS`;
     });
 
+    /* ---------- 6c. AND SO DO THE WARRENS ----------
+       Found by the assertion above coming back with FOUR HUNDRED MORE open tiles than went in:
+       `baseBlocked` is the world as generated and `restore` rebuilds `blocked` from it, but it
+       is captured long before `seedCaves` runs — so every wall the cave generator raised was
+       dropped on the first reload and a warren that was a set of chambers before you saved was
+       open floor afterwards. Both halves are asserted, because they fail independently: the
+       ROCK (can you still not walk through it) and the LIST the renderer draws from, which the
+       load path used to reset to empty and never refill.
+       RUN BEFORE THE OTHER ROUND-TRIP, not after: the undercroft's save assertion below does
+       a `restore` of its own, and on a build with this bug that first restore has already
+       eaten the walls — so measured second, the baseline reads zero and the red line says
+       "ROCK 0 → 0" about a warren that was perfectly solid when the run started. */
+    guard(['andSoDoTheWarrens'], () => {
+      if(!caves.length){ R.andSoDoTheWarrens = '!! NO CAVES'; return; }
+      const rock = () => caves.reduce((n, cv) => n + (cv.rooms || []).reduce((m, rm) => {
+        let c = 0;
+        for(let i = rm.x0; i <= rm.x1; i++){ if(blocked.has(bkey(i, rm.y0, rm.f))) c++; if(blocked.has(bkey(i, rm.y1, rm.f))) c++; }
+        for(let j = rm.y0; j <= rm.y1; j++){ if(blocked.has(bkey(rm.x0, j, rm.f))) c++; if(blocked.has(bkey(rm.x1, j, rm.f))) c++; }
+        return m + c;
+      }, 0), 0);
+      /* UNIQUE TILES, not list length. Chambers are free to overlap, so a tile on two rings
+         is pushed twice by the generator and once by the rebuild — 1759 entries against 1516
+         tiles, describing the same rock. Counting entries would read a tidier list as a loss. */
+      const drawn = () => { const u = new Set(); for(const cv of caves) for(const w of cv.walls) u.add(bkey(w.x, w.y, w.f)); return u.size; };
+      const drawnBefore = drawn(), rockBefore = rock();
+      restore(JSON.parse(JSON.stringify(snapshot())));
+      const rockAfter = rock(), drawnAfter = drawn();
+      R.andSoDoTheWarrens = (rockBefore > 500 && rockAfter === rockBefore && drawnAfter === drawnBefore)
+        ? `and a warren is still a warren after a save — ${rockAfter} tiles of rock still solid and all ${drawnAfter} of them still drawn`
+        : `!! ROCK ${rockBefore} → ${rockAfter}, DRAWN ${drawnBefore} → ${drawnAfter}`;
+    });
+
     /* ---------- 6b. AND IT IS STILL THERE AFTER A SAVE ----------
        REASONING IS NOT MEASURING. The argument that the undercroft survives a reload is sound
        — `restore` never clears `decks`, and the tiles the tunnels carve open are dropped from
@@ -217,7 +249,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const standingAfter = probe.filter(k => decks.has(k) && !blocked.has(k)).length;
       /* the shafts are stairs, and a stair the reload forgot is an underworld with no way in */
       const ways = stairs.filter(st => st.from === 0 && st.to <= F).length;
-      R.andItSurvivesASave = (after >= before * 0.99 && standingAfter === standingBefore && ways >= 20)
+      R.andItSurvivesASave = (after === before && standingAfter === standingBefore && ways >= 20)
         ? `and it comes back off a save — ${after} open tiles against ${before}, all ${standingAfter} hall floors still there, ${ways} ways down`
         : `!! ${before} OPEN TILES WENT IN AND ${after} CAME BACK (halls ${standingBefore}→${standingAfter}, ways down ${ways})`;
     });
