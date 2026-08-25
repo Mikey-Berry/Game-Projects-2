@@ -28,7 +28,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
   await p.waitForTimeout(3000);
-  await p.evaluate(() => document.getElementById('btn-start').click());
+  /* ---------- PAUSE IN THE SAME EVALUATE AS THE CLICK ----------
+     THIS WAS THE UNEXPLAINED FOUR POINTS. Starting the game and then sleeping 2500ms leaves
+     the world running live for two and a half seconds — hundreds of frames, each consuming an
+     unpredictable number of `rnd()` draws — so where the stream is standing when the first
+     measurement begins depends on HOW FAST THE MACHINE IS and HOW MANY BODIES ARE IN THE
+     WORLD. A batch that adds a hundred bodies underground burns more draws per frame; a loaded
+     machine runs fewer frames. Both move the answer, and neither is a change in behaviour.
+     Measured: the survival share read 43% and 59% on the same build across two runs, and 43 /
+     56 / 58 across three builds, all of it from this window. `wanderers.js` closes it and says
+     why; this file did not. Same fix, and the number holds still afterwards. */
+  await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(2500);
 
   const out = await p.evaluate(() => {
@@ -183,8 +193,26 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const foe = mk('bandit', { atk: 16, def: 12, tough: 12, ath: 8 }, 601.8, 602.6);
       const wasWard = ward.blood, wasG = g.blood;
       const tot = (c) => c.blood + Object.values(c.parts).reduce((s, q) => s + q.hp, 0);
+      /* ---------- RESET THE STAGING, NOT JUST THE WOUNDS ----------
+         Reported as "a bodyguard catches one blow in fifty", and it was three artefacts of
+         this loop stacked on top of each other, none of them in the game:
+           · A CAUGHT BLOW KNOCKS THE GUARD BACK and nothing here put it back, so after a few
+             dozen swings it had drifted 56 TILES from the ward and every later swing was a
+             body on the far side of a field being asked to block. 1359 of 2000 swings failed
+             on the distance gate alone.
+           · `blood = 1e6` DOES NOT MEAN UNKILLABLE — parts still fail, which is written down
+             in this repo already — so the ward eventually died mid-swing.
+           · and `kill` runs `releaseTargets`, which clears `guardTarget` on everyone pointing
+             at the corpse. One unlucky swing ended interposition for the whole rest of the run
+             and the rate collapsed toward zero, at a speed that depended on the PRNG. That is
+             the whole of the 10%-versus-4% "difference between builds".
+         Pin the three of them, keep the ward alive, and re-state the order every swing. The
+         measured rate is 39% of landed blows, not 2%. */
       for (let i = 0; i < swings; i++) {
         foe.swingT = 0; foe.staggerT = 0; foe.cool = 0;      /* every call is a real trial */
+        ward.x = 600; ward.y = 600; g.x = 600.9; g.y = 601.4; foe.x = 601.8; foe.y = 602.6;
+        for (const c of [ward, g, foe]) { c.vx = 0; c.vy = 0; c.lungeT = 0; c.knockT = 0; }
+        g.job = 'guard'; g.guardTarget = ward;
         const b4 = tot(g), w4 = tot(ward);
         attack(foe, ward);
         const af = tot(g);
@@ -196,14 +224,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       }
       const pct = Math.round(100 * caught / Math.max(1, resolved));
       R.interpose = `a guard on the line took ${pct}% of the ${resolved} blows that actually landed on somebody (of ${swings} swings)`;
-      /* THE FLOOR IS 1%, AND THAT IS NOT A CLIMBDOWN — it is the first honest reading. Against
-         a real denominator the rate is 2% on THIS build and 2% on the build before the batch,
-         so the old 5% floor was calibrated against a count that was mostly no-op swings. The
-         assertion still does its job: interposition breaking entirely reads as zero. Whether
-         one blow in fifty is enough for a bodyguard to feel like one is a balance question,
-         it is pre-existing, and it is written up in the ledger rather than quietly retuned. */
-      R.interposeSane = (resolved >= 200 && pct >= 1 && pct <= 60) ? 'inside the intended band'
-        : `!! INTERPOSITION IS ${pct}% OF ${resolved} LANDED BLOWS — outside the 1-60% band`;
+      /* THE BAND IS ROUND WHAT THE GAME ACTUALLY DOES. `interposer` pays
+         `clamp(0.20 + def*0.006 + ath*0.004, 0, 0.55)`, so a guard runs from one blow in five
+         at no skill to the 0.55 cap at high skill; this one (def 20, ath 12) computes 0.368
+         and measures 39% of landed blows, the small excess being blows the ward would have
+         dodged anyway. 20-55 is that formula's own range, and it is a real bound in both
+         directions — a guard who catches everything is as wrong as one who catches nothing. */
+      R.interposeSane = (resolved >= 200 && pct >= 20 && pct <= 55) ? 'inside the intended band'
+        : `!! INTERPOSITION IS ${pct}% OF ${resolved} LANDED BLOWS — outside the 20-55% band`;
       /* and behind the ward it must do nothing at all: position is the skill */
       let behind = 0;
       g.x = 598.2; g.y = 597.4;
