@@ -255,6 +255,54 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       wipe();
     }
 
+    /* ---------- AND A HANDFUL OF BONE SOLDIERS IS NOT AN ARMY ----------
+       Reported: "raising Old Bones massively speeds up the notice dial. I don't think it
+       should, as they are weak undead and not a genuine threat." Two dials count a host and
+       both were counting these: `hostSize`, through the `bindWeight || 1` trap `risenLoad`
+       already carries a note about (0 || 1 is 1, so a weightless body weighed a full one), and
+       `hostNoiseTick`, where anything undead defaults to 0.75.
+       MEASURED ON THE DIALS, NOT ON THE NEEDLE. A first version ran the world for ten seconds
+       with each host and diffed `noticed` — which came out NEGATIVE, because `update` also
+       DECAYS the dial and advances a world that has other reasons to move it. The two inputs
+       are deterministic and are exactly what the fix changed; the needle is just f(inputs). */
+    try {
+      const me = player().find(c => c.stats.magic > 0) || player()[0];
+      const born = [];
+      const clean = () => { for (const c of born) { const i2 = chars.indexOf(c); if (i2 >= 0) chars.splice(i2, 1); } born.length = 0; };
+      const stage = (n, propped) => {
+        clean();
+        for (let i2 = 0; i2 < n; i2++) {
+          const u = makeChar('R', 'player', me.x + 0.4 + i2 * 0.4, me.y, { atk: 5, def: 5, tough: 5 });
+          u.undead = true; u.state = 'ok'; u.master = me; u.noFight = true;
+          if (propped) { u.propped = true; u.bindWeight = 0; }
+          chars.push(u); born.push(u);
+        }
+      };
+      /* what one tick of the noise dial costs, with the needle reset either side */
+      const noise = () => { const was = noticed; noticed = 0; hostNoiseTick(); const d = noticed; noticed = was; return d; };
+      /* and the weight the host reads as, which is what feeds the standing bump and the
+         menace flag — recomputed by the game itself rather than by a copy of the formula.
+         It lives on a ONE-SECOND sub-tick inside `update`, so a single frame never reaches it
+         and the first version of this read 0 for a host of eight bound risen. */
+      const weight = () => { for (let i2 = 0; i2 < 40; i2++) update(1 / 30); return hostSize; };
+
+      clean();          const noise0 = noise(), w0 = weight();
+      stage(8, false);  const noiseB = noise(), wB = weight();
+      stage(8, true);   const noiseP = noise(), wP = weight();
+      clean(); noticed = 0; noticeTier = 0;
+
+      R._notice = `host weight: none ${w0}, eight bound ${wB}, eight propped ${wP} · ` +
+                  `noise a tick: none ${noise0.toFixed(4)}, bound ${noiseB.toFixed(4)}, propped ${noiseP.toFixed(4)}`;
+      const heavier = wB - w0, lighter = wP - w0;
+      R.bonesWeighNothing = (heavier >= 7 && lighter <= 0.01)
+        ? `and eight bone soldiers add ${lighter} to the host's weight where eight bound risen add ${heavier} — nothing is holding them`
+        : `!! PROPPED BODIES WEIGH ${lighter} AGAINST A BOUND ${heavier}`;
+      const ratio = noiseB > 1e-9 ? noiseP / noiseB : (noiseP > 0 ? 99 : 0);
+      R.bonesAreQuiet = (noiseB > 0 && ratio < 0.34)
+        ? `and they raise the dial at ${(ratio * 100).toFixed(0)}% of a bound host's rate — heard, but not an army`
+        : `!! BONE SOLDIERS COST ${(ratio * 100).toFixed(0)}% OF A BOUND HOST (${noiseP.toFixed(4)} against ${noiseB.toFixed(4)})`;
+    } catch (e) { R.bonesAreQuiet = '!! ' + String(e.message).slice(0, 80).toUpperCase(); }
+
     return R;
   });
 
