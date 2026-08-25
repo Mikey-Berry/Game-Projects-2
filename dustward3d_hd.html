@@ -164,6 +164,15 @@
     font-family:inherit;cursor:default;}
   .ccstep.done{color:var(--dust);border-bottom-color:var(--dust);cursor:pointer}
   .ccstep.on{color:var(--gold);border-bottom-color:var(--gold)}
+  /* the front door: two choices and nothing else on the screen */
+  #ccfront{padding:26px 26px 30px;display:none;flex-direction:column;gap:12px;flex:0 0 auto}
+  #ccfront.on{display:flex}
+  .ccfront-btn{display:flex;flex-direction:column;align-items:stretch;text-align:left;
+    padding:16px 18px;border:1px solid var(--edge);background:#00000028;color:var(--bone);
+    font-family:inherit;font-size:17px;letter-spacing:4px;cursor:pointer;min-height:44px}
+  .ccfront-btn:hover{border-color:var(--gold);color:var(--gold)}
+  .ccfront-btn small{display:block;color:var(--dust);font-size:11.5px;letter-spacing:0;
+    line-height:1.55;margin-top:6px}
   #ccbody{flex:1 1 auto;overflow-y:auto;overscroll-behavior:contain;padding:16px 26px 8px;min-height:0}
   #ccq{color:var(--bone);font-size:19px;letter-spacing:3px;margin-bottom:4px}
   #ccwhy{color:var(--dust);font-size:13px;line-height:1.6;margin-bottom:16px;max-width:64ch}
@@ -521,6 +530,7 @@ body.touch #hint{display:none}
       <h1>DUSTWARD</h1>
       <div class="tag">THE SUN IS STILL THERE. YOU JUST CAN'T REACH IT.</div>
     </div>
+    <div id="ccfront"></div>
     <div id="ccsteps"></div>
     <div id="ccbody">
       <div id="ccq"></div>
@@ -27078,6 +27088,15 @@ function openOptions(){
     opts.input = opts.input === 'auto' ? 'touch' : opts.input === 'touch' ? 'mouse' : 'auto';
   });
   row('SHOW FPS & FRAME TIMES', opts.fps ? 'ON' : 'OFF', () => opts.fps = !opts.fps);
+  /* ---------- A PURSE, FOR TESTING ----------
+     "there should be an option (for testing purposes) that gives like 10k gold per click.
+     Would be helpful to expedite test runs." Labelled as what it is and sat next to the map
+     reveal, which is the other honest cheat in this menu. */
+  row('GIVE 10,000 GOLD — playtesting only', 'CLICK FOR 10K', () => {
+    cats += 10000;
+    log('Ten thousand gold, out of nowhere. Nobody asks where it came from.', 'good');
+    refreshTop();
+  });
   row('REVEAL MAP — playtesting only', opts.seeAll ? 'ON (the fog is a lie)' : 'OFF', () => opts.seeAll = !opts.seeAll);
   row('PIXEL RATIO', opts.dpr === 'auto' ? 'AUTO (native)' : 'CAP ' + opts.dpr, () => {
     opts.dpr = opts.dpr === 'auto' ? '1.5' : opts.dpr === '1.5' ? '1.0' : 'auto';
@@ -27098,6 +27117,39 @@ function openOptions(){
     opts.amb = steps[(steps.findIndex(v => Math.abs(v - cur) < 0.01) + 1) % steps.length];
     AU.init(); AU.setVolume();
   });
+  /* ---------- AND THE WAY BACK OUT ----------
+     "There should be a way for the player to return to the main menu from inside the game
+     itself." The honest implementation is a RELOAD, and it is worth writing down why rather
+     than looking like laziness: the world lives in module-level state — `chars`, `decks`,
+     `blocked`, `baseBlocked`, every worldgen array — built once as the script executes.
+     `restore` can put a saved world back on top of that, but there is no code path that
+     UNBUILDS one, and inventing one to serve a menu button is a large new surface for the
+     class of bug this file already has a dozen notes about. So: save first, then reload into
+     the front door, where CONTINUE is waiting with the run that was just saved.
+     THE SAVE IS THE WHOLE POINT, so it is awaited and its failure is reported — dropping
+     somebody back to the menu having quietly lost the afternoon is the one outcome that must
+     not happen. */
+  {
+    const r2 = document.createElement('div'); r2.className = 'trow';
+    r2.innerHTML = '<span class="tn">MAIN MENU<br><span style="color:var(--dust);font-size:11px">' +
+                   'Saves first, then goes back to the front screen. CONTINUE picks this run up again.</span></span>';
+    const b2 = document.createElement('button');
+    b2.textContent = 'SAVE & QUIT TO MENU';
+    b2.onclick = async () => {
+      b2.disabled = true; b2.textContent = 'SAVING…';
+      let ok = false;
+      try { ok = await storeSave(); } catch(e){ ok = false; }
+      if(!ok){
+        b2.disabled = false;
+        b2.textContent = 'SAVE FAILED — TAP TO RETRY';
+        log('Could not write the save. Staying put rather than losing the run.', 'bad');
+        return;
+      }
+      location.reload();
+    };
+    r2.appendChild(b2);
+    body.appendChild(r2);
+  }
   const note = document.createElement('div');
   note.style.cssText = 'color:var(--dust);font-size:11px;margin-top:8px;line-height:1.5';
   note.textContent = 'On high-DPI screens, PIXEL RATIO CAP 1.5 is the single biggest smoothness win. SHADOWS LOW halves the shadow work with little visible cost. F9 also toggles the map reveal; F10 the FPS readout. ' +
@@ -29811,6 +29863,17 @@ async function unpackSaveFile(buf){
     return JSON.parse(new TextDecoder().decode(await gunzipBytes(u8)));
   return JSON.parse(new TextDecoder().decode(u8));
 }
+/* THE BROWSER HALF OF A SAVE, ON ITS OWN. `btn-save` also downloads a file, which is right
+   for SAVE and wrong for quitting to the menu — nobody wants a download every time they back
+   out to the front screen. Returns whether the write actually landed, because the caller
+   reloads the page on the strength of it. */
+async function storeSave(){
+  try {
+    const text = await packSaveText(snapshot());
+    localStorage.setItem('dustward_save', text);
+    return true;
+  } catch(e){ return false; }
+}
 $('btn-save').onclick = async () => {
   const snap = snapshot();
   const text = await packSaveText(snap);
@@ -29977,24 +30040,59 @@ async function openMoveDialog(){
 }
 $('btn-move').onclick = () => { openMoveDialog(); };
 
-(function offerContinue(){
+/* ---------- THE FRONT DOOR ----------
+   "the main menu should simply have a NEW GAME or CONTINUE? option FIRST. Then if it's a new
+   game, open the full character creation menu. Continue just picks up with your last
+   character."
+   What was here appended a bare CONTINUE button to the bottom of the overlay when a save
+   existed — under the whole creator, which is where everything else ended up too. Two doors
+   now, and the creator is behind one of them.
+   CONTINUE IS ONLY OFFERED WHEN THERE IS SOMETHING TO CONTINUE, and it says what: a save with
+   nothing in it is worse than no button, because it looks like a way back to a run you had. */
+let ccMode = 'front';
+function ccSavedText(){
   let data = null;
   try { data = localStorage.getItem('dustward_save'); } catch(e){}
-  if(!data) return;
-  const btn = document.createElement('button');
-  btn.textContent = 'CONTINUE';
-  btn.style.marginTop = '10px';
-  btn.onclick = async () => {
+  return data || null;
+}
+function showCCFront(){
+  ccMode = 'front';
+  const data = ccSavedText();
+  const f = $('ccfront');
+  f.classList.add('on');
+  $('ccsteps').style.display = 'none';
+  $('ccbody').style.display = 'none';
+  $('ccnav').style.display = 'none';
+  f.innerHTML =
+    (data ? `<button class="ccfront-btn" id="cc-continue">CONTINUE<small>Pick up your last character where the autosave left them.${ccSaveNote ? ' ' + ccSaveNote : ''}</small></button>` : '') +
+    `<button class="ccfront-btn" id="cc-new">NEW GAME<small>Choose what you are, where you came from and how it starts. Five short steps.</small></button>` +
+    (data ? '' : '<div style="color:var(--dust);font-size:11.5px;line-height:1.6">No saved run on this browser yet. The game autosaves as you play.</div>');
+  const nb = $('cc-new');
+  if(nb) nb.onclick = () => { ccMode = 'create'; ccStep = 0; showCCCreate(); };
+  const cb = $('cc-continue');
+  if(cb) cb.onclick = async () => {
     let snap = null;
-    try { snap = await unpackSaveText(data); } catch(err){ log('Quicksave was corrupted.', 'bad'); return; }
-    if(!snap){ log('Quicksave was corrupted.', 'bad'); return; }
+    try { snap = await unpackSaveText(data); } catch(err){ snap = null; }
+    if(!snap){
+      cb.innerHTML = 'CONTINUE<small style="color:var(--warn)">That quicksave is corrupted and cannot be read. Start a new game.</small>';
+      return;
+    }
+    AU.init();
     restore(snap);
     started = true;
     $('startoverlay').style.display = 'none';
     paused = false; syncPauseBtn();
   };
-  document.querySelector('#startoverlay').insertBefore(btn, null);
-})();
+}
+let ccSaveNote = '';
+function showCCCreate(){
+  ccMode = 'create';
+  $('ccfront').classList.remove('on');
+  $('ccsteps').style.display = '';
+  $('ccbody').style.display = '';
+  $('ccnav').style.display = '';
+  buildCCreate();
+}
 
 /* ============================================================ CHARACTER CREATION */
 /* ---------- THE SEARCH FOR LYRE ----------
@@ -30471,7 +30569,11 @@ function buildCCreate(){
 }
 $('cc-back').onclick = () => { if(ccStep > 0){ ccStep--; buildCCreate(); } };
 $('cc-next').onclick = () => { ccStep = Math.min(ccStep + 1, ccSteps().length - 1); buildCCreate(); };
+/* the picks are normalised once so `applyCreation` has a valid line even if the player never
+   opens the creator at all — a harness clicking `btn-start` on the front door is exactly that
+   case, and it is the way a hundred and eleven of them start the game. */
 buildCCreate();
+showCCFront();
 function applyCreation(race, gift, origin, sub){
   /* clear the default squad and build the chosen life */
   for(const c of [...chars]) if(c.faction==='player') chars.splice(chars.indexOf(c), 1);

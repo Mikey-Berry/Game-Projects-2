@@ -74,6 +74,26 @@ const PHONES = [
        before: every step has to be finger-drivable, not just the one button on the first
        screen. Capped, so a flow that never ends fails instead of hanging. */
     const navHits = [];
+    /* THE FRONT DOOR COMES FIRST. The overlay opens on NEW GAME / CONTINUE now, and the
+       creator's nav rail is hidden behind it — a rail whose parent is `display:none` still
+       reports its own computed display, so a probe that only asked the button reads a live
+       control at 0x0 in the corner and taps the wallpaper. Open the door with a finger like a
+       player, and count it as one of the taps it takes to get in. */
+    {
+      const front = await p.evaluate(() => {
+        const nb = document.getElementById('cc-new');
+        if (!nb) return null;
+        nb.scrollIntoView({ block: 'center' });
+        const r = nb.getBoundingClientRect();
+        return { minHit: Math.min(Math.round(r.width), Math.round(r.height)),
+                 at: (r.top >= 0 && r.bottom <= innerHeight && r.width > 0)
+                   ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } : null };
+      });
+      if (front) {
+        navHits.push(front.minHit);
+        if (front.at) { await p.touchscreen.tap(front.at.x, front.at.y); await p.waitForTimeout(150); }
+      }
+    }
     for (let step = 0; step < 8; step++) {
       const nav = await p.evaluate(() => {
         const st = document.getElementById('btn-start');
@@ -182,7 +202,7 @@ const PHONES = [
     const badNav = rows.filter(r => r.navHits.length && Math.min(...r.navHits) < 44);
     R._theWalk = rows.map(r => `${r.vp.n} ${r.navHits.length} step${r.navHits.length === 1 ? '' : 's'}`).join(' · ');
     R.andEveryStepIsDrivableByThumb = badNav.length === 0
-      ? `and every step of the creator can be driven with a finger — ${rows[0].navHits.length} taps to the start button, all of them 44px or better`
+      ? `and every step of the creator can be driven with a finger — ${rows[0].navHits.length} taps from the front door to the start button, all of them 44px or better`
       : `!! A STEP BUTTON IS TOO SMALL OR OFF SCREEN ON ${badNav.map(r => r.vp.n + ' (' + Math.min(...r.navHits) + 'px)').join('; ')}`;
     const small = rows.filter(r => r.geom.minHit < 44);
     R.andItIsBigEnoughToHit = small.length === 0

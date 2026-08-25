@@ -1031,6 +1031,12 @@ the truth was 45%.
   independent: measured second, the warren check read "ROCK 0 → 0" because the earlier
   round-trip had already eaten the walls on a broken build — a red line about something that
   was solid when the run started. Put the pristine-world measurement first.
+- **`display:none` on a PARENT does not show up on the child.** `getComputedStyle(child).display`
+  returns the child's own value, so a probe asking "is this button visible" about a control
+  inside a hidden panel gets `inline-block`, a rect of 0x0 at the origin, and — because 0 is
+  within every bound — a perfectly plausible tap coordinate in the top-left corner. It then
+  taps the wallpaper four times and reports the feature broken. Ask `offsetParent === null`, or
+  check the rect has a size, or drive the UI the way a player reaches it.
 - **A hundred and eleven harnesses open the game the same way.** Every file in the suite calls
   `document.getElementById('btn-start').click()`, so that element is load-bearing infrastructure
   and not just a button. Rebuilding the start screen around a step flow was safe only because
