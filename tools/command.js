@@ -28,7 +28,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE: ' + m.text().slice(0, 220)); });
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
   await p.waitForTimeout(3000);
-  await p.evaluate(() => document.getElementById('btn-start').click());
+  /* ---------- PAUSE IN THE SAME EVALUATE AS THE CLICK ----------
+     This file already carries two notes explaining that its forage block was flaky because
+     "the harness starts the world and then waits in REAL time before touching it, so a loaded
+     machine has burned a different number of `rnd()` calls before the band is even made", and
+     both times the answer was to widen the step budget — 60, then 240. It went red again at
+     240 on a full-suite run, at 0/0, on a box running about 1.6x slower than the one the
+     budget was tuned on. Widening a budget does not remove a variable; it moves the threshold.
+     The variable is the 2500ms of live frames, and `paused` only gates the RAF loop's own
+     `update` — a direct `update(dt)` still runs — so this harness, which drives every tick
+     itself through `step()`, loses nothing by freezing the world it never wanted running. */
+  await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(2500);
 
   const out = await p.evaluate(() => {
@@ -136,9 +146,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          question is whether a forage order sweeps its ground, not whether it does so within a
          step budget that happens to suit an unloaded machine — so it gets four times the room
          and the assertion means what it says again. */
-      for (let i = 0; i < 240 && !(c1.opened && c2.opened); i++) step(6);
-      R.foundTheChests = (c1.opened && c2.opened) ? 'opened both inside the ground'
-        : `MISSED A CHEST (${c1.opened ? 1 : 0}/${c2.opened ? 1 : 0})`;
+      let sweeps = 0;
+      for (; sweeps < 240 && !(c1.opened && c2.opened); sweeps++) step(6);
+      /* AND SAY WHY, IF NOT. `MISSED A CHEST (0/0)` names the symptom and nothing else — it
+         cannot tell a band that swept the wrong ground from one that never got the order. */
+      const nearest = (ch) => Math.min(...band.map(u => dist(u.x, u.y, ch.x, ch.y))).toFixed(1);
+      R.foundTheChests = (c1.opened && c2.opened) ? `opened both inside the ground, in ${sweeps} sweeps`
+        : `MISSED A CHEST (${c1.opened ? 1 : 0}/${c2.opened ? 1 : 0}) — closest approach ${nearest(c1)} and ${nearest(c2)} tiles, order ${cdr.cmd ? cdr.cmd.phase : 'CLOSED OUT'}`;
       R.leftTheFarOne = !far.opened ? 'left the one outside the order' : 'WANDERED TO THE FAR CHEST';
       /* and having cleared it, they come home rather than standing in the field */
       for (let i = 0; i < 200 && cdr.cmd; i++) step(6);

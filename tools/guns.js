@@ -152,14 +152,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.theBoltsLand = f.blood < hp0 || f.state !== 'ok'
         ? `and the bolts land on the thing it was aimed at (${hp0} -> ${Math.max(0, f.blood).toFixed(0)} blood, ${f.state})`
         : '!! THE BOLTS DO NOT ARRIVE — THE TURRET FIRES INTO NOTHING';
-      /* A LIVE TARGET TO ASK ABOUT. The first version asked `emplTarget` after the run and
-         reported that the turret was blind — it was not, it had already killed the only
-         hostile on the field. Ask the question of something still standing. */
+      /* ---------- A LIVE TARGET TO ASK ABOUT, AND ONLY ONE ----------
+         The first version asked `emplTarget` after the run and reported that the turret was
+         blind — it was not, it had already killed the only hostile on the field. The fix was
+         to stage a fresh one; the fix was half of one. Whether the FIRST raider is still
+         standing after forty seconds of bolts is a coin the PRNG flips: on the run that
+         reported this red it was alive at 41 blood, six tiles out, and `emplTarget` quite
+         correctly named it instead of the newcomer. An identity test needs one candidate.
+         So the first raider comes off the field the moment its own assertion has been read. */
+      { const i = chars.indexOf(f); if(i >= 0) chars.splice(i, 1); }
       const f2 = foe(gx + 6, gy + 1);
       run(2);   /* `charsNear` reads a grid rebuilt inside update(); a body pushed while paused is invisible to it */
-      R.theTurretPicksATarget = emplTarget(t, emplSpec(t)) === f2
-        ? 'and it picks up the next hostile to walk into its arc'
-        : '!! THE TURRET CANNOT SEE A HOSTILE SIX TILES AWAY IN THE OPEN';
+      const picked = emplTarget(t, emplSpec(t));
+      R.theTurretPicksATarget = picked === f2
+        ? 'and with the field cleared it picks up the next hostile to walk into its arc'
+        : `!! THE TURRET CANNOT SEE A HOSTILE SIX TILES AWAY IN THE OPEN (it named ${picked ? picked.name + ' at ' + dist(picked.x, picked.y, t.x, t.y).toFixed(1) : 'nothing'})`;
       R.theCrewLearnsTheMachine = g.stats.gunnery > 20
         ? `the crew learns the machine at the machine (gunnery ${g.stats.gunnery.toFixed(1)})`
         : `!! FIRING TEACHES NOTHING (gunnery still ${g.stats.gunnery.toFixed(1)})`;

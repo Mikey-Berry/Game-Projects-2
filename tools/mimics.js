@@ -51,10 +51,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
   await p.waitForTimeout(3000);
 
-  /* the picker is drawn before the world exists, so it is asked about first */
+  /* THE PICKER IS DRAWN BEFORE THE WORLD EXISTS, so it is asked about first.
+     READ THE NAME, NOT THE WHOLE CARD. This matched the card's entire `textContent` against
+     the string 'Mimic', which held for exactly as long as a card was only its label. The
+     step-by-step creator puts a `.ccdesc` blurb inside every card, so the text became
+     'MimicSomething that lives alongside people...' and this went red about a race that is
+     right there in the list. The label lives in `.ccname`. */
   const menu = await p.evaluate(() => {
-    const opts = [...document.querySelectorAll('#ccreate .ccopt')].map(x => x.textContent.trim());
-    return { hasMimic: opts.includes('Mimic'), opts: opts.slice(0, 14).join(' | ') };
+    const cards = [...document.querySelectorAll('#ccreate .ccopt')];
+    const name = (x) => ((x.querySelector('.ccname') || x).textContent || '').trim();
+    const opts = cards.map(name);
+    return { hasMimic: opts.some(o => /^mimic$/i.test(o)), opts: opts.slice(0, 14).join(' | ') };
   });
 
   await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });

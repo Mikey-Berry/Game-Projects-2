@@ -232,18 +232,37 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          directions — a guard who catches everything is as wrong as one who catches nothing. */
       R.interposeSane = (resolved >= 200 && pct >= 20 && pct <= 55) ? 'inside the intended band'
         : `!! INTERPOSITION IS ${pct}% OF ${resolved} LANDED BLOWS — outside the 20-55% band`;
-      /* and behind the ward it must do nothing at all: position is the skill */
-      let behind = 0;
-      g.x = 598.2; g.y = 597.4;
-      for (let i = 0; i < 200; i++) {
-        const b4 = Object.values(g.parts).reduce((s, q) => s + q.hp, 0);
+      /* ---------- AND BEHIND THE WARD IT MUST DO NOTHING AT ALL: POSITION IS THE SKILL ----------
+         THE SAME BUG AS THE LOOP ABOVE, LEFT IN THE LOOP BELOW IT. This reset the wounds and
+         not the staging, and it went red on a full-suite run with `BLOCKED 1 BLOWS FROM BEHIND
+         THE WARD` — which is a probe artefact, not a defect. Measured: `interposer` asked
+         directly, with the three bodies pinned behind, picked a guard 0 times in 4000. What
+         moves is the WARD: 200 unreset `attack` calls knock her from 600,600 to 581.5,573.3,
+         directly away from the foe, so the guard she was standing in front of ends up in
+         FRONT of her (face 1.000, 29 tiles out) and one blow crossed over on the way.
+         So: pin all three every swing, the way the loop above does, and print the denominator
+         — `behind = 0` out of nothing is not a pass. And place the guard INSIDE `GUARD_STEP`,
+         or the distance gate rejects him and this goes green without ever testing the facing. */
+      let behind = 0, behindLanded = 0;
+      const ux = (601.8 - 600) / Math.hypot(1.8, 2.6), uy = (602.6 - 600) / Math.hypot(1.8, 2.6);
+      for (let i = 0; i < 400; i++) {
+        foe.swingT = 0; foe.staggerT = 0; foe.cool = 0;
+        ward.x = 600; ward.y = 600; foe.x = 601.8; foe.y = 602.6;
+        g.x = 600 - ux * 1.4; g.y = 600 - uy * 1.4;      /* 1.4 out, dead behind her */
+        for (const c of [ward, g, foe]) { c.vx = 0; c.vy = 0; c.lungeT = 0; c.knockT = 0; }
+        g.job = 'guard'; g.guardTarget = ward;
+        const b4 = tot(g), w4 = tot(ward);
         attack(foe, ward);
-        if (Object.values(g.parts).reduce((s, q) => s + q.hp, 0) < b4) behind++;
-        for (const k of PARTS) { g.parts[k].hp = g.parts[k].max; ward.parts[k].hp = ward.parts[k].max; }
-        g.blood = wasG; ward.blood = wasWard; g.state = 'ok'; ward.state = 'ok';
+        if (tot(g) < b4) behind++;
+        if (tot(g) < b4 || tot(ward) < w4) behindLanded++;
+        for (const k of PARTS) { g.parts[k].hp = g.parts[k].max; g.parts[k].bleed = 0; ward.parts[k].hp = ward.parts[k].max; ward.parts[k].bleed = 0; }
+        g.blood = wasG; ward.blood = wasWard; g.staggerT = 0; ward.staggerT = 0;
+        g.state = 'ok'; ward.state = 'ok';
       }
-      R.noBlocksFromBehind = behind === 0 ? 'a guard behind the ward blocks nothing'
-        : `!! BLOCKED ${behind} BLOWS FROM BEHIND THE WARD`;
+      R.noBlocksFromBehind = (behind === 0 && behindLanded >= 200)
+        ? `a guard 1.4 tiles behind the ward — inside GUARD_STEP ${GUARD_STEP}, so it is the facing that stops him — blocks 0 of ${behindLanded} landed blows`
+        : behindLanded < 200 ? `!! ONLY ${behindLanded} OF 400 SWINGS LANDED — nothing was tested`
+        : `!! BLOCKED ${behind} OF ${behindLanded} BLOWS FROM BEHIND THE WARD`;
       clean();
     }
 
