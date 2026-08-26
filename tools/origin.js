@@ -285,16 +285,27 @@ const KEY = process.argv[3] || 'lyonart';
     R.sheHoldsFire = her && him && !hostile(her, him) && dead.every(u => !hostile(her, u) && !hostile(u, her)) ?
       'she does not shoot the household' : 'SHE OPENS FIRE ON HIS DEAD';
 
-    /* --- she reacts to what he became, not to a flag --- */
+    /* --- she reacts to what he became, not to a flag ---
+       ASKED WITHOUT BEING ANSWERED. This used to call `talkTo` twice and read her speech
+       bubble, which worked only for as long as the conversation had no consequences. It has
+       one now — one conversation and she is in the squad — so the second `talkTo` would have
+       read a squad line and the comparison would have gone green on two lines that differ for
+       a completely different reason. `sisterGreeting` is the world-reading half on its own. */
     if (her) {
-      talkTo(her);
-      R.plainGreeting = (her.bubble && her.bubble.text || '').slice(0, 46) + '...';
+      const plain = sisterGreeting();
       if (him) him.lich = true;
-      her._greeted = false; her.bubble = null;
-      talkTo(her);
-      R.asALich = (her.bubble && her.bubble.text || '').slice(0, 46) + '...';
-      R.sheNoticed = (R.asALich !== R.plainGreeting) ? 'she reads the man' : 'SAME LINE REGARDLESS';
+      const asLich = sisterGreeting();
       if (him) him.lich = false;
+      R.plainGreeting = plain.slice(0, 46) + '...';
+      R.asALich = asLich.slice(0, 46) + '...';
+      R.sheNoticed = (asLich !== plain) ? 'she reads the man' : 'SAME LINE REGARDLESS';
+      /* AND THE CONVERSATION GOES SOMEWHERE. "After going through everything to find Lyre —
+         she doesn't even join the party?" The arc itself is tools/sister.js; this is the one
+         assertion that belongs to the origin, because the origin is what promised her. */
+      talkTo(her);
+      R.andSheJoins = (her.faction === 'player' && (her.regard || 0) < -10)
+        ? `she comes, at ${(her.regard || 0).toFixed(0)} — ${regardBand(her.regard || 0).label}`
+        : `SHE DOES NOT JOIN (faction '${her.faction}', regard ${(her.regard || 0).toFixed(0)})`;
     }
 
     /* --- an eleven-year search must survive a save --- */

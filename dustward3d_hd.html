@@ -3087,6 +3087,12 @@ function regardTick(){
   }
 }
 function departSquad(c){
+  /* SHE IS NOT A MERCENARY, AND THERE IS NOWHERE ELSE SHE WAS EVER GOING. Everybody else who
+     walks out goes into the drifter pool and wanders the roads with the rest of the leavers.
+     She goes back to the corpse-field and the work, which is what she was doing for eleven
+     years before he turned up — which is also why she is the one leaver who can be found
+     again, and talked back. Once. */
+  if(c.bossKey === 'lyre'){ sisterLeaves(c); return; }
   log(`${c.name} has left. They took what they were carrying and did not look back.`, 'bad');
   worldEvent('departure', c.x, c.y, `Somebody has walked out on the necromancer's outfit.`);
   c.faction = 'drifter'; c.neutral = true; c.regard = 0;
@@ -11224,6 +11230,16 @@ function harvestFlesh(){
 const rifts = [];
 let riftN = 0;
 const RIFT_SEAL_COST = {vflesh:10, iron:6, remains:12};
+/* WHAT THE PRICE ACTUALLY IS. Eleven years of closing tears by hand, alone, with nothing in
+   her pockets, is eleven years of finding out how much of the rite is load-bearing and how
+   much of it is the Church's furniture. She knows. She does not hand it over on the day she
+   joins and she does not hand it over for an apology — see `sisterArc`. */
+function riftSealCost(){
+  const out = {};
+  const f = (typeof sisterArc === 'object' && sisterArc.taught) ? 0.4 : 1;
+  for(const k in RIFT_SEAL_COST) out[k] = Math.max(1, Math.round(RIFT_SEAL_COST[k] * f));
+  return out;
+}
 function riftAt(x, y){
   for(const r of rifts) if(dist(r.x, r.y, x, y) < r.r) return r;
   return null;
@@ -12098,13 +12114,14 @@ function sealTick(c, dt){
   if(r.seal >= 30){
     /* The Compact's warehouses answer first. One camp's stores cannot close tears at the
        rate the sky opens them; seven towns' can, which is most of why you signed them. */
-    const fromCompact = sealStock(RIFT_SEAL_COST);
-    if(!fromCompact && !canAfford(RIFT_SEAL_COST)){
-      if(rnd() < dt*0.2) log(`The rite needs ${costText(RIFT_SEAL_COST)} to close it for good${compactActive() ? ' — and the common stock is empty' : ''}.`, 'bad');
+    const price = riftSealCost();
+    const fromCompact = sealStock(price);
+    if(!fromCompact && !canAfford(price)){
+      if(rnd() < dt*0.2) log(`The rite needs ${costText(price)} to close it for good${compactActive() ? ' — and the common stock is empty' : ''}.`, 'bad');
       r.seal = 30;
       return true;
     }
-    if(!fromCompact) campSpend(RIFT_SEAL_COST);
+    if(!fromCompact) campSpend(price);
     else if(rnd() < 0.5) log('The common stock pays for the closing. That is what it is for.', 'good');
     if(r.r >= 10){ addItem('formula_w', 1); log('Sealed at full width: the closing rite itself was worth writing down. +1 Worn Formula.', 'good'); }
     closeRift(r, c);
@@ -12124,6 +12141,7 @@ function closeRift(r, by){
   }
   bumpNotice(-16);   /* closing a wound is the surest way to be forgotten */
   deed('rift_sealed', 1);
+  sisterSaw(r);      /* and one person in this world has been doing it by hand for eleven years */
   addSpecks(r.x, r.y, '#e8dcff', 50);
   log(`${by ? by.name : 'Someone'} closed the tear. The dark loses its grip, a little.`, 'good');
   worldEvent('sealed', r.x, r.y, 'The tear in the waste has been closed. The roads are a fraction safer.');
@@ -16767,6 +16785,7 @@ function update(dt){
     for(const t of towns) dreadTick(t);
     siegeTick();                     /* the door presses on every seat that did not sign */
     regardTick();                    /* and what your own people make of all this */
+    sisterTick();                    /* and one of them is keeping her own ledger */
     compactProduce();                /* the signed seats put their hands to it... */
     compactTithe();                  /* ...and what they make goes to the common stock */
     compactStrainTick();             /* and one left to rot walks back out */
@@ -25992,7 +26011,7 @@ function openWarTable(){
       : `<span class="tn">${n}/7 signed${held ? ` <span style="color:#c07a3a">(${held} held by force, worth half)</span>` : ''} · strength ${str.toFixed(1)}` +
         `${compactActive() ? '' : ` <span style="color:var(--dust)">— needs ${COMPACT_MIN} to stand</span>`}` +
         `<br><span style="color:var(--dust)">common stock: ${stockTxt} · muster: ${compact.muster.filter(id=>{const c=charById.get(id);return c&&c.state==='ok';}).length} under arms` +
-        ` · the signed towns are working at ${compactOutput().toFixed(1)}/day (a closing costs ${costText(RIFT_SEAL_COST)})</span></span>`;
+        ` · the signed towns are working at ${compactOutput().toFixed(1)}/day (a closing costs ${costText(riftSealCost())})</span></span>`;
     body.appendChild(row);
   }
   /* THE SEATS */
@@ -28376,7 +28395,7 @@ cv.addEventListener('mousedown', e => {
       if(!able){ log('Closing a tear takes a gift. Any gift — they all draw on the same tap.', 'bad'); return; }
       clearOrders(able);
       able.sealTarget = rf;
-      log(`${able.name} goes to close the tear. It will cost ${costText(RIFT_SEAL_COST)} and a great deal of mana.`, '');
+      log(`${able.name} goes to close the tear. It will cost ${costText(riftSealCost())} and a great deal of mana.`, '');
       return;
     }
     /* right-click a stair: everyone selected takes it, up or down */
@@ -29146,22 +29165,19 @@ function talkTo(t){
      to tick: the origin's payoff is finding out that the person you crossed a dead world for
      has spent it doing the opposite of what you came to do. */
   if(t.bossKey === 'lyre'){
-    /* There is no global deed ledger — deed() writes straight into each companion's regard
-       and keeps no tally. So read the world instead, which is more honest anyway: she is
-       judging what she can see and what the roads are saying, not consulting a scoreboard. */
-    const lich = player().some(c => c.lich);
-    const raised = player().filter(c => c.undead).length;
-    const worstRep = towns.reduce((m2, t2) => Math.min(m2, t2.rep ?? 0), 0);
-    const wanted = towns.some(t2 => (t2.bounty || 0) > 300);
-    const loud = noticeTier;
-    if(lich) line = "You did it, then. I felt it from here. Eleven years closing what our father opened, and you spent them becoming the thing he was afraid of.";
-    else if(wanted || worstRep <= -50) line = "I hear what follows you. I have been out here sealing tears with my hands, and there are towns that will not say your name indoors. Tell me you brought something other than the crown.";
-    else if(loud >= 2) line = "Something is paying attention to you. I can feel it standing behind you from here. Whatever you have been working, it has been heard.";
-    else if(raised > 6) line = "Six of the household came through with you. There are more now. You always did think the answer was more hands.";
-    else line = "Eleven years. I assumed they had killed you at home. Do not tell me why you came — I can see the crown from here.";
-    say(t, line);
+    /* SHE IS ALREADY YOURS. Then this is not a greeting and not a recruitment — it is talking
+       to somebody in your own squad, and the greeting below is the wrong thing to say. */
+    if(t.faction === 'player'){ sisterSquadLine(t); return; }
+    say(t, sisterGreeting());
     t.questDone = true;
     if(!t._greeted){ t._greeted = true; deed('found_sister', 1); log('You have found her.', 'good'); }
+    /* AND THEN SHE COMES. The greeting was the whole of it for as long as this quest has
+       existed — three halls, two crossings of the waste, and a bark. One conversation now,
+       and which one depends on where in the arc the two of you are: she joins, or she has
+       gone back to the fields and is deciding whether to come back. `sisterReturn` is the
+       one of the two that can say no. */
+    if(sisterArc.left || sisterArc.returns) sisterReturn(t);
+    else sisterJoin(t);
     return;
   }
   if(t.isLeader >= 0){
@@ -29435,6 +29451,13 @@ function snapshot(){
     search: {on: search.on, asked: {...search.asked}, found: search.found,
              siteId: search.siteId, leads: search.leads, met: search.met,
              cairn: !!search.cairn, told: !!search.told, siteId2: search.siteId2 ?? -1},
+    /* FINDING HER WAS THE OLD END OF IT AND THAT ALREADY RODE THE SAVE. What happens after has
+       to as well, or a reload hands back a squad with her standing in it and no memory of how
+       she got there — the same bug one storey up. */
+    sisterArc: {joined: sisterArc.joined, said: {...sisterArc.said}, last: sisterArc.last,
+                warned: sisterArc.warned, sealed: sisterArc.sealed, left: sisterArc.left,
+                returns: sisterArc.returns, taught: !!sisterArc.taught,
+                committed: !!sisterArc.committed, done: sisterArc.done || ''},
     mother: {on: mother.on, caveId: mother.caveId, found: mother.found,
              spoken: mother.spoken, reads: mother.reads, toldPrice: mother.toldPrice},
     shrines: shrines.map(sh => ({broken: !!sh.broken, hp: Math.round(sh.hp), reT: sh.reT || 0})),
@@ -29480,6 +29503,15 @@ function restore(d){
         do { search.siteId2 = ri(0, sites.length - 1); } while(search.siteId2 === search.siteId);
       } else search.siteId2 = search.siteId;
     }
+  }
+  {
+    const sa = d.sisterArc || {};
+    sisterArc.joined = sa.joined || 0; sisterArc.said = {...(sa.said || {})};
+    sisterArc.last = sa.last === undefined ? -99 : sa.last;
+    sisterArc.warned = sa.warned || 0; sisterArc.sealed = sa.sealed || 0;
+    sisterArc.left = sa.left || 0; sisterArc.returns = sa.returns || 0;
+    sisterArc.taught = !!sa.taught; sisterArc.committed = !!sa.committed;
+    sisterArc.done = sa.done || '';
   }
   if(d.mother){
     mother.on = !!d.mother.on; mother.caveId = d.mother.caveId ?? -1;
@@ -30325,6 +30357,213 @@ function lyreTick(dt){
   log('LYRE. She is standing in the middle of a corpse-field, alive, and the tears around her have all been sealed. She has been doing this for years.', 'good');
   log('She has seen the crown. Talk to her.', 'good');
   threadDone('lyre', 'Found. She is alive, she is not sorry, and she is still working. Talk to her.');
+}
+/* ---------- AND THEN WHAT ----------
+   The old end of the search was a bark. She read the world correctly, said one line about it,
+   and then stood in that corpse-field for the rest of the run. The note that came back said
+   exactly what it looks like from outside: "After going through everything to find Lyre —
+   asking around, tracking down clues, walking across the map — she doesn't even join the
+   party?"
+
+   She joins. But she is not a recruit and this is not a recruitment. Every other ally in this
+   game arrives already decided about you: the wanderers have a price, the drifters have a
+   wage, the risen have no say. She arrives UNDECIDED, at a number low enough that the panel
+   says so, and that number is the whole feature — she is the one companion whose opinion is
+   something you play against rather than a stat you read off a card.
+
+   And she weighs the same things her greeting weighs, because that is already the honest way
+   to do it: not a hidden deed ledger, but the world. Tears closed where she can see them. The
+   count of the dead walking behind you. Whether there is a seat out there that bars its doors
+   when it hears your name. Whether you put the crown on.
+
+   Two ends, both reachable, neither of them a fail state. She commits and hands over the one
+   thing she has that he does not — or she warns you once and goes back to the fields, where
+   she can be found and talked back exactly once more. */
+const SISTER_GAP = 2;        /* days between beats. She is a person, not a quest log flushing */
+const sisterArc = {joined: 0, said: {}, last: -99, warned: 0, sealed: 0,
+                   left: 0, returns: 0, taught: false, committed: false, done: ''};
+/* Each beat is answerable to a fact about the world, and fires once. `at`/`below` gate on the
+   number; `when` gates on the fact. Order is priority: the loudest thing she has noticed since
+   the last time she spoke is the thing she says. */
+const SISTER_BEATS = [
+  {key:'terms', when: () => day >= sisterArc.joined + 1, move: 0,
+   line:'I will walk with you. I am not with you. Those are different things and you are going to feel the difference.'},
+  {key:'crown', when: () => player().some(c => c.lich), move: -30,
+   line:'You did it. I felt it from here and I told myself I had not felt it. Whatever is standing in front of me now, it is not what I went first for.'},
+  {key:'count', when: () => player().filter(c => c.undead && c.state !== 'dead').length >= 12, move: -5,
+   line:'Twelve of them behind you now. Every one of those was somebody who had finished. I am keeping the count, since you are not.'},
+  {key:'doors', when: () => towns.some(t2 => (t2.rep ?? 0) <= -40), move: -5,
+   line:'There is a seat back there that bars its doors when it hears your name. I have been on the wrong side of one of those. It is not a small thing and it does not wash off.'},
+  {key:'work', when: () => sisterArc.sealed >= 1, move: 4,
+   line:'That is one. I stopped counting somewhere past four hundred. Take me to the next one and I will stop asking what the crown is for.'},
+  {key:'signed', when: () => typeof compactActive === 'function' && compactActive(), move: 6,
+   line:'Seven halls with their names on the same page. Eleven years and I could not get two of them to agree on the weather. You did that wearing the crown.'},
+  {key:'warm', at: 25, move: 0,
+   line:'I have spent a month working out what you are. I have decided I do not have to. You are here, and the tears are closing.'},
+];
+function sisterHer(){ return chars.find(c => c.bossKey === 'lyre' && c.state !== 'dead') || null; }
+/* WHAT SHE SAYS BEFORE SHE HAS DECIDED. There is no global deed ledger — deed() writes straight
+   into each companion's regard and keeps no tally — so this reads the WORLD, which is more
+   honest anyway: she is judging what she can see and what the roads are saying, not consulting
+   a scoreboard. Pulled out of `talkTo` so it can be asked without also being answered. */
+function sisterGreeting(){
+  const lich = player().some(c => c.lich);
+  const raised = player().filter(c => c.undead).length;
+  const worstRep = towns.reduce((m2, t2) => Math.min(m2, t2.rep ?? 0), 0);
+  const wanted = towns.some(t2 => (t2.bounty || 0) > 300);
+  if(lich) return "You did it, then. I felt it from here. Eleven years closing what our father opened, and you spent them becoming the thing he was afraid of.";
+  if(wanted || worstRep <= -50) return "I hear what follows you. I have been out here sealing tears with my hands, and there are towns that will not say your name indoors. Tell me you brought something other than the crown.";
+  if(noticeTier >= 2) return "Something is paying attention to you. I can feel it standing behind you from here. Whatever you have been working, it has been heard.";
+  if(raised > 6) return "Six of the household came through with you. There are more now. You always did think the answer was more hands.";
+  return "Eleven years. I assumed they had killed you at home. Do not tell me why you came — I can see the crown from here.";
+}
+/* the journal step gets reopened by hand: threadDone latches, and finding her closed it */
+function sisterThread(step, opts){
+  const t = threadOf('lyre'); if(t) t.done = false;
+  threadSet('lyre', 'The search for Lyre', step, opts || {});
+}
+/* SHE HAS TO BE THERE TO SEE IT. A tear closed on the far side of the map by somebody else is
+   news; a tear closed while she is standing in the specks is the only argument he has. */
+function sisterSaw(r){
+  const her = sisterHer();
+  if(!her || her.faction !== 'player') return;
+  if(r && dist(her.x, her.y, r.x, r.y) > 40) return;
+  sisterArc.sealed++;
+  her.regard = clamp((her.regard || 0) + 3, -100, 100);
+}
+function sisterJoin(c){
+  sisterArc.joined = day; sisterArc.last = day - SISTER_GAP;
+  c.faction = 'player'; c.neutral = false; c.provoked = false; c.homeTown = null;
+  c.civ = false; c.leaving = null; c.devoted = false;
+  c.conviction = c.conviction || 'compassion';
+  /* LOW, AND ON THE RIGHT SIDE OF THE DOOR. STRAINED, so the panel says out loud that she has
+     not decided — but a long way clear of the -60 where an ordinary mercenary starts packing,
+     because a companion who can be lost in one bad afternoon is a companion nobody takes. */
+  c.regard = -25;
+  clearOrders(c);
+  say(c, 'No. Do not say any of it. I will come — I have had eleven years to learn what happens to the ones who work alone. But I am going to watch what you do.');
+  log(`LYRE IS WITH YOU. She comes at arm's length: ${regardBand(c.regard).label}. She has not decided about you and she is not going to pretend she has.`, 'good');
+  worldEvent('lyre', c.x, c.y,
+    'The woman who has been closing tears by hand out past the fences has taken up with the man in the crown. Nobody who knows what either of them is expects that to hold.');
+  sisterThread('She is with you, and she has not decided about you. What she makes of this depends on what she watches you do.',
+    {hint: 'She weighs what her own eyes weigh: tears closed where she can see them, the dead you raise, and the towns that will not say your name.', mark: null});
+  refreshSquadBar(); refreshCharPanel(); AU.news();
+}
+/* SHE DOES NOT COME BACK FOR AN APOLOGY. She left over a thing, and the thing has to have
+   stopped. Read the same three facts her greeting reads, so the condition is one the player
+   can already see in the interface rather than a hidden counter. */
+function sisterReturn(c){
+  if(sisterArc.done === 'gone'){
+    say(c, 'I came back once. I am not doing it again, and you know why, and we can both stand here and not say it.');
+    log(`${c.name} has nothing more to say to you. She said it all the second time.`, 'bad');
+    return;
+  }
+  const lich = player().some(u => u.lich);
+  const worstRep = towns.reduce((m2, t2) => Math.min(m2, t2.rep ?? 0), 0);
+  const wanted = towns.some(t2 => (t2.bounty || 0) > 300);
+  if(lich){
+    say(c, 'You are standing there in a body you stopped needing and asking me to come back to it. No.');
+    log(`${c.name} will not walk with a lich. Whatever else changes, that will not.`, 'bad');
+    return;
+  }
+  if(wanted || worstRep <= -30){
+    say(c, 'The roads are still saying your name the way they were saying it when I left. Put that down first. Then come back.');
+    log(`${c.name} will not come back while the towns still want you. Settle it, and ask her again.`, 'bad');
+    return;
+  }
+  sisterArc.returns++; sisterArc.left = 0; sisterArc.warned = 0;
+  sisterJoin(c);
+  c.regard = -20;
+  log(`${c.name} has come back. That is the last time it is on offer and both of you know it.`, 'good');
+}
+function sisterLeaves(c){
+  sisterArc.left = day; sisterArc.warned = 0;
+  if(sisterArc.returns >= 1) sisterArc.done = 'gone';
+  c.faction = 'exile'; c.neutral = true; c.holdsFire = true; c.provoked = false;
+  c.regard = -30;             /* not indifference. She is disappointed, which is worse */
+  c.job = null; c.devoted = false; c.leaving = null; c.squad = null;
+  clearOrders(c);
+  selected = selected.filter(x => x !== c);
+  /* back to the field the ledger named, which is where he found her and where she will be */
+  const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+  const site = sites[search.siteId2 >= 0 ? search.siteId2 : search.siteId];
+  if(site){ const q = findOpenNear(site.x + ri(-4, 4), site.y + ri(-4, 4), 8); if(q){ c.x = q.x; c.y = q.y; } }
+  log(`${c.name} HAS GONE. Not into the waste with the rest of the leavers — back to the field, and the work. She left the way she arrived here: on her own feet, carrying nothing.`, 'bad');
+  say(c, 'I will be where I was. Come and find me when you can tell me what the crown is for.');
+  worldEvent('lyre', c.x, c.y,
+    'The woman who closes tears by hand has walked out of the necromancer\'s outfit and gone back to it. People are saying she lasted longer than anyone expected.');
+  sisterThread(sisterArc.done === 'gone'
+      ? 'She has gone back to the fields a second time. There is not a third.'
+      : 'She has gone back to the fields. She will hear you out — if the thing she left over has actually stopped.',
+    {hint: 'She will not come back for an apology. Put the crown down, settle what the towns want, and go and stand in front of her.',
+     mark: {x: c.x, y: c.y}});
+  refreshSquadBar(); refreshCharPanel(); AU.news();
+}
+function sisterCommits(c){
+  sisterArc.committed = true; sisterArc.taught = true; sisterArc.done = 'kept';
+  c.devoted = true; c.morale = 100;
+  say(c, 'Sit down. There is a way to close one that costs a tenth of what you have been paying for it, and I have never told anybody, because the last person I told sold it within the month. I am telling you.');
+  log(`${c.name} HAS THROWN IN. She has been holding one thing back since the field and she has stopped holding it.`, 'good');
+  log(`She teaches the closing. A tear now costs ${costText(riftSealCost())} instead of ${costText(RIFT_SEAL_COST)}.`, 'good');
+  grantFavor('sister');
+  worldEvent('lyre', c.x, c.y,
+    'The two who came through the door eleven years apart are working the same side of it now. Whatever that means, it is not nothing.');
+  sisterThread('She has decided. Whatever this is now, it is the two of you doing it.', {hint: '', mark: null});
+  refreshSquadBar(); refreshCharPanel();
+}
+/* SHE IS ALREADY YOURS AND YOU CLICKED HER ANYWAY. Not a second recruitment and not a second
+   greeting — where the arc has actually got to, in her voice, off the number and nothing else.
+   It must not touch `regard`: a conversation is not a deed. */
+function sisterSquadLine(c){
+  const v = c.regard || 0;
+  const line = sisterArc.committed
+      ? 'Ask me for the rite again if you have forgotten it. I will not mind. I forgot it twice.'
+    : sisterArc.warned ? 'You know where I stand. I told you once and I am not going to make a habit of it.'
+    : v <= -30 ? 'I am still here. Do not read anything into that yet.'
+    : v >= 25 ? 'There is a field two days north that has gone quiet. When you are finished with whatever this is.'
+    : 'Eleven years of this and the thing I miss is somebody to talk to at the end of it. So. Talk.';
+  say(c, line);
+  log(`${c.name}: "${line}"`, '');
+}
+/* once a day, with the rest of what your own people make of you */
+function sisterTick(){
+  const her = sisterHer();
+  if(!her || her.faction !== 'player' || her.state === 'dead') return;
+  const v = her.regard || 0;
+  if(day - sisterArc.last >= SISTER_GAP){
+    for(const b of SISTER_BEATS){
+      if(sisterArc.said[b.key]) continue;
+      if(b.at !== undefined && v < b.at) continue;
+      if(b.below !== undefined && v > b.below) continue;
+      if(b.when && !b.when(her)) continue;
+      sisterArc.said[b.key] = day; sisterArc.last = day;
+      say(her, b.line);
+      log(`${her.name}: "${b.line}"`, b.move < 0 ? 'bad' : b.move > 0 ? 'good' : '');
+      if(b.move) her.regard = clamp((her.regard || 0) + b.move, -100, 100);
+      break;                            /* one at a time. A wall of text is not a relationship */
+    }
+  }
+  const w = her.regard || 0;
+  if(sisterArc.committed) return;
+  /* THE RUNG BEFORE THE LAST ONE. Somebody who walks out with no warning is a bug report, so
+     there is a step the player can read and act on, and it names what she is objecting to. */
+  if(w <= -45 && !sisterArc.warned){
+    sisterArc.warned = day;
+    say(her, 'Stop. Whatever the next one is — the next hall, the next field of them standing back up — I am not going to stand here and watch it. Give me a reason and I will stay.');
+    log(`${her.name} has named the condition, and she is not a person who says a thing twice.`, 'bad');
+    sisterThread('She has told you what she will not watch. She means it, and she has somewhere else to be.',
+      {hint: 'Close a tear where she can see it. Put down what the towns are holding against you. Or let her go.', mark: null});
+  }
+  if(w > -20 && sisterArc.warned) sisterArc.warned = 0;
+  /* AND THE EXIT IS HERS, NOT A DIE ROLL. regardTick offers an ordinary mercenary a 25%-a-day
+     chance of packing, which is right for somebody you hired; the sister's leaving is the end
+     of an arc and it happens when the arc says so. */
+  if(w <= -60 && !her.leaving){
+    her.leaving = day + 1;
+    say(her, 'I did not cross a dead world to hold the door for this.');
+    log(`${her.name} is going. Tomorrow, unless something changes tonight.`, 'bad');
+  }
+  if(w >= 60) sisterCommits(her);
 }
 /* ---------- THE DESCENT: LOOKING FOR MOTHER ----------
    The world already says who she is; nobody has put the two halves together. The Scholars
