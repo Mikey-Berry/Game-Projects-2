@@ -1864,6 +1864,7 @@ function makeChar(name, faction, x, y, o={}){
     Math.round(((o[k] ?? base) + ((_sb.stats && _sb.stats[k]) || 0)) * 10) / 10);
   const _bl = Math.round((o.race === 'chimera' ? 125 : 100) * (_sb.bloodMul || 1));
   const _gift = canHoldGift(o.race, o.sub) ? (o.gift || null) : null;
+  const _cv = rollConviction(_gift);
   return {
     id: uid++, name, faction, x, y,
     stats: {atk:st('atk',2), def:st('def',2), tough:st('tough',2), ath:st('ath',2), medic:st('medic',2),
@@ -1871,7 +1872,11 @@ function makeChar(name, faction, x, y, o={}){
       blades:st('blades',1), blunt:st('blunt',1), ranged:st('ranged',1), martial:st('martial',1),
       smithing:st('smithing',1), crafting:st('crafting',1), farming:st('farming',1), brewing:st('brewing',1),
       gunnery:st('gunnery',1)},
-    conviction: o.conviction || rollConviction(_gift), regard: o.regard || 0,
+    /* SPEND THE DRAW EITHER WAY. Written as `o.conviction || rollConviction(_gift)` the roll is
+       short-circuited away for every caller that names a conviction — which is rule 2 in this
+       file's own notes, and it started mattering the moment the hiring bar began passing one:
+       buying a hand would have cost the world one fewer number than not buying them. */
+    conviction: o.conviction || _cv, regard: o.regard || 0,
     gift: _gift, hollowTier: o.hollowTier??0, nascent: false, xpDebt: null, mana: 15 + Math.floor(o.magic??1), castCd: 0,
     concentrating: null,   /* {key, lock, exclusive} while sustaining a concentration spell */
     att: {divine:0, destruction:0, dark:0, dust:0, ...(_gift ? {[_gift]: 2} : {})},
@@ -3620,6 +3625,31 @@ function rollConviction(gift){
   let r = rnd() * pool.reduce((a, [, w]) => a + w, 0);
   for(const [k, w] of pool) if((r -= w) < 0) return k;
   return pool[pool.length - 1][0];
+}
+/* ---------- WHAT THE ROW WILL ACTUALLY BUY ----------
+   The hiring row is the one place in this game where you are shown a person's character before
+   you pay for them, and it is the entire reason one hand costs more than another — a
+   Compassionate medic and a Cruel one are two different runs. So the row is a CONTRACT, and
+   two of its fields were not being honoured.
+
+   THE CONVICTION was rolled by `makeRecruit`, printed on the row, and then thrown away: the
+   hire called `makeChar` without it, and `makeChar` rolls its own. Twenty-three of twenty-nine
+   hires came out as somebody else. It is fixed at the till, by passing it.
+
+   THE STATS are subtler and were never reported, because they are off by ones and twos rather
+   than by a word: `makeChar` adds the LINE's flat gifts on top of whatever the caller asked
+   for, and `makeRecruit` returns the roll before that. So a hand advertised at atk 9 arrives
+   at 8, and one advertised at tough 10 arrives at 13. The line's gifts are not the bug — they
+   are how lines work — the ROW was simply printing the wrong half. Twenty-two of twenty-nine.
+   One function, asked by the row, computing it the way `makeChar` will, so that the row and
+   the body cannot drift apart again. */
+function recruitStats(r){
+  const sb = (SUBRACES[r.race] || {})[r.sub] || SUB_NONE;
+  const out = {};
+  for(const k in r.stats)
+    out[k] = Math.max(k === 'magic' || k === 'armr' ? 0 : 1,
+      Math.round((r.stats[k] + ((sb.stats && sb.stats[k]) || 0)) * 10) / 10);
+  return out;
 }
 function makeRecruit(t){
   const lvl = ri(2,9);
@@ -8425,6 +8455,81 @@ function nearestEnemy(c, r){
   }
   return best;
 }
+/* ---------- WHO A SQUAD DECIDES TO KILL ----------
+   "The attack-move command AI isn't very intelligent. For example, all of my troops will
+    attempt to attack the FIRST thing they see, and swarm around it, even though there are
+    other more viable targets they could be engaging. This results in them getting mowed down
+    by the other enemy units."
+
+   Both places a body picks a fight called `nearestEnemy`, which is a pure distance sort. That
+   is correct for one animal and wrong for eight people standing next to each other, because
+   eight bodies at the same spot compute the same answer eight times. The pile is not a fault
+   in anybody's logic — it is what identical inputs produce, and no amount of making each unit
+   individually smarter removes it. What removes it is letting each one see WHAT THE REST OF
+   THE LINE IS ALREADY DOING, which is the one input they were missing.
+
+   Measured on the build that shipped the note: eight on attack-move against six enemies inside
+   the same nine tiles put EIGHT OF EIGHT on one body and engaged ONE of the six. Against a
+   brute worth no blows and a rank of crossbows behind it, they spent the fight on the brute and
+   took down 0.86 of five bows.
+
+   Four things go into the choice, and distance is still one of them — it simply stops being
+   the only one:
+
+     · WHAT THE LINE IS ALREADY DOING. Each ally already on a body divides its worth. This is
+       the whole fix; the rest is making sure the spreading is not indiscriminate.
+     · WHO IS ALREADY WORKING ON YOU. Something with one of yours in its sights is a problem
+       you have whether you engage it or not.
+     · WHO IS DOING IT FROM RANGE. A crossbow rank is what actually kills a squad; a brute
+       with a club is a wall you can walk around.
+     · WHAT IS NEARLY DOWN. Finishing takes a weapon off the field for good, so converging on
+       something at a tenth of its blood is worth more than spreading for its own sake.
+
+   PLAYER SIDE ONLY, DELIBERATELY. Handing this to the bandits and the levies as well would be
+   a large, unasked-for change to how hard the world fights, smuggled in under a squad-command
+   fix. They keep `nearestEnemy`. And a target the player NAMED is never reconsidered here —
+   `targetManual` is checked at both call sites. */
+function squadCrowd(c, r){
+  const on = new Map();
+  for(const u of charsNear(c.x, c.y, r + 6)){
+    if(u === c || u.state !== 'ok' || u.faction !== c.faction || !u.target) continue;
+    on.set(u.target, (on.get(u.target) || 0) + 1);
+  }
+  return on;
+}
+function squadValue(c, o, d, crowd){
+  let v = 1;
+  if(o.target && o.target.faction === c.faction && o.target.state === 'ok') v *= 1.7;
+  const w = o.weapon ? ITEMS[o.weapon] : null;
+  if((w && w.range) || (o.gift && o.stance === 'ranged')) v *= 1.45;
+  const frac = clamp((o.blood || 0) / Math.max(1, o.maxBlood || 1), 0, 1);
+  v *= 1 + 1.1 * (1 - frac);
+  v /= 1 + 0.85 * crowd;
+  /* 2.2 rather than 0 so that standing one tile closer is a nudge and not a verdict — with a
+     bare `v/d` everything collapses back onto distance the moment two candidates are adjacent */
+  return v / (2.2 + d);
+}
+function squadTarget(c, r){
+  const cands = [];
+  for(const o of charsNear(c.x, c.y, r)){
+    if(o.state !== 'ok') continue;
+    if(o.veilT > 0 && hostile(c, o)) continue;        /* the fold: eyes slide off */
+    if((o.floor || 0) !== (c.floor || 0)) continue;   /* a floor is as good as a wall */
+    if(!hostile(c, o)) continue;
+    const d = dist(c.x, c.y, o.x, o.y);
+    if(d > r) continue;
+    if(losBlocked(c.x, c.y, o.x, o.y, c.floor || 0)) continue;
+    cands.push([o, d]);
+  }
+  if(cands.length < 2) return cands.length ? cands[0][0] : null;
+  const on = squadCrowd(c, r);
+  let best = null, bs = -1;
+  for(const [o, d] of cands){
+    const s = squadValue(c, o, d, on.get(o) || 0);
+    if(s > bs){ bs = s; best = o; }
+  }
+  return best;
+}
 function isOutlaw(f){ return f==='bandit' || f==='slaver' || f==='cannibal'; }
 /* a Gravecloth Shroud hides what a body is from watching eyes */
 function revealedUndead(c){
@@ -8591,7 +8696,9 @@ function ai(c, dt){
      under a move order: a runner keeps running and pays the toll in passing cuts. */
   if(!c.noFight && !c.target && c.scanT <= 0 && !boundForAWeapon(c)){
     c.scanT = 0.22 + rnd() * 0.12;             /* eyes sweep at human speed, not framerate */
-    c.target = nearestEnemy(c, c.faction==='town' ? 10 : 9);
+    c.target = (c.faction === 'player' && !c.targetManual)
+      ? squadTarget(c, 9)                                  /* a squad picks its fights as a squad */
+      : nearestEnemy(c, c.faction==='town' ? 10 : 9);
     if(c.target && !c.saidAggro){
       c.saidAggro = true;
       if(c.bossKey==='baroness') say(c, 'All roads pay me toll.');
@@ -10425,7 +10532,7 @@ function physics(c, dt){
        levies and the roaming bands have always used (see the AI target pick), so this is the
        squad being given the same eyes as everybody else rather than a new rule. Sightline
        still gates it — nearestEnemy walks the line, and a wall is still a wall. */
-    const e = nearestEnemy(c, 10);
+    const e = (c.faction === 'player') ? squadTarget(c, 10) : nearestEnemy(c, 10);
     if(e){ c.target = e; c.targetManual = false; }
   }
   /* medics keep their distance from trouble */
@@ -13170,6 +13277,33 @@ spawnWanderers();
    of the world can see the door. One night. Then it passes, and you count the dead. */
 let bloodMoon = 0;        /* days remaining — only ever 0 or 1 */
 let bloodMoonWarned = false;
+/* ---------- AND A FLOOR UNDER THE GAP ----------
+   "We need a cooldown for blood moon events too. Getting them several times in a row is rough."
+
+   The note above this says a red moon "should be a thing people remember, not a weekly chore",
+   and the ROLL was already rare enough for that on average — 3.25% of nights, one every
+   thirty-one. The average was never the complaint. What was missing is a floor: an independent
+   coin flipped every dawn has no shortest gap, and clustering is not a flaw in that design, it
+   IS that design. Measured over six thousand nights on the build that shipped the report: a
+   median gap of twenty nights, a longest of a hundred and eighty-seven — and a SHORTEST OF
+   TWO, because the only thing standing between one red moon and the next was the single
+   morning the roll spent clearing the flag.
+
+   So: nothing at all for BLOOD_MOON_GAP nights, then the odds climb back over BLOOD_MOON_RAMP
+   rather than switching on. A hard cooldown alone would trade clustering for a metronome —
+   every red moon landing in the same window after the last — and the tail is most of what
+   makes the event feel like weather in the old sense rather than a timer. The base rate is
+   raised to pay for the floor, so the moon is not quietly retired: what changes is that the
+   gaps bunch far less, not that there are far fewer of them. */
+const BLOOD_MOON_GAP = 16;      /* nights in which it simply cannot happen */
+const BLOOD_MOON_RAMP = 14;     /* and then the odds climb back over this many more */
+let bloodMoonLast = -999;       /* the night it last rose. Rides the save, or saving shortens the gap */
+function bloodMoonOdds(){
+  const since = day - bloodMoonLast;
+  if(since <= BLOOD_MOON_GAP) return 0;
+  const warm = Math.min(1, (since - BLOOD_MOON_GAP) / BLOOD_MOON_RAMP);
+  return (0.046 + eldritchTide() * 0.013) * warm;
+}
 function bloodMoonRoll(){
   if(bloodMoon > 0){
     bloodMoon = 0;
@@ -13179,8 +13313,9 @@ function bloodMoonRoll(){
     return;
   }
   /* rare. It should be a thing people remember, not a weekly chore. */
-  if(day > 12 && rnd() < 0.022 + eldritchTide() * 0.006){
+  if(day > 12 && rnd() < bloodMoonOdds()){
     bloodMoon = 1;
+    bloodMoonLast = day;
     log('THE MOON IS COMING UP RED. Get behind something. Tonight the door is wide open.', 'bad');
     /* on a red moon, the door is not a figure of speech */
     if(!rifts.length){
@@ -27036,7 +27171,8 @@ function openBar(v){
       const g = r.gift ? ` <span style="color:#a98ad4">✦ ${r.gift}</span>` : '';
       const raceLbl = ((SUBRACES[r.race] || {})[r.sub] || {}).label || (RACES[r.race] ? RACES[r.race].label : 'Human');
       const cv = CONVICTIONS[r.conviction] || CONVICTIONS.cold;
-      row.innerHTML = `<span class="tn">${r.name}${g} <span style="color:#c8a86a">${cv.label}</span> <span style="color:var(--dust)">${raceLbl} · atk ${r.stats.atk} · def ${r.stats.def} · tough ${r.stats.tough} · med ${r.stats.medic}${r.gift?' · mag '+r.stats.magic:''}</span>` +
+      const rs = recruitStats(r);        /* the numbers the body will have, not the roll behind them */
+      row.innerHTML = `<span class="tn">${r.name}${g} <span style="color:#c8a86a">${cv.label}</span> <span style="color:var(--dust)">${raceLbl} · atk ${rs.atk} · def ${rs.def} · tough ${rs.tough} · med ${rs.medic}${r.gift?' · mag '+rs.magic:''}</span>` +
         `<br><span style="color:var(--dust);font-size:11px">${cv.blurb}</span></span>
         <button data-hire="${i}">HIRE ${r.cost}g</button>`;
       body.appendChild(row);
@@ -27098,7 +27234,8 @@ function openBar(v){
       cats -= r.cost;
       town.recruits.splice(i,1);
       const p = findOpenNear(v.x, v.y+1, 2);
-      const c = makeChar(r.name, 'player', p.x, p.y, {...r.stats, gift:r.gift, race: r.race || 'human', sub: r.sub || null, sex: r.sex || 'm'});
+      const c = makeChar(r.name, 'player', p.x, p.y, {...r.stats, gift:r.gift, race: r.race || 'human', sub: r.sub || null, sex: r.sex || 'm',
+        conviction: convictionOpen(r.conviction, r.gift) ? r.conviction : undefined});
       chars.push(c);
       log(`${r.name} joined the squad.`, 'good');
       refreshTop(); refreshSquadBar(); render();
@@ -29401,7 +29538,7 @@ function snapshot(){
     pilgrimDestI: c.pilgrimage ? towns.indexOf(c.pilgrimage.dest) : -1,
   });
   return {
-    v:20, cats, bloodMoon, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields, nodeUses:[...nodeUses], phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
+    v:20, cats, bloodMoon, bloodMoonLast, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields, nodeUses:[...nodeUses], phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen},
@@ -29620,6 +29757,9 @@ function restore(d){
   Object.assign(bossSlain, d.bossSlain || {});
   Object.assign(placesSeen, d.placesSeen || {});
   bloodMoon = d.bloodMoon || 0;
+  /* A FLOOR THAT RESETS ON LOAD IS A FLOOR YOU CAN WALK THROUGH BY SAVING. `?? -999` rather
+     than `|| -999`: night 0 is a real night, and `||` would send it back to never. */
+  bloodMoonLast = d.bloodMoonLast ?? -999;
   redoubts.length = 0;
   if(Array.isArray(d.redoubts)) for(const r of d.redoubts) redoubts.push(r);
   noticeTier = d.noticeTier || noticeTierOf(noticed);
