@@ -724,6 +724,25 @@ function isBlocked(x, y, f = 0){
 /* deterministic decor: trees on grass, rocks on sand/rock, ore in the veins beneath */
 const nodeUses = new Map();    /* 'x,y' -> times harvested */
 let oreFields = [];            /* seeded after towns are placed — geology explains the map's politics */
+/* ---------- WHAT AN OUTCROP LOOKS LIKE ----------
+   "Iron is at least indistinguishable from normal rock and I haven't come across it yet."
+
+   It was. A boulder was a #57504a dodecahedron; an iron seam was a #4a423e dodecahedron of
+   the same size wearing a 0.19 speck of dull brown — a difference of about twenty in colour
+   and a crust smaller than half the base. Copper, which nobody has ever reported failing to
+   find, wears a 0.20 cap of bright verdigris that is a hundred and twelve away from boulder
+   grey. One of the two metals was signposted and the other was camouflaged, and the report is
+   the exactly predictable consequence.
+   So iron gets a rust-red crust of its own, slightly LARGER than copper's because a seam of
+   it is the thing a player is most often specifically hunting for, on a browner stone that
+   does not read as granite. Held in a table rather than inline in the mesh builder so that
+   "can you tell it from a rock" is a question something can be asked, rather than a fact
+   buried three hundred lines inside the renderer. */
+const NODE_LOOK = {
+  rock:  {base:'#57504a', baseSz:0.40, crust:null,      crustSz:0},
+  cvein: {base:'#4e5a4a', baseSz:0.38, crust:'#5fae86', crustSz:0.20},
+  ivein: {base:'#5c3f30', baseSz:0.40, crust:'#c8663a', crustSz:0.24},
+};
 const NODE_CAP = {tree:9, rock:14, cvein:16, ivein:14};
 const NODE_REGROW = {tree:0.55, rock:0.30, cvein:0.22, ivein:0.16};  /* uses recovered per day */
 function oreAt(x, y){
@@ -1157,7 +1176,14 @@ function rollQuality(skill){
 }
 function tierKey(base, t){ return t==='n' ? base : base + '_' + t; }
 const VENDOR_STOCK = {
-  general: ['meat','fruit','fish','bandage','mats','wood','stone','copper','fabric','rum','hide','salt','pack_s','pack_l'],
+  /* ---------- AND THE ORE ROW, WHICH WAS STOCKED AND UNLISTED ----------
+     "Towns still do not sell iron at all." They have always CARRIED it — the seeding puts 14
+     to 22 ingots in the pit and one to four in every other seat, plus ore and coal — and not
+     one of the three was on any vendor's list, so all of it sat in the town's books where
+     nothing could reach it. Measured before this: 7 of 7 seats holding iron, 0 of 7 selling
+     it, exactly like the aether cells two notes down. Copper was listed and iron was not,
+     which is the whole of why one of them felt like it existed. */
+  general: ['meat','fruit','fish','bandage','mats','wood','stone','copper','iron','iron_ore','coal','fabric','rum','hide','salt','pack_s','pack_l'],
   weapons: ['w_plank','w_club','w_rkat','w_kat','w_nod','w_bow','w_xbow','a_rag','a_lea','a_pla'],
   robotics:['p_arm','p_leg','bandage'],
   occult:  ['tome','formula_t','formula_w','sunder','bandage','fabric','rum','mats','meat','remains','a_shroud','aether_cell'],
@@ -1510,6 +1536,57 @@ function placeTownAt(def, cx0, cy0){
     if(towns.some(t => dist(t.x, t.y, x, y) < 50)) continue;
     if(oreFields.some(f => dist(f.x, f.y, x, y) < 70)) continue;
     oreFields.push({x, y, r: ri(9, 14), kind: rnd() < 0.5 ? 'cvein' : 'ivein', home: null});
+  }
+  /* ---------- AND NO SEAT IS STRANDED FROM EITHER METAL ----------
+     "Iron is STILL not a naturally occurring resource... I haven't come across it yet."
+
+     There is plenty of it — measured on a fresh world, 128 outcropping tiles of iron against
+     124 of copper, so the generator was never the problem. WHERE it is was: seven fields
+     scattered at random across a map 1440 tiles on a side left DUSTPORT 626 TILES from the
+     nearest iron, Copperhold 452, Hollowmere 316 and Fallowend 354. Four of seven seats had no
+     iron within a day's walk in any direction, and a resource you cannot walk to has not been
+     placed in the world so much as filed in it.
+     Geology still explains the politics — the pit still owns the great seam and Copperhold
+     still owns the green one, and those are the ones worth a war. This only guarantees that
+     every seat has SOMETHING of each within reach, which is the difference between a metal
+     being scarce and a metal being a rumour. Both metals, because the mirror of this bug is
+     one bad seed away and copper is the control the iron numbers are read against.
+     AND THE FIELD HAS TO ACTUALLY OUTCROP. A vein only breaks the surface on dry ground above
+     0.90 of the height field, so a circle can be dropped somewhere perfectly legal and yield
+     nothing a player can walk up to and swing at. Each candidate is sampled before it counts. */
+  const IRON_WALK = 150;              /* how far a seat may be from the nearest seam of a metal */
+  const outcrops = (x, y, r) => {
+    let n = 0;
+    for(let dy = -r; dy <= r; dy++) for(let dx = -r; dx <= r; dx++){
+      if(dx*dx + dy*dy > r*r) continue;
+      const px = x + dx, py = y + dy;
+      if(px < 4 || py < 4 || px >= W-4 || py >= H-4) continue;
+      if(tileAt(px, py) === 3) continue;
+      /* THE SAME TEST `rawDecorAt` MAKES, to the character. Written any other way this counts
+         a different thing than the world draws, and a field passes the check and outcrops
+         nowhere — which is the failure this whole helper exists to prevent. */
+      if(hash2(px*3+7, py*3+13) > 0.90) n++;
+    }
+    return n;
+  };
+  for(const kind of ['ivein', 'cvein']){
+    for(const t of towns){
+      let best = 1e9;
+      for(const f of oreFields) if(f.kind === kind) best = Math.min(best, dist(f.x, f.y, t.x, t.y));
+      if(best <= IRON_WALK) continue;
+      for(let k = 0; k < 400; k++){
+        const a = rnd() * Math.PI * 2, off = 55 + rnd() * (IRON_WALK - 70);
+        const x = Math.round(clamp(t.x + Math.cos(a)*off, 26, W-26));
+        const y = Math.round(clamp(t.y + Math.sin(a)*off, 26, H-26));
+        if(tileAt(x, y) === 3) continue;
+        if(towns.some(o => dist(o.x, o.y, x, y) < (o.clearR || 15) + 14)) continue;
+        if(oreFields.some(f => dist(f.x, f.y, x, y) < 44)) continue;
+        const r = ri(9, 13);
+        if(outcrops(x, y, r) < 14) continue;       /* a circle that breaks the surface nowhere is not a seam */
+        oreFields.push({x, y, r, kind, home: null});
+        break;
+      }
+    }
   }
 })();
 
@@ -1948,7 +2025,36 @@ const BUBBLE_T = 4.2;
 function say(c, text){ c.bubble = {text, t: BUBBLE_T}; }
 function pick(arr){ return arr[ri(0, arr.length-1)]; }
 const chars = [], corpses = [];
-function player(){ return chars.filter(c => c.faction==='player' && c.state!=='dead' && !c.phantom); }
+/* ---------- WHO IS "YOU" ----------
+   "When unique (named) NPCs join the squad, they boot over the main character from the
+    leftmost spot on the squad menu. For continuity, they should simply go at the very end."
+
+   It is not only the menu. `applyCreation` clears the old squad and PUSHES the new one, so the
+   protagonist goes on the end of `chars` — and every named NPC in the world (the wanderers,
+   the immortals, the sister, anyone recruited out of a town) was placed at worldgen, which is
+   EARLIER. The moment one of them turns `faction = 'player'` it is sitting ahead of the
+   protagonist in the array, and this function is what the whole file means by "the player's
+   own body": the camera anchor, the quest anchor, where a world event is stamped, who a leader
+   is talking to. Recruiting Lyre quietly made Lyre the main character.
+
+   So the protagonist is a FLAG now rather than a position, and it is put back in front here —
+   one findIndex over a squad-sized array, against a filter over eight hundred bodies that this
+   function was already paying for. */
+function player(){
+  const a = chars.filter(c => c.faction==='player' && c.state!=='dead' && !c.phantom);
+  if(a.length > 1 && !a[0].protagonist){
+    const i = a.findIndex(c => c.protagonist);
+    if(i > 0) a.unshift(a.splice(i, 1)[0]);
+  }
+  return a;
+}
+/* and the order the squad bar shows them in: you, then the order they turned up in */
+let squadSeq = 0;
+function squadOrder(c){
+  if(c.protagonist) return -1;
+  if(!c.squadNo) c.squadNo = ++squadSeq;
+  return c.squadNo;
+}
 /* THE DEAD WHO KEPT A MIND. Most risen are hands and nothing else: they haul, they swing, and
    they cannot be told to read. A lich kept its own mind, a lieutenant kept the one it died
    with, and a servitor was bound around a mind on purpose. Everything that asks "can this one
@@ -8535,6 +8641,19 @@ function isOutlaw(f){ return f==='bandit' || f==='slaver' || f==='cannibal'; }
 function revealedUndead(c){
   return !!c.undead && !(c.armor && ITEMS[c.armor].conceal) && !(c.veilT > 0) && !c.shrouded;
 }
+/* ---------- WHAT COUNTS AS THE WALKING DEAD ----------
+   "Paladins, despite hating undead, do not attack cairn beasts or Malathuun's Answers. They
+    simply ignore them — an odd discrepancy."
+
+   And it is, because a cairn beast is a heap of the dead that got up and walked and an Answer
+   is the sundered ground itself standing: the two most obviously unquiet things in the world.
+   They were invisible to the Purge on a technicality — both are built as `fauna`, `beast` and
+   `neutral` rather than `undead`, so `revealedUndead` said no and the unprovoked-neutral rule
+   two lines further on closed the door behind it.
+   No shroud clause: a Gravecloth hides what a body IS, and nothing hides a thing the size of a
+   barn made of other people's bones. The exiles get the same rule, because theirs has always
+   been "hunt any dead you can see" and this is the largest example of one in the world. */
+function walksAsDead(c){ return revealedUndead(c) || c.bossKey === 'cairn'; }
 /* fixed enmities that pierce a neutral creature's calm */
 function pierceNeutral(n, o){
   /* Some people are exempt from the standing quarrel because they are somebody's family.
@@ -8544,8 +8663,13 @@ function pierceNeutral(n, o){
      fire on sight and the whole scene the origin is built around never happens. She judges him
      in words instead. It runs both ways: his dead do not swing at her either. */
   if(n.holdsFire || o.holdsFire) return false;
-  if(n.faction==='exile') return revealedUndead(o);                      /* Ash hunts the dead she can see */
+  /* AND A NEUTRAL HEAP OF THE DEAD IS STILL THE DEAD. Asked from the beast's side because
+     that is the only side this function is ever asked from — `hostile` calls it for whichever
+     of the pair is neutral — and one rule here settles the quarrel in both directions. */
+  if(walksAsDead(n) && (o.faction==='purge' || o.faction==='exile')) return true;
+  if(n.faction==='exile') return walksAsDead(o);                         /* Ash hunts the dead she can see */
   if(n.undead) return o.faction==='purge' || o.faction==='exile';        /* the dead and their hunters */
+
   return false;
 }
 function hostile(a, b){
@@ -8593,7 +8717,7 @@ function hostile(a, b){
   /* purge squads hunt the walking dead — and necromancers, once known */
   if(a.faction==='purge' || b.faction==='purge'){
     const p = a.faction==='purge' ? b : a;
-    if(revealedUndead(p)) return true;
+    if(walksAsDead(p)) return true;
     if(p.faction==='player') return menaceFlag || purgeWrath > 0;
     if(p.faction==='town' && p.homeTown && p.homeTown.def.undeadFriendly) return true;
     return false;
@@ -9850,7 +9974,28 @@ function travel(c, x, y, dt, arrive=0.15){
 const SLOT_RING = [];
 for(let _s = 0; _s < 8; _s++) SLOT_RING.push([Math.cos(_s * Math.PI / 4), Math.sin(_s * Math.PI / 4)]);
 const SLOT_CROWD = 6.0;          /* dearer than the whole ring is wide: free beats shared, always */
-function slotRadius(t){ return 0.9 + Math.max(0, (t.big || 1) - 1) * 0.5; }
+/* ---------- HOW CLOSE IS CLOSE ENOUGH TO SWING ----------
+   "Sometimes fighting enemies get stuck in a weird sliding animation where neither side is
+    attacking, simply sliding around. Seems to especially happen with extremely large enemies."
+
+   Two numbers that had to agree and did not. `slotRadius` sends a body to stand at 0.9 tiles
+   from an ordinary man and further out from anything bigger — 1.5 from a wyrm, because a
+   wyrm's body is in the way — and the swing was gated on a flat 1.0 for everything alive. So
+   against anything past `big` 1.2 a body walked to its slot, found itself outside the only
+   distance it is allowed to strike from, and walked to its slot again. That is the sliding:
+   every part working, and the two numbers disagreeing.
+   Measured over thirty seconds of one man on one target, by size: 104 blood off an ordinary
+   body, 59 off a cairn beast, 23 off `big` 1.6, and EIGHT off a wyrm — not a stall, a fight
+   that only happens on the frames a jostle happens to push him inside 1.0.
+   So the reach is derived from the same body size the slot is, and the slot is derived from
+   the reach, which makes "you can hit what you were sent to stand next to" true by
+   construction rather than by two constants staying in step. The cap is what `windup` will
+   actually resolve a blow at (1.7), so a body can never be sent somewhere its own swing gets
+   thrown away. */
+/* how far out a shooter holds: inside its own range by enough that a jostle is not a ceasefire */
+function rangedBand(w){ return Math.max(1.8, (w.range || 0) - 0.9); }
+function meleeReach(t){ return Math.min(1.65, 1.0 + Math.max(0, ((t && t.big) || 1) - 1) * 0.5); }
+function slotRadius(t){ return meleeReach(t) - 0.1; }
 function approachSlot(c, t, dt){
   c._slotT = (c._slotT || 0) - dt;
   if(!c._slot || c._slot.t !== t || c._slotT <= 0){
@@ -10670,17 +10815,39 @@ function physics(c, dt){
     const w = c.weapon ? ITEMS[c.weapon] : null;
     /* a mage in ranged stance is a mage, not a brawler: hold the band, defend, recover mana */
     if(c.stance==='ranged' && c.gift && (!w || !w.range)){
-      const band = 7;
-      if(d < 5.5){
-        /* back away, guard up — never wade in with fists */
-        c.blocking = true;
-        const ux = (c.x - t.x)/Math.max(0.01, d), uy = (c.y - t.y)/Math.max(0.01, d);
-        travel(c, clamp(c.x + ux*3, 2, W-2), clamp(c.y + uy*3, 2, H-2), dt, 0);
+      /* ---------- THE POCKET HAS TO BE INSIDE THE THROW ----------
+         "Sometimes AI set to ranged pause JUST outside their own attack range while engaged
+          with an enemy... battle stance, the red target line drawn, but not attacking."
+         Here it was, exactly: the band was a hard-coded 7, the order to close in was
+         `d > firebolt.range + 1` — that is, past NINE — and a firebolt reaches EIGHT. So
+         anywhere between eight and nine a caster was too far to throw anything and not far
+         enough to be told to walk, and it stood there. Measured before this: a destruction
+         caster with two hundred mana and a target settled at 8.96 tiles and put ten blood
+         through it in thirty seconds, on the frames something happened to jostle it inside.
+         The band comes off the art it is actually holding now, and it sits a tile and a bit
+         INSIDE it, so a shove does not stop the fight.
+         AND A GIFT WITH NOTHING TO THROW IS NOT A RANGED UNIT. This branch only ever reaches
+         for a firebolt or a darkbolt, so a divine or dust caster put on RANGED held a pocket
+         it could do nothing from — thirty seconds, no damage, a red line drawn the whole
+         time. The original intent stays intact and is worth keeping: a destruction caster out
+         of mana still holds the band and waits, because it is a mage and not a brawler. It is
+         only the gifts that can NEVER throw anything that fall through to fight with what
+         they are holding. */
+      const bolt = (c.gift === 'destruction' || c.omni) ? SPELLS.firebolt
+                 : c.gift === 'dark' ? SPELLS.darkbolt : null;
+      if(bolt){
+        const band = Math.max(4, bolt.range - 1.2);
+        if(d < band - 1.3){
+          /* back away, guard up — never wade in with fists */
+          c.blocking = true;
+          const ux = (c.x - t.x)/Math.max(0.01, d), uy = (c.y - t.y)/Math.max(0.01, d);
+          travel(c, clamp(c.x + ux*3, 2, W-2), clamp(c.y + uy*3, 2, H-2), dt, 0);
+          return;
+        }
+        if(d > band){ travel(c, t.x, t.y, dt, band); return; }
+        c.blocking = true;   /* in the pocket: stand, guard, wait for mana */
         return;
       }
-      if(d > SPELLS.firebolt.range + 1){ travel(c, t.x, t.y, dt, band); return; }
-      c.blocking = true;   /* in the pocket: stand, guard, wait for mana */
-      return;
     }
     if(w && w.range){
       /* ---------- TOO CLOSE TO SHOOT IS NOT THE SAME AS NOTHING TO DO ----------
@@ -10708,10 +10875,18 @@ function physics(c, dt){
            So guarding is still the right answer for a bow. A LANCE is a different weapon —
            a spike on a frame long enough to keep a man off you — and for that one, and
            anything else given a `melee` profile, standing there was always the wrong answer. */
-        if(d > 1.0 || !w.melee) return;  /* out of reach, or nothing to fight with: guard and wait */
+        if(d > meleeReach(t) || !w.melee) return;  /* out of reach, or nothing to fight with: guard and wait */
         /* and inside reach, with something to fight with, fall through to the swing */
       }
-      else if(d > w.range){ travel(c, t.x, t.y, dt, w.range - 0.5); return; } /* no firing on the move */
+      /* ---------- AND IT STOPS INSIDE ITS RANGE, NOT ON THE EDGE OF IT ----------
+         `else if(d > w.range){ travel(..., w.range - 0.5) }` looks like it parks a body half a
+         tile inside its range and never does: the moment `d` drops to the range the branch
+         stops being taken, so the walk ends wherever that frame happened to leave it and the
+         stop distance is dead code. Measured: a Hunting Bow of range 7 settled at 6.92 and a
+         Crossbow of range 8 at 7.99 — a hand's breadth of margin, and any shove, any step the
+         target takes, puts them outside it again with the target line still drawn. The band is
+         the number the walk is judged against now, so the margin is real. */
+      else if(d > rangedBand(w)){ travel(c, t.x, t.y, dt, rangedBand(w)); return; } /* no firing on the move */
       else {
       /* the draw. A crossbow is already spanned and only has to be brought up; a bow has
          to be pulled and held; the lance has to spin something up that was never meant to
@@ -10740,12 +10915,13 @@ function physics(c, dt){
        reaches the slot or loses the reach, and `approachSlot` restarts it when it hands out a
        different place to stand. */
     const slot = approachSlot(c, t, dt);
+    const reach = meleeReach(t);        /* a wyrm is hit from further out than a man is */
     let circling = false;
-    if(slot && d <= 1.0){
+    if(slot && d <= reach){
       if(dist(c.x, c.y, slot.x, slot.y) <= 0.45) c._slotWait = 0;                 /* standing in it: fight */
       else if((c._slotWait = (c._slotWait || 0) + dt) < 1.2) circling = true;
-    } else if(d > 1.0) c._slotWait = 0;
-    if(d > 1.0 || circling){
+    } else if(d > reach) c._slotWait = 0;
+    if(d > reach || circling){
       /* ---------- AND WHETHER THERE IS ROOM FOR HIM AT ALL ----------
          The Kenshi rule: a body only has so many sides, and the extras wait at spear-length.
          One pass, and nothing else may scan inside it — `charsNear` hands back one shared
@@ -14153,6 +14329,15 @@ function carryShape(r, body, rot, m){
     r.sex  = body.sex  || r.sex;
     if(body.clawDmg) r.clawDmg = Math.max(3, Math.min(body.clawDmg, 6 + m * 0.9));
   }
+  /* ---------- AND THE ORDER'S HELM STAYS ON ----------
+     "Paladins raised as undead should keep their silly looking little hat. Just to add insult
+      to injury when they must fight the bones of their brothers."
+     The helm and the gold crest were drawn off `c.faction`, so the moment one of them stood up
+     in your colours it came back bare-headed like anybody else. Carried forward rather than
+     re-derived, and carried through a re-raise as well, because what a body WAS is not a thing
+     that stops being true. The pauldrons do not come with it: plate is kit, and kit comes off
+     a corpse. The hat is the joke. */
+  r.wasOrder = body.faction === 'purge' || body.faction === 'exile' || !!body.wasOrder;
   r.big = 1 + ((body.big || 1) - 1) * rot;
 }
 /* ---------- what a HARVEST hand is allowed to render down ----------
@@ -19793,14 +19978,16 @@ function vscaleOf(c){
   /* Greenrest's ring: the one place the name still fits */
   addInst(oasisTrees, new THREE.CylinderGeometry(0.07, 0.13, 0.9, 5), '#3a2c1c', 0.45, treeScale, true);
   addInst(oasisTrees, new THREE.ConeGeometry(0.65, 1.6, 6), '#2f4a26', 1.5, treeScale, true);
-  addInst(rocks, new THREE.DodecahedronGeometry(0.4, 0), '#57504a', 0.25, p => 0.7 + hash2(p[0]*3,p[1]*3)*0.8, true);
+  addInst(rocks, new THREE.DodecahedronGeometry(NODE_LOOK.rock.baseSz, 0), NODE_LOOK.rock.base, 0.25, p => 0.7 + hash2(p[0]*3,p[1]*3)*0.8, true);
   addInst(shrubs, new THREE.SphereGeometry(0.32, 5, 4), '#5d5640', 0.25, null, false);
-  /* ore outcrops: green-crusted copper, rust-dark iron */
+  /* ore outcrops: green-crusted copper, rust-crusted iron. Colours and sizes live in
+     NODE_LOOK — see the note there for why iron's used to be a secret. */
   const veinScale = p => 0.8 + hash2(p[0]*7, p[1]*11)*0.5;
-  addInst(cveins, new THREE.DodecahedronGeometry(0.38, 0), '#4e5a4a', 0.22, veinScale, true);
-  addInst(cveins, new THREE.OctahedronGeometry(0.20, 0), '#5fae86', 0.42, veinScale, true);
-  addInst(iveins, new THREE.DodecahedronGeometry(0.40, 0), '#4a423e', 0.24, veinScale, true);
-  addInst(iveins, new THREE.OctahedronGeometry(0.19, 0), '#8a5a3c', 0.44, veinScale, true);
+  for(const [list, k] of [[cveins, 'cvein'], [iveins, 'ivein']]){
+    const L = NODE_LOOK[k];
+    addInst(list, new THREE.DodecahedronGeometry(L.baseSz, 0), L.base, 0.22, veinScale, true);
+    addInst(list, new THREE.OctahedronGeometry(L.crustSz, 0), L.crust, 0.44, veinScale, true);
+  }
   for(const k of nodeInstances.keys()){
     const [nx, ny] = k.split(',').map(Number);
     if(nodeDepleted(nx, ny)) hideNodeInstance(k);
@@ -23826,10 +24013,11 @@ function buildCharMesh(c){
     }
     if(c.pack==='pack_s') obox(0.32, 0.4, 0.22, '#6b5a40', 0, 0.24, -0.28, e.spine);
     if(c.pack==='pack_l'){ obox(0.46, 0.64, 0.3, '#4a3b2c', 0, 0.26, -0.34, e.spine); obox(0.4, 0.11, 0.26, '#8a7048', 0, 0.62, -0.34, e.spine); }
-    if(c.faction==='purge' || c.faction==='exile'){
+    if(c.faction==='purge' || c.faction==='exile' || c.wasOrder){
       obox(0.34, 0.2, 0.34, '#f0ead8', 0, 0.42, 0, e.headG);        /* great helm */
       obox(0.09, 0.26, 0.09, '#d4a040', 0, 0.6, 0, e.headG);        /* gold crest */
-      obox(0.66, 0.12, 0.32, '#f0ead8', 0, 0.52, 0, e.spine);       /* pauldrons */
+      /* the plate came off the corpse with everything else; the helm did not — see carryShape */
+      if(!c.wasOrder) obox(0.66, 0.12, 0.32, '#f0ead8', 0, 0.52, 0, e.spine);   /* pauldrons */
     } else if(c.faction==='bandit' || c.faction==='slaver'){
       obox(0.36, 0.16, 0.36, '#241a10', 0, 0.38, -0.04, e.headG);   /* hood */
       obox(0.13, 0.13, 0.13, '#241a10', 0.29, 0.55, 0, e.spine);    /* shoulder spike */
@@ -25512,6 +25700,47 @@ function renderMinimap(){
   const span = camDist * 1.3;
   mmcx.strokeStyle = 'rgba(232,220,196,0.6)';
   mmcx.strokeRect((camX-span/2)*128/W, (camY-span/2)*128/H, span*128/W, span*128/H);
+  drawCompass();
+}
+/* ---------- WHICH WAY IS NORTH ----------
+   "Some small indicator on the mini-map to show which direction (NSEW) the camera is facing
+    would be helpful to get a general sense of direction."
+
+   The map is drawn north-up and never rotates; the WORLD rotates under the camera on Q and E.
+   So the map and the view disagree by `camYaw` and there was nothing anywhere on the screen
+   saying by how much — you can be looking due south at a map that is still drawn the other way
+   up, and every "it's east of you" in the journal is read off the wrong axis.
+   A rose rather than a needle: a needle tells you where north is and a player wants the other
+   question answered too, which is what the thing at the top of my screen is called. The four
+   letters sit where those directions actually are from the camera's point of view, so the one
+   at the top of the rose is the one you are walking towards.
+   Drawn into the minimap canvas itself rather than as another HUD element, because the phone
+   layout has already had two passes at fitting what is up there and this needs no room. */
+function drawCompass(){
+  const cx = 17, cy = 128 - 17, r = 11.5;
+  const [rx, ry] = camRight(), [fx, fy] = camFwd();
+  mmcx.save();
+  mmcx.fillStyle = 'rgba(20,16,8,0.62)';
+  mmcx.beginPath(); mmcx.arc(cx, cy, r + 3.5, 0, Math.PI*2); mmcx.fill();
+  mmcx.strokeStyle = 'rgba(232,220,196,0.30)'; mmcx.lineWidth = 1;
+  mmcx.beginPath(); mmcx.arc(cx, cy, r + 3.5, 0, Math.PI*2); mmcx.stroke();
+  mmcx.font = 'bold 9px monospace';
+  mmcx.textAlign = 'center'; mmcx.textBaseline = 'middle';
+  /* world y grows southward, so north is -y. Each letter is projected onto the camera's own
+     right and forward vectors — the same two the movement keys use — which is what makes the
+     rose agree with the view rather than with the map. */
+  for(const [label, dx, dy] of [['N', 0, -1], ['E', 1, 0], ['S', 0, 1], ['W', -1, 0]]){
+    const sx = dx*rx + dy*ry;              /* how far right of screen-centre that way lies */
+    const sy = -(dx*fx + dy*fy);           /* and how far up it */
+    const north = label === 'N';
+    mmcx.fillStyle = north ? '#e8c86a' : 'rgba(232,220,196,0.72)';
+    mmcx.fillText(label, cx + sx*r, cy + sy*r);
+  }
+  /* and the way the camera is pointing, so the rose reads as a heading and not as decoration */
+  mmcx.strokeStyle = '#7fd4c8'; mmcx.lineWidth = 1.4;
+  mmcx.beginPath(); mmcx.moveTo(cx, cy + 3.5); mmcx.lineTo(cx, cy - 4.5); mmcx.stroke();
+  mmcx.beginPath(); mmcx.moveTo(cx - 2.2, cy - 2.2); mmcx.lineTo(cx, cy - 5); mmcx.lineTo(cx + 2.2, cy - 2.2); mmcx.stroke();
+  mmcx.restore();
 }
 
 /* ============================================================ UI */
@@ -25650,7 +25879,7 @@ function assignToGroup(list, name){
 }
 function refreshSquadBar(){
   const bar = $('squadbar'); bar.innerHTML = '';
-  const mine = chars.filter(c => c.faction==='player');
+  const mine = chars.filter(c => c.faction==='player').sort((a, b) => squadOrder(a) - squadOrder(b));
   const living = mine.filter(c => (!c.undead || c.lich) && !c.grp);
   /* ---------- WHAT IS BOUND AND WHAT IS ONLY PROPPED UP ----------
      "To be clear, these temporary undead should NOT count towards the total under the
@@ -29511,6 +29740,7 @@ function snapshot(){
     clawDmg:c.clawDmg, clawWt:c.clawWt||null, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
     servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, eater:!!c.eater, harvestBonus:c.harvestBonus??null, corpseWorth:c.corpseWorth??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, boundTold:!!c.boundTold,
+    protagonist:!!c.protagonist, squadNo:c.squadNo||0, wasOrder:!!c.wasOrder,
     salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null, lieuWear:c.lieuWear||0,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
     bindWeight:c.bindWeight, shortTag:c.shortTag, tempT:c.tempT??null, propped:!!c.propped,
@@ -29870,6 +30100,12 @@ function restore(d){
     c.noMind = !!s.noMind;
     if(c.shape && c.shape.mind === undefined && c.shape.will !== undefined) c.shape.mind = c.shape.will;
     c.conviction = s.conviction || c.conviction || rollConviction(c.gift); c.regard = s.regard || 0;
+    /* WHO YOU ARE HAS TO SURVIVE A RELOAD. Without this the flag is lost, `player()` falls
+       back to array order, and the recruit who happened to be placed at worldgen is the main
+       character again the moment you load. `squadSeq` is carried past the highest number in
+       the save so the next person to join still goes on the end. */
+    c.protagonist = !!s.protagonist; c.squadNo = s.squadNo || 0; c.wasOrder = !!s.wasOrder;
+    if(c.squadNo > squadSeq) squadSeq = c.squadNo;
     /* and a save written before the gift ruled it out gets the reroll on the way in, or the
        devout necromancers already walking around stay devout necromancers forever */
     if(!convictionOpen(c.conviction, c.gift)) c.conviction = rollConviction(c.gift);
@@ -31058,6 +31294,7 @@ function applyCreation(race, gift, origin, sub){
     if(o && o.race === race && !o.sub && sub) o.sub = sub;
     const c = makeChar(pickName(), 'player', p.x, p.y, o); chars.push(c); return c;
   };
+  squadSeq = 0;   /* a new life starts the roster over */
   /* Companions used to be dropped at a raw offset from the leader — p.x+1, p.y+0.5 — which is
      fine until the leader's open tile happens to have a town wall or a building on one side of
      it. Then somebody starts the run inside solid geometry. Ask for the offset, take open
@@ -31290,6 +31527,9 @@ function applyCreation(race, gift, origin, sub){
     c.x = q.x; c.y = q.y;
   }
   if(isBlocked(me.x, me.y)){ const q = findOpenNear(me.x, me.y, 4); me.x = q.x; me.y = q.y; }
+  /* YOU ARE THE ONE THE STORY IS ABOUT, wherever you end up in the array — see `player()`. */
+  for(const c of chars) if(c.protagonist) c.protagonist = false;
+  me.protagonist = true; me.squadNo = 0;
   camX = me.x; camY = me.y;
   computeVision();
   return me;
