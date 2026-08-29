@@ -130,23 +130,48 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        The minimap is drawn north-up and never rotates; the world turns under the camera. The
        rose has to answer "which way am I looking", so the letter that lands at the top of it
        must change when the camera turns — and must be the right letter. */
-    guard(['thereIsACompass', 'andItTurnsWithTheCamera'], () => {
-      R.thereIsACompass = typeof drawCompass === 'function' ? 'the minimap draws a rose' : '!! THERE IS NO COMPASS ON THE MINIMAP';
-      /* Read the geometry the rose is built from rather than the pixels: which world heading
-         is up the screen. `camFwd` is the vector the rose projects onto, so this is the same
-         arithmetic the drawing does, asked at four yaws a quarter-turn apart. */
-      const was = camYaw;
-      const top = (yaw) => {
+    guard(['thereIsAFacingOnTheMap', 'andItPointsWhereYouAreLooking'], () => {
+      R.thereIsAFacingOnTheMap = typeof drawViewCone === 'function'
+        ? 'the minimap draws a view wedge at the camera'
+        : '!! NOTHING ON THE MINIMAP SAYS WHICH WAY YOU ARE FACING';
+      /* ---------- READ THE PIXELS, NOT THE ARITHMETIC ----------
+         The first version of this asked `camFwd` at four yaws and checked the four answers
+         differed — which is a test of `camFwd`, and it went GREEN on the build that had no
+         indicator at all. The claim is about the MAP: the drawn wedge has to move to the side
+         of the camera you are looking at. So the wedge is drawn at four yaws and the centre
+         of mass of what it lit up is compared against the camera's own dot on the map. */
+      const was = camYaw, wx = camX, wy = camY;
+      camX = W / 2; camY = H / 2;
+      /* ---------- ASK camFwd WHICH WAY IT MEANT, DO NOT ASSUME ----------
+         The first version of this hard-coded "yaw +90 degrees is east" and reported the wedge
+         broken while it was tracking perfectly: `camFwd` is `[-sin, -cos]`, so a positive yaw
+         swings WEST. The claim worth testing has no sign convention in it — the wedge must sit
+         on the side of you that the camera is looking at, whatever the yaw arithmetic is — so
+         the expectation is read from `camFwd` at each yaw and compared with what got drawn.
+         The top ten rows are excluded: the fixed N tick lives there and would drag every
+         centre of mass northward, which matters most in the one case pointing away from it. */
+      const probe = (yaw) => {
         camYaw = yaw;
         const [fx, fy] = camFwd();
-        return Math.abs(fy) > Math.abs(fx) ? (fy < 0 ? 'N' : 'S') : (fx > 0 ? 'E' : 'W');
+        mmcx.clearRect(0, 0, 128, 128);
+        drawViewCone();
+        const d = mmcx.getImageData(0, 0, 128, 128).data;
+        let sx = 0, sy = 0, n = 0;
+        for (let y = 10; y < 128; y++) for (let x = 0; x < 128; x++) {
+          if (d[(y * 128 + x) * 4 + 3] > 8) { sx += x; sy += y; n++; }
+        }
+        if (!n) return null;
+        const ox = sx / n - 64, oy = sy / n - 64, len = Math.hypot(ox, oy);
+        return { n, len, dot: len ? (ox * fx + oy * fy) / len : 0, ox, oy };
       };
-      const seen = [top(0), top(Math.PI / 2), top(Math.PI), top(-Math.PI / 2)];
-      camYaw = was;
-      R._rose = `looking ${seen.join(' then ')} as the camera turns a full circle`;
-      R.andItTurnsWithTheCamera = new Set(seen).size === 4
-        ? `and a full turn of the camera reads ${seen.join('/')} — four different headings, not a fixed arrow`
-        : `!! THE ROSE READS ${seen.join('/')} THROUGH A FULL TURN`;
+      const yaws = [0, Math.PI / 2, Math.PI, -Math.PI / 2, 0.8];
+      const got = yaws.map(probe);
+      camYaw = was; camX = wx; camY = wy;
+      const ok = got.every(g => g && g.n > 60 && g.len > 5);
+      R._cone = got.map((g, i) => g ? `${(yaws[i]).toFixed(1)}rad -> (${g.ox.toFixed(0)},${g.oy.toFixed(0)})` : 'nothing').join('  ');
+      R.andItPointsWhereYouAreLooking = (ok && got.every(g => g.dot > 0.9))
+        ? `and at five yaws the wedge sits square on the side the camera is facing (worst alignment ${Math.min(...got.map(g => g.dot)).toFixed(3)} of 1)`
+        : `!! THE WEDGE DOES NOT FOLLOW THE CAMERA — ${got.map((g, i) => g ? `${yaws[i].toFixed(1)}rad align ${g.dot.toFixed(2)} len ${g.len.toFixed(1)} px ${g.n}` : 'nothing drawn').join(' | ')}`;
     });
 
     return R;

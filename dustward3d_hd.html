@@ -745,6 +745,27 @@ const NODE_LOOK = {
 };
 const NODE_CAP = {tree:9, rock:14, cvein:16, ivein:14};
 const NODE_REGROW = {tree:0.55, rock:0.30, cvein:0.22, ivein:0.16};  /* uses recovered per day */
+/* ---------- AND HOW LONG A WORKED-OUT ONE STAYS WORKED OUT ----------
+   "Trees/rocks that get fully mined or felled do not always disappear from the map.
+    Especially trees."
+
+   They disappear. They come straight back. `regrowNodes` runs at the day rollover and takes
+   `NODE_REGROW` off the counter, and a node was only ever "dead" while its counter sat at or
+   above the cap — so ONE decrement put it under, and the tree stood up again the next morning.
+   Measured on the build that shipped the report: a tree back after 1 day HOLDING 0.6 OF 9
+   SWINGS, a copper seam after 1 day with 0.1 of 16. A game day is 192 real seconds. So from
+   the chair: chop it down, watch it vanish, and three minutes later it is standing there
+   again with one swing left in it — which is indistinguishable from never having gone.
+
+   Two numbers fix it and neither is a new kind of state, because the counter can carry both.
+   Felling OVERSHOOTS the cap by however many days the stump should lie there, so the existing
+   `used >= CAP` test keeps saying dead for the whole of it. And when it finally crosses back
+   it is RESET to a fraction of its cap, so what returns is a young tree rather than a stump
+   with one swing in it — otherwise the next chop puts it straight back in the ground and the
+   player sees the flicker all over again.
+   The land still heals, which was always the right idea. It just takes long enough to notice. */
+const NODE_DEAD_DAYS = {tree:8, rock:14, cvein:12, ivein:16};
+const NODE_RETURN = 0.45;      /* what share of its cap a regrown node comes back already used */
 function oreAt(x, y){
   for(const f of oreFields){
     const dx = x - f.x, dy = y - f.y;
@@ -797,6 +818,9 @@ function useNode(x,y,by){
   const k = x+','+y;
   nodeUses.set(k, (nodeUses.get(k)||0) + 1);
   if(nodeDepleted(x,y)){
+    /* the stump: the counter is pushed past the cap by the days it should lie there, so the
+       one test everything else already makes keeps answering "worked out" for all of them */
+    nodeUses.set(k, NODE_CAP[raw] + (NODE_REGROW[raw]||0) * (NODE_DEAD_DAYS[raw]||0));
     hideNodeInstance(k);
     if(by && by.faction === 'player')
       log(raw==='tree' ? 'The tree is felled.' : raw==='rock' ? 'The stone is mined out.' : 'The vein is worked out — for now.', '');
@@ -811,7 +835,13 @@ function regrowNodes(){
     const wasDead = used >= NODE_CAP[raw];
     const now = used - NODE_REGROW[raw];
     if(now <= 0) nodeUses.delete(k); else nodeUses.set(k, now);
-    if(wasDead && (nodeUses.get(k)||0) < NODE_CAP[raw]) showNodeInstance(k);
+    /* AND WHAT COMES BACK IS WORTH CUTTING. Left as it was, a node crossed the cap by a
+       hair and stood up with a fraction of a swing in it. Only when the key is still there:
+       a node that recovered all the way is deleted above and owes nothing. */
+    if(wasDead && nodeUses.has(k) && nodeUses.get(k) < NODE_CAP[raw]){
+      nodeUses.set(k, NODE_CAP[raw] * NODE_RETURN);
+      showNodeInstance(k);
+    }
   }
 }
 
@@ -8268,7 +8298,68 @@ const TECHS = {
     desc:'Conjure a squad that was never there. Enemies bite at nothing while yours do the cutting'},
   last_rite:    {name:'The Last Rite',     cost:2500,hours:120, req:'rites_deep',   rp:60, desc:'Ascension to lichdom — at a price'},
 };
-const research = { done:{}, active:null, left:0, rp:0, study:null };
+const research = { done:{}, active:null, left:0, rp:0, study:null, queue:[] };
+/* ---------- LINING THE WORK UP ----------
+   "The ability to queue up research would be nice."
+
+   The gate was one line — "Finish the current project first" — and everything else about the
+   feature already existed. What a queue needs beyond a list is a decision about WHEN THE BILL
+   FALLS DUE, and paying at the moment you line something up is the wrong answer twice: it
+   locks gold away invisibly for work that has not started, and it makes the queue refuse the
+   thing you queue it FOR, which is a chain whose later steps you cannot afford yet.
+   So a project is paid for when it STARTS, and every gate is re-asked then — the bench may not
+   be built yet, the insight may not be earned yet, and both of those are things a queue is
+   supposed to give you time to arrange. A chain is queueable when its prerequisite is done, in
+   progress, or queued ahead of it, which is the whole point of lining work up.
+   A blocked head does not stop the queue and does not go quiet: it says so once and the next
+   thing that CAN start, starts. */
+const RESEARCH_QUEUE_MAX = 8;
+function willHaveTech(k){ return !!research.done[k] || research.active === k || research.queue.includes(k); }
+/* every gate a project has to pass on the day it begins, in one place, so the button and the
+   queue cannot drift apart about what is allowed */
+function researchBlocker(key){
+  const t = TECHS[key]; if(!t) return 'no such project';
+  if(research.done[key]) return 'already done';
+  if(t.req && !research.done[t.req]) return `${TECHS[t.req].name} first`;
+  if(t.needs && !pBuilds.some(b => b.type === t.needs)) return `a ${BUILD_TYPES[t.needs].name} to work at`;
+  if(t.needsQuest && !immortalFavor(t.needsQuest)) return 'the favor of the one who walked this road first';
+  if(t.rp && research.rp < t.rp) return `${t.rp} insight (have ${Math.floor(research.rp)})`;
+  if(cats < t.cost) return `${t.cost} gold`;
+  if(!canAfford(t.mats || {})) return costText(t.mats || {});
+  return null;
+}
+function researchBegin(key){
+  if(researchBlocker(key)) return false;
+  const t = TECHS[key];
+  cats -= t.cost;
+  campSpend(t.mats || {});
+  if(t.rp) research.rp -= t.rp;
+  research.active = key; research.left = t.hours * RESEARCH_DRAG;
+  deed('research', 1);
+  return true;
+}
+/* called the moment a bench finishes something, and whenever the queue might have come unstuck */
+function researchNext(){
+  if(research.active || !research.queue.length) return;
+  for(let i = 0; i < research.queue.length; i++){
+    const key = research.queue[i];
+    if(research.done[key]){ research.queue.splice(i--, 1); continue; }
+    if(researchBegin(key)){
+      research.queue.splice(i, 1);
+      log(`The benches take up ${TECHS[key].name}.`, 'good');
+      refreshTop(); refreshInv();
+      return;
+    }
+  }
+  /* nothing in it can start. Say so ONCE, or a queue that is waiting on a bench nobody built
+     looks exactly like a queue that quietly emptied itself. */
+  const head = research.queue[0];
+  const why = head && researchBlocker(head);
+  if(why && research._stalled !== head){
+    research._stalled = head;
+    log(`The benches are waiting on ${TECHS[head].name}: it wants ${why}.`, 'bad');
+  }
+}
 const FORMULA_KEYS = ['formula_t','formula_w','formula_p'];
 /* ---------- FAVOR, AND WHERE IT LIVES ----------
    This used to ask `chars.some(c => c.questGive === kind && c.questDone)` — that is, it read
@@ -8481,6 +8572,8 @@ function researchTick(dh){
     research.done[research.active] = true;
     log(`Research complete: ${TECHS[research.active].name}.`, 'good');
     research.active = null;
+    research._stalled = null;
+    researchNext();          /* and the benches pick up whatever was lined up behind it */
   }
 }
 
@@ -25696,50 +25789,48 @@ function renderMinimap(){
     mmcx.strokeStyle = '#141008'; mmcx.lineWidth = 1;
     mmcx.strokeRect(w.x*128/W - 2.5, w.y*128/H - 2.5, 5, 5);
   }
-  /* camera viewport frame stays on top of the fog */
-  const span = camDist * 1.3;
-  mmcx.strokeStyle = 'rgba(232,220,196,0.6)';
-  mmcx.strokeRect((camX-span/2)*128/W, (camY-span/2)*128/H, span*128/W, span*128/H);
-  drawCompass();
+  drawViewCone();
 }
-/* ---------- WHICH WAY IS NORTH ----------
-   "Some small indicator on the mini-map to show which direction (NSEW) the camera is facing
-    would be helpful to get a general sense of direction."
+/* ---------- WHICH WAY AM I FACING ----------
+   "The current compass on the minimap is vague and confusing. Rather than a specific compass,
+    I was just hoping for a way to determine orientation on the mini-map. As in, I can see at a
+    glance which direction the camera is facing (from the mini-map, with north being up.)"
 
-   The map is drawn north-up and never rotates; the WORLD rotates under the camera on Q and E.
-   So the map and the view disagree by `camYaw` and there was nothing anywhere on the screen
-   saying by how much — you can be looking due south at a map that is still drawn the other way
-   up, and every "it's east of you" in the journal is read off the wrong axis.
-   A rose rather than a needle: a needle tells you where north is and a player wants the other
-   question answered too, which is what the thing at the top of my screen is called. The four
-   letters sit where those directions actually are from the camera's point of view, so the one
-   at the top of the rose is the one you are walking towards.
-   Drawn into the minimap canvas itself rather than as another HUD element, because the phone
-   layout has already had two passes at fitting what is up there and this needs no room. */
-function drawCompass(){
-  const cx = 17, cy = 128 - 17, r = 11.5;
-  const [rx, ry] = camRight(), [fx, fy] = camFwd();
+   The first attempt was a rose in the corner — four letters arranged around the camera's own
+   axes — and it answers the question backwards: it tells you where north is RELATIVE TO THE
+   SCREEN, which you then have to compose with a map drawn the other way round in your head.
+   The map is the fixed thing. North is up on it and always was. What was missing is where YOU
+   are pointing ON that map, and the only thing marking the camera was an axis-aligned
+   rectangle of the view span — which does not turn, so at any yaw but zero it framed ground
+   that was not on screen and said nothing about facing at all.
+   A wedge says both at once: it sits at the camera's focus, and it points. Nothing to read,
+   nothing to compose — the direction the cone opens is the direction you are looking, on a map
+   whose top is north. The `N` tick at the top edge is there to state that convention once. */
+function drawViewCone(){
+  const [fx, fy] = camFwd();
+  const s = 128 / W;                       /* the map is square, so one scale does both axes */
+  /* ---------- FIXED ON THE MAP, NOT TO SCALE WITH THE VIEW ----------
+     Drawn to scale it is four pixels. The view span is at most a few dozen tiles and the map
+     is 1440 across on a 128-pixel canvas, so an honest frustum — which is what the old
+     rectangle was — is smaller than the dot marking a town. This is a HEADING, and a heading
+     is worth more than a footprint here: a fixed wedge, anchored where you are, wide enough
+     to read without looking twice. */
+  const back = 5, reach = 26, half = 0.52;   /* pixels, and about a 60-degree cone */
+  const ax = camX * s - fx * back, ay = camY * s - fy * back;
   mmcx.save();
-  mmcx.fillStyle = 'rgba(20,16,8,0.62)';
-  mmcx.beginPath(); mmcx.arc(cx, cy, r + 3.5, 0, Math.PI*2); mmcx.fill();
-  mmcx.strokeStyle = 'rgba(232,220,196,0.30)'; mmcx.lineWidth = 1;
-  mmcx.beginPath(); mmcx.arc(cx, cy, r + 3.5, 0, Math.PI*2); mmcx.stroke();
-  mmcx.font = 'bold 9px monospace';
-  mmcx.textAlign = 'center'; mmcx.textBaseline = 'middle';
-  /* world y grows southward, so north is -y. Each letter is projected onto the camera's own
-     right and forward vectors — the same two the movement keys use — which is what makes the
-     rose agree with the view rather than with the map. */
-  for(const [label, dx, dy] of [['N', 0, -1], ['E', 1, 0], ['S', 0, 1], ['W', -1, 0]]){
-    const sx = dx*rx + dy*ry;              /* how far right of screen-centre that way lies */
-    const sy = -(dx*fx + dy*fy);           /* and how far up it */
-    const north = label === 'N';
-    mmcx.fillStyle = north ? '#e8c86a' : 'rgba(232,220,196,0.72)';
-    mmcx.fillText(label, cx + sx*r, cy + sy*r);
-  }
-  /* and the way the camera is pointing, so the rose reads as a heading and not as decoration */
-  mmcx.strokeStyle = '#7fd4c8'; mmcx.lineWidth = 1.4;
-  mmcx.beginPath(); mmcx.moveTo(cx, cy + 3.5); mmcx.lineTo(cx, cy - 4.5); mmcx.stroke();
-  mmcx.beginPath(); mmcx.moveTo(cx - 2.2, cy - 2.2); mmcx.lineTo(cx, cy - 5); mmcx.lineTo(cx + 2.2, cy - 2.2); mmcx.stroke();
+  mmcx.beginPath();
+  mmcx.moveTo(ax, ay);
+  mmcx.arc(ax, ay, reach, Math.atan2(fy, fx) - half, Math.atan2(fy, fx) + half);
+  mmcx.closePath();
+  mmcx.fillStyle = 'rgba(232,220,196,0.13)';
+  mmcx.fill();
+  mmcx.strokeStyle = 'rgba(232,220,196,0.62)'; mmcx.lineWidth = 1;
+  mmcx.stroke();
+  /* and the one fact the wedge is read against */
+  mmcx.fillStyle = 'rgba(232,220,196,0.55)';
+  mmcx.fillRect(63.5, 0, 1, 3);
+  mmcx.font = 'bold 8px monospace'; mmcx.textAlign = 'center'; mmcx.textBaseline = 'top';
+  mmcx.fillText('N', 64, 3.5);
   mmcx.restore();
 }
 
@@ -26653,6 +26744,15 @@ function openResearch(){
         + `it is worth a little less than the one before.`;
       body.appendChild(hint);
     }
+    if(research.queue.length){
+      const q = document.createElement('div');
+      q.style.cssText = 'margin-bottom:10px;color:var(--dust);font-size:11.5px;line-height:1.6';
+      const head = research.queue[0], why = research.active ? null : researchBlocker(head);
+      q.innerHTML = `<span style="color:var(--warn);letter-spacing:2px">ON THE LIST</span><br>` +
+        research.queue.map((k, i) => `${i+1}. ${TECHS[k].name}`).join('<br>') +
+        (why ? `<br><span style="color:var(--blood)">waiting: ${TECHS[head].name} wants ${why}</span>` : '');
+      body.appendChild(q);
+    }
     for(const key of Object.keys(TECHS)){
       const t = TECHS[key];
       const row = document.createElement('div'); row.className = 'trow';
@@ -26660,37 +26760,49 @@ function openResearch(){
       const mats = t.mats || {};
       const hasSite = !t.needs || pBuilds.some(b => b.type === t.needs);
       const matTxt = Object.keys(mats).length ? ' · ' + costText(mats) : '';
+      const qi = research.queue.indexOf(key);
+      const rpTxt = t.rp ? ` · ${t.rp} insight` : '';
       if(research.done[key]) status = '<span style="color:var(--ok)">DONE</span>';
       else if(research.active===key) status = '<span style="color:var(--warn)">…</span>';
-      else if(t.req && !research.done[t.req]) status = `<span style="color:var(--dust)">needs ${TECHS[t.req].name}</span>`;
+      else if(qi >= 0) status = `<button data-unq="${key}">QUEUED #${qi+1} — REMOVE</button>`;
+      /* A CHAIN IS THE POINT OF A QUEUE, so the prerequisite may be one you have already lined
+         up rather than one you have finished. Everything after this is checked again on the
+         day the project actually begins — see `researchBlocker`. */
+      else if(t.req && !willHaveTech(t.req)) status = `<span style="color:var(--dust)">needs ${TECHS[t.req].name}</span>`;
+      else if(research.active || research.queue.length) status = `<button data-q="${key}">QUEUE · ${t.cost}g${matTxt}${rpTxt} · ${t.hours}h</button>`;
       else if(!hasSite) status = `<span style="color:var(--dust)">build a ${BUILD_TYPES[t.needs].name}</span>`;
       else if(t.needsQuest && !immortalFavor(t.needsQuest)) status = `<span style="color:var(--dust)">win the favor of the one who walked this road first</span>`;
       else if(t.rp && research.rp < t.rp) status = `<span style="color:var(--dust)">needs ${t.rp} insight (have ${research.rp})</span>`;
       else {
         const afford = cats >= t.cost && canAfford(mats);
-        const rpTxt = t.rp ? ` · ${t.rp} insight` : '';
         status = `<button data-res="${key}" ${afford?'':'disabled'}>START ${t.cost}g${matTxt}${rpTxt} · ${t.hours}h</button>`;
       }
       row.innerHTML = `<span class="tn">${t.name} <span style="color:var(--dust)">${t.desc}</span></span><span>${status}</span>`;
       body.appendChild(row);
     }
     body.querySelectorAll('[data-res]').forEach(b => b.onclick = () => {
-      const key = b.dataset.res, t = TECHS[key];
+      const key = b.dataset.res;
       if(research.active){ log('Finish the current project first.', 'bad'); return; }
-      if(t.needs && !pBuilds.some(pb => pb.type === t.needs)){
-        log(`Study needs a ${BUILD_TYPES[t.needs].name} to work at.`, 'bad'); return;
-      }
-      if(cats < t.cost){ refuse('Not enough gold.'); return; }
-      const mats = t.mats || {};
-      if(!canAfford(mats)){ log(`Need ${costText(mats)}.`, 'bad'); return; }
-      if(t.needsQuest && !immortalFavor(t.needsQuest)){ log('The road is walked before it is written. Find them. Earn it.', 'bad'); return; }
-      if(t.rp && research.rp < t.rp){ log('Not enough insight. Bring back formulae from the old world.', 'bad'); return; }
-      cats -= t.cost;
-      campSpend(mats);
-      if(t.rp) research.rp -= t.rp;
-      research.active = key; research.left = t.hours * RESEARCH_DRAG;
-      deed('research', 1);
+      const why = researchBlocker(key);
+      if(why){ log(`That road wants ${why}.`, 'bad'); return; }
+      researchBegin(key);
       refreshTop(); refreshInv(); rndr();
+    });
+    body.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
+      const key = b.dataset.q;
+      if(research.queue.includes(key) || research.done[key] || research.active === key) return;
+      if(research.queue.length >= RESEARCH_QUEUE_MAX){ log(`The benches will only look that far ahead (${RESEARCH_QUEUE_MAX}).`, 'bad'); return; }
+      research.queue.push(key);
+      research._stalled = null;
+      log(`${TECHS[key].name} goes on the bench list, ${research.queue.length} deep.`, '');
+      researchNext();          /* in case nothing was actually running */
+      rndr();
+    });
+    body.querySelectorAll('[data-unq]').forEach(b => b.onclick = () => {
+      const i = research.queue.indexOf(b.dataset.unq);
+      if(i >= 0) research.queue.splice(i, 1);
+      research._stalled = null;
+      rndr();
     });
   };
   rndr();
@@ -29832,7 +29944,7 @@ function snapshot(){
       store: b.store ? {...b.store} : undefined,
       stored: b.stored ? b.stored.map(sChar) : undefined})),
     recruits: towns.map(t=>t.recruits),
-    research: {done:{...research.done}, active:research.active, left:research.left, rp:research.rp, study:research.study?{...research.study}:null},
+    research: {done:{...research.done}, active:research.active, left:research.left, rp:research.rp, study:research.study?{...research.study}:null, queue:[...research.queue]},
   };
 }
 function restore(d){
@@ -30019,6 +30131,7 @@ function restore(d){
   if(Array.isArray(d.drops)) for(const dr of d.drops) drops.push({x:dr.x, y:dr.y, items:{...dr.items}});
   kitOpen = d.kitOpen||0; day = d.day; hour = d.hour; uid = d.uid;
   research.done = d.research.done||{}; research.active = d.research.active; research.left = d.research.left||0; research.rp = d.research.rp||0; research.study = d.research.study ? {...d.research.study} : null;
+  research.queue = [...(d.research.queue || [])]; research._stalled = null;
   const byId = {};
   const revive = (s) => {
     const c = makeChar(s.name, s.faction, s.x, s.y, {});
@@ -31442,7 +31555,7 @@ function applyCreation(race, gift, origin, sub){
 
     /* every formula the golden age left behind */
     for(const k of Object.keys(TECHS)) research.done[k] = true;
-    research.active = null; research.left = 0; research.study = null;
+    research.active = null; research.left = 0; research.study = null; research.queue.length = 0; research._stalled = null;
 
     /* the necromancer, already past the point of no return */
     me = mk(p, {atk:16, def:14, tough:14, ath:6, medic:8, magic:80, gift:'dark', race,
