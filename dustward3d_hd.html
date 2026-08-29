@@ -7932,6 +7932,8 @@ const BUILD_TYPES = {
     desc:'Shapes Quickened Flesh into a corpse a day (needs Carrion Rites)'},
   ossuary: {name:'Ossuary',       cost:{iron:6, stone:30, mats:20}, w:3, h:3,
     desc:'A deeper harvest — more bodies, and better ones (needs Ossuary Rites)'},
+  boneyard:{name:'Boneyard',      cost:{stone:14, mats:12, iron:2}, w:3, h:3,
+    desc:'Racks, hooks and a drain. A body rendered down in here gives up nearly twice what one does in a field — and the great dead can only be worked here at all (needs Rites of Binding)'},
   circle:  {name:'Binding Circle', mats:30, w:2, h:2, desc:'Craft greater undead (needs Rites of Binding)'},
   crypt:   {name:'Crypt', mats:25, w:2, h:2, desc:'Stasis for undead — interred units free their binding slots'},
   bin:     {name:'Storage Bin', mats:6,  w:1, h:1, desc:'Takes anything. Gatherers unload here; camp stores feed building and research'},
@@ -11425,9 +11427,14 @@ function physics(c, dt){
       }
       c._working = 0.5;
       c.carrT = (c.carrT || 0) - dt;
+      if(rnd() < dt * 1.4) addSpecks(c.x, c.y - 0.4, '#8a5a4a', 2);
       if(c.carrT > 0) return;
-      c.carrT = 1.6;
-      if(rnd() < 0.7) addSpecks(c.x, c.y - 0.4, '#8a5a4a', 2);
+      /* THE WORK IS THE WORK. A second and a half a body made a HARVEST hand a tap that never
+         stopped running; a rendering is a job, and a thing the size of a barn is an afternoon.
+         Halved on the racks, because that is what the racks are for. */
+      c.carrT = harvestSecs(body) * (inBoneyard(body) ? 0.5 : 1);
+      /* and a great body in the open is not work this hand can finish — leave it for the cart */
+      if(isGreatBody(body) && !inBoneyard(body) && body.looted){ body._harvSkip = now + 0.4; c.carrBody = null; c.carrScanT = 0; return; }
       if(!body.looted){
         const got = lootCorpse(body, true, c) || [];
         if(got.length) log(`${c.name} turns out a body: ${got.join(', ')}.`, 'good');
@@ -14222,6 +14229,14 @@ function cartFodder(b){
 /* where it takes them. A circle first — that is what they are for — then any of the carrion
    houses, then whoever bound it, so a cart never has nowhere to put anything down. */
 function cartDrop(c){
+  /* THE YARD FIRST, AND BY A LONG WAY. Everything else on this list is somewhere a body can be
+     put down; the Boneyard is the only one where putting it down is worth anything, so a cart
+     that can reach one crosses the camp to do it rather than dropping the load at the nearest
+     circle. Bodies are set down INSIDE the footprint — `inBoneyard` reads a position, so a
+     corpse stacked one tile short of the racks is a corpse in a field. */
+  for(const b of pBuilds){
+    if(b.type === 'boneyard') return {x: b.x + BUILD_TYPES.boneyard.w/2, y: b.y + BUILD_TYPES.boneyard.h/2};
+  }
   const want = ['circle', 'crypt', 'ossuary', 'charnel'];
   let best = null, bd = 1e9;
   for(const b of pBuilds){
@@ -14240,12 +14255,24 @@ function cartTick(c, dt){
   c.cartScanT = (c.cartScanT || 0) - dt;
   if(c.cartScanT <= 0){
     c.cartScanT = 2.0;
-    let body = null, bd = 1e9;
+    let body = null, bd = 1e9, great = null, gd = 1e9;
+    /* ---------- THE GREAT DEAD GO FIRST, AND NOT BY A WEIGHTING ----------
+       Every other corpse on the field is merely worth MORE at the yard; a Sixfold cannot be
+       rendered or looted anywhere else at all, so it is the only body the cart is strictly
+       necessary for. Written first as a distance multiplier, which is a thumb on the scale
+       rather than a rule: at three tiles against sixteen the ordinary corpse still won, and a
+       cart that walks past the thing it exists for is the cart we started with. Two piles, and
+       the giant pile is taken first — a cart on a map with no giant on it clears the field
+       exactly as it always did. */
     if(load < cap) for(const b of corpses){
       if(!cartFodder(b) || b._cartSkip > day + hour/24) continue;
+      if(inBoneyard(b)) continue;                       /* already home */
       const d = dist(b.x, b.y, c.x, c.y);
-      if(d < 46 && d < bd){ bd = d; body = b; }
+      if(d >= 46) continue;
+      if(isGreatBody(b)){ if(d < gd){ gd = d; great = b; } }
+      else if(d < bd){ bd = d; body = b; }
     }
+    body = great || body;
     if(body !== c.cartBody) c.cartGiveUp = 45;
     c.cartBody = body;
   }
@@ -14467,6 +14494,14 @@ function lootCorpse(t, quiet, by){
   const log = quiet ? (() => {}) : outerLog;
   /* going through the pockets of somebody's neighbour, in front of the neighbours */
   if(t && (t.faction === 'town' || t.homeTown)) crime('theft', t.x, t.y, player()[0] || null, t.floor || 0);
+  /* ---------- YOU DO NOT GO THROUGH A SIXFOLD WITH A KNIFE IN A FIELD ----------
+     Everything one of the great dead was carrying is under a thing the size of a barn, and
+     the answer is a wagon and a yard rather than a longer animation. It stays lootable — it is
+     just lootable SOMEWHERE, which is the entire reason the Gravecart exists. */
+  if(!t.looted && isGreatBody(t) && !inBoneyard(t)){
+    log(`There is far too much of it to go through out here. Get it onto a cart and back to a Boneyard.`, 'bad');
+    return null;
+  }
   if(t.looted){ return harvestCorpse(t, quiet, by); }
   t.looted = true;
   let got = [];
@@ -14581,6 +14616,46 @@ function stripMachine(t, quiet){
   refreshInv();
   return ingots;
 }
+/* ---------- THE CORPSE WORKS ----------
+   "For corpse harvesting I think the process should take a bit more time. Perhaps corpses can
+    be piled in dedicated storage buildings that allow a fuller extraction of mortal remains.
+    One, we just need a use for the bone cart as it's pointless when a Death Eater can just walk
+    around and harvest all day long. And two, I love the idea of hauling back a Sixfold's corpse
+    to properly extract and loot it."
+
+   The Gravecart was a solved problem looking for a question. It picks bodies up and takes them
+   somewhere, and there was no reason to want them somewhere: a Death Eater rendered a body
+   down where it fell, at full value, in a second and a half, and every corpse in the world was
+   equally convenient. Nothing the cart did could not be skipped.
+
+   So value moves to a PLACE. A field rendering is a knife and a hurry — it takes real work and
+   it wastes most of the body. A Boneyard has racks and a drain and time, and gives up nearly
+   twice as much. That is the cart's job: the difference between the two numbers, multiplied by
+   every corpse on the field.
+
+   AND THE GREAT DEAD DO NOT COME APART IN A FIELD AT ALL. A Sixfold is two and a half times a
+   man and a Brood is over three; you do not turn one of those out with a knife standing over
+   it in the open. They give up a quarter of their remains to a field rendering and none of
+   their gear, and the rest is waiting for you at the yard. Which is the fantasy the note is
+   actually describing: a wagon, a thing the size of a barn on it, and the whole camp turning
+   out to take it apart properly. */
+const YARD_MULT = 1.9;          /* what a body is worth rendered in a yard against in the field */
+const GREAT_BODY = 2.0;         /* `big` at or over this cannot be worked in the open */
+const FIELD_GREAT_SHARE = 0.25; /* and what a knife in a hurry gets off one anyway */
+function isGreatBody(t){ return ((t && t.big) || 1) >= GREAT_BODY; }
+function boneyardAt(x, y){
+  for(const b of pBuilds){
+    if(b.type !== 'boneyard') continue;
+    const w = BUILD_TYPES.boneyard.w, h = BUILD_TYPES.boneyard.h;
+    if(x >= b.x - 0.5 && x <= b.x + w + 0.5 && y >= b.y - 0.5 && y <= b.y + h + 0.5) return b;
+  }
+  return null;
+}
+function inBoneyard(t){ return !!(t && boneyardAt(t.x, t.y)); }
+/* how long a rendering takes, in seconds of work. A man is one job; a thing the size of a barn
+   is the afternoon. This is the "a bit more time" half, and it is what makes a HARVEST hand a
+   hand you have to allocate rather than a tap that never stops running. */
+function harvestSecs(t){ return 5 + 4 * Math.max(0, ((t && t.big) || 1) - 1); }
 function harvestCorpse(t, quiet, by){
   const log = quiet ? (() => {}) : outerLog;
   if(isMachineBody(t)) return stripMachine(t, quiet);
@@ -14591,6 +14666,11 @@ function harvestCorpse(t, quiet, by){
      yield, which is correct: this is the creature's edge, not a global buff. */
   let n = Math.max(1, dk.remains - (rnd() < 0.4 ? 0 : 1));
   if(by && by.harvestBonus) n += by.harvestBonus;
+  /* THE PLACE IS WORTH MORE THAN THE HAND. A yard rendering is the whole body; a field one is
+     what a knife and an hour can get off it before the rest is spoiled. */
+  const yard = inBoneyard(t);
+  if(yard) n = Math.round(n * YARD_MULT);
+  else if(isGreatBody(t)) n = Math.max(1, Math.round(n * FIELD_GREAT_SHARE));
   /* and a quarter-body renders down to a quarter of that. A fresh Eye comes out at one; one
      that has been lying in the sun comes out at nothing, and the knife says so rather than
      reporting a harvest of zero. The body is still cleared — there was just nothing in it. */
@@ -14603,10 +14683,12 @@ function harvestCorpse(t, quiet, by){
   }
   addItem('remains', n);
   rememberRemains(t, n, dk);
-  if(dk.k === 'fresh' && rnd() < 0.35) addItem('vflesh', 1);
+  if(dk.k === 'fresh' && rnd() < (yard ? 0.8 : 0.35)) addItem('vflesh', 1);
   const ci = corpses.indexOf(t); if(ci>=0) corpses.splice(ci,1);
   const xi = chars.indexOf(t); if(xi>=0) chars.splice(xi,1);
-  log(`Harvested ${n} Mortal Remains from a ${dk.label} body.`, 'good');
+  log(yard ? `Rendered down on the racks: ${n} Mortal Remains from a ${dk.label} body. Nothing of it wasted.`
+           : isGreatBody(t) ? `Took ${n} Mortal Remains off it in the field. Most of a thing that size is still lying there — that wants a Boneyard.`
+           : `Harvested ${n} Mortal Remains from a ${dk.label} body.`, 'good');
   refreshInv();
   return n;
 }
@@ -20813,6 +20895,32 @@ function drawStation(g, b, cx0, cz0, y){
         box(g, W2*0.72, 0.1, 0.1, PB.bone, cx0, y + 0.35 + i*0.22, cz0 + D2*0.46, false);
       box(g, 0.5, 0.5, 0.12, PB.occult, cx0, y + 1.0, cz0 + D2*0.47, false);
       break;
+    case 'boneyard':
+      /* AN OPEN YARD, NOT A HOUSE, because you have to be able to see what is stacked in it —
+         the whole point of the building is that bodies are lying there waiting to be worked,
+         and a roof would hide the only thing it is for. Four posts, a gantry between them with
+         hooks on it, low racks along two sides, and a drain in the middle of a stained floor. */
+      for(const [sx, sz] of [[-1,-1],[1,-1],[-1,1],[1,1]])
+        box(g, 0.15, 1.9, 0.15, PB.post, cx0 + sx*W2*0.42, y + 0.95, cz0 + sz*D2*0.42);
+      box(g, W2*0.95, 0.13, 0.13, PB.timberDk, cx0, y + 1.86, cz0 - D2*0.42);
+      box(g, W2*0.95, 0.13, 0.13, PB.timberDk, cx0, y + 1.86, cz0 + D2*0.42);
+      box(g, 0.1, 0.1, D2*0.9, PB.iron, cx0, y + 1.84, cz0, false);
+      /* the hooks, and what is hanging off two of them */
+      for(let i = 0; i < 4; i++){
+        const hz = cz0 - D2*0.3 + i*D2*0.2;
+        box(g, 0.06, 0.30, 0.06, PB.iron, cx0, y + 1.66, hz, false);
+        if(i % 2 === 0) box(g, 0.20, 0.44, 0.16, PB.flesh, cx0, y + 1.32, hz, false);
+      }
+      /* the racks: low slatted benches down each side, which is where a cart puts a load */
+      for(const sx of [-1, 1]){
+        box(g, W2*0.22, 0.10, D2*0.82, PB.timber, cx0 + sx*W2*0.34, y + 0.56, cz0);
+        for(const sz of [-1, 1]) box(g, 0.1, 0.55, 0.1, PB.post, cx0 + sx*W2*0.34, y + 0.28, cz0 + sz*D2*0.34);
+      }
+      /* the drain, and the ground around it */
+      box(g, W2*0.5, 0.04, D2*0.5, PB.stoneDk, cx0, y + 0.03, cz0, false);
+      box(g, 0.26, 0.06, 0.26, PB.iron, cx0, y + 0.06, cz0, false);
+      box(g, 0.5, 0.34, 0.34, PB.bone, cx0 - W2*0.06, y + 0.17, cz0 + D2*0.26, false);
+      break;
     case 'wartable':
       /* a map weighted with lead soldiers */
       for(const [sx, sz] of [[-1,-1],[1,-1],[-1,1],[1,1]])
@@ -22475,6 +22583,146 @@ function buildCharMesh(c){
       }
       e.torso = g.children[0]; e.head = g.children[2];
       e.legL = e.legR = e.legL2 = e.legR2 = new THREE.Group();     /* inert stand-ins */
+    } else if(c.gauntKind === 'choir'){
+      /* ---------- THE CHOIR-KIN ----------
+         "Choir Kin currently do not have a dedicated model, just the baseline gaunt one."
+         They fell through every branch above and took the QUADRUPED rig — the same box on four
+         legs a dust hound wears — which is the worst possible reading of a thing whose barks
+         are "(the chord)" and "(one held note)" and whose whole mechanic is that standing near
+         it raises the Attention: `choirTick` says the song is a question and your proximity is
+         the answer. It is a SINGER. So it is built out of the thing it does.
+         A column of throats. No head, because the head would be one voice and the name says
+         several: a ring of mouths around the trunk, all open, all lit from the inside, and a
+         seventh at the top turned to the sky where a face has no business being. It stands on
+         a fused base rather than legs — it does not walk so much as arrive. */
+      const meat = '#5b2f3e', pale = '#e8d8dc', throat = '#ffb08a';
+      e.torso = obox(0.30, 1.05, 0.30, meat, 0, 1.10, 0);              /* the column */
+      obox(0.44, 0.16, 0.44, meat, 0, 1.66, 0);                        /* a shoulder yoke with nothing on it */
+      /* the ring: six throats around the trunk, each a socket with a light down it */
+      for(let i = 0; i < 6; i++){
+        const a2 = i / 6 * Math.PI * 2, r2 = 0.26;
+        const mx = Math.sin(a2) * r2, mz = Math.cos(a2) * r2;
+        const my = 1.02 + (i % 2) * 0.20;                              /* not level: they do not line up */
+        obox(0.19, 0.24, 0.19, pale, mx, my, mz);                      /* the socket */
+        mk(BOXG, ownGlow(throat), 0.10, 0.15, 0.10, mx * 1.22, my, mz * 1.22, g);   /* what is down it */
+      }
+      /* and the seventh, turned up. `headG` so the pose machine has something to move. */
+      e.headG = new THREE.Group(); e.headG.position.set(0, 1.80, 0); g.add(e.headG);
+      e.head = obox(0.26, 0.26, 0.26, pale, 0, 0.10, 0, e.headG);
+      mk(BOXG, ownGlow(throat), 0.15, 0.10, 0.15, 0, 0.24, 0, e.headG);
+      /* thin arms held back and out, the way somebody holds a note */
+      /* ---------- THE ARMS COME IN ----------
+         Written first with the arms held out and back, and the harness measured the result:
+         3.32 tall over 2.23 WIDE, an aspect of 1.49 against a dust hound's 0.56. Not an animal,
+         but not a column either — a scarecrow. The whole silhouette is meant to be a vertical
+         thing that stands and sings, so the arms hang at its sides and only the elbows drift
+         back. The measurement was right and the pose was wrong. */
+      const mkArm = (side) => {
+        const sh = new THREE.Group(); sh.position.set(side * 0.17, 1.58, -0.04); g.add(sh);
+        obox(0.07, 0.52, 0.07, meat, side * 0.04, -0.24, -0.04, sh);
+        const el = new THREE.Group(); el.position.set(side * 0.06, -0.50, -0.10); sh.add(el);
+        obox(0.06, 0.46, 0.06, meat, side * 0.02, -0.22, -0.04, el);
+        for(let i = 0; i < 3; i++) obox(0.022, 0.17, 0.022, pale, side * 0.04 + (i - 1) * 0.035, -0.52, -0.05, el);
+        return {sh, el};
+      };
+      const ca = mkArm(-1), cb = mkArm(1);
+      e.armL = ca.sh; e.elbL = ca.el; e.armR = cb.sh; e.elbR = cb.el;
+      /* the base: a fused skirt, no legs. It is given leg groups anyway so the walk cycle has
+         something to hold, and they are the skirt itself — it sways, it does not stride. */
+      const mkFoot = (side) => {
+        const hip = new THREE.Group(); hip.position.set(side * 0.10, 0.56, 0); g.add(hip);
+        obox(0.26, 0.34, 0.26, meat, side * 0.04, -0.17, 0, hip);
+        /* A KNEE THAT IS NOT A KNEE. The humanoid pose machine reaches for `kneeL`/`kneeR`
+           without asking whether the body has any, so a rig that leaves them out throws on
+           `undefined.rotation` and never appears at all — which is how this one first came
+           out as "choir FAILED" while every other kind built. It is the lower half of the
+           skirt: it sways on the walk cycle instead of folding. */
+        const kn = new THREE.Group(); kn.position.set(0, -0.34, 0); hip.add(kn);
+        obox(0.24, 0.24, 0.24, meat, side * 0.02, -0.12, 0, kn);
+        obox(0.30, 0.10, 0.34, pale, side * 0.02, -0.26, 0.03, kn);
+        return {hip, kn};
+      };
+      const cl = mkFoot(-1), cr = mkFoot(1);
+      e.legL = cl.hip; e.kneeL = cl.kn; e.legR = cr.hip; e.kneeR = cr.kn;
+      e.legL2 = null; e.legR2 = null;
+      e.spine = e.torso;
+      e.bipedGaunt = true;
+    } else if(c.gauntKind === 'gaunt' || c.gauntKind === 'shrike'){
+      /* ---------- AND THE BASELINE GAUNT, WHICH WAS A DOG ----------
+         "Even the baseline gaunt skin is kind of lame and basic. It reads as an animal — not a
+          non-Euclidean eldritch horror."
+         It was an animal. With no branch of its own it took the quadruped rig, which is the rig
+         a hound, an elk and a pack mule wear, and no amount of colour fixes a silhouette that
+         is four legs and a snout.
+         At this fidelity a silhouette is all there is, so the horror has to be structural. Four
+         things, none of which any living thing does: an ODD NUMBER OF ARMS, because two is an
+         animal and three is not; a head with NO FACE, with the eyes scattered down the torso
+         where eyes do not go; knees that fold the wrong way under a body too tall for them;
+         and a piece of it that is NOT ATTACHED — a shard held a hand's width off the shoulder,
+         turning slowly, which is the one thing a box can do that biology cannot. */
+      /* AND THE SHRIKE IS NOT THE GAUNT IN ANOTHER COLOUR. It shares the wrong-jointed frame,
+         which is the family resemblance and worth keeping — but a recolour is exactly the
+         complaint that started all this. It is hollow-FACED and it is the fastest thing out
+         there: a neck too long for the body, a crest opened where the face should be, and a
+         second pair of arms folded against the ribs instead of the loose shard. */
+      const isShrike = c.gauntKind === 'shrike';
+      const hide = isShrike ? '#3a3348' : '#413a4c';
+      const pale = isShrike ? '#d8d2e4' : '#c9c1d6';
+      const eye  = isShrike ? '#e8f0ff' : '#c8402a';
+      e.torso = obox(0.34, 0.92, 0.28, hide, 0, 1.24, 0);
+      obox(0.50, 0.18, 0.34, hide, 0, 1.74, -0.02);                    /* shoulders, too wide for it */
+      /* the eyes are on the BODY. Four of them, unevenly spaced, none of them paired. */
+      for(const [ex, ey2] of [[-0.10, 1.52], [0.13, 1.40], [-0.04, 1.24], [0.09, 1.08]])
+        mk(SPHG, ownGlow(eye), 0.036, 0.036, 0.030, ex, ey2, 0.15, g);
+      /* the head: a smooth wedge with nothing on it, tipped back — and on a shrike it sits at
+         the end of a neck that has no business being that long */
+      if(isShrike) obox(0.10, 0.42, 0.10, pale, 0, 1.98, 0);
+      e.headG = new THREE.Group(); e.headG.position.set(0, isShrike ? 2.24 : 1.86, 0); g.add(e.headG);
+      e.head = obox(0.22, 0.26, 0.20, pale, 0, 0.12, 0.02, e.headG);
+      obox(0.16, 0.09, 0.14, hide, 0, 0.24, 0.06, e.headG);            /* a ridge where a brow would be */
+      /* THREE arms: a pair, and one more out of the middle of the back */
+      const mkClaw = (side, ry, sx, sy2, sz) => {
+        const sh = new THREE.Group(); sh.position.set(sx, sy2, sz); sh.rotation.y = ry; g.add(sh);
+        obox(0.085, 0.56, 0.085, hide, 0, -0.28, 0, sh);
+        const el = new THREE.Group(); el.position.set(0, -0.56, 0); sh.add(el);
+        obox(0.075, 0.50, 0.075, hide, 0, -0.25, 0, el);
+        for(let i = 0; i < 3; i++)
+          mk(CONEG, ownBone(pale), 0.030, 0.20, 0.030, (i - 1) * 0.055, -0.58, 0.02, el, Math.PI);
+        return {sh, el};
+      };
+      const gl = mkClaw(-1, 0, -0.26, 1.70, 0), gr = mkClaw(1, 0, 0.26, 1.70, 0);
+      e.armL = gl.sh; e.elbL = gl.el; e.armR = gr.sh; e.elbR = gr.el;
+      if(isShrike){
+        for(let i = 0; i < 5; i++)                                   /* the crest, opened */
+          mk(CONEG, ownBone(pale), 0.030, 0.26 - Math.abs(i - 2) * 0.05, 0.030,
+             (i - 2) * 0.055, 0.30, 0.06, e.headG);
+        for(const side of [-1, 1]){                                  /* and the folded pair */
+          obox(0.055, 0.34, 0.055, hide, side * 0.19, 1.44, -0.09);
+          obox(0.050, 0.30, 0.050, hide, side * 0.23, 1.16, -0.02);
+        }
+      } else {
+        mkClaw(1, Math.PI, 0.02, 1.66, -0.16);    /* the third, out of its own back */
+        /* THE SHARD: not attached to anything, and it turns. Named `shard` and not `sigil`
+           because the lich rig owns `e.sigil` and hides and shows it on rules of its own — a
+           collision would have this thing blinking for reasons to do with phylacteries. */
+        e.shard = new THREE.Group(); e.shard.position.set(-0.30, 1.92, -0.10); g.add(e.shard);
+        obox(0.10, 0.14, 0.10, pale, 0, 0, 0, e.shard);
+        mk(BOXG, ownGlow(eye), 0.05, 0.05, 0.05, 0, 0, 0, e.shard);
+      }
+      /* legs that fold the wrong way, and too long for the body over them */
+      const mkBack = (side) => {
+        const hip = new THREE.Group(); hip.position.set(side * 0.14, 0.94, 0); g.add(hip);
+        obox(0.10, 0.52, 0.10, hide, 0, -0.26, -0.06, hip);            /* thigh, angled back */
+        const kn = new THREE.Group(); kn.position.set(0, -0.52, -0.10); hip.add(kn);
+        obox(0.085, 0.50, 0.085, hide, 0, -0.25, 0.08, kn);            /* shin, angled forward */
+        obox(0.10, 0.05, 0.22, pale, 0, -0.50, 0.14, kn);              /* and it walks on the toes */
+        return {hip, kn};
+      };
+      const bl = mkBack(-1), br = mkBack(1);
+      e.legL = bl.hip; e.kneeL = bl.kn; e.legR = br.hip; e.kneeR = br.kn;
+      e.legL2 = null; e.legR2 = null;
+      e.spine = e.torso;
+      e.bipedGaunt = true;
     } else if(c.gauntKind === 'stalker'){
       /* the Thin Stalker is a height and a stillness. The legs arrive before the body does,
          and the head hangs too low on it, like something worn rather than grown. */
@@ -24231,8 +24479,17 @@ function syncChars(dt){
       continue;
     }
     e.g.rotation.x = 0;
+    /* THE LOOSE PIECE TURNS, whatever else the body is doing — put here, above the branch
+       chain, because it belongs to the rig and not to any one pose. It is the one part of the
+       gaunt's silhouette attached to nothing, and a static one reads as a mistake rather than
+       as a thing that should not be able to hang there. */
+    if(e.shard) e.shard.rotation.y += dt * 0.9;
     if(c.state==='dead' || c.state==='down' || c.resting){
-      if(c.beast && !c.construct && c.gauntKind !== 'larder') e.g.rotation.set(0, e.rotY, Math.PI/2);
+      /* A GAUNT BUILT ON TWO LEGS FALLS LIKE A PERSON. This read `gauntKind !== 'larder'`,
+         which was the only upright one at the time — so the next upright one to be built would
+         have lain down sideways like a dog. `e.bipedGaunt` is set by every branch that stands
+         its creature up, so the rule follows the rig rather than a name. */
+      if(c.beast && !c.construct && !e.bipedGaunt) e.g.rotation.set(0, e.rotY, Math.PI/2);
       else e.g.rotation.set(-Math.PI/2, e.rotY, 0);
       e.g.position.y = gy + 0.3;
       if(e.floats){
@@ -24283,7 +24540,7 @@ function syncChars(dt){
       for(let i = 0; i < e.spineBits.length; i++)
         e.spineBits[i].rotation.x = Math.sin(e.phase - i * 0.7) * (0.10 + i * 0.05);
       e.sigil.rotation.y += dt * 0.9;
-    } else if(c.beast && !c.construct && c.gauntKind !== 'larder'){
+    } else if(c.beast && !c.construct && !e.bipedGaunt){
       e.g.rotation.set(0, e.rotY, 0);
       if(e.limbs){
         /* the Sixfold: six limbs, three joints each, moving like slow weather */
@@ -27607,7 +27864,7 @@ const BUILD_CATS = [
   ['DEFENCE',    ['turret', 'lance']],
   ['LABOUR',     ['farm', 'workbench', 'loom', 'forge', 'kiln', 'smelter']],
   ['STUDY',      ['r_bench', 'script']],
-  ['THE CRAFT',  ['circle', 'crypt', 'vat', 'charnel', 'ossuary']],
+  ['THE CRAFT',  ['circle', 'crypt', 'boneyard', 'vat', 'charnel', 'ossuary']],
   ['STORAGE',    ['bin', 'rick', 'spile', 'orebin', 'larder', 'shed', 'relic']],
 ];
 /* what the world will not let you build yet, and why */
@@ -27615,6 +27872,7 @@ function buildLock(key){
   if((key==='circle' || key==='crypt') && !research.done.rites_binding) return 'Rites of Binding';
   if((key==='kiln' || key==='smelter') && !research.done.smelting) return 'Smelting';
   if(key==='vat' && !research.done.quickening) return 'The Quickening';
+  if(key==='boneyard' && !research.done.rites_binding) return 'Rites of Binding';
   if(key==='charnel' && !research.done.carrion_rites) return 'Carrion Rites';
   if(key==='ossuary' && !research.done.ossuary_rites) return 'Ossuary Rites';
   /* the lance is not gated behind research you can buy — it is gated behind a piece of paper
