@@ -59,6 +59,7 @@ the truth was 45%.
 | `orders.js` | Giving an order without going through a menu, and letting go of one. Two of its three subjects were **half-built and unreachable**, which is this project's most common shape of bug: `findNode` had taken `'copper'` and `'iron_ore'` by name since ore was added and nothing ever passed them, so two live branches of the world scanner had no caller and ore was the only resource that could not be got by a job; and `toggleConcentrationOff` had been bound to X the whole time with nothing in the game saying so. So the assertions are about REACHABILITY — not "does the job work" but "can a player switch it on". It also drives shift+right-click with Playwright's own mouse on a seam, a tree and a bench, and checks the shortcut refuses a hollow risen the STUDY job the long way round would refuse. |
 | `tears.js` | Two ways to shut a tear, and why you would ever choose the slow one. **It asserts the premise first**, because the premise is the whole reason for the feature and it is measurable: the seal wants Quickened Flesh and Iron, which are a Flesh Vat behind a 700-gold project and a smelter behind a seam. Then the three properties that make the long rite a different thing rather than a cheaper one — 5.7x the hold, six through at the caster in two waves, and a hold that BLEEDS AWAY with nobody on it. The negative control is that the quick seal summons nothing, or the two roads would be one road with different arithmetic. |
 | `vessels.js` | What a golem eats, and whether anything will give it any. Three faults that composed into one absurdity: the hunger tick said "the etchings want ore" and accepted only ingots, so a camp with a full bin of Iron Ore watched its golem seize up beside it (measured on the broken build: bin 6 → 6, hunger 10 → 9); the hand-feeding button is gated on `it.type === 'food'` and metal is 'mat' or 'trade', so there was **no way to give a vessel an ingot at all**; and that button never asked who it was feeding, so the one thing you could put into a golem was bread. Every claim is asserted through the panel's own buttons and `campTake` from a real bin, because "the mechanism works if you call it correctly" was true of all three before the fix. |
+| `sixfold.js` | What a boss is supposed to do about a crowd. Measures an EXCHANGE RATE rather than a power level: the same twenty-four Old Bones against the same beast with its arsenal and with it switched off, asserting both that the swarm keeps its damage (48 blood against 30) and that it now pays for standing shoulder to shoulder (12 dead against 2). **The mechanism was already in the game.** `sweep` — {arc, reach, mult, max}, applied by `sweepAfter` out of `attack` — was written for the wyrm, and its own comment is this report about a different creature; the Sixfold was never given one. The first attempt wrote a second sweep inside the weapon-cleave branch and it fired alongside the original, and the only thing that caught it was the negative control passing on a build containing none of the new code. |
 | `doorsave.js` | Save/load fidelity for the door, the doorborn, fallen seats and the ruin flag. |
 | `fight.js` | 900 combat resolutions across every weapon × armour pair. Watches for throws and for NaN reaching a blood pool or a body part. |
 | `wepsoak.js` | 160 weapon and armour swap cycles, then a save/load round trip. Catches geometry leaks and orphaned meshes. |
@@ -1245,6 +1246,21 @@ the truth was 45%.
   came out, so nothing downstream should pay for it: `vpick` draws on `vrnd`, the renderer's
   counter, which until then drew nothing but dust motes. `pain.js` asserts it at 200 barks for
   zero movement of `seed`.
+- **The spatial hash is rebuilt inside `update`, and nowhere else.** A probe that stages
+  bodies and then calls a tick DIRECTLY is asking `charsNear` about where everybody stood in
+  the previous test. It reported a Sixfold stamping at two bodies — counting six from the
+  staging before — and then hurting none of them, because they were not in the map it damaged
+  through. `rebuildCharGrid()` after staging.
+- **Give both sides of an A/B the same dice.** `rnd()` is one seeded stream and the second
+  staging inherits wherever the first left it, so a two-run comparison measures the world's
+  mood as much as the change. Three trials a side did not fix it and neither did alternating
+  the order: the same 9-against-3 came back on a build with the feature and on one without.
+  `seed = 90210` at the top of each run is what leaves the thing under test as the only
+  difference.
+- **A blow lands on a PART, not on the blood pool.** `applyDamage` takes a limb down and the
+  blood follows later through the bleed, so "was this body hurt" read off `blood` says no to a
+  fresh wound. sixfold.js measured blood first and reported six hurt on both sides of every
+  comparison — it was counting bodies knocked to the ground, not bodies struck.
 - **A synthetic `MouseEvent` on `#game` arrives at the element and does nothing.** The
   mousedown handler is bound to the canvas the renderer owns; dispatching at the id gets a
   listener hit and no branch taken, and the probe reads "no menu opened" on a build whose menu
