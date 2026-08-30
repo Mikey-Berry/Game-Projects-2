@@ -8537,6 +8537,19 @@ const RECIPES = {
     {out:'a_lev',  n:1, cost:{hide_lev:4, fabric:3}, tech:'adv_smithing'},
   ],
 };
+/* ---------- THE TRADES THAT WANT SOMEBODY HOME BEHIND THE EYES ----------
+   STUDY and CRAFT were filtered by `mindedDead` and GUNNERY was not, although `emplGunner`
+   refuses a mindless body at the weapon — so the menu offered a necromancer their whole host
+   of hollow risen for the turrets, and every one of them stood in the dirt doing nothing.
+   ONE list, read by the job buttons, by the right-click menu and by shift+right-click, so
+   none of the three can disagree with the simulation or with each other. */
+const NEEDS_A_MIND = ['research', 'craft', 'gunner'];
+/* which standing job tends which building, and which job works which kind of node. Both are
+   read by the right-click menu AND by shift+right-click — see the mousedown handler — so the
+   two ways of assigning a job cannot mean different things. */
+const BUILD_JOB = {r_bench:'research', farm:'farm', charnel:'charnel', ossuary:'charnel', vat:'flesh',
+                   boneyard:'bones', workbench:'craft', forge:'craft'};
+const NODE_JOB  = {wood:'wood', stone:'stone', copper:'mine', iron_ore:'mine', fish:'fish'};
 const BENCH_SEATS = 3;        /* how many minds one bench can hold */
 /* ============================================================ WHO IS AT WHICH BENCH
    "Reading a ton of old formulae at once basically chunks it into one GIANT research project.
@@ -10439,6 +10452,18 @@ function jobHasWork(c, j){
        at the foot of an unreachable rampart instead of going back to the fields */
     case 'gunner': return pBuilds.some(b => isEmpl(b.type) && emplUsableBy(b, c) && emplReachable(b, c));
     case 'wood': case 'stone': case 'fish': return true;   /* the waste always has more of these */
+    /* ORE IS NOT LIKE THE OTHER THREE. Trees, boulders and water are everywhere; a copper
+       seam is not, so a miner with nothing to mine has to be able to fall through to a second
+       trade rather than stand in a field. This is the one case here that cannot be answered
+       without looking, so the look is cached for half an hour of game time. */
+    case 'mine': {
+      const now = day + hour / 24;
+      if(c._mineLook === undefined || now - c._mineLook > 0.02 || now < c._mineLook){
+        c._mineLook = now;
+        c._mineHas = !!findNode(c, 'mine');
+      }
+      return c._mineHas;
+    }
     default: return true;                                   /* guard, patrol and the rest always apply */
   }
 }
@@ -11835,7 +11860,10 @@ function physics(c, dt){
     } else if(!c.gather){
       c.jobNodeT -= dt;
       if(c.jobNodeT <= 0){
-        const node = findNode(c, c.job);
+        /* THE EFFECTIVE JOB, not the primary. A hand whose first trade has nothing to offer
+           has already fallen through to `ej` everywhere else in this chain; reading `c.job`
+           here sent them to look for the wrong kind of node. */
+        const node = findNode(c, ej);
         if(node) c.gather = node;
         else c.jobNodeT = 5;
       }
@@ -14154,6 +14182,19 @@ function findNode(c, kind){
       if(kind==='stone' && decorAt(tx,ty)==='rock' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'stone', sx:tx+0.5, sy:ty+0.5};
       if(kind==='copper' && decorAt(tx,ty)==='cvein' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'copper', sx:tx+0.5, sy:ty+0.5};
       if(kind==='iron_ore' && decorAt(tx,ty)==='ivein' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'iron_ore', sx:tx+0.5, sy:ty+0.5};
+      /* ---------- AND ONE JOB THAT WORKS EITHER SEAM ----------
+         "There is currently no job for mining ore, of any kind. I have to manually order for it
+          to be done."
+         Both ore kinds were already findable here, by name, and NOTHING ASKED FOR THEM: the
+         job list had wood, stone and fish and no way to say `copper` or `iron_ore`. So the
+         scanner had two dead branches and ore was the one resource in the game that could only
+         be got by clicking on it. MINE takes whichever seam is nearer, because the spiral is
+         already walking outward and a miner does not care which rock it is. */
+      if(kind==='mine' && !isBlocked(tx+0.5, ty+0.5)){
+        const d2 = decorAt(tx,ty);
+        if(d2==='cvein') return {kind:'copper', sx:tx+0.5, sy:ty+0.5};
+        if(d2==='ivein') return {kind:'iron_ore', sx:tx+0.5, sy:ty+0.5};
+      }
       if(kind==='fish' && tileAt(tx,ty)===3){
         const g = gatherKindAt(tx+0.5, ty+0.5);
         if(g) return g;
@@ -25393,6 +25434,30 @@ function syncChars(dt){
       e.concMark.position.set(0, 2.34 + bob, 0);
       e.concMark.material.opacity = 0.75 + Math.sin(Date.now()*0.006)*0.25;
     } else if(e.concMark){ e.concMark.visible = false; }
+    /* ---------- AND THE WARD'S EDGE, DRAWN ON THE GROUND ----------
+       "Ainzopha'ar's Light is a cool ability — there should be some visual indicator of its
+        radius to keep allies safe."
+       `WARD_RADIUS` is nine tiles and there was nothing on screen that said so, which makes
+       the one decision the spell asks of you — who is inside it — a guess. The ring is hung
+       off the caster's own group so it travels with them (the light is mobile, that is the
+       whole point of it) and its scale is undone against the group's, or a big caster would
+       carry a bigger ward than the rule grants them. */
+    if(isConcentrating(c, 'warding') && c.state === 'ok'){
+      if(!e.wardRing){
+        e.wardRing = new THREE.Mesh(
+          new THREE.RingGeometry(WARD_RADIUS - 0.30, WARD_RADIUS, 72),
+          new THREE.MeshBasicMaterial({color: 0xfff2c0, transparent: true, opacity: 0.4,
+            side: THREE.DoubleSide, depthWrite: false}));
+        e.wardRing.rotation.x = -Math.PI / 2;
+        e.wardRing.renderOrder = 3;
+        e.g.add(e.wardRing);
+      }
+      e.wardRing.visible = true;
+      const sx = e.g.scale.x || 1, sy = e.g.scale.y || 1;
+      e.wardRing.scale.setScalar(1 / sx);
+      e.wardRing.position.set(0, 0.07 / sy, 0);
+      e.wardRing.material.opacity = 0.30 + Math.sin(Date.now() * 0.0025) * 0.12;
+    } else if(e.wardRing){ e.wardRing.visible = false; }
     /* AFFECTED MARKER: it must be obvious who is charmed (turned to your side) or shrouded
        (a risen wearing a living face). A small bead below the head, distinct from the caster's. */
     const affected = c.charmed ? 0x8fd0ff : c.shrouded ? 0x9a7ac0 : 0;
@@ -26861,15 +26926,10 @@ function refreshCharPanel(){
   jr.innerHTML = '<span style="color:var(--dust);font-size:10px">JOB</span>';
   const JOBS = [
     [null,'NONE'], ['wood','WOOD'], ['stone','STONE'], ['fish','FISH'], ['farm','TEND'],
-    ['build','BUILD'], ['flesh','FLESH'], ['charnel','CHARNEL'], ['raise','RAISE'], ['carrion','HARVEST'], ['bones','BONE HAUL'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
+    ['build','BUILD'], ['flesh','FLESH'], ['charnel','CHARNEL'], ['raise','RAISE'], ['carrion','HARVEST'], ['bones','BONE HAUL'], ['mine','MINE'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
   ];
-  /* ---------- THE TRADES THAT WANT SOMEBODY HOME BEHIND THE EYES ----------
-     STUDY and CRAFT were filtered by `mindedDead` and GUNNERY was not, although `emplGunner`
-     refuses a mindless body at the weapon — so the menu offered a necromancer their whole host
-     of hollow risen for the turrets, and every one of them stood in the dirt doing nothing.
-     One list, read by both job buttons and by both assignment loops, so the menu and the
-     simulation cannot disagree again. */
-  const NEEDS_A_MIND = ['research', 'craft', 'gunner'];
+  /* the trades that want somebody home behind the eyes — hoisted to module scope, because
+     shift+right-click assigns jobs too and a second copy of this list would drift */
   /* the fallback trade: shown beside the primary, set the same way */
   const mkJobButton = (which) => {
     const b2 = document.createElement('button');
@@ -26957,6 +27017,28 @@ function refreshCharPanel(){
       refreshCharPanel();
     };
     jr.appendChild(gw);
+  }
+  /* ---------- WHAT THEY ARE HOLDING OPEN ----------
+     "There doesn't seem to be a way to drop concentration of spells like Shroud the Dead or
+      Ainzopha'ar's Light. They just kind of become a permanent tax on the caster's mana."
+     There WAS a way — `toggleConcentrationOff` on X — and nothing in the game said so, which
+     for a player is the same as there not being one. A held spell is a standing decision that
+     costs a fixed slice of the caster's pool for as long as it lasts, so it belongs in the
+     panel that shows the rest of their standing decisions, with the price written on it.
+     PER CASTER, which also answers the "spells you can cast on multiple allies" half: each
+     caster holds exactly one concentration, so a shroud on three bodies is three casters with
+     three separate beads over their heads and three buttons — select all three and X drops
+     the lot. */
+  if(c.concentrating){
+    const sp = SPELLS[c.concentrating.key];
+    const lock = Math.round((c.concentrating.lock || 0) * 100);
+    const cw = document.createElement('button');
+    cw.textContent = '✦ ' + (sp ? sp.label : c.concentrating.key) + (lock ? ` (${lock}% mana)` : '') + ' ✕';
+    cw.title = 'Holding this open' + (c.concentrating.exclusive ? ' — and can do nothing else while it burns' : '')
+             + '. Click to let it go (or X with them selected).';
+    cw.style.cssText = 'padding:2px 6px;font-size:10px;border-color:#a98ad4;color:#a98ad4';
+    cw.onclick = () => { endConcentration(c); refreshCharPanel(); refreshSquadBar(); };
+    jr.appendChild(cw);
   }
   /* ---------- COMMAND ----------
      A job is what one hand does. An order is what a band does, and the band is whoever is
@@ -28439,9 +28521,9 @@ $('btn-help').onclick = () => {
   $('modalbody').innerHTML = `<div style="line-height:1.9;color:var(--dust)">
     <b style="color:var(--bone)">CONTROLS</b><br>
     Left click / drag: select · shift adds · <b>S</b> whole squad · <b>1–5</b> control groups (shift+digit sets)<br>
-    Right click: move · attack · treat ally · loot/harvest corpse (menu) · rest in bed · trade · gather (trees, rock, water) · use workstation<br>
-    <b>A</b> attack-move · <b>C</b>/<b>V</b> cast spells · <b>B</b> build · <b>SPACE</b> pause · <b>F</b> re-follow camera · <b>ARROWS</b> pan · minimap click jumps · <b>PIN</b> beside the map, then click it to mark a place (right-click a pin to lift it)<br>
-    <b>CTRL+right-click</b> force-attack anyone · <b>ALT+right-click</b> examine · <b>hold ALT</b> shows building signs and drop tags ·
+    Right click: move · attack · treat ally · loot/harvest corpse (menu) · rest in bed · trade · gather (trees, rock, ore, water) · use workstation<br>
+    <b>A</b> attack-move · <b>C</b>/<b>V</b> cast spells · <b>X</b> let go of any concentration the selection is holding · <b>B</b> build · <b>SPACE</b> pause · <b>F</b> re-follow camera · <b>ARROWS</b> pan · minimap click jumps · <b>PIN</b> beside the map, then click it to mark a place (right-click a pin to lift it)<br>
+    <b>CTRL+right-click</b> force-attack anyone · <b>SHIFT+right-click</b> a seam, tree, boulder, water or a workshop to make it that unit's standing job · <b>ALT+right-click</b> examine · <b>hold ALT</b> shows building signs and drop tags ·
     <b>G</b> then click an ally: bodyguard order (undead default to guarding their master; any move order clears it) ·
     double-click a squad portrait to jump the camera there<br><br>
     <b style="color:var(--bone)">BODIES</b><br>
@@ -28913,6 +28995,37 @@ cv.addEventListener('mousedown', e => {
     if(guardMode){ guardMode = false; return; }
     const movers = selected.filter(c => c.state==='ok');
     if(!movers.length) return;
+    /* ---------- SHIFT: THE THING YOU CLICKED BECOMES THE STANDING JOB ----------
+       "This is a peripheral thought, but I wonder if a shift+right click command could set
+        that to someone's job? (As in, I shift-right click an ore vein, and that becomes their
+        primary job.) Would be a lot easier than manually navigating through menus for it."
+       Placed FIRST in the right-click chain and it returns, so the modifier means one thing
+       everywhere: on a seam, a tree, a boulder, water, or a building that somebody tends. The
+       tables it reads are the same two the job menu and the building menu read — see
+       `NODE_JOB` and `BUILD_JOB` — so there is no way for the shortcut to assign a job the
+       long way round would not. */
+    if(e.shiftKey && !e.ctrlKey && !e.altKey){
+      const gk = gatherKindAt(wx, wy);
+      const pbj = pBuilds.find(b2 => wx >= b2.x - 0.3 && wx <= b2.x + b2.w + 0.3 && wy >= b2.y - 0.3 && wy <= b2.y + b2.h + 0.3);
+      const jk = (gk && NODE_JOB[gk.kind]) || (pbj && BUILD_JOB[pbj.type]) || null;
+      if(jk){
+        const took = [], cannot = [];
+        for(const m of movers){
+          if(m.faction !== 'player') continue;
+          if(NEEDS_A_MIND.includes(jk) && !mindedDead(m)){ cannot.push(m); continue; }
+          clearOrders(m);
+          m.job = jk; m.gather = null; m.gatherT = 0; m.jobNodeT = 0; m.patrolPost = null;
+          took.push(m);
+        }
+        assignPatrolPosts();
+        if(took.length) log(took.length === 1
+          ? `${took[0].name} takes up the ${jk} work.`
+          : `${took.length} of them take up the ${jk} work.`, 'good');
+        if(cannot.length) log(`${cannot.length === 1 ? cannot[0].name + ' has' : cannot.length + ' of them have'} nobody home to do that work.`, 'bad');
+        refreshCharPanel();
+        return;
+      }
+    }
     /* ALT: right-click a highlighted drop tag → send the nearest selected unit to fetch it */
     if(e.altKey){
       const bhit = pBuilds.find(b => b._rect && e.clientX >= b._rect.x && e.clientX <= b._rect.x + b._rect.w && e.clientY >= b._rect.y && e.clientY <= b._rect.y + b._rect.h);
@@ -29591,9 +29704,8 @@ cv.addEventListener('mousedown', e => {
         /* right-clicking a building offers the job that tends IT, so this table is the one
            place the split has to be exactly right — a Charnel House offering FLESH would send
            the hand to the vats and leave the house cold. */
-        const JOB_OF = {r_bench:'research', farm:'farm', charnel:'charnel', ossuary:'charnel', vat:'flesh'};
         const items = [];
-        const bj = JOB_OF[pb.type];
+        const bj = BUILD_JOB[pb.type];
         if(bj && movers.length) items.push({label:`ASSIGN ${movers.length > 1 ? movers.length + ' UNITS' : movers[0].name.toUpperCase()}: ${bj.toUpperCase()}`, fn:()=>{
           for(const m of movers){
             if((bj === 'research') && m.undead && !m.lich){ log(`${m.name} cannot study. The risen don't think.`, 'bad'); continue; }
