@@ -146,37 +146,65 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.theFormulaeAreCommitted = (stash[key] || 0) === 0
         ? 'the formulae have gone to the bench and are spent'
         : `!! THE FORMULAE WERE NOT TAKEN (${stash[key]} left)`;
-      R.thereIsAReadingToDo = research.study && research.study.left > 0
-        ? `and there is ${Math.ceil(research.study.left)}h of reading queued, worth ${research.study.rp} insight`
+      R.thereIsAReadingToDo = research.study && research.study.docs.length === 4 && research.study.left > 0
+        ? `and there are ${research.study.docs.length} documents on the desk worth ${studyLeftRp()} insight, the first ${Math.ceil(research.study.left)}h off`
         : '!! NOTHING WAS QUEUED — THE FORMULAE WENT NOWHERE';
 
-      /* it must occupy the bench, or "like the usual research flow" means nothing */
-      research.active = 'construction'; research.left = 50;
-      const left0 = research.left;
-      for (let i = 0; i < 5; i++) researchTick(1);
-      R.theReadingOccupiesTheBench = research.left === left0
-        ? 'and while it reads, the tech project does not advance — one bench, one job'
-        : `!! THE BENCH READS AND RESEARCHES AT ONCE (${left0} -> ${research.left})`;
+      /* ---------- THE INSIGHT DRIPS, ONE DOCUMENT AT A TIME ----------
+         "Reading a ton of old formulae at once basically chunks it into one GIANT research
+          project. That's fine — but the actual insight gleaned should drip out over time per
+          formula studied, not be held in reserve until the entire goliath project finishes."
+         So the test is not whether the total arrives. It is whether ANY of it arrives before
+         the last page is turned — the old build paid nothing at all until the whole stack was
+         done, and would sail through an assertion that only checked the final number. */
+      let h = 0, firstPay = -1;
+      while (research.study && h < 4000) {
+        researchTick(1); h++;
+        if (firstPay < 0 && research.rp > 0) firstPay = h;
+      }
+      R.theInsightDripsOut = (firstPay > 0 && firstPay < h * 0.5 && research.rp === worth)
+        ? `the first document pays at hour ${firstPay} of ${h} — a quarter of the stack is not held hostage to the rest, and the total still comes to ${worth}`
+        : `!! FIRST PAYMENT AT HOUR ${firstPay} OF ${h} (rp ${research.rp}, wanted ${worth})`;
 
-      let h = 0;
-      while (research.study && h < 4000) { researchTick(1); h++; }
-      R.theInsightArrivesLater = research.rp === worth && !research.study
-        ? `the insight lands after ${h} hours of work: +${worth}`
-        : `!! THE READING DID NOT PAY OUT (rp ${research.rp}, wanted ${worth}, study ${!!research.study})`;
-      /* and the tech project picks straight back up */
-      researchTick(1);
-      R.theBenchGoesBackToWork = research.left < left0
-        ? 'and the bench goes back to the project it was on'
-        : '!! THE BENCH NEVER RESUMES THE TECH PROJECT';
+      /* ---------- AND THE TREE RUNS BESIDE IT, OFF A SPLIT CREW ----------
+         The rule used to be "one bench, one job" — reading returned out of `researchTick`
+         before the tech project was touched at all. The note asked for the opposite: workable
+         at the same time, but not by the same person. Two scholars means one on each. */
+      research.rp = 0;
+      stash[key] = 4;
+      openResearch();
+      const btn2 = [...document.querySelectorAll('#modalbody button')].find(x => x.textContent.trim() === 'STUDY ALL');
+      if (btn2) btn2.click();
+      research.active = 'construction'; research.left = 500;
+      const left0 = research.left, read0 = studyLeftRp();
+      const sides = benchSides();
+      R.theCrewIsSplit = (sides.read.length === 1 && sides.tree.length === 1)
+        ? 'two scholars at one bench go one to the desk and one to the tree — nobody works both'
+        : `!! ${sides.read.length} ON THE DESK AND ${sides.tree.length} ON THE TREE, FROM A CREW OF 2`;
+      for (let i = 0; i < 5; i++) researchTick(1);
+      R.bothAdvanceAtOnce = (research.left < left0 && research.study && research.study.left > 0 && studyLeftRp() <= read0)
+        ? `and both cranks turn: the project ${Math.round(left0)}h -> ${Math.round(research.left)}h while the desk works down its stack`
+        : `!! tech ${left0} -> ${research.left}, desk ${read0} -> ${studyLeftRp()}`;
+      /* AND NEITHER SIDE GETS THE WHOLE CREW'S CURVE. One mind is 1.0x; two on one job is
+         1.7x. Split, each side must be at 1.0 — that is the whole of "two researchers
+         shouldn't have 2x speed for BOTH". */
+      const splitRate = researchRate(), splitRead = studyRate();
+      research.study = null;
+      const soloRate = researchRate();
+      R.neitherSideGetsTheWholeCrew = (Math.abs(splitRate - 1) < 0.05 && Math.abs(splitRead - 1) < 0.05 && soloRate > splitRate * 1.3)
+        ? `split, each side runs at ${splitRate.toFixed(2)}x; put both minds on the tree alone and it is ${soloRate.toFixed(2)}x`
+        : `!! SPLIT ${splitRate.toFixed(2)}/${splitRead.toFixed(2)}, WHOLE CREW ON ONE ${soloRate.toFixed(2)}`;
+      research.active = null; research.left = 0;
     }
 
     /* ---- and none of it happens with nobody at the bench ---- */
     {
       wipe();
-      research.study = { rp: 10, left: 20 };
+      research.study = beginReading(['formula_t', 'formula_t']);
+      const wasLeft = research.study.left;
       research.active = 'smithing'; research.left = 40;
       for (let i = 0; i < 20; i++) researchTick(1);
-      R.anEmptyBenchReadsNothing = research.study.left === 20 && research.left === 40
+      R.anEmptyBenchReadsNothing = research.study.left === wasLeft && research.left === 40
         ? 'an empty bench reads nothing and researches nothing — the work does not do itself'
         : `!! WORK HAPPENS WITH NOBODY THERE (study ${research.study.left}, tech ${research.left})`;
       research.study = null; research.active = null; research.left = 0;
@@ -184,10 +212,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     /* ---- the reading rides the save ---- */
     {
-      research.study = { rp: 7, left: 15 };
+      research.study = beginReading(['formula_t', 'formula_w']);
       const snap = JSON.parse(JSON.stringify(snapshot()));
-      R.theReadingRidesTheSave = snap.research && snap.research.study && snap.research.study.rp === 7
-        ? 'and a reading in progress is written to the save'
+      /* THE WHOLE STACK, not just the hours. A save that carried the clock and dropped the
+         documents would restore a desk that can never pay out. */
+      R.theReadingRidesTheSave = snap.research && snap.research.study && snap.research.study.docs
+        && snap.research.study.docs.length === 2 && snap.research.study.left > 0
+        ? 'and a reading in progress rides the save with every document still on the desk'
         : `!! A READING IN PROGRESS IS LOST ON SAVE (${JSON.stringify(snap.research && snap.research.study)})`;
       research.study = null;
     }

@@ -1988,7 +1988,12 @@ function makeChar(name, faction, x, y, o={}){
       magic:st('magic',1), labor:st('labor',2), armr:st('armr',1),
       blades:st('blades',1), blunt:st('blunt',1), ranged:st('ranged',1), martial:st('martial',1),
       smithing:st('smithing',1), crafting:st('crafting',1), farming:st('farming',1), brewing:st('brewing',1),
-      gunnery:st('gunnery',1)},
+      /* STUDY. "Studying should have a separate skill related to it. I feel like we talked
+         about this before but I don't see anything in the UI that indicates someone can
+         improve in studying — a skill very distinct from say, labor." There was none: the
+         bench read `stats.magic`, so the fastest scholar in the camp was whoever happened to
+         be the best caster, and nobody got better at reading by reading. */
+      gunnery:st('gunnery',1), study:st('study',1)},
     /* SPEND THE DRAW EITHER WAY. Written as `o.conviction || rollConviction(_gift)` the roll is
        short-circuited away for every caller that names a conviction — which is rule 2 in this
        file's own notes, and it started mattering the moment the hiring bar began passing one:
@@ -8396,7 +8401,7 @@ for(const tk of ['rites_binding', 'rites_deep']){
   const list = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : (names[0] || '');
   TECHS[tk].desc = (tk === 'rites_binding' ? 'Binding Circle: ' : '') + list;
 }
-const research = { done:{}, active:null, left:0, rp:0, study:null, queue:[] };
+const research = { done:{}, active:null, left:0, rp:0, study:null, queue:[], readFirst:false };
 /* ---------- LINING THE WORK UP ----------
    "The ability to queue up research would be nice."
 
@@ -8533,34 +8538,75 @@ const RECIPES = {
   ],
 };
 const BENCH_SEATS = 3;        /* how many minds one bench can hold */
-/* how fast the work is going: 0 if nobody is at a bench, otherwise the sum of every bench's
-   crew (capped at its seats) with diminishing returns — a second pair of hands helps a great
-   deal, a third less so, and a fourth has nowhere to stand. */
-function researchRate(){
-  let rate = 0;
+/* ============================================================ WHO IS AT WHICH BENCH
+   "Reading a ton of old formulae at once basically chunks it into one GIANT research project.
+    That's fine — but the insight gleaned should drip out over time per formula studied. Also
+    it happens with other research simultaneously, which is a bit odd. They should be workable
+    at the same time but not by the same person… (So two researchers shouldn't have 2x speed
+    for BOTH formula and ongoing research.)"
+
+   The old rule was the opposite of both halves: reading BLOCKED the tree entirely — one
+   `return` at the top of `researchTick` — and one rate served whichever of the two was
+   running, so the same three scholars were worth 2.2x to whatever they happened to be doing.
+   Now the camp's seated scholars are one pool that gets SPLIT, and each half turns its own
+   crank at its own pace. Two minds means one on each and 1.0x apiece, not 1.7x on both. */
+function benchSeated(){
+  /* every scholar actually in a seat, with the bench they are sitting at. Capped per bench,
+     because the fourth body at a two-by-two table is standing in a doorway. */
+  const out = [];
   for(const b of pBuilds){
     if(b.type !== 'r_bench') continue;
-    const crew = chars.filter(c => c.faction==='player' && c.job==='research' &&
-      mindedDead(c) && c.state==='ok' &&
-      dist(c.x, c.y, b.x+1, b.y+1) < 3.2);
-    const n = Math.min(BENCH_SEATS, crew.length);
+    for(const c of benchCrew(b).slice(0, BENCH_SEATS)) out.push({b, c});
+  }
+  return out;
+}
+/* THE SPLIT. The reading takes the smaller half, so one scholar with a project running keeps
+   pushing the tree and the formulae wait — which is a rule a player can see and act on rather
+   than a silent halving. `readFirst` is that action: it puts the whole bench on the desk. */
+function benchSides(){
+  const all = benchSeated();
+  const reading = !!research.study, tree = !!research.active;
+  /* WITH NEITHER JOB RUNNING, EVERYBODY IS NOTIONALLY ON THE TREE. `researchRate()` is read by
+     panels and probes as "the pace this camp would push a project at", and returning nought
+     for an idle bench turns a capacity question into a work-in-progress one — which read, in
+     the harness, as a lone scholar suddenly working at 0.00x. */
+  if(!reading) return {read: [], tree: all};
+  if(!tree || research.readFirst) return {read: all, tree: []};
+  const nRead = Math.floor(all.length / 2);
+  return {read: all.slice(all.length - nRead), tree: all.slice(0, all.length - nRead)};
+}
+/* how fast one side of the split is going: the sum of every bench's share of it with
+   diminishing returns — a second pair of hands helps a great deal, a third less so, and a
+   fourth has nowhere to stand — and then the same rule applied ACROSS benches.
+   THE SAME RULE ACROSS BENCHES, because the curve above says the right thing and used to say
+   it only INSIDE one bench: build a second and they summed, flat, forever. Three benches with
+   three scholars apiece came out at 9.9x, so an eighty-hour project finished in about a minute
+   of real time and the whole tree fell over in an afternoon. A sublinear total says it once
+   for the whole camp: one scholar at one bench is untouched (1.0 stays 1.0), a full bench goes
+   3.3 -> 2.3, three full benches 9.9 -> 4.8. Still worth building the second. No longer worth
+   building five. */
+function sideRate(list){
+  const byBench = new Map();
+  for(const {b, c} of list){ if(!byBench.has(b)) byBench.set(b, []); byBench.get(b).push(c); }
+  let rate = 0;
+  for(const crew of byBench.values()){
+    const n = crew.length;
+    if(!n) continue;
     /* 1 mind = 1.0, 2 = 1.7, 3 = 2.2 — sharing a problem helps, but they get in each other's way */
-    const mult = n === 0 ? 0 : n === 1 ? 1 : n === 2 ? 1.7 : 2.2;
-    /* a sharper mind reads faster: the best scholar at the bench sets the pace */
-    const skill = crew.length ? Math.max(...crew.map(c => c.stats.magic || 1)) : 0;
+    const mult = n === 1 ? 1 : n === 2 ? 1.7 : 2.2;
+    /* a sharper mind reads faster: the best scholar at the bench sets the pace. STUDY now,
+       not MAGIC — the bench used to run on the caster stat, so the fastest scholar in a camp
+       was whoever happened to be the best mage and nobody ever got better at reading. */
+    const skill = Math.max(...crew.map(c => c.stats.study || 1));
     rate += mult * (1 + Math.min(0.5, skill * 0.008));
   }
-  /* ---------- AND THE SAME RULE ACROSS BENCHES ----------
-     The curve above says the right thing and only said it INSIDE one bench: a second mind is
-     worth most of another hand, a third less, a fourth has nowhere to stand. Build a second
-     bench and none of that applied — the benches summed, flat, forever. Three benches with
-     three scholars apiece came out at 9.9x, so an eighty-hour project finished in about a
-     minute of real time and the whole tree fell over in an afternoon. That is the "especially
-     with multiple people at the bench" in the report.
-     A sublinear total says it once for the whole camp instead. One scholar at one bench is
-     untouched (1.0 stays 1.0); a full bench goes 3.3 -> 2.3; three full benches 9.9 -> 4.8.
-     Still worth building the second bench. No longer worth building five. */
   return Math.pow(rate, 0.68);
+}
+function researchRate(){ return sideRate(benchSides().tree); }
+function studyRate(){ return sideRate(benchSides().read); }
+/* what the desk still owes you, for the panel: the sum of what is left unread */
+function studyLeftRp(){
+  return research.study ? research.study.docs.reduce((a, k) => a + ITEMS[k].rp, 0) : 0;
 }
 /* HOW LONG THE READING TAKES, over and above the crew curve. The `hours` in the table are a
    READABLE ordering — 40 for the first tech, 104 for the deepest — and re-typing twenty of
@@ -8648,23 +8694,110 @@ function benchCrew(b){
    arrives when the reading is done. Priced per point rather than per document so a fat
    Ashen Formula is a longer read than a scrap, which is the obvious reading of it. */
 const STUDY_HOURS_PER_RP = 2.2;
+/* ---------- ONE DOCUMENT AT A TIME ----------
+   "Reading a ton of old formulae at once basically chunks it into one GIANT research project
+    that takes hundreds of hours to chew through. That's fine — but the actual insight gleaned
+    should drip out over time per formula studied, not be held in reserve until the entire
+    goliath project finishes."
+   The desk holds a STACK now rather than a sum. Each document is read, paid out and set aside
+   before the next is opened, and the overflow carries forward so no reading hour is lost at
+   the join. Cheapest first: forty tattered scraps start paying within the hour, where a
+   Preserved Formula at the front of the queue would hold everything behind it for a day. */
+function beginReading(docs){
+  if(!docs.length) return null;
+  docs.sort((a, b) => ITEMS[a].rp - ITEMS[b].rp);
+  return {docs, left: ITEMS[docs[0]].rp * STUDY_HOURS_PER_RP};
+}
+/* ============================================================ THE SCRIPTORIUM
+   "The current scriptorium UI is really clunky. For one, it allows you to train anyone,
+    anywhere. It should ONLY train the person at the bench — implying that they are studying.
+    And as with the pattern we've been working on, it should take time to train them."
+
+   It was a shop counter: every living body in the squad listed with four buttons apiece, and
+   pressing one moved a tier instantly from anywhere on the map. Nothing about it was a
+   building. It is a DESK now — one pupil, sat at it, for a stated number of hours — and the
+   list is the people actually standing there.
+
+   TUITION IS PAID ON COMMIT, like a research project's materials, and refunded in full if you
+   call it off. Time is the cost that cannot be refunded, which is the whole point. */
+const TUITION_HOURS = [0, 26, 40, 60];   /* hours to reach tier 1, 2, 3 */
+function scriptPupils(b){
+  return chars.filter(c => c.faction === 'player' && c.state === 'ok' && mindedDead(c)
+    && c.race !== 'chimera' && !c.nascent && !c.settler
+    && (c.floor || 0) === (b.floor || 0)
+    && dist(c.x, c.y, b.x + 1, b.y + 1) < 3.2);
+}
+function tuitionCost(u, br){ return u.gift === br ? 5 : 10; }
+function tuitionHours(u, br){
+  const to = attOf(u, br) + 1;
+  const h = TUITION_HOURS[Math.min(3, to)] * (u.gift === br ? 0.7 : 1);
+  /* A SHARPER MIND LEARNS FASTER, which is the second half of giving studying a skill of its
+     own: it is worth having, and it is worth having on the person you are teaching. */
+  return Math.max(6, h / (1 + Math.min(0.8, (u.stats.study || 1) * 0.012)));
+}
+function scriptTick(dh){
+  for(const b of pBuilds){
+    if(b.type !== 'script' || !b.tuition) continue;
+    const t = b.tuition;
+    /* LOOKED UP IN `chars`, NOT IN `charById`. That map is rebuilt inside `update` for the
+       spatial hash, so anything that reads it is quietly asserting a frame has been drawn —
+       and a lesson that silently reports "they are not at the desk" because a lookup table is
+       a tick stale is a bug that only shows up in the one place nobody looks. There are never
+       more than a couple of these buildings; the scan is free. */
+    const u = chars.find(c => c.id === t.who);
+    /* the pupil has to still be a pupil, and still be at the desk */
+    if(!u || u.state !== 'ok' || dist(u.x, u.y, b.x + 1, b.y + 1) >= 3.2){
+      if(!t.stalled){ t.stalled = true; if(u) log(`${u.name} is not at the Scriptorium. The lesson waits.`, 'bad'); }
+      continue;
+    }
+    t.stalled = false;
+    t.left -= dh;
+    /* they get better at studying BY studying, which is the one place the skill is unarguably
+       being used */
+    xpGain(u, 'study', dh * 0.5);
+    if(t.left <= 0){
+      b.tuition = null;
+      /* THE TIER IS AWARDED, not fed in as experience. Routing it through `attGain` would put
+         the shortfall through the race multiplier and the teacher bonus, and 1.5x of "exactly
+         enough" overshoots into the next tier — a course that buys a tier and a slice of the
+         one above it, every time, for the same fee. */
+      const cap = attCap(u, t.br);
+      u.att = u.att || {divine:0, destruction:0, dark:0, dust:0};
+      u.attXp = u.attXp || {divine:0, destruction:0, dark:0, dust:0};
+      if(u.att[t.br] < cap){
+        u.att[t.br]++;
+        u.attXp[t.br] = 0;
+        const word = ['', 'an initiate', 'an adept', 'a MASTER'][u.att[t.br]];
+        log(`${u.name} finishes the course at the Scriptorium: ${word} of the ${t.br} art.`, 'good');
+      } else log(`${u.name} has nothing left to learn here of the ${t.br} art.`, '');
+      refreshCharPanel();
+    }
+  }
+}
 function researchTick(dh){
-  /* the bench wants ASSIGNED minds at it — the work does not do itself */
-  const rate = researchRate();
-  if(rate <= 0) return;
-  /* THE READING COMES FIRST, and it occupies the bench: a camp cannot study the old world and
-     push the tree at the same time. That is the whole of "more like the usual research flow". */
+  /* ---------- BOTH CRANKS TURN, EACH AT ITS OWN PACE ----------
+     This used to be one rate and a `return`: the reading occupied the bench outright, so a
+     camp could not read the old world and push the tree at once. Both run now, off a crew
+     that has been split between them — see `benchSides`. */
   if(research.study){
-    research.study.left -= dh * rate;
-    if(research.study.left <= 0){
-      research.rp += research.study.rp;
-      log(`The formulae come apart under study. +${research.study.rp} insight.`, 'good');
-      research.study = null;
+    const sr = studyRate();
+    if(sr > 0){
+      research.study.left -= dh * sr;
+      while(research.study && research.study.left <= 0){
+        const k = research.study.docs.shift();
+        research.rp += ITEMS[k].rp;
+        const rest = research.study.docs.length;
+        log(`${ITEMS[k].name} comes apart under study. +${ITEMS[k].rp} insight.`
+          + (rest ? ` ${rest} still on the desk.` : ' The desk is clear.'), 'good');
+        if(!rest){ research.study = null; break; }
+        research.study.left += ITEMS[research.study.docs[0]].rp * STUDY_HOURS_PER_RP;
+      }
       refreshInv();
     }
-    return;
   }
   if(!research.active) return;
+  const rate = researchRate();
+  if(rate <= 0) return;
   research.left -= dh * rate;
   if(research.left <= 0){
     research.done[research.active] = true;
@@ -11494,9 +11627,18 @@ function physics(c, dt){
     if(ej==='research'){
       if(!mindedDead(c)) return;
       if(dist(c.x,c.y,c._jx||c.x,c._jy||c.y) < 2) c._working = 0.5;
-      const bench = pBuilds.find(b => b.type==='r_bench');
-      if(bench && research.active && dist(c.x,c.y,bench.x+1,bench.y+1) > 2.4)
+      /* NEAREST bench, not the first one in the array — a second bench across the camp was
+         built to be sat at, and every scholar walking to the same table is the reason a camp
+         with three of them still ran at one bench's pace. */
+      const bench = pBuilds.filter(b => b.type==='r_bench')
+        .sort((a,b2) => dist(a.x,a.y,c.x,c.y) - dist(b2.x,b2.y,c.x,c.y))[0];
+      if(bench && (research.active || research.study) && dist(c.x,c.y,bench.x+1,bench.y+1) > 2.4)
         travel(c, bench.x+1, bench.y+2.6, dt, 0.4);
+      /* AND THEY GET BETTER AT IT. A scholar who has never earned anything from sitting at a
+         bench is the whole of "I don't see anything in the UI that indicates someone can
+         improve in studying". Only while there is work on the table — a bench nobody has given
+         a project to teaches nothing. */
+      else if(bench && (research.active || research.study)) xpGain(c, 'study', dt * 0.16);
     } else if(ej==='farm'){
       const farm = pBuilds.filter(b => b.type==='farm')
         .sort((a,b2) => dist(a.x,a.y,c.x,c.y) - dist(b2.x,b2.y,c.x,c.y))[0];
@@ -13667,7 +13809,7 @@ function openWanderer(c){
   ask.textContent = w.ask;
   body.appendChild(ask);
   const row = document.createElement('div'); row.className = 'trow';
-  const skills = ['atk','def','tough','medic','gunnery','crafting','labor','magic']
+  const skills = ['atk','def','tough','medic','gunnery','crafting','labor','study','magic']
     .filter(k => (w.stats[k] || 0) >= 12)
     .map(k => `${k} ${Math.floor(c.stats[k])}`).join(' · ');
   row.innerHTML = `<span class="tn">${c.name}<br><span style="color:var(--dust);font-size:11px">${skills}${w.gift ? ' · ✦ ' + w.gift : ''}</span></span>`;
@@ -18307,6 +18449,7 @@ function update(dt){
     }
   }
   researchTick(dh);
+  scriptTick(dh);
   visT -= dt;
   if(visT <= 0){ visT = 0.25; computeVision(); }
   if(weather.storm > 0) weather.storm -= dh;
@@ -26651,7 +26794,7 @@ function refreshCharPanel(){
       sb.disabled = !canAfford({salt: need});
     }
   }
-  $('stats').innerHTML = ['atk','def','tough','ath','medic','magic','labor','armr','gunnery']
+  $('stats').innerHTML = ['atk','def','tough','ath','medic','magic','labor','study','armr','gunnery']
     .map(s=>`<span data-tip="${s}">${s.toUpperCase()}</span><b data-tip="${s}">${(Math.floor(c.stats[s]*10)/10).toFixed(1)}</b>`).join('');
   const giftTxt = c.gift ? ` · <span style="color:#a98ad4">✦ ${c.gift.toUpperCase()}</span>` : '';
   /* what they are, and what they currently make of you */
@@ -27055,47 +27198,81 @@ function openWarTable(){
     }
   }
 }
-function openScriptorium(){
-  openModal('SCRIPTORIUM', 'Formulae are not invented. They are found, copied, and practised until the hand knows them.');
+function openScriptorium(at){
+  /* WHICH DESK. `openScriptorium` is reached by walking somebody up to a building, so the
+     building is the subject — a camp with two of them runs two courses, and the panel is
+     about the one you clicked. Falls back to the first if something calls it bare. */
+  const b = at || pBuilds.find(x => x.type === 'script');
+  openModal('SCRIPTORIUM', 'Formulae are not invented. They are found, copied, and practised until the hand knows them. One pupil at the desk, for as long as it takes.');
   const body = $('modalbody');
   const rndr = () => {
     body.innerHTML = '';
+    if(!b){ body.textContent = 'There is no Scriptorium standing.'; return; }
     const pool = document.createElement('div');
     pool.style.cssText = 'margin-bottom:8px;color:#a98ad4';
     pool.textContent = `INSIGHT: ${research.rp} pts — spent here on hands, not on projects.`;
     body.appendChild(pool);
-/* THE FOUR ARTS: tuition in insight. The specialty is cheap; everything else costs double. */
-{
-  const pupils = player().filter(u => u.state === 'ok' && u.race !== 'chimera' && !u.nascent && !u.settler
-    && mindedDead(u));
-  if(pupils.length){
+
+    /* ---------- WHAT IS BEING TAUGHT RIGHT NOW ---------- */
+    if(b.tuition){
+      const u = charById.get(b.tuition.who);
+      const d = document.createElement('div'); d.className = 'trow';
+      const away = b.tuition.stalled || !u;
+      d.innerHTML = `<span class="tn">AT THE DESK: ${u ? u.name : 'somebody who is no longer with us'} — the ${b.tuition.br} art, `
+        + `${Math.ceil(b.tuition.left)}h left`
+        + (away ? ` <span style="color:var(--blood)">— and they are not at the desk. The lesson waits.</span>` : '')
+        + `</span>`;
+      const cb = document.createElement('button');
+      cb.textContent = 'CALL IT OFF';
+      cb.onclick = () => {
+        research.rp += b.tuition.fee;
+        log(`The lesson is abandoned. ${b.tuition.fee} insight comes back; the hours do not.`, '');
+        b.tuition = null; rndr();
+      };
+      d.appendChild(cb);
+      body.appendChild(d);
+    }
+
+    /* ---------- AND WHO IS STANDING THERE ----------
+       The old list was `player()` — every living body in the squad, wherever they were, each
+       with four buttons that moved a tier the instant you pressed one. This is the people
+       within arm's reach of the desk, which is what "implying that they are studying" means. */
+    const pupils = scriptPupils(b);
     const h4 = document.createElement('div');
     h4.style.cssText = 'margin:12px 0 4px;color:#a98ad4;letter-spacing:2px';
     h4.textContent = 'THE FOUR ARTS'; body.appendChild(h4);
     const info4 = document.createElement('div');
     info4.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:4px';
-    info4.textContent = 'Anyone can follow a formula — that is what the Fracture left. Study buys progress; casting earns it; a better-attuned squadmate speeds both. Only the born specialty reaches mastery.';
+    info4.textContent = 'Anyone can follow a formula — that is what the Fracture left. A course at the desk buys a tier outright; casting still earns them in the field. Only the born specialty reaches mastery. Tuition is paid up front and refunded if you call it off; the hours are not.';
     body.appendChild(info4);
+    if(!pupils.length){
+      const none = document.createElement('div');
+      none.style.cssText = 'color:var(--dust);font-size:12px';
+      none.textContent = 'Nobody is at the desk. Send somebody to stand at the Scriptorium and they can be taught here.';
+      body.appendChild(none);
+    }
     for(const u of pupils){
       const row = document.createElement('div'); row.className = 'trow';
-      const cells = BRANCHES.map(b => {
-        const t2 = attOf(u, b), cap = attCap(u, b);
-        const xp = (u.attXp && u.attXp[b]) || 0;
-        const tag = u.gift === b ? '✦' : '';
-        if(t2 >= cap) return `<span style="color:${u.gift===b?'#d4a040':'var(--dust)'}">${tag}${b} ${['—','I','II','III'][t2]}</span>`;
-        const cost2 = u.gift === b ? 5 : 10;
-        return `<span>${tag}${b} ${['—','I','II','III'][t2]} <button data-study="${u.id}|${b}" ${research.rp < cost2 ? 'disabled' : ''}>+ ${cost2}rp</button></span>`;
+      const cells = BRANCHES.map(b2 => {
+        const t2 = attOf(u, b2), cap = attCap(u, b2);
+        const tag = u.gift === b2 ? '✦' : '';
+        const nm = `${tag}${b2} ${['—','I','II','III'][t2]}`;
+        if(t2 >= cap) return `<span style="color:${u.gift===b2?'#d4a040':'var(--dust)'}">${nm}</span>`;
+        if(b.tuition) return `<span style="color:var(--dust)">${nm}</span>`;
+        const cost2 = tuitionCost(u, b2);
+        return `<span>${nm} <button data-study="${u.id}|${b2}" ${research.rp < cost2 ? 'disabled' : ''}>`
+             + `${cost2}rp · ${Math.ceil(tuitionHours(u, b2))}h</button></span>`;
       }).join(' · ');
-      row.innerHTML = `<span class="tn">${u.name}</span><span style="font-size:11px">${cells}</span>`;
+      row.innerHTML = `<span class="tn">${u.name} <span style="color:var(--dust);font-size:11px">study ${Math.floor(u.stats.study || 1)}</span></span><span style="font-size:11px">${cells}</span>`;
       body.appendChild(row);
       /* consecration: the giftless who earn adept in an art may take it as their path */
       if(!u.gift){
-        const ready = BRANCHES.filter(b => attOf(u, b) === 2);
-        for(const b of ready){
+        const ready = BRANCHES.filter(b2 => attOf(u, b2) === 2);
+        for(const b2 of ready){
           const cr = document.createElement('div'); cr.className = 'trow';
           const can2 = campHas('formula_p') >= 1 && research.rp >= 40;
           cr.innerHTML = `<span class="tn" style="color:var(--dust)">— ${u.name} has earned what others are born to</span>
-            <span>${can2 ? `<button data-consec="${u.id}|${b}">CONSECRATE ${b.toUpperCase()} — 1 Preserved Formula + 40 insight</button>` : '<span style="color:var(--dust)">needs 1 Preserved Formula + 40 insight</span>'}</span>`;
+            <span>${can2 ? `<button data-consec="${u.id}|${b2}">CONSECRATE ${b2.toUpperCase()} — 1 Preserved Formula + 40 insight</button>` : '<span style="color:var(--dust)">needs 1 Preserved Formula + 40 insight</span>'}</span>`;
           body.appendChild(cr);
         }
       }
@@ -27104,10 +27281,12 @@ function openScriptorium(){
       const [uid2, br] = b2.dataset.study.split('|');
       const u = chars.find(x => x.id === +uid2);
       if(!u) return;
-      const cost2 = u.gift === br ? 5 : 10;
+      if(b.tuition){ log('The desk is busy.', 'bad'); return; }
+      const cost2 = tuitionCost(u, br);
       if(research.rp < cost2){ refuse('Not enough insight.'); return; }
       research.rp -= cost2;
-      attGain(u, br, 60);
+      b.tuition = {who: u.id, br, left: tuitionHours(u, br), fee: cost2, stalled: false};
+      log(`${u.name} sits down to the ${br} art — ${Math.ceil(b.tuition.left)}h of it. They have to stay at the desk.`, '');
       rndr();
     });
     body.querySelectorAll('[data-consec]').forEach(b2 => b2.onclick = () => {
@@ -27121,14 +27300,6 @@ function openScriptorium(){
       log(`${u.name} takes the ${br} art as their own path. What others are born to, they have earned — and its summit is open to them now.`, 'good');
       refreshInv(); rndr();
     });
-  }
-}
-    if(!player().some(u => u.state === 'ok' && mindedDead(u) && u.race !== 'chimera' && !u.nascent && !u.settler)){
-      const none = document.createElement('div');
-      none.style.cssText = 'color:var(--dust);font-size:12px';
-      none.textContent = 'Nobody here can hold a formula in their head. The mindless dead cannot study, and a chimera never will.';
-      body.appendChild(none);
-    }
   };
   rndr();
 }
@@ -27148,11 +27319,30 @@ function openResearch(){
       if(research.study){
         const rd = document.createElement('div');
         rd.style.cssText = 'margin-bottom:8px;color:var(--warn);font-size:11px';
-        const rr = researchRate();
-        rd.innerHTML = `READING: ${Math.ceil(research.study.left)}h left, worth ${research.study.rp} insight` +
-          (rr > 0 ? ` <span style="color:var(--dust)">(~${Math.ceil(research.study.left / rr)}h at this pace)</span>`
-                  : ` <span style="color:var(--blood)">(nobody is studying — assign the STUDY job)</span>`);
+        const rr = studyRate();
+        const st = research.study;
+        const head = ITEMS[st.docs[0]];
+        rd.innerHTML = `ON THE DESK: ${st.docs.length} document${st.docs.length === 1 ? '' : 's'}, ${studyLeftRp()} insight still in them.`
+          + ` Reading ${head.name} — ${Math.ceil(st.left)}h`
+          + (rr > 0 ? ` <span style="color:var(--dust)">(~${Math.ceil(st.left / rr)}h at this pace; each one pays as it is finished)</span>`
+                    : ` <span style="color:var(--blood)">(nobody is on the reading — see the split below)</span>`);
         body.appendChild(rd);
+        /* ---------- AND WHO IS ON WHICH ----------
+           The split is invisible otherwise, and an invisible split reads as the bench being
+           slow. It is also the one place the player can overrule it. */
+        const sides = benchSides();
+        const sp = document.createElement('div'); sp.className = 'trow';
+        sp.innerHTML = `<span class="tn" style="font-size:11px;color:var(--dust)">`
+          + `${sides.tree.length} on the tree · ${sides.read.length} on the desk`
+          + (research.active && !sides.read.length ? ' — the formulae are waiting for a second mind at the bench' : '')
+          + `</span>`;
+        if(research.active){
+          const tb = document.createElement('button');
+          tb.textContent = research.readFirst ? 'READING FIRST — EVERY MIND ON THE DESK' : 'SPLIT BETWEEN THE DESK AND THE TREE';
+          tb.onclick = () => { research.readFirst = !research.readFirst; rndr(); };
+          sp.appendChild(tb);
+        }
+        body.appendChild(sp);
       }
       if(held.length){
         const row = document.createElement('div'); row.className = 'trow';
@@ -27163,11 +27353,12 @@ function openResearch(){
         sb.disabled = !!research.study;
         sb.onclick = () => {
           if(research.study){ log('The bench is already reading.', 'bad'); return; }
-          let got = 0;
-          for(const [k,n] of held){ if(campSpend({[k]:n})) got += ITEMS[k].rp * n; }
-          if(!got){ rndr(); return; }
-          research.study = {rp: got, left: got * STUDY_HOURS_PER_RP};
-          log(`The formulae go to the bench — ${Math.ceil(research.study.left)}h of reading before anything comes of them.`, '');
+          const docs = [];
+          for(const [k,n] of held){ if(campSpend({[k]:n})) for(let i = 0; i < n; i++) docs.push(k); }
+          research.study = beginReading(docs);
+          if(!research.study){ rndr(); return; }
+          log(`${docs.length} document${docs.length === 1 ? '' : 's'} go to the desk. They will be read one at a time, `
+            + `and each one pays as it is finished — the first in ${Math.ceil(research.study.left)}h.`, '');
           refreshInv(); rndr();
         };
         row.appendChild(sb); body.appendChild(row);
@@ -27374,7 +27565,7 @@ $('btn-court').onclick = () => {
   court(a, b);
   refreshCharPanel();
 };
-const GOALS = [null,'blades','blunt','ranged','martial','smithing','crafting','farming','brewing','medic','magic','labor','gunnery'];
+const GOALS = [null,'blades','blunt','ranged','martial','smithing','crafting','farming','brewing','medic','magic','labor','study','gunnery'];
 $('btn-goal').onclick = () => {
   const c = selected[0]; if(!c || c.faction!=='player') return;
   const r = $('btn-goal').getBoundingClientRect();
@@ -29430,7 +29621,7 @@ cv.addEventListener('mousedown', e => {
       if(!near){ log('Nobody is close enough to work there.', 'bad'); return; }
       if(ws.type==='wartable') openWarTable();
       else if(ws.type==='r_bench') openResearch();
-      else if(ws.type==='script') openScriptorium();
+      else if(ws.type==='script') openScriptorium(ws);   /* the desk you walked up to, not the first one built */
       else if(ws.type==='circle') openBinding(ws);
       else if(ws.type==='crypt') openCrypt(ws);
       else openCrafting(ws.type, ws);
@@ -30436,9 +30627,11 @@ function snapshot(){
     shrines: shrines.map(sh => ({broken: !!sh.broken, hp: Math.round(sh.hp), reT: sh.reT || 0})),
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       store: b.store ? {...b.store} : undefined,
+      /* a course at the Scriptorium is forty hours of somebody's life — it rides the save */
+      tuition: b.tuition ? {...b.tuition} : undefined,
       stored: b.stored ? b.stored.map(sChar) : undefined})),
     recruits: towns.map(t=>t.recruits),
-    research: {done:{...research.done}, active:research.active, left:research.left, rp:research.rp, study:research.study?{...research.study}:null, queue:[...research.queue]},
+    research: {done:{...research.done}, active:research.active, left:research.left, rp:research.rp, study:research.study?{docs:[...(research.study.docs || [])], left:research.study.left}:null, readFirst:!!research.readFirst, queue:[...research.queue]},
   };
 }
 function restore(d){
@@ -30506,6 +30699,7 @@ function restore(d){
        here, because the save may list the turret before the wall it is bolted to. Take the
        saved answer instead of re-deriving one from a half-built camp. */
     if(isEmpl(b.type) && b.floor !== undefined) pb.floor = b.floor;
+    if(b.tuition) pb.tuition = {...b.tuition};
   }
   /* a night's work on a bar is not undone by loading the game */
   if(window._cellHp){
@@ -30624,7 +30818,16 @@ function restore(d){
   drops.length = 0;
   if(Array.isArray(d.drops)) for(const dr of d.drops) drops.push({x:dr.x, y:dr.y, items:{...dr.items}});
   kitOpen = d.kitOpen||0; day = d.day; hour = d.hour; uid = d.uid;
-  research.done = d.research.done||{}; research.active = d.research.active; research.left = d.research.left||0; research.rp = d.research.rp||0; research.study = d.research.study ? {...d.research.study} : null;
+  research.done = d.research.done||{}; research.active = d.research.active; research.left = d.research.left||0; research.rp = d.research.rp||0; research.readFirst = !!d.research.readFirst;
+  /* A SAVE FROM BEFORE THE STACK carries `{rp, left}` and no `docs`. Restoring that shape puts
+     a reading on the desk that `researchTick` cannot advance — `docs[0]` is undefined — so the
+     bench silently stops reading forever. Old readings are paid out where they stand. */
+  research.study = null;
+  if(d.research.study){
+    const st = d.research.study;
+    if(st.docs && st.docs.length) research.study = {docs: [...st.docs], left: st.left};
+    else if(st.rp) research.rp += st.rp;
+  }
   research.queue = [...(d.research.queue || [])]; research._stalled = null;
   const byId = {};
   const revive = (s) => {
