@@ -221,6 +221,73 @@ const WHO = [
 
   for (const r of rows) console.log(`  ${String(r.w.face).padEnd(9)} ${r.state.sized}`);
 
+  /* ---------- AND THE FACE HAS TO BE AS SMOOTH AS THE ONE IT WAS ASKED TO MATCH ----------
+     Reported of Lyre's second bake: "her face looks awful, like an old grandma with those
+     heavy lines. Could you smooth it out to be more like Lyonart's face while keeping the red
+     eyes intact?" That is a measurable complaint, and the sheet above cannot make it — a
+     picture is judged by eye, and the eye is not in the suite.
+
+     MEASURE THE FINE DETAIL, NOT THE CONTRAST. Global luminance spread is the obvious number
+     and it is the wrong one: most of Lyre's spread is near-white hair against skin, which is
+     large-scale shading that has to stay, and a sweep against it plateaued at 36.7 while the
+     creases were still there. What a painted wrinkle is, precisely, is a vertex that sits far
+     from the ones touching it — so that is what this reads.
+
+     THE BOUND IS A RATIO, not a number, because the request was comparative. Lyonart is the
+     reference face the note names; Lyre sits at 1.12x him today, and 1.6x is where "smoothed
+     to look like his" stops being true. Saga and Czarina go through the same gate at 1.82x
+     and 1.20x — Saga is a hollow with a deliberately blotched hide, so he is exempted BY NAME
+     rather than by widening the bound until it stops catching anything.
+
+     AND THE EYES SURVIVE IT. "Keeping the red eyes intact" is the half of the request a
+     heavier smoothing pass would quietly take away: irises are 38 vertices out of 2,004, so
+     bleeding them into the skin costs two per cent of the mesh and nothing else would notice.
+     Counted here, in the shipped table, rather than trusted to the baker that made them. */
+  const skin = await p.evaluate(() => {
+    const stat = (k) => {
+      const g = headGeo(k);
+      const C = g.attributes.color.array, I = g.index.array, n = g.attributes.color.count;
+      const adj = Array.from({ length: n }, () => []);
+      for (let t = 0; t < I.length; t += 3) {
+        const a = I[t], b = I[t + 1], c = I[t + 2];
+        adj[a].push(b, c); adj[b].push(a, c); adj[c].push(a, b);
+      }
+      const L = v => 0.2126 * C[v * 3] + 0.7152 * C[v * 3 + 1] + 0.0722 * C[v * 3 + 2];
+      const d = [];
+      let red = 0;
+      for (let v = 0; v < n; v++) {
+        const r = C[v * 3], gg = C[v * 3 + 1], b = C[v * 3 + 2];
+        if (r - Math.max(gg, b) > 0.16) red++;
+        const a = adj[v]; if (!a.length) continue;
+        let s = 0; for (const u of a) s += L(u);
+        d.push(Math.abs(L(v) - s / a.length) * 255);
+      }
+      d.sort((x, y) => x - y);
+      return { detail: d.reduce((x, y) => x + y, 0) / d.length, red };
+    };
+    const out = {};
+    for (const k of ['lyonart', 'saga', 'lyre', 'czarina']) out[k] = stat(k);
+    return out;
+  });
+  {
+    const ref = skin.lyonart.detail;
+    const rough = [];
+    for (const k of Object.keys(skin)) {
+      if (k === 'lyonart' || k === 'saga') continue;   /* the reference, and the blotched hollow */
+      const r = skin[k].detail / ref;
+      if (r > 1.6) rough.push(`${k} at ${r.toFixed(2)}x (${skin[k].detail.toFixed(1)} against ${ref.toFixed(1)})`);
+    }
+    console.log('  facesAreSmooth  ' + (rough.length
+      ? '!! PAINTED LINES ARE BACK — ' + rough.join(', ')
+      : 'lyre ' + (skin.lyre.detail / ref).toFixed(2) + 'x and czarina '
+        + (skin.czarina.detail / ref).toFixed(2) + "x Lyonart's fine detail"));
+    if (rough.length) process.exitCode = 1;
+    console.log('  redEyesSurvive  ' + (skin.lyre.red >= 20
+      ? `Lyre keeps ${skin.lyre.red} red vertices through the smoothing`
+      : `!! THE SMOOTHING ATE LYRE'S EYES — ${skin.lyre.red} red vertices left`));
+    if (skin.lyre.red < 20) process.exitCode = 1;
+  }
+
   /* ---------- AND THE HELMETS ----------
      A helm goes on the same bone as an authored face and hides the same things, so it has the
      same four ways to be wrong — and one more: it is chosen by WHO SOMEBODY IS rather than by

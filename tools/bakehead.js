@@ -89,6 +89,98 @@ const COLOUR_W = Number(process.env.HEAD_COLOUR_W || 0.06);   /* how much an alb
 const BAKE_TABLE = process.env.BAKE_TABLE || 'HEADP';
 const OUT = path.join(__dirname, process.env.BAKE_OUT || 'heads.gen.js');
 
+/* ================================ SOFTENING PAINTED DETAIL ================================
+ * Reported of the second Lyre head: "her face looks awful, like an old grandma with those
+ * heavy lines. Could you smooth it out to be more like Lyonart's face while keeping the red
+ * eyes intact?"
+ *
+ * MEASURED FIRST, because "heavy lines" has two completely different causes and they want
+ * opposite fixes. If the creases were GEOMETRY — QEM leaving faceted ridges at 4,000 triangles
+ * under a flat-shaded renderer — the answer is a bigger budget. If they are PAINTED into the
+ * albedo, a bigger budget reproduces them more faithfully and makes it worse. Luminance spread
+ * across the baked vertex colours, which is what a flat-shaded model actually shows you:
+ *
+ *     lyonart  sdev 27.8   p5-p95  86      <- the face the note asks for
+ *     lyre v2  sdev 45.4   p5-p95 138      <- 1.6x the contrast of it
+ *     lyre v1  sdev 38.9   p5-p95 124      <- and v2 is worse than what it replaced
+ *
+ * Painted. So this softens the ALBEDO and leaves the mesh alone.
+ *
+ * AND IT SOFTENS THE FINE DETAIL ONLY. Flattening every vertex toward the head's mean would
+ * take the shadow under the chin and the hair-to-skin step with it and leave a pasty oval —
+ * the large-scale shading is most of what makes the thing read as a face at all. So: a few
+ * Laplacian passes over the colour give the LOW-frequency field, and the high-frequency
+ * remainder — which is exactly what a painted wrinkle is — is scaled down and added back.
+ * Unsharp masking, run backwards.
+ *
+ * THE EYES ARE LOCKED, AND SO IS THE RING AROUND THEM. "Keeping the red eyes intact" is not a
+ * side condition, it is the one thing that must survive: 37 vertices of the 2,004 carry a
+ * chroma over 40/255 and every one of them is an iris. Smoothing across that boundary would
+ * bleed skin into the red and red into the skin — so saturated vertices are frozen, and their
+ * immediate neighbours are frozen too, or the iris ends up with a pink halo.
+ */
+const SOFTEN_ITERS = Number(process.env.HEAD_SOFTEN || 0);      /* Laplacian passes; 0 is off */
+const SOFTEN_KEEP  = Number(process.env.HEAD_DETAIL || 1);      /* how much fine detail survives */
+const KEEP_CHROMA  = Number(process.env.HEAD_KEEP_CHROMA || 0.157);   /* 40/255 — an iris, not skin */
+function soften(P, C, I, log){
+  if(SOFTEN_ITERS <= 0 || SOFTEN_KEEP >= 1) return;
+  const nv = P.length / 3;
+  const adj = Array.from({ length: nv }, () => []);
+  for (let t = 0; t < I.length; t += 3) {
+    const a = I[t], b = I[t + 1], c = I[t + 2];
+    adj[a].push(b, c); adj[b].push(a, c); adj[c].push(a, b);
+  }
+  const locked = new Uint8Array(nv);
+  let eyes = 0;
+  for (let v = 0; v < nv; v++) {
+    const r = C[v * 3], g = C[v * 3 + 1], b = C[v * 3 + 2];
+    if (Math.max(r, g, b) - Math.min(r, g, b) > KEEP_CHROMA) { locked[v] = 1; eyes++; }
+  }
+  /* and one ring out, or the iris gets a pink halo where skin averaged into it */
+  const halo = Uint8Array.from(locked);
+  for (let v = 0; v < nv; v++) if (locked[v]) for (const u of adj[v]) halo[u] = 1;
+  let S = Float64Array.from(C);
+  for (let it = 0; it < SOFTEN_ITERS; it++) {
+    const N = Float64Array.from(S);
+    for (let v = 0; v < nv; v++) {
+      if (halo[v]) continue;
+      const a = adj[v]; if (!a.length) continue;
+      let r = 0, g = 0, b = 0;
+      for (const u of a) { r += S[u * 3]; g += S[u * 3 + 1]; b += S[u * 3 + 2]; }
+      const n = a.length;
+      N[v * 3] = (S[v * 3] + r / n) * 0.5;
+      N[v * 3 + 1] = (S[v * 3 + 1] + g / n) * 0.5;
+      N[v * 3 + 2] = (S[v * 3 + 2] + b / n) * 0.5;
+    }
+    S = N;
+  }
+  for (let v = 0; v < nv; v++) {
+    if (halo[v]) continue;
+    for (let k = 0; k < 3; k++) {
+      const i = v * 3 + k;
+      C[i] = Math.max(0, Math.min(1, S[i] + (C[i] - S[i]) * SOFTEN_KEEP));
+    }
+  }
+  /* Report the FINE-DETAIL figure, not the global spread. Global luminance sdev is the wrong
+     score here and the first sweep proved it: six passes only moved it 45.4 -> 36.7 against
+     Lyonart's 27.8 and then plateaued, because most of Lyre's spread is her near-white hair
+     against her skin — legitimate large-scale contrast that should stay. What the note is
+     about is the high-frequency part, so measure exactly that: how far each vertex sits from
+     the average of the ones touching it.
+         lyonart  detail mean 6.05  p95 22.13      <- the face the note asks for
+         czarina  detail mean 7.25  p95 31.88
+         lyre v2  detail mean 16.08 p95 48.96      <- 2.7x Lyonart's                        */
+  const lum = (v) => 0.2126 * C[v * 3] + 0.7152 * C[v * 3 + 1] + 0.0722 * C[v * 3 + 2];
+  const d = [];
+  for (let v = 0; v < nv; v++) {
+    const a = adj[v]; if (!a.length) continue;
+    let n = 0; for (const u of a) n += lum(u);
+    d.push(Math.abs(lum(v) - n / a.length) * 255);
+  }
+  d.sort((x, y) => x - y);
+  const mean = d.reduce((x, y) => x + y, 0) / d.length;
+  log(`      softened ${SOFTEN_ITERS}x keeping ${SOFTEN_KEEP} of the fine detail — ${eyes} saturated verts locked, ${halo.reduce((a, b) => a + b, 0) - eyes} more in their ring; fine detail now mean ${mean.toFixed(2)} p95 ${d[Math.floor(d.length * 0.95)].toFixed(2)}`);
+}
 /* ================================ glTF ================================ */
 function readGLB(p) {
   const b = fs.readFileSync(p);
@@ -430,6 +522,7 @@ const b64 = (buf) => Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength).toS
 
     const W = weld(Float64Array.from(P0), C0, Int32Array.from(IDX));
     const R = simplify(W.P, W.C, W.I, job.tris, s => console.log(s));
+    soften(R.P, R.C, R.I, s => console.log(s));
 
     /* centre it, and make the longest axis exactly 1 */
     let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
