@@ -100,7 +100,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const c = makeChar(o.name, fac, x, y, { atk: 20, def: 10, tough: 16, ath: 8, ...o });
         c.state = 'ok'; c.x = x; c.y = y; chars.push(c); return c;
       };
-      const rows = [], dead = [];
+      const rows = [], dead = [], count = {};
       for (const gap of [5, 8, 9.4]) {
         for (let i = chars.length - 1; i >= 0; i--) if (dist(chars[i].x, chars[i].y, gx, gy) < 70) chars.splice(i, 1);
         const post = put('wild', gx + gap, gy, { name: 'Post' });
@@ -116,14 +116,23 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         for (let i = 0; i < 30 / (1 / 30); i++) { post.x = px; post.y = py; post.vx = post.vy = 0; update(1 / 30); }
         window.fireRanged = realFire;
         const hit = b0 - post.blood;
-        rows.push(`at ${gap}: ${loosed} loosed, ${hit.toFixed(0)} blood through it`);
-        if (loosed > 0 && hit <= 0) dead.push(`${gap} tiles (${loosed} shots, nothing landed)`);
-        if (loosed === 0) dead.push(`${gap} tiles (it would not shoot at all)`);
+        count[gap] = loosed;
+        rows.push(`at ${gap}: ${loosed} arrived, ${hit.toFixed(0)} blood through it`);
+        if (loosed === 0) dead.push(`${gap} tiles (nothing arrived at all)`);
       }
       R._flight = rows.join(' | ');
-      R.aShotAtFullReachLands = dead.length === 0
-        ? 'and a shot loosed at the far edge of the new band actually arrives, not only the close ones'
-        : `!! ARROWS GO NOWHERE AT ${dead.join(', ')}`;
+      /* ---------- COMPARE THE FAR EDGE AGAINST THE CLOSE ONE ----------
+         `fireRanged` is called at ARRIVAL, not at the draw, so this spy counts shots that
+         survived the flight. The first version only asked whether ANY arrived, and a negative
+         control proved that too weak: with the old flat-9 resolution reach put back and
+         everything else new, the archer still landed shots at 9.4 tiles — FIVE of them, against
+         ten close in. Half its arrows discarded in the air, and the assertion green. A rate
+         against its own close-range baseline is the measurement; a yes/no is not. */
+      const near = count[5] || 0, far = count[9.4] || 0;
+      R.aShotAtFullReachLands = (dead.length === 0 && near >= 6 && far >= near * 0.8)
+        ? `and ${far} of a possible ${near} arrive from the far edge of the band — the flight is not eating them`
+        : dead.length ? `!! NOTHING ARRIVES AT ${dead.join(', ')}`
+        : `!! ${far} ARRIVE AT 9.4 TILES AGAINST ${near} CLOSE IN — the far shots are being discarded in the air`;
     });
 
     /* ---------- 4. AND THE HOST CAN ACTUALLY FIELD THEM ----------
