@@ -41,7 +41,7 @@ const path = require('path');
 /* Every harness in the suite, in the order the serial chain runs them. `prep.js` is not here:
    it rewrites game.html and must finish before anything reads it. */
 const ALL = [
-  'boot.js', 'origin.js', 'sister.js', 'hire.js', 'nights.js', 'focus.js', 'standoff.js', 'ironworks.js', 'muster.js', 'stumps.js', 'queue.js', 'charnelworks.js', 'watchrigs.js', 'towncheck.js', 'fight.js', 'roundtrip.js', 'save.js', 'walls.js',
+  'boot.js', 'origin.js', 'sister.js', 'hire.js', 'nights.js', 'focus.js', 'standoff.js', 'ironworks.js', 'muster.js', 'stumps.js', 'queue.js', 'charnelworks.js', 'watchrigs.js', 'volley.js', 'towncheck.js', 'fight.js', 'roundtrip.js', 'save.js', 'walls.js',
   'world.js', 'host.js', 'raise.js', 'hosts.js', 'kitrot.js', 'craftwork.js', 'bound.js', 'descend.js', 'cave.js', 'under.js', 'opaque.js', 'guns.js', 'arrow.js', 'gunnery.js', 'roads.js', 'aid.js',
   'reach.js', 'ceiling.js', 'study.js', 'carry.js', 'jail.js', 'mishap.js', 'command.js', 'menus.js', 'rightclick.js', 'clicks.js', 'rites.js', 'notes.js', 'board.js', 'chores.js', 'trades.js', 'charnel.js', 'cloth.js',
   'threads.js', 'beasts.js', 'wyrm.js', 'curse.js', 'siege.js', 'guild.js', 'purge.js', 'watchers.js', 'lieu.js', 'wanderers.js', 'survive.js', 'melee.js', 'press.js', 'patrol.js', 'pace.js', 'spiral.js', 'flank.js', 'kiting.js', 'lich.js', 'voices.js', 'pain.js', 'heads.js',
