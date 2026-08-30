@@ -41,7 +41,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const bs = document.getElementById('btn-start');
     return bs && typeof chars !== 'undefined' && chars.length > 0;
   }, null, { timeout: 60000 });
-  await p.evaluate(() => document.getElementById('btn-start').click());
+  /* START AND STOP IN THE SAME BREATH. A click followed by a wait lets the world run for
+     however many frames the machine manages, which is not a fixed number and drops when a
+     sixty-harness suite is loading the box — so every body is somewhere slightly different
+     by the time this probe stages anything, and the numbers below inherit it. Measured on
+     one unchanged build before this was applied here: flank.js gave 1.67 / 1.67 / 1.09 over
+     three runs, and guns.js split three-to-two on an md5 that had not moved. Pausing inside
+     the same evaluate leaves no frames at all between the two. Every file below sets
+     `paused` for itself anyway; this only removes the window before its first statement. */
+  await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForFunction(() => document.getElementById('startoverlay').style.display === 'none', null, { timeout: 60000 });
 
   const out = await p.evaluate(() => {
@@ -153,6 +161,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          bodies came out at exactly 74.0 gained — because the skill ceiling is 100 and they had
          both simply maxed. A multiplier on the RATE is invisible once everything involved has
          finished; the assertion has to land while there is still road ahead. */
+      /* ---------- "AN IDENTICAL STARTING LINE" WAS NOT IDENTICAL ----------
+         The comment above is right about what the control needs and the code did not deliver
+         it: `spawnGaunt` goes through `makeChar`, which rolls a human SUBRACE for anything
+         with no race — so one Messenger came up Ironscar-bred (+3 atk) and the other
+         Orchard-bred (-1), and `xpGain` yields less the higher the stat already is. On the old
+         stream the two happened to roll compatibly; the day fourteen bodies were added to
+         worldgen the pair diverged and this reported 4.5 against 4.0 about a multiplier that
+         was working perfectly. Levelled by hand, so the two bodies differ in exactly the thing
+         under test and nothing else. */
+      /* THE LINE AS WELL AS THE STAT. `xpGain` multiplies by BOTH `learnMult` and the
+         subrace's per-skill `learn` — Ironscar-bred learns atk at 1.30x — so levelling the
+         starting number alone still left one of the pair climbing faster for a reason that
+         has nothing to do with the thing under test. */
+      ord.sub = m.sub;
+      ord.stats.atk = m.stats.atk;
       const mA = m.stats.atk, oA = ord.stats.atk;
       for (let i = 0; i < 20; i++) { xpGain(m, 'atk', 0.2); xpGain(ord, 'atk', 0.2); }
       const mGain = m.stats.atk - mA, oGain = ord.stats.atk - oA;

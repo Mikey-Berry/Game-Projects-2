@@ -38,7 +38,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
   await p.waitForTimeout(3000);
-  await p.evaluate(() => document.getElementById('btn-start').click());
+  /* START AND STOP IN THE SAME BREATH. A click followed by a wait lets the world run for
+     however many frames the machine manages, which is not a fixed number and drops when a
+     sixty-harness suite is loading the box — so every body is somewhere slightly different
+     by the time this probe stages anything, and the numbers below inherit it. Measured on
+     one unchanged build before this was applied here: flank.js gave 1.67 / 1.67 / 1.09 over
+     three runs, and guns.js split three-to-two on an md5 that had not moved. Pausing inside
+     the same evaluate leaves no frames at all between the two. Every file below sets
+     `paused` for itself anyway; this only removes the window before its first statement. */
+  await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(3000);
 
   const out = await p.evaluate(() => {
@@ -257,7 +265,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     /* ==================== 5. THE CHIMERA LINES KEEP THEIR BONES ==================== */
     {
-      const lines = ['houndkin', 'oxbound', 'thinblood', 'scaleborn'];
+      /* READ THE TABLE, DO NOT COPY IT. This was a hand-written list of the four chimera
+         lines and it went red the day one of them was cut — reporting "a raised chimera loses
+         its line" about a line that no longer exists, which is a probe telling you about
+         itself. Every line the race actually has, whatever that turns out to be. */
+      const lines = Object.keys(SUBRACES.chimera || {});
       const seen = {};
       let plain = null;
       for (const sub of lines) {

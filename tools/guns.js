@@ -152,14 +152,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.theBoltsLand = f.blood < hp0 || f.state !== 'ok'
         ? `and the bolts land on the thing it was aimed at (${hp0} -> ${Math.max(0, f.blood).toFixed(0)} blood, ${f.state})`
         : '!! THE BOLTS DO NOT ARRIVE — THE TURRET FIRES INTO NOTHING';
-      /* A LIVE TARGET TO ASK ABOUT. The first version asked `emplTarget` after the run and
-         reported that the turret was blind — it was not, it had already killed the only
-         hostile on the field. Ask the question of something still standing. */
+      /* ---------- A LIVE TARGET TO ASK ABOUT, AND ONLY ONE ----------
+         The first version asked `emplTarget` after the run and reported that the turret was
+         blind — it was not, it had already killed the only hostile on the field. The fix was
+         to stage a fresh one; the fix was half of one. Whether the FIRST raider is still
+         standing after forty seconds of bolts is a coin the PRNG flips: on the run that
+         reported this red it was alive at 41 blood, six tiles out, and `emplTarget` quite
+         correctly named it instead of the newcomer. An identity test needs one candidate.
+         So the first raider comes off the field the moment its own assertion has been read. */
+      { const i = chars.indexOf(f); if(i >= 0) chars.splice(i, 1); }
       const f2 = foe(gx + 6, gy + 1);
       run(2);   /* `charsNear` reads a grid rebuilt inside update(); a body pushed while paused is invisible to it */
-      R.theTurretPicksATarget = emplTarget(t, emplSpec(t)) === f2
-        ? 'and it picks up the next hostile to walk into its arc'
-        : '!! THE TURRET CANNOT SEE A HOSTILE SIX TILES AWAY IN THE OPEN';
+      const picked = emplTarget(t, emplSpec(t));
+      R.theTurretPicksATarget = picked === f2
+        ? 'and with the field cleared it picks up the next hostile to walk into its arc'
+        : `!! THE TURRET CANNOT SEE A HOSTILE SIX TILES AWAY IN THE OPEN (it named ${picked ? picked.name + ' at ' + dist(picked.x, picked.y, t.x, t.y).toFixed(1) : 'nothing'})`;
       R.theCrewLearnsTheMachine = g.stats.gunnery > 20
         ? `the crew learns the machine at the machine (gunnery ${g.stats.gunnery.toFixed(1)})`
         : `!! FIRING TEACHES NOTHING (gunnery still ${g.stats.gunnery.toFixed(1)})`;
@@ -189,9 +196,30 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const f0 = foe(gx + 8, gy);
       logs.length = 0;
       runPinned(200, [f0]);
-      R.aDryHeavyHoldsItsFire = (t.shots || 0) === 0 && f0.blood === 100
-        ? 'with an empty stash the Heavy will not fire at all'
-        : `!! A DRY HEAVY FIRES ANYWAY (${t.shots} bolts) — the charge rule does nothing`;
+      /* ---------- AND SAY WHO ELSE WAS THERE ----------
+         This assertion has two halves and they fail for opposite reasons: the Heavy firing is
+         a charge-rule bug, and the raider losing blood while it fired NOTHING is somebody
+         else's arrow. The message only ever named the first, so a run that failed on the
+         control read as a regression in the feature. `clearGround` runs once at staging and
+         twenty seconds is long enough for something to walk back in. */
+      const intruders = chars.filter(c => !c.__probe && c.state !== 'dead' &&
+                                          (c.floor || 0) === (f0.floor || 0) && dist(c.x, c.y, f0.x, f0.y) < 25)
+                             .map(c => `${c.name}/${c.faction}@${dist(c.x, c.y, f0.x, f0.y).toFixed(0)}`);
+      R._whoElseWasThere = intruders.length
+        ? `${intruders.length} on the measuring ground: ${intruders.slice(0, 6).join(', ')}`
+        : 'nothing but the control on the measuring ground';
+      /* THE CONTROL'S BLOOD IS NOT A CONSTANT. `=== 100` was an exact-equality test on a
+         number the game moves on purpose: two hundred steps of 0.1s is twenty seconds, and
+         `HOUR_SEC` is 8, so the raider stands in the open for TWO AND A HALF GAME-HOURS and
+         loses a point to hunger and weather. Measured at 99/100 with nothing else within
+         twenty-five tiles — the assertion was reading ordinary attrition as gunfire, and it
+         had been passing only because the arithmetic used to land the other side of a tick.
+         A bolt from a Heavy is worth far more than five, so five is the bound. */
+      R.aDryHeavyHoldsItsFire = (t.shots || 0) > 0
+        ? `!! A DRY HEAVY FIRES ANYWAY (${t.shots} bolts) — the charge rule does nothing`
+        : f0.blood > 95
+          ? `with an empty stash the Heavy will not fire at all (the raider is at ${f0.blood.toFixed(0)}, having stood outside for two and a half hours)`
+          : `!! THE HEAVY FIRED NOTHING BUT THE CONTROL LOST ${(100 - f0.blood).toFixed(0)} BLOOD — something else was shooting`;
       R.aDryHeavySaysWhereCellsComeFrom = logs.some(l => /Heavy Aetheric Lance is dry/.test(l) && /scavenged/.test(l) && /(Dustport|Hollowmere|occult dealers|redoubt)/.test(l))
         ? `and it says why, and where they come from: "${(logs.find(l => /is dry/.test(l)) || '').slice(0, 92)}…"`
         : `!! A DRY HEAVY IS UNEXPLAINED (said ${logs.find(l => /dry/.test(l)) || 'nothing'})`;

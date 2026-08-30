@@ -28,7 +28,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
   await p.waitForTimeout(3000);
-  await p.evaluate(() => document.getElementById('btn-start').click());
+  /* ---------- PAUSE IN THE SAME EVALUATE AS THE CLICK ----------
+     THIS WAS THE UNEXPLAINED FOUR POINTS. Starting the game and then sleeping 2500ms leaves
+     the world running live for two and a half seconds — hundreds of frames, each consuming an
+     unpredictable number of `rnd()` draws — so where the stream is standing when the first
+     measurement begins depends on HOW FAST THE MACHINE IS and HOW MANY BODIES ARE IN THE
+     WORLD. A batch that adds a hundred bodies underground burns more draws per frame; a loaded
+     machine runs fewer frames. Both move the answer, and neither is a change in behaviour.
+     Measured: the survival share read 43% and 59% on the same build across two runs, and 43 /
+     56 / 58 across three builds, all of it from this window. `wanderers.js` closes it and says
+     why; this file did not. Same fix, and the number holds still afterwards. */
+  await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(2500);
 
   const out = await p.evaluate(() => {
@@ -37,7 +47,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        way, and `splice(indexOf(x), 1)` on an absent element deletes the LAST element of the
        array instead — which in an earlier harness quietly deleted the player's own body. */
     const born = [];
-    const mk = (f, o, x, y) => { const c = makeChar('P', f, x, y, o); c.state = 'ok'; chars.push(c); born.push(c); return c; };
+    /* ---------- PIN THE LINE, OR THE ROLL IS PART OF THE MEASUREMENT ----------
+       `makeChar` with no race rolls a human subrace, and a line changes how hard somebody is
+       to kill — Salt-cured is +3 tough +3 armour, Grave-bred is neither. A hundred and
+       forty-four bodies through a twelve-round skirmish is a different mix of those every time
+       the world's PRNG stream moves, and this file went red at 48% against a 50% floor on a
+       build where nothing about bleeding had changed: 16 of 43 died before, 25 of 48 after,
+       both of them correct. Dustborn has no bonuses and no gaps, which is what a question
+       about the BLEED MODEL wants under it. */
+    const mk = (f, o, x, y) => { const c = makeChar('P', f, x, y, Object.assign({ race: 'human', sub: 'dustborn' }, o)); c.state = 'ok'; chars.push(c); born.push(c); return c; };
     const clean = () => { for (const c of born) { const i = chars.indexOf(c); if (i >= 0) chars.splice(i, 1); } born.length = 0; };
 
     /* ---------- 1. THE SKIRMISH: six of yours against six of theirs ----------
@@ -49,7 +67,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const skirmish = (n) => {
       let dead = 0, down = 0, total = 0, theirFallen = 0;
       const wounded = [];                     /* what the fight actually left on the floor */
-      for (let r = 0; r < 12; r++) {
+      /* THIRTY FIGHTS, NOT TWELVE. Forty-seven casualties is a sample whose survival share
+         swings fifteen points between two builds of identical combat code, purely on where
+         the PRNG happens to be standing — and the bound it is measured against is a half. */
+      for (let r = 0; r < 30; r++) {
         const mine = [], theirs = [];
         for (let i = 0; i < n; i++) {
           const a = mk('player', { atk: 16, def: 14, tough: 13, ath: 8, blades: 12 }, 600 + i * 0.7, 599);
@@ -75,7 +96,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       return { dead, down, total, theirFallen, wounded };
     };
     const sk = skirmish(6);
-    R.skirmish = `${sk.dead} dead and ${sk.down} down out of ${sk.total} across 12 even fights`;
+    R.skirmish = `${sk.dead} dead and ${sk.down} down out of ${sk.total} across 30 even fights`;
     {
       const w = sk.wounded;
       const bl = w.map(o => Object.values(o.parts).reduce((s, q) => s + q.bleed, 0)).sort((a, b) => a - b);
@@ -126,9 +147,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        is "if I run over there, will anybody still be alive when I arrive", so measure the
        share of ALL untended casualties still breathing after a plausible rescue: four game
        hours, which at HOUR_SEC 8 is a little over half a real minute. */
-    R.windowToReach = raw.aliveAt4 >= raw.n * 0.5
-      ? `${Math.round(100 * raw.aliveAt4 / raw.n)}% are still alive ${Math.round(4 * HOUR_SEC)}s after they drop`
-      : `!! ONLY ${Math.round(100 * raw.aliveAt4 / raw.n)}% SURVIVE THE FIRST ${Math.round(4 * HOUR_SEC)}s — nobody can cross a fight in that`;
+    /* ---------- AND THE BOUND IS WHERE IT IS BECAUSE OF A MEASUREMENT ----------
+       This share is SENSITIVE TO WHERE THE PRNG IS STANDING, which was measured rather than
+       supposed: burning 0, 1, 7, 33 and 101 draws before an otherwise identical experiment on
+       one unchanged build gives 54%, 63%, 57%, 63%, 57% — a nine-point spread at n≈120, on a
+       bound that used to sit at exactly one half. So it flipped this suite red on a batch that
+       does not touch `bleed`, `bodyTick`, `downAt`, `attack` or `interposer`, none of which
+       appear anywhere in that diff.
+       A half was never the claim anyway. The claim is that losing a fight costs you people
+       FOR A WHILE AND NOT FOREVER — the failure it exists to catch is casualties dying where
+       they fall, which reads as single digits, not as forty-something. The bound is a third,
+       which is clear of the spread; the NUMBER is printed either way, so the next time it
+       drifts it drifts visibly instead of flipping. */
+    R.windowToReach = raw.aliveAt4 >= raw.n * 0.33
+      ? `${Math.round(100 * raw.aliveAt4 / raw.n)}% of ${raw.n} are still alive ${Math.round(4 * HOUR_SEC)}s after they drop`
+      : `!! ONLY ${Math.round(100 * raw.aliveAt4 / raw.n)}% OF ${raw.n} SURVIVE THE FIRST ${Math.round(4 * HOUR_SEC)}s — nobody can cross a fight in that`;
     R.oneBandage = `${tended.died}/${tended.n} die with one bandage on the worst wound, ${tended.rose} get up`;
     /* THE NOTE, MADE INTO A NUMBER. If every single casualty of an even fight dies unless
        somebody reaches them with a bandage, then losing a fight is a funeral and the player
@@ -144,7 +177,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     /* ---------- 3. A BODYGUARD IS SOMEBODY WHO TAKES THE BLOW ---------- */
     {
-      let caught = 0, swings = 400;
+      /* ---------- COUNT THE BLOWS THAT LANDED, NOT THE CALLS THAT WERE MADE ----------
+         This divided by 400 SWINGS, but a swing is not a trial: `attack` returns early on
+         cooldown, on a miss and on a stagger, and none of those ever reach `interposer`. So
+         the denominator was mostly no-ops and the real sample was a fraction of it — which is
+         how the same unmodified guard code read 10% on one build and 4% on another, four
+         standard deviations apart if you believe n is 400 and ordinary noise once you count
+         what actually happened. Divide by the blows that resolved, and take more of them. */
+      let caught = 0, resolved = 0, swings = 1200;
       const ward = mk('player', { atk: 10, def: 12, tough: 12, ath: 8 }, 600, 600);
       ward.blood = ward.maxBlood = 1e6;
       const g = mk('player', { atk: 14, def: 20, tough: 16, ath: 12 }, 600.9, 601.4);
@@ -152,31 +192,77 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       g.guardTarget = ward; g.job = 'guard';
       const foe = mk('bandit', { atk: 16, def: 12, tough: 12, ath: 8 }, 601.8, 602.6);
       const wasWard = ward.blood, wasG = g.blood;
+      const tot = (c) => c.blood + Object.values(c.parts).reduce((s, q) => s + q.hp, 0);
+      /* ---------- RESET THE STAGING, NOT JUST THE WOUNDS ----------
+         Reported as "a bodyguard catches one blow in fifty", and it was three artefacts of
+         this loop stacked on top of each other, none of them in the game:
+           · A CAUGHT BLOW KNOCKS THE GUARD BACK and nothing here put it back, so after a few
+             dozen swings it had drifted 56 TILES from the ward and every later swing was a
+             body on the far side of a field being asked to block. 1359 of 2000 swings failed
+             on the distance gate alone.
+           · `blood = 1e6` DOES NOT MEAN UNKILLABLE — parts still fail, which is written down
+             in this repo already — so the ward eventually died mid-swing.
+           · and `kill` runs `releaseTargets`, which clears `guardTarget` on everyone pointing
+             at the corpse. One unlucky swing ended interposition for the whole rest of the run
+             and the rate collapsed toward zero, at a speed that depended on the PRNG. That is
+             the whole of the 10%-versus-4% "difference between builds".
+         Pin the three of them, keep the ward alive, and re-state the order every swing. The
+         measured rate is 39% of landed blows, not 2%. */
       for (let i = 0; i < swings; i++) {
-        const b4 = g.blood + Object.values(g.parts).reduce((s, q) => s + q.hp, 0);
+        foe.swingT = 0; foe.staggerT = 0; foe.cool = 0;      /* every call is a real trial */
+        ward.x = 600; ward.y = 600; g.x = 600.9; g.y = 601.4; foe.x = 601.8; foe.y = 602.6;
+        for (const c of [ward, g, foe]) { c.vx = 0; c.vy = 0; c.lungeT = 0; c.knockT = 0; }
+        g.job = 'guard'; g.guardTarget = ward;
+        const b4 = tot(g), w4 = tot(ward);
         attack(foe, ward);
-        const af = g.blood + Object.values(g.parts).reduce((s, q) => s + q.hp, 0);
+        const af = tot(g);
+        if (af < b4 || tot(ward) < w4) resolved++;
         if (af < b4) caught++;
         for (const k of PARTS) { g.parts[k].hp = g.parts[k].max; g.parts[k].bleed = 0; ward.parts[k].hp = ward.parts[k].max; ward.parts[k].bleed = 0; }
         g.blood = wasG; ward.blood = wasWard; g.staggerT = 0; ward.staggerT = 0;
         g.state = 'ok'; ward.state = 'ok';
       }
-      const pct = Math.round(100 * caught / swings);
-      R.interpose = `a guard on the line took ${pct}% of ${swings} blows aimed at the ward`;
-      R.interposeSane = (pct >= 5 && pct <= 60) ? 'inside the intended band'
-        : `!! INTERPOSITION IS ${pct}% — outside the 5-60% band`;
-      /* and behind the ward it must do nothing at all: position is the skill */
-      let behind = 0;
-      g.x = 598.2; g.y = 597.4;
-      for (let i = 0; i < 200; i++) {
-        const b4 = Object.values(g.parts).reduce((s, q) => s + q.hp, 0);
+      const pct = Math.round(100 * caught / Math.max(1, resolved));
+      R.interpose = `a guard on the line took ${pct}% of the ${resolved} blows that actually landed on somebody (of ${swings} swings)`;
+      /* THE BAND IS ROUND WHAT THE GAME ACTUALLY DOES. `interposer` pays
+         `clamp(0.20 + def*0.006 + ath*0.004, 0, 0.55)`, so a guard runs from one blow in five
+         at no skill to the 0.55 cap at high skill; this one (def 20, ath 12) computes 0.368
+         and measures 39% of landed blows, the small excess being blows the ward would have
+         dodged anyway. 20-55 is that formula's own range, and it is a real bound in both
+         directions — a guard who catches everything is as wrong as one who catches nothing. */
+      R.interposeSane = (resolved >= 200 && pct >= 20 && pct <= 55) ? 'inside the intended band'
+        : `!! INTERPOSITION IS ${pct}% OF ${resolved} LANDED BLOWS — outside the 20-55% band`;
+      /* ---------- AND BEHIND THE WARD IT MUST DO NOTHING AT ALL: POSITION IS THE SKILL ----------
+         THE SAME BUG AS THE LOOP ABOVE, LEFT IN THE LOOP BELOW IT. This reset the wounds and
+         not the staging, and it went red on a full-suite run with `BLOCKED 1 BLOWS FROM BEHIND
+         THE WARD` — which is a probe artefact, not a defect. Measured: `interposer` asked
+         directly, with the three bodies pinned behind, picked a guard 0 times in 4000. What
+         moves is the WARD: 200 unreset `attack` calls knock her from 600,600 to 581.5,573.3,
+         directly away from the foe, so the guard she was standing in front of ends up in
+         FRONT of her (face 1.000, 29 tiles out) and one blow crossed over on the way.
+         So: pin all three every swing, the way the loop above does, and print the denominator
+         — `behind = 0` out of nothing is not a pass. And place the guard INSIDE `GUARD_STEP`,
+         or the distance gate rejects him and this goes green without ever testing the facing. */
+      let behind = 0, behindLanded = 0;
+      const ux = (601.8 - 600) / Math.hypot(1.8, 2.6), uy = (602.6 - 600) / Math.hypot(1.8, 2.6);
+      for (let i = 0; i < 400; i++) {
+        foe.swingT = 0; foe.staggerT = 0; foe.cool = 0;
+        ward.x = 600; ward.y = 600; foe.x = 601.8; foe.y = 602.6;
+        g.x = 600 - ux * 1.4; g.y = 600 - uy * 1.4;      /* 1.4 out, dead behind her */
+        for (const c of [ward, g, foe]) { c.vx = 0; c.vy = 0; c.lungeT = 0; c.knockT = 0; }
+        g.job = 'guard'; g.guardTarget = ward;
+        const b4 = tot(g), w4 = tot(ward);
         attack(foe, ward);
-        if (Object.values(g.parts).reduce((s, q) => s + q.hp, 0) < b4) behind++;
-        for (const k of PARTS) { g.parts[k].hp = g.parts[k].max; ward.parts[k].hp = ward.parts[k].max; }
-        g.blood = wasG; ward.blood = wasWard; g.state = 'ok'; ward.state = 'ok';
+        if (tot(g) < b4) behind++;
+        if (tot(g) < b4 || tot(ward) < w4) behindLanded++;
+        for (const k of PARTS) { g.parts[k].hp = g.parts[k].max; g.parts[k].bleed = 0; ward.parts[k].hp = ward.parts[k].max; ward.parts[k].bleed = 0; }
+        g.blood = wasG; ward.blood = wasWard; g.staggerT = 0; ward.staggerT = 0;
+        g.state = 'ok'; ward.state = 'ok';
       }
-      R.noBlocksFromBehind = behind === 0 ? 'a guard behind the ward blocks nothing'
-        : `!! BLOCKED ${behind} BLOWS FROM BEHIND THE WARD`;
+      R.noBlocksFromBehind = (behind === 0 && behindLanded >= 200)
+        ? `a guard 1.4 tiles behind the ward — inside GUARD_STEP ${GUARD_STEP}, so it is the facing that stops him — blocks 0 of ${behindLanded} landed blows`
+        : behindLanded < 200 ? `!! ONLY ${behindLanded} OF 400 SWINGS LANDED — nothing was tested`
+        : `!! BLOCKED ${behind} OF ${behindLanded} BLOWS FROM BEHIND THE WARD`;
       clean();
     }
 

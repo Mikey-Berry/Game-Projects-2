@@ -23,7 +23,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
   await p.waitForTimeout(3000);
-  await p.evaluate(() => document.getElementById('btn-start').click());
+  /* START AND STOP IN THE SAME BREATH. A click followed by a wait lets the world run for
+     however many frames the machine manages, which is not a fixed number and drops when a
+     sixty-harness suite is loading the box — so every body is somewhere slightly different
+     by the time this probe stages anything, and the numbers below inherit it. Measured on
+     one unchanged build before this was applied here: flank.js gave 1.67 / 1.67 / 1.09 over
+     three runs, and guns.js split three-to-two on an md5 that had not moved. Pausing inside
+     the same evaluate leaves no frames at all between the two. Every file below sets
+     `paused` for itself anyway; this only removes the window before its first statement. */
+  await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(3000);
 
   const out = await p.evaluate(() => {

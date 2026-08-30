@@ -37,7 +37,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push(String(e.message).slice(0, 200)));
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
   await p.waitForTimeout(3000);
-  await p.evaluate(() => document.getElementById('btn-start').click());
+  /* START AND STOP IN THE SAME BREATH. A click followed by a wait lets the world run for
+     however many frames the machine manages, which is not a fixed number and drops when a
+     sixty-harness suite is loading the box — so every body is somewhere slightly different
+     by the time this probe stages anything, and the numbers below inherit it. Measured on
+     one unchanged build before this was applied here: flank.js gave 1.67 / 1.67 / 1.09 over
+     three runs, and guns.js split three-to-two on an md5 that had not moved. Pausing inside
+     the same evaluate leaves no frames at all between the two. Every file below sets
+     `paused` for itself anyway; this only removes the window before its first statement. */
+  await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(3000);
 
   const out = await p.evaluate(() => {
@@ -134,6 +142,23 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        without one of them is the same crash under a new name.
        Read off the BUILT MESH and not off the character flags, because a flag no rig honours
        would pass a flag test and change nothing on screen. */
+    /* ---------- AND THE RIG A LINE DESCRIBES IS THE RIG IT GETS ----------
+       The float rule is a contract about what a floating rig must carry. This is the question
+       one level up: does a summon whose mesh branch describes something float AT ALL. The
+       Soulbound's branch draws a small blank wax figure hung in the air inside three turning
+       rings — and the branch sits inside `if(c.beast)`, which its summon never set. The Wisp
+       set it, the Servitor set it, the Soulbound did not, so it wore the ordinary skeleton and
+       the authored figure had never been drawn. Nothing logs, because nothing is missing:
+       there is simply a condition that cannot be true.
+       Read off the BUILT MESH, like everything else here — `floats` is stamped by the rig, so
+       a summon that sets the flag and builds nothing still fails. */
+    const WANT_FLOAT = ['wisp', 'servitor', 'soulbound'];
+    const notFloating = WANT_FLOAT.filter(k => rigs[k] && !rigs[k].floats);
+    R._floatWanted = `meant to hang in the air: ${WANT_FLOAT.join(', ')}`;
+    R.everyFigureThatShouldHangInTheAirDoes = notFloating.length === 0
+      ? 'and each of the three summons whose mesh describes a floating figure actually builds one'
+      : `!! ${notFloating.join(', ')} BUILDS A HUMANOID RIG — ITS AUTHORED MESH IS BEHIND A CONDITION THAT IS NEVER TRUE`;
+
     const NEEDED = ['float', 'sigil', 'spineBits'];
     const floaters = Object.entries(rigs).filter(([, e]) => e && e.floats);
     const missing = floaters.filter(([, e]) => NEEDED.some(k => !e[k])).map(([k, e]) => `${k} lacks ${NEEDED.filter(n => !e[n]).join('+')}`);
@@ -155,7 +180,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   });
 
   console.log('=== EVERY BOUND THING, DRAWN ===\n');
-  for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(30) + v);
+  for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(38) + v);
   const bad = Object.values(out).map(String).filter(v => v.startsWith('!!'));
   /* THE FRAME THROWS INTO A CHANNEL OF ITS OWN. See the note at the top. */
   if (errs.length) console.log('\n  ' + 'uncaughtInTheFrame'.padEnd(30) + `!! ${errs.length} EXCEPTION(S) ESCAPED THE RENDER LOOP — ${[...new Set(errs)].slice(0, 3).join(' | ')}`);

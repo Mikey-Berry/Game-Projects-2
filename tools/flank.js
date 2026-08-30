@@ -39,7 +39,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 220)));
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
   await p.waitForTimeout(3000);
-  await p.evaluate(() => document.getElementById('btn-start').click());
+  /* ---------- START IT AND STOP IT IN THE SAME BREATH ----------
+     THIS FILE WAS NON-DETERMINISTIC AND IT WAS THIS LINE. `click()` and then two and a half
+     seconds of `waitForTimeout` lets the world RUN for however many sim steps the machine
+     manages in that window, which is not a fixed number and drops sharply when a 51-harness
+     suite is loading the box. Every body is somewhere slightly different by the time the probe
+     stages anything, and the numbers inherit it.
+     Measured on one unchanged build: `worstDetour` came back 1.67, 1.67, 1.09 over three runs,
+     and `switches` 1, 1, 0 — the assertion was reporting the machine's load. Pausing in the
+     same evaluate as the click leaves no frames between the two, so every run starts from the
+     identical world. Same fix, same reason, as the one in guns.js. */
+  await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(2500);
 
   const out = await p.evaluate(() => {
