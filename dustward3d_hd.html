@@ -2124,19 +2124,74 @@ function armorPen(c){
    manages one body over a shoulder. */
 function carryCap(c){ return c.cart ? 6 : c.mule ? 3 : 1; }
 function carried(c){ return (c.carry ? 1 : 0) + (c.carryList ? c.carryList.length : 0); }
+/* ============================================================ SHIFTING THE GREAT DEAD
+   "For big corpses, it should take either a bone cart, mule, OR like four regular dudes
+    minimum. Either way, it should also be a slow drag, not one guy soloing it all."
+
+   One necromancer could put a Sixfold over their shoulder and jog home with it, because
+   `takeBody` only ever asked whether your hands were empty. A thing two and a half times the
+   size of a man is either freight — a Gravecart, a Bone Mule — or it is four people and an
+   afternoon, and either way it does not travel at walking pace.
+
+   THE CREW IS REAL BODIES, not a number checked once at the pick-up. Three more hands are
+   taken off whatever they were doing and walk with the load; lose one to a fight, a wall or a
+   death and the corpse goes down in the dirt where it stands. That is the cost of the
+   shortcut and the reason the cart is worth binding. */
+const GREAT_HANDS = 4;          /* pairs of hands it takes to shift one of the great dead */
+const GREAT_REACH = 4.5;        /* how far off somebody can be and still be called over to help */
+function freeToHaul(o, lead, body){
+  return !!o && o !== lead && o.faction === 'player' && o.state === 'ok'
+      && !o.carry && !o.bearing && !o.manning && !o.haulFor && !o.drag
+      && !concExclusive(o) && (o.floor || 0) === (body.floor || 0)
+      && dist(o.x, o.y, body.x, body.y) < GREAT_REACH;
+}
+function haulCrewFor(lead, body){
+  return chars.filter(o => freeToHaul(o, lead, body))
+    .sort((a, b) => dist(a.x, a.y, body.x, body.y) - dist(b.x, b.y, body.x, body.y))
+    .slice(0, GREAT_HANDS - 1);
+}
+/* is this body being dragged by a team rather than carried? Read by the pace and by the
+   per-frame check that keeps the team honest. */
+function draggingGreat(c){ return !!(c.carry && isGreatBody(c.carry) && !c.cart && !c.mule); }
 function takeBody(c, body){
   if(!body || body.state !== 'dead') return false;
   /* Carrying a corpse out of a town is the signature crime of this trade, and until now it
      was free. The town has to be able to see you do it. */
   if(c.faction === 'player') crime('graverob', body.x, body.y, c, body.floor || 0);
   if(carried(c) >= carryCap(c)){ log(`${c.name} has their hands full.`, 'bad'); return false; }
+  /* A GREAT BODY IS THE WHOLE LOAD — a flatbed with a Sixfold on it is a full flatbed */
+  if(bodiesOf(c).some(isGreatBody)){ log(`${c.name} already has all they can drag.`, 'bad'); return false; }
+  let crew = null;
+  if(isGreatBody(body)){
+    if(carried(c) > 0){ log(`There is no room for something that size on top of what ${c.name} is already carrying.`, 'bad'); return false; }
+    if(!c.cart && !c.mule){
+      crew = haulCrewFor(c, body);
+      if(crew.length < GREAT_HANDS - 1){
+        log(`${body.name} will not be shifted by ${crew.length + 1} ${crew.length ? 'pairs' : 'pair'} of hands. That wants a Gravecart, a Bone Mule, or ${GREAT_HANDS} bodies on it at once.`, 'bad');
+        return false;
+      }
+    }
+  }
   if(c.mule){
     c.carryList = c.carryList || [];
     c.carryList.push(body);
   } else c.carry = body;
-  log(`${c.name} took up ${body.name}.` + (c.mule ? ` (${carried(c)}/${carryCap(c)})` : ''), '');
+  if(crew){
+    for(const o of crew){ clearOrders(o); o.haulFor = c; }
+    c.haulCrew = crew;
+    log(`${crew.length + 1} of them get ${body.name} up off the ground. It is going to be a slow walk.`, '');
+  } else log(`${c.name} took up ${body.name}.` + (c.mule ? ` (${carried(c)}/${carryCap(c)})` : ''), '');
   refreshCharPanel();
   return true;
+}
+/* the team lets go — because the load went down, or because there are not enough of them left.
+   SWEPT BY WHO POINTS AT THE LEAD, not by the lead's own list. The frame check trims the dead
+   and the strayed out of `haulCrew` before this runs, so a member released off the list keeps
+   its `haulFor` forever — the same "a flag dropped across a boundary" that has cost this
+   project four bugs already. Whoever thinks they are holding this load is let go of it. */
+function releaseHaulCrew(c){
+  for(const o of chars) if(o.haulFor === c) o.haulFor = null;
+  c.haulCrew = null;
 }
 function bodiesOf(c){
   const out = [];
@@ -2147,6 +2202,7 @@ function bodiesOf(c){
 function dropBodies(c){
   const n = carried(c);
   if(!n) return false;
+  releaseHaulCrew(c);
   c.carry = null; c.carryList = null;
   log(`${c.name} set ${n > 1 ? n + ' bodies' : 'the body'} down.`, '');
   refreshCharPanel();
@@ -2159,7 +2215,7 @@ function dropBodies(c){
 function whoCarries(body){ return chars.find(o => o.carry === body || (o.carryList && o.carryList.includes(body))) || null; }
 function dropOneBody(c, body, at){
   if(!c || !body) return false;
-  if(c.carry === body) c.carry = null;
+  if(c.carry === body){ c.carry = null; releaseHaulCrew(c); }
   else if(c.carryList && c.carryList.includes(body)) c.carryList.splice(c.carryList.indexOf(body), 1);
   else return false;
   body.floor = c.floor || 0;
@@ -2303,6 +2359,10 @@ function moveSpeedRaw(c){
   if(c.bearing) s *= 0.72;   /* a body over your shoulder — see bearTarget */
   if(c.carry) s *= 0.8;
   if(c.carryList && c.carryList.length) s *= Math.pow(0.93, c.carryList.length);   /* a laden mule is a slow mule */
+  /* A SLOW DRAG, NOT A WALK. The load is the same either way; what a cart buys is that the
+     load is on wheels rather than on four people's shoulders. */
+  if(bodiesOf(c).some(isGreatBody)) s *= c.cart ? 0.62 : c.mule ? 0.55 : 0.40;
+  if(c.haulFor) s *= 0.40;    /* and the other three are walking at the same pace, by definition */
   if(c.frayed) s *= 1 - 0.35 * (c.frayT || 0);
   if(c.phyl) s *= 0.92;   /* it is heavier than it looks */
   if(weather.storm > 0 && (c.floor || 0) >= 0) s *= 0.85;   /* a storm does not blow underground */
@@ -2492,6 +2552,8 @@ function releaseTargets(c){
     if(o.lootTarget === c) o.lootTarget = null;
     if(o.rescueTarget === c) o.rescueTarget = null;
     if(o.carryTarget === c) o.carryTarget = null;
+    if(o.haulFor === c) o.haulFor = null;                                  /* the lead is gone */
+    if(o.haulCrew && o.haulCrew.includes(c)) o.haulCrew = o.haulCrew.filter(h => h !== c);
     if(o.execTarget === c) o.execTarget = null;
     if(o.master === c) o.master = null;
     if(o.under === c.id) o.under = null;
@@ -8294,8 +8356,14 @@ const TECHS = {
   pyromancy:    {name:'Pyromancy',         cost:600, hours:64, req:'construction',desc:'Firebolt splashes to nearby enemies'},
   benediction:  {name:'Benediction',       cost:600, hours:64, req:'construction',desc:'Heal spreads to allies near the target'},
   necromancy:   {name:'Deeper Necromancy', cost:600, hours:64, req:'construction',desc:'+2 servant cap, stronger risen'},
-  rites_binding:{name:'Rites of Binding',  cost:700, hours:72, req:'necromancy',  desc:'Binding Circle: craft Gravehounds, Hollow Brutes, Bound Servitors'},
-  rites_deep:   {name:'Deeper Rites',      cost:1200,hours:96, req:'rites_binding',desc:'Marrow Archers, Skeleton Mages, Ashen Colossus'},
+  /* The two roster lines are WRITTEN BELOW, off the roster itself — see the loop after this
+     table. Left as prose they drift, and both of them had: Binding still promised HOLLOW
+     BRUTES, renamed Bone Knights a while ago, and never mentioned the Gravecart or the
+     Stitch-Hand; Deeper still promised MARROW ARCHERS, which moved down a tier when their
+     weight and range changed. A tech's description is the only place a player can find out
+     what a 1200-gold project buys BEFORE paying for it, so it cannot be a memory. */
+  rites_binding:{name:'Rites of Binding',  cost:700, hours:72, req:'necromancy',  desc:''},
+  rites_deep:   {name:'Deeper Rites',      cost:1200,hours:96, req:'rites_binding',desc:''},
   quickening:   {name:'The Quickening',    cost:700, hours:72, req:'rites_binding', needs:'circle', mats:{fabric:10, copper:8},
     desc:'Flesh Vat: the homunculus-makers\' art — grow meat that was never alive'},
   carrion_rites:{name:'Carrion Rites',     cost:900, hours:80, req:'quickening', needs:'vat', mats:{vflesh:8, fabric:8},
@@ -8316,6 +8384,18 @@ const TECHS = {
     desc:'Conjure a squad that was never there. Enemies bite at nothing while yours do the cutting'},
   last_rite:    {name:'The Last Rite',     cost:2500,hours:120, req:'rites_deep',   rp:60, desc:'Ascension to lichdom — at a price'},
 };
+/* ---------- THE TWO ROSTER LINES, WRITTEN OFF THE ROSTER ----------
+   Reported: the Marrow Archer's line in the circle is stale. It was — Deeper Rites still sold
+   an archer that had moved to Binding a batch earlier, and Binding still sold a Hollow Brute
+   that had been renamed. Two lines of prose describing a table twelve entries long, kept in
+   step by hand, which is a thing that works right up until it doesn't.
+   They are generated now. Rename a shape, move one between the tiers, add a thirteenth, and
+   both descriptions say so without anybody remembering to go and edit them. */
+for(const tk of ['rites_binding', 'rites_deep']){
+  const names = Object.values(UNDEAD_TYPES).filter(u => u.tech === tk).map(u => u.name);
+  const list = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : (names[0] || '');
+  TECHS[tk].desc = (tk === 'rites_binding' ? 'Binding Circle: ' : '') + list;
+}
 const research = { done:{}, active:null, left:0, rp:0, study:null, queue:[] };
 /* ---------- LINING THE WORK UP ----------
    "The ability to queue up research would be nice."
@@ -10147,16 +10227,19 @@ function approachSlot(c, t, dt){
 function clearOrders(c){
   if(concExclusive(c) && !concMobile(c)) endConcentration(c);   /* a rooted light goes out when you move; a lantern travels with you */
   c.target = null; c.moveTarget = null; c.healTarget = null;
-  c.lootTarget = null; c.tradeTarget = null; c.bedTarget = null; c.pickupTarget = null; c.phylTarget = null; c.sealTarget = null; c.doorWork = false;
+  c.lootTarget = null; c.lootRender = false; c.tradeTarget = null; c.bedTarget = null; c.pickupTarget = null; c.phylTarget = null; c.sealTarget = null; c.doorWork = false;
   c.gather = null; c.attackMove = null; c.healProg = 0; c.gatherT = 0;
   c.chestTarget = null; c.targetManual = false; c.orderTarget = null; c.fleeT = 0;
   c.talkTarget = null;
   c.structTarget = null; c.repairTarget = null; c.stuckT = 0;
-  c.carryTarget = null; c.rescueTarget = null; c.seizeTarget = null;
+  c.carryTarget = null; c.rescueTarget = null; c.seizeTarget = null; c.yardRun = false;
   /* `bearTarget` is an order and goes. `bearing` is a LOAD and stays: a new move order is
      how you carry somebody somewhere, so dropping them on it would make the feature
      impossible to use. Putting them down is its own decision — see `physics`. */
   c.bearTarget = null;
+  /* AND HELPING TO DRAG SOMETHING IS AN ORDER. Given one of your own, a hauler steps off the
+     load — which is how you abandon a Sixfold halfway home, and it costs the team the corpse. */
+  c.haulFor = null;
   c.craftJob = null;      /* a new order takes them off the bench; nothing unmade was paid for */
   c.guardTarget = null; c.haulTarget = null;
   c.path = null; c.pathGoal = null;
@@ -10202,6 +10285,11 @@ function jobHasWork(c, j){
     case 'build':  return blueprints.length > 0;
     case 'raise':  return corpses.some(b => b.state === 'dead' && !b.raised) && risenLoad(c) < risenCap(c);
     case 'carrion': return corpses.some(carrionFodder);
+    /* somewhere to put one, and something to put there. Without the first half a camp with no
+       yard and no circle sends hands out to fetch corpses they can only stand and hold. */
+    case 'bones':  return pBuilds.some(b => b.type === 'boneyard' || b.type === 'circle' || b.type === 'crypt'
+                                         || b.type === 'ossuary' || b.type === 'charnel')
+                       && corpses.some(b => cartFodder(b) && !inBoneyard(b));
     /* ---------- TWO TRADES THAT WERE ONE WORD ----------
        FLESH used to mean both halves of the chain: coaxing quickflesh out of greenfruit and
        cloth at a vat, AND shaping that quickflesh into bodies at a Charnel House. One job
@@ -10593,6 +10681,15 @@ function physics(c, dt){
      larder haul each pin their captive beside them by hand, inline; the player's own seize
      never did, because `jail()` teleports the body at the end and nobody noticed it had been
      standing in a field the whole time. */
+  /* ---------- ONE OF THE OTHER THREE PAIRS OF HANDS ----------
+     A hauler on a team has no orders of their own while the load is up. Placed here, above
+     every other order and every job, because that is what "four dudes minimum" means: they
+     are on the corpse, not on the corpse when nothing else is going on. */
+  if(c.haulFor){
+    const lead = c.haulFor;
+    if(!chars.includes(lead) || lead.state !== 'ok' || !draggingGreat(lead)) c.haulFor = null;
+    else { travel(c, lead.x, lead.y, dt, 1.5); return; }
+  }
   if(c.bearTarget){
     const v = c.bearTarget;
     if(!chars.includes(v) || v.state !== 'down' || v.captured || v.jailedAt || c.bearing){ c.bearTarget = null; }
@@ -10630,10 +10727,24 @@ function physics(c, dt){
       c.carryTarget = null;
     } else return;
   }
+  /* ---------- "TAKE IT TO THE RACKS" IS ONE ORDER, NOT THREE ----------
+     Getting a body onto a Boneyard by hand was: pick up, walk, put down — and the putting down
+     has to land INSIDE the footprint, because `inBoneyard` reads a position. Miss by a tile and
+     the corpse is in a field. `cartDrop` already knows where the racks are and aims at the
+     middle of them, so the order below is the cart's own delivery, issued to a person. */
+  if(c.yardRun){
+    if(!carried(c)){ if(!c.carryTarget) c.yardRun = false; }
+    else {
+      const home = cartDrop(c);
+      if(!home){ c.yardRun = false; log(`${c.name} has nowhere to put a body down.`, 'bad'); }
+      else if(dist(c.x, c.y, home.x, home.y) > 1.6){ travel(c, home.x, home.y, dt, 1.2); return; }
+      else { dropBodies(c); c.yardRun = false; return; }
+    }
+  }
   /* loot order */
   if(c.lootTarget){
     const t = c.lootTarget;
-    if(travel(c, t.x, t.y, dt, 1.15)){ lootCorpse(t); c.lootTarget = null; }
+    if(travel(c, t.x, t.y, dt, 1.15)){ lootCorpse(t, false, c, c.lootRender); c.lootTarget = null; c.lootRender = false; }
     else return;
   }
   if(c.phylTarget){
@@ -11420,6 +11531,20 @@ function physics(c, dt){
           }
         }
       }
+    } else if(ej==='bones'){
+      /* ---------- A LIVING HAND WALKS THE CART'S ROUNDS ----------
+         "Putting corpses on the boneyard is a bit finicky right now, especially if others get
+          in the way. Perhaps if a bone yard is nearby, that can be a default option, or even
+          an assignable job."
+         It is the job. `cartTick` was already the whole of the behaviour — find a body nobody
+         has a claim on, pick it up, walk it to the yard, set it down — and exactly one thing in
+         the game could reach it: a bound Gravecart, which is two research tiers and a binding
+         away. A hand on BONE HAUL carries one at a time instead of six and otherwise walks the
+         identical rounds. A dispatch, not a second copy of the loop to drift away from the
+         first. FOUR of them on the job is also how a Sixfold gets moved without a cart: the
+         first to reach it calls the other three off their own rounds. */
+      if(cartTick(c, dt)) return;
+      return;
     } else if(ej==='carrion'){
       /* THE HARVEST ROUNDS. Walk to the nearest body nobody has a claim on, turn out its
          pockets, then render it down. Two beats per corpse — the looting is the first pass,
@@ -11457,8 +11582,22 @@ function physics(c, dt){
          stopped running; a rendering is a job, and a thing the size of a barn is an afternoon.
          Halved on the racks, because that is what the racks are for. */
       c.carrT = harvestSecs(body) * (inBoneyard(body) ? 0.5 : 1);
-      /* and a great body in the open is not work this hand can finish — leave it for the cart */
-      if(isGreatBody(body) && !inBoneyard(body) && body.looted){ body._harvSkip = now + 0.4; c.carrBody = null; c.carrScanT = 0; return; }
+      /* ---------- A GREAT BODY IN THE OPEN IS ONE PASS, THEN IT IS THE CART'S PROBLEM ----------
+         The old line here read `body.looted`, which for a great body in a field is a flag that
+         can never be set — `lootCorpse` refuses to go through one out there. So the job fell
+         past this guard into the looting branch, was refused, changed nothing, and came round
+         again: a hand set to HARVEST stood over a Sixfold for the rest of the run. It takes
+         the field share once — leaving the body, which is the point — and then leaves it be. */
+      if(isGreatBody(body) && !inBoneyard(body)){
+        if(body.fieldDone){ body._harvSkip = now + 0.4; c.carrBody = null; c.carrScanT = 0; return; }
+        const n = harvestCorpse(body, true, c);
+        log(n > 0 ? `${c.name} takes what a knife can reach off ${body.name} — ${n} Mortal Remains. The rest of it needs a cart.`
+                  : `${c.name} gets nothing out of ${body.name} where it lies.`, n > 0 ? 'good' : '');
+        body._harvSkip = now + 0.4;
+        c.carrBody = null; c.carrScanT = 0;
+        xpGain(c, 'labor', 0.4);
+        return;
+      }
       if(!body.looted){
         const got = lootCorpse(body, true, c) || [];
         if(got.length) log(`${c.name} turns out a body: ${got.join(', ')}.`, 'good');
@@ -14293,7 +14432,10 @@ function cartTick(c, dt){
       if(inBoneyard(b)) continue;                       /* already home */
       const d = dist(b.x, b.y, c.x, c.y);
       if(d >= 46) continue;
-      if(isGreatBody(b)){ if(d < gd){ gd = d; great = b; } }
+      /* AND ONLY WITH AN EMPTY BED. A great body is the whole load — see takeBody — so a cart
+         with two ordinary corpses aboard that walked to a Sixfold would be refused, and walk
+         to it again on the next scan, forever. It takes the small ones home first. */
+      if(isGreatBody(b)){ if(load === 0 && d < gd){ gd = d; great = b; } }
       else if(d < bd){ bd = d; body = b; }
     }
     body = great || body;
@@ -14309,7 +14451,10 @@ function cartTick(c, dt){
       travel(c, body.x, body.y, dt, 0.7);
       return true;
     }
-    takeBody(c, body);
+    /* A REFUSED PICK-UP IS NOT A REASON TO STAND THERE. takeBody can say no for four reasons
+       now — hands full, a great body on a loaded bed, no room, not enough hands — and without
+       this the scan re-picks the same corpse two seconds later and the round never advances. */
+    if(!takeBody(c, body)) body._cartSkip = day + hour / 24 + 0.05;
     c.cartBody = null; c.cartScanT = 0;
     return true;
   }
@@ -14506,6 +14651,9 @@ function carryShape(r, body, rot, m){
    it is written down rather than made in passing. */
 function carrionFodder(b){
   if(!b || b.state !== 'dead' || b.raised) return false;
+  /* a great body already worked where it fell is not work any more — it is freight. Without
+     this the job re-picks the nearest corpse every scan and walks back to the same Sixfold. */
+  if(isGreatBody(b) && b.fieldDone && !inBoneyard(b)) return false;
   if(b.bossKey || b.vip || b.phyl) return false;              /* names, not material */
   if(b.faction === 'town' || b.homeTown) return false;        /* that is a theft, not a chore */
   if(chars.some(o => o.carry === b || o.raiseBody === b)) return false;   /* already spoken for */
@@ -14514,7 +14662,12 @@ function carrionFodder(b){
   if(b.faction === 'player' && !b.grown && !b.undead) return false;
   return true;
 }
-function lootCorpse(t, quiet, by){
+/* `renderOnly` is the HARVEST order: skip the pockets and go straight to the rendering.
+   It used to be expressed by FORGING `body.looted = true` at the menu, which is the same thing
+   for an ordinary corpse and a quiet disaster for a great one — a Sixfold carries two Preserved
+   Formulae, two Worn, three pieces of the Sundered and three thousand gold in `dropItems`, and
+   marking it looted threw all of that away before the great-body gate below could refuse. */
+function lootCorpse(t, quiet, by, renderOnly){
   const log = quiet ? (() => {}) : outerLog;
   /* going through the pockets of somebody's neighbour, in front of the neighbours */
   if(t && (t.faction === 'town' || t.homeTown)) crime('theft', t.x, t.y, player()[0] || null, t.floor || 0);
@@ -14526,7 +14679,7 @@ function lootCorpse(t, quiet, by){
     log(`There is far too much of it to go through out here. Get it onto a cart and back to a Boneyard.`, 'bad');
     return null;
   }
-  if(t.looted){ return harvestCorpse(t, quiet, by); }
+  if(t.looted || renderOnly){ return harvestCorpse(t, quiet, by); }
   t.looted = true;
   let got = [];
   if(t.loot){ cats += t.loot; got.push(`${t.loot} gold`); }
@@ -14691,15 +14844,38 @@ function harvestCorpse(t, quiet, by){
   let n = Math.max(1, dk.remains - (rnd() < 0.4 ? 0 : 1));
   if(by && by.harvestBonus) n += by.harvestBonus;
   /* THE PLACE IS WORTH MORE THAN THE HAND. A yard rendering is the whole body; a field one is
-     what a knife and an hour can get off it before the rest is spoiled. */
+     what a knife and an hour can get off it before the rest is spoiled.
+     ---------- AND THE FIELD SHARE IS AN ADVANCE, NOT A SALE ----------
+     "The harvest action for a Sixfold now completely removes its body, even though the tooltip
+     says that you can get more back from a boneyard." It did, and the tooltip was the honest
+     half: the knife took a quarter and the other three quarters were deleted with it.
+     A great body carries `rendered` now — the share already taken off it — and the field pass
+     leaves the body lying there with that mark on it. What the yard pays is the REMAINDER of
+     the yard total, so 0.25 in the field then 1.65 on the racks comes to the same 1.9 as
+     hauling it home untouched. Taking the field share is an advance against the yard, not a
+     penalty for it and not a shortcut past it. */
   const yard = inBoneyard(t);
-  if(yard) n = Math.round(n * YARD_MULT);
-  else if(isGreatBody(t)) n = Math.max(1, Math.round(n * FIELD_GREAT_SHARE));
+  const great = isGreatBody(t);
+  const taken = t.rendered || 0;
+  if(great && !yard && t.fieldDone){
+    log(`There is nothing more to be had out of it here. What is left of it wants a Boneyard.`, 'bad');
+    return 0;
+  }
+  const share = Math.max(0, (yard ? YARD_MULT : great ? FIELD_GREAT_SHARE : 1) - taken);
+  if(share <= 0){
+    log(`It has already given up everything it had.`, 'bad');
+    return 0;
+  }
+  n = great || yard ? Math.max(1, Math.round(n * share)) : n;
   /* and a quarter-body renders down to a quarter of that. A fresh Eye comes out at one; one
      that has been lying in the sun comes out at nothing, and the knife says so rather than
      reporting a harvest of zero. The body is still cleared — there was just nothing in it. */
   n = Math.round(n * bodyWorth(t));
   if(n <= 0){
+    /* and a great body is never cleared away by a rendering that got nothing — the same rule
+       as below, applied on the path that is easy to forget: whatever it was carrying is still
+       under it, and deleting the corpse deletes that too */
+    if(great && !yard){ t.fieldDone = true; log('There is nothing a knife can get out of it here.', ''); return 0; }
     const c0 = corpses.indexOf(t); if(c0>=0) corpses.splice(c0,1);
     const x0 = chars.indexOf(t);   if(x0>=0) chars.splice(x0,1);
     log('There is not enough left of it to render.', '');
@@ -14708,10 +14884,19 @@ function harvestCorpse(t, quiet, by){
   addItem('remains', n);
   rememberRemains(t, n, dk);
   if(dk.k === 'fresh' && rnd() < (yard ? 0.8 : 0.35)) addItem('vflesh', 1);
+  /* A GREAT BODY WORKED IN THE OPEN IS STILL LYING THERE. Everything else comes apart and is
+     gone; this one is marked and left, because the rest of it — and everything it was
+     carrying — is the whole reason to own a cart. */
+  if(great && !yard){
+    t.rendered = taken + share;
+    t.fieldDone = true;
+    log(`Took ${n} Mortal Remains off it where it fell. Most of a thing that size is still lying there — that wants a cart and a Boneyard.`, 'good');
+    refreshInv();
+    return n;
+  }
   const ci = corpses.indexOf(t); if(ci>=0) corpses.splice(ci,1);
   const xi = chars.indexOf(t); if(xi>=0) chars.splice(xi,1);
   log(yard ? `Rendered down on the racks: ${n} Mortal Remains from a ${dk.label} body. Nothing of it wasted.`
-           : isGreatBody(t) ? `Took ${n} Mortal Remains off it in the field. Most of a thing that size is still lying there — that wants a Boneyard.`
            : `Harvested ${n} Mortal Remains from a ${dk.label} body.`, 'good');
   refreshInv();
   return n;
@@ -18373,8 +18558,24 @@ function update(dt){
       c.carryList.forEach((b, i) => { b.x = c.x - 0.5 + i * 0.34; b.y = c.y + 0.4; b.floor = c.floor || 0; });
     }
     if(c.carry){
-      if(!corpses.includes(c.carry)){ c.carry = null; continue; }
+      if(!corpses.includes(c.carry)){ releaseHaulCrew(c); c.carry = null; continue; }
       c.carry.x = c.x - 0.4; c.carry.y = c.y + 0.25;
+      c.carry.floor = c.floor || 0;
+      /* ---------- AND THE TEAM HAS TO STILL BE THERE ----------
+         Checked every frame rather than once at the pick-up, because the whole point of a
+         four-hand load is that it is a commitment you can lose: somebody dies, somebody is
+         dragged off, somebody is left the wrong side of a wall, and the thing goes down where
+         it stands. Counted by who is actually WITH it, not by who agreed to help. */
+      if(draggingGreat(c)){
+        if(c.haulCrew) c.haulCrew = c.haulCrew.filter(o =>
+          chars.includes(o) && o.state === 'ok' && o.haulFor === c && dist(o.x, o.y, c.x, c.y) < GREAT_REACH + 3);
+        if(!c.haulCrew || c.haulCrew.length < GREAT_HANDS - 1){
+          const b = c.carry;
+          releaseHaulCrew(c);
+          c.carry = null;
+          log(`They lose their grip on ${b.name}. It comes down where it is.`, 'bad');
+        }
+      }
     }
   }
   separate();
@@ -26517,7 +26718,7 @@ function refreshCharPanel(){
   jr.innerHTML = '<span style="color:var(--dust);font-size:10px">JOB</span>';
   const JOBS = [
     [null,'NONE'], ['wood','WOOD'], ['stone','STONE'], ['fish','FISH'], ['farm','TEND'],
-    ['build','BUILD'], ['flesh','FLESH'], ['charnel','CHARNEL'], ['raise','RAISE'], ['carrion','HARVEST'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
+    ['build','BUILD'], ['flesh','FLESH'], ['charnel','CHARNEL'], ['raise','RAISE'], ['carrion','HARVEST'], ['bones','BONE HAUL'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
   ];
   /* ---------- THE TRADES THAT WANT SOMEBODY HOME BEHIND THE EYES ----------
      STUDY and CRAFT were filtered by `mindedDead` and GUNNERY was not, although `emplGunner`
@@ -29066,8 +29267,14 @@ cv.addEventListener('mousedown', e => {
     if(body){
       const m0 = movers[0];
       const items = [{label:'EXAMINE', fn:()=>examine(body)}];
+      /* THE DEFAULT WHEN THERE ARE RACKS TO PUT IT ON. Listed above LOOT and HARVEST because
+         once a camp has a Boneyard that is what you want done with almost every body — and for
+         a great one it is the ONLY thing that can be done with it. */
+      if(pBuilds.some(b => b.type === 'boneyard') && !inBoneyard(body) && !whoCarries(body))
+        items.push({label:'TAKE TO THE BONEYARD', fn:()=>{
+          clearOrders(m0); m0.carryTarget = body; m0.yardRun = true; }});
       if(!body.looted) items.push({label:'LOOT', fn:()=>{ clearOrders(m0); m0.lootTarget = body; }});
-      items.push({label:'HARVEST', fn:()=>{ clearOrders(m0); m0.lootTarget = body; body.looted = true; }});
+      items.push({label:'HARVEST', fn:()=>{ clearOrders(m0); m0.lootTarget = body; m0.lootRender = true; }});
       /* A BODY ALREADY OVER SOMEBODY'S SHOULDER. Offering PICK UP on one was the whole of the
          interface for a corpse you were already carrying — it answered "someone already has
          that body" and left you carrying it until it was raised or rendered. */
@@ -30120,7 +30327,7 @@ function snapshot(){
     heldKit: c.heldKit || null, prisoner: !!c.prisoner, breakT: c.breakT || 0,
     masterId:c.master ? c.master.id : null, guard:c.guard,
     homeTownI: c.homeTown ? towns.indexOf(c.homeTown) : -1,
-    beast:!!c.beast, loot:c.loot||0, deadAt:c.deadAt||0, looted:!!c.looted, robbed:!!c.robbed, swag: c.swag ? {gold: c.swag.gold, items: {...c.swag.items}} : null,
+    beast:!!c.beast, loot:c.loot||0, deadAt:c.deadAt||0, looted:!!c.looted, robbed:!!c.robbed, rendered:c.rendered||0, fieldDone:!!c.fieldDone, swag: c.swag ? {gold: c.swag.gold, items: {...c.swag.items}} : null,
     mobileVendor:!!c.mobileVendor, caravanDestI: c.caravan ? towns.indexOf(c.caravan.dest) : -1,
     followId: c.follow ? c.follow.id : null,
     job:c.job, job2:c.job2||null, grp:c.grp||null,
@@ -30141,10 +30348,15 @@ function snapshot(){
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
     immortal:c.immortal||null, wanderKey:c.wanderKey||null, wanderMet:c.wanderMet||0, wanderSeen:c.wanderSeen?{...c.wanderSeen}:null, wanderJoined:!!c.wanderJoined, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, golem:!!c.golem, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
-    carryId: c.carry ? c.carry.id : null,
+    carryId: c.carry ? c.carry.id : null, yardRun: !!c.yardRun,
     skinShift: c.skinShift || null, shiftN: c.shiftN || 0,
     bearingId: c.bearing ? c.bearing.id : null,
     carryIds: c.carryList ? c.carryList.map(b => b.id) : null,
+    /* THE TEAM ON A GREAT BODY SURVIVES A RELOAD, both ends of it. Saving only the lead's
+       carry would put a Sixfold back over one person's shoulder — the exact thing the four-hand
+       rule exists to prevent — because the crew check runs every frame and would find no crew. */
+    haulForId: c.haulFor ? c.haulFor.id : null,
+    haulCrewIds: c.haulCrew ? c.haulCrew.map(o => o.id) : null,
     lich: !!c.lich, face: c.face||null, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, coilSpeaker: !!c.coilSpeaker, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
     guardTargetId: c.guardTarget ? c.guardTarget.id : null,
     /* somebody you were paid to keep alive, and who they were walking to */
@@ -30434,7 +30646,7 @@ function restore(d){
     c.armor  = (s.armor  && ITEMS[s.armor])  ? s.armor  : null;
     if(s.weapon && !ITEMS[s.weapon]) console.warn('dropped unknown weapon from save:', s.weapon);
     if(s.armor && !ITEMS[s.armor]) console.warn('dropped unknown armor from save:', s.armor); c.state = s.state; c.undead = !!s.undead;
-    c.beast = s.beast; c.loot = s.loot; c.deadAt = s.deadAt; c.looted = s.looted; c.robbed = s.robbed; c.swag = s.swag ? {gold: s.swag.gold, items: {...s.swag.items}} : null;
+    c.beast = s.beast; c.loot = s.loot; c.deadAt = s.deadAt; c.looted = s.looted; c.robbed = s.robbed; c.rendered = s.rendered || 0; c.fieldDone = !!s.fieldDone; c.swag = s.swag ? {gold: s.swag.gold, items: {...s.swag.items}} : null;
     c.guard = s.guard; c.homeTown = s.homeTownI>=0 ? towns[s.homeTownI] : null;
     c.mobileVendor = !!s.mobileVendor;
     if(s.caravanDestI >= 0) c.caravan = {dest: towns[s.caravanDestI], waitT: 0};
@@ -30555,7 +30767,8 @@ function restore(d){
     c._mid = s.masterId; c._fid = s.followId; c._did = s.dragId; c._cid = s.carryId; c._gid = s.guardTargetId;
     c._bid = s.bearingId || null;
     c.skinShift = s.skinShift || null; c.shiftN = s.shiftN || 0;
-    c._cids = s.carryIds || null;
+    c._cids = s.carryIds || null; c.yardRun = !!s.yardRun;
+    c._hfid = s.haulForId || null; c._hcids = s.haulCrewIds || null;
     byId[c.id] = c;
     return c;
   };
@@ -30647,6 +30860,8 @@ function restore(d){
     if(c._bid){ c.bearing = byId[c._bid] || null; if(c.bearing) c.bearing.borneBy = c; }
     if(c._cid) c.carry = corpses.find(x => x.id === c._cid) || null;
     if(c._cids) c.carryList = c._cids.map(id => corpses.find(x => x.id === id)).filter(Boolean);
+    if(c._hfid) c.haulFor = byId[c._hfid] || null;
+    if(c._hcids) c.haulCrew = c._hcids.map(id => byId[id]).filter(Boolean);
     if(c._gid) c.guardTarget = byId[c._gid] || null;
   };
   for(const c of chars) relink(c);
