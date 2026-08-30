@@ -10373,7 +10373,7 @@ function approachSlot(c, t, dt){
 function clearOrders(c){
   if(concExclusive(c) && !concMobile(c)) endConcentration(c);   /* a rooted light goes out when you move; a lantern travels with you */
   c.target = null; c.moveTarget = null; c.healTarget = null;
-  c.lootTarget = null; c.lootRender = false; c.tradeTarget = null; c.bedTarget = null; c.pickupTarget = null; c.phylTarget = null; c.sealTarget = null; c.doorWork = false;
+  c.lootTarget = null; c.lootRender = false; c.tradeTarget = null; c.bedTarget = null; c.pickupTarget = null; c.phylTarget = null; c.sealTarget = null; c.tearTarget = null; c.doorWork = false;
   c.gather = null; c.attackMove = null; c.healProg = 0; c.gatherT = 0;
   c.chestTarget = null; c.targetManual = false; c.orderTarget = null; c.fleeT = 0;
   c.talkTarget = null;
@@ -10664,6 +10664,7 @@ function physics(c, dt){
   escapeIfStuck(c);
   if(c.doorWork && workTheDoor(c, dt)) return;   /* the door outranks every other thing */
   if(sealTick(c, dt)) return;   /* closing a tear is the only work that outranks a knife */
+  if(tearRiteTick(c, dt)) return;   /* and so does the long way round */
   if(mawFeed(c, dt)) return;   /* the Maw is here for the bodies, not for you */
   /* A ROOM GARRISON holds its chamber — redoubt guards and cave dwellers alike. It will not
      leave the room (or the floor) to chase, so a wandering boss can't lure a whole warren into
@@ -12756,6 +12757,10 @@ function riftTick(dh){
   }
   for(const r of rifts){
     r.age += dh;
+    /* THE RITE BLEEDS AWAY WITH NOBODY ON IT. Without this the long rite is not a
+       protect-the-caster event at all — it is a long errand you can walk away from and come
+       back to, and driving the caster off costs the attacker nothing. */
+    if(r.tearWork > 0 && !tearRiteHeld(r)) r.tearWork = Math.max(0, r.tearWork - dh * HOUR_SEC * TEAR_DECAY);
     /* a tear is a door left open: the wider it gets, the more comes through to stay */
     const pop = chars.filter(g2 => g2.riftId === r.id && g2.state !== 'dead').length;
     const wantPop = 1 + Math.floor(r.r / 4);
@@ -12815,6 +12820,91 @@ function riftTick(dh){
 function riftSealer(r){
   return player().find(c => c.gift && c.state === 'ok' && (!c.undead || c.lich) &&
     dist(c.x, c.y, r.x, r.y) < 3.5) || null;
+}
+/* ============================================================ THE LONG RITE
+   "Perhaps there can be two ways to close tears — the current one, which costs a ton of
+    materials (and closes it relatively quickly) versus a much longer 'ritual' version, which
+    is more of a 'protect the caster' event and costs time and military strength as creatures
+    come through to attempt to stop the ritual. For context, the portals are basically
+    impossible to close early-mid game right now, so it would be nice to have a way to close
+    them that doesn't require iron and specifically quickened flesh, as that's far down the
+    tech tree."
+
+   The seal costs 10 Quickened Flesh, 6 Iron and 12 Mortal Remains. Quickened Flesh comes out
+   of a Flesh Vat, which is THE QUICKENING — Rites of Binding, then a 700-gold project, then a
+   building; iron wants a smelter and a seam. Both are a long way past the point where the
+   first tears open, so the reported experience is exactly right: there is a stretch of the
+   game where a widening tear is a thing you watch.
+
+   The rite asks for none of that. It asks for a gift, a very long hold, and a line of bodies
+   between the caster and what comes out to stop them — which is the one currency a camp
+   always has. It is deliberately NOT cheaper, only differently priced: the seal is over in
+   about twenty seconds and the rite is two and a half minutes with waves coming through it.
+   AND IT DECAYS IF YOU LOSE IT, which is what makes it an event rather than a long errand:
+   drive the caster off and the work bleeds away while nobody is holding it.
+
+   NAMED `TEAR_*` AND `tearRiteTick`, NOT `RITE_*` AND `riteTick`. THE LAST RITE — ascension
+   to lichdom — already owns those names, and the comment three hundred lines above this one
+   says so in as many words. Written first as `riteTick` anyway, and the only reason it was
+   caught is that `const RITE_WORK` threw on the spot: a second top-level FUNCTION of the same
+   name would have collided silently, the later declaration would simply have won, and this
+   would have shipped as a dead tear-rite plus an ascension advanced twice a frame. */
+const TEAR_WORK = 150;      /* seconds of held rite, at a raw caster's pace */
+const TEAR_WAVE = 22;       /* seconds between what the tear sends to stop it */
+const TEAR_MANA = 0.9;      /* mana a second — against the seal's 2.5, so it can be sustained */
+/* HOW FAST THE HOLD BLEEDS, IN THE SAME UNITS THE CASTER ADDS IN — work per REAL second, not
+   per game hour. Written first as 0.35 and read as an hourly figure, which put the bleed at
+   2.8 an hour against a 150-point rite: fifty-three game hours to lose what took nineteen to
+   build, which is not a bleed, it is a rounding error. A caster at magic 20 adds about 1.4 a
+   second, so this is two thirds of the gain: being driven off costs you, and it does not
+   erase the whole hold the moment somebody lands a blow. */
+const TEAR_DECAY = 0.9;
+function tearRiteRate(c){ return 1 + (c.stats.magic || 1) * 0.02; }
+function tearRiteHeld(r){ return chars.some(c => c.tearTarget === r && c.state === 'ok'); }
+function tearRiteTick(c, dt){
+  if(!c.tearTarget) return false;
+  const r = c.tearTarget;
+  if(!rifts.includes(r)){ c.tearTarget = null; return false; }
+  if(!c.gift || (c.undead && !c.lich)){ c.tearTarget = null; return false; }
+  if(!travel(c, r.x, r.y, dt, 2.2)) return true;
+  if(c.mana < 1){ if(rnd() < dt*0.2) log(`${c.name} has nothing left to hold the rite with.`, 'bad'); return true; }
+  c.mana -= dt * TEAR_MANA;
+  const was = r.tearWork || 0;
+  r.tearWork = was + dt * tearRiteRate(c);
+  if(rnd() < dt * 4) addSpecks(r.x + (rnd()-0.5)*3, r.y + (rnd()-0.5)*3, '#d8c8ff', 2);
+  bumpNotice(dt * 0.05);   /* it feels you working at the edges of it, the same as the seal does */
+  /* a readout, because two and a half minutes with no number on it is a player wondering
+     whether anything is happening at all */
+  for(const mark of [0.25, 0.5, 0.75]){
+    if(was < TEAR_WORK * mark && r.tearWork >= TEAR_WORK * mark)
+      log(`The rite is ${Math.round(mark*100)}% of the way through. ${c.name} does not stop.`, '');
+  }
+  /* ---------- AND THE TEAR FIGHTS BACK ----------
+     Timed off the rift rather than off the caster, so a second caster joining shortens the
+     hold without doubling the waves — the point of a second gifted body is that the rite ends
+     sooner, not that the field is twice as busy. */
+  r.tearWorkWave = (r.tearWorkWave === undefined ? TEAR_WAVE : r.tearWorkWave) - dt;
+  if(r.tearWorkWave <= 0){
+    r.tearWorkWave = TEAR_WAVE;
+    const n = 2 + Math.floor(r.r / 5);
+    for(let k = 0; k < n; k++){
+      const q = findOpenNear(r.x + ri(-4, 4), r.y + ri(-4, 4), 4);
+      const g = spawnGaunt(r.r >= 10 ? pick(['maw','stalker','shrike']) : pick(['gaunt','stalker']), q.x, q.y);
+      if(!g) continue;
+      g.riftId = r.id;
+      g.nightborn = false;
+      g.hunt = true;                 /* they are not wandering. They are coming for the caster. */
+      g.target = c;
+    }
+    log(`The tear answers: ${n} of them come through at the one holding it.`, 'bad');
+    AU.news && AU.news();
+  }
+  if(r.tearWork >= TEAR_WORK){
+    log('The rite lands. No iron, no quickened flesh — just the hours and whoever stood in front of them.', 'good');
+    closeRift(r, c);
+    c.tearTarget = null;
+  }
+  return true;
 }
 function sealTick(c, dt){
   if(!c.sealTarget) return false;
@@ -29664,9 +29754,23 @@ cv.addEventListener('mousedown', e => {
       const able = movers.filter(m => m.gift && (!m.undead || m.lich))
         .sort((a,b2)=>b2.stats.magic - a.stats.magic)[0];
       if(!able){ log('Closing a tear takes a gift. Any gift — they all draw on the same tap.', 'bad'); return; }
-      clearOrders(able);
-      able.sealTarget = rf;
-      log(`${able.name} goes to close the tear. It will cost ${costText(riftSealCost())} and a great deal of mana.`, '');
+      /* ---------- TWO WAYS TO SHUT ONE, AND THE CHOICE IS THE POINT ----------
+         The seal is quick and wants Quickened Flesh and Iron, both a long way down the tree.
+         The rite wants neither, and asks for two and a half minutes and a line of bodies
+         instead. Offered as a menu rather than picked for you, because which of the two a camp
+         can afford is exactly the decision the note is about. */
+      const held = Math.round((rf.tearWork || 0) / TEAR_WORK * 100);
+      showCtxMenu(e.clientX, e.clientY, [
+        {label: `SEAL IT — ${costText(riftSealCost())}`, fn: () => {
+          clearOrders(able); able.sealTarget = rf;
+          log(`${able.name} goes to close the tear. It will cost ${costText(riftSealCost())} and a great deal of mana.`, '');
+        }},
+        {label: `THE LONG RITE — no materials${held ? `, ${held}% held` : ''}`, fn: () => {
+          clearOrders(able); able.tearTarget = rf;
+          log(`${able.name} begins the long rite. No iron and no quickened flesh — but it takes minutes, it bleeds away if they are driven off, and the tear will send things to drive them off. Put somebody in front of them.`, 'bad');
+        }},
+        {label: 'LEAVE IT', fn: () => {}},
+      ]);
       return;
     }
     /* right-click a stair: everyone selected takes it, up or down */
@@ -30651,7 +30755,7 @@ function snapshot(){
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
     immortal:c.immortal||null, wanderKey:c.wanderKey||null, wanderMet:c.wanderMet||0, wanderSeen:c.wanderSeen?{...c.wanderSeen}:null, wanderJoined:!!c.wanderJoined, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, golem:!!c.golem, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
-    carryId: c.carry ? c.carry.id : null, yardRun: !!c.yardRun,
+    carryId: c.carry ? c.carry.id : null, yardRun: !!c.yardRun, tearRiftId: c.tearTarget ? c.tearTarget.id : null,
     skinShift: c.skinShift || null, shiftN: c.shiftN || 0,
     bearingId: c.bearing ? c.bearing.id : null,
     carryIds: c.carryList ? c.carryList.map(b => b.id) : null,
@@ -30681,7 +30785,7 @@ function snapshot(){
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen},
-    rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], pyres: pyres.map(q=>({x:q.x, y:q.y, name:q.name, day:q.day})), necroSeen: towns.map(t=>t.necroSeen||0), coilHeld: towns.map(t=>!!t.coilHeld), coilShrine, coilExposed, coilStruck, coilN,
+    rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang,tearWork:r.tearWork||0,tearWave:r.tearWave})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], pyres: pyres.map(q=>({x:q.x, y:q.y, name:q.name, day:q.day})), necroSeen: towns.map(t=>t.necroSeen||0), coilHeld: towns.map(t=>!!t.coilHeld), coilShrine, coilExposed, coilStruck, coilN,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
     camps: camps.map(c => ({id:c.id, x:c.x, y:c.y, fac:c.fac, cap:c.cap, tents:c.tents})),
     bonds: [...bonds.entries()],
@@ -31082,7 +31186,7 @@ function restore(d){
     c._mid = s.masterId; c._fid = s.followId; c._did = s.dragId; c._cid = s.carryId; c._gid = s.guardTargetId;
     c._bid = s.bearingId || null;
     c.skinShift = s.skinShift || null; c.shiftN = s.shiftN || 0;
-    c._cids = s.carryIds || null; c.yardRun = !!s.yardRun;
+    c._cids = s.carryIds || null; c.yardRun = !!s.yardRun; c._trift = s.tearRiftId || null;
     c._hfid = s.haulForId || null; c._hcids = s.haulCrewIds || null;
     byId[c.id] = c;
     return c;
@@ -31175,6 +31279,7 @@ function restore(d){
     if(c._bid){ c.bearing = byId[c._bid] || null; if(c.bearing) c.bearing.borneBy = c; }
     if(c._cid) c.carry = corpses.find(x => x.id === c._cid) || null;
     if(c._cids) c.carryList = c._cids.map(id => corpses.find(x => x.id === id)).filter(Boolean);
+    if(c._trift != null) c.tearTarget = rifts.find(r => r.id === c._trift) || null;
     if(c._hfid) c.haulFor = byId[c._hfid] || null;
     if(c._hcids) c.haulCrew = c._hcids.map(id => byId[id]).filter(Boolean);
     if(c._gid) c.guardTarget = byId[c._gid] || null;
