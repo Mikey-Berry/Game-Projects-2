@@ -138,10 +138,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       /* run the Order until it takes somebody and burns them — no flags set by hand */
       let guardN = 0;
       while (pyres.length === 0 && guardN++ < 4000) { day++; questionTick(); }
+      /* ---------- AND SOMEBODY HAS TO GO AND READ THE NAME ----------
+         A pole going up used to be the whole gate, which meant a burning that happened on the
+         far side of the map, seen by nobody, opened her. Her own line asks for the name off it,
+         so one of yours has to stand at the pole — the sneaking-into-Paladin-territory the note
+         liked. `witnessTick` is where the world records where your people have set foot. */
+      const shutStill = wandererGate(al);
+      const reader = player().find(c => c.state !== 'dead');
+      const rx = reader.x, ry = reader.y;
+      reader.x = pyres[0].x + 1; reader.y = pyres[0].y;
+      witnessTick();
+      reader.x = rx; reader.y = ry;
       const g = wandererGate(al);
-      R.andThenTheOrderOpensIt = (pyres.length > 0 && g.ok)
-        ? `and it opens on the day the first pole goes up (day ${day}, ${pyres.length} stake) — reachable without spending a coin`
-        : `!! AFTER ${guardN} DAYS: pyres ${pyres.length}, gate ${g.ok ? 'open' : g.why}`;
+      R.andThenTheOrderOpensIt = (pyres.length > 0 && !shutStill.ok && g.ok)
+        ? `and it opens once one of yours has stood at the pole and read the name (day ${day}, ${pyres.length} stake) — a burning nobody saw is not an answer, and no coin changes hands either way`
+        : `!! AFTER ${guardN} DAYS: pyres ${pyres.length}, before reading ${shutStill.ok ? 'ALREADY OPEN' : 'shut'}, after ${g.ok ? 'open' : g.why}`;
     });
 
     guard(['hisIsShutAtFirst', 'andSomebodyWhoGrewOpensIt'], () => {
