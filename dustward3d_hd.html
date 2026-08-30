@@ -10626,6 +10626,13 @@ function physics(c, dt){
             attack(c, tgt); retaliate(tgt, c);
             /* the blade doesn't stop at the first body: cleave through the arc */
             const wpn = c.weapon ? ITEMS[c.weapon] : null;
+            /* A CLAWED THING SWEEPS THROUGH `sweepAfter`, NOT THROUGH HERE. This gate is about
+               a WEAPON's arc; the same idea for things with nothing in their hands already
+               exists, is called `sweep`, reads {arc, reach, mult, max}, and is applied from
+               `attack`. Written a second time in this branch it fired ALONGSIDE the original —
+               two sweeps a swing, off one record whose keys half-matched each. One name, one
+               meaning, and the harness that caught it did so by passing on a build that had
+               none of the new code in it at all. */
             if(wpn && !wpn.range){
               /* the move decides the reach of the stroke, not the weapon's damage tier —
                  a turning cut takes the ring; a thrust takes one man */
@@ -12011,10 +12018,20 @@ const RIFT_SEAL_COST = {vflesh:10, iron:6, remains:12};
    her pockets, is eleven years of finding out how much of the rite is load-bearing and how
    much of it is the Church's furniture. She knows. She does not hand it over on the day she
    joins and she does not hand it over for an apology — see `sisterArc`. */
-function riftSealCost(){
+/* ---------- AND BY THE WIDTH OF THE THING ----------
+   "Attempting to close a tear manually is REALLY tough right now. It's almost easier to just
+    let it grow and spit out a Sixfold to fight."
+   That is a fair reading of a flat price. A tear opens at six and can reach sixteen, and every
+   one of them cost the same ten Quickened Flesh and six Iron — so shutting a fresh crack was
+   priced as if it were a doorway, and the cheapest thing a player could do with a small tear
+   was walk away from it. The price is the WOUND now: a quarter of it at six, all of it at
+   full width. Called bare it still answers the full price, which is what the panels quoting a
+   headline figure want. */
+function riftSealCost(r){
   const out = {};
   const f = (typeof sisterArc === 'object' && sisterArc.taught) ? 0.4 : 1;
-  for(const k in RIFT_SEAL_COST) out[k] = Math.max(1, Math.round(RIFT_SEAL_COST[k] * f));
+  const w = r ? clamp(((r.r || 6) - 4) / 12, 0.25, 1) : 1;
+  for(const k in RIFT_SEAL_COST) out[k] = Math.max(1, Math.round(RIFT_SEAL_COST[k] * f * w));
   return out;
 }
 function riftAt(x, y){
@@ -12802,9 +12819,33 @@ function enterRuin(){
   worldEvent('ruin', W/2, H/2, 'The last of the seven has gone quiet. There is nothing out there now but the waste and whatever is walking in it.');
   AU.news();
 }
+/* ============================================================ HOW OFTEN THE SKY TEARS
+   "Tears seem to happen extremely frequently, even in the very early game, and even when
+    attention is at unnoticed. The idea is a slow buildup to an apocalypse, so early game
+    shouldn't have quite so many eldritch beings, with threats primarily being fauna and
+    bandits etc."
+
+   The rate was ONE NUMBER for the whole run — 0.004 an hour, about a tear every ten days —
+   with the Fracture and your Attention together worth an additive 0.0016 on top of it. So a
+   camp on day three that had never raised a finger and a camp at THE SKY LEANS under the
+   deepest scrutiny in the game were within a quarter of each other, and the first tear opened
+   around day ten of every run whatever the player did. A tear also never closes on its own, so
+   from that day the world simply always had one.
+
+   A stage table instead, and Attention as a MULTIPLIER rather than a rounding error. THE DUST
+   FALLS is meant to be a world where the worst thing on the road is a bandit, so it is quiet:
+   about one tear in a hundred days, against one in nine by THE WATCHERS WAKE. */
+const RIFT_FIRST_DAY = 10;                                          /* nothing tears before this */
+const RIFT_RATE = [0.0004, 0.0022, 0.0045, 0.0075, 0.011, 0.014];   /* per hour, by fracture stage */
+const RIFT_GROW = [0.35, 0.6, 1, 1, 1.15, 1.3];                     /* and how fast one widens */
+function riftOdds(){
+  if(day < RIFT_FIRST_DAY) return 0;
+  const base = RIFT_RATE[Math.min(RIFT_RATE.length - 1, fractureStage)] || 0;
+  return base * (1 + noticeTier * 0.55);
+}
 function riftTick(dh){
   /* the world is thin now. It was never whole to begin with — and it gets thinner when you work the formulae. */
-  if(rifts.length < riftCap() && rnd() < (0.004 + eldritchTide() * 0.0016) * dh){
+  if(rifts.length < riftCap() && rnd() < riftOdds() * dh){
     const anchor = pick(player().filter(c => c.state !== 'dead')) || {x: W/2, y: H/2};
     const a = rnd() * Math.PI * 2, d = 22 + rnd() * 30;
     const x = clamp(Math.round(anchor.x + Math.cos(a) * d), 6, W-7);
@@ -12868,10 +12909,37 @@ function riftTick(dh){
       }
     }
     /* left alone, a tear widens FASTER the wider and older it gets — an ignored rift is a
-       mounting emergency, not background scenery. */
+       mounting emergency, not background scenery. Scaled by the stage, because a mounting
+       emergency on day twelve is the thing the report is about. */
     if(r.r < 16 && !r.birthed){
-      const growRate = 0.02 + r.age * 0.0006 + r.r * 0.004;
+      /* THE AGE TERM IS THE EMERGENCY, and before THE THINNING there is not one. Left in, it
+         swamps everything: an untouched tear at stage 0 narrowed for a fortnight, and then the
+         age term alone had grown to three times the healing and it widened all the way to a
+         Sixfold anyway. A tear the world is still able to close is not one that gets angrier
+         the longer you leave it. */
+      const ageTerm = fractureStage < 2 ? 0 : r.age * 0.0006;
+      const growRate = (0.02 + ageTerm + r.r * 0.004) * (RIFT_GROW[Math.min(RIFT_GROW.length - 1, fractureStage)] ?? 1);
       if(rnd() < growRate * dh) r.r += 0.5;
+    }
+    /* ---------- AND BEFORE THE THINNING, THEY DRIFT SHUT ----------
+       THE GAME ALREADY TOLD THE PLAYER THIS AND DID NOT DO IT. Stage 2's own announcement is
+       "The tears are not closing on their own any more" — a promise about stages 0 and 1 that
+       nothing kept. A tear opened on day ten stayed open until somebody paid iron and quickened
+       flesh for it or it birthed a Sixfold, which is most of why the early game never had a
+       quiet week in it. Not while somebody is working at it, and not once it has been fed. */
+    if(fractureStage < 2 && !r.birthed && !r.tearWork && r.seal <= 0){
+      if(rnd() < dh * (0.03 - fractureStage * 0.012)) r.r -= 0.5;
+      if(r.r <= 4){
+        const i = rifts.indexOf(r); if(i >= 0) rifts.splice(i, 1);
+        for(let j = chars.length - 1; j >= 0; j--){
+          const g = chars[j];
+          if(g.faction === 'gaunt' && g.riftId === r.id && g.state !== 'dead'){ addSpecks(g.x, g.y, '#6a4a7a', 8); chars.splice(j, 1); }
+        }
+        addSpecks(r.x, r.y, '#c8b8e8', 26);
+        log('The tear out in the waste has drawn itself shut. The dust falls the right way round again.', 'good');
+        worldEvent('sealed', r.x, r.y, 'The tear in the waste closed on its own overnight. It will not always.');
+        continue;
+      }
     }
   }
 }
@@ -12980,7 +13048,7 @@ function sealTick(c, dt){
   if(r.seal >= 30){
     /* The Compact's warehouses answer first. One camp's stores cannot close tears at the
        rate the sky opens them; seven towns' can, which is most of why you signed them. */
-    const price = riftSealCost();
+    const price = riftSealCost(r);
     const fromCompact = sealStock(price);
     if(!fromCompact && !canAfford(price)){
       if(rnd() < dt*0.2) log(`The rite needs ${costText(price)} to close it for good${compactActive() ? ' — and the common stock is empty' : ''}.`, 'bad');
@@ -13012,7 +13080,12 @@ function closeRift(r, by){
   log(`${by ? by.name : 'Someone'} closed the tear. The dark loses its grip, a little.`, 'good');
   worldEvent('sealed', r.x, r.y, 'The tear in the waste has been closed. The roads are a fraction safer.');
 }
-function isNight(){ return hour < 5.5 || hour > 19.5; }
+/* ---------- WHEN A NIGHT IS, WRITTEN ONCE ----------
+   These were two literals inside `isNight` and nothing else in the game knew them, which is
+   how the blood moon ended up straddling midnight — see `bloodMoonRise`. Anything that has to
+   agree with the dark reads them now. */
+const DUSK_H = 19.5, DAWN_H = 5.5;
+function isNight(){ return hour < DAWN_H || hour > DUSK_H; }
 function nearestTownDist(x, y){
   let d = 1e9;
   for(const t of towns) d = Math.min(d, dist(t.x, t.y, x, y));
@@ -14020,11 +14093,108 @@ function spawnSixfold(atX, atY){
   c.big = 2.4;
   c.blood = 700; c.maxBlood = 700;
   c.clawDmg = 26;
+  /* ---------- SIX LEGS, AND ALL OF THEM ARRIVE ----------
+     "They're a good boss but a bit underpowered in that they can only hit one enemy at a time.
+      And they have zero range. Perhaps a little bit of variety to their arsenal would make them
+      more of a threat. Right now, I can simply swarm them with old bones and win out (which
+      should be a viable strategy in some cases, by the way, but for a boss-level enemy might
+      indicate that the creature itself is underpowered.)"
+     Three answers, and the note's parenthesis is the design brief for all three: swarming has to
+     stay a real strategy, it just has to COST something.
+       · THE SWEEP — every ordinary blow takes up to four bodies inside a 2.4-tile arc. Being
+         one of six in front of it is no longer free.
+       · THE STAMP — it rears when four or more are crowded inside three tiles and comes down.
+         That is the direct answer to a wall of Old Bones: bring the wall, and pay for standing
+         shoulder to shoulder inside it.
+       · THE HURL — it picks up whatever is lying near it and throws it, out to fourteen tiles.
+         A thing with no range at all can be beaten by never approaching it. */
+  /* THE MECHANISM ALREADY EXISTED AND THE WYRM ALREADY USES IT. `sweep` is {arc, reach, mult,
+     max}, applied by `sweepAfter` out of `attack`, and its own comment says why: "six men could
+     stand shoulder to shoulder in front of a house-sized animal and take it in turns". That is
+     the report, written down two batches ago about a different creature — and the Sixfold, which
+     is 2.4x a man and fights with six legs, simply never got given one.
+     Smaller than the wyrm's on every axis: it is a thing the size of a cart, not a house. */
+  c.sweep = {arc: 1.5, reach: 2.6, mult: 0.45, max: 4};
   c.loot = ri(2400, 4000);
   c.dropItems = {formula_p:2, formula_w:2, remains:6, tome:2, sunder:3};
   chars.push(c);
   worldEvent('sixfold', sp.x, sp.y, 'Drovers out past the last fence describe a shape on the ridgeline: six legs, jointed wrong, with something small hanging under it where a head should not be. Nobody has gone back to check.');
   return c;
+}
+/* ---------- THE STAMP AND THE HURL ----------
+   Driven off a single timer on the creature so the two never land in the same second, and both
+   are TELEGRAPHED: a stamp announces itself a beat before it arrives, which is what makes
+   spacing a decision rather than a dice roll. */
+const SIX_STAMP_R = 3.0;      /* how close is "crowded" */
+const SIX_STAMP_N = 4;        /* and how many of them it takes */
+const SIX_HURL_MIN = 5, SIX_HURL_MAX = 14;
+function sixfoldTick(dt){
+  for(const c of chars){
+    if(c.bossKey !== 'sixfold' || c.state !== 'ok') continue;
+    c._sixT = (c._sixT || 0) - dt;
+    /* the stamp lands a beat after it is announced */
+    if(c._stampT){
+      c._stampT -= dt;
+      if(c._stampT <= 0){
+        c._stampT = 0;
+        AU.thud && AU.thud(c.x, c.y);
+        addSpecks(c.x, c.y, '#8a7a6a', 34);
+        for(const o of charsNear(c.x, c.y, SIX_STAMP_R + 1)){
+          if(o === c || o.state !== 'ok' || !hostile(c, o)) continue;
+          if((o.floor || 0) !== (c.floor || 0)) continue;
+          const d = dist(c.x, c.y, o.x, o.y);
+          if(d > SIX_STAMP_R + 0.6) continue;
+          /* THE SHOVE IS THE POINT, NOT THE DAMAGE. At 0.45 of a blow to everything inside
+             three and a half tiles it flattened twenty-four bodies in a minute, which is not
+             "swarming costs something", it is "swarming is suicide". What a stamp is FOR is
+             breaking the press apart; the damage is the reminder. */
+          applyDamage(c, o, pickPart(), atkPower(c) * 0.22, 'blunt', o.faction === 'player', true);
+          /* and it puts them on the ground — the point is that the press comes apart */
+          if(o.state === 'ok'){
+            const k = Math.max(0.01, d);
+            o.shoveT = o.shoveDur = 0.30; o.shoveK = 0.9;
+            o.shoveDX = (o.x - c.x) / k; o.shoveDY = (o.y - c.y) / k;
+            o.flinchT = Math.max(o.flinchT || 0, 0.5);
+          }
+        }
+      }
+      continue;
+    }
+    if(c._sixT > 0) continue;
+    /* crowded? rear up. Counted BEFORE the cooldown is spent, so a lone fighter never eats one */
+    let crowd = 0;
+    for(const o of charsNear(c.x, c.y, SIX_STAMP_R)){
+      if(o !== c && o.state === 'ok' && hostile(c, o) && (o.floor||0) === (c.floor||0)
+         && dist(c.x, c.y, o.x, o.y) <= SIX_STAMP_R) crowd++;
+    }
+    if(crowd >= SIX_STAMP_N){
+      /* AND RARELY. Frequency is the real dial, not the damage: an Old Bones has four
+         toughness, so ANY blow that touches it takes a limb off — at one stamp every ten
+         seconds a swarm of them was flattened before it landed a single hit, and cutting the
+         damage in half changed nothing at all because it was already past their parts. A long
+         cooldown is what gives a crowd its window. */
+      c._sixT = 17 + rnd() * 6;
+      c._stampT = 0.7;
+      addSpecks(c.x, c.y + 2.2, '#c9b78e', 12);
+      if(player().some(o => dist(o.x, o.y, c.x, c.y) < 24))
+        log('The Sixfold gathers all six legs under itself. GET OUT FROM UNDER IT.', 'bad');
+      continue;
+    }
+    /* nothing within reach? throw something at whatever is keeping its distance */
+    const far = charsNear(c.x, c.y, SIX_HURL_MAX)
+      .filter(o => o !== c && o.state === 'ok' && hostile(c, o) && (o.floor||0) === (c.floor||0)
+                && dist(c.x, c.y, o.x, o.y) >= SIX_HURL_MIN
+                && !losBlocked(c.x, c.y, o.x, o.y, c.floor||0))
+      .sort((a, b) => dist(a.x,a.y,c.x,c.y) - dist(b.x,b.y,c.x,c.y))[0];
+    if(far){
+      c._sixT = 5 + rnd() * 3;
+      projectiles.push({x: c.x, y: c.y - 1.2, target: far, speed: 9, floor: c.floor || 0,
+        dmg: 20 + rnd() * 14, caster: c, wt: 'blunt', ap: 0.15, hurl: 1.7});
+      addSpecks(c.x, c.y + 1.4, '#7d6149', 10);
+      if(player().some(o => dist(o.x, o.y, c.x, c.y) < 24))
+        log('The Sixfold tears something out of the ground and throws it.', 'bad');
+    } else c._sixT = 1.2;
+  }
 }
 spawnSixfold();
 /* and one Cairn Beast, standing in a corpse-field from the first day, growing on whatever
@@ -14066,14 +14236,33 @@ function bloodMoonOdds(){
   const warm = Math.min(1, (since - BLOOD_MOON_GAP) / BLOOD_MOON_RAMP);
   return (0.046 + eldritchTide() * 0.013) * warm;
 }
-function bloodMoonRoll(){
-  if(bloodMoon > 0){
-    bloodMoon = 0;
-    bloodMoonWarned = false;
-    log('The moon is white again. Count the dead and bury what is left of them.', 'good');
-    worldEvent('bloodmoon', W/2, H/2, 'The blood moon has passed. Every settlement on the road counted its losses at dawn.');
-    return;
-  }
+/* ---------- AND IT RISES AND SETS WITH THE NIGHT, NOT WITH THE CALENDAR ----------
+   "The Blood Moon fix really hasn't been implemented properly. I'm still getting blood moon
+    nights like twice in a row at times. I asked for a cooldown."
+
+   The cooldown WAS implemented and it does hold: measured over six thousand rolls, no two are
+   closer than sixteen days. The report is still right, and the fault was never in the odds.
+
+   The roll ran at the DAY ROLLOVER — midnight — and cleared itself at the next one. A night
+   runs 19.5 to 5.5, so a moon that rose at midnight on day D was red for the last five and a
+   half hours of the night already in progress, went out with the sun, and came back at 19.5
+   for the four and a half hours until the calendar ticked over and cleared it. Measured on the
+   build that shipped the report, over three thousand days: one hundred and seventy-six red
+   SPANS from eighty-eight moons — every single one of them arriving as two, 0.6 days apart,
+   neither of them a whole night. That is "blood moon nights twice in a row", exactly, and no
+   cooldown on the ROLL could ever have touched it, because both halves are the same roll.
+
+   It rises at dusk and sets at dawn now: one span, ten hours, and the cooldown counts the
+   thing the player counts. */
+function bloodMoonSet(){
+  if(bloodMoon <= 0) return;
+  bloodMoon = 0;
+  bloodMoonWarned = false;
+  log('The moon is white again. Count the dead and bury what is left of them.', 'good');
+  worldEvent('bloodmoon', W/2, H/2, 'The blood moon has passed. Every settlement on the road counted its losses at dawn.');
+}
+function bloodMoonRise(){
+  if(bloodMoon > 0) return;
   /* rare. It should be a thing people remember, not a weekly chore. */
   if(day > 12 && rnd() < bloodMoonOdds()){
     bloodMoon = 1;
@@ -17677,6 +17866,17 @@ function updateProjectiles(dt){
           if(loud) log(`${p.caster.name}'s stray shot hit ${p.target.name}!`, 'bad');
           sayAs(p.target, 'ff');
         }
+        /* A THROWN SLAB DOES NOT LAND ON ONE MAN. `hurl` is its radius, and the splash is
+           the whole reason to throw it at a rank rather than at a person. */
+        if(p.hurl){
+          addSpecks(p.target.x, p.target.y - 0.3, '#8a7a6a', 16);
+          for(const o of charsNear(p.target.x, p.target.y, p.hurl)){
+            if(o === p.target || o.state === 'dead' || !hostile(p.caster, o)) continue;
+            if((o.floor||0) !== (p.target.floor||0)) continue;
+            if(dist(o.x, o.y, p.target.x, p.target.y) > p.hurl) continue;
+            applyDamage(p.caster, o, pickPart(), p.dmg * 0.6, 'blunt', loud, true);
+          }
+        }
         if(p.bolt){
           addSpecks(p.target.x, p.target.y-0.5, '#ff8a3a', 7);
           if(research.done.pyromancy){
@@ -17800,6 +18000,7 @@ function update(dt){
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
   if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
   gauntTick(dt / HOUR_SEC);   /* the dark is never empty for long */
+  sixfoldTick(dt);            /* and the biggest thing in it has more than one way to kill you */
   wldT += dt;
   const wtick = wldT >= 0.25;
   const wdt = wldT;             /* accumulated seconds for throttled world scans */
@@ -17808,6 +18009,13 @@ function update(dt){
   hourAcc += dt / HOUR_SEC;
   const dh = dt / HOUR_SEC;
   hour += dh;
+  /* THE MOON KEEPS THE NIGHT'S HOURS. Checked on the EDGES rather than in the day block, and
+     before the midnight wrap, so a rise at 19.5 and a set at 5.5 are one span across it. */
+  {
+    const prevH = hour - dh;
+    if(prevH <= DUSK_H && hour > DUSK_H) bloodMoonRise();
+    if(prevH < DAWN_H && hour >= DAWN_H) bloodMoonSet();
+  }
   if(hour >= 24){
     hour -= 24; day++;
     guildPayday();           /* the Guild is paid at dawn or it goes home at dawn */
@@ -17848,7 +18056,6 @@ function update(dt){
     compactStrainTick();             /* and one left to rot walks back out */
     regrowNodes();   /* the waste reclaims what was taken */
     gauntDawn();     /* and the dark takes back its own */
-    bloodMoonRoll();
     /* it forgets you faster the longer you keep your head down */
     /* It forgets a quiet camp quickly — but once it has actually turned its head, it does
        NOT lose interest fast. The old curve punished you harder the more it watched, which
@@ -29865,9 +30072,9 @@ cv.addEventListener('mousedown', e => {
          can afford is exactly the decision the note is about. */
       const held = Math.round((rf.tearWork || 0) / TEAR_WORK * 100);
       showCtxMenu(e.clientX, e.clientY, [
-        {label: `SEAL IT — ${costText(riftSealCost())}`, fn: () => {
+        {label: `SEAL IT — ${costText(riftSealCost(rf))}`, fn: () => {
           clearOrders(able); able.sealTarget = rf;
-          log(`${able.name} goes to close the tear. It will cost ${costText(riftSealCost())} and a great deal of mana.`, '');
+          log(`${able.name} goes to close the tear. It is ${rf.r.toFixed(0)} across, so it will cost ${costText(riftSealCost(rf))} and a great deal of mana.`, '');
         }},
         {label: `THE LONG RITE — no materials${held ? `, ${held}% held` : ''}`, fn: () => {
           clearOrders(able); able.tearTarget = rf;
@@ -30850,7 +31057,7 @@ function snapshot(){
        thick. Saving one string fixes the whole roster. */
     kin:c.kin||null,
     clawDmg:c.clawDmg, clawWt:c.clawWt||null, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
-    servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, eater:!!c.eater, harvestBonus:c.harvestBonus??null, corpseWorth:c.corpseWorth??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
+    servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, eater:!!c.eater, harvestBonus:c.harvestBonus??null, corpseWorth:c.corpseWorth??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, sweep:c.sweep?{...c.sweep}:null, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, boundTold:!!c.boundTold,
     protagonist:!!c.protagonist, squadNo:c.squadNo||0, wasOrder:!!c.wasOrder,
     salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null, lieuWear:c.lieuWear||0,
@@ -31210,7 +31417,7 @@ function restore(d){
     if(s.harvestBonus != null) c.harvestBonus = s.harvestBonus;
     if(s.bindBonus != null) c.bindBonus = s.bindBonus;
     c.onlyArt = s.onlyArt || null; c.speedMult = s.speedMult || 0;
-    c.markT = s.markT || 0; c.heat = s.heat || 0; c.mustered = !!s.mustered;
+    c.markT = s.markT || 0; c.heat = s.heat || 0; c.mustered = !!s.mustered; c.sweep = s.sweep ? {...s.sweep} : null;
     if(s.ate != null) c.ate = s.ate;
     /* a body worth a quarter of a body has to still be worth a quarter after a reload, or a
        saved swarm turns back into a field of whole men the moment the game is opened again */
