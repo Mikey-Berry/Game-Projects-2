@@ -1261,7 +1261,23 @@ const cells = [], shrines = [];
    A pyre is not an event, it is a THING: it goes into the world at the moment of the burning
    and it is still there fifty days later, on the road, with a name on it. Declared up here
    beside `cells` because worldgen sites the pyre ground and the render walks the list. */
-const pyres = [];   /* {x, y, name, day} */
+const pyres = [];   /* {x, y, name, day, read} */
+/* ---------- AND ONE THAT SOMEBODY OF YOURS HAS ACTUALLY STOOD AT ----------
+   "Albedo's request to join is confusing — check the pyre where a paladin burned someone, or
+    something like that? I like the idea, especially since it requires sneaking into paladin
+    territory. But I cannot find any pyres of burnt ones, despite the tooltip messages that
+    the Paladins have taken them."
+   TWO FAULTS, and the second is the one that made the first confusing. The poles are real and
+   they are built on time — measured over two hundred days: five taken, five burned, five poles
+   — but every one of them stands at the Bastion gate, which in that run was 370 tiles from
+   where the player starts, and nothing in the game ever said where. A world event went past in
+   the feed and that was the whole of it.
+   AND HER GATE DID NOT ASK FOR WHAT HER LINE ASKS FOR. "Come back and tell me whose name was
+   on the pole" was implemented as `pyres.length > 0` — satisfied by a burning happening
+   anywhere in the world, seen by nobody. The sneaking-into-Paladin-territory the note liked was
+   not in the code at all. It is now: this holds the name off a pole one of yours has stood at,
+   and it is what she is waiting to hear. */
+let pyreRead = null;   /* {name, day, x, y} */
 /* ---------- CONSECRATED GROUND ----------
    A SHRINE appeared exactly twice in this whole file: once in the town plan and once in the
    roof table. It was a roof. Meanwhile `hallow` already meant "anathema to the dead" — but
@@ -2618,7 +2634,7 @@ function ascendTransmute(c){
   c.big = 1.15;
   c.hunger = 100;
   log(`${c.name} pours in. The etchings take. What stands up is taller, and rings when you knock on it.`, 'good');
-  log('SIGIL-BOUND: ageless · no bleeding, no severing · toughness half again · feeds on iron and ingots now, never bread.', 'good');
+  log('SIGIL-BOUND: ageless · no bleeding, no severing · toughness half again · feeds on ore, lead and ingots now, never bread.', 'good');
 }
 /* the armor fails; the etching holds. A husk is a phylactery you re-etch at a forge. */
 function shedHusk(c){
@@ -4533,6 +4549,15 @@ function burnHeretic(c){
   worldEvent('purge', p2.x, p2.y,
     `${c.name} burned at the Bastion gate. The Order leaves the pole standing, which is the point of the pole.`);
   log(`${c.name} has been burned at the Bastion. The stake is still standing.`, 'bad');
+  /* WHERE, and recomputed as a bearing every time the journal draws it. A world event scrolls
+     past in the feed; a thread with a mark on it is a place you can walk to. */
+  if(!pyreRead)
+    threadSet('pyre', 'The poles at the gate',
+      `The Order burned ${c.name} and left the pole standing at the Bastion gate. `
+      + (pyres.length > 1 ? `There are ${pyres.length} of them now. ` : '')
+      + 'Somebody of yours has to stand at one and read the name off it.',
+      {mark: {x: p2.x, y: p2.y},
+       hint: 'Paladin ground, and they do not suffer necromancers on it. Go quietly or go in strength.'});
   AU.news();
 }
 /* the day tick: the Order takes, holds, and burns on time */
@@ -7898,18 +7923,28 @@ function bodyTick(c, dh){
   /* hunger — the dead don't eat, and NPCs forage off-screen; only the player must manage food */
   if(!c.undead){
     if(c.faction==='player'){
-      if(c.immortal === 'transmute' || c.race === 'golem'){
+      if(eatsMetal(c)){
         /* MAINTENANCE, NOT APPETITE: the vessel wants metal. A golem in the squad is a
-           logistics decision rather than another mouth — it will never touch the larder and
-           it will quietly eat the ingots you were saving for a wall. */
+           logistics decision rather than another mouth — it will never touch the larder.
+           ---------- AND ORE IS METAL ----------
+           "Golems cannot eat properly — they get hungry with a message that their etching
+            craves ore, but it doesn't automatically take from the ore storage to feed them."
+           It said ORE and it would only accept INGOTS, so a camp with a full bin of Iron Ore
+           and Copper Ore off the new MINE job watched its golem seize up beside them. The
+           table below is what a golem eats, and the order is CHEAPEST FIRST: it takes the raw
+           rock before it touches the ingots you were saving for a wall, which is both the
+           better play and the more obvious reading of "it eats ore". */
         c.hunger -= dh * 1.2;
         if(c.hunger < 45){
-          if(campTake('c_ingot', 1)) { c.hunger = Math.min(100, c.hunger + 40); }
-          else if(campTake('iron', 1)) { c.hunger = Math.min(100, c.hunger + 25); }
+          for(const k of GOLEM_ORDER){
+            if(campTake(k, 1)){ c.hunger = Math.min(100, c.hunger + GOLEM_FEED[k]); break; }
+          }
         }
         if(c.hunger <= 0){
           c.hunger = 0;
-          if(rnd()<dh*.5) log(`${c.name} is seizing up — the etchings want ore.`, 'bad');
+          /* SAY WHAT IS ACTUALLY WRONG. "The etchings want ore" reads as a preference when the
+             truth is that there is no metal of any kind in the stores. */
+          if(rnd()<dh*.5) log(`${c.name} is seizing up — there is no ore and no metal in the stores.`, 'bad');
         }
       } else {
       c.hunger -= dh * 2.1;
@@ -8496,7 +8531,29 @@ function witnessTick(){
   /* Paladin ground. They do not suffer necromancers here, which is the point of going. */
   if(bastion && player().some(c => c.state !== 'dead' && dist(c.x, c.y, bastion.x, bastion.y) < BASTION_R - 6))
     sawPlace('bastion');
+  /* THE POLES AT THE GATE, AND THE NAMES ON THEM. Standing close enough to read one is the
+     thing Albedo asks for, so it is a thing the world has to record. */
+  for(const py of pyres){
+    if(py.read) continue;
+    const who = player().find(c => c.state !== 'dead' && (c.floor || 0) === 0 && dist(c.x, c.y, py.x, py.y) < 3.5);
+    if(!who) continue;
+    py.read = day;
+    pyreRead = {name: py.name, day: py.day, x: py.x, y: py.y};
+    log(`${who.name} reads the name burned into the pole: ${py.name}. Day ${py.day}.`, 'bad');
+    threadDone('pyre', `${py.name}. Somebody should tell the woman in the town who has been waiting to hear a name.`);
+    break;
+  }
 }
+/* ---------- WHAT A GOLEM EATS, AND IN WHAT ORDER ----------
+   A vessel with etchings in it does not eat, it is MAINTAINED, and the thing it is maintained
+   with is metal in any state. Raw rock goes furthest per unit of nothing and least per unit of
+   hunger, which is what makes smelting worth doing and raw ore worth feeding it.
+   ONE TABLE, read by the hunger tick, by the stores panel and by a pack. Three copies of this
+   list would be three chances for the message and the mechanism to disagree — which is exactly
+   what went wrong here the first time: the log said ore and the code took ingots. */
+const GOLEM_FEED = {lead: 8, iron_ore: 15, copper: 12, iron: 25, c_ingot: 40};
+const GOLEM_ORDER = ['lead', 'iron_ore', 'copper', 'iron', 'c_ingot'];
+function eatsMetal(c){ return !!c && (c.race === 'golem' || c.immortal === 'transmute'); }
 const MATS_RECIPE = {wood:2, stone:2};   /* what a sawyer turns into one Build Material */
 const MATS_SECS = 6;
 const RECIPES = {
@@ -10686,8 +10743,11 @@ function physics(c, dt){
       return;
     }
   }
-  if(c.faction === 'gaunt'){
-    /* the Warding Light: a gaunt will not enter it. Drop a target inside the ward and back off. */
+  /* the Warding Light: a gaunt will not enter it. Drop a target inside the ward and back off.
+     ONE GUARD FOR BOTH HALVES — `wardTurns` decides whether this creature is turned at all,
+     and it has to gate the target-drop as well as the retreat or a Sixfold would keep walking
+     forward while quietly forgetting who it was walking at. */
+  if(wardTurns(c)){
     if(c.target && wardedFrom(c.target)){ c.target = null; }
     const ward = (function(){ for(const o of chars){ if(isConcentrating(o,'warding') && o.state==='ok' && (o.floor||0)===(c.floor||0) && dist(o.x,o.y,c.x,c.y) < WARD_RADIUS + 1.5) return o; } return null; })();
     if(ward){
@@ -13850,9 +13910,12 @@ function wandererGate(c){
      she has spent a lifetime telling herself is not coming. Every run gets there — the Order
      takes somebody at 3.5% a day whether or not you have raised a finger, and a great deal
      faster if you have been careless where a town could see you. */
-  if(w.want === 'pyre')
-    return pyres.length ? {ok:true, label:'TELL HER WHOSE NAME IT WAS'}
-                        : {ok:false, why:'the Order has not built a fire for anybody yet, and until it does she has nothing to hear'};
+  if(w.want === 'pyre'){
+    if(pyreRead) return {ok:true, label:`TELL HER IT WAS ${pyreRead.name.toUpperCase()}`};
+    return pyres.length
+      ? {ok:false, why:`the Order has ${pyres.length === 1 ? 'built one pole' : 'built ' + pyres.length + ' poles'} at the Bastion gate and nobody of yours has stood at ${pyres.length === 1 ? 'it' : 'one'} to read the name`}
+      : {ok:false, why:'the Order has not built a fire for anybody yet, and until it does she has nothing to hear'};
+  }
   /* AND HIS IS THE ONE THING IN THIS WORLD YOU CANNOT SHORTCUT: somebody who grew. */
   if(w.want === 'beat'){
     const best = player().filter(u => u.state !== 'dead')
@@ -15378,7 +15441,7 @@ const SPELLS = {
   phantom:   {gift:'dust',        label:'THE UNWALLED',cost:16,range:7, minMag:10, tier:2, tech:'dust_unwalled', hint:'target open ground — conjure a squad that was never there'},
   revive:    {gift:'divine',      label:'REVIVE',     cost:25, range:4, minMag:25, tier:3, immortalOnly:'divine', hint:'target a companion dead less than an hour — call them back'},
   warding:   {gift:'divine',      label:"AINZOPHA'AR'S LIGHT", cost:14, range:0, minMag:12, tier:2, instant:true, self:true,
-              concentrate:{lock:1, exclusive:true, mobile:true}, hint:'carry the light — gaunts will not come near you or your squad, but you can raise no hand and cast nothing else while it burns'},
+              concentrate:{lock:1, exclusive:true, mobile:true}, hint:'carry the light — lesser gaunts will not come near you or your squad, but the great ones walk straight through it, and you can raise no hand or cast anything else while it burns'},
   /* ---- new arts (this batch) ---- */
   blink:     {gift:'dust',        label:'STEP UNSEEN', cost:12, range:12, minMag:8, tier:2, tech:'dust_veil',
               hint:'target open ground within reach — fold the distance and arrive there'},
@@ -16491,11 +16554,28 @@ function castCharm(c, foe){
    so it shields the whole squad as it moves — but the bearer can raise no hand and work no
    other formula while it burns. (Mobile exclusive concentration.) */
 const WARD_RADIUS = 9;
+/* ---------- WHAT THE LIGHT TURNS, AND WHAT WALKS THROUGH IT ----------
+   "It needs to have some sort of weakness that can be circumvented."
+   It had none. Nine tiles of "the entire gaunt faction stops existing", held indefinitely by
+   one caster, with no counter of any kind — the only price was that the bearer could not act,
+   and in a squad of eight that is not a price.
+   THE CEILING IS THE SAME NUMBER AS THE ONE FOR CARRYING A CORPSE, deliberately: anything you
+   would need four people to haul is a thing the light does not turn. A Sixfold is 2.4 and a
+   Brood is over three; every ordinary gaunt in the roster is 1.5 or under, so the light still
+   does exactly what it always did to the swarm. And a NAMED thing is never turned, whatever
+   its size — the great ones are not stray dogs to be shooed off a doorstep.
+   Which makes the counterplay legible in both directions: the light is the answer to the many,
+   and the one has to be killed the way anything else is killed. */
+function wardTurns(g){
+  if(!g || g.faction !== 'gaunt') return false;
+  if(g.bossKey) return false;             /* named. It has come a long way and it is not stopping */
+  return !isGreatBody(g);                 /* GREAT_BODY, shared with the haul rule on purpose */
+}
 function castWarding(c){
   spendCast(c, 'warding');
   startConcentration(c, 'warding', 1, true, true);   /* exclusive, but mobile — a lantern for the squad */
   addSpecks(c.x, c.y - 0.4, '#fff2c0', 30);
-  log(`${c.name} raises Ainzopha'ar's Light. Nothing born of the tear will come near it — nor can ${c.name} raise a hand while it burns.`, 'good');
+  log(`${c.name} raises Ainzopha'ar's Light. The lesser things born of the tear will not come near it — the great ones do not care, and ${c.name} can raise no hand while it burns.`, 'good');
 }
 /* is this point inside a live warding aura held by a non-hostile caster? */
 function wardedFrom(c){
@@ -27822,6 +27902,11 @@ function refreshInv(){
     if(it.type==='armor') btns = `<button data-eq="${k}">WEAR</button>`;
     if(it.type==='pack') btns = `<button data-eq="${k}">SHOULDER</button>`;
     if(it.type==='food') btns = `<button data-eat="${k}">EAT</button>`;
+    /* AND METAL IS FOOD, TO THE ONE THING THAT EATS IT. There was no way to hand a golem an
+       ingot at all: the button is gated on `type === 'food'` and metal is 'mat' or 'trade', so
+       the only thing anybody could feed a vessel by hand was bread — which it should not be
+       able to eat either. Shown only when the body selected is one that runs on metal. */
+    if(GOLEM_FEED[k] && eatsMetal(selected[0])) btns = `<button data-feed="${k}">FEED THE ETCHINGS · +${GOLEM_FEED[k]}</button>`;
     if(it.type==='pros') btns = `<button data-pros="${k}">ATTACH</button>`;
     if(it.type==='tome') btns = `<button data-read="${k}">READ</button>`;
     if(bins().some(bn => binAccepts(bn, k))) btns += `<button data-stow="${k}" title="Send to camp stores (shift ×10)">STOW</button>`;
@@ -27857,9 +27942,21 @@ function refreshInv(){
   });
   b.querySelectorAll('[data-eat]').forEach(btn => btn.onclick = () => {
     const c = selected[0]; if(!c) return;
+    /* a vessel has no stomach. This was never enforced anywhere, so the answer to a starving
+       golem was to hand it a loaf — which worked, and is the opposite of what it is */
+    if(eatsMetal(c)){ log(`${c.name} has no use for that. The etchings want metal.`, 'bad'); return; }
     const k = btn.dataset.eat;
     if(!takeItem(k)) return;
     c.hunger = Math.min(100, c.hunger + ITEMS[k].feed);
+    refreshInv(); refreshCharPanel();
+  });
+  b.querySelectorAll('[data-feed]').forEach(btn => btn.onclick = () => {
+    const c = selected[0]; if(!c) return;
+    if(!eatsMetal(c)){ log(`${c.name} cannot eat that.`, 'bad'); return; }
+    const k = btn.dataset.feed;
+    if(!takeItem(k)) return;
+    c.hunger = Math.min(100, c.hunger + GOLEM_FEED[k]);
+    log(`${c.name} takes the ${ITEMS[k].name}. The etchings settle.`, 'good');
     refreshInv(); refreshCharPanel();
   });
   b.querySelectorAll('[data-read]').forEach(btn => btn.onclick = () => {
@@ -27972,7 +28069,14 @@ function openInventory(c){
           log(`${c.name} equipped ${it.name}.`,'good'); render(); refreshCharPanel();
         });
       }
-      if(it.type==='food') mk('EAT', () => { if(c.undead){ log('The dead do not eat.','bad'); return; } invTake(c,k); c.hunger=Math.min(100,c.hunger+it.feed); render(); refreshCharPanel(); });
+      if(it.type==='food') mk('EAT', () => {
+        if(c.undead){ log('The dead do not eat.','bad'); return; }
+        if(eatsMetal(c)){ log(`${c.name} has no use for that. The etchings want metal.`,'bad'); return; }
+        invTake(c,k); c.hunger=Math.min(100,c.hunger+it.feed); render(); refreshCharPanel(); });
+      if(GOLEM_FEED[k] && eatsMetal(c)) mk('FEED THE ETCHINGS', () => {
+        invTake(c,k); c.hunger = Math.min(100, c.hunger + GOLEM_FEED[k]);
+        log(`${c.name} takes the ${it.name}. The etchings settle.`, 'good');
+        render(); refreshCharPanel(); });
       if(it.type==='tome') mk('READ', () => { if(c.undead){ log('The risen cannot read.','bad'); return; } invTake(c,k); readBook(c,k); render(); refreshCharPanel(); });
       mkBulk('GIVE', 'hand it to the nearest of yours', (n) => {
         const to = nearestSquadmate(c); if(!to){ log('No squadmate within reach.','bad'); return; }
@@ -30785,7 +30889,7 @@ function snapshot(){
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen},
-    rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang,tearWork:r.tearWork||0,tearWave:r.tearWave})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], pyres: pyres.map(q=>({x:q.x, y:q.y, name:q.name, day:q.day})), necroSeen: towns.map(t=>t.necroSeen||0), coilHeld: towns.map(t=>!!t.coilHeld), coilShrine, coilExposed, coilStruck, coilN,
+    rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang,tearWork:r.tearWork||0,tearWave:r.tearWave})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], pyres: pyres.map(q=>({x:q.x, y:q.y, name:q.name, day:q.day, read:q.read||0})), pyreRead: pyreRead ? {...pyreRead} : null, necroSeen: towns.map(t=>t.necroSeen||0), coilHeld: towns.map(t=>!!t.coilHeld), coilShrine, coilExposed, coilStruck, coilN,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
     camps: camps.map(c => ({id:c.id, x:c.x, y:c.y, fac:c.fac, cap:c.cap, tents:c.tents})),
     bonds: [...bonds.entries()],
@@ -31255,7 +31359,10 @@ function restore(d){
   /* THE STAKES COME BACK. A permanent alteration to the world that does not survive a save is
      not permanent, it is a session decoration. */
   pyres.length = 0;
-  if(Array.isArray(d.pyres)) for(const q of d.pyres) pyres.push({x:q.x, y:q.y, name:q.name, day:q.day});
+  if(Array.isArray(d.pyres)) for(const q of d.pyres) pyres.push({x:q.x, y:q.y, name:q.name, day:q.day, read:q.read || 0});
+  /* AND WHETHER ANYBODY READ ONE. Dropping this across a save is the difference between
+     Albedo taking your hand and Albedo asking you to go and do a thing you already did. */
+  pyreRead = d.pyreRead ? {...d.pyreRead} : null;
   towns.forEach((t, i) => t.necroSeen = (d.necroSeen && d.necroSeen[i]) || 0);
   towns.forEach((t, i) => t.coilHeld = !!(d.coilHeld && d.coilHeld[i]));
   marks.length = 0;

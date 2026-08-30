@@ -193,6 +193,49 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : '!! THE RING OUTLIVES THE SPELL';
     });
 
+    /* ---------- 5. AND THE GREAT ONES WALK THROUGH IT ----------
+       "It needs to have some sort of weakness that can be circumvented."
+       Asserted as BEHAVIOUR and not just as a predicate, and in a PAIR: the ordinary gaunt has
+       to still be turned, or "the light no longer works" would pass this test just as cleanly
+       as "the light now has a ceiling". */
+    guard(['theLightStillTurnsTheSwarm', 'butNotTheGreatOnes'], () => {
+      wipe();
+      const u = put('Bearer', gx, gy, { magic: 30 });
+      u.gift = 'divine';
+      startConcentration(u, 'warding', 1, true, true);
+      const stage = (kind, at) => {
+        const g = spawnGaunt(kind, at.x, at.y);
+        if (!g) return null;
+        g.x = at.x; g.y = at.y; g.state = 'ok'; g.target = u; g.hunt = true;
+        made.push(g);
+        return g;
+      };
+      const near = { x: gx + 4, y: gy };
+      const small = stage('gaunt', near);
+      const big = stage('gaunt', { x: gx + 4, y: gy + 2 });
+      if (big) { big.big = 2.4; big.bossKey = null; }
+      const d0s = dist(small.x, small.y, u.x, u.y), d0b = dist(big.x, big.y, u.x, u.y);
+      /* RUN THE WORLD, NOT JUST THE DECISION. `ai` chooses; `physics` moves. Calling the
+         former on its own leaves both creatures standing exactly where they were staged and
+         the probe reads "nobody backed off" for a light that works perfectly. */
+      paused = false;
+      for (let i = 0; i < 60; i++) update(0.1);
+      paused = true;
+      const d1s = dist(small.x, small.y, u.x, u.y), d1b = dist(big.x, big.y, u.x, u.y);
+      R._ward = `the ordinary gaunt went ${d0s.toFixed(1)} -> ${d1s.toFixed(1)} tiles, the ${big.big}x one ${d0b.toFixed(1)} -> ${d1b.toFixed(1)}`;
+      R.theLightStillTurnsTheSwarm = (d1s > d0s + 0.5 && !small.target)
+        ? `an ordinary gaunt inside the light drops its target and backs off — ${d0s.toFixed(1)} to ${d1s.toFixed(1)} tiles`
+        : `!! THE LIGHT NO LONGER TURNS A COMMON GAUNT (${d0s.toFixed(1)} -> ${d1s.toFixed(1)}, target ${!!small.target})`;
+      R.butNotTheGreatOnes = (d1b < d0b && wardTurns(small) && !wardTurns(big))
+        ? `while a ${big.big}x one walks straight in — ${d0b.toFixed(1)} to ${d1b.toFixed(1)} tiles — so the light answers the many and the one still has to be killed`
+        : `!! turnsSmall=${wardTurns(small)} turnsBig=${wardTurns(big)} bigMoved ${d0b.toFixed(1)} -> ${d1b.toFixed(1)}`;
+      /* and a NAMED thing is never turned, whatever size it is */
+      const named = stage('gaunt', { x: gx + 4, y: gy - 2 });
+      named.bossKey = 'sixfold';
+      R._named = wardTurns(named) ? '!! A NAMED GAUNT IS STILL TURNED BY THE LIGHT' : 'and a named one is never turned, whatever it measures';
+      endConcentration(u, true);
+    });
+
     /* helpers for the out-of-page section, which needs a real modified click */
     window.__O = { gx, gy, put, wipe, seam };
     return R;

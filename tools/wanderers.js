@@ -138,6 +138,54 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? `Cressa will not be talked loose — "${c0.why}" — and is free the moment they are down`
         : `!! CRESSA'S GATE IS WRONG (${c0.ok}/${c1.ok}: ${c0.why})`;
 
+      /* ---------- ALBEDO — A NAME OFF A POLE, WHICH SOMEBODY HAS TO GO AND READ ----------
+         "I like the idea, especially since it requires sneaking into paladin territory. But I
+          cannot find any pyres of burnt ones, despite the tooltip messages that the Paladins
+          have taken them."
+         The poles are built and they are built on time — measured over two hundred days of
+         `questionTick`: five taken, five burned, five poles. Every one of them stands at the
+         Bastion gate, which is a long way from where anybody starts, and NOTHING SAID SO. And
+         her gate asked `pyres.length > 0` — satisfied by a burning that happened somewhere in
+         the world, seen by nobody, which is not what her line asks for.
+         So this is a THREE-STATE test: no fire at all, a fire nobody has stood at, and a name
+         somebody read. The middle state is the one that did not exist. */
+      const albedo = who('albedo');
+      pyres.length = 0; pyreRead = null;
+      const a0 = wandererGate(albedo);
+      const pole = { x: bastion.x, y: bastion.y + BASTION_R + 3 };
+      pyres.push({ x: pole.x, y: pole.y, name: 'Bess Prentiss', day: day });
+      const a1 = wandererGate(albedo);
+      R.albedoNeedsAFire = (!a0.ok && /not built a fire/.test(a0.why))
+        ? `with no fire lit she says so — "${a0.why}"`
+        : `!! ALBEDO'S FIRST GATE IS WRONG (${a0.ok}: ${a0.why})`;
+      R.andSomebodyHasToStandAtIt = (!a1.ok && /nobody of yours has stood/.test(a1.why))
+        ? `and a pole nobody has walked to is still not an answer — "${a1.why}"`
+        : `!! A DISTANT BURNING OPENED HER WITHOUT ANYBODY GOING (${a1.ok}: ${a1.why})`;
+      /* walk somebody to it. `witnessTick` is where every other "your people set foot here"
+         lives, so that is what gets run rather than a hand-rolled equivalent. */
+      const reader = player().find(u => u.state !== 'dead');
+      const rx = reader.x, ry = reader.y;
+      reader.x = pole.x + 1; reader.y = pole.y;
+      witnessTick();
+      const a2 = wandererGate(albedo);
+      R.andThenSheTakesYourHand = (a2.ok && pyreRead && pyreRead.name === 'Bess Prentiss' && /BESS PRENTISS/.test(a2.label))
+        ? `stand at the pole and the name comes off it — she is waiting to hear "${pyreRead.name}", and the button says so`
+        : `!! ${a2.ok} / ${a2.label || a2.why} / read ${JSON.stringify(pyreRead)}`;
+      /* AND THE WORLD SAYS WHERE. A world event scrolls past in the feed; a thread with a mark
+         on it is a place you can walk to, and finding it was the actual complaint. */
+      threads.length = 0; pyres.length = 0; pyreRead = null;
+      const victim = makeChar('Doomed', 'town', bastion.x, bastion.y + 2, { atk: 4, def: 4, tough: 8 });
+      victim.state = 'ok'; victim.heretic = true; victim.burnDay = day;
+      chars.push(victim);
+      burnHeretic(victim);
+      const th = threads.find(t => t.key === 'pyre');
+      R.andTheJournalSaysWhere = (th && th.mark && dist(th.mark.x, th.mark.y, bastion.x, bastion.y) < BASTION_R + 12)
+        ? `and the burning opens a journal thread with a bearing on it — "${th.title}", pointing ${Math.round(dist(th.mark.x, th.mark.y, bastion.x, bastion.y))} tiles from the Bastion's middle`
+        : `!! NOTHING IN THE JOURNAL POINTS AT A POLE (${th ? JSON.stringify(th.mark) : 'no thread'})`;
+      reader.x = rx; reader.y = ry;
+      { const i = chars.indexOf(victim); if (i >= 0) chars.splice(i, 1); }
+      pyres.length = 0; pyreRead = null; threads.length = 0;
+
       /* HESPER — three places, not three button presses */
       const hesper = who('hesper');
       hesper.wanderMet = 0; hesper.wanderSeen = null;
@@ -391,7 +439,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     : `!! THE ROSTER IS PINNED TO FIXED COORDINATES (${same} identical)`;
 
   console.log('\n=== THE SIX WHO ARE ALWAYS OUT THERE ===\n');
-  for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(18) + v);
+  for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(26) + ' ' + v);
   const bad = Object.values(out).filter(v => typeof v === 'string' && v.startsWith('!!'));
   if (errs.length) console.log('\n' + errs.slice(0, 6).join('\n'));
   console.log('\n' + (bad.length || errs.length
