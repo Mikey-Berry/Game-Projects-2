@@ -319,6 +319,40 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     return R;
   }));
 
+  /* ================= 6. AND THE BROWSER STAYS OUT OF IT =================
+     "When I right click on stuff in the browser game, I tend to get popups to save image and
+      stuff like that."
+     Right-click is a primary control here, and the browser answers a good many of them with its
+     own menu — "Save image as..." over a canvas, "Back / Reload" over everything else. Only the
+     two canvases suppressed it, and the canvases are not most of the screen.
+     ASKED OF FOUR PLACES, because the interesting half is the EXEMPTION: a guard that kills the
+     native menu everywhere would take copy and paste off the save-transfer boxes, which is the
+     one place in the game a player genuinely needs it. `defaultPrevented` is the whole answer —
+     it is exactly what decides whether Chrome draws the menu. */
+  Object.assign(R, await p.evaluate(() => {
+    const R = {};
+    const ask = (el) => {
+      const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      el.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+    const canvas = document.getElementById('game');
+    const mini = document.getElementById('minimap') || document.getElementById('mmcanvas');
+    const hud = document.getElementById('log') || document.getElementById('squadbar') || document.body;
+    const box = document.createElement('textarea');
+    document.body.appendChild(box);
+    const onCanvas = ask(canvas), onMini = mini ? ask(mini) : true, onHud = ask(hud), onText = ask(box);
+    box.remove();
+    R._nativeMenu = `suppressed on: canvas ${onCanvas}, minimap ${onMini}, HUD ${onHud}; textarea ${onText}`;
+    R.theBrowserMenuIsSuppressed = (onCanvas && onMini && onHud)
+      ? 'the browser\'s own menu is refused over the canvas, the minimap and the HUD alike — not just over the two canvases that used to guard themselves'
+      : `!! canvas ${onCanvas}, minimap ${onMini}, HUD ${onHud}`;
+    R.butNotOverATextBox = !onText
+      ? 'and a textarea keeps it, so copying a save out of the transfer box and pasting one back in still works'
+      : '!! A TEXTAREA HAS LOST ITS COPY AND PASTE MENU';
+    return R;
+  }));
+
   console.log('=== WHAT A RIGHT-CLICK OFFERS ===\n');
   for (const [k, v] of Object.entries(R)) console.log('  ' + (k.startsWith('_') ? ('· ' + k.slice(1)).padEnd(34) : k.padEnd(34)) + v);
   const bad = Object.values(R).map(String).filter(v => v.startsWith('!!'));
