@@ -131,7 +131,22 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* RUN THE WORLD. This is the part no other harness does: the bug is a starvation that
        takes game-days to express, so the clock has to actually turn. */
     paused = false;
-    for (let i = 0; i < 9000; i++) update(0.25);   /* ~2250s of game time */
+    /* ---------- WATCH FOR THE BEAST, DO NOT SNAPSHOT FOR IT ----------
+       `cairnExists` used to read `cairn` at one instant three simulated days after the run
+       finished, and that is a coin flip rather than an assertion: the beast is neutral fauna in
+       a world where the Purge and the Bastion both hunt it (they were TAUGHT to, deliberately —
+       see `walksAsDead`), so whether one happens to be breathing at that particular moment turns
+       on a fortnight of chaotic combat. It went red on a pathing change that altered how bodies
+       walk, on a build where a clean run to day twelve has one standing.
+       What this section is FOR is that the beast gets into the world and is announced with a
+       place on it — "it always spawned, it was five hundred tiles away, and a whole playthrough
+       never met it". So the claim is that one existed AT ALL during the twelve days, recorded as
+       it happens; whether the paladins then killed it is the world working. */
+    let everCairn = null, cairnDay = 0;
+    for (let i = 0; i < 9000; i++) {
+      update(0.25);
+      if (!everCairn && liveCairns().length) { everCairn = cairns[0]; cairnDay = day; }
+    }
 
     const wild1 = countWild(), out1 = countOutlaw();
     R.dayReached = `ran to day ${day} (${wild0}->${wild1} wild, ${out0}->${out1} outlaw)`;
@@ -158,9 +173,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* ---------- 3. THE CAIRN BEAST IS FINDABLE ----------
        It always spawned. It was five hundred tiles away, neutral, and announced by a line of
        news that named no place, which is why a whole playthrough never met it. */
-    R.cairnExists = (cairn && cairn.state !== 'dead')
-      ? `the beast is in the world at ${cairn.x.toFixed(0)},${cairn.y.toFixed(0)}, big ${cairn.big.toFixed(2)}`
-      : '!! NO CAIRN BEAST IN THE WORLD';
+    R.cairnExists = everCairn
+      ? `the beast got into the world on day ${cairnDay}, at ${everCairn.x.toFixed(0)},${everCairn.y.toFixed(0)}, big ${everCairn.big.toFixed(2)}` +
+        (everCairn.state === 'dead' ? ' — and something has since killed it, which is the world working' : ' — and it is still standing')
+      : '!! NO CAIRN BEAST APPEARED ANYWHERE IN TWELVE DAYS';
     /* ---------- AND THE GROUND KEEPS ANSWERING ----------
        It is not a one-per-world boss: it is what an uncleared field turns into, so a late
        game full of corpses should be growing more of them. Pile the dead up and check that

@@ -322,6 +322,17 @@ the truth was 45%.
   consumer and no producer; a creature 515 tiles away announced by news that named no place.
   `world.js` is the answer to that class — it runs `update()` forward for twelve game-days and
   then asks what is still in the world.
+- **And a long-run assertion can be a coin flip dressed as a measurement.** `world.js` read the
+  global `cairn` at ONE INSTANT — after nine thousand ticks, a cull of every wild animal, and four
+  thousand more — and asked whether a beast was breathing right then. The Cairn Beast is neutral
+  fauna in a world where the Purge and the Bastion both hunt it, because they were taught to on
+  purpose, so whether one is alive at that moment turns on a fortnight of chaotic combat; a change
+  to how bodies *walk* was enough to flip it red. Measured, a clean run to day twelve has one
+  standing on both builds and the beast is seeded on day 1 — spawning was never the question. It
+  watches for one as the run happens now, reports the day it appeared, and says plainly when
+  something has since killed it, which is the world working rather than a failure. Findability,
+  which is what the section is actually for, is still carried by `cairnSaysWhere` and
+  `cairnBearing`.
 - **A long-run assertion can pass on the broken build and prove nothing.** The first version of
   the dust-hound check counted animals after twelve days and reported 27 alive — on the fixed
   build AND the broken one, because extinction takes longer than that. Counting the symptom was
