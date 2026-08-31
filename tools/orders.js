@@ -342,6 +342,112 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     });
   }
 
+  /* ================= 6. AND A CHORD THE BROWSER DOES NOT TAKE AWAY =================
+     "When I right click on stuff in the browser game, I tend to get popups to 'save image' and
+      stuff like that... Notably, it mostly happens with shift + right click."
+     Section 5 above proves the shortcut WORKS on shift, and it does — but shift is the one
+     chord no page is allowed to keep. Both engines hand shift+right-click to the browser by
+     design (Gecko does not even fire the contextmenu event while shift is down), and the HTML
+     spec blesses it as the user's escape hatch, so the page-wide guard in `rightclick.js`
+     section 6 cannot reach it and never will. The order still lands; the browser's own menu
+     opens over the top of it.
+     So the fix is a second chord, and the assertions below are about the SHAPE of it: ctrl
+     does the same thing on a node, and does NOT trample the two things ctrl already means. */
+  const ctrlRight = async (q) => {
+    await p.keyboard.down('Control');
+    await p.mouse.move(q.x, q.y);
+    await p.mouse.down({ button: 'right' });
+    await p.mouse.up({ button: 'right' });
+    await p.keyboard.up('Control');
+  };
+  {
+    await p.evaluate(() => {
+      const u = chars.find(c => c.id === window.__T.uid);
+      u.job = null; selected = [u]; hideCtxMenu();
+    });
+    const q = await aimAt('seam');
+    await ctrlRight(q);
+    out.ctrlOnASeamSetsMineToo = await p.evaluate(() => {
+      const u = chars.find(c => c.id === window.__T.uid);
+      return u.job === 'mine'
+        ? 'ctrl+right-clicking a seam sets MINE exactly as shift does — the one chord the browser leaves alone'
+        : `!! THE JOB IS ${u.job || 'NONE'} AFTER CTRL+RIGHT-CLICKING A SEAM`;
+    });
+  }
+  /* AND IT DOES NOT EAT A FORCE ATTACK. Ctrl+right-click on a body means ATTACK ANYWAY, and an
+     enemy standing on an ore seam has to stay attackable — otherwise the new chord takes a
+     fight away to give you a job. The pair is the point: the SAME click on the SAME tile, once
+     with somebody standing on it and once without. Asserting only the first half would pass on
+     a build where ctrl had simply been wired to nothing at all. */
+  {
+    await p.evaluate(() => {
+      const u = chars.find(c => c.id === window.__T.uid);
+      u.job = null; selected = [u]; hideCtxMenu();
+      const t = window.__T.seamTile;
+      const foe = makeChar('Squatter', 'bandit', t.x, t.y, { atk: 6, def: 6, tough: 10 });
+      foe.state = 'ok'; foe.__probe = true;
+      chars.push(foe); window.__T.foeId = foe.id;
+      /* NO TICKS AFTER THIS. The fog over the seam was lifted during the staging for section 5
+         and `visAt` is about the TILE, so there is nothing left to run for — and running it
+         anyway is what broke the first version of this: six tenths of a second is enough for a
+         bandit dropped next to an armed stranger to walk a tile and a half, and the probe then
+         reported a force-attack guard that had failed when what had really happened is that
+         nobody was standing on the seam any more. */
+      rebuildCharGrid();
+    });
+    const q = await aimAt('seam');
+    await ctrlRight(q);
+    out._foe = await p.evaluate((q2) => {
+      const f = chars.find(c => c.id === window.__T.foeId);
+      const t = window.__T.seamTile;
+      const m = screenToWorld(q2.x, q2.y);
+      return f ? `the bandit stands ${dist(f.x, f.y, t.x, t.y).toFixed(2)} tiles off the seam, visAt ${visAt(f.x, f.y)}, ${dist(f.x, f.y, m.x, m.y).toFixed(2)} from where the click landed`
+               : '!! THE BANDIT IS GONE';
+    }, q);
+    out.butNotOverSomebodyStanding = await p.evaluate(() => {
+      const u = chars.find(c => c.id === window.__T.uid);
+      return !u.job
+        ? 'and with a bandit standing on that same seam the ctrl-click is still a FORCE ATTACK, not a job order'
+        : `!! CTRL+RIGHT-CLICK TOOK THE FIGHT AWAY AND HANDED OUT ${u.job.toUpperCase()} INSTEAD`;
+    });
+    await p.evaluate(() => {
+      const f = chars.find(c => c.id === window.__T.foeId);
+      if (f) chars.splice(chars.indexOf(f), 1);
+      const u = chars.find(c => c.id === window.__T.uid);
+      u.job = null; u.target = null; selected = [u]; hideCtxMenu();
+      rebuildCharGrid();
+    });
+    const q2 = await aimAt('seam');
+    await ctrlRight(q2);
+    out.andTheSameClickWorksOnceTheyMove = await p.evaluate(() => {
+      const u = chars.find(c => c.id === window.__T.uid);
+      return u.job === 'mine'
+        ? 'and the identical click on the identical tile sets MINE the moment nobody is standing there — the guard is the body, not the chord'
+        : `!! THE JOB IS ${u.job || 'NONE'} ON AN EMPTY SEAM`;
+    });
+  }
+  /* AND THE BUILDING KEEPS ITS FULLER MENU. Ctrl+right-click on a building already offered
+     ASSIGN, SHUT DOWN and DECONSTRUCT off this same `BUILD_JOB` table — that branch is where
+     the shortcut's own comment points. Letting the new chord claim buildings too would have
+     preempted three entries with one, silently, and nothing else here would have noticed. */
+  {
+    await p.evaluate(() => {
+      const u = chars.find(c => c.id === window.__T.uid);
+      u.job = null; selected = [u]; hideCtxMenu();
+    });
+    const q = await aimAt('bench');
+    await ctrlRight(q);
+    out.andABuildingKeepsItsOwnMenu = await p.evaluate(() => {
+      const el = document.getElementById('ctxmenu');
+      const open = el && el.style.display !== 'none';
+      const labels = open ? [...document.querySelectorAll('#ctxmenu button')].map(x => x.textContent) : [];
+      const has = (f) => labels.some(l => l.toUpperCase().includes(f));
+      return (open && has('ASSIGN') && has('SHUT DOWN') && has('DECONSTRUCT'))
+        ? `and ctrl on a Research Bench still opens the building's own three — ${labels.length} entries, assign/shut down/deconstruct — instead of being swallowed by the shortcut`
+        : `!! open=${open} labels=${JSON.stringify(labels)}`;
+    });
+  }
+
   const bad = Object.values(out).filter(v => typeof v === 'string' && v.startsWith('!!'));
   for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(32) + v);
   for (const e of errs) console.log('  ' + e);

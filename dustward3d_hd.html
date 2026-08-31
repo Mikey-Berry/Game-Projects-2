@@ -8607,6 +8607,9 @@ const NEEDS_A_MIND = ['research', 'craft', 'gunner'];
 const BUILD_JOB = {r_bench:'research', farm:'farm', charnel:'charnel', ossuary:'charnel', vat:'flesh',
                    boneyard:'bones', workbench:'craft', forge:'craft'};
 const NODE_JOB  = {wood:'wood', stone:'stone', copper:'mine', iron_ore:'mine', fish:'fish'};
+/* one line, once a session, pointing at the chord the browser does not steal — see the job
+   shortcut in the right-click chain */
+let jobChordHinted = false;
 const BENCH_SEATS = 3;        /* how many minds one bench can hold */
 /* ============================================================ WHO IS AT WHICH BENCH
    "Reading a ton of old formulae at once basically chunks it into one GIANT research project.
@@ -28258,13 +28261,22 @@ function openInventory(c){
       const mk = (label, fn) => { const b=document.createElement('button'); b.textContent=label; b.style.cssText='padding:2px 5px;font-size:10px;margin-left:3px'; b.onclick=fn; acts.appendChild(b); return b; };
       /* MOVING A STACK. Selling has taken shift for ten since the shop was written; the pack
          had no such thing, so shifting sixty Mortal Remains into the wagon was sixty clicks.
-         Same gesture, one step further: shift for ten, right-click for ten, shift+right-click
-         for the whole stack. */
+         Same gesture, one step further: shift for ten, right-click for ten, ctrl+right-click
+         for the whole stack.
+         AND IT IS CTRL AND NOT SHIFT FOR A REASON THAT COST THIS BUTTON ITS TOP GEAR. "Take
+         all" was written as shift+RIGHT-click and read off `ev.shiftKey` inside an
+         `oncontextmenu` handler — but the browser keeps shift+right-click for itself, and
+         Gecko does not fire the contextmenu event AT ALL while shift is down. So in Firefox
+         this handler never ran on that chord: no stack moved, and "save image as" opened over
+         the panel instead. Not noise, like the same chord on the map — the feature was simply
+         gone, in a whole engine, with the tooltip still advertising it.
+         Shift on a plain LEFT-click is untouched and still means ten, because nothing reserves
+         that one. It is only the right button the browser has claims on. */
       const mkBulk = (label, tip, fn) => {
         const b = mk(label, null);
-        b.title = tip + ' — shift for 10, shift+right-click for all';
+        b.title = tip + ' — shift for 10, right-click for 10, ctrl+right-click for all';
         const n = (ev) => { const have = c.inv[k] || 0;
-          return ev.type === 'contextmenu' ? (ev.shiftKey ? have : Math.min(10, have)) : (ev.shiftKey ? Math.min(10, have) : 1); };
+          return ev.type === 'contextmenu' ? ((ev.shiftKey || ev.ctrlKey) ? have : Math.min(10, have)) : (ev.shiftKey ? Math.min(10, have) : 1); };
         b.onclick = (ev) => fn(n(ev));
         b.oncontextmenu = (ev) => { ev.preventDefault(); ev.stopPropagation(); fn(n(ev)); };
         return b;
@@ -28924,7 +28936,7 @@ $('btn-help').onclick = () => {
     Left click / drag: select · shift adds · <b>S</b> whole squad · <b>1–5</b> control groups (shift+digit sets)<br>
     Right click: move · attack · treat ally · loot/harvest corpse (menu) · rest in bed · trade · gather (trees, rock, ore, water) · use workstation<br>
     <b>A</b> attack-move · <b>C</b>/<b>V</b> cast spells · <b>X</b> let go of any concentration the selection is holding · <b>B</b> build · <b>SPACE</b> pause · <b>F</b> re-follow camera · <b>ARROWS</b> pan · minimap click jumps · <b>PIN</b> beside the map, then click it to mark a place (right-click a pin to lift it)<br>
-    <b>CTRL+right-click</b> force-attack anyone · <b>SHIFT+right-click</b> a seam, tree, boulder, water or a workshop to make it that unit's standing job · <b>ALT+right-click</b> examine · <b>hold ALT</b> shows building signs and drop tags ·
+    <b>CTRL+right-click</b> a seam, tree, boulder or water to make it that unit's standing job — or a body, to force-attack it · <b>SHIFT+right-click</b> does the same job order and also works on a workshop, but your browser reserves that chord and will open its own menu over the top · <b>ALT+right-click</b> examine · <b>hold ALT</b> shows building signs and drop tags ·
     <b>G</b> then click an ally: bodyguard order (undead default to guarding their master; any move order clears it) ·
     double-click a squad portrait to jump the camera there<br><br>
     <b style="color:var(--bone)">BODIES</b><br>
@@ -29416,7 +29428,7 @@ cv.addEventListener('mousedown', e => {
     if(guardMode){ guardMode = false; return; }
     const movers = selected.filter(c => c.state==='ok');
     if(!movers.length) return;
-    /* ---------- SHIFT: THE THING YOU CLICKED BECOMES THE STANDING JOB ----------
+    /* ---------- SHIFT OR CTRL: THE THING YOU CLICKED BECOMES THE STANDING JOB ----------
        "This is a peripheral thought, but I wonder if a shift+right click command could set
         that to someone's job? (As in, I shift-right click an ore vein, and that becomes their
         primary job.) Would be a lot easier than manually navigating through menus for it."
@@ -29424,11 +29436,40 @@ cv.addEventListener('mousedown', e => {
        everywhere: on a seam, a tree, a boulder, water, or a building that somebody tends. The
        tables it reads are the same two the job menu and the building menu read — see
        `NODE_JOB` and `BUILD_JOB` — so there is no way for the shortcut to assign a job the
-       long way round would not. */
-    if(e.shiftKey && !e.ctrlKey && !e.altKey){
+       long way round would not.
+
+       AND THERE ARE TWO CHORDS, BECAUSE SHIFT IS THE ONE CHORD NO PAGE IS ALLOWED TO KEEP.
+       "When I right click on stuff in the browser game, I tend to get popups to 'save image'
+        and stuff like that... Notably, it mostly happens with shift + right click."
+       That is not a bug in the guard and it cannot be fixed by one. Both engines hand
+       shift+right-click to the BROWSER on purpose — Gecko does not even fire the contextmenu
+       event when shift is down, so there is no event to call preventDefault on — and the HTML
+       spec blesses it outright as the user's escape hatch out of pages that steal the menu.
+       So the shortcut had been given the single chord the browser reserves: the order lands
+       underneath, and "save image as" opens over the top of it every time.
+       CTRL IS THE ANSWER AND IT WAS ALREADY HALF-WIRED. Ctrl+right-click already means "the
+       thing under the cursor is the SUBJECT, not a destination" — it is how you assign the job
+       at a BUILDING, in the ctrl branch some six hundred lines down, off this same `BUILD_JOB`.
+       A gather node was the one subject it had never been pointed at. So ctrl now means at the
+       seam what it already meant at the shed.
+       BUILDINGS STAY OUT OF THE CTRL HALF, deliberately: they have the fuller menu already —
+       assign, shut down, deconstruct — and claiming them up here would preempt all three with
+       the one entry it opens with. And a body you can see stays out of it too, because
+       ctrl+right-click on a body is FORCE ATTACK, and an enemy standing on an ore seam has to
+       stay attackable. Shift keeps both halves, unchanged, for the muscle memory already
+       built — and for the browsers and prefs that do leave it alone. */
+    const jobChord = e.altKey ? null
+      : (e.shiftKey && !e.ctrlKey) ? 'both'
+      : (e.ctrlKey && !e.shiftKey) ? 'node'
+      : null;
+    if(jobChord){
       const gk = gatherKindAt(wx, wy);
-      const pbj = pBuilds.find(b2 => wx >= b2.x - 0.3 && wx <= b2.x + b2.w + 0.3 && wy >= b2.y - 0.3 && wy <= b2.y + b2.h + 0.3);
-      const jk = (gk && NODE_JOB[gk.kind]) || (pbj && BUILD_JOB[pbj.type]) || null;
+      const pbj = jobChord === 'both'
+        ? pBuilds.find(b2 => wx >= b2.x - 0.3 && wx <= b2.x + b2.w + 0.3 && wy >= b2.y - 0.3 && wy <= b2.y + b2.h + 0.3)
+        : null;
+      const overFoe = jobChord === 'node' && chars.some(c2 => c2.state !== 'dead' && c2.faction !== 'player' &&
+        visAt(c2.x, c2.y) === 2 && bodyHit(c2, wx, wy, 0.9));
+      const jk = overFoe ? null : ((gk && NODE_JOB[gk.kind]) || (pbj && BUILD_JOB[pbj.type]) || null);
       if(jk){
         const took = [], cannot = [];
         for(const m of movers){
@@ -29442,6 +29483,13 @@ cv.addEventListener('mousedown', e => {
         if(took.length) log(took.length === 1
           ? `${took[0].name} takes up the ${jk} work.`
           : `${took.length} of them take up the ${jk} work.`, 'good');
+        /* said ONCE, on the chord that summons the browser's menu, and only when the order
+           actually landed — the player has no way to know the shortcut has a second chord and
+           every reason to think the popup is ours */
+        if(took.length && jobChord === 'both' && !jobChordHinted){
+          jobChordHinted = true;
+          log('(Ctrl+right-click sets work the same way, without the browser opening its own menu over it.)', '');
+        }
         if(cannot.length) log(`${cannot.length === 1 ? cannot[0].name + ' has' : cannot.length + ' of them have'} nobody home to do that work.`, 'bad');
         refreshCharPanel();
         return;
