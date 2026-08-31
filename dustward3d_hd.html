@@ -6969,7 +6969,22 @@ function walkingDeadCheck(dt){
   _walkDeadT = 4;
   contrabandCheck();
   for(const c of chars){
-    if(c.faction !== 'player' || !c.undead || c.state !== 'ok') continue;
+    /* ---------- A DISGUISE THE LAW CANNOT SEE THROUGH EITHER ----------
+       "Casting shroud the dead seems to only work while the caster is extremely close."
+       It works at any range — measured, it holds at a hundred and twenty tiles — and this line
+       is why it looked otherwise. It asked `c.undead`, the RAW FLAG, where every other watching
+       eye in the game asks `revealedUndead`: so the town's alarm was fooled by a shroud and the
+       town's LAW was not. You were fined and outlawed for a body nobody present could tell was
+       dead, three times over at 25 standing apiece, and once the ledger passed -50 `hostile`
+       turned the whole town on you — which is a rep rule and does not care about disguises at
+       all. That is the "only while the caster is close": walk through and you are gone before
+       the third fine lands; leave a shrouded risen standing in a town and it is killed by
+       guards who were never supposed to have noticed it.
+       ONE PREDICATE COVERS THREE DISGUISES. `revealedUndead` is the Gravecloth Shroud, the veil
+       and this spell together — none of the three has ever worked against the bounty, and all
+       three work now, because there is one answer in the game to "can that be seen for what it
+       is" and this line was not asking it. */
+    if(c.faction !== 'player' || !revealedUndead(c) || c.state !== 'ok') continue;
     /* UNDER THE TOWN IS NOT THROUGH THE TOWN. A tunnel that happens to run beneath the walls
        is not a procession past the gate, and the whole point of the undercroft is that it goes
        under everything — so without this every town in the world became a place you could be
@@ -13306,6 +13321,55 @@ const corpseSites = [];
     if(corpseSites.some(s => dist(s.x, s.y, p.x, p.y) < 60)) continue;
     const s = {id: i + 1, x: p.x, y: p.y, r: 12};
     corpseSites.push(s);
+    /* ---------- AND IT IS A THING, NOT A PICTURE OF ONE ----------
+       "It's also odd that you can walk inside them — they should act as obstacles and not
+        scenery you can phase through. That kills the illusion."
+       THE FOOTPRINTS ARE THE GEOMETRY, TRANSFORMED THE SAME WAY THE GEOMETRY IS. Each monument
+       is drawn in its own local frame and then turned by `id * 2.39996`, so a footprint written
+       in world tiles would be right for one site and wrong for the other four. Every candidate
+       tile is pushed back through the INVERSE of that turn and tested against the same local
+       boxes the mesh is built from — which is also what keeps the two in step the next time
+       somebody moves a rib.
+       WHAT IS LEFT OPEN IS DELIBERATE. You can walk between the ribs and between the fingers,
+       because the inside of a ribcage is the best thing about a ribcage and a hand you cannot
+       stand in the palm of is a wall. It is the masses that stop you: the skull, the jaw, the
+       spine, the rib feet, the fingers themselves, the back of the hand.
+       DONE HERE, ABOVE THE CACHE AND THE ECOLOGY, so `openAt` and `findOpenNear` below can see
+       it — a chest placed under the jaw or an animal spawned inside the cranium would be the
+       same bug one step further on. And it costs no `rnd()` draw, which matters: anything that
+       did would move every body worldgen places after this loop. */
+    {
+      const ang = (s.id * 2.39996) % (Math.PI * 2);
+      const cosA = Math.cos(-ang), sinA = Math.sin(-ang);
+      const V = s.id % 3;
+      /* local boxes: [x, z, halfWidth, halfDepth] in the monument's own frame */
+      const boxes = [];
+      if(V === 0){
+        for(let k = 0; k < 7; k++){
+          const t2 = k / 6 - 0.5, z = t2 * 16;
+          boxes.push([0, z, 1.3, 1.1]);                                  /* the spine */
+          for(const side of [-1, 1]) boxes.push([side * (4.5 - Math.abs(t2) * 1.2), z, 1.0, 1.0]);
+        }
+        boxes.push([0.6, -10.5, 1.8, 3.2]);                              /* the fallen sternum */
+      } else if(V === 1){
+        boxes.push([0, 0.2, 6.4, 5.6]);                                  /* the cranium */
+        boxes.push([-0.9, 1.6, 4.4, 3.3]);                               /* the jaw */
+        boxes.push([0, 5.6, 5.6, 2.4]);                                  /* and the back of it, in the earth */
+      } else {
+        boxes.push([0, 3.4, 4.9, 3.3]);                                  /* the back of the hand */
+        boxes.push([0.4, 7.2, 3.9, 2.2]);                                /* the wrist */
+        for(const fx of [-3.9, -1.9, 0.1, 2.1]) boxes.push([fx, 0.6, 0.9, 0.9]);
+        boxes.push([4.6, 3.0, 1.0, 1.0]);                                /* the thumb */
+      }
+      for(let ty = Math.round(p.y) - 14; ty <= Math.round(p.y) + 14; ty++)
+        for(let tx = Math.round(p.x) - 14; tx <= Math.round(p.x) + 14; tx++){
+          if(tx < 1 || ty < 1 || tx >= W - 1 || ty >= H - 1) continue;
+          const dx = tx + 0.5 - p.x, dz = ty + 0.5 - p.y;
+          const lx = dx * cosA - dz * sinA, lz = dx * sinA + dz * cosA;
+          for(const [bx, bz, hw, hd] of boxes)
+            if(Math.abs(lx - bx) <= hw && Math.abs(lz - bz) <= hd){ blocked.add(bkey(tx, ty)); break; }
+        }
+    }
     /* ---------- THE FRAGMENT CACHE, OUT FROM UNDER THE BONES ----------
        It used to sit at the exact centre of the site — which is also where the skull, the
        ribcage and the hand are all centred. The skull variant alone is a 13x11 dome sitting
@@ -13338,8 +13402,18 @@ const corpseSites = [];
       sunder: ri(2, 4),
       ...(rnd() < 0.6 ? {formula_p: 1} : {formula_w: ri(1, 2)}),
     }}});
-    /* the ecology: things that grew from the fall. Not nightborn — this ground makes its own dark. */
-    const dn = ri(2, 4);
+    /* ---------- THE ECOLOGY, AND IT HAS TO BE ABLE TO SURVIVE BEING VISITED ----------
+       "The ecosystems that Malathuun's sundered sites are built around seem to get wiped out
+        pretty quickly. Those mites or whatever tend to become corpses."
+       Two to four animals is not an ecosystem, it is a garrison — one fight and the ground is
+       a field of carcasses with nothing living on it, permanently, because the restock below
+       only woke up under TWO and then trickled one back every seventeen hours. The site is
+       supposed to be a place that BREEDS things, and the first thing a player does at one is
+       kill everything on it; if it cannot come back from that it is scenery with a chest.
+       Five to eight now, and the number is recorded on the site so the regrowth below has
+       something to grow BACK TO rather than a hardcoded floor of two. */
+    const dn = ri(5, 8);
+    s.pop = dn;
     for(let k = 0; k < dn; k++){
       const q = findOpenNear(p.x + ri(-8, 8), p.y + ri(-8, 8), 5);
       const g = spawnGaunt(rnd() < 0.5 ? 'stalker' : 'gaunt', q.x, q.y);
@@ -13616,7 +13690,17 @@ function cairnWhere(x, y){
    worthless, it is eating — but it leaves named dead alone, because a thing with a name is a
    thing the player has a claim on and finding it inside the beast is not a story. */
 function cairnFood(b){
-  return !!b && b.state === 'dead' && !b.raised && !b.bossKey && !b.vip && !b.phyl
+  /* ---------- AND THE SITE'S OWN DEAD ARE NOT PART OF THE PILE ----------
+     "Those mites or whatever tend to become corpses… and then a Malathuun's Answer often pops
+      up to eat them."
+     That is a loop, and it is the reason the sites read as self-destroying: kill the ecology,
+     the carcasses count toward the fodder that calls the ground up, the thing that gets up eats
+     the carcasses, and the site is empty ground with a hole in it. Cutting `siteId` out of the
+     count breaks it at the only place it can be broken without touching the ordinary beast —
+     a Corpse Cairn is a heap of the unclaimed DEAD, meaning people nobody buried, and a
+     tear-born animal shot on the ground it was spawned on was never that. Battlefield dead,
+     town dead and your own unburied all still count exactly as before. */
+  return !!b && b.state === 'dead' && !b.raised && !b.bossKey && !b.vip && !b.phyl && !b.siteId
       && !chars.some(o => o.carry === b || (o.carryList && o.carryList.includes(b)));
 }
 /* ---------- HOW MUCH OF A BODY A BODY IS ----------
@@ -13687,10 +13771,18 @@ let _cairnT = 0;
    off, and it can be killed for. `cacheIdx` is recorded at worldgen so the right chest is
    certain, and `chestsOpened` already rides the save, so a looted-and-walked site stays that
    way across a reload with nothing new to store. */
-const CURSE_FODDER = 70;         /* unclaimed dead on the ground before the site answers */
-const CURSE_GAP = 6;             /* game-days between curses, so it stays an event */
+/* ---------- AND IT IS AN EVENT, WHICH MEANS IT HAS TO BE RARE ----------
+   "Malathuun's Answer events should be much less common than they are now. Corpse Cairns should
+    spawn as per usual but not necessarily as an event isolated at these locations."
+   All three dials moved and the ordinary Corpse Cairn is untouched — `CAIRN_PER_BODY` and
+   `CAIRN_MAX` are exactly what they were, so the beast that forms out of a battlefield still
+   forms out of a battlefield at the same rate. What changed is the bar for the SITE standing
+   up: a fortnight and a half between them instead of six days, a hundred and twenty unclaimed
+   dead instead of seventy, and not before the end of the first month. */
+const CURSE_FODDER = 120;        /* unclaimed dead on the ground before the site answers */
+const CURSE_GAP = 18;            /* game-days between curses, so it stays an event */
 const CURSE_ATE = 32;            /* half-grown: ~3.5x, against a ceiling of 8.0 */
-const CURSE_DAY = 16;            /* not in the first fortnight; there are no fields yet */
+const CURSE_DAY = 30;            /* not in the first month; there are no fields yet */
 /* Read off the news rather than stored: `events` ride the save, so the cooldown survives a
    reload without a new field. A curse old enough to have been pruned out of a 500-event log is
    old enough that the gap has long since passed anyway. */
@@ -13827,6 +13919,27 @@ function corpseSiteTick(wdt){
   for(const s of corpseSites){
     if(player().some(c => c.state !== 'dead' && dist(c.x, c.y, s.x, s.y) < s.r)){
       bumpNotice(wdt * 0.35);   /* the consciousness pervades. You are standing in it. */
+    }
+    /* ---------- AND THE GROUND RESTOCKS ITSELF, DAY OR NIGHT ----------
+       MOVED HERE FROM `gauntTick`, where it had been sitting between the choir and the brood.
+       Same caller, same `dh`, no behaviour in it either way — but a function called
+       `corpseSiteTick` that does not tick the corpse sites is a name that lies, and the probe
+       for this went looking in the obvious place and found an empty site after four days.
+       IT GROWS BACK TOWARD WHAT IT WAS, AND FASTER THE EMPTIER IT IS. The old rule woke only
+       below two and drew a flat 0.06 an hour, so a cleared site sat dead for the best part of a
+       day and then crept back to a population of TWO and stopped — which is the whole of "the
+       ecosystems get wiped out pretty quickly". Against the site's own `s.pop` and scaled by
+       the size of the hole, a site stripped of eight refills over a day and a half while a site
+       missing one barely notices. `s.pop` is undefined on a save from before this: fall back to
+       the old floor rather than to NaN, which would silently stop every site in an old game
+       regrowing and would look exactly like the bug being fixed. */
+    const want = s.pop || 3;
+    const pop = chars.filter(c => c.siteId === s.id && c.state !== 'dead' && c.gauntKind).length;
+    if(pop < want && rnd() < wdt * 0.045 * (want - pop)){
+      const q = findOpenNear(s.x + ri(-8, 8), s.y + ri(-8, 8), 5);
+      const g = spawnGaunt(rnd() < 0.5 ? 'stalker' : 'gaunt', q.x, q.y);
+      g.nightborn = false; g.guard = {x: q.x, y: q.y}; g.siteId = s.id;
+      if(rnd() < 0.5) g.dropItems = {sunder: 1};
     }
   }
 }
@@ -14310,16 +14423,6 @@ function gauntTick(dh){
   choirTick(dh);
   cairnTick(dh * HOUR_SEC);   /* it eats on real seconds, not game hours */
   broodTick(dh * HOUR_SEC);   /* and the thing in the door heals on the hours the door has stood */
-  /* the sundered ground restocks itself, day or night */
-  for(const s of corpseSites){
-    const pop = chars.filter(c => c.siteId === s.id && c.state !== 'dead' && c.gauntKind).length;
-    if(pop < 2 && rnd() < dh * 0.06){
-      const q = findOpenNear(s.x + ri(-8, 8), s.y + ri(-8, 8), 5);
-      const g = spawnGaunt(rnd() < 0.5 ? 'stalker' : 'gaunt', q.x, q.y);
-      g.nightborn = false; g.guard = {x: q.x, y: q.y}; g.siteId = s.id;
-      if(rnd() < 0.5) g.dropItems = {sunder: 1};
-    }
-  }
   if(!isNight() && !rifts.length) return;   /* a tear makes its own night */
   const living = chars.filter(c => c.faction === 'gaunt' && c.state !== 'dead');
   const tier = eldritchTide();
@@ -21528,59 +21631,137 @@ const syncSundered = makeDynGroup(
       const grp = new THREE.Group();
       grp.position.set(s.x, gy2, s.y);
       grp.rotation.y = (s.id * 2.39996) % (Math.PI * 2);
+      /* ---------- THE MONUMENTS, REBUILT ----------
+         "Could we increase their graphical fidelity a bit? Right now they are hard to make out
+          or just look plain stupid, like the giant 'skull' with its dorky looking eyes and
+          super square head. Should be a bit more unnerving. (Hands too just look like a weird
+          white thing jutting out of the ground.)"
+         Photographed before touching them, and the report is exact. The skull was ONE BOX —
+         13 by 8 by 11 — with two black rectangles stuck on the front, which at play distance
+         is a shipping container with windows. The hand was five pale slabs in a row with no
+         knuckle, no palm and no thumb.
+         WHAT MAKES A SKULL READ IS NOT THE DOME, IT IS WHAT HANGS OFF IT: a brow that
+         OVERHANGS its sockets so they sit in shadow rather than being painted on, a nasal hole,
+         cheekbones that flare and leave a gap behind them, and teeth. And what makes it
+         unnerving is that it is not square to the world — every one of these is tilted, because
+         a thing that fell out of the sky and drove into the ground did not land level.
+         THREE MATERIALS, NOT TWO. Bone the light catches, a dirtier bone for whatever is going
+         into the earth, and a near-black for the cavities — a hole lit the same as the face
+         around it is a painted hole. */
+      const dirtMat = new THREE.MeshLambertMaterial({color: 0x6f6858});
+      const voidMat = new THREE.MeshLambertMaterial({color: 0x080607});
+      const B3 = (mat, sx, sy, sz, px, py, pz, rx, ry, rz) => {
+        const m = new THREE.Mesh(BOXG, mat);
+        m.scale.set(sx, sy, sz); m.position.set(px, py, pz);
+        if(rx) m.rotation.x = rx; if(ry) m.rotation.y = ry; if(rz) m.rotation.z = rz;
+        m.castShadow = true; grp.add(m); return m;
+      };
+      /* IT DID NOT LAND LEVEL. Derived off the id so it is stable across a reload and different
+         between sites — a rolled angle here would move every body worldgen places after it. */
+      const tilt = ((s.id * 7919) % 100) / 100 - 0.5;
+      grp.rotation.z = tilt * 0.16;
+      grp.rotation.x = (((s.id * 5417) % 100) / 100 - 0.5) * 0.12;
       if(variant === 0){
-        /* the ribcage: seven arcs over a sunken spine, tall as a keep */
+        /* THE RIBCAGE: seven arcs over a sunken spine, tall as a keep — and no two the same.
+           It was the best of the three already, because ribs are a shape a row of slabs can
+           actually make. What it lacked was damage: a perfect cage of identical arcs reads as
+           architecture, and this is a carcass. Two ribs are broken off short and one is gone. */
         for(let i = 0; i < 7; i++){
           const t2 = i / 6 - 0.5;
+          const full = 11 - Math.abs(t2) * 5;
           for(const side of [-1, 1]){
-            const rib = new THREE.Mesh(BOXG, boneMat);
-            rib.scale.set(0.9, 11 - Math.abs(t2) * 5, 1.6);
-            rib.position.set(side * (4.5 - Math.abs(t2) * 1.2), (11 - Math.abs(t2) * 5) * 0.42, t2 * 16);
-            rib.rotation.z = side * -0.5;
-            rib.castShadow = true;
-            grp.add(rib);
+            /* the missing one, and the two stumps — chosen off i and side so they stay put */
+            const key = (i * 3 + (side > 0 ? 1 : 2)) % 7;
+            if(key === 0) continue;                        /* that one is gone entirely */
+            const brk = key === 3 ? 0.42 : key === 5 ? 0.62 : 1;
+            const h2 = full * brk;
+            const rib = B3(boneMat, 0.8, h2, 1.5,
+              side * (4.5 - Math.abs(t2) * 1.2), h2 * 0.42, t2 * 16, 0, 0, side * -0.5);
+            /* and the arc closes over the top on the ones that survived whole */
+            if(brk === 1) B3(boneMat, 0.7, 3.4, 1.3,
+              side * (3.1 - Math.abs(t2) * 0.9), full * 0.86, t2 * 16, 0, 0, side * -1.15);
+            void rib;
           }
-          const vert = new THREE.Mesh(BOXG, oldMat);
-          vert.scale.set(2.6, 1.8, 2.0);
-          vert.position.set(0, 0.9, t2 * 16);
-          grp.add(vert);
+          /* the spine: a vertebra with a process standing off it, not a lump */
+          B3(oldMat, 2.4, 1.6, 1.9, 0, 0.85, t2 * 16);
+          B3(dirtMat, 0.8, 2.2, 0.8, 0, 2.1, t2 * 16 + 0.2, 0.22, 0, 0);
         }
+        /* a sternum, fallen forward off the front of the cage */
+        B3(dirtMat, 3.2, 0.9, 6.0, 0.6, 0.45, -10.5, 0.1, 0.4, 0.06);
       } else if(variant === 1){
-        /* the skull: half-buried, sockets like doorways */
-        const dome = new THREE.Mesh(BOXG, boneMat);
-        dome.scale.set(13, 8, 11); dome.position.set(0, 2.6, 0); dome.castShadow = true;
-        grp.add(dome);
-        const brow = new THREE.Mesh(BOXG, boneMat);
-        brow.scale.set(13.6, 2.2, 3.2); brow.position.set(0, 6.2, -4.6);
-        grp.add(brow);
+        /* THE SKULL, and every piece of it is doing one job the box could not.
+           Built looking down -z: the face is at negative z, the jaw runs out in front of it. */
+        /* the cranium, in four courses that narrow going up and back — the silhouette is the
+           whole difference between a skull and a crate */
+        /* EVERYTHING SITS 1.5 HIGHER THAN THE FIRST DRAFT, and that is not a taste change.
+           The group's origin is ground level, so the upper jaw at y -0.1 and the tooth row at
+           -1.0 were UNDER the terrain: they came back as a band of stripes where the tooth
+           faces fought the ground plane for the same pixels. Half-buried is the right idea and
+           the teeth are the part that has to be out of the earth. */
+        B3(boneMat, 12.6, 3.2, 11.0, 0, 3.5, 0.2);
+        B3(boneMat, 12.0, 2.6, 10.0, 0, 6.2, 0.6);
+        B3(boneMat, 10.4, 2.2, 8.6, 0, 8.3, 1.1);
+        B3(boneMat,  7.6, 1.5, 6.2, 0, 9.8, 1.6);
+        /* the brow: WIDER and FURTHER FORWARD than the sockets behind it, so they are in its
+           shadow. This is the one piece that makes a socket look like a hole in a head. */
+        B3(boneMat, 13.2, 1.9, 3.2, 0, 7.5, -5.2, -0.12, 0, 0);
         for(const side of [-1, 1]){
-          const socket = new THREE.Mesh(BOXG, new THREE.MeshLambertMaterial({color: 0x0a0808}));
-          socket.scale.set(3.2, 3.4, 1.2); socket.position.set(side * 3.2, 4.2, -5.4);
-          grp.add(socket);
+          /* the socket proper, set BACK under that brow, with a bone rim around it */
+          B3(voidMat, 3.4, 3.6, 2.2, side * 3.3, 5.4, -4.2);
+          B3(boneMat, 0.9, 3.9, 1.6, side * 5.3, 5.5, -4.6);              /* outer rim */
+          B3(boneMat, 0.9, 3.4, 1.6, side * 1.4, 5.6, -4.6);              /* inner rim, by the nose */
+          B3(boneMat, 3.6, 0.8, 1.5, side * 3.3, 3.6, -4.7, 0.16, 0, 0);  /* the cheek under it */
+          /* the zygomatic sweeping back to the ear, with daylight behind it */
+          B3(boneMat, 0.9, 1.0, 4.6, side * 5.6, 3.9, -1.9, 0, side * 0.22, 0);
         }
-        const jaw = new THREE.Mesh(BOXG, oldMat);
-        jaw.scale.set(9, 1.6, 7); jaw.position.set(0, 0.7, 6.5); jaw.rotation.x = 0.12;
-        grp.add(jaw);
+        /* the nose: a hole, not a bump, and the two shelves that make its edges */
+        B3(voidMat, 1.9, 2.6, 1.8, 0, 3.4, -4.4);
+        B3(boneMat, 2.6, 0.7, 1.4, 0, 2.0, -4.6);
+        /* the upper jaw and its teeth — nothing says skull faster than a row of them */
+        B3(boneMat, 8.2, 1.3, 2.6, 0, 1.4, -4.2);
+        for(let i = 0; i < 7; i++){
+          const tx = (i - 3) * 1.05;
+          const th = (i % 3 === 1 ? 1.5 : 1.05);
+          B3(oldMat, 0.72, th, 0.7, tx, 0.75 - (th - 1.05) * 0.5, -4.9);
+        }
+        /* the lower jaw, off its hinge and half into the ground */
+        const jaw = B3(oldMat, 8.6, 1.4, 6.4, -0.9, 0.5, 1.6, 0.20, 0.16, 0.05);
+        void jaw;
+        B3(dirtMat, 7.4, 1.1, 2.0, -1.4, 0.1, -2.6, 0.12, 0.16, 0);
+        /* and the back of it going into the earth */
+        B3(dirtMat, 11.0, 2.6, 4.6, 0, 1.1, 5.6, -0.1, 0, 0);
       } else {
-        /* the hand: five fingers breaking the earth, still reaching for something */
-        for(let f2 = 0; f2 < 5; f2++){
-          const t2 = f2 / 4 - 0.5;
-          const h2 = 7 + Math.sin(f2 * 1.7) * 2.5;
-          const fing = new THREE.Mesh(BOXG, boneMat);
-          fing.scale.set(1.5, h2, 1.5);
-          fing.position.set(t2 * 9, h2 * 0.4, Math.abs(t2) * 3);
-          fing.rotation.x = -0.35; fing.rotation.z = t2 * 0.5;
-          fing.castShadow = true;
-          grp.add(fing);
-          const tip = new THREE.Mesh(BOXG, boneMat);
-          tip.scale.set(1.3, 3.2, 1.3);
-          tip.position.set(t2 * 9 - t2 * 1.5, h2 * 0.82 + 1.1, Math.abs(t2) * 3 - 1.6);
-          tip.rotation.x = -1.0; tip.rotation.z = t2 * 0.7;
-          grp.add(tip);
+        /* THE HAND: five fingers breaking the earth, still reaching for something.
+           IT WAS SLABS BECAUSE IT HAD NO JOINTS. A finger is three bones with a bend at each
+           knuckle, and without them a pale rectangle standing in dirt is what you get. Each
+           one is built in three segments that lean further back as they go up, with a knuckle
+           between, and the thumb is set off across the palm where a thumb goes. */
+        const back = B3(dirtMat, 9.6, 2.6, 6.4, 0, 1.0, 3.4, 0.12, 0, 0);   /* back of the hand */
+        void back;
+        B3(dirtMat, 7.6, 2.2, 4.2, 0.4, 0.2, 7.2, 0.20, 0.12, 0);           /* the wrist, going under */
+        const FINGERS = [[-3.9, 5.4, 0.30], [-1.9, 7.2, 0.14], [0.1, 7.9, 0.02], [2.1, 6.9, -0.14]];
+        for(const [fx, len, lean] of FINGERS){
+          /* three bones, each shorter, each leaning further back */
+          let px = fx, py = 2.0, pz = 0.6, ang = -0.22 + lean * 0.5;
+          const seg = [len * 0.46, len * 0.34, len * 0.26];
+          for(let k = 0; k < 3; k++){
+            const h2 = seg[k], w = 1.45 - k * 0.22;
+            B3(boneMat, w, h2, w, px, py + h2 * 0.5, pz, ang, 0, lean * 0.5);
+            /* the knuckle between this bone and the next, which is what reads as a joint */
+            py += h2 * 0.92; pz -= Math.sin(ang) * h2 * 0.9; px += lean * 0.35;
+            if(k < 2) B3(oldMat, w * 1.18, 0.7, w * 1.18, px, py, pz, ang, 0, lean * 0.5);
+            ang -= 0.34;
+          }
         }
-        const palm = new THREE.Mesh(BOXG, oldMat);
-        palm.scale.set(10, 2.4, 6); palm.position.set(0, 0.9, 4.2);
-        grp.add(palm);
+        /* the thumb, across the palm and lower than the rest */
+        let tx2 = 4.6, ty2 = 1.4, tz2 = 3.0, tang = 0.30;
+        for(let k = 0; k < 2; k++){
+          const h2 = 3.4 - k * 0.9, w = 1.6 - k * 0.25;
+          B3(boneMat, w, h2, w, tx2, ty2 + h2 * 0.5, tz2, tang, 0, -0.62);
+          ty2 += h2 * 0.86; tx2 -= 1.5; tz2 -= 0.5;
+          if(k < 1) B3(oldMat, w * 1.2, 0.7, w * 1.2, tx2, ty2, tz2, tang, 0, -0.62);
+          tang -= 0.30;
+        }
       }
       g.add(grp);
     }
@@ -24544,10 +24725,29 @@ function buildCharMesh(c){
              Nothing showed, and the bare lit forehead it was supposed to cover read as a pale
              band across the face — which is what "still looks a little off" was pointing at.
              It runs 0.02 to 0.18 now: through the head and out the front of it. */
-          B(0.30, 0.105, 0.15, hairc, 0, 0.345, 0.092, e.headG);
-          const FR = [[-0.112, 0.052, hairDk], [-0.042, 0.086, hairc], [0.038, 0.074, hairDk], [0.108, 0.044, hairc]];
+          /* ---------- THE FRINGE COMES UP TO MEET THE CROWN ----------
+             "Bring the fringe up to meet the crown."
+             THE TWO OF THEM WERE ONE MASS OF HAIR DRAWN AS TWO SEPARATE SLABS, and everything
+             wrong with her head came from the join. The crown ran down to y 0.2925 and the
+             strands began at 0.300, flush, which sounds like they meet — but the crown's front
+             face sat at z 0.167 and the strands at 0.187, so each one presented a lit
+             horizontal LEDGE where it emerged. Four ledges at the same height is a bar across
+             the forehead, and a bar across the forehead is a headband. That is the whole of
+             "that odd band of hair over their face", and it was never the depth numbers.
+             TWO CHANGES, AND THEY ONLY WORK TOGETHER. The fronts are FLUSH now — the crown is
+             deepened to 0.20 so its face lands at 0.19 with the strands — so there is no ledge
+             to catch light. And the strands start at 0.34, which is INSIDE the crown's own
+             height rather than under it, so the top of every strand is buried in the mass above
+             it and the only edge left anywhere is the ragged bottom one.
+             AND FIVE STRANDS, NOT FOUR, over a wider spread of lengths: 0.070 to 0.115 against
+             the old 0.044 to 0.086. With the top edge gone the bottom edge is the entire read,
+             so it has to be properly uneven — and the two longest now come down onto the eyes,
+             which the comment above has always said they should. */
+          B(0.30, 0.105, 0.20, hairc, 0, 0.345, 0.090, e.headG);
+          const FR = [[-0.120, 0.075, hairDk], [-0.062, 0.100, hairc], [0.000, 0.085, hairDk],
+                      [0.062, 0.115, hairc], [0.120, 0.070, hairDk]];
           for(const [fx, flen, fc] of FR)
-            B(0.070, flen, 0.03, fc, fx, 0.300 - flen/2, 0.172, e.headG);
+            B(0.062, flen, 0.036, fc, fx, 0.340 - flen/2, 0.172, e.headG);
           /* and down both sides, past the jaw */
           for(const sx of [-1, 1]){
             B(0.056, 0.34, 0.26, hairc, sx*0.162, 0.222, -0.008, e.headG);
