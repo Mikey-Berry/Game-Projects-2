@@ -1890,6 +1890,23 @@ function innateArt(c, key){
   const list = c && subOf(c).innate;
   return !!(list && list.indexOf(key) >= 0);
 }
+/* ---------- AND "HAS A GIFT" IS NOT THE SAME QUESTION AS "CAN CAST ANYTHING" ----------
+   "Succubi currently can't use their racial charm ability. Not only is the option not there for
+    players, I don't see any in the world using it much."
+   `innateArt` and `spellsFor` and `castReady` and `beginCast` were all taught about innate arts
+   when the lines were written. THREE PLACES WERE NOT, and all three ask the same wrong question
+   — `if(c.gift)` — as a shorthand for "is this a caster": the character panel, which draws the
+   whole spell row inside it, so a giftless succubus had no BUTTON; the C and V hotkeys; and the
+   NPC caster branch in `ai`, which is why none of them ever used it either. She had the art,
+   the mana (`rawMaxMana` is 15 + magic for every body alive) and the cast path the entire time
+   and no way in the world to reach any of it.
+   One predicate now, so the next art that is a body rather than a formula cannot go missing in
+   only some of the four places. */
+function hasArts(c){
+  if(!c) return false;
+  const innate = subOf(c).innate;
+  return !!(c.gift || c.omni || (innate && innate.length));
+}
 function canHoldGift(race, sub){
   const r = RACES[race] || RACES.human;
   const s = (SUBRACES[race] || {})[sub];
@@ -10325,36 +10342,122 @@ function findPath(sx, sy, gx, gy, pf = 0){
   return null;
 }
 /* travel toward (x,y) along a path; returns true when within `arrive` */
+/* ---------- AND WHEN NOTHING IS WORKING, DO SOMETHING ELSE ----------
+   "Caravans on walls sometimes still happens. Actually NPC pathing in general could use some
+    work. It's rare but they still get stuck on mountains or outside on city walls. These
+    situations should have a fallback of some sort."
+   THE OLD BEHAVIOUR WAS AN INFINITE RETRY WITH NO ESCALATION, and that is why it never
+   resolved itself. When `findPath` comes back empty the body falls through to
+   `stepToward(c, x, y)` — a STRAIGHT LINE at the goal — and walks into the mountain. `pathFail`
+   then suppresses the re-flood for three or four seconds, after which it asks the identical
+   question from the identical tile, gets the identical answer, and walks into the same rock.
+   Nothing in that loop ever tries anything DIFFERENT, so a body that got into a bad spot stayed
+   there for the rest of the game.
+   SO THE FALLBACK IS AN ESCALATION, and it is driven off PROGRESS rather than off whether the
+   pathfinder succeeded — which matters, because half of these bodies have a perfectly good path
+   and are being held against a wall by the crowd, and the other half are pinned somewhere the
+   pathfinder is right to refuse. "Has this body got measurably nearer its goal in the last
+   couple of seconds" catches both without having to tell them apart.
+     · ONCE: forget the failure and ask for the WHOLE goal. The forty-tile leg is the usual
+       culprit — it aims at a point on the straight line, which lands inside a wall often enough
+       — and the full path routes through the gate.
+     · TWICE, AND THREE TIMES: go round. A waypoint off the perpendicular, first one side then
+       the other, so the body walks to the corner of whatever is in the way and paths on from
+       there. This is the one that unsticks a caravan on a town wall.
+     · FOUR AND AFTER: widen the detour each time, and alternate sides.
+   AND THE LAST RESORT IS NARROW ON PURPOSE. A body standing on a tile that is itself blocked
+   cannot path anywhere and no detour will help it — that is the mountain case, and the only
+   answer is to put it on open ground. Everything else keeps trying, because silently moving
+   bodies around the map is a cure that could easily be worse than the disease. */
+let unstuckN = 0;                       /* how many times the fallback has had to fire */
+const STUCK_EVERY = 1.6;                /* seconds between progress checks */
+const STUCK_GAIN = 0.35;                /* tiles of progress that counts as "moving" */
+function travelStuck(c, x, y, dt){
+  /* the goal changed: this is a new journey and it starts unstuck */
+  if(!c.stuckGoal || dist(c.stuckGoal.x, c.stuckGoal.y, x, y) > 1.5){
+    c.stuckGoal = {x, y}; c.stuckD = dist(c.x, c.y, x, y); c.stuckT = 0; c.stuckN = 0;
+    return;
+  }
+  c.stuckT = (c.stuckT || 0) + dt;
+  if(c.stuckT < STUCK_EVERY) return;
+  c.stuckT = 0;
+  const D = dist(c.x, c.y, x, y);
+  const was = c.stuckD === undefined ? D : c.stuckD;
+  c.stuckD = D;
+  if(D <= was - STUCK_GAIN){ c.stuckN = 0; c.detour = null; return; }   /* moving. Nothing to do. */
+  c.stuckN = (c.stuckN || 0) + 1;
+  unstuckN++;
+  if(c.stuckN === 1){
+    /* ask the whole question, not the truncated one */
+    c.pathFail = null; c.pathFailAnyT = 0; c.repathT = 0; c.path = null; c.detour = null;
+    c.wholeLeg = 1;
+    return;
+  }
+  /* go round: a waypoint off the perpendicular, alternating sides and widening */
+  const side = (c.stuckN % 2) ? 1 : -1;
+  const reach = 5 + Math.min(4, c.stuckN - 1) * 2.5;
+  const ang = Math.atan2(y - c.y, x - c.x) + side * Math.PI / 2;
+  const q = findOpenNear(clamp(c.x + Math.cos(ang) * reach, 2, W - 2),
+                         clamp(c.y + Math.sin(ang) * reach, 2, H - 2), 6);
+  if(q) c.detour = {x: q.x, y: q.y, t: 5 + reach * 0.3};
+  c.pathFail = null; c.pathFailAnyT = 0; c.repathT = 0; c.path = null;
+  /* THE LAST RESORT, and only for a body standing INSIDE something. No detour helps a unit on
+     a blocked tile — it cannot path off the tile it is on — so this is the mountain case and
+     the only cure is open ground. Held back to the fourth failure so it can never be the first
+     thing that happens to anybody. */
+  if(c.stuckN >= 4 && isBlocked(c.x, c.y, c.floor || 0)){
+    const o = findOpenNear(c.x, c.y, 10);
+    if(o && !isBlocked(o.x, o.y, c.floor || 0)){
+      c.x = o.x; c.y = o.y; c.path = null; c.detour = null; c.stuckN = 0;
+    }
+  }
+}
 function travel(c, x, y, dt, arrive=0.15){
-  if(dist(c.x,c.y,x,y) <= arrive){ c.path = null; c.pathGoal = null; return true; }
+  if(dist(c.x,c.y,x,y) <= arrive){
+    c.path = null; c.pathGoal = null; c.detour = null; c.stuckGoal = null; c.stuckN = 0;
+    return true;
+  }
+  travelStuck(c, x, y, dt);
+  /* THE REAL GOAL IS KEPT SEPARATE FROM THE ONE BEING WALKED AT. A detour that overwrote `x`
+     and `y` would make the arrival test at the bottom fire on reaching the WAYPOINT, and the
+     caller would be told the journey was finished halfway up the side of the obstacle. */
+  let tx = x, ty = y;
+  if(c.detour){
+    c.detour.t -= dt;
+    if(c.detour.t <= 0 || dist(c.x, c.y, c.detour.x, c.detour.y) < 1.4) c.detour = null;
+    else { tx = c.detour.x; ty = c.detour.y; }
+  }
   c.repathT -= dt;
   if(c.pathFailAnyT > 0) c.pathFailAnyT -= dt;
-  if(c.repathT <= 0 && (!c.path || !c.pathGoal || dist(c.pathGoal.x,c.pathGoal.y,x,y) > 1.2)){
+  if(c.repathT <= 0 && (!c.path || !c.pathGoal || dist(c.pathGoal.x,c.pathGoal.y,tx,ty) > 1.2)){
     /* a goal that just proved unreachable stays unreachable for a few seconds — don't re-flood.
        And a body that just failed ANY path walks straight lines for a beat before asking again. */
-    if(c.pathFailAnyT > 0 || (c.pathFail && dist(c.pathFail.x, c.pathFail.y, x, y) < 1.2 && (c.pathFail.t -= dt) > 0)){
+    if(c.pathFailAnyT > 0 || (c.pathFail && dist(c.pathFail.x, c.pathFail.y, tx, ty) < 1.2 && (c.pathFail.t -= dt) > 0)){
       c.repathT = 0.4;
     } else {
       /* a cross-map trip is walked in forty-tile legs: short paths are cheap paths,
          and the seven-thousand-tile flood never has a reason to happen */
-      let px2 = x, py2 = y;
-      const D2 = dist(c.x, c.y, x, y);
-      if(D2 > 60){
+      let px2 = tx, py2 = ty;
+      const D2 = dist(c.x, c.y, tx, ty);
+      /* `wholeLeg` is the first escalation above: one attempt at the undivided goal, because
+         the truncation is the single commonest reason a leg lands inside a wall */
+      if(D2 > 60 && !c.wholeLeg){
         const k2 = 40 / D2;
-        px2 = clamp(c.x + (x - c.x) * k2, 2, W - 2);
-        py2 = clamp(c.y + (y - c.y) * k2, 2, H - 2);
+        px2 = clamp(c.x + (tx - c.x) * k2, 2, W - 2);
+        py2 = clamp(c.y + (ty - c.y) * k2, 2, H - 2);
       }
+      c.wholeLeg = 0;
       c.path = findPath(c.x, c.y, px2, py2, c.floor || 0);
       /* A truncated leg aims at a point on the straight line, which routinely lands inside a
          walled town or behind a wall — the leg fails, the body walks into the wall, and a
          caravan sits there forever. If the leg fails, ask for the REAL goal before giving up:
          the full path routes around the wall and through the gate. */
-      if(!c.path && (px2 !== x || py2 !== y)){
-        c.path = findPath(c.x, c.y, x, y, c.floor || 0);
+      if(!c.path && (px2 !== tx || py2 !== ty)){
+        c.path = findPath(c.x, c.y, tx, ty, c.floor || 0);
       }
-      c.pathGoal = {x, y};
+      c.pathGoal = {x: tx, y: ty};
       c.repathT = 0.6 + rnd()*0.4;
-      if(!c.path){ c.pathFail = {x, y, t: 3.5 + rnd()*2}; c.pathFailAnyT = 1.2 + rnd()*0.8; }
+      if(!c.path){ c.pathFail = {x: tx, y: ty, t: 3.5 + rnd()*2}; c.pathFailAnyT = 1.2 + rnd()*0.8; }
       else c.pathFail = null;
     }
   }
@@ -10362,10 +10465,11 @@ function travel(c, x, y, dt, arrive=0.15){
     const wp = c.path[0];
     if(stepToward(c, wp.x, wp.y, dt)) c.path.shift();
   } else {
-    stepToward(c, x, y, dt);
+    stepToward(c, tx, ty, dt);
   }
   return dist(c.x,c.y,x,y) <= arrive;
 }
+
 /* ---------- WHICH SIDE OF HIM TO STAND ON ----------
    "Everyone tries to beeline towards the enemy and gets caught on allies. They should attempt
    to flank around where possible."
@@ -11266,8 +11370,14 @@ function physics(c, dt){
     /* gifted casters lead with their art. An NPC alchemist opens with the sustained arts
        (they cost nothing to keep once up), then reaches for the situational ones, and only
        then falls back on a bolt. Archetypes set c.arts to widen what they'll reach for. */
-    if(c.castCd <= 0 && (c.gift || c.omni) && !concExclusive(c)){
-      const arts = c.arts || {};
+    if(c.castCd <= 0 && hasArts(c) && !concExclusive(c)){
+      /* `c.arts` is what an ARCHETYPE was handed — a duster gets blink and charm, a paladin
+         gets hallow. A line born to an art was never in that table, which is the other half of
+         "I don't see any in the world using it much": the branch below is a lookup on `arts`
+         and a succubus's charm was not in it. Innate arts are folded in here rather than being
+         written into every archetype, so the body's own nature reaches the same branches. */
+      const arts = Object.assign({}, c.arts || {});
+      for(const k of (subOf(c).innate || [])) arts[k] = true;
       /* --- sustained weapon-arts: light them once, keep them lit --- */
       if(arts.firebrand && !isConcentrating(c) && c.mana >= SPELLS.firebrand.cost && c.weapon){
         castFirebrand(c); return;
@@ -15828,8 +15938,19 @@ function attGain(c, branch, pts){
 }
 function spellsFor(c){
   if(!c) return [];
-  return Object.entries(SPELLS).filter(([k,sp]) => innateArt(c, k) ||
+  const out = Object.entries(SPELLS).filter(([k,sp]) => innateArt(c, k) ||
     ((c.omni || attOf(c, sp.gift) >= (sp.tier||1)) && c.stats.magic >= sp.minMag && (!sp.lichOnly || c.lich) && (!sp.tech || research.done[sp.tech]) && (!sp.immortalOnly || c.immortal === sp.immortalOnly)));
+  /* ---------- WHAT THE BODY IS COMES BEFORE WHAT IT LEARNED ----------
+     "We will also need to make sure this ability doesn't clash with a Succubus who has an
+      alchemical gift."
+     It never DUPLICATED — the filter returns each key once however many ways it qualified — but
+     the order was declaration order in `SPELLS`, so a succubus who took the dust attunement had
+     her innate charm shuffled in among her studied arts at whatever position the table happened
+     to put it, and the C and V hotkeys landed on different spells for two succubi with the same
+     art. Innate first, stable, and marked as innate where it is drawn: her charm is always the
+     first thing on her row and her formulae queue up behind it. */
+  out.sort((a, b) => (innateArt(c, b[0]) ? 1 : 0) - (innateArt(c, a[0]) ? 1 : 0));
+  return out;
 }
 let castMode = null; /* {caster, spell} */
 /* (risenN hoisted above worldgen — roaming necromancers count against it too) */
@@ -27452,7 +27573,7 @@ function refreshCharPanel(){
   const mmRaw = rawMaxMana(c), mm = Math.max(1, maxMana(c));
   const srow = $('spellrow');
   srow.innerHTML = '';
-  if(c.gift){
+  if(hasArts(c)){
     $('cp-manarow').style.display = 'flex';
     $('cp-mana').style.width = clamp(c.mana/mm*100,0,100)+'%';
     const strainPct = Math.round(bindStrain(c) * 100);
@@ -27462,8 +27583,12 @@ function refreshCharPanel(){
     const keys = ['C','V'];
     spellsFor(c).forEach(([k, sp], i) => {
       const b = document.createElement('button');
-      b.textContent = `${sp.label} (${sp.cost})${i<2 ? ' ['+keys[i]+']' : ''}`;
-      b.style.cssText = 'padding:2px 5px;font-size:10px';
+      /* an art the body IS reads differently from one it studied, or a succubus who also took
+         an attunement has two kinds of thing in one undifferentiated row */
+      const born = innateArt(c, k);
+      b.textContent = `${born ? '\u25c6 ' : ''}${sp.label} (${sp.cost})${i<2 ? ' ['+keys[i]+']' : ''}`;
+      b.title = born ? `${sp.label} — born to it, not studied. ${sp.hint || ''}` : (sp.hint || sp.label);
+      b.style.cssText = 'padding:2px 5px;font-size:10px' + (born ? ';border-color:#8a6ab5' : '');
       b.disabled = c.mana < sp.cost || c.state!=='ok' || c.castCd > 0;
       b.onclick = () => beginCast(c, k);
       srow.appendChild(b);
@@ -29270,8 +29395,8 @@ addEventListener('keydown', e => {
   if(e.key==='b' || e.key==='B') toggleBuild();
   if(e.key==='l' || e.key==='L'){ if(modalOpen){ $('modal').style.display='none'; modalOpen=false; } else openChronicles(); }
   if(e.key==='i' || e.key==='I'){ const c = selected[0]; if(c && c.faction==='player') openInventory(c); }
-  if(e.key==='c' || e.key==='C'){ const c = selected[0]; if(c && c.gift){ const sp = spellsFor(c)[0]; if(sp) beginCast(c, sp[0]); } }
-  if(e.key==='v' || e.key==='V'){ const c = selected[0]; if(c && c.gift){ const sp = spellsFor(c)[1]; if(sp) beginCast(c, sp[0]); } }
+  if(e.key==='c' || e.key==='C'){ const c = selected[0]; if(hasArts(c)){ const sp = spellsFor(c)[0]; if(sp) beginCast(c, sp[0]); } }
+  if(e.key==='v' || e.key==='V'){ const c = selected[0]; if(hasArts(c)){ const sp = spellsFor(c)[1]; if(sp) beginCast(c, sp[0]); } }
   if(e.key==='x' || e.key==='X'){ toggleConcentrationOff(); }
   if(e.key==='q' || e.key==='Q'){ listenForMother(); }
   if(e.key==='Escape'){
