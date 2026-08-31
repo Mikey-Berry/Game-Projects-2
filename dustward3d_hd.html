@@ -10370,8 +10370,9 @@ function findPath(sx, sy, gx, gy, pf = 0){
    answer is to put it on open ground. Everything else keeps trying, because silently moving
    bodies around the map is a cure that could easily be worse than the disease. */
 let unstuckN = 0;                       /* how many times the fallback has had to fire */
-const STUCK_EVERY = 1.6;                /* seconds between progress checks */
+const STUCK_EVERY = 3.0;                /* seconds between progress checks */
 const STUCK_GAIN = 0.35;                /* tiles of progress that counts as "moving" */
+const STUCK_NEAR = 4;                   /* inside this, a stall is the crowd and not the map */
 function travelStuck(c, x, y, dt){
   /* the goal changed: this is a new journey and it starts unstuck */
   if(!c.stuckGoal || dist(c.stuckGoal.x, c.stuckGoal.y, x, y) > 1.5){
@@ -10382,20 +10383,37 @@ function travelStuck(c, x, y, dt){
   if(c.stuckT < STUCK_EVERY) return;
   c.stuckT = 0;
   const D = dist(c.x, c.y, x, y);
+  /* ---------- A BODY THAT IS ALREADY THERE IS NOT LOST ----------
+     THE FIRST VERSION OF THIS BROKE THREE FIGHTING HARNESSES AND IT IS THE MOST USEFUL THING
+     IN THIS BLOCK. Inside a few tiles of the goal a body stops making progress ALL THE TIME and
+     none of it is a pathing failure: it is at the target and the target is surrounded, or its
+     own line is in the doorway, or it is trading blows. Sending that body on a perpendicular
+     detour is not a rescue, it is pulling it out of the fight — and that is exactly what it
+     did. press.js went from twelve bodies on six sides of an enemy to four (they were walking
+     AWAY to go round something that was not there), the Sixfold's stamp stopped finding four
+     bodies crowded together so its kills fell from seventeen to two, and focus.js watched its
+     line come apart. Every one of them a movement symptom, and none of them anywhere near the
+     code that had changed.
+     So the fallback is for JOURNEYS. Within four tiles the crowd sorts itself out, and this
+     stays out of it. */
+  if(D <= STUCK_NEAR){ c.stuckN = 0; c.detour = null; c.stuckD = D; return; }
   const was = c.stuckD === undefined ? D : c.stuckD;
   c.stuckD = D;
   if(D <= was - STUCK_GAIN){ c.stuckN = 0; c.detour = null; return; }   /* moving. Nothing to do. */
   c.stuckN = (c.stuckN || 0) + 1;
   unstuckN++;
-  if(c.stuckN === 1){
-    /* ask the whole question, not the truncated one */
+  if(c.stuckN <= 2){
+    /* ask the whole question, not the truncated one. TWICE before anything disruptive happens:
+       at a three-second cadence that is six seconds of a body going nowhere, and a repath costs
+       nothing anybody can see. The detour below moves a unit somewhere it was not sent, so it
+       has to be a later resort than it was. */
     c.pathFail = null; c.pathFailAnyT = 0; c.repathT = 0; c.path = null; c.detour = null;
     c.wholeLeg = 1;
     return;
   }
   /* go round: a waypoint off the perpendicular, alternating sides and widening */
   const side = (c.stuckN % 2) ? 1 : -1;
-  const reach = 5 + Math.min(4, c.stuckN - 1) * 2.5;
+  const reach = 5 + Math.min(4, c.stuckN - 2) * 2.5;
   const ang = Math.atan2(y - c.y, x - c.x) + side * Math.PI / 2;
   const q = findOpenNear(clamp(c.x + Math.cos(ang) * reach, 2, W - 2),
                          clamp(c.y + Math.sin(ang) * reach, 2, H - 2), 6);
@@ -10405,7 +10423,7 @@ function travelStuck(c, x, y, dt){
      a blocked tile — it cannot path off the tile it is on — so this is the mountain case and
      the only cure is open ground. Held back to the fourth failure so it can never be the first
      thing that happens to anybody. */
-  if(c.stuckN >= 4 && isBlocked(c.x, c.y, c.floor || 0)){
+  if(c.stuckN >= 5 && isBlocked(c.x, c.y, c.floor || 0)){
     const o = findOpenNear(c.x, c.y, 10);
     if(o && !isBlocked(o.x, o.y, c.floor || 0)){
       c.x = o.x; c.y = o.y; c.path = null; c.detour = null; c.stuckN = 0;

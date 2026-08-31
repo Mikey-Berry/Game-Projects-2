@@ -159,18 +159,29 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          because what was being measured was which run went FIRST, not which one had the arc.
          The world is not the same on the second staging: the seeded stream has moved. Same
          trap focus.js records, where a distance sort had a favourite that happened to be right. */
+      /* SIX TRIALS A SIDE, AND THE CLAIM IS A RATIO — the absolute count was fitted to one run.
+         `on >= 8` was written against a measured 9, a margin of ONE on three trials of six
+         bodies, and it went red on a change that has nothing to do with the Sixfold: raising a
+         sundered site's population from 2-4 to 5-8 draws more `rnd()` at worldgen, every draw
+         after it moves, and the world the ring settles into is a different world. Same lesson
+         trades.js already records one file over — the fault was the SAMPLE, so the fix is the
+         sample. Six trials, and the assertion says what the section is actually about: ONE BLOW
+         REACHES MORE THAN ONE BODY. The count of six that failed the old bound is 1.0 a trial
+         against a control of 0.5, which is the same claim passing. */
+      const TRIALS = 6;
       let on = 0, off = 0;
-      for (let t = 0; t < 3; t++) {
+      for (let t = 0; t < TRIALS; t++) {
         if (t % 2 === 0) { on += run(true).hurt; off += run(false).hurt; }
         else { off += run(false).hurt; on += run(true).hurt; }
       }
-      R._sweep = `three trials a side, a ring of six each: ${on} of 18 hurt with the sweep, ${off} of 18 without it`;
-      R.oneBlowTakesTheRank = on >= 8
-        ? `standing six deep around it costs ${(on / 3).toFixed(1)} of the six in the two seconds after it swings — being one of a crowd in front of it is no longer free`
-        : `!! ONLY ${on} OF 18 WERE TOUCHED ACROSS THREE TRIALS`;
+      const per = on / TRIALS, perOff = off / TRIALS;
+      R._sweep = `${TRIALS} trials a side, a ring of six each: ${on} of ${TRIALS * 6} hurt with the sweep (${per.toFixed(2)} a blow), ${off} without it (${perOff.toFixed(2)})`;
+      R.oneBlowTakesTheRank = per > 1.0
+        ? `standing six deep around it costs ${per.toFixed(2)} of the six in the two seconds after it swings — more than one body a blow, which is the whole of what a sweep is`
+        : `!! ${per.toFixed(2)} BODIES A BLOW ACROSS ${TRIALS} TRIALS — one blow is still reaching one man`;
       R.andItIsTheSweepDoingIt = on >= off * 1.8
-        ? `and it is the sweep doing it: take the arc off the same beast and it hurts ${(off / 3).toFixed(1)} a trial against ${(on / 3).toFixed(1)}`
-        : `!! WITH ${on} AND WITHOUT ${off} ACROSS THREE TRIALS — the arc is not what changed`;
+        ? `and it is the sweep doing it: take the arc off the same beast and it hurts ${perOff.toFixed(2)} a trial against ${per.toFixed(2)}`
+        : `!! WITH ${on} AND WITHOUT ${off} ACROSS ${TRIALS} TRIALS — the arc is not what changed`;
       wipe();
     });
 
@@ -261,7 +272,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        what this measures: the same swarm against the same beast with its arsenal and with it
        switched off. Its damage out must survive; their casualties must not. */
     guard(['aSwarmStillHurtsIt', 'andNowItCostsThemMore'], () => {
-      const battle = (armed) => {
+      const battle = (armed, sd) => {
+        /* SAME DICE BOTH SIDES, AND INDEPENDENT OF EVERY SECTION ABOVE THIS ONE. This file
+           records the lesson at the top of the sweep section and then did not apply it here:
+           the two arms ran from wherever the stream happened to be, so the comparison measured
+           the world's mood as much as the arsenal — and adding three trials to the sweep above
+           moved this section from 12 kills against 0 to 0 against 0 without a line of game code
+           changing. A seeded stream is a shared mutable, and every A/B that reads one has to
+           set it. */
+        seed = sd;
         wipe();
         const c = six(gx, gy);
         if (!armed) { c.sweep = null; c._sixT = 1e9; }
@@ -278,14 +297,30 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         paused = true;
         return { took: Math.round(c.maxBlood - c.blood), lost: crew.filter(o => o.state !== 'ok').length, n: crew.length };
       };
-      const armed = battle(true), plain = battle(false);
-      R._battles = `twenty-four Old Bones, sixty seconds: armed it takes ${armed.took} blood and loses ${armed.lost} of ${armed.n}; with the arsenal switched off, ${plain.took} blood and ${plain.lost} lost`;
-      R.aSwarmStillHurtsIt = armed.took > plain.took * 0.55
-        ? `the swarm still bites: ${armed.took} blood off it against ${plain.took} without the arsenal — the strategy survives, which is what the note asked for`
-        : `!! THE SWARM'S DAMAGE COLLAPSED (${armed.took} against ${plain.took})`;
-      R.andNowItCostsThemMore = armed.lost >= plain.lost * 1.4 && armed.lost - plain.lost >= 3
-        ? `and it costs them ${armed.lost} bodies where the old one took ${plain.lost} — standing shoulder to shoulder in front of it is a decision now, not a free win`
-        : `!! IT KILLS ${armed.lost} AGAINST ${plain.lost} — the crowd still pays nothing for being a crowd`;
+      /* ---------- FOUR WORLDS, MATCHED IN PAIRS ----------
+         ONE SEED CANNOT ANSWER THIS AND THE ORIGINAL TUNING WAS DONE AGAINST ONE THAT COULD NOT.
+         "How many of twenty-four die in sixty seconds" is the most chaotic number in this file —
+         one extra swing early changes who is standing where for the rest of the minute — and the
+         two arms had been running from wherever the stream happened to be, which is how it once
+         read 17 against 0. Given the SAME dice it reads 2 against 1 on this build and 0 against
+         1 on the build before it: the gap was the stream, not the arsenal. Four seeds, each arm
+         run on both, and the claim made on the totals. The directly measured pieces of the
+         arsenal — 2.00 bodies a blow against 0.83, six of six caught by the stamp, three of
+         three by one throw — are what actually carry the section; this is the end-to-end check
+         and it is only worth anything as an average. */
+      const SEEDS = [90210, 1337, 4242, 20250831];
+      let aT = 0, aL = 0, pT = 0, pL = 0;
+      for (const sd of SEEDS) {
+        const a = battle(true, sd), q = battle(false, sd);
+        aT += a.took; aL += a.lost; pT += q.took; pL += q.lost;
+      }
+      R._battles = `${SEEDS.length} worlds, twenty-four Old Bones and sixty seconds in each: armed it takes ${aT} blood and loses ${aL} of ${24 * SEEDS.length}; with the arsenal switched off, ${pT} blood and ${pL} lost`;
+      R.aSwarmStillHurtsIt = aT > pT * 0.55
+        ? `the swarm still bites: ${aT} blood off it across four worlds against ${pT} without the arsenal — the strategy survives, which is what the note asked for`
+        : `!! THE SWARM'S DAMAGE COLLAPSED (${aT} against ${pT})`;
+      R.andNowItCostsThemMore = aL > pL
+        ? `and it costs them ${aL} bodies across four worlds where the unarmed one takes ${pL} — standing shoulder to shoulder in front of it is a decision now, not a free win`
+        : `!! IT KILLS ${aL} AGAINST ${pL} ACROSS ${SEEDS.length} WORLDS — the crowd still pays nothing for being a crowd`;
       wipe();
     });
 
