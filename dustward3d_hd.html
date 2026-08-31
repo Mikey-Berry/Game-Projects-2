@@ -7385,6 +7385,9 @@ function mitigate(d, dmg, wt, ap, a){
   /* the dead take more where the ground is hallowed — the same relation a hallowed blade
      already had to them, made a property of the PLACE instead of the weapon */
   if(d.undead && consecratedAt(d.x, d.y)) dmg *= 1.35;
+  /* and the same again for the light somebody is carrying — see `wardSears`. Whoever is
+     holding it: a paladin's burns yours, and yours burns your own. */
+  if(d.undead && wardSears(d)) dmg *= WARD_SEAR;
   /* BINDING STRAIN: a will stretched across a host of risen has less of itself left to
      hold its own body together. The bigger the army, the softer its master. */
   const strain = bindStrain(d);
@@ -7865,6 +7868,22 @@ function treatOnePart(medic, target){
 function bodyTick(c, dh){
   if(c.construct){ for(const k of PARTS) c.parts[k].bleed = 0; }   /* there is nothing in it to run out */
   if(c.state==='dead') return;
+  /* ---------- AND THE SEARING HAS TO BE VISIBLE ----------
+     A vulnerability leaves no mark of its own: without this the whole of the evidence is a
+     risen dying sooner than it used to, three fights from now, with no way to connect it to
+     the lantern its master is carrying. The ring on the ground says where the light reaches;
+     this says what it is doing to the thing standing in it.
+     THE TIMER IS RESET WHETHER OR NOT THERE IS A LIGHT, so `wardSears` — which walks `chars` —
+     runs once every 1.2 game hours per risen body rather than once per tick per risen body.
+     Written the other way round, a host of twenty with no ward anywhere sweeps the whole
+     roster twenty times a tick to find nothing. */
+  if(c.undead && c.state === 'ok'){
+    c._searT = (c._searT || 0) - dh;
+    if(c._searT <= 0){
+      c._searT = 1.2;
+      if(wardSears(c)) addFloat(c.x, c.y - 1.2, 'SEARED', '#ffe9a8');
+    }
+  }
   const inBed = !!c.resting;
   /* ---------- BLEEDING, AND WHY CLOTTING NEVER WORKED ----------
      A wound closed at a flat 0.35 an hour whatever its size. A real exchange leaves a body
@@ -15633,7 +15652,7 @@ const SPELLS = {
   phantom:   {gift:'dust',        label:'THE UNWALLED',cost:16,range:7, minMag:10, tier:2, tech:'dust_unwalled', hint:'target open ground — conjure a squad that was never there'},
   revive:    {gift:'divine',      label:'REVIVE',     cost:25, range:4, minMag:25, tier:3, immortalOnly:'divine', hint:'target a companion dead less than an hour — call them back'},
   warding:   {gift:'divine',      label:"AINZOPHA'AR'S LIGHT", cost:14, range:0, minMag:12, tier:2, instant:true, self:true,
-              concentrate:{lock:1, exclusive:true, mobile:true}, hint:'carry the light — lesser gaunts will not come near you or your squad, but the great ones walk straight through it, and you can raise no hand or cast anything else while it burns'},
+              concentrate:{lock:1, exclusive:true, mobile:true}, hint:'carry the light — lesser gaunts will not come near you or your squad, but the great ones walk straight through it, your own risen sear in it and take far more harm while they stand there, and you can raise no hand or cast anything else while it burns'},
   /* ---- new arts (this batch) ---- */
   blink:     {gift:'dust',        label:'STEP UNSEEN', cost:12, range:12, minMag:8, tier:2, tech:'dust_veil',
               hint:'target open ground within reach — fold the distance and arrive there'},
@@ -16767,7 +16786,33 @@ function castWarding(c){
   spendCast(c, 'warding');
   startConcentration(c, 'warding', 1, true, true);   /* exclusive, but mobile — a lantern for the squad */
   addSpecks(c.x, c.y - 0.4, '#fff2c0', 30);
-  log(`${c.name} raises Ainzopha'ar's Light. The lesser things born of the tear will not come near it — the great ones do not care, and ${c.name} can raise no hand while it burns.`, 'good');
+  log(`${c.name} raises Ainzopha'ar's Light. The lesser things born of the tear will not come near it — the great ones do not care, ${c.name} can raise no hand while it burns, and every risen thing standing in it, yours included, is easier to break.`, 'good');
+}
+/* ---------- AND THE LIGHT DOES NOT ASK WHOSE DEAD THEY ARE ----------
+   "For the Ainzopha'ar's Light weakness, let's go with searing undead. Perhaps rather than
+    damage, it's similar to hallowed edge in that they simply take more damage while within
+    range of it."
+   THE COST IS PAID BY THE ARMY, WHICH IS THE ONLY COST A NECROMANCER FEELS. The light already
+   had a price — the bearer can raise no hand and cast nothing else — and in a squad of eight
+   that is not a price at all. This one cannot be paid out of a spare body: hold the light and
+   every risen thing inside nine tiles of you is softer, including the twenty you spent a week
+   raising. So the light is the answer when the living are doing the fighting, and a liability
+   the moment the dead are.
+   NOT DAMAGE, VULNERABILITY. A burn would kill your own host while you looked at something
+   else and would read as a bug; this is the relation `hallow` has always had to the dead —
+   sanctified steel at 1.6, hallowed GROUND at 1.35 — made a property of the light. It stacks
+   with both on purpose: three separate investments in anathema, three multipliers.
+   AND IT ASKS NOTHING ABOUT FACTION, unlike `wardedFrom` two lines down, which protects its
+   own side. A paladin's light burns your risen and yours burns theirs. The dead are the dead. */
+const WARD_SEAR = 1.4;
+function wardSears(c){
+  if(!c || !c.undead) return null;
+  for(const o of chars){
+    if(!isConcentrating(o, 'warding') || o.state !== 'ok') continue;
+    if((o.floor||0) !== (c.floor||0)) continue;
+    if(dist(o.x, o.y, c.x, c.y) < WARD_RADIUS) return o;
+  }
+  return null;
 }
 /* is this point inside a live warding aura held by a non-hostile caster? */
 function wardedFrom(c){
