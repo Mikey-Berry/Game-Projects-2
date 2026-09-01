@@ -4737,3 +4737,61 @@ a snapshot of one creature after a fortnight of combat. Every one of them went r
 that had nothing to do with what it was testing, and every one was fixed in the HARNESS rather
 than the game. The tell each time was the same: the mechanism's own direct measurements — bodies
 per blow, six of six caught by the stamp, three of three by one throw — never moved at all.
+
+[DONE] "Let's squash bugs first — the one you discovered, and also I find that movement down
+there can be quite finicky. Perhaps because of zooming out too much to the overhead world and
+accidentally clicking up there… not sure, but sometimes movement commands send people in the
+opposite direction I want them to go."
+    Proof in tools/deepaim.js. Four of its seven claims fail on the build before this.
+    THREE BUGS, ONE ROOT: NOTHING IN THE RIGHT-CLICK CHAIN ASKED WHICH STOREY YOU WERE ON.
+    `wx, wy` came from `screenToWorld`, which marches the TERRAIN and stops at the first solid
+    thing — underground, the mountain overhead. Everything below it inherited that point.
+    · YOU COULD NOT RIGHT-CLICK ANYTHING DOWN THERE. Twenty-one `bodyHit(o, wx, wy, …)` tests in
+      that chain, every one comparing the cursor against a spot on the hillside. Not "finicky":
+      no body in a cave was ever under the cursor.
+    · AND A CLICK THAT MISSED THE FLOOR BECAME AN ORDER TO LEAVE. Only the move order at the
+      very bottom asked `storeyHit`, and only as a fallback for the point it already had wrong —
+      so when the ray found no carved tile, the destination fell through to `wx, wy` at FLOOR
+      ZERO. The ray crosses the ground about `depth / tan(pitch)` tiles from where it crosses
+      the floor below, so a squad standing in a hall was handed a destination on the surface and
+      set off for the nearest shaft to climb out. Measured: a click five tiles into solid rock
+      ordered them to storey 0. Which direction that reads as depends on the yaw, and "the
+      opposite direction I want them to go" is one of them. The player's own guess — that the
+      click was landing on the overhead world — was right about the mechanism.
+    · AND THE THIRD ONE ONLY BECAME REACHABLE ONCE THE FIRST TWO WERE FIXED. `bodyGap` is a
+      HORIZONTAL distance, so a creature one floor up at the same x and y is under the cursor as
+      far as every picking test is concerned. It could not show while nothing underground
+      matched anything; the moment the chain answered on the right storey, cave.js aimed a move
+      order at empty floor and got back an ATTACK ON A CARRION MAW ONE STOREY ABOVE, through the
+      rock. Fixed in `bodyHit` itself, which is the one place all twenty-one and the cast
+      dispatch and the drag-select go through — and NARROWLY, only below ground, because a
+      blanket "must be on the storey you are looking at" would stop you clicking somebody on a
+      RAMPART from the ground, which is supported deliberately and is what `elevatedHit` is for.
+    AND GOING UP IS UNAFFECTED. Refusing the surface fallback does not strand anybody: ascending
+    is done by clicking a STAIR, several branches above, which is the deliberate way rather than
+    the accidental one.
+
+[DONE] `gatherKindAt` was floor-blind. Every gatherable in the game is surface decor read off
+`decorAt(x, y)`, which knows nothing about storeys, so a body in the undercroft was offered the
+boulder sitting on the hill twenty-two units above its head — sampled eight and all eight were
+the surface rock at the same coordinates. Harmless until mining became a JOB and ctrl+right-click
+began assigning it off exactly this table. It takes a floor now and answers NOTHING for any
+storey but the ground, in one place rather than at each of the four call sites, because a fifth
+caller is how this comes back. Asserted as a PAIR — nothing under the hall, and the same tiles
+still naming their rock when asked from the surface — because "returns nothing" is also what a
+function broken outright returns.
+
+[NOTE] A BUG CAN BE HIDDEN BY ANOTHER BUG, AND FIXING THE FIRST IS WHAT EXPOSES IT. The
+cross-storey pick had been live the whole time and was unreachable because the click never
+resolved underground at all. Two consequences worth keeping: the assertion for it PASSES on the
+old build, vacuously, so it is a guard rather than a discriminator and the file says so; and the
+harness that caught it (cave.js) went red on a change that had made the game more correct — the
+third time this session a green-to-red move turned out to be a test whose staging had quietly
+depended on the broken behaviour.
+
+[NOTE] AND A SETTLE LOOP THAT BREAKS ON ONE QUIET FRAME IS NOT A SETTLE LOOP. deepaim.js waited
+for the camera anchor by comparing one frame against the last and breaking under a threshold —
+and one slow frame satisfies that while the lerp still has tiles to run. It was not wrong, it was
+INTERMITTENTLY wrong: the same build reported the squadmate click working on one run and finding
+nobody on the next, because the click was aimed through one camera and measured through another.
+Five consecutive still frames, and three clean runs before it was believed.

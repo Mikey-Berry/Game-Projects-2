@@ -175,11 +175,23 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     {
       selected = [hand];
       let dest = null;
+      /* ---------- AND NOBODY MAY BE STANDING ON IT ----------
+         This used to take the first carved tile three to nine tiles off, and one of them had a
+         cave dweller on it. That was harmless while a right-click underground could not find a
+         body at all — the click fell through to a move order because `screenToWorld` put the
+         cursor on the mountainside and nothing matched. Now that the chain resolves on the
+         storey you are looking at, a right-click on a creature is an ATTACK, correctly, and this
+         file reported a move order that had gone "nowhere" when what had really happened is that
+         it had aimed at a gaunt and ordered the spelunker to kill it.
+         So the destination has to be EMPTY GROUND, which is what a player means by pointing at
+         the floor. The `mate` is excluded on the same grounds. */
+      const clearOf = (x, y) => !chars.some(o => o.state !== 'dead' && (o.floor || 0) === spot.f &&
+                                                 dist(o.x, o.y, x, y) < 1.6);
       for (const k of decks) {
         const q2 = unkey(k);
         if (q2.f !== spot.f) continue;
         const d = dist(q2.x + 0.5, q2.y + 0.5, hand.x, hand.y);
-        if (d > 3 && d < 9) { dest = { x: q2.x + 0.5, y: q2.y + 0.5 }; break; }
+        if (d > 3 && d < 9 && clearOf(q2.x + 0.5, q2.y + 0.5)) { dest = { x: q2.x + 0.5, y: q2.y + 0.5 }; break; }
       }
       if (!dest) R.aMoveOrderStaysUnderground = '(no second tile on this storey within reach to aim at)';
       else {
@@ -188,6 +200,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         document.getElementById('game').dispatchEvent(new MouseEvent('mousedown', {
           clientX: q.x, clientY: q.y, button: 2, buttons: 2, bubbles: true, cancelable: true }));
         const t = hand.moveTarget;
+        const el0 = document.getElementById('ctxmenu');
+        const menuOpen = el0 && el0.style.display !== 'none';
+        const tg = hand.target;
+        R._aimedAt = `aimed at empty floor ${dest.x.toFixed(1)},${dest.y.toFixed(1)}, ${dist(dest.x, dest.y, hand.x, hand.y).toFixed(1)} tiles off; menu ${menuOpen ? 'OPENED' : 'did not open'}` +
+          (tg ? ` · ATTACKING ${tg.name} (${tg.faction}, floor ${tg.floor}, big ${(tg.big||1).toFixed(1)}) standing ${dist(tg.x, tg.y, dest.x, dest.y).toFixed(1)} from the aim point` : ' · no attack order');
         R.order = t ? `ordered to ${t.x.toFixed(1)},${t.y.toFixed(1)} (aimed at ${dest.x.toFixed(1)},${dest.y.toFixed(1)})` : 'no order taken';
         /* 4 TILES WAS NOT AN ASSERTION. The old build sent the order 3.6 tiles wide — it had
            resolved through the terrain march onto the mountainside and `routeTo` salvaged

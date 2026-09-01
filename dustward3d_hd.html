@@ -14791,7 +14791,7 @@ function findNode(c, kind){
         if(d2==='ivein') return {kind:'iron_ore', sx:tx+0.5, sy:ty+0.5};
       }
       if(kind==='fish' && tileAt(tx,ty)===3){
-        const g = gatherKindAt(tx+0.5, ty+0.5);
+        const g = gatherKindAt(tx+0.5, ty+0.5, 0);   /* findNode only ever walks the surface */
         if(g) return g;
       }
     }
@@ -26596,7 +26596,21 @@ function bodyGap(c, wx, wy){
 }
 /* and the catchment grows with the body. Neutral at big 1, so every ordinary person in the
    game is picked exactly as before and only the drift changes for them. */
+/* ---------- AND UNDERGROUND, A STOREY IS A CEILING ----------
+   `bodyGap` is a HORIZONTAL distance, so a creature standing one floor above the squad — at
+   the same x and y, through several yards of rock — was under the cursor as far as every one
+   of this function's callers was concerned. It did not show while the right-click chain
+   resolved its point on the surface, because then nothing underground matched anything; the
+   moment the chain started answering on the right storey, an order aimed at empty floor three
+   tiles away came back as an attack on a Carrion Maw one storey up. Measured, in cave.js.
+   NARROW ON PURPOSE, AND ONLY UNDERGROUND. Every caller of this is a cursor-versus-body pick —
+   the right-click chain, the cast dispatch, the drag-select — so a blanket "must be on the
+   storey you are looking at" would also stop you clicking somebody standing on a RAMPART from
+   the ground, which is supported deliberately and is what `elevatedHit` exists for. Below
+   ground there are no such half-storeys: the floors are 3.4 apart and the undercroft is
+   twenty-two down, and anything on another one of them is behind rock. */
 function bodyHit(c, wx, wy, base){
+  if(activeFloor < 0 && c && (c.floor || 0) !== activeFloor) return false;
   return bodyGap(c, wx, wy) < base + Math.max(0, ((c && c.big) || 1) - 1) * 0.85;
 }
 
@@ -29755,7 +29769,19 @@ cv.addEventListener('mousedown', e => {
     if(e.shiftKey) camFollow = false;
     return;
   }
-  const mp = screenToWorld(e.clientX, e.clientY);
+  /* ---------- THE WHOLE CHAIN HAS TO ASK THE STOREY YOU ARE LOOKING AT ----------
+     "Movement down there can be quite finicky... sometimes movement commands send people in
+      the opposite direction I want them to go."
+     `screenToWorld` marches the TERRAIN and stops at the first solid thing, which underground
+     is the mountain overhead — so every one of the forty-odd `bodyHit(o, wx, wy, …)` tests
+     below was comparing the cursor against a point on the hillside, and nothing in a cave could
+     be right-clicked at all. Only the move order at the very bottom ever asked `storeyHit`, and
+     only as a fallback for a point it had already got wrong.
+     The left-click path in `mouseup` has resolved this correctly since the cave fix — `const
+     mp2 = lift2 || screenToWorld(...)` — and the right-click path was simply never given the
+     same line. It is given it here, once, above everything that reads `wx`. */
+  const lift0 = activeFloor ? storeyHit(e.clientX, e.clientY, activeFloor) : null;
+  const mp = lift0 || screenToWorld(e.clientX, e.clientY);
   const wx = mp.x, wy = mp.y;
   if(e.button === 0){
     if(castMode){ resolveCast(wx, wy); return; }
@@ -29851,7 +29877,7 @@ cv.addEventListener('mousedown', e => {
       : (e.ctrlKey && !e.shiftKey) ? 'node'
       : null;
     if(jobChord){
-      const gk = gatherKindAt(wx, wy);
+      const gk = gatherKindAt(wx, wy, activeFloor);
       const pbj = jobChord === 'both'
         ? pBuilds.find(b2 => wx >= b2.x - 0.3 && wx <= b2.x + b2.w + 0.3 && wy >= b2.y - 0.3 && wy <= b2.y + b2.h + 0.3)
         : null;
@@ -30611,7 +30637,7 @@ cv.addEventListener('mousedown', e => {
       return;
     }
     /* gather node? */
-    const g = gatherKindAt(wx, wy);
+    const g = gatherKindAt(wx, wy, activeFloor);
     if(g){
       movers.forEach((m, i) => {
         clearOrders(m);
@@ -30627,6 +30653,22 @@ cv.addEventListener('mousedown', e => {
        at all — and a rampart after that, so pointing your ground squad at a wall still sends
        them up it. */
     const lift = storeyHit(e.clientX, e.clientY, activeFloor) || elevatedHit(e.clientX, e.clientY);
+    /* ---------- AND A CLICK THAT MISSES IS NOT AN ORDER TO LEAVE ----------
+       When `storeyHit` finds no floor — which it does for any click on uncarved rock, and the
+       undercroft is 4.5% of the map — this fell through to `wx, wy` at floor ZERO. That is not
+       a small error: the ray crosses the ground about `depth / tan(pitch)` tiles from where it
+       crosses the floor below, so a squad standing in a hall was handed a destination some
+       thirty tiles away ON THE SURFACE, and set off for the nearest shaft to climb out of.
+       Which direction that reads as depends entirely on the camera yaw, and "the opposite
+       direction I want them to go" is one of them.
+       Measured before the fix: a click five tiles into solid rock ordered them to storey 0.
+       So an order given on a storey stays on that storey. Going UP is still perfectly possible
+       and is unaffected — it is done by clicking a stair, several branches above this one,
+       which is the deliberate way rather than the accidental one. */
+    if(activeFloor && !lift){
+      log('There is no floor there. Point at a hall, or at a stair to go up.', '');
+      return;
+    }
     const tf = lift ? lift.f : 0;
     /* the snapped tile: a move order should name a piece of floor that exists */
     const tx2 = lift ? (lift.sx ?? lift.x) : wx, ty2 = lift ? (lift.sy ?? lift.y) : wy;
@@ -31420,7 +31462,18 @@ function examine(t){
   log(`${t.name} — ${nat}${ageBit}${t.neutral && !t.provoked ? ', not hostile' : ''}. ${gear}. ${read}`);
 }
 /* what resource lives under this click? */
-function gatherKindAt(wx, wy){
+/* ---------- AND IT MATTERS WHICH STOREY YOU ARE ASKING ABOUT ----------
+   Every gatherable in this game is SURFACE DECOR — a tree, a boulder, a vein of ore in the
+   hillside — read off `decorAt(x, y)`, which knows nothing about floors. So a body standing in
+   the undercroft, twenty-two units of rock below the grass, was being offered the boulder
+   sitting on the hill above its head: sampled eight "nodes" under the halls and all eight were
+   the surface rock at the same coordinates. It cost nothing until mining became a JOB and
+   ctrl+right-click began assigning it off exactly this table.
+   Nothing is quarryable underground yet, so the honest answer for any storey but the ground is
+   NOTHING — and it is answered here, once, rather than at each of the three call sites, because
+   a fourth caller is the way this comes back. */
+function gatherKindAt(wx, wy, f){
+  if(f) return null;
   const tx = Math.floor(wx), ty = Math.floor(wy);
   const t = tileAt(tx, ty);
   const dec = (tx>=0 && ty>=0 && tx<W && ty<H) ? decorAt(tx, ty) : null;
