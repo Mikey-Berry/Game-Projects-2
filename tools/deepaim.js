@@ -169,6 +169,26 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        against the surface point, so nothing underground is ever under the cursor. */
     {
       const mate = chars.find(c => c.id === D.mateId);
+      /* ---------- HEAL HIM FIRST, AND THAT IS NOT CHEATING ----------
+         This claim is about PICKING — whether a body standing underground is under the cursor
+         at all. It is not about what the menu then offers. And the right-click chain has a
+         deliberate fast path in front of the squadmate menu: a squadmate who is WOUNDED sends
+         the ablest medic to them and returns, opening nothing. That is the intended answer to
+         a click on a bleeding ally, so it is correct behaviour and it is also indistinguishable
+         from the failure this claim is looking for — no menu either way.
+         And the mate does get wounded. Something in the undercroft bit him during the seconds
+         the camera spends settling: he stages whole, and by the time the click goes out he is
+         carrying two bleeding legs and `treatable` is true. THIS IS THE WHOLE OF THE "flaky"
+         HISTORY of this file — the run where nothing found him in the dark passed, the run
+         where something did failed, and the camera-settle rewrite that was supposed to have
+         fixed it fixed a different intermittency and left this one behind. It is not a coin
+         flip on the camera. It is a coin flip on the wildlife.
+         So the probe stages the condition it means to measure: a whole squadmate, healed on
+         the frame before the click. `_onMate` still reports the wounds that were there, so if
+         this ever starts mattering again it is on the line rather than silently absorbed. */
+      const hurtWas = PARTS.filter(k => mate.parts[k].hp < mate.parts[k].max || mate.parts[k].bleed > 0.05);
+      for (const k of PARTS) { const pt = mate.parts[k]; pt.hp = pt.max; pt.bleed = 0; pt.severed = false; }
+      mate.state = 'ok';
       hideCtxMenu();
       const q = w2s(mate.x, mate.y, charY(mate) + 0.9);
       hand.moveTarget = null;
@@ -177,7 +197,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const el = document.getElementById('ctxmenu');
       const open = el && el.style.display !== 'none';
       const labels = open ? [...document.querySelectorAll('#ctxmenu button')].map(x => x.textContent.trim()) : [];
-      R._onMate = `right-click on a squadmate underground: menu ${open ? labels.length + ' entries' : 'did not open'}`;
+      R._onMate = `right-click on a squadmate underground: menu ${open ? labels.length + ' entries' : 'did not open'}`
+        + (hurtWas.length ? ` (something down here had bitten him first — ${hurtWas.join(', ')} — healed before the click so the medic fast-path does not answer it)` : '');
       R.aSquadmateDownThereCanBeClicked = open && labels.length
         ? `right-clicking somebody standing beside you underground offers what you can do to them — ${labels.length} entries`
         : '!! A RIGHT-CLICK ON A BODY UNDERGROUND FINDS NOBODY THERE';
