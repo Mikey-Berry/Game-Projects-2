@@ -7141,6 +7141,8 @@ function skillCap(c){ return c.lich ? 150 : (c.race==='hollow' && c.hollowTier >
 function xpGain(c, stat, amt){
   if(stat === 'tough' && c.immortal === 'divine') return;   /* perfected means finished */
   amt *= raceOf(c).xp;
+  /* a body that came with nothing learns faster than one that came with everything */
+  if(c.learnRate) amt *= c.learnRate;
   /* AND THE PART OF THE RACE THAT MATTERS. A single global rate makes a race a difficulty
      setting; a per-skill one makes it a past. An orchard-bred human picks up medicine half
      again as fast as anybody and will never be much with a blade, and after a hundred days
@@ -8180,6 +8182,22 @@ const BUILD_TYPES = {
 };
 /* crafted undead: bound at the circle from remains + materials + a necromancer's mana */
 const UNDEAD_TYPES = {
+  /* ---------- THE LONGDEAD ----------
+     "Maybe we can add a 'longdead' unit to the binding circle... It is simply put together
+      from mortal remains gathered, and costs very little to maintain/upkeep. It also has very
+      low stats, but can grow over time."
+     THE CHEAP TIER THE HOST HAS NEVER HAD. Every other binding is a specialist bought with
+     mana, materials and a real slice of the ceiling; this one is two handfuls of somebody
+     else's grandfather and almost no binding at all. A quarter of a slot means four of them
+     cost what one Gravehound costs, which is the only way a host gets NUMBERS without the
+     strain economy — the thing that makes a host expensive to KEEP — being quietly repealed.
+     AND ITS STATS DO NOT SCALE WITH THE NECROMANCER, which every other line here does. A
+     Longdead raised by a master of the art is exactly as feeble as one raised on the first
+     day; what it has instead is that it can LEARN, so the ones that survive become worth
+     something and the ones that do not were nearly free. That is a different kind of unit
+     from anything else at the circle: not bought, but kept. */
+  longdead:   {name:'Longdead',      tech:'rites_binding', mana:4,  weight:0.25, tag:'LD',
+    cost:{remains:2},                   desc:'Old bones, brown with the dust of whatever they were buried in. Feeble, nearly free to hold, and the only thing at this circle that gets better by surviving'},
   gravehound: {name:'Gravehound',    tech:'rites_binding', mana:10, weight:1, tag:'GH',
     cost:{remains:1, hide:2},           desc:'Fast bone hound — runs down stragglers'},
   /* Renamed from HOLLOW BRUTE, and paid for in stone rather than hide. Hide comes off beasts
@@ -8518,6 +8536,13 @@ const TECHS = {
      what a 1200-gold project buys BEFORE paying for it, so it cannot be a memory. */
   rites_binding:{name:'Rites of Binding',  cost:700, hours:72, req:'necromancy',  desc:''},
   rites_deep:   {name:'Deeper Rites',      cost:1200,hours:96, req:'rites_binding',desc:''},
+  /* ---------- THE ANCHOR ----------
+     "I like the idea of binding circles eventually operating as a sort of 'anchor' for undead.
+      Maybe with the right tech upgrade, it can take the mana and binding cap burden off of the
+      caster within a certain range. That way, garrisons and 'bases' do not contribute to the
+      caster's total binding." */
+  rites_anchor: {name:'The Anchored Dead',  cost:1500,hours:110,req:'rites_deep', mats:{stone:20, c_ingot:6},
+    desc:'A binding circle holds its own. Risen standing near one stop drawing on their master entirely — no slot, no strain — so a garrison is not a tax on the man who raised it'},
   quickening:   {name:'The Quickening',    cost:700, hours:72, req:'rites_binding', needs:'circle', mats:{fabric:10, copper:8},
     desc:'Flesh Vat: the homunculus-makers\' art — grow meat that was never alive'},
   carrion_rites:{name:'Carrion Rites',     cost:900, hours:80, req:'quickening', needs:'vat', mats:{vflesh:8, fabric:8},
@@ -15856,7 +15881,7 @@ function leashTick(){
 function refreshBindStrain(){
   const load = new Map();
   for(const x of chars){
-    if(!x.undead || x.lieutenant || x.propped || x.state === 'dead' || !x.master) continue;
+    if(!x.undead || x.lieutenant || x.propped || x.anchored || x.state === 'dead' || !x.master) continue;
     load.set(x.master, (load.get(x.master) || 0) + (x.bindWeight || 1));
   }
   for(const c of chars){
@@ -16186,8 +16211,62 @@ function risenLoad(caster){
      Excluded by the flag rather than by fixing the fallback in eleven places, because
      `propped` is what the question actually is: is this body BOUND, or is it standing up
      because a working says so. */
-  return chars.filter(x => x.undead && !x.lieutenant && !x.propped && x.state!=='dead' && x.master===caster)
+  /* `anchored` joins `lieutenant` and `propped` as a third way to be standing up without being
+     carried in your master's head — see `refreshAnchors`. Same list, same reason. */
+  return chars.filter(x => x.undead && !x.lieutenant && !x.propped && !x.anchored && x.state!=='dead' && x.master===caster)
     .reduce((s,x) => s + (x.bindWeight||1), 0);
+}
+/* ---------- WHAT AN ANCHORED CIRCLE HOLDS ----------
+   A CAP PER CIRCLE, AND THAT IS THE DESIGN DECISION IN THIS FEATURE. Without one, a single
+   circle carries an unlimited host and the ceiling stops existing — which is not "garrisons do
+   not tax the caster", it is "there is no cost". With one, a garrison is SIZED, holding more
+   ground means building and defending more circles, and the ceiling becomes a thing you lay out
+   on the map instead of a number on one man.
+   AND ANCHORING IS BY PROXIMITY, NOT BY ASSIGNMENT. A body walks into the ring and is held; it
+   walks out and its master feels it again. That is what makes it a garrison — the circle keeps
+   what STAYS. */
+const ANCHOR_R = 11;        /* how far a circle's hold reaches */
+const ANCHOR_CAP = 6;       /* and how much of the dead any one of them can carry */
+function anchorCircles(){
+  return research.done.rites_anchor
+    ? pBuilds.filter(b => b.type === 'circle' && (b.progress === undefined || b.progress >= 1))
+    : [];
+}
+/* Recomputed rather than stored, because a body that walks two tiles has changed the answer.
+   Nearest circle first, so a body standing between two is held by the one it is actually at. */
+function refreshAnchors(){
+  const rings = anchorCircles();
+  if(!rings.length){
+    for(const c of chars) if(c.anchored) c.anchored = null;
+    return;
+  }
+  const held = new Map();
+  const dead = chars.filter(c => c.undead && !c.propped && c.state !== 'dead' && c.master);
+  /* AND IT IS DETERMINISTIC WHO GETS DROPPED WHEN A CIRCLE IS FULL. Sorted by distance, so the
+     ones standing in the middle of the ring are the ones it keeps — not whoever happens to sit
+     earlier in `chars`, which would reshuffle a garrison every time somebody died. */
+  const pairs = [];
+  for(const c of dead){
+    let best = null, bd = 1e9;
+    for(const r of rings){
+      if((r.floor || 0) !== (c.floor || 0)) continue;
+      const d = dist(c.x, c.y, r.x + 1, r.y + 1);
+      if(d < ANCHOR_R && d < bd){ bd = d; best = r; }
+    }
+    if(best) pairs.push({c, r: best, d: bd});
+  }
+  pairs.sort((a, b) => a.d - b.d);
+  for(const c of dead) c.anchored = null;
+  for(const q of pairs){
+    const n = held.get(q.r) || 0;
+    if(n + (q.c.bindWeight || 1) > ANCHOR_CAP) continue;
+    held.set(q.r, n + (q.c.bindWeight || 1));
+    q.c.anchored = q.r;
+  }
+}
+function anchorLoad(r){
+  return chars.filter(c => c.anchored === r && c.state !== 'dead')
+    .reduce((n, c) => n + (c.bindWeight || 1), 0);
 }
 function lieutenantsOf(caster){
   return chars.filter(x => x.lieutenant && x.state!=='dead' && x.master===caster).length;
@@ -17153,7 +17232,25 @@ function craftUndead(kind, caster, circle, shape){
   const p = findOpenNear(circle.x+1, circle.y+1, 2.5);
   let u;
   risenN++;
-  if(kind==='gravehound'){
+  if(kind==='longdead'){
+    /* FLAT, AND DELIBERATELY NOT `m`. See the table entry: this one does not inherit its
+       master's power, it earns its own. `learn` above the ordinary rate because a thing with
+       nothing else going for it should at least come on quickly when it is used. */
+    /* ---------- AND IT HAS NO BLOODLINE, WHICH IS NOT A DETAIL ----------
+       `makeChar` rolls a SUBRACE for every body it builds and adds that line's flat gifts on
+       top of whatever the caller asked for — so a Longdead handed atk 2 was coming out at 2 or
+       5 depending on whose great-grandmother the dice picked. Wrong twice over. Mechanically it
+       makes the one binding whose whole identity is "exactly this feeble" the only one whose
+       numbers are not what the table says. And in the fiction it is worse: this thing is
+       assembled from REMAINS, plural, gathered out of a bin — there is no one person in there
+       to have inherited anything from. Naming a line that does not exist resolves to `SUB_NONE`,
+       which carries no stats, so it gets what it was handed and nothing else. */
+    u = makeChar('Longdead '+risenN, caster.faction, p.x, p.y,
+      {atk:2, def:2, tough:3, ath:4, labor:4, race:'human', sub:'longdead'});
+    u.kin = 'longdead'; u.longdead = true;
+    u.blood = 45; u.maxBlood = 45;
+    u.learnRate = 1.35;
+  } else if(kind==='gravehound'){
     u = makeChar('Gravehound '+risenN, caster.faction, p.x, p.y, {atk:6+m*0.8, def:4+m*0.5, tough:3+m*0.3, ath:16, labor:4});
     u.beast = true; u.kin = 'hound'; u.clawDmg = 7 + m*0.4; u.blood = 60; u.maxBlood = 60;
   } else if(kind==='brute'){
@@ -19081,6 +19178,10 @@ function update(dt){
   necroT += dt;
   if(necroT > 1){
     necroT = 0;
+    /* ORDER MATTERS HERE: the strain is computed from who is anchored, so who is anchored has
+       to be settled first. Run the other way round, a body that walked into a circle this
+       second is still charged to its master for one more. */
+    refreshAnchors();
     refreshBindStrain();
     hostNoiseTick();                 /* a loud host is heard, and what hears it is not patient */
     leashTick();                     /* and one held on a short lead frays off the end of it */
@@ -23350,6 +23451,11 @@ function buildCharMesh(c){
     /* A crafted body has no rot to read — nothing about it ever lay in the ground — so it
        fell through to plain new bone with everything else off the circle. A mage is the one
        that should not: the art it was steeped in has been burning in it since the binding. */
+    /* THE LONGDEAD ARE OLDER THAN THE REST OF THE HOST AND HAVE TO LOOK IT. Everything else
+       off the circle comes out as clean new bone; these came out of the ground already brown,
+       and the dust of wherever they were lying is still on them. It is the only thing on
+       screen that says "these were cheap and these are old" before it opens its mouth. */
+    : (c.undead && c.kin === 'longdead') ? '#9d8a68'
     : (c.undead && c.kin === 'mage') ? '#a3907c'
     : (c.undead && !c.lich && c.rot && ROT_SKIN[c.rot]) ? ROT_SKIN[c.rot]
     : c.undead ? '#e0dcc8'
