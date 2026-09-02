@@ -66,14 +66,22 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.statsAdd = asked.stats.tough > 20
         ? `an explicit tough:20 pitborn comes out at ${asked.stats.tough}, not 20`
         : `!! THE LINE'S BONUS WAS OVERWRITTEN BY THE CALLER (${asked.stats.tough})`;
-      /* and nothing lands at zero or below */
-      let floorBad = 0;
+      /* ---------- AND NOTHING LANDS BELOW ITS FLOOR ----------
+         THREE SKILLS FLOOR AT ZERO AND THE REST AT ONE, and the list is a decision rather than
+         an oversight: magic, armour skill and CHARISMA all have to be able to say "none at all".
+         A Fallen has no magic; a scaleborn has no charm, and clamping that up to 1 would put
+         four unrelated lines on the same number and make the bottom of the stat a place where
+         nothing can be told apart. Charisma joined the list when it was added — this claim went
+         red on the scaleborn's zero, correctly, and it is the list that was out of date. */
+      const ZERO_FLOOR = ['magic', 'armr', 'charisma'];
+      let floorBad = 0, floorSaid = [];
       for (const [race, t] of Object.entries(SUBRACES)) for (const k of Object.keys(t)) {
         const c = mk({ race, sub: k });
-        for (const [sk, v] of Object.entries(c.stats)) if (!(v >= 0) || (sk !== 'magic' && sk !== 'armr' && v < 1)) floorBad++;
+        for (const [sk, v] of Object.entries(c.stats))
+          if (!(v >= 0) || (!ZERO_FLOOR.includes(sk) && v < 1)) { floorBad++; floorSaid.push(`${k}.${sk}=${v}`); }
       }
-      R.statFloor = floorBad === 0 ? 'no line starts anybody at zero'
-        : `!! ${floorBad} STATS LANDED BELOW THE FLOOR`;
+      R.statFloor = floorBad === 0 ? `no line starts anybody below its floor — ${ZERO_FLOOR.join(', ')} may be nothing at all, everything else is at least 1`
+        : `!! ${floorBad} STATS LANDED BELOW THE FLOOR: ${floorSaid.slice(0, 6).join(' ')}`;
       clean();
     }
 

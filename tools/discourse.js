@@ -222,6 +222,79 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       wipe(); zero();
     });
 
+    /* ---------- 7. A LINE YOU MIGHT NOT GET AWAY WITH ----------
+       Every option before this batch was a GATE — you have the thing or you do not, and the
+       answer never changes. A check is the other half, and it is the reason a charisma build is
+       a build rather than a discount: you may attempt it, it may fail, and the odds are on the
+       button so the player is choosing a risk rather than pulling a lever in the dark. */
+    guard(['aConversationCanBeRisked', 'theOddsAreOnTheButton', 'andATongueMovesThem', 'andTheyRememberBeingWorkedOn'], () => {
+      wipe(); zero();
+      const t = makeChar('Villager', 'town', me.x + 40, me.y + 40, { atk: 2, def: 2 });
+      t.state = 'ok'; t.homeTown = towns[0]; t.__probe = true; chars.push(t); made.push(t);
+      const c = makeChar('Talker', 'player', t.x + 1, t.y, { atk: 5, def: 5 });
+      c.state = 'ok'; c.__probe = true; chars.push(c); made.push(c);
+      for (const o of made) if (o.faction === 'player' && o !== c) o.x = t.x + 60;
+      const optsAt = (cha) => {
+        c.stats.charisma = cha;
+        talkTo(t);
+        const l = [...document.querySelectorAll('#modalbody button')].map(x => x.textContent.trim());
+        shut();
+        return l;
+      };
+      const lo = optsAt(0), hi = optsAt(70);
+      const pct = (list) => { const m = list.map(x => /^\[TALK (\d+)%\]/.exec(x)).find(Boolean); return m ? +m[1] : null; };
+      R._check = `at charisma 0 the persuasion reads ${pct(lo)}%, at 70 it reads ${pct(hi)}%`;
+      R.aConversationCanBeRisked = lo.some(x => x.startsWith('[TALK '))
+        ? `an ordinary villager offers something you can TRY rather than only things you either have or have not: "${lo.find(x => x.startsWith('[TALK ')).slice(0, 70)}"`
+        : `!! NO OPTION IN THIS CONVERSATION IS A CHECK: ${JSON.stringify(lo)}`;
+      R.theOddsAreOnTheButton = (pct(lo) !== null)
+        ? `and the button carries its own odds — ${pct(lo)}% — so a risk is chosen rather than discovered`
+        : '!! A CHECK IS OFFERED WITH NO ODDS ON IT';
+      R.andATongueMovesThem = (pct(lo) !== null && pct(hi) !== null && pct(hi) > pct(lo) + 20)
+        ? `and the tongue is what moves them: the same line off the same villager reads ${pct(lo)}% for a charmless hand and ${pct(hi)}% for a trained one`
+        : `!! CHARISMA DOES NOT MOVE THE CHECK (${pct(lo)} → ${pct(hi)})`;
+      /* AND NO FREE REROLLS. Without a memory on the person, a failed persuasion costs nothing:
+         shut the window, open it again, ask the same question until it works. */
+      c.stats.charisma = 70;
+      talkTo(t);
+      const btn = [...document.querySelectorAll('#modalbody button')].find(x => x.textContent.trim().startsWith('[TALK '));
+      if (btn) btn.click();
+      shut();
+      const after = optsAt(70);
+      const spent = after.find(x => x.startsWith('[TALK ') && /already tried/.test(x));
+      R.andTheyRememberBeingWorkedOn = spent
+        ? 'and a person remembers being worked on — the line comes back greyed out, so a failed persuasion is not a free reroll off the back of closing the window'
+        : `!! THE SAME CHECK CAN BE RUN AGAIN ON THE SAME PERSON: ${JSON.stringify(after.filter(x => x.startsWith('[TALK ')))}`;
+      wipe(); zero();
+    });
+
+    /* ---------- 8. AND THE OTHER PRACTITIONER HAS SOMETHING TO SAY ----------
+       An NPC necromancer had three barks in a game about necromancy — the only other person on
+       the map doing the player's own work had less to say than a farmer. */
+    guard(['theOtherNecromancerTalks', 'andTheDeepestLinesAreForTheDeepestIn'], () => {
+      wipe(); zero();
+      const n = makeChar('Bonewright', 'town', me.x + 40, me.y + 40, { atk: 2, def: 2 });
+      n.state = 'ok'; n.npcNecro = true; n.homeTown = towns[0]; n.__probe = true; chars.push(n); made.push(n);
+      const c = makeChar('Asker', 'player', n.x + 1, n.y, { atk: 5, def: 5 });
+      c.state = 'ok'; c.__probe = true; chars.push(c); made.push(c);
+      for (const o of made) if (o.faction === 'player' && o !== c) o.x = n.x + 60;
+      talkTo(n);
+      const plain = [...document.querySelectorAll('#modalbody button')].map(x => x.textContent.trim());
+      shut();
+      c.gift = 'dark'; c.att = { ...(c.att || {}), dark: 3 };
+      talkTo(n);
+      const deep = [...document.querySelectorAll('#modalbody button')].map(x => x.textContent.trim());
+      shut();
+      R._necro = `plain hand ${plain.length} options · dark adept ${deep.length}`;
+      R.theOtherNecromancerTalks = plain.length >= 3
+        ? `the other necromancer answers with ${plain.length} ways in rather than one bark and a turned back`
+        : `!! THE NECROMANCER STILL ONLY BARKS (${plain.length}): ${JSON.stringify(plain)}`;
+      R.andTheDeepestLinesAreForTheDeepestIn = deep.length > plain.length && deep.some(x => x.startsWith('[DARK]'))
+        ? `and how far into the art you are decides what is on offer — ${plain.length} for a stranger, ${deep.length} for somebody who has been where they have been`
+        : `!! plain ${JSON.stringify(plain)} deep ${JSON.stringify(deep)}`;
+      wipe(); zero();
+    });
+
     return R;
   });
 

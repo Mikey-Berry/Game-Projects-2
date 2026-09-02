@@ -1149,6 +1149,51 @@ function priceBuy(town, k){
   return Math.round(ITEMS[k].base * base * (town.sacked > 0 ? 1.45 : 1) * scarcity(town, k) * leaderMarket(town));
 }
 function priceSell(town, k){ return Math.max(1, Math.round(priceBuy(town,k) * 0.55)); }
+/* ---------- WHAT A TONGUE IS WORTH AT A COUNTER ----------
+   "A charisma build is always fun in any game." The thing that makes one fun is that it pays
+   on a curve you can feel early and never quite finish climbing, so this saturates in both
+   directions off an ordinary person's starting number rather than running linearly to free.
+     · below the reference it bites fast and shallowly — the first few points of "people do not
+       like looking at you" cost you real money, and the floor is +16%, not +200%;
+     · above it the first ten points are worth more than the next fifty, and the ceiling is a
+       fifth off. A fifth off everything, forever, is an enormous amount in this economy and
+       still not an exploit, because the shelf price is only half of what trade costs you.
+   Nobody gets it free. That is the design: charisma buys a better deal, never a gift. */
+const CHA_REF = 6;                       /* what an unremarkable human brings to a counter */
+function chaOf(c){ return (c && c.stats && c.stats.charisma) || 0; }
+function hagglePull(cha){
+  const d = (cha || 0) - CHA_REF;
+  return d >= 0 ? -0.22 * (d / (d + 26)) : 0.16 * (-d / (-d + 7));
+}
+/* WHOSE TONGUE. The one standing closest to the counter who can actually speak — the risen
+   do not haggle — and among those, the best of them. Sending your smooth talker in to buy is
+   a decision the player makes by choosing who walks over, which is the same rule the
+   conversation trees use for who gets the gated lines. */
+function speakerNear(x, y, r){
+  return player().filter(c => c.state === 'ok' && (!c.undead || c.lich) && dist(c.x, c.y, x, y) < r)
+    .sort((a, b) => chaOf(b) - chaOf(a))[0] || null;
+}
+/* ---------- AND IT IS LEARNED BY DOING IT ----------
+   "trained by buying and selling (or attempting these kinds of checks)."
+   BY WHAT THE DEAL WAS WORTH, NOT BY THE CLICK. This is the trap the labour skill already fell
+   into and has a note of its own about: pay a flat rate per action and the skill is farmed by
+   the cheapest possible action repeated, so a hand went from raw to capped on one woodpile.
+   Selling five hundred rats one at a time must not out-train a season of real commerce, so the
+   gain rides on GOLD MOVED and is capped per deal — and it tapers as the skill climbs, because
+   the hundredth haggle teaches less than the second. */
+function tradeLearned(c, gold){
+  if(!c || !gold) return;
+  const taper = clamp(1 - chaOf(c) / 130, 0.12, 1);
+  xpGain(c, 'charisma', Math.min(0.30, Math.abs(gold) / 900) * taper);
+}
+/* AND SO IS A CHECK YOU TRIED AND LOST. Attempting is the training — the guard who did not
+   believe you taught you as much as the one who did, and a stat you can only train by winning
+   is a stat you cannot climb out of a hole with. */
+function socialTried(c, won){
+  if(!c) return;
+  const taper = clamp(1 - chaOf(c) / 130, 0.12, 1);
+  xpGain(c, 'charisma', (won ? 0.55 : 0.38) * taper);
+}
 
 /* quality tiers: every weapon and armor exists in four grades of make */
 const TIERS = {
@@ -1675,21 +1720,24 @@ function makeParts(){
    down. Worldgen builds several hundred bodies before that point and a `const` in its
    temporal dead zone takes the whole script with it. */
 const RACES = {
-  human:      {label:'Human',      xp:1.0,  speed:1.0,  deathAge:62,  fertile:true,  cap:100,
+  /* `cha` is the flat charisma a line is BORN with — see `makeChar`. It is the whole of what
+     "some people are easier to like" means mechanically, and it is deliberately small next to
+     what practice adds, because a stat you cannot move is a wall and not a build. */
+  human:      {label:'Human',      xp:1.0,  speed:1.0,  deathAge:62,  fertile:true,  cap:100, cha:6,
     blurb:'The stubborn default. Learns, breeds, dies on schedule.'},
-  homunculus: {label:'Homunculus', xp:1.35, speed:1.0,  deathAge:34,  fertile:false, cap:75,
+  homunculus: {label:'Homunculus', xp:1.35, speed:1.0,  deathAge:34,  fertile:false, cap:75,  cha:3,
     blurb:'Vat-grown. Learns frighteningly fast; the clock runs frighteningly fast too. Cannot have children.'},
   /* Scaleborn used to be a race of its own. It is a chimera — everything about it (built to
      order, does not breed true, was somebody's project) was already the chimera story told
      twice, so it is a LINE of chimera now, and the others are the rest of the catalogue. */
-  chimera:    {label:'Chimera',    xp:1.0,  speed:1.25, deathAge:90,  fertile:false, cap:140, noGift:true,
+  chimera:    {label:'Chimera',    xp:1.0,  speed:1.25, deathAge:90,  fertile:false, cap:140, noGift:true, cha:3,
     blurb:'Engineered by people who thought they had time, and there is no such thing as a chimera in general — there are the lines they kept. Faster and harder than anything born, and mostly stone-deaf to alchemy: the arts that made them cannot pass back through them.'},
   /* THE MADE THAT WOKE UP. Nobody built a golem to think; they built one to carry, or to
      copy, or to stand in a doorway. Enough centuries of doing one thing and something in
      there started having opinions about it. */
-  golem:      {label:'Golem',      xp:0.62, speed:0.88, deathAge:900, fertile:false, cap:115, construct:true,
+  golem:      {label:'Golem',      xp:0.62, speed:0.88, deathAge:900, fertile:false, cap:115, construct:true, cha:2,
     blurb:'A servant that was left running until it began to want things. Does not bleed, does not age, does not sleep, and does not learn easily — it was made for one task and it is very good at that one. What is left of the trade it was built for is most of what it is.'},
-  hollow:     {label:'Hollow',     xp:0.85, speed:1.0,  deathAge:62,  fertile:false, cap:100,
+  hollow:     {label:'Hollow',     xp:0.85, speed:1.0,  deathAge:62,  fertile:false, cap:100, cha:6,
     blurb:'A rider in a borrowed body. Pushes the host past its limits — and takes a cut of everything the host learns. It is saving up for something.'},
   /* ---------- THE IMPERFECT MIRROR ----------
      A Messenger is a Watcher that learned to speak. A Mimic is something that learned to LIVE
@@ -1699,7 +1747,7 @@ const RACES = {
      nobody in particular, and the one that quit.
      No mimic is a Messenger and no Messenger is a mimic, but they are made of the same stuff,
      which is why the Fallen come apart the way a Watcher does. */
-  mimic:      {label:'Mimic',      xp:1.05, speed:1.0,  deathAge:120, fertile:false, cap:110,
+  mimic:      {label:'Mimic',      xp:1.05, speed:1.0,  deathAge:120, fertile:false, cap:110, cha:11,
     blurb:'Something that lives alongside people and has learned to be one of them, near enough. Nobody agrees what they were before, and asking is rude. They age like a rumour and they do not breed true.'},
 };
 /* A subrace record. Everything is optional; `learn` is the one that matters.
@@ -1714,8 +1762,8 @@ const SUBRACES = {
       blurb:'Nine generations of getting on with it. No talent for anything and no gap either.'},
     harborborn: {label:'Harborborn', w:12, skin:'#a8845c',
       blurb:'Dustport stock. Everything washes up there and somebody has to know what it is worth.',
-      stats:{ranged:3, crafting:2, gunnery:2, tough:-1},
-      learn:{ranged:1.30, gunnery:1.30, crafting:1.15, labor:0.80, tough:0.85}},
+      stats:{ranged:3, crafting:2, gunnery:2, tough:-1, charisma:3},
+      learn:{ranged:1.30, gunnery:1.30, crafting:1.15, labor:0.80, tough:0.85, charisma:1.25}},
     pitborn:    {label:'Pitborn',    w:12, skin:'#8a6a48',
       blurb:'Copperhold owes everyone and everyone owes Copperhold. Bred to the shaft, in the dark, for three lifetimes.',
       stats:{tough:4, labor:4, smithing:2, ath:-1, medic:-1},
@@ -1734,15 +1782,20 @@ const SUBRACES = {
       learn:{tough:1.30, armr:1.25, atk:0.85, magic:0.85, crafting:0.85, ath:0.85}},
     gravebred:  {label:'Grave-bred',  w:10, skin:'#b09a86',
       blurb:'Raised in Hollowmere, where the dead do the heavy lifting and nobody finds it strange. Easy around a corpse. Less easy around a crowd.',
-      stats:{magic:3, medic:2, labor:-1},
+      stats:{magic:3, medic:2, labor:-1, charisma:-3},
       learn:{magic:1.35, medic:1.15, farming:0.75, brewing:0.75}},
   },
   chimera: {
     /* the line everyone has heard of, and the reason the word chimera frightens a town */
     scaleborn:  {label:'Scaleborn',  w:30, skin:null, gift:true, speed:0.92, deathAge:140, cap:125,
       blurb:'Dragon-blooded, and the only line that kept the art it was made with. Long-lived, slow to learn, and the vestigial wings carry just enough of the weight to matter. Not welcome everywhere.',
-      stats:{tough:3, armr:2},
-      learn:{tough:1.15, armr:1.15, atk:0.85, blades:0.85, martial:0.85}},
+      /* NOT WELCOME EVERYWHERE, AND NOW THAT IS A NUMBER. The scaleborn price penalty used to
+         be a flag the shop read — a wall, the same on the first day and the thousandth. As
+         charisma it is a starting position instead: they begin behind and they can walk out of
+         it, which is what a line that has spent two centuries being looked at sideways would
+         actually have learned to do. */
+      stats:{tough:3, armr:2, charisma:-4},
+      learn:{tough:1.15, armr:1.15, atk:0.85, blades:0.85, martial:0.85, charisma:1.20}},
     houndkin:   {label:'Houndkin',   w:26, skin:'#8f7a58', bald:true, speed:1.18, deathAge:55,
       blurb:'Grafted for pursuit and nothing else. Nothing on this map runs it down. It cannot be taught to sit still either.',
       stats:{ath:6, martial:3, crafting:-2, smithing:-2},
@@ -1826,23 +1879,29 @@ SUBRACES.mimic = {
     skins:['#b96a86', '#e6dcd8', '#332b33', '#8a5aa0', '#6a4a6e', '#c2513f'],
     build:{sh:0.92, hip:1.14, ch:1.06, limb:0.94, sy:1.05},
     blurb:'Devil-horned and unbothered by it. Talks people round, and can carry a child by anything that walks — which is the part nobody says out loud.',
-    stats:{magic:14, medic:2, atk:-2, tough:-2},
-    learn:{magic:1.25, medic:1.15, martial:0.85, crafting:0.9}},
+    stats:{magic:14, medic:2, atk:-2, tough:-2, charisma:9},
+    learn:{magic:1.25, medic:1.15, martial:0.85, crafting:0.9, charisma:1.30}},
   /* ---------- THE ONE THAT IS NOBODY IN PARTICULAR ----------
      It has no face of its own to go back to. "Change form" is not a disguise it puts on, it is
      the only thing it does — and every time it does it, whoever it was is gone. */
   doppelganger: {label:'Doppelganger', w:8, skin:'#9d9481', innate:['shift'],
     blurb:'Wears a face until the face becomes a problem, then wears another. A clean slate every time, and it costs exactly what a clean slate costs: nobody who knew you knows you.',
-    stats:{ranged:2, crafting:2, atk:-1},
-    learn:{ranged:1.15, crafting:1.15, martial:0.9, magic:0.95}},
+    /* "nobody who knew you knows you" is a charisma penalty said in prose: a mimic's ease
+       with people is built out of being KNOWN, and this line throws that away every time it
+       has a bad week. It learns the trick faster than most and never banks it. */
+    stats:{ranged:2, crafting:2, atk:-1, charisma:-5},
+    learn:{ranged:1.15, crafting:1.15, martial:0.9, magic:0.95, charisma:1.35}},
   /* ---------- THE ONE THAT QUIT ----------
      A Messenger that put the eldritch down and built itself a body out of statuary — the gods
      of old as men imagined them, which is a mimicry of a mimicry and exactly the joke. It will
      not touch alchemy, and it is not modest about the rest. */
   fallen: {label:'Fallen', w:6, sexOnly:'m', skin:'#d8cdb4', noGift:true, charismatic:true, voidDeath:true,
     blurb:'A Messenger that walked out. Forged itself in the shape of the old gods and will not go near the arts it left behind — the fear is genuine. When one dies the void takes it back, and nothing comes home.',
-    stats:{atk:4, def:3, tough:3, martial:3, magic:-99},
-    learn:{martial:1.2, atk:1.15, magic:0.0}},
+    /* The Fallen's standing favour at the counter was a `charismatic` flag; it is charisma
+       now, and a large amount of it, because being shaped like somebody's god is not a trick
+       that wears off. */
+    stats:{atk:4, def:3, tough:3, martial:3, magic:-99, charisma:12},
+    learn:{martial:1.2, atk:1.15, magic:0.0, charisma:1.15}},
 };
 function subsFor(race){ return SUBRACES[race] || null; }
 function subOf(c){
@@ -2010,7 +2069,11 @@ function makeChar(name, faction, x, y, o={}){
   const _sb = (SUBRACES[o.race] || {})[o.sub] || SUB_NONE;
   /* the subrace's flat gifts land BEFORE anything else, so a caller that asked for a specific
      number still gets that number plus what the line is worth, not instead of it */
-  const st = (k, base) => Math.max(k === 'magic' || k === 'armr' ? 0 : 1,
+  /* CHARISMA FLOORS AT ZERO, like magic and armour skill, and for the same reason: "cannot do
+     this at all" has to be sayable. A scaleborn golem is not a shy person, it is a thing people
+     do not want to be spoken to by, and clamping that up to 1 would have made the floor of the
+     stat a place where four different lines all sit together. */
+  const st = (k, base) => Math.max(k === 'magic' || k === 'armr' || k === 'charisma' ? 0 : 1,
     Math.round(((o[k] ?? base) + ((_sb.stats && _sb.stats[k]) || 0)) * 10) / 10);
   const _bl = Math.round((o.race === 'chimera' ? 125 : 100) * (_sb.bloodMul || 1));
   const _gift = canHoldGift(o.race, o.sub) ? (o.gift || null) : null;
@@ -2026,7 +2089,14 @@ function makeChar(name, faction, x, y, o={}){
          improve in studying — a skill very distinct from say, labor." There was none: the
          bench read `stats.magic`, so the fastest scholar in the camp was whoever happened to
          be the best caster, and nobody got better at reading by reading. */
-      gunnery:st('gunnery',1), study:st('study',1)},
+      /* CHARISMA. "Maybe that should be another skill... a charisma stat that is flat and
+         racial based upon character creation, and trained by buying and selling (or attempting
+         these kinds of checks). A charisma build is always fun in any game."
+         The base is the RACE's, not a flat 1, because that is the half of it the player picks
+         at creation and cannot change afterwards — see `cha` in RACES and the `charisma` entries
+         in SUBRACES, which is where the old scaleborn and Fallen price flags went. */
+      gunnery:st('gunnery',1), study:st('study',1),
+      charisma:st('charisma', (RACES[o.race] || RACES.human).cha ?? 5)},
     /* SPEND THE DRAW EITHER WAY. Written as `o.conviction || rollConviction(_gift)` the roll is
        short-circuited away for every caller that names a conviction — which is rule 2 in this
        file's own notes, and it started mattering the moment the hiring bar began passing one:
@@ -6772,12 +6842,20 @@ function crime(kind, x, y, by, f){
      threshold moves on its own if the table ever does. The Fallen has to be close enough for
      the witness to be looking at THEM, and it is a roll rather than a rule — "occasional",
      and a charm that always works is not a charm, it is a permit. */
+  /* AND THIS IS A CHARISMA CHECK NOW, NOT A RACE. It was the Fallen's alone and a flat 55%;
+     it is anybody's, at odds their tongue earned, and TRYING it teaches them whether or not it
+     lands. The Fallen still wins it nearly always, because twelve points of born charm is what
+     the flag was worth — the difference is that everyone else can now get there. */
   if(spec.bounty <= 90){
-    const smoother = player().find(o => o.state === 'ok' && traitOf(o, 'charismatic', false) &&
-      dist(o.x, o.y, saw.x, saw.y) < 9);
-    if(smoother && rnd() < 0.55){
-      log(`${saw.name} saw — and ${smoother.name} was already talking. It comes to nothing.`, 'good');
-      return null;
+    const smoother = speakerNear(saw.x, saw.y, 9);
+    if(smoother){
+      const odds = clamp(0.10 + chaOf(smoother) * 0.028, 0.10, 0.82);
+      const won = rnd() < odds;
+      socialTried(smoother, won);
+      if(won){
+        log(`${saw.name} saw — and ${smoother.name} was already talking. It comes to nothing.`, 'good');
+        return null;
+      }
     }
   }
   t.bounty = (t.bounty || 0) + spec.bounty;
@@ -6816,28 +6894,76 @@ let _stopOpen = false;
 function contrabandOn(c){
   return Object.keys(CONTRABAND).filter(k => c.inv && c.inv[k] > 0);
 }
-/* What a guard makes of you before they look in the bag. There is no silver-tongue stat in
-   this game and inventing one for a single scene would be worse than using what is already
-   true about the character: how this town feels about you, whether there is already a price
-   on your head, how loud your workings have been, and what you happen to be carrying. */
+/* What a guard makes of you before they look in the bag.
+   THERE IS A SILVER-TONGUE STAT NOW, and the note this comment used to carry — "inventing one
+   for a single scene would be worse than using what is already true" — was right about the
+   scene and wrong about the game: the answer was not to fake it here, it was for the stat to
+   exist everywhere. So the lettered-person proxy this used to lean on (research plus crafting,
+   because a scholar can talk like one) is gone and charisma is read directly. Everything else
+   about the odds is unchanged, because all of it is still true. */
 function talkOdds(c, t, found){
-  let p = 0.52;
-  p += clamp((t.rep || 0), -60, 60) * 0.004;          /* they know you here, for good or ill */
+  let p = 0.30;
+  p += clamp(chaOf(c), 0, 90) * 0.0075;                /* the whole of what a tongue is for */
+  p += clamp((t.rep || 0), -60, 60) * 0.004;           /* they know you here, for good or ill */
   p -= Math.min(0.35, (t.bounty || 0) / 900);          /* a face with a price is not given the benefit */
   p -= noticeTier * 0.07;                              /* something has been paying attention to you */
-  p += clamp(((c.stats.research || 0) + (c.stats.crafting || 0)) * 0.004, 0, 0.12);  /* you can talk like a lettered person */
   if(found.includes('sunder') || found.includes('doctrine')) p -= 0.22;   /* some things explain themselves */
   if(c.veilT > 0) p += 0.15;
   return clamp(p, 0.05, 0.92);
 }
+/* ---------- THE OTHER WAY TO END A CONVERSATION ----------
+   "a charisma roll, bribe, resist, etc..." — resist is not only drawing steel. A guard weighing
+   whether to open a pack is weighing what happens if they do, and for some of the people who
+   walk through these gates that arithmetic is genuinely frightening. This reads off what the
+   world already knows about you rather than off a stat: the price on your head, how loudly your
+   workings have been heard, and how much of the dead is standing behind you at that moment.
+   IT IS THE OPPOSITE TRADE TO TALKING. It works on exactly the reputation that makes talking
+   HARD, so the two options cover for each other's weakness — and it costs you standing in the
+   town whether or not it lands, because a threat is remembered. */
+function scareOdds(c, t, g){
+  let p = 0.10;
+  p += Math.min(0.30, (t.bounty || 0) / 700);          /* they have already decided you are dangerous */
+  p += noticeTier * 0.09;                              /* and something larger agrees */
+  p += Math.min(0.22, fame.known / 320);
+  if(fame.repute < 0) p += Math.min(0.18, -fame.repute / 220);
+  p += Math.min(0.20, chars.filter(o => o.faction === 'player' && o.state === 'ok' &&
+    revealedUndead(o) && dist(o.x, o.y, g.x, g.y) < 14).length * 0.045);
+  p += clamp((c.stats.atk || 0) - 20, 0, 60) * 0.002;
+  p -= clamp((t.rep || 0), 0, 60) * 0.003;             /* liked people are not feared people */
+  return clamp(p, 0.03, 0.88);
+}
+/* ---------- WHICH WALLS A BODY IS INSIDE, AND WHEN THAT CHANGED ----------
+   The stop was written as a gate scene — "a gate is a bottleneck, not a body scanner" — and then
+   implemented as a proximity poll, which is not the same thing and did not work. Measured on the
+   built game: standing in the middle of Dustport with a proscribed book in hand, for five game
+   days, produced ZERO stops. The nearest posted guard to that town's centre is 9.7 tiles and the
+   check wanted one within 6, so the roll it was making was against a condition that is never
+   true there. At the gate the nearest guard is 1.7 tiles and it fires every time — so the whole
+   mechanic already lived at the gate and nothing was arranging for it to happen there.
+   A CROSSING IS AN EVENT, NOT A POLL. This returns which town's walls a body is within, and the
+   caller compares it against the last answer: walking in is a thing that happens once, at a
+   place, and that is when a search belongs. */
+function inWalls(c){
+  const t = townAt(c.x, c.y);
+  if(!t) return null;
+  const r = (t.def.wall ? t.def.wall.r : 20);
+  return (Math.abs(c.x - t.x) <= r && Math.abs(c.y - t.y) <= r) ? t : null;
+}
+const GATE_ODDS = 0.55;     /* walking in past a watched gate with it on you */
+const LINGER_ODDS = 0.045;  /* and the ambient risk of carrying it around inside, per 4s */
 function contrabandCheck(){
   if(_stopOpen || modalOpen) return;
   for(const c of player()){
     if(c.state !== 'ok' || c.undead) continue;
-    const t = townAt(c.x, c.y);
+    const t = inWalls(c);
+    /* the crossing is recorded for EVERY body every tick, including into towns that never
+       search anybody, or the first walk into a hostile town after leaving a friendly one
+       would not read as a crossing at all */
+    const was = c._walls || null;
+    const nowKey = t ? t.def.key : null;
+    const crossed = !!t && was !== nowKey;
+    c._walls = nowKey;
     if(!t || t.playerRuled || t.def.undeadFriendly) continue;
-    const r = (t.def.wall ? t.def.wall.r : 20);
-    if(Math.abs(c.x - t.x) > r || Math.abs(c.y - t.y) > r) continue;
     /* ON THE PERSON. The shared pool is everybody's; a guard cannot search a stash that is
        not there, and reading it meant one proscribed formula put the whole company at risk
        every time any of them walked through a gate. */
@@ -6845,9 +6971,25 @@ function contrabandCheck(){
     if(!found.length) continue;
     /* and not twice in a day by the same town — you were searched at the gate already */
     if((c.stoppedDay || -9) >= day && c.stoppedAt === t.def.key) continue;
-    const g = charsNear(c.x, c.y, 6).find(o => o.faction === 'town' && !o.civ && o.state === 'ok' &&
-      o.homeTown === t && dist(o.x, o.y, c.x, c.y) < 6);
-    if(!g || rnd() > 0.05) continue;
+    /* WIDER ON THE WAY IN THAN WHILE LOAFING ABOUT INSIDE, and that is the whole of the
+       difference. It is tempting to write this as "the gate is watched and the far wall is not,
+       so sneak round" — it was written that way first — but that is not this world: Dustport
+       fields EIGHTEEN guards standing at radius 19-25, and the nearest one to any point on its
+       wall is between two and seven tiles. There is no quiet corner to measure your way to. So
+       the choice this mechanic asks for is not which way you walked in; it is what is in the
+       pack and whose pack it is, which is the choice the stash already offered and nobody had a
+       reason to make. */
+    const reach = crossed ? 12 : 8;
+    const g = charsNear(c.x, c.y, reach).find(o => o.faction === 'town' && !o.civ && o.state === 'ok' &&
+      o.homeTown === t && dist(o.x, o.y, c.x, c.y) < reach);
+    if(!g) continue;
+    /* A FACE THEY WANT ANYWAY GETS LOOKED AT HARDER. Both of these already govern how the stop
+       GOES; they should also govern whether it happens, or a wanted necromancer strolls past the
+       watch exactly as often as a farmer. */
+    let odds = crossed ? GATE_ODDS : LINGER_ODDS;
+    odds *= 1 + Math.min(0.9, (t.bounty || 0) / 500) + noticeTier * 0.12;
+    if((t.rep || 0) > 25) odds *= 0.6;        /* they know you here, and not for that */
+    if(rnd() > clamp(odds, 0, 0.92)) continue;
     c.stoppedDay = day; c.stoppedAt = t.def.key;
     theStop(c, g, t, found);
     return;
@@ -6872,15 +7014,83 @@ function theStop(c, g, t, found){
     b.onclick = () => { close(); fn(); };
     body.appendChild(b);
   };
-  mk('TALK', `${Math.round(odds * 100)}% — reputation, your bounty, and what they are holding`, () => {
-    if(rnd() < odds){
-      say(g, pick(['Hn. On your way.', 'I have not seen this.', 'Not today. Move.']));
-      log(`${g.name} looks at it for a long moment, and then somewhere else. ${c.name} walks on.`, 'good');
-    } else {
-      say(g, 'Do not insult me.');
-      log(`${g.name} is not having it.`, 'bad');
-      theReckoning(c, g, t, what);
-    }
+  /* ---------- THE OPTIONS ARE THE SCENE ----------
+     Every line here is a different thing to be. Talking is charisma and reputation; frightening
+     them is the exact reputation that makes talking impossible; the gated lines are the ones only
+     a particular body could say at all, tagged so the player can see which part of who they are
+     bought it. And every one of them TRAINS the tongue, win or lose — the note asked for that
+     explicitly, and a stat you can only raise by succeeding is a stat you cannot climb out of a
+     bad run with. */
+  const won = () => {
+    say(g, pick(['Hn. On your way.', 'I have not seen this.', 'Not today. Move.']));
+    log(`${g.name} looks at it for a long moment, and then somewhere else. ${c.name} walks on.`, 'good');
+  };
+  const lost = (line) => {
+    say(g, line);
+    log(`${g.name} is not having it.`, 'bad');
+    theReckoning(c, g, t, what);
+  };
+  mk('TALK', `${Math.round(odds * 100)}% — your tongue, your standing here, and what they are holding`, () => {
+    const ok = rnd() < odds;
+    socialTried(c, ok);
+    ok ? won() : lost('Do not insult me.');
+  });
+  /* THE THREAT, AND IT IS NOT FREE. It works off notoriety, so it is strongest exactly where
+     talking is weakest, and it costs standing whether or not it lands — a town remembers being
+     leaned on by somebody it already did not trust. */
+  {
+    const sc = scareOdds(c, t, g);
+    mk('LET THEM SEE WHAT YOU ARE', `${Math.round(sc * 100)}% — your bounty, what has been heard of you, and what is standing behind you`, () => {
+      t.rep = clamp((t.rep || 0) - 4, -100, 100);
+      if(rnd() < sc){
+        say(g, pick(['...go.', 'I did not stop you. Remember that.', 'Not for what they pay me.']));
+        log(`${g.name}'s hand comes off the pack. ${c.name} walks on, and is watched the whole way.`, 'good');
+      } else {
+        say(g, 'You think you are the first?');
+        log(`${g.name} does not move, and now the street is watching.`, 'bad');
+        theReckoning(c, g, t, what);
+      }
+    });
+  }
+  /* ---------- AND THE LINES ONLY SOMEBODY IN PARTICULAR COULD SAY ----------
+     Same rule as the conversation trees: the interesting part is the option, not the outcome. A
+     succubus does not roll for this and neither does a lich — being what they are IS the check,
+     and the price is that everyone remembers who walked through the gate. */
+  if(subIs(c, 'succubus')) mk('[SUCCUBUS] Look at me. You are not going to open that.', 'no roll — it is what she is', () => {
+    socialTried(c, true);
+    say(g, 'I... no. No, I am not. Go on. Go on, then.');
+    log(`${g.name} steps back out of ${c.name}'s way and looks faintly ill about it afterwards.`, 'good');
+  });
+  else if(c.lich) mk('[LICH] Take your hand off it.', 'no roll — and they will tell everyone', () => {
+    socialTried(c, true);
+    say(g, 'Sir. Sir, I did not — go. Please go.');
+    log(`${g.name} lets go as though the strap were hot. ${t.name} will hear about this by nightfall.`, 'good');
+    /* NO `deed` CALL HERE, deliberately. There is no ledger kind for "let a town see what you
+       are" and inventing one to fire would be a no-op dressed as a mechanic — `fameDeed`
+       returns early on an unknown kind and nothing happens. The town's own memory is the
+       consequence, and that is a real one. */
+    t.rep = clamp((t.rep || 0) - 6, -100, 100);
+  });
+  else if(c.gift === 'divine') mk('[DIVINE] It is sanctified. Ask your own chapter.', `${Math.round(clamp(odds + 0.24, 0.05, 0.95) * 100)}% — the light is a hard thing to argue with`, () => {
+    const p2 = clamp(odds + 0.24, 0.05, 0.95), ok = rnd() < p2;
+    socialTried(c, ok);
+    ok ? won() : lost('My chapter would have told me.');
+  });
+  else if(subIs(c, 'fallen')) mk('[FALLEN] Look at the shape of me and think about who you are speaking to.', `${Math.round(clamp(odds + 0.20, 0.05, 0.95) * 100)}% — it is not modest and it does not have to be`, () => {
+    const p2 = clamp(odds + 0.20, 0.05, 0.95), ok = rnd() < p2;
+    socialTried(c, ok);
+    ok ? won() : lost('I have seen statues. Open it.');
+  });
+  /* AND A SEAT THAT OWES YOU. Standing high enough in a town buys a name to drop, which is the
+     payoff for every quest run for that seat — read off the town's own opinion, so it is the one
+     out that you earn by being good rather than by being frightening. */
+  if((t.rep || 0) >= 40) mk('NAME THE SEAT', 'they know whose errands you run here', () => {
+    const p2 = clamp(0.55 + (t.rep - 40) * 0.006 + chaOf(c) * 0.004, 0.4, 0.95), ok = rnd() < p2;
+    socialTried(c, ok);
+    if(ok){
+      say(g, 'You are the one who did the thing at the wall. Right. Right, go on.');
+      log(`${g.name} decides, correctly, that this is above ${g.sex === 'f' ? 'her' : 'them'}.`, 'good');
+    } else lost('Everybody knows somebody.');
   });
   mk(`BRIBE — ${bribe}g`, cats >= bribe ? 'coin, quietly' : 'you do not have it', () => {
     if(cats < bribe){ log('You do not have it, and counting it out in front of them made that plain.', 'bad'); theReckoning(c, g, t, what); return; }
@@ -16225,7 +16435,19 @@ function risenLoad(caster){
    AND ANCHORING IS BY PROXIMITY, NOT BY ASSIGNMENT. A body walks into the ring and is held; it
    walks out and its master feels it again. That is what makes it a garrison — the circle keeps
    what STAYS. */
-const ANCHOR_R = 11;        /* how far a circle's hold reaches */
+/* ---------- ELEVEN TILES WAS NOT A GARRISON, IT WAS A DOORMAT ----------
+   "An 11 tile range for the binding circle is quite small. If I am operating a base, it needs to
+    be more to make it worthwhile. (Thinking 2-3 needed per base maybe.)"
+   Measured rather than guessed. A town in this world runs 23-24 buildings with its furthest
+   standing 21 tiles from the middle, so a base worth the word is roughly 42 tiles across. At
+   eleven a ring covered a fifth of that and you needed five or six of them just to stop your own
+   garrison wandering off the edge of its own hold — which made the rite feel like a tax rather
+   than a place.
+   NINETEEN IS THE NUMBER THAT MAKES THE ANSWER TWO OR THREE. One ring covers most of a
+   town-sized base and not all of it; two cover it with the corners thin; three cover it and its
+   outworks. That is the shape the note asks for, and it is arrived at from the town figure
+   rather than from taste. */
+const ANCHOR_R = 19;        /* how far a circle's hold reaches */
 const ANCHOR_CAP = 6;       /* and how much of the dead any one of them can carry */
 function anchorCircles(){
   return research.done.rites_anchor
@@ -18025,15 +18247,23 @@ function promote(u, caster){
   refreshSquadBar(); refreshCharPanel();
   return true;
 }
+let ctxCircle = null;      /* the circle whose hold is being shown, while its window is open */
 function openBinding(circle){
   const ritualist = player().filter(c => c.gift==='dark' && !c.undead && c.state==='ok' && dist(c.x,c.y,circle.x+1,circle.y+1) < 4)
     .sort((a,b)=>b.stats.magic-a.stats.magic)[0]
     || player().filter(c => c.lich && c.state==='ok' && dist(c.x,c.y,circle.x+1,circle.y+1) < 4)[0];
   if(!ritualist){ log('A dark-gifted squad member must stand at the circle.', 'bad'); return; }
-  openModal('BINDING CIRCLE', `Ritualist: ${ritualist.name} — MAG ${Math.floor(ritualist.stats.magic)} · mana ${Math.round(ritualist.mana)} · bound ${risenLoad(ritualist)}/${risenCap(ritualist)}`);
+  /* WHAT THIS STONE IS CARRYING, said in the same breath as what the RITUALIST is carrying —
+     the whole point of the rite is that those are two different numbers now, and a player who
+     cannot see both has no way to tell the feature is working. */
+  const anchorLine = () => research.done.rites_anchor
+    ? ` · this circle holds ${anchorLoad(circle)}/${ANCHOR_CAP} within ${ANCHOR_R} tiles`
+    : '';
+  openModal('BINDING CIRCLE', `Ritualist: ${ritualist.name} — MAG ${Math.floor(ritualist.stats.magic)} · mana ${Math.round(ritualist.mana)} · bound ${risenLoad(ritualist)}/${risenCap(ritualist)}${anchorLine()}`);
+  ctxCircle = circle;
   const body = $('modalbody');
   const rndr = () => {
-    $('modalsub').textContent = `Ritualist: ${ritualist.name} — MAG ${Math.floor(ritualist.stats.magic)} · mana ${Math.round(ritualist.mana)} · bound ${risenLoad(ritualist)}/${risenCap(ritualist)}`;
+    $('modalsub').textContent = `Ritualist: ${ritualist.name} — MAG ${Math.floor(ritualist.stats.magic)} · mana ${Math.round(ritualist.mana)} · bound ${risenLoad(ritualist)}/${risenCap(ritualist)}${anchorLine()}`;
     body.innerHTML = '';
     /* if someone here is carrying a lich, offer to put them back together — but never block the circle */
     const bearer = bearerNear(circle);
@@ -27218,6 +27448,19 @@ function renderOverlay(){
       }
     }
   }
+  /* ---------- WHAT A CIRCLE WILL HOLD, WHILE YOU ARE DECIDING WHERE TO PUT IT ----------
+     An anchor's reach was invisible: no ring, no number, nothing on the building. The player was
+     asked to lay out a garrison against a radius they could not see and a cap they had to infer
+     from which of their dead stopped counting. Placement is the entire decision this feature
+     asks for, so it is drawn at the moment the decision is being made — every standing circle's
+     hold, and the one under the cursor, so overlap and gaps are both visible at once. */
+  if(buildMode === 'circle' && research.done.rites_anchor){
+    for(const r of anchorCircles()) projCircle(r.x + 1, r.y + 1, ANCHOR_R, 'rgba(169,138,212,0.55)');
+    projCircle(mouseTX + 1, mouseTY + 1, ANCHOR_R, 'rgba(232,200,106,0.8)');
+  }
+  /* and when one is selected to be worked at, so you can see what you already hold */
+  if(!buildMode && ctxCircle && modalOpen && research.done.rites_anchor)
+    projCircle(ctxCircle.x + 1, ctxCircle.y + 1, ANCHOR_R, 'rgba(169,138,212,0.75)');
   /* cast range */
   if(castMode && castMode.caster.state==='ok'){
     const c = castMode.caster, sp = SPELLS[castMode.spell];
@@ -27504,6 +27747,7 @@ const TIPS = {
   save: '<b>SAVE</b>Writes to browser storage and downloads a file. The world autosaves once a day.<i>Browser storage never leaves this device. The file is the copy that travels.</i>',
   move: '<b>MOVE</b>Carry this world to another device. There is no server behind this game, so a save crosses by hand — as a code you paste, or as a file.<i>Copy the code on the desktop, paste it into a note or an email to yourself, and paste it back on the phone.</i>',
   stance:'<b>STANCE</b>How this one picks fights on their own: melee closes, ranged holds off, medic hangs back and patches, tank draws blows, hold stands still.',
+  charisma:'<b>CHARISMA</b>How much easier this one makes everything that runs through another person. It sets what you pay and what you are paid at every counter in the world, and it is what a guard is weighing when they have a hand on your pack and have not decided yet.<i>Part of it is the line you were born into and cannot change. The rest is practice: every trade you make and every check you try — win or lose — teaches whoever did the talking.</i>',
   job:  '<b>JOB</b>Standing work they return to when nobody is giving orders.',
 };
 {
@@ -27810,7 +28054,7 @@ function refreshCharPanel(){
       sb.disabled = !canAfford({salt: need});
     }
   }
-  $('stats').innerHTML = ['atk','def','tough','ath','medic','magic','labor','study','armr','gunnery']
+  $('stats').innerHTML = ['atk','def','tough','ath','medic','magic','labor','study','armr','gunnery','charisma']
     .map(s=>`<span data-tip="${s}">${s.toUpperCase()}</span><b data-tip="${s}">${(Math.floor(c.stats[s]*10)/10).toFixed(1)}</b>`).join('');
   const giftTxt = c.gift ? ` · <span style="color:#a98ad4">✦ ${c.gift.toUpperCase()}</span>` : '';
   /* what they are, and what they currently make of you */
@@ -28598,7 +28842,7 @@ $('btn-court').onclick = () => {
   court(a, b);
   refreshCharPanel();
 };
-const GOALS = [null,'blades','blunt','ranged','martial','smithing','crafting','farming','brewing','medic','magic','labor','study','gunnery'];
+const GOALS = [null,'blades','blunt','ranged','martial','smithing','crafting','farming','brewing','medic','magic','labor','study','gunnery','charisma'];
 $('btn-goal').onclick = () => {
   const c = selected[0]; if(!c || c.faction!=='player') return;
   const r = $('btn-goal').getBoundingClientRect();
@@ -28779,6 +29023,10 @@ function refreshInv(){
 /* ============================================================ TRADE & RECRUIT MODALS */
 let modalOpen = false;
 function openModal(title, sub){
+  /* CLEARED BY WHATEVER OPENS NEXT, rather than by every path that closes a window. There are a
+     dozen ways to shut a modal in this file and exactly one way to open one, so the flag is
+     owned here — a ring that outlived its window would otherwise hang on the ground forever. */
+  ctxCircle = null;
   $('modaltitle').textContent = title; $('modalsub').textContent = sub;
   $('modal').style.display = 'flex'; modalOpen = true; paused = true; syncPauseBtn();
   AU.open();
@@ -29075,18 +29323,25 @@ function openVendor(v){
       const base = ITEMS[k].tierOf || k;
       return VENDOR_STOCK[v.vt].includes(base);
     };
-    const prejudiced = ['greenrest','copperhold'].includes(town.def.key) &&
-      player().some(c => subIs(c, 'scaleborn') && dist(c.x, c.y, v.x, v.y) < 8);
+    /* ---------- WHO IS DOING THE TALKING, AND WHAT IT IS WORTH ----------
+       This used to be two flags: a scaleborn at the counter put prices UP by a flat 15%, a
+       Fallen put them DOWN by a flat 10%, and everybody else in the game paid list. Two races
+       had an economy and nobody else had a lever.
+       Both flags are charisma now — the scaleborn are born four points behind and the Fallen
+       twelve ahead, which is the same fact said in a currency every other body in the game can
+       also earn and spend. What is new is that it MOVES: buy and sell through this window and
+       whoever is doing the talking gets better at it. */
+    const talker = speakerNear(v.x, v.y, 8);
+    /* AND A TOWN IS ALLOWED ITS OWN OPINION ON TOP. Greenrest and Copperhold specifically
+       distrust the scaleborn; that is a fact about those two towns rather than about the body
+       standing there, so it stays — expressed as charisma, so a scaleborn who has actually
+       learned to talk can trade their way back out of it instead of being walled out forever. */
+    const prejudiced = ['greenrest','copperhold'].includes(town.def.key) && talker && subIs(talker, 'scaleborn');
+    const effCha = Math.max(0, chaOf(talker) - (prejudiced ? 7 : 0));
+    const prejMult = 1 + hagglePull(effCha);
     if(prejudiced) log(`The ${v.name.toLowerCase()} eyes the scaleborn and adjusts the prices upward.`, 'bad');
-    /* ---------- AND THE MIRROR OF THE SAME MECHANISM ----------
-       A scaleborn at the counter puts the prices UP. A Fallen puts them down, by the same
-       trick and for the same reason: the trader is looking at somebody and deciding how they
-       feel about it. It is deliberately the small end of the scale — a tenth off is a
-       standing favour, not an economy. */
-    const charming = player().some(c => c.state === 'ok' && traitOf(c, 'charismatic', false) &&
-      dist(c.x, c.y, v.x, v.y) < 8);
-    if(charming && !prejudiced) log(`The ${v.name.toLowerCase()} decides you look like somebody worth keeping happy.`, 'good');
-    const prejMult = (prejudiced ? 1.15 : 1) * (charming ? 0.9 : 1);
+    else if(prejMult <= 0.94) log(`The ${v.name.toLowerCase()} decides ${talker.name} looks like somebody worth keeping happy.`, 'good');
+    else if(prejMult >= 1.06) log(`The ${v.name.toLowerCase()} takes one look at ${talker ? talker.name : 'you'} and the prices firm up.`, 'bad');
     /* THE CHART. Sold by the general trade and nobody else — a weaponsmith does not survey.
        It is not stock: a town has exactly one map of its own country and sells you a copy of
        it, so this is a row of its own above the shelves rather than an ITEMS key with a count.
@@ -29109,7 +29364,11 @@ function openVendor(v){
     for(const k of keys){
       const it = ITEMS[k];
       const row = document.createElement('div'); row.className = 'trow';
-      const bp = Math.round(priceBuy(town,k) * prejMult), sp = priceSell(town,k);
+      /* BOTH SIDES OF THE COUNTER, or it is half a stat. A talker who buys cheap and still
+         sells at list has only half a lever, and selling is where a trade run actually earns:
+         you buy in one town to sell in another. Divided rather than multiplied, so the same
+         number moves the price the way that favours you in both directions. */
+      const bp = Math.round(priceBuy(town,k) * prejMult), sp = Math.max(1, Math.round(priceSell(town,k) / prejMult));
       const have = ownPool(k), inStock = stockOf(town, k);
       row.innerHTML = `<span class="tn">${it.name}${it.dmg?` <span style="color:var(--dust)">dmg ${it.dmg} ${it.wt}</span>`:''}${it.def?` <span style="color:var(--dust)">-${Math.round(it.def*100)}% dmg</span>`:''}</span>
         <span class="tc">stock ${inStock} · own ${have}</span>
@@ -29139,6 +29398,7 @@ function openVendor(v){
         cats -= bp; town.stock[k]--; addItem(k, 1); bought++;
       }
       if(!bought){ refuse('Not enough gold.'); return; }
+      tradeLearned(talker, bought * Math.round(priceBuy(town, k) * prejMult));
       refreshTop(); refreshInv(); render();
     });
     body.querySelectorAll('[data-sell]').forEach(b => b.onclick = (e) => {
@@ -29147,8 +29407,9 @@ function openVendor(v){
       if(n <= 0) return;
       poolTake(k, n);
       let got = 0;
-      for(let i=0;i<n;i++){ got += priceSell(town, k); town.stock[k] = (town.stock[k]||0) + 1; }
+      for(let i=0;i<n;i++){ got += Math.max(1, Math.round(priceSell(town, k) / prejMult)); town.stock[k] = (town.stock[k]||0) + 1; }
       cats += got;
+      tradeLearned(talker, got);
       refreshTop(); refreshInv(); render();
     });
   };
@@ -31552,8 +31813,29 @@ function meets(c, req){
   if(req.known !== undefined && fame.known < req.known) return false;
   if(req.repute !== undefined && fame.repute > req.repute) return false;      /* "at most this well thought of" */
   if(req.reputeMin !== undefined && fame.repute < req.reputeMin) return false;
+  if(req.cha !== undefined && chaOf(c) < req.cha) return false;
   return true;
 }
+/* ---------- A LINE YOU MIGHT NOT GET AWAY WITH ----------
+   Every option above is a GATE: you either have the thing or you do not, and the answer is the
+   same every time you ask. A check is the other half — you may attempt it and it may not work,
+   which is the whole of what a persuasion is and the reason a charisma build is worth having in
+   a game rather than being a discount coupon.
+   FIFTY-FIFTY WHEN YOUR TONGUE MATCHES THE DIFFICULTY, and legible on the button, so the player
+   is choosing a risk rather than pulling a lever in the dark. */
+/* THIRTY POINTS FROM HOPELESS TO NEARLY CERTAIN, and the difficulties are set against what
+   bodies in this game actually start with: an ordinary human opens at 6, a succubus at 15, a
+   Fallen at 23, a scaleborn at 0. At the first slope tried — 0.035 a point — a starting
+   character read 5% on EVERY check in the game, which is not a build, it is a locked door with
+   a percentage painted on it. */
+function checkOdds(c, chk){
+  return clamp(0.5 + (chaOf(c) - (chk.dc === undefined ? 12 : chk.dc)) * 0.030, 0.05, 0.95);
+}
+/* AND A PERSON REMEMBERS BEING WORKED ON. Without this, a failed persuasion is a free reroll:
+   close the window, open it again, ask the same question. Stored on the body you asked, so
+   trying the next guard along is a real and sensible answer to being turned down by this one. */
+function chkDone(t, id){ return !!(t._chk && t._chk[id]); }
+function chkMark(t, id){ (t._chk || (t._chk = {}))[id] = 1; }
 /* WHAT THE BUTTON SAYS ABOUT ITSELF. The tag is the whole point of a gated line — it tells the
    player which part of who they are bought them this. */
 function reqTag(req){
@@ -31568,6 +31850,7 @@ function reqTag(req){
   if(req.known !== undefined) return fame.repute < 0 ? 'NOTORIOUS' : 'RENOWNED';
   if(req.tech) return 'LEARNED';
   if(req.magic !== undefined) return 'ADEPT';
+  if(req.cha !== undefined) return 'SILVER-TONGUED';
   return '';
 }
 /* ---------- THE GREETING IS WHERE FAME LANDS ----------
@@ -31645,18 +31928,42 @@ function drawTalk(){
     const b = document.createElement('button');
     b.style.cssText = 'display:block;width:100%;text-align:left;margin:3px 0;padding:6px 8px;font-size:11px;line-height:1.45';
     const tag = o.req ? reqTag(o.req) : '';
+    const go = (to) => { if(to && TALK_TREES[key][to]){ talkState.node = to; drawTalk(); } else closeTalk(); };
+    if(o.check){
+      /* ---------- THE OPTION THAT MIGHT NOT WORK ----------
+         Shown with its odds, because a risk you cannot see the size of is not a decision. Once
+         attempted it stays attempted on THIS person — walk down the street and try the next one
+         if you want another go at it, which is a better answer than reopening the window. */
+      const id = key + '.' + talkState.node + '.' + o.say.slice(0, 24);
+      const done = chkDone(t, id);
+      const pc = checkOdds(c, o.check);
+      b.textContent = `[TALK ${Math.round(pc * 100)}%] ` + o.say + (done ? '  — you have already tried this on them' : '');
+      b.style.borderColor = done ? '#4a4038' : '#c8a86a';
+      if(done) b.disabled = true;
+      else b.onclick = () => {
+        chkMark(t, id);
+        const won = rnd() < pc;
+        socialTried(c, won);
+        if(o.fn) o.fn(t, c, won);
+        go(won ? o.win : o.lose);
+      };
+      body.appendChild(b);
+      continue;
+    }
     b.textContent = (tag ? `[${tag}] ` : '') + o.say;
     if(tag) b.style.borderColor = '#8a6ab5';
     b.onclick = () => {
       if(o.fn) o.fn(t, c);
-      if(o.to && TALK_TREES[key][o.to]){ talkState.node = o.to; drawTalk(); }
-      else closeTalk();
+      go(o.to);
     };
     body.appendChild(b);
   }
   /* THERE IS ALWAYS A WAY OUT. A node whose every option is gated off is a conversation the
      player cannot leave, and gated options are exactly the ones that vanish for most bodies. */
-  if(!shown || !(node.opts || []).some(o => !o.to && !o.req)){
+  /* A CHECK IS NOT AN EXIT EITHER, and it looked like one: it carries `win`/`lose` rather than
+     `to`, so a node whose only ungated line was a persuasion counted as "there is a way out of
+     here" and the way out was a coin flip. */
+  if(!shown || !(node.opts || []).some(o => !o.to && !o.req && !o.check)){
     const b = document.createElement('button');
     b.style.cssText = 'display:block;width:100%;text-align:left;margin:3px 0;padding:6px 8px;font-size:11px';
     b.textContent = 'Say nothing, and go.';
@@ -31678,7 +31985,60 @@ const TALK_TREES = {
         {say:'Look at me. You want to tell me what you know.', req:{sub:'succubus'}, to:'charmed'},
         {say:'You know what I am. Say it out loud.', req:{lich:true}, to:'afraid'},
         {say:'They tell stories about me. Which one did you hear?', req:{known:34}, to:'story'},
+        {say:'Who is worth knowing in this town?', to:'who'},
+        {say:'Is there work going?', to:'work'},
+        {say:'You have been staring. Say it or stop.', req:{race:'chimera'}, to:'staring'},
+        {say:'Between us — what does this town not say out loud?',
+         check:{dc:10}, win:'confided', lose:'rebuffed'},
         {say:'Nothing. Good day to you.'},
+      ],
+    },
+    who: {
+      line: (t) => {
+        const town = t.homeTown;
+        if(!town) return 'Out here? Whoever has water. That is the whole list.';
+        const L = town.leader;
+        return `${L && L.title ? L.title + ' ' : ''}${(seatHolder(town) || {name:'whoever is left'}).name} holds the seat, and the seat holds the grain. ` +
+          (town.rep < -20 ? 'They have opinions about you, and I would not test them.'
+           : town.rep > 30 ? 'And they think well of you, which is not nothing in a year like this.'
+           : 'Beyond that, the post by the well tells you more than I will.');
+      },
+      opts: [{say:'Good to know.'}],
+    },
+    work: {
+      line: (t) => t.homeTown
+        ? 'The post by the well. That is where it goes up and that is where it comes down. Anything else is somebody doing you a favour, and nobody here is.'
+        : 'Work? Out here the work is not dying. It pays badly.',
+      opts: [
+        {say:'I will look at the post.'},
+        {say:'I was rather hoping YOU had something.', check:{dc:16}, win:'favour', lose:'rebuffed'},
+      ],
+    },
+    favour: {
+      line: 'There is a thing. My cousin went out past the fences and did not come back, and the watch will not go. If you happen to be going that way. If you happen to find him.',
+      opts: [{say:'I happen to be going that way.', fn:(t)=>{
+        if(t.homeTown) t.homeTown.rep = clamp(t.homeTown.rep + 3, -300, 100);
+        log('You have promised a stranger something. That is how most of it starts.', '');
+      }}],
+    },
+    confided: {
+      line: (t) => t.homeTown
+        ? `That the seat is thinner than it looks. That half of what leaves here at night is not grain. And that ${t.homeTown.name} will be somebody else's before the year is out, and everyone knows it, and nobody says it.`
+        : 'That there is nothing out here worth the walk, and that everyone who says otherwise is selling something.',
+      opts: [{say:'You said nothing. I heard nothing.', fn:(t)=>{ if(t.homeTown) t.homeTown.rep = clamp(t.homeTown.rep + 2, -300, 100); }}],
+    },
+    rebuffed: {
+      line: () => pick([
+        'No. I do not think I will.',
+        'You have a way of asking that makes a person want to be somewhere else.',
+        'I have said more than enough to you already.']),
+      opts: [{say:'Fair enough.'}],
+    },
+    staring: {
+      line: 'I have. My father worked one of your lot in the pit and it did the work of four men and never said a word, and I have never been sure since whether I was looking at a man or a very good tool. There. I said it.',
+      opts: [
+        {say:'Keep wondering.'},
+        {say:'I am a man. Your father worked a slave.', fn:(t)=>{ if(t.homeTown) t.homeTown.rep = clamp(t.homeTown.rep + 2, -300, 100); }},
       ],
     },
     news: {
@@ -31714,10 +32074,59 @@ const TALK_TREES = {
         : fameGreeting(t, c),
       opts: [
         {say:'Any trouble on the roads?', to:'roads'},
+        {say:'What is forbidden inside these walls?', to:'forbidden'},
+        {say:'What does the watch do about the tears?', when:()=>fractureStage >= 1, to:'tears'},
         {say:'You have heard what happens to people who get in my way.', req:{known:62}, to:'back'},
         {say:'The light is in me. You have nothing to fear from this one.', req:{gift:'divine'}, to:'blessed'},
+        {say:'I am going to be coming and going. It would suit us both if you did not look too hard.',
+         check:{dc:22}, win:'looked_away', lose:'looked_harder'},
         {say:'Carry on, then.'},
       ],
+    },
+    /* ---------- THE ONE PIECE OF INFORMATION THE PLAYER COULD NOT GET ANYWHERE ----------
+       There is a list of things a gate will search you for and no way in the game to learn what
+       is on it — you found out by being stopped. A guard telling you is the obvious answer and
+       it is generated from the table, so it cannot go stale the way a hand-written line would. */
+    forbidden: {
+      line: (t) => {
+        const town = t.homeTown;
+        if(town && town.def.undeadFriendly) return 'Here? Not much. Bring what you like. Nobody in this town has the standing to object and most of us have stopped trying.';
+        const names = Object.values(CONTRABAND);
+        return `Grave-goods. Books that argue. Anything with the Fracture in it. ` +
+          `Carry ${names[0]} through this gate and we will have a conversation about it, and you will not enjoy it. ` +
+          `Walk the dead through and it stops being a conversation.`;
+      },
+      opts: [
+        {say:'Noted.'},
+        {say:'And if a man were carrying one of those right now?', to:'hypothetical'},
+      ],
+    },
+    hypothetical: {
+      line: 'Then a man would be a fool to ask me about it standing this close. Go on. Go on before I decide to be curious.',
+      opts: [{say:'Going.'}],
+    },
+    tears: {
+      line: () => fractureStage >= 3
+        ? 'We do what we are told, which is to hold the wall and not look up. The ones that came through last month went through four of us. I knew all four.'
+        : 'Not our business, they tell us. Chapter business. And the chapter is three days off and does not hurry.',
+      opts: [
+        {say:'I close them. When it comes to that, send for me.', req:{att:{dark:1}}, fn:(t)=>{
+          if(t.homeTown) t.homeTown.rep = clamp(t.homeTown.rep + 3, -300, 100);
+          log('The watch has your name now, for the right reason.', 'good');
+        }},
+        {say:'Hold the wall, then.'},
+      ],
+    },
+    looked_away: {
+      line: 'I am on this gate until dawn and I have been on it since dawn. I see about half of what goes through it. Make sure you are in the other half.',
+      opts: [{say:'That is all I asked.', fn:(t)=>{ if(t.homeTown) t.homeTown.rep = clamp(t.homeTown.rep + 1, -300, 100); }}],
+    },
+    looked_harder: {
+      line: 'Now why would you say a thing like that to me. Out loud. To my face.',
+      opts: [{say:'A misunderstanding.', fn:(t)=>{
+        if(t.homeTown) t.homeTown.rep = clamp(t.homeTown.rep - 5, -300, 100);
+        log('The watch will be looking at you rather harder now.', 'bad');
+      }}],
     },
     roads: {
       line: (t) => makeRumor(t),
@@ -31747,10 +32156,76 @@ const TALK_TREES = {
       opts: [
         {say:'What does the seat need?', to:'need'},
         {say:'What would it take to put your name on the Compact?', when:()=>fractureStage >= 1, to:'compact'},
+        {say:'Is there work the post will not carry?', to:'quiet_work'},
+        {say:'Tell me about the war.', when:(t)=>!!(towns[t.isLeader] && towns[t.isLeader].warWith), to:'war'},
         {say:'I have studied things your scholars would burn. Use me.', req:{att:{dark:2}}, to:'useme'},
         {say:'I have closed tears. Ask anyone.', req:{reputeMin:25, known:34}, to:'respect'},
+        {say:'Your walls are thinner than your neighbours think. I could make that untrue.',
+         check:{dc:26}, win:'retained', lose:'dismissed'},
         {say:'Nothing today.'},
       ],
+    },
+    /* ---------- WHAT A SEAT ASKS FOR WHEN THE POST CANNOT CARRY IT ----------
+       The board is public and everything on it is a thing a town is willing to admit it wants.
+       This is the other list. It is deliberately not a quest with a marker — it is a standing
+       offer that pays when you happen to satisfy it, because a seat that hands out errands is a
+       quest dispenser and a seat that tells you what it is short of is a person. */
+    quiet_work: {
+      line: (t) => {
+        const town = towns[t.isLeader];
+        if(town && town.plague > 0) return 'Medicine. Any medicine, from anyone, and I will not ask a single question about where it came from or what was done to get it. Bring it to the hall, not the post.';
+        if(town && town.warWith) return `Anything that makes ${town.warWith.name} slower. I am not going to say more than that in a room with a door in it.`;
+        if(town && town.rep < 0) return 'From you? There is nothing I would want badly enough to be seen taking it from your hand.';
+        return 'Iron, and the names of whoever has been moving grain out of here at night. The first is a purchase. The second is a favour, and I return favours.';
+      },
+      opts: [
+        {say:'I will see to it.'},
+        {say:'Favours are worth more than coin. Say what the favour is worth.', check:{dc:20}, win:'terms', lose:'dismissed'},
+      ],
+    },
+    terms: {
+      line: 'A hearing whenever you want one, and the gate open to you at any hour. That is worth more than the gold and we both know it, which is why I offered it and not the gold.',
+      opts: [{say:'Done.', fn:(t)=>{
+        const town = towns[t.isLeader];
+        if(town) town.rep = clamp(town.rep + 8, -300, 100);
+        log('The seat owes you a hearing. Doors in this town will open a little faster.', 'good');
+      }}],
+    },
+    war: {
+      line: (t) => {
+        const town = towns[t.isLeader];
+        const w = town && town.warWith;
+        return w ? `${w.name}. It was a road and a toll and a man who would not move his cart, and now it is this. I have buried nineteen. They have buried more, which is supposed to be a comfort and is not.`
+                 : 'There is no war. There is only the waiting for one.';
+      },
+      opts: [
+        {say:'I will fight for you.', to:'need'},
+        {say:'End it. Let me carry the offer.', check:{dc:30}, win:'parley', lose:'dismissed'},
+        {say:'Bury the rest yourself.'},
+      ],
+    },
+    parley: {
+      line: 'You would carry it? Then carry this: the road is theirs, the toll is mine, and neither of us says which of those two came first. If they take it, I will owe you something I cannot name in public.',
+      opts: [{say:'I will carry it.', fn:(t)=>{
+        const town = towns[t.isLeader];
+        if(town) town.rep = clamp(town.rep + 6, -300, 100);
+        log('You are carrying a peace offer. Whether it survives the road is another question.', '');
+      }}],
+    },
+    retained: {
+      line: 'You are not wrong, and you are the third person to say it and the first I have believed. Very well. Walk them with my mason and tell him what you told me.',
+      opts: [{say:'By nightfall.', fn:(t)=>{
+        const town = towns[t.isLeader];
+        if(town) town.rep = clamp(town.rep + 7, -300, 100);
+        log('The seat has taken your word over its mason\'s. That is standing.', 'good');
+      }}],
+    },
+    dismissed: {
+      line: () => pick([
+        'No. Next.',
+        'You have said your piece and I have heard it and the answer is the one you were expecting.',
+        'I have sat this chair through worse men than you saying better things than that.']),
+      opts: [{say:'Then I have wasted your afternoon.'}],
     },
     need: {
       line: (t) => {
@@ -31774,6 +32249,84 @@ const TALK_TREES = {
     respect: {
       line: 'I asked. They said it was true. That buys you a hearing in this hall and nothing else — but a hearing is more than most get.',
       opts: [{say:'It is enough for today.'}],
+    },
+  },
+  /* ---------- THE ONE PERSON IN THE WORLD WHO DOES THE SAME WORK YOU DO ----------
+     An NPC necromancer had three barks and nothing else, which is a strange thing for a game
+     about necromancy: the only other practitioner on the map had less to say than a farmer. The
+     gates here are the ones that matter to this conversation and to no other — how far into the
+     art you are, whether you have crossed the line they are all circling, and whether they have
+     heard of you. A lich talking to a living necromancer is the best of them, because one of the
+     two of them has already answered the question the other is still asking. */
+  necro: {
+    root: {
+      line: (t, c) => {
+        if(c && c.lich) return 'Oh. Oh, you have DONE it. Stand still. Let me look at you — no, do not explain, I do not want it explained, I want to look.';
+        if(fameBand().key === 'nobody') return 'The dead here rest lightly. We prefer it that way. State your business or admire the stonework.';
+        return fameGreeting(t, c);
+      },
+      opts: [
+        {say:'How do you keep working here without the watch taking you?', to:'quiet'},
+        {say:'What is past the binding? What comes after the circle?', req:{att:{dark:2}}, to:'past'},
+        {say:'How many are you holding right now? Honestly.', req:{gift:'dark'}, to:'howmany'},
+        {say:'You will end up in a jar or on a pyre. Which are you planning for?', req:{lich:true}, to:'jar'},
+        {say:'Teach me something I have not paid for.', check:{dc:24}, win:'taught', lose:'refused'},
+        {say:'Nothing. Carry on.'},
+      ],
+    },
+    quiet: {
+      line: 'Small. You keep it small. One at a time, always inside, never anything that walks past a window, and you make sure the town needs a body moved more often than it needs somebody to blame. The day you are useful is the day you are legal.',
+      opts: [
+        {say:'And the day you stop being useful?'  , to:'useful'},
+        {say:'That is not a life. That is a hiding place.', to:'hiding'},
+      ],
+    },
+    useful: {
+      line: 'Then you are a story they tell about the last one. I have been here eleven years. I have buried two of us in that time and neither grave has a name on it.',
+      opts: [{say:'I will not be the third.'}],
+    },
+    hiding: {
+      line: 'It is. And it is eleven years long, which is longer than anyone who said what you just said has managed. Come back and say it again at year twelve.',
+      opts: [{say:'I intend to.'}],
+    },
+    past: {
+      line: () => research.done.rites_anchor
+        ? 'You have anchored, then. Good. The stone holds what the man cannot — and the next question, the one nobody writes down, is what happens when the stone holds more of them than the man ever could. Somebody will find out. I would rather it were not here.'
+        : 'The circle is a crutch and every one of us pretends it is a throne. Bind it to STONE and the ceiling stops being your skull. That is the whole secret and it took me nine years and a dead apprentice.',
+      opts: [
+        {say:'Show me the working.', check:{dc:32}, win:'shown', lose:'refused'},
+        {say:'I will find it myself.'},
+      ],
+    },
+    shown: {
+      line: 'Then take it, and take the other half with it: the stone does not care whose they are. Build one and walk away and something else will be standing in it inside a season.',
+      /* A REAL PAYOUT, not a line of flavour. `research.rp` is the currency the whole tech tree
+         runs on, so handing over eighteen of it is the same reward the Scriptorium gives for a
+         long night's reading — earned here by a hard persuasion instead. */
+      opts: [{say:'I will not walk away.', fn:()=>{
+        research.rp += 18;
+        log('You have been given a piece of the working that is in no book. Eighteen points of insight.', 'good');
+        refreshTop && refreshTop();
+      }}],
+    },
+    howmany: {
+      line: 'Four. Two of those are one body I keep having to repair, so really three, and one of the three is my mother. Do not look at me like that. You will have a number too, and yours will have a name in it as well.',
+      opts: [{say:'Three, at the moment.'}, {say:'More than four.'}],
+    },
+    jar: {
+      line: 'The jar. Obviously the jar. I have had it since I was thirty and I have never once been able to look at it for more than a moment. You have done it, so tell me — does it stop?',
+      opts: [
+        {say:'No.'},
+        {say:'Yes. Eventually you stop noticing you are still here.'},
+      ],
+    },
+    taught: {
+      line: 'Fine. Fine — the marrow first, always. Everyone starts at the skull because it is the part that looks like a person and it is the LAST part that matters. Start at the marrow and half your failures stop happening.',
+      opts: [{say:'The marrow first.', fn:(t, c)=>{ if(c) xpGain(c, 'magic', 0.8); log(`${c.name} has learned something worth more than the asking.`, 'good'); }}],
+    },
+    refused: {
+      line: 'No. I paid for all of it and so will you. That is not spite, it is the only reason any of us are careful.',
+      opts: [{say:'Then I will pay.'}],
     },
   },
 };
@@ -31812,7 +32365,12 @@ function talkTo(t){
      turning away is the whole characterisation; giving them a menu would make them ordinary.
      They are checked first, below, so the generic tree never swallows them. */
   if(t.guard){ if(openDiscourse(t, 'guard')) return; }
-  else if(!t.npcNecro && !t.coil && !t.vt && !t.wanderKey){ if(openDiscourse(t, 'town')) return; }
+  /* THE OTHER PRACTITIONER GETS A CONVERSATION TOO. This was in the exclusion list beside the
+     Coil cultist, and for the Coil that is right — one strange sentence and a turned back IS the
+     characterisation. A necromancer is the opposite case: the only other person on the map who
+     does what the player does had three barks, in a game about doing it. */
+  else if(t.npcNecro){ if(openDiscourse(t, 'necro')) return; }
+  else if(!t.coil && !t.vt && !t.wanderKey){ if(openDiscourse(t, 'town')) return; }
   if(t.faction==='drifter') line = pick(DRIFTER_BARKS);
   else if(t.npcNecro) line = pick(['The dead here rest lightly. We prefer it that way.','Bring me a body and I\'ll show you craft.', makeRumor(t)]);
   else if(t.coil && coilExposed) line = pick([
@@ -32303,9 +32861,18 @@ function restore(d){
   const revive = (s) => {
     const c = makeChar(s.name, s.faction, s.x, s.y, {});
     c.id = s.id;
+    /* ---------- THIS LIST HAS TO HOLD EVERY SKILL THE GAME HAS ----------
+       `makeChar` above built a full set and this REPLACES it, so a skill missing from both the
+       defaults here and the save file does not come back as its default — it comes back as
+       `undefined`, and every arithmetic that touches it thereafter is NaN. `gunnery` and
+       `study` were both added to `makeChar` and never added here, so an old save has been
+       restoring bodies with no gunnery and no study at all. Charisma would have been the third.
+       The racial base is read for charisma specifically because that half of it is a fact about
+       the line and not a thing the body earned. */
     c.stats = Object.assign({atk:2,def:2,tough:2,ath:2,medic:2,magic:1,labor:2,armr:1,
       blades:1, blunt:1, ranged:1, martial:1,
-      smithing:1, crafting:1, farming:1, brewing:1}, s.stats);
+      smithing:1, crafting:1, farming:1, brewing:1, gunnery:1, study:1,
+      charisma:(RACES[s.race] || RACES.human).cha ?? 5}, s.stats);
     c.gift = s.gift; c.mana = s.mana; c.stance = s.stance||'melee';
     c.parts = s.parts; c.blood = s.blood; c.maxBlood = s.maxBlood; c.hunger = s.hunger;
     /* Drop gear the build no longer knows about, rather than carrying a key that will
@@ -33536,6 +34103,22 @@ function buildCCreate(){
       `<dt>RACE</dt><dd>${RACES[ccPick.race].label}${sb ? ' · ' + sb.label : ''}<small>${RACES[ccPick.race].blurb}${sb ? ' ' + (sb.blurb || '') : ''}</small></dd>` +
       `<dt>GIFT</dt><dd>${giftOK ? CC_GIFTS[ccPick.gift].label : 'NONE'}<small>${giftOK ? CC_GIFTS[ccPick.gift].desc : 'The arts that made this one cannot pass back through it.'}</small></dd>` +
       `<dt>PATH</dt><dd>${og.label}<small>${og.blurb}${og.fixes ? ' <b>' + og.fixes + '</b>' : ''}</small></dd>` +
+      /* ---------- THE ONE NUMBER THE RACE STEP DECIDES OUTRIGHT ----------
+         Charisma is the only stat a player picks rather than earns, and until it was shown here
+         the race step was quietly setting the price of everything they would ever buy without
+         saying so. The wording is what it BUYS, not what it is, because "charisma 2" means
+         nothing to somebody who has not played yet. */
+      (() => {
+        const cha = Math.max(0, ((RACES[ccPick.race] || RACES.human).cha ?? 5) +
+          ((sb && sb.stats && sb.stats.charisma) || 0));
+        const m = 1 + hagglePull(cha);
+        const word = cha >= 14 ? 'People want to agree with this one.'
+          : cha >= 8 ? 'Easy enough to talk to.'
+          : cha >= 4 ? 'Unremarkable across a counter.'
+          : cha >= 1 ? 'Hard work, in a room.'
+          : 'People would rather deal with somebody else.';
+        return `<dt>CHARISMA</dt><dd>${cha}<small>${word} Prices ${m > 1.005 ? 'run ' + Math.round((m - 1) * 100) + '% against you' : m < 0.995 ? 'run ' + Math.round((1 - m) * 100) + '% your way' : 'sit at list'} to start with, and this is a skill like any other — trading and talking your way out of trouble both move it.</small></dd>`;
+      })() +
       `<dt>THE FIRST MORNING</dt><dd><small>${og.intro}</small></dd>` +
       '</dl>' +
       '<details class="cchow"><summary>HOW TO PLAY</summary>' +
