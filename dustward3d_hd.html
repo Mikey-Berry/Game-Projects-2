@@ -3258,10 +3258,73 @@ function convictionSwing(c){
   const lettered = (c.stats && c.stats.magic > 12) || c.scholar || c.minded === 'lettered';
   return lettered ? 0.65 : 1;
 }
+/* ============================================================ WHAT THE WORLD HAS HEARD
+   "Like M&B2, I think a fame/reputation system would be nice. Not just per town, but like a
+    global recognition type thing... ah, you're Lyonart, the one I've heard about, or, oh,
+    you're that necromancer stealing all the corpses in the night."
+
+   TWO NUMBERS, NOT ONE, because those are two different questions and the note asks both.
+   `known` is HOW WIDELY they have heard of you and it only ever rises — a story does not
+   unhappen, and a man who burned a town is not forgotten by being pleasant afterwards.
+   `repute` is WHAT THEY HEARD, and it moves both ways. A single axis cannot say "notorious",
+   which is the more interesting half of the note: the corpse-thief who gets respect is somebody
+   with high `known` and negative `repute`, and that is a person the world reacts to.
+
+   AND IT HANGS OFF `deed`, WHICH ALREADY EXISTS. Twenty kinds of act already come through that
+   function once each so the squad can have opinions about them — sacking a town, sealing a
+   tear, raising a body, ascending. Every one of them is already the sort of thing that travels,
+   so the world's memory is the same list read by a different reader, and nothing new has to be
+   remembered to call it. */
+const FAME_DEEDS = {
+  /* the things that make a name */
+  town_saved:  {k: 7.0, r:  7.0},   door_closed: {k: 5.0, r:  5.0},
+  boss:        {k: 6.0, r:  5.0},   compact:     {k: 6.0, r:  5.0},
+  rift_sealed: {k: 3.5, r:  4.0},   gaunt_killed:{k: 0.25, r: 0.5},
+  found_sister:{k: 1.0, r:  1.0},   found_mother:{k: 1.0, r:  1.0},
+  /* the things that make a different kind of name */
+  conquer:     {k: 8.0, r: -5.0},   lich:        {k: 12.0, r:-14.0},
+  civkill:     {k: 1.5, r: -4.0},   slave_sold:  {k: 1.5, r: -5.0},
+  purge_killed:{k: 2.0, r: -2.0},   raise:       {k: 0.6, r: -1.5},
+  recruit_prisoner:{k: 0.6, r:-1.5},ransom:      {k: 1.0, r: -1.0},
+  town_lost:   {k: 3.0, r: -3.0},   squadmate_lost:{k:0.5, r:-0.5},
+  /* and the things people barely mention */
+  research:    {k: 0.3, r:  0.0},   gold:        {k: 0.2, r:  0.0},
+};
+const fame = {known: 0, repute: 0};
+/* THE BANDS ARE ABOUT `known`; `repute` only chooses which WORD the band uses. Getting this
+   the wrong way round gives you a scale that runs from villain to hero and has no room on it
+   for somebody everyone has heard of and nobody agrees about. */
+const FAME_BANDS = [
+  {at:  0, key:'nobody', good:'nobody in particular',  bad:'nobody in particular'},
+  {at: 12, key:'local',  good:'known in these parts',  bad:'talked about in these parts'},
+  {at: 34, key:'known',  good:'known',                 bad:'ill spoken of'},
+  {at: 62, key:'great',  good:'renowned',              bad:'notorious'},
+  {at: 86, key:'legend', good:'a legend',              bad:'a horror story'},
+];
+function fameBand(){
+  let b = FAME_BANDS[0];
+  for(const f of FAME_BANDS) if(fame.known >= f.at) b = f;
+  return b;
+}
+function fameLabel(){ const b = fameBand(); return fame.repute < 0 ? b.bad : b.good; }
+/* IT SATURATES. Flat gains make the hundredth gaunt as famous-making as the first, and the
+   scale runs out inside a week of play. The closer to being known everywhere you are, the less
+   any single act adds — which is also how it works. */
+function fameDeed(kind, m){
+  const f = FAME_DEEDS[kind];
+  if(!f) return;
+  const was = fameBand().key;
+  if(f.k) fame.known = clamp(fame.known + f.k * m * (1 - fame.known / 112), 0, 100);
+  if(f.r) fame.repute = clamp(fame.repute + f.r * m, -100, 100);
+  const now = fameBand();
+  if(now.key !== was && now.key !== 'nobody')
+    log(`Word has got around. Out past the fences you are ${fameLabel()} now.`, fame.repute < 0 ? 'bad' : 'good');
+}
 /* THE DEED LEDGER. Anything the player does that somebody might have a view about comes
    through here once, and every living member of the squad reacts according to what they are. */
 function deed(kind, mag, where){
   const m = mag === undefined ? 1 : mag;
+  fameDeed(kind, m);
   for(const c of chars){
     if(c.faction !== 'player' || c.state === 'dead') continue;
     if(c.undead && !c.lich && !c.lieutenant && !c.minded) continue;   /* hands do not have views */
@@ -31341,6 +31404,273 @@ function approachAndTalk(movers, o){
   m0.talkGiveUp = 30;      /* seconds; a person on the far side of a river is not a conversation */
   log(`${m0.name} goes to speak with ${o.name}.`, '');
 }
+/* ============================================================ CONVERSATION
+   "I would like for there to be more actual dialogue and discourse to the game. Branching
+    dialogue trees, with additional options based on your race/gift etc."
+
+   There was none of this. `talkTo` picked one line, put it in a bubble and logged it — a bark,
+   not a conversation, and the same bark whoever you were and whatever you had done.
+
+   THE OPTION IS THE INTERESTING PART, NOT THE TREE. What makes a line worth reading in Baldur's
+   Gate is that it is offered to YOU: a thing only a succubus would think to say, only a
+   necromancer could mean, only somebody they have heard of could get away with. So the whole
+   system is one predicate — `meets` — and every option carries the requirement that unlocked
+   it, shown on the button, because an option you cannot see you have earned is an option you
+   did not earn.
+
+   AND WHO IS "YOU" IS A REAL QUESTION IN A SQUAD GAME. The person standing in front of them is
+   the one who is speaking, so the gates read off THAT body: send the succubus and you get the
+   succubus's options. That is a decision the player makes by choosing who walks over. */
+function speakerFor(t){
+  const near = chars.filter(o => o.faction === 'player' && o.state === 'ok' && (!o.undead || o.lich))
+    .sort((a, b) => dist(a.x, a.y, t.x, t.y) - dist(b.x, b.y, t.x, t.y))[0];
+  return near || player()[0] || null;
+}
+/* ---------- ONE PREDICATE, AND EVERYTHING GATES THROUGH IT ----------
+   Every field is optional and absent means "don't care", so a requirement reads as exactly the
+   list of things it asks for. Anything that wants a new kind of gate adds a clause here and it
+   is available to every line in the game at once. */
+function meets(c, req){
+  if(!req) return true;
+  if(!c) return false;
+  const has = (v, want) => Array.isArray(want) ? want.includes(v) : v === want;
+  if(req.race && !has(c.race, req.race)) return false;
+  if(req.sub && !has(c.sub, req.sub)) return false;
+  if(req.gift && !has(c.gift, req.gift)) return false;
+  if(req.att) for(const [b, tier] of Object.entries(req.att)) if(attOf(c, b) < tier) return false;
+  if(req.conv && !has(c.conviction, req.conv)) return false;
+  if(req.lich && !c.lich) return false;
+  if(req.immortal && c.immortal !== req.immortal) return false;
+  if(req.magic !== undefined && (c.stats.magic || 0) < req.magic) return false;
+  if(req.tech && !research.done[req.tech]) return false;
+  if(req.known !== undefined && fame.known < req.known) return false;
+  if(req.repute !== undefined && fame.repute > req.repute) return false;      /* "at most this well thought of" */
+  if(req.reputeMin !== undefined && fame.repute < req.reputeMin) return false;
+  return true;
+}
+/* WHAT THE BUTTON SAYS ABOUT ITSELF. The tag is the whole point of a gated line — it tells the
+   player which part of who they are bought them this. */
+function reqTag(req){
+  if(!req) return '';
+  if(req.lich) return 'LICH';
+  if(req.immortal) return req.immortal === 'divine' ? 'HALLOWED' : 'SIGIL-BOUND';
+  if(req.sub) return String(Array.isArray(req.sub) ? req.sub[0] : req.sub).toUpperCase();
+  if(req.race) return String(Array.isArray(req.race) ? req.race[0] : req.race).toUpperCase();
+  if(req.att) return Object.keys(req.att)[0].toUpperCase();
+  if(req.gift) return String(req.gift).toUpperCase();
+  if(req.conv) return String(req.conv).toUpperCase();
+  if(req.known !== undefined) return fame.repute < 0 ? 'NOTORIOUS' : 'RENOWNED';
+  if(req.tech) return 'LEARNED';
+  if(req.magic !== undefined) return 'ADEPT';
+  return '';
+}
+/* ---------- THE GREETING IS WHERE FAME LANDS ----------
+   This is the note's own example, and it wants both halves: the one they have heard good things
+   about, and the one they have heard the other kind about and are careful around. */
+function fameGreeting(t, c){
+  const nm = (c && c.name) || 'you';
+  const b = fameBand().key, dark = fame.repute < 0;
+  if(b === 'nobody') return pick(['Don\'t know you.', 'Aye? Say your piece.', 'You\'re not from here.']);
+  if(b === 'local') return dark ? `You're the one they've been talking about.` : `Seen you about. ${nm}, is it?`;
+  if(b === 'known') return dark
+    ? `I know that name. ${nm}. People here lock up at dusk on account of names like that.`
+    : `${nm}. I've heard the name. Better than most I hear.`;
+  if(b === 'great') return dark
+    ? `${nm}. So it's true, then — you're the one lifting the dead out of the ground at night. I'll say this: nobody's stopped you.`
+    : `You're ${nm}. The one I've heard about. Didn't think I'd be standing this close.`;
+  return dark
+    ? `They tell that story about you to children, to make them come inside. And here you are, asking me the time of day.`
+    : `${nm}. There are people who don't believe you exist. I'll have something to tell them.`;
+}
+/* ---------- THE MODAL ---------- */
+let talkState = null;
+/* ---------- NAMED `openDiscourse`, AND THE FIRST NAME WAS A REAL BUG ----------
+   This was written as `openTalk`, which ALREADY EXISTS eighty lines above as
+   `openTalk(o, who)` — the scholar and wanderer conversation, called from `approachAndTalk`.
+   Two top-level functions with one name is the later one winning silently, so every scholar in
+   the world stopped opening anything: `approachAndTalk` handed a CHARACTER where this expects a
+   tree key, `TALK_TREES[thatCharacter]` was undefined, and the call quietly returned false.
+   Nothing threw. The suite caught it, and the lesson is the one already in this ledger under a
+   different collision: one name, one meaning — and check before adding a name, because a
+   duplicate `const` throws where a duplicate `function` does not. */
+function openDiscourse(t, key){
+  const c = speakerFor(t);
+  const tree = TALK_TREES[key];
+  if(!tree || !c) return false;
+  talkState = {t, c, key, node: 'root'};
+  openModal(t.name.toUpperCase(), talkTitleOf(t));
+  drawTalk();
+  return true;
+}
+function talkTitleOf(t){
+  if(t.isLeader >= 0 && towns[t.isLeader]) return `${towns[t.isLeader].leader.title} of ${towns[t.isLeader].name}`;
+  if(t.guard) return t.homeTown ? `Watch of ${t.homeTown.name}` : 'Watch';
+  if(t.scholar) return 'A lettered one, far from a desk';
+  return t.homeTown ? `Of ${t.homeTown.name}` : 'Out on the road';
+}
+function closeTalk(){
+  talkState = null;
+  document.getElementById('modal').style.display = 'none';
+  modalOpen = false;
+  syncPauseBtn();
+}
+function drawTalk(){
+  if(!talkState) return;
+  const {t, c, key} = talkState;
+  const node = TALK_TREES[key][talkState.node];
+  const body = document.getElementById('modalbody');
+  body.innerHTML = '';
+  /* what they say */
+  const said = document.createElement('div');
+  said.style.cssText = 'font-size:13px;line-height:1.6;color:var(--ink,#e8dcc4);margin-bottom:10px';
+  said.textContent = '"' + (typeof node.line === 'function' ? node.line(t, c) : node.line) + '"';
+  body.appendChild(said);
+  /* who is doing the talking, because the gates read off them */
+  const who = document.createElement('div');
+  who.style.cssText = 'font-size:10px;letter-spacing:1px;color:var(--dust);margin-bottom:8px';
+  who.textContent = `${c.name.toUpperCase()} IS SPEAKING`;
+  body.appendChild(who);
+
+  let shown = 0;
+  for(const o of (node.opts || [])){
+    if(!meets(c, o.req)) continue;
+    if(o.when && !o.when(t, c)) continue;
+    shown++;
+    const b = document.createElement('button');
+    b.style.cssText = 'display:block;width:100%;text-align:left;margin:3px 0;padding:6px 8px;font-size:11px;line-height:1.45';
+    const tag = o.req ? reqTag(o.req) : '';
+    b.textContent = (tag ? `[${tag}] ` : '') + o.say;
+    if(tag) b.style.borderColor = '#8a6ab5';
+    b.onclick = () => {
+      if(o.fn) o.fn(t, c);
+      if(o.to && TALK_TREES[key][o.to]){ talkState.node = o.to; drawTalk(); }
+      else closeTalk();
+    };
+    body.appendChild(b);
+  }
+  /* THERE IS ALWAYS A WAY OUT. A node whose every option is gated off is a conversation the
+     player cannot leave, and gated options are exactly the ones that vanish for most bodies. */
+  if(!shown || !(node.opts || []).some(o => !o.to && !o.req)){
+    const b = document.createElement('button');
+    b.style.cssText = 'display:block;width:100%;text-align:left;margin:3px 0;padding:6px 8px;font-size:11px';
+    b.textContent = 'Say nothing, and go.';
+    b.onclick = closeTalk;
+    body.appendChild(b);
+  }
+}
+/* ---------- THE TREES ----------
+   Modest on purpose: three conversations, two levels deep, with enough gated lines to prove the
+   shape. The content is the cheap half — the predicate and the tagging above are what make the
+   next twenty lines somebody writes cost nothing. */
+const TALK_TREES = {
+  town: {
+    root: {
+      line: (t, c) => fameGreeting(t, c),
+      opts: [
+        {say:'What is the news hereabouts?', to:'news'},
+        {say:'Somebody has been burying people in a hurry. Where?', req:{gift:'dark'}, to:'graves'},
+        {say:'Look at me. You want to tell me what you know.', req:{sub:'succubus'}, to:'charmed'},
+        {say:'You know what I am. Say it out loud.', req:{lich:true}, to:'afraid'},
+        {say:'They tell stories about me. Which one did you hear?', req:{known:34}, to:'story'},
+        {say:'Nothing. Good day to you.'},
+      ],
+    },
+    news: {
+      line: (t) => t.homeTown ? makeRumor(t) : pick(DRIFTER_BARKS),
+      opts: [{say:'Obliged.'}],
+    },
+    graves: {
+      line: 'Three, past the low wall. Fever took them and nobody wanted to dig deep. You did not hear it from me.',
+      opts: [{say:'You never saw me.', fn:(t)=>{ if(t.homeTown) t.homeTown.rep = clamp(t.homeTown.rep - 1, -300, 100); }}],
+    },
+    charmed: {
+      line: 'I... yes. Yes, I suppose I do. What was I saying? I was going to say something.',
+      opts: [{say:'You were about to tell me what everyone here is afraid of.', to:'news'}, {say:'Never mind. Go home.'}],
+    },
+    afraid: {
+      line: 'You are the cold that came into the room. I have known since you spoke. Please. I have children.',
+      opts: [
+        {say:'Then keep them indoors.'},
+        {say:'I am not here for them.', fn:(t)=>{ if(t.homeTown) t.homeTown.rep = clamp(t.homeTown.rep + 2, -300, 100); }},
+      ],
+    },
+    story: {
+      line: () => fame.repute < 0
+        ? 'That you take them out of the ground before they are cold. That the ones who go looking do not come back and do not stay buried either.'
+        : 'That you closed a tear with your own hands while better-armed men watched. I did not believe it. I am reconsidering.',
+      opts: [{say:'Believe what you like.'}],
+    },
+  },
+  guard: {
+    root: {
+      line: (t, c) => t.homeTown && t.homeTown.rep < -20
+        ? 'I know that face. Keep your hands where I can see them and your dead outside the wall.'
+        : fameGreeting(t, c),
+      opts: [
+        {say:'Any trouble on the roads?', to:'roads'},
+        {say:'You have heard what happens to people who get in my way.', req:{known:62}, to:'back'},
+        {say:'The light is in me. You have nothing to fear from this one.', req:{gift:'divine'}, to:'blessed'},
+        {say:'Carry on, then.'},
+      ],
+    },
+    roads: {
+      line: (t) => makeRumor(t),
+      opts: [{say:'Right.'}],
+    },
+    back: {
+      line: () => fame.repute < 0
+        ? 'I have. I have also got a wife and a shift that ends at dawn. Go where you are going.'
+        : 'I have heard. I would rather be standing next to you than across from you. Go on.',
+      opts: [{say:'Sensible.'}],
+    },
+    blessed: {
+      line: 'You have the look. My mother would have knelt. I will settle for getting out of your road.',
+      opts: [{say:'Peace on the watch.'}],
+    },
+  },
+  leader: {
+    root: {
+      line: (t, c) => {
+        const town = towns[t.isLeader], L = town && town.leader;
+        if(town && town.warWith) return `${town.warWith.name} will answer for what they've done. Until then, keep your blade sheathed in my streets.`;
+        if(town && town.plague > 0) return 'The sickness will pass. The town will still be here. I will still be here.';
+        if(town && town.rep < -20) return `I know who you are. ${town.name} is watching you.`;
+        if(fameBand().key === 'nobody') return pick(LEADER_LINES[L && L.trait] || ['Speak, then. The seat is busy.']);
+        return fameGreeting(t, c);
+      },
+      opts: [
+        {say:'What does the seat need?', to:'need'},
+        {say:'What would it take to put your name on the Compact?', when:()=>fractureStage >= 1, to:'compact'},
+        {say:'I have studied things your scholars would burn. Use me.', req:{att:{dark:2}}, to:'useme'},
+        {say:'I have closed tears. Ask anyone.', req:{reputeMin:25, known:34}, to:'respect'},
+        {say:'Nothing today.'},
+      ],
+    },
+    need: {
+      line: (t) => {
+        const town = towns[t.isLeader];
+        if(town && town.plague > 0) return 'Medicine, and somebody to carry the dead who will not talk about it afterwards.';
+        if(town && town.rep < 0) return 'What this seat needs is for you to give it a reason to change its mind.';
+        return 'Grain, walls, and fewer things out past the fences. In that order, most seasons.';
+      },
+      opts: [{say:'I will see what I can do.'}],
+    },
+    compact: {
+      line: () => compactSize() === 0
+        ? 'Seven seats and not one of them wants to be the first to admit the sky is broken. Bring me one other signature and I will think about it.'
+        : 'Others have signed, I hear. That changes the arithmetic. Not the price.',
+      opts: [{say:'I will bring you a name.'}],
+    },
+    useme: {
+      line: 'I am told the dark arts are a hanging matter. I am also told the tears do not care what is legal. Do not make me choose in public.',
+      opts: [{say:'Then we understand each other.', fn:(t)=>{ const town = towns[t.isLeader]; if(town) town.rep = clamp(town.rep + 4, -300, 100); }}],
+    },
+    respect: {
+      line: 'I asked. They said it was true. That buys you a hearing in this hall and nothing else — but a hearing is more than most get.',
+      opts: [{say:'It is enough for today.'}],
+    },
+  },
+};
 function talkTo(t){
   let line;
   /* SHE HAS BEEN WATCHING THE NEWS COME IN. What she says is not about the crown, it is
@@ -31363,23 +31693,21 @@ function talkTo(t){
     else sisterJoin(t);
     return;
   }
-  if(t.isLeader >= 0){
-    const town = towns[t.isLeader];
-    const L = town && town.leader;
-    if(L){
-      if(town.warWith) line = `${town.warWith.name} will answer for what they've done. Until then, spend your coin and keep your blade sheathed.`;
-      else if(town.plague > 0) line = 'The sickness will pass. The town will still be here. I will still be here.';
-      else if(town.rep < -20) line = `I know who you are. ${town.name} is watching you.`;
-      else line = pick(LEADER_LINES[L.trait] || ['Speak, then. The seat is busy.']);
-      say(t, line);
-      log(`${L.title} ${L.name}: "${line}"`);
-      return;
-    }
+  /* ---------- THE SEAT GETS A CONVERSATION, NOT A LINE ----------
+     Every branch of the old version ended in `say` and a log entry, which is a bark. The lines
+     it chose were good and they are all still here — inside the tree's root, where the town's
+     war, its plague and its opinion of you still pick which one you get. What is new is that
+     there is now somewhere to go afterwards. */
+  if(t.isLeader >= 0 && towns[t.isLeader] && towns[t.isLeader].leader){
+    if(openDiscourse(t, 'leader')) return;
   }
+  /* ---------- AND SO DOES THE WATCH, AND ANYBODY ON THE STREET ----------
+     THE ODD ONES KEEP THEIR BARKS, deliberately. A Coil cultist saying one strange thing and
+     turning away is the whole characterisation; giving them a menu would make them ordinary.
+     They are checked first, below, so the generic tree never swallows them. */
+  if(t.guard){ if(openDiscourse(t, 'guard')) return; }
+  else if(!t.npcNecro && !t.coil && !t.vt && !t.wanderKey){ if(openDiscourse(t, 'town')) return; }
   if(t.faction==='drifter') line = pick(DRIFTER_BARKS);
-  else if(t.guard) line = t.homeTown && t.homeTown.rep < -20
-    ? 'We\'re watching you. Don\'t give us a reason.'
-    : pick(['Keep it peaceful.','Move along.', makeRumor(t)]);
   else if(t.npcNecro) line = pick(['The dead here rest lightly. We prefer it that way.','Bring me a body and I\'ll show you craft.', makeRumor(t)]);
   else if(t.coil && coilExposed) line = pick([
     'The wars are not the end. The wars are the appetite.',
@@ -31605,7 +31933,7 @@ function snapshot(){
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen},
-    rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang,tearWork:r.tearWork||0,tearWave:r.tearWave})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], pyres: pyres.map(q=>({x:q.x, y:q.y, name:q.name, day:q.day, read:q.read||0})), pyreRead: pyreRead ? {...pyreRead} : null, necroSeen: towns.map(t=>t.necroSeen||0), coilHeld: towns.map(t=>!!t.coilHeld), coilShrine, coilExposed, coilStruck, coilN,
+    rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang,tearWork:r.tearWork||0,tearWave:r.tearWave})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, fame: {...fame}, lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], pyres: pyres.map(q=>({x:q.x, y:q.y, name:q.name, day:q.day, read:q.read||0})), pyreRead: pyreRead ? {...pyreRead} : null, necroSeen: towns.map(t=>t.necroSeen||0), coilHeld: towns.map(t=>!!t.coilHeld), coilShrine, coilExposed, coilStruck, coilN,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
     camps: camps.map(c => ({id:c.id, x:c.x, y:c.y, fac:c.fac, cap:c.cap, tents:c.tents})),
     bonds: [...bonds.entries()],
@@ -32069,6 +32397,10 @@ function restore(d){
   nodeUses.clear();
   if(d.nodeUses) for(const [k,v] of d.nodeUses){ nodeUses.set(k, v); if(nodeDepleted(...k.split(',').map(Number))) hideNodeInstance(k); }
   purgeWrath = d.purgeWrath || 0; lastInquestDay = d.lastInquestDay ?? -99;
+  /* A SAVE FROM BEFORE THIS HAS NO NAME YET, which is the right answer for it — an old game
+     starts unknown and earns its reputation from here rather than being handed one. */
+  fame.known = (d.fame && d.fame.known) || 0;
+  fame.repute = (d.fame && d.fame.repute) || 0;
   /* a save from before the shared clock has no quiet owed, which is the right answer for it */
   siegeQuietUntil = d.siegeQuietUntil ?? -99;
   guildRep = d.guildRep ?? 0;
