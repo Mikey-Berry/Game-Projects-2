@@ -12338,7 +12338,17 @@ function physics(c, dt){
       }
       return;
     } else if(ej==='build'){
+      /* ---------- A BUILDER'S HORIZON ----------
+         "The 'build' order should have a range limit. Right now, someone who still has it on
+          will travel across the map to help build something (and usually die along the way.)
+          The range can be generous but not infinite. Maybe two or three times the size of a
+          town."
+         There was no filter at all — nearest blueprint on the whole 1440x1440 map, forever. A
+         town measures about 42 tiles across its buildings, so BUILD_REACH is a bit over two of
+         them: far enough that a camp and its outworks are one job, short enough that a frame
+         raised on the far side of the world is not this hand's business. */
       const bp = blueprints
+        .filter(b2 => dist(b2.x, b2.y, c.x, c.y) <= BUILD_REACH)
         .sort((a,b2) => dist(a.x,a.y,c.x,c.y) - dist(b2.x,b2.y,c.x,c.y))[0];
       if(bp){
         const cx2 = bp.x + bp.w/2, cy2 = bp.y + bp.h/2;
@@ -15513,9 +15523,28 @@ function cartDrop(c){
   const m = c.master;
   return (m && m.state !== 'dead') ? {x: m.x, y: m.y} : null;
 }
+/* how far from the yard a cart will range for a body. Generous — it is a cart, that is what
+   it is for — but finite, so a yard in the camp does not put every corpse on the map on its
+   round. */
+const CART_RANGE = 60;
+/* how far a standing BUILD order will send somebody. A town runs about 42 tiles across its
+   buildings, so this is a bit over two of them. */
+const BUILD_REACH = 95;
 function cartTick(c, dt){
   const cap = carryCap(c);
   const load = carried(c);
+  /* ---------- NO YARD, NO ROUND ----------
+     "Gravecarts, when there is no graveyard available, sort of default to picking up and then
+      immediately dropping corpses. They should simply follow whatever orders given, not default
+      to anything."
+     Exactly what happened, and the loop is visible in four lines: the scan had no idea whether
+     a yard existed, so the cart walked to a corpse and picked it up; `cartDrop` then found
+     nowhere worth putting it and returned null; `return false` handed the body back to the
+     ordinary AI, which set it down; and the next scan picked the same corpse up again.
+     A cart with nowhere to take anything is just a squadmate. Bail before the scan — not after
+     the pick-up — and it follows the orders it was given like anybody else. */
+  const yard = pBuilds.find(b => b.type === 'boneyard' && (b.progress === undefined || b.progress >= 1));
+  if(!yard && load === 0) return false;
   /* full, or holding something with nothing left to pick up: take it home */
   c.cartScanT = (c.cartScanT || 0) - dt;
   if(c.cartScanT <= 0){
@@ -15529,9 +15558,13 @@ function cartTick(c, dt){
        cart that walks past the thing it exists for is the cart we started with. Two piles, and
        the giant pile is taken first — a cart on a map with no giant on it clears the field
        exactly as it always did. */
-    if(load < cap) for(const b of corpses){
+    if(load < cap && yard) for(const b of corpses){
       if(!cartFodder(b) || b._cartSkip > day + hour/24) continue;
       if(inBoneyard(b)) continue;                       /* already home */
+      /* AND WITHIN THE YARD'S REACH, not the cart's. A body it would have to drag across the
+         world is somebody else's problem — and a cart that wanders that far is a cart that
+         dies on the road, which is the other half of the same report. */
+      if(dist(b.x, b.y, yard.x, yard.y) > CART_RANGE) continue;
       const d = dist(b.x, b.y, c.x, c.y);
       if(d >= 46) continue;
       /* AND ONLY WITH AN EMPTY BED. A great body is the whole load — see takeBody — so a cart
@@ -16205,7 +16238,7 @@ const SPELLS = {
   deathgrip: {gift:'dark',        label:'DEATHGRIP',  cost:10, range:6, minMag:1,  tier:2, lichOnly:true, hint:'seize a masterless undead'},
   veil:      {gift:'dust',        label:'THE VEIL',   cost:10, range:6, minMag:1,  tier:1, tech:'dust_veil', hint:'target an ally — fold the light around them'},
   phantom:   {gift:'dust',        label:'THE UNWALLED',cost:16,range:7, minMag:10, tier:2, tech:'dust_unwalled', hint:'target open ground — conjure a squad that was never there'},
-  revive:    {gift:'divine',      label:'REVIVE',     cost:25, range:4, minMag:25, tier:3, immortalOnly:'divine', hint:'target a companion dead less than an hour — call them back'},
+  revive:    {gift:'divine',      label:'REVIVE',     cost:25, range:4, minMag:25, tier:3, immortalOnly:'divine', hint:'target a fallen companion whose body has not turned — call them back. Brine holds one where it was'},
   warding:   {gift:'divine',      label:"AINZOPHA'AR'S LIGHT", cost:14, range:0, minMag:12, tier:2, instant:true, self:true,
               concentrate:{lock:1, exclusive:true, mobile:true}, hint:'carry the light — lesser gaunts will not come near you or your squad, but the great ones walk straight through it, your own risen sear in it and take far more harm while they stand there, and you can raise no hand or cast anything else while it burns'},
   /* ---- new arts (this batch) ---- */
@@ -17192,7 +17225,20 @@ function resolveCastAt(c, key, wx, wy){
     const now = day + hour/24;
     const body2 = corpses.find(o => o.faction==='player' && !o.undead && !o.beast && bodyHit(o, wx, wy, 0.9));
     if(!body2){ log('No companion lies there.', 'bad'); return; }
-    if(now - (body2.deadAt||0) > 1/24){ log('Too long gone. The light calls, and nothing turns around.', 'bad'); return; }
+    /* ---------- THE BODY DECIDES, NOT THE CLOCK ----------
+       "Current description of 'revive' is that it's for companions dead less than an hour.
+        That's unrealistic when an hour passes in seconds in game."
+       An hour is eight real seconds here, so the window was under ten seconds of play — which
+       is not a mechanic, it is a race condition with a spell attached. The game already has a
+       far better answer to "how long gone is this one": `decayStage`, four stages from fresh to
+       bare bones, and BRINE PINS IT. So curing a fallen companion is now what keeps them
+       revivable, which connects two systems that had nothing to say to each other, and the
+       question the spell asks is the one a player can see on the body. */
+    const st = decayStage(body2);
+    if(st.k === 'spoiled' || st.k === 'bones'){
+      log(`Too far gone — ${st.label}. The light calls, and nothing turns around.${body2.salted ? '' : ' Brine would have held them where they were.'}`, 'bad');
+      return;
+    }
     if(!campSpend({bandage: 2})){ log('The body needs binding — 2 bandages.', 'bad'); return; }
     castRevive(c, body2);
   } else if(key==='veil'){
@@ -19900,8 +19946,18 @@ function update(dt){
   updateProjectiles(dt);
   updateParticles(dt);
   /* camera: follow selection, or roam free */
+  /* ---------- AN EMPTY SELECTION FOLLOWS NOBODY ----------
+     "When I deselect someone (such as by clicking on the ground), it tends to recenter the
+      camera on the 'main character' or first squad member. I would rather it leave the camera
+      where it is, as that's usually the area I'm trying to focus on."
+     `|| player()[0]` was the whole of it: clearing the selection left `camFollow` true with
+     nothing to follow, so the fallback grabbed the protagonist and the view slid off whatever
+     you had just cleared the selection in order to LOOK at. Deselecting is a thing you do to
+     see the ground; it should not move the ground.
+     F still takes you home — see the key handler, which now centres explicitly when there is
+     nobody selected rather than leaning on this fallback to do it. */
   if(camFollow){
-    const focus = selected.find(c=>c.state!=='dead') || player()[0];
+    const focus = selected.find(c=>c.state!=='dead');
     if(focus){ camX = lerp(camX, focus.x, Math.min(1, dt*4)); camY = lerp(camY, focus.y, Math.min(1, dt*4)); }
   }
   if(player().length === 0 && started){
@@ -27820,6 +27876,7 @@ const TIPS = {
   move: '<b>MOVE</b>Carry this world to another device. There is no server behind this game, so a save crosses by hand — as a code you paste, or as a file.<i>Copy the code on the desktop, paste it into a note or an email to yourself, and paste it back on the phone.</i>',
   stance:'<b>STANCE</b>How this one picks fights on their own: melee closes, ranged holds off, medic hangs back and patches, tank draws blows, hold stands still.',
   charisma:'<b>CHARISMA</b>How much easier this one makes everything that runs through another person. It sets what you pay and what you are paid at every counter in the world, and it is what a guard is weighing when they have a hand on your pack and have not decided yet.<i>Part of it is the line you were born into and cannot change. The rest is practice: every trade you make and every check you try — win or lose — teaches whoever did the talking.</i>',
+  binding:'<b>BINDING</b>How much of the dead this one is holding up, against how many they can hold at once. The ceiling grows with MAGIC, with the Necromancy rites, and with every soulbound standing beside them.<i>A body held by an anchored circle is counted separately — it is standing because the stone says so, not because you are, and it costs you neither a slot nor the strain.</i>',
   job:  '<b>JOB</b>Standing work they return to when nobody is giving orders.',
 };
 {
@@ -28129,6 +28186,22 @@ function refreshCharPanel(){
   $('stats').innerHTML = ['atk','def','tough','ath','medic','magic','labor','study','armr','gunnery','charisma']
     .map(s=>`<span data-tip="${s}">${s.toUpperCase()}</span><b data-tip="${s}">${(Math.floor(c.stats[s]*10)/10).toFixed(1)}</b>`).join('');
   const giftTxt = c.gift ? ` · <span style="color:#a98ad4">✦ ${c.gift.toUpperCase()}</span>` : '';
+  /* ---------- WHAT THIS ONE IS HOLDING UP, WHERE THEY CAN SEE IT ----------
+     "It would be nice to have a place somewhere that necromancers can see their binding cap at
+      a glance when they are selected."
+     There was nowhere: the ceiling lived in the binding circle's window, which means you found
+     out you were full by walking to a circle and being refused. It belongs on the body that is
+     carrying it. Anchored bodies are named separately because they are the whole point of the
+     rite — a garrison that stopped counting is invisible unless the panel says how many. */
+  let bindTxt = '';
+  if(c.faction === 'player' && (c.gift === 'dark' || c.lich)){
+    const load = risenLoad(c), cap = risenCap(c);
+    const held = (typeof anchorCircles === 'function' && anchorCircles().length)
+      ? chars.filter(x => x.anchored && x.master === c && x.state !== 'dead').length : 0;
+    const col = load >= cap ? 'var(--rust)' : load >= cap - 1 ? 'var(--warn)' : 'var(--dust)';
+    bindTxt = ` · <span style="color:${col}" data-tip="binding">BOUND ${load}/${cap}` +
+      (held ? ` <span style="color:var(--ok)">+${held} held</span>` : '') + '</span>';
+  }
   /* what they are, and what they currently make of you */
   let convTxt = '';
   if(c.conviction && c.faction === 'player' && (!c.undead || c.lich || c.lieutenant || c.minded)){
@@ -28167,7 +28240,7 @@ function refreshCharPanel(){
   const ldNow = invWeight(c).toFixed(0), ldCap = invCap(c).toFixed(0);
   $('equip').innerHTML = `<b>${ageTxt}</b>${c.goal ? ' · goal: '+c.goal : ''} · WPN <b>${(wepOf(c)||{}).name || 'Fists'}</b> · ARM <b>${(c.armor&&ITEMS[c.armor]?ITEMS[c.armor].name:'None')}</b>` +
     (c.pack ? ` · PACK <b>${ITEMS[c.pack].name}</b>` : '') +
-    `${giftTxt}${convTxt}<br><span style="color:${+ldNow > +ldCap ? 'var(--rust)' : 'var(--dust)'}">LOAD ${ldNow}/${ldCap}kg${invTxt}</span>`;
+    `${giftTxt}${bindTxt}${convTxt}<br><span style="color:${+ldNow > +ldCap ? 'var(--rust)' : 'var(--dust)'}">LOAD ${ldNow}/${ldCap}kg${invTxt}</span>`;
   const sr = $('stancerow');
   sr.innerHTML = '';
   /* `mindedDead`, not "is it a lich". This row is the ONLY place in the panel that still
@@ -29918,7 +29991,11 @@ addEventListener('keydown', e => {
   }
   if(e.code==='Space'){ e.preventDefault(); paused = !paused; syncPauseBtn(); }
   if(e.key==='s' || e.key==='S') selectAll();
-  if(e.key==='f' || e.key==='F') camFollow = true;
+  if(e.key==='f' || e.key==='F'){
+    camFollow = true;
+    /* with nobody selected the follow does nothing now, so F says where to go itself */
+    if(!selected.some(c => c.state !== 'dead')){ const me = player()[0]; if(me){ camX = me.x; camY = me.y; } }
+  }
   if(e.key==='r' || e.key==='R'){ camYawT = 0; camPitchT = 0.95; }
   if(e.key==='g' || e.key==='G'){
     if(selected.some(c=>c.faction==='player' && c.state==='ok')){ guardMode = true; log('GUARD: click an ally to protect. ESC cancels.'); }
