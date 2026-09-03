@@ -467,6 +467,7 @@ body.touch #hint{display:none}
   <button id="btn-sp5">5x</button>
   <button id="btn-build" data-tip="build">BUILD [B]</button>
   <button id="btn-all" data-tip="squad">SQUAD [S]</button>
+  <button id="btn-work" data-tip="work">WORK [K]</button>
   <button id="btn-chron" data-tip="chron">CHRONICLES [L]</button>
   <button id="btn-save" data-tip="save">SAVE</button>
   <button id="btn-load">LOAD</button>
@@ -8980,7 +8981,10 @@ const NEEDS_A_MIND = ['research', 'craft', 'gunner'];
    read by the right-click menu AND by shift+right-click — see the mousedown handler — so the
    two ways of assigning a job cannot mean different things. */
 const BUILD_JOB = {r_bench:'research', farm:'farm', charnel:'charnel', ossuary:'charnel', vat:'flesh',
-                   boneyard:'bones', workbench:'craft', forge:'craft'};
+                   boneyard:'bones', workbench:'craft', forge:'craft',
+                   /* the three that were missing, which is why right-clicking a smelter never
+                      offered the job that works one */
+                   smelter:'craft', kiln:'craft', loom:'craft'};
 const NODE_JOB  = {wood:'wood', stone:'stone', copper:'mine', iron_ore:'mine', fish:'fish'};
 /* one line, once a session, pointing at the chord the browser does not steal — see the job
    shortcut in the right-click chain */
@@ -9125,6 +9129,16 @@ function craftTick(c, dt){
     j.made[j.out] = (j.made[j.out] || 0) + r.n;
   }
   j.done++;
+  /* the book is the shared truth: a hand working an order marks it off as it goes, so shutting
+     the game or losing the crafter does not lose the count */
+  if(j.order){
+    j.order.done = Math.min(j.order.want, (j.order.done || 0) + 1);
+    if(j.order.done >= j.order.want){
+      const i = craftOrders.indexOf(j.order);
+      if(i >= 0) craftOrders.splice(i, 1);
+      log(`The order is filled — ${j.order.want} × ${ITEMS[j.order.out].name}.`, 'good');
+    }
+  }
   if(j.done >= j.want) finishCraft(c, null);
   return true;
 }
@@ -10986,7 +11000,10 @@ function jobHasWork(c, j){
     case 'flesh':  return pBuilds.some(b => b.type === 'vat');
     case 'charnel': return pBuilds.some(b => FLESH[b.type]);
     case 'farm':   return pBuilds.some(b => b.type === 'farm');
-    case 'craft':  return pBuilds.some(b => b.type === 'workbench' || b.type === 'forge');
+    /* EVERY WORKSHOP, not the two that happened to be listed. The kiln, the loom and the
+       smelter were all absent, which is why a hand set to CRAFT walked to the bench no matter
+       what you actually wanted made. */
+    case 'craft':  return pBuilds.some(b => RECIPES[b.type] && (b.progress === undefined || b.progress >= 1));
     case 'research': return mindedDead(c) && pBuilds.some(b => b.type === 'r_bench');
     /* a weapon they cannot climb to is not work — otherwise a hand with a second trade stands
        at the foot of an unreachable rampart instead of going back to the fields */
@@ -12401,9 +12418,23 @@ function physics(c, dt){
       }
     } else if(ej==='craft'){
       if(!mindedDead(c)) return;
+      /* ---------- THE BOOK FIRST ----------
+         A hand on CRAFT takes the next order it can actually do and walks to whichever building
+         that recipe belongs to — which is the whole of "you no longer have to micromanage where
+         your squadmates stand", and the whole of why the smelter was unusable. */
+      if(!c.craftJob) takeOrder(c);
+      if(c.craftJob){
+        const j = c.craftJob;
+        if(dist(c.x, c.y, j.bx, j.by) > 2.4){ travel(c, j.bx, j.by + 1.4, dt, 0.4); return; }
+        return;                     /* craftTick does the work — it runs before the job tick */
+      }
+      /* ---------- AND THE STANDING WORK WHEN THE BOOK IS EMPTY ----------
+         Turning wood and stone into build materials was ALL this job ever did. It stays, as the
+         thing a spare pair of hands falls back to, because a camp always wants more mats and an
+         idle crafter with nothing ordered should not simply stand there. */
       const bench = pBuilds.filter(b => b.type==='workbench')
         .sort((a,b2) => dist(a.x,a.y,c.x,c.y) - dist(b2.x,b2.y,c.x,c.y))[0];
-      if(!bench){ if(rnd() < dt*0.05) log(`${c.name} has no Workbench to work at.`, 'bad'); return; }
+      if(!bench){ if(rnd() < dt*0.05) log(`${c.name} has nothing ordered and no Workbench to fall back on.`, 'bad'); return; }
       if(dist(c.x, c.y, bench.x+1, bench.y+1) > 2.2){ travel(c, bench.x+1, bench.y+2.4, dt, 0.4); return; }
       /* stationed at the bench: turn the woodpile and the stone heap into something you can build with */
       if(!canAfford(MATS_RECIPE)){
@@ -18739,7 +18770,7 @@ function coarsePointer(){
 function stripKeyHints(){
   /* "[B]" and "[S]" are instructions for a keyboard nobody has. Done once, and only on the
      labels that carry one, so the desktop text is untouched. */
-  for(const id of ['btn-build', 'btn-all', 'btn-chron']){
+  for(const id of ['btn-build', 'btn-all', 'btn-chron', 'btn-work']){
     const b2 = document.getElementById(id);
     if(b2 && !b2._plain){ b2._full = b2.textContent; b2._plain = b2.textContent.replace(/\s*\[[A-Z]\]\s*$/, ''); }
     if(b2) b2.textContent = TOUCH ? b2._plain : b2._full;
@@ -27871,6 +27902,7 @@ const TIPS = {
   notice:'<b>NOTICE</b>How much attention your work with the dead has drawn. It forgets a quiet camp quickly — but once it has actually turned its head it does not look away fast. It is no longer what decides how bad the nights get; that is the calendar. What it buys you is a share on top, and how the living speak to you.<i>Every formula you work is heard.</i>',
   chron:'<b>CHRONICLES [L]</b>Everything you have been told, and everything you have seen — including news of the wider world and who carried it to you.',
   build:'<b>BUILD [B]</b>Place structures. Blueprints need materials hauled to them before anyone can raise them.',
+  work: '<b>WORK ORDERS [K]</b>Everything your camp can make, in one book. Order what you want and how many; anybody set to CRAFT takes the next order they can do and walks to whichever building it wants.<i>You still have to have built the workshop. You no longer have to stand anybody in it \u2014 and nothing gets made that you did not ask for.</i>',
   squad:'<b>SQUAD [S]</b>Select everyone you have. Shift+1-5 stores a group, 1-5 recalls it.',
   save: '<b>SAVE</b>Writes to browser storage and downloads a file. The world autosaves once a day.<i>Browser storage never leaves this device. The file is the copy that travels.</i>',
   move: '<b>MOVE</b>Carry this world to another device. There is no server behind this game, so a save crosses by hand — as a code you paste, or as a file.<i>Copy the code on the desktop, paste it into a note or an email to yourself, and paste it back on the phone.</i>',
@@ -28908,6 +28940,141 @@ function bestCrafter(kind, near){
       (!near || dist(c.x, c.y, near.x+1, near.y+1) < 4))
     .sort((a,b) => b.stats[craftSkillFor(kind)] - a.stats[craftSkillFor(kind)])[0];
 }
+/* ============================================================ THE WORK ORDER BOOK
+   "Perhaps the 'crafting' menu could be similar to research in that it is universal. It can list
+    what is available to craft, and squadmates with the 'craft' job as assignable to that task.
+    Perhaps we can use this menu to place 'orders' of units, shift-clickable for stacks... and
+    that way we don't run into the issue of building WAY more stuff than we actually need. Again,
+    this crafting UI should be universal... You still need to HAVE that actual building created
+    as a prerequisite, but you no longer have to micromanage where your squadmates stand."
+
+   AND IT IS ALSO THE SMELTER BUG. "The smelter is broken right now. It doesn't properly let
+   someone use it to craft ingots... Setting someone to 'craft' simply sends them to the bench."
+   That is exactly what CRAFT did, and it is not a bug in the smelter: the whole job was eleven
+   lines that walked to a `workbench` and turned wood and stone into build materials. `canDoJob`
+   agreed — `case 'craft': return pBuilds.some(b => b.type === 'workbench' || b.type === 'forge')`
+   — and the kiln, the loom and the smelter were not in it. Every other recipe in the game could
+   only be made by opening that building's own window with somebody standing inside it.
+
+   ONE BOOK, READ BY EVERY HAND. An order names a recipe and a count; any CRAFT hand takes the
+   first order it can actually do, walks to the right building, and works it with the machinery
+   that already exists — `craftJob` and `craftTick` were already a timed order with a bench
+   position in them, so this is a dispatcher rather than a rewrite. */
+const craftOrders = [];
+function shopFor(kind){
+  return pBuilds.find(b => b.type === kind && (b.progress === undefined || b.progress >= 1));
+}
+function orderDoable(o){
+  const r = (RECIPES[o.kind] || []).find(x => x.out === o.out);
+  return !!(r && research.done[r.tech] && shopFor(o.kind) && canAfford(r.cost));
+}
+/* WHY an order is not moving, in the player's words, because a queue that silently does nothing
+   is worse than no queue. */
+function orderBlock(o){
+  const r = (RECIPES[o.kind] || []).find(x => x.out === o.out);
+  if(!r) return 'no such working';
+  if(!research.done[r.tech]) return 'needs ' + TECHS[r.tech].name;
+  if(!shopFor(o.kind)) return 'needs a ' + (BUILD_TYPES[o.kind] ? BUILD_TYPES[o.kind].name : o.kind);
+  if(!canAfford(r.cost)) return 'short of materials';
+  return null;
+}
+/* Hand the next doable order to a free pair of hands. Called from the CRAFT job. */
+function takeOrder(c){
+  for(const o of craftOrders){
+    if(o.done >= o.want) continue;
+    if(o.taken && o.taken !== c && chars.includes(o.taken) && o.taken.craftJob) continue;
+    if(!orderDoable(o)) continue;
+    const shop = shopFor(o.kind);
+    o.taken = c;
+    c.craftJob = {
+      kind: o.kind, out: o.out, want: o.want - o.done, done: 0, ruined: 0, made: {},
+      t: 0, dur: craftDur(c, o.kind), order: o,
+      bx: shop.x + (shop.w || 2) / 2, by: shop.y + (shop.h || 2) / 2,
+    };
+    return true;
+  }
+  return false;
+}
+/* ---------- THE ORDER BOOK, AS A WINDOW ----------
+   Universal on purpose: it lists every recipe in the game, says which building each one wants
+   and whether you have it, and takes orders you do not have to be standing anywhere to place.
+   Modelled on the research panel rather than on the old per-bench window, which is what the
+   note asks for — "similar to research in that it is universal". */
+const SHOP_NAMES = {workbench:'WORKBENCH', forge:'FORGE', kiln:'CHARCOAL KILN', smelter:'SMELTER', loom:"WEAVER'S SHED"};
+function craftHands(){
+  return chars.filter(c => c.faction === 'player' && c.state === 'ok' && c.job === 'craft' && mindedDead(c));
+}
+function openWorkshops(){
+  const hands = craftHands();
+  openModal('THE WORK ORDERS',
+    `${hands.length ? hands.length + (hands.length === 1 ? ' hand is' : ' hands are') + ' set to CRAFT' : 'Nobody is set to CRAFT — order what you like, but nothing will be made until somebody is'}` +
+    ' · orders are worked wherever the building stands · shift-click to order ten');
+  const body = $('modalbody');
+  const rndr = () => {
+    body.innerHTML = '';
+    /* ---- WHAT IS ON ORDER ---- */
+    {
+      const h = document.createElement('div');
+      h.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:1px;margin:2px 0 4px';
+      h.textContent = 'ON ORDER'; body.appendChild(h);
+      if(!craftOrders.length){
+        const d = document.createElement('div');
+        d.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:8px';
+        d.textContent = 'Nothing ordered. A hand set to CRAFT with an empty book turns wood and stone into build materials at a Workbench.';
+        body.appendChild(d);
+      }
+      for(const o of craftOrders.slice()){
+        const row = document.createElement('div'); row.className = 'trow';
+        const why = orderBlock(o);
+        const who = chars.find(c => c.craftJob && c.craftJob.order === o);
+        const state = who ? `<span style="color:var(--ok)">${who.name} is on it</span>`
+                    : why ? `<span style="color:var(--rust)">${why}</span>`
+                          : '<span style="color:var(--dust)">waiting for a free pair of hands</span>';
+        row.innerHTML = `<span class="tn">${ITEMS[o.out].name} <span style="color:var(--dust)">×${o.want - o.done} left of ${o.want} · ${SHOP_NAMES[o.kind] || o.kind}</span></span>
+          <span class="tc">${state}</span>`;
+        const x = document.createElement('button');
+        x.textContent = 'CANCEL'; x.style.cssText = 'padding:1px 6px;font-size:10px';
+        x.onclick = () => {
+          const i = craftOrders.indexOf(o); if(i >= 0) craftOrders.splice(i, 1);
+          for(const c of chars) if(c.craftJob && c.craftJob.order === o) finishCraft(c, 'The order was withdrawn.');
+          rndr();
+        };
+        row.appendChild(x);
+        body.appendChild(row);
+      }
+    }
+    /* ---- AND EVERYTHING THAT COULD BE ORDERED ---- */
+    for(const kind of Object.keys(RECIPES)){
+      const shop = shopFor(kind);
+      const h = document.createElement('div');
+      h.style.cssText = `color:${shop ? 'var(--warn)' : 'var(--dust)'};font-size:11px;letter-spacing:1px;margin:12px 0 4px`;
+      h.textContent = (SHOP_NAMES[kind] || kind.toUpperCase()) + (shop ? '' : ' — not built');
+      body.appendChild(h);
+      for(const r of RECIPES[kind]){
+        const it = ITEMS[r.out];
+        const row = document.createElement('div'); row.className = 'trow';
+        const costTxt = Object.keys(r.cost).map(k => `${r.cost[k]} ${ITEMS[k].name}`).join(' + ');
+        const locked = !research.done[r.tech];
+        row.innerHTML = `<span class="tn">${it.name}${r.n > 1 ? ' ×' + r.n : ''} <span style="color:var(--dust)">${costTxt}</span></span>
+          <span class="tc">${locked ? `needs ${TECHS[r.tech].name}` : shop ? '' : 'no ' + (BUILD_TYPES[kind] ? BUILD_TYPES[kind].name : kind)}</span>`;
+        const btn = document.createElement('button');
+        btn.textContent = 'ORDER';
+        btn.disabled = locked || !shop;
+        btn.onclick = (e) => {
+          const want = e.shiftKey ? 10 : 1;
+          const ex = craftOrders.find(o => o.kind === kind && o.out === r.out);
+          if(ex) ex.want += want;
+          else craftOrders.push({kind, out: r.out, want, done: 0, taken: null});
+          log(`Ordered ${want} × ${it.name}.`, '');
+          rndr();
+        };
+        row.appendChild(btn);
+        body.appendChild(row);
+      }
+    }
+  };
+  rndr();
+}
 let craftingBench = null;
 function openCrafting(kind, bench){
   craftingBench = bench || null;
@@ -29190,6 +29357,7 @@ document.addEventListener('click', e => {
   if(b && !b.disabled) AU.ui();
 }, true);
 const _chb = document.getElementById('btn-chron'); if(_chb) _chb.onclick = () => openChronicles();
+const _wkb = document.getElementById('btn-work'); if(_wkb) _wkb.onclick = () => openWorkshops();
 function openInventory(c){
   openModal('BACKPACK — ' + c.name, 'Personal load. Equip, eat, hand to a squadmate, stash, or drop. [I] reopens.');
   const body = $('modalbody');
@@ -29991,6 +30159,7 @@ addEventListener('keydown', e => {
   }
   if(e.code==='Space'){ e.preventDefault(); paused = !paused; syncPauseBtn(); }
   if(e.key==='s' || e.key==='S') selectAll();
+  if(e.key==='k' || e.key==='K') openWorkshops();
   if(e.key==='f' || e.key==='F'){
     camFollow = true;
     /* with nobody selected the follow does nothing now, so F says where to go itself */
@@ -31237,7 +31406,9 @@ cv.addEventListener('mousedown', e => {
       else if(ws.type==='script') openScriptorium(ws);   /* the desk you walked up to, not the first one built */
       else if(ws.type==='circle') openBinding(ws);
       else if(ws.type==='crypt') openCrypt(ws);
-      else openCrafting(ws.type, ws);
+      /* EVERY WORKSHOP OPENS THE SAME BOOK. You still have to HAVE the building — the order
+         refuses without it — but you no longer have to walk anybody to it to place the order. */
+      else openWorkshops();
       return;
     }
     /* gather node? */
@@ -32882,7 +33053,7 @@ function snapshot(){
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen},
-    rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang,tearWork:r.tearWork||0,tearWave:r.tearWave})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, fame: {...fame}, lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], pyres: pyres.map(q=>({x:q.x, y:q.y, name:q.name, day:q.day, read:q.read||0})), pyreRead: pyreRead ? {...pyreRead} : null, necroSeen: towns.map(t=>t.necroSeen||0), coilHeld: towns.map(t=>!!t.coilHeld), coilShrine, coilExposed, coilStruck, coilN,
+    rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang,tearWork:r.tearWork||0,tearWave:r.tearWave})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, fame: {...fame}, craftOrders: craftOrders.map(o => ({kind:o.kind, out:o.out, want:o.want, done:o.done})), lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], pyres: pyres.map(q=>({x:q.x, y:q.y, name:q.name, day:q.day, read:q.read||0})), pyreRead: pyreRead ? {...pyreRead} : null, necroSeen: towns.map(t=>t.necroSeen||0), coilHeld: towns.map(t=>!!t.coilHeld), coilShrine, coilExposed, coilStruck, coilN,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
     camps: camps.map(c => ({id:c.id, x:c.x, y:c.y, fac:c.fac, cap:c.cap, tents:c.tents})),
     bonds: [...bonds.entries()],
@@ -33359,6 +33530,12 @@ function restore(d){
      starts unknown and earns its reputation from here rather than being handed one. */
   fame.known = (d.fame && d.fame.known) || 0;
   fame.repute = (d.fame && d.fame.repute) || 0;
+  /* the order book, defensively: a save from before it existed simply has none */
+  craftOrders.length = 0;
+  for(const o of (d.craftOrders || [])){
+    if(!o || !RECIPES[o.kind] || !ITEMS[o.out]) continue;
+    craftOrders.push({kind:o.kind, out:o.out, want:o.want || 1, done:o.done || 0, taken:null});
+  }
   /* a save from before the shared clock has no quiet owed, which is the right answer for it */
   siegeQuietUntil = d.siegeQuietUntil ?? -99;
   guildRep = d.guildRep ?? 0;
