@@ -273,8 +273,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        the map doing the player's own work had less to say than a farmer. */
     guard(['theOtherNecromancerTalks', 'andTheDeepestLinesAreForTheDeepestIn'], () => {
       wipe(); zero();
-      const n = makeChar('Bonewright', 'town', me.x + 40, me.y + 40, { atk: 2, def: 2 });
-      n.state = 'ok'; n.npcNecro = true; n.homeTown = towns[0]; n.__probe = true; chars.push(n); made.push(n);
+      /* FACTION `guild`, WHICH IS WHAT THE WORLD ACTUALLY MAKES. Staging one as faction `town`
+         with a post makes it a genuine watchman — `isWatch` is faction plus post — so the first
+         attempt at hardening this probe produced a body that correctly answered as the watch and
+         a claim that correctly failed. The point is to stage the real thing, not a nearby thing. */
+      const n = makeChar('Bonewright', 'guild', me.x + 40, me.y + 40, { atk: 2, def: 2 });
+      n.state = 'ok'; n.npcNecro = true; n.neutral = true; n.__probe = true;
+      /* ---------- STANDING AT A POST, BECAUSE EVERY REAL ONE IS ----------
+         This probe used to build a necromancer with no `guard`, and that omission is the whole
+         reason it passed on a build where the feature did not work: `c.guard` holds a POST, every
+         npcNecro in the world is given one at spawn, and the conversation router tested `t.guard`
+         before `t.npcNecro` — so in play they all answered as the town watch and this tree was
+         unreachable. Stage the body the world actually makes, or the claim is about a body that
+         does not exist. */
+      n.guard = { x: n.x, y: n.y };
+      chars.push(n); made.push(n);
       const c = makeChar('Asker', 'player', n.x + 1, n.y, { atk: 5, def: 5 });
       c.state = 'ok'; c.__probe = true; chars.push(c); made.push(c);
       for (const o of made) if (o.faction === 'player' && o !== c) o.x = n.x + 60;

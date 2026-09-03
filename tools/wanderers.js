@@ -308,9 +308,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       if (!q) return false;
       const mp = screenToWorld(q.x, q.y);
       window.__aim = dist(mp.x, mp.y, o.x, o.y);
-      document.getElementById('game').dispatchEvent(new MouseEvent('mousedown', {
-        clientX: q.x, clientY: q.y, button: 2, buttons: 2, bubbles: true, cancelable: true,
+      /* ---------- A CLICK IS A PRESS AND A RELEASE, AND NOW THAT MATTERS ----------
+         A right-click on somebody with something to say no longer resolves on mousedown: the
+         press starts a hold timer and the RELEASE decides which it was — a tap talks, a hold
+         opens the options menu. So a probe that dispatches only mousedown now stages a button
+         that is still being held down, and correctly gets no conversation. Dispatch both, the
+         way a hand does. */
+      const ev = (type) => document.getElementById('game').dispatchEvent(new MouseEvent(type, {
+        clientX: q.x, clientY: q.y, button: 2, buttons: type === 'mousedown' ? 2 : 0,
+        bubbles: true, cancelable: true,
       }));
+      ev('mousedown');
+      ev('mouseup');
       return true;
     };
 

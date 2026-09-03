@@ -1181,10 +1181,36 @@ function speakerNear(x, y, r){
    Selling five hundred rats one at a time must not out-train a season of real commerce, so the
    gain rides on GOLD MOVED and is capped per deal — and it tapers as the skill climbs, because
    the hundredth haggle teaches less than the second. */
-function tradeLearned(c, gold){
+/* ---------- AND CHURNING THE SAME STACK IS NOT COMMERCE ----------
+   "Buying/selling the same items should not increase charisma or it would be too easy to farm."
+   Measured before fixing, and it was worse than the guess: buy ten of something dear and sell
+   the same ten straight back, shift-clicking, and a hundred clicks took charisma from 6 to 31.6
+   — a whole build in under a minute, because the gain rode on GROSS gold moved and a round trip
+   moves a great deal of gross gold while going nowhere.
+   TWO RULES, AND THE FIRST ONE IS THE NOTE'S OWN SENTENCE. Selling a vendor back the thing you
+   just bought from them teaches nothing: it is not a deal, it is the same coin crossing the same
+   counter twice. Tracked per town per day, by item.
+   The second closes the door the first leaves ajar — churn ten DIFFERENT items instead. A town's
+   market is worth a fixed amount of learning in a day, and every deal spends against that, so
+   clicking faster only runs out the budget sooner. The first real business you do with a town
+   each day teaches most of what there is to learn there, which is also how it works. */
+const TRADE_BUDGET = 2600;      /* gold of business a town can teach you from, per day */
+function tradeSameDay(t, k, dir){
+  if(!t) return false;
+  if(!t._trade || t._trade.day !== day) t._trade = {day, vol: 0, seen: {}};
+  const was = t._trade.seen[k];
+  t._trade.seen[k] = dir;
+  return was !== undefined && was !== dir;      /* bought it here today, now selling it back */
+}
+function tradeLearned(c, gold, t, k, dir){
   if(!c || !gold) return;
+  /* the round trip: nothing to learn from your own coin coming back */
+  if(t && k && tradeSameDay(t, k, dir)) return;
+  const vol = (t && t._trade) ? t._trade.vol : 0;
+  const room = clamp(1 - vol / TRADE_BUDGET, 0, 1);
+  if(t && t._trade) t._trade.vol += Math.abs(gold);
   const taper = clamp(1 - chaOf(c) / 130, 0.12, 1);
-  xpGain(c, 'charisma', Math.min(0.30, Math.abs(gold) / 900) * taper);
+  xpGain(c, 'charisma', Math.min(0.30, Math.abs(gold) / 900) * taper * room);
 }
 /* AND SO IS A CHECK YOU TRIED AND LOST. Attempting is the training — the guard who did not
    believe you taught you as much as the one who did, and a stat you can only train by winning
@@ -18259,6 +18285,9 @@ function openBinding(circle){
   const anchorLine = () => research.done.rites_anchor
     ? ` · this circle holds ${anchorLoad(circle)}/${ANCHOR_CAP} within ${ANCHOR_R} tiles`
     : '';
+  /* which page of the circle is open. Per-open, so walking up to a circle always starts at the
+     work rather than wherever you left the bench. */
+  let shapePage = false;
   openModal('BINDING CIRCLE', `Ritualist: ${ritualist.name} — MAG ${Math.floor(ritualist.stats.magic)} · mana ${Math.round(ritualist.mana)} · bound ${risenLoad(ritualist)}/${risenCap(ritualist)}${anchorLine()}`);
   ctxCircle = circle;
   const body = $('modalbody');
@@ -18287,6 +18316,18 @@ function openBinding(circle){
       sep.textContent = 'BINDINGS';
       body.appendChild(sep);
     }
+    /* ---------- THE BENCH IS A PAGE OF ITS OWN NOW ----------
+       "I don't want the main 'default' page to allow for the slider for custom undead. It's just
+        too much and I sometimes forget about it and end up crafting a weirdly unbalanced undead
+        not suited for what I want."
+       Six sliders, a budget line, a paragraph of law and a preview sat between the player and
+       the BIND buttons every single time the circle was opened — and worse, the shape PERSISTS on
+       the circle, so a setting made once and forgotten silently shaped everything bound
+       afterwards. Both halves of that are fixed by the same move: the bench goes behind a door,
+       and what is left in its place on the front page is a one-line statement of what the circle
+       is currently set to do, which is the thing that was missing.
+       AND IT SHOUTS WHEN IT IS NOT EVEN, with a one-click way back, because "I forgot it was set"
+       is the actual complaint and a door alone would not answer it. */
     /* ---- THE SHAPING BENCH ----
        Three sliders against one budget, so every point of one is a point off another. The
        panel says what it will cost and what it will come out as before anything is bound. */
@@ -18303,7 +18344,36 @@ function openBinding(circle){
     const spent = SHAPE_AXES.reduce((n, ax) => n + (sh[ax.k] || 0), 0);
     const over = Math.max(0, spent - budget);
     const extra = shapeCost(sh, ritualist);
-    {
+    if(!shapePage){
+      /* THE FRONT PAGE SAYS WHAT THE STONE IS SET TO, AND OFFERS THE DOOR */
+      const nm = shapeNameFor(sh);
+      const even = SHAPE_AXES.every(ax => (sh[ax.k] || 0) === (SHAPE_NEUTRAL[ax.k] || 0));
+      const row = document.createElement('div'); row.className = 'trow';
+      row.innerHTML = `<span class="tn">THE SHAPING <span style="color:${even ? 'var(--dust)' : 'var(--warn)'}">` +
+        (even ? 'even — nothing emphasised, nothing starved'
+              : `SET TO COME OUT ${String(nm || 'MISSHAPEN').toUpperCase()} · ${spent}/${shapeCeiling()} points` +
+                (over ? ` · pays ${costText(extra)} on top` : '')) +
+        `</span></span>`;
+      const open = document.createElement('button');
+      open.textContent = even ? 'SHAPE' : 'ADJUST';
+      open.onclick = () => { shapePage = true; rndr(); };
+      row.appendChild(open);
+      if(!even){
+        const ev = document.createElement('button');
+        ev.textContent = 'SET EVEN'; ev.style.cssText = 'margin-left:4px';
+        ev.onclick = () => { circle.shape = {...SHAPE_NEUTRAL}; rndr(); };
+        row.appendChild(ev);
+      }
+      body.appendChild(row);
+      const sep2 = document.createElement('div');
+      sep2.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:1px;margin:10px 0 4px';
+      sep2.textContent = 'BINDINGS'; body.appendChild(sep2);
+    } else {
+      const back = document.createElement('button');
+      back.textContent = '\u2190 BACK TO THE BINDINGS';
+      back.style.cssText = 'margin-bottom:8px';
+      back.onclick = () => { shapePage = false; rndr(); };
+      body.appendChild(back);
       const h = document.createElement('div');
       h.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:1px;margin:2px 0 4px';
       h.textContent = 'THE SHAPING'; body.appendChild(h);
@@ -18349,16 +18419,18 @@ function openBinding(circle){
       rst.textContent = 'EVEN'; rst.style.cssText = 'padding:1px 6px;font-size:10px;margin-bottom:8px';
       rst.onclick = () => { circle.shape = {...SHAPE_NEUTRAL}; rndr(); };
       body.appendChild(rst);
-      const sep = document.createElement('div');
-      sep.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:1px;margin:10px 0 4px';
-      sep.textContent = 'BINDINGS'; body.appendChild(sep);
+      const done = document.createElement('button');
+      done.textContent = 'DONE \u2014 BACK TO THE BINDINGS';
+      done.style.cssText = 'margin-left:6px;padding:1px 6px;font-size:10px';
+      done.onclick = () => { shapePage = false; rndr(); };
+      body.appendChild(done);
     }
     /* ---------- WHAT THE PILE IS WORTH, SAID OUT LOUD ----------
        The binding now cuts every body down to the quality of the Mortal Remains it is built
        from, and a ceiling the player cannot see is not a mechanic, it is an unexplained nerf.
        So the circle states it: what the pile is worth, what that permits, and — the part that
        makes it actionable — that rendering better bodies is how the number goes up. */
-    {
+    if(!shapePage){
       const q = remainsQ(), cap = bindCeiling();
       const band = q >= REMAINS_Q_CAP - 1 ? 'the best you will get'
                  : q > 32 ? 'soldiers' : q > 18 ? 'fighting men' : 'nobodies and vermin';
@@ -18369,7 +18441,7 @@ function openBinding(circle){
         `<span style="color:var(--muted)">A body is never stronger than what it was made of. Render better dead and the ceiling rises.</span>`;
       body.appendChild(qr);
     }
-    for(const [k, ut] of Object.entries(UNDEAD_TYPES)){
+    for(const [k, ut] of (shapePage ? [] : Object.entries(UNDEAD_TYPES))){
       const row = document.createElement('div'); row.className = 'trow';
       const bill = {...ut.cost};
       for(const ck in extra) bill[ck] = (bill[ck] || 0) + extra[ck];
@@ -18384,7 +18456,7 @@ function openBinding(circle){
     /* ---- RAISING ONE UP ----
        Anything of yours that has done the work can be given a name and a mind. */
     {
-      const mine = chars.filter(u => u.undead && u.crafted && !u.lieutenant && !u.lich &&
+      const mine = shapePage ? [] : chars.filter(u => u.undead && u.crafted && !u.lieutenant && !u.lich &&
         u.state !== 'dead' && u.master === ritualist);
       if(mine.length){
         const h = document.createElement('div');
@@ -29398,7 +29470,7 @@ function openVendor(v){
         cats -= bp; town.stock[k]--; addItem(k, 1); bought++;
       }
       if(!bought){ refuse('Not enough gold.'); return; }
-      tradeLearned(talker, bought * Math.round(priceBuy(town, k) * prejMult));
+      tradeLearned(talker, bought * Math.round(priceBuy(town, k) * prejMult), town, k, 'buy');
       refreshTop(); refreshInv(); render();
     });
     body.querySelectorAll('[data-sell]').forEach(b => b.onclick = (e) => {
@@ -29409,7 +29481,7 @@ function openVendor(v){
       let got = 0;
       for(let i=0;i<n;i++){ got += Math.max(1, Math.round(priceSell(town, k) / prejMult)); town.stock[k] = (town.stock[k]||0) + 1; }
       cats += got;
-      tradeLearned(talker, got);
+      tradeLearned(talker, got, town, k, 'sell');
       refreshTop(); refreshInv(); render();
     });
   };
@@ -30189,7 +30261,11 @@ function marqueeSet(on){
 }
 let dragStart = null, dragRect = null;
 let panDrag = null;
+/* a hold that never got its release — the cursor left the canvas, or a second press arrived —
+   must not fire a menu at a stale point about a stale body */
+cv.addEventListener('mouseleave', () => holdCancel());
 cv.addEventListener('mousedown', e => {
+  holdCancel();
   hideCtxMenu();
   if(!started || modalOpen) return;
   if(e.button === 1){
@@ -30417,7 +30493,28 @@ cv.addEventListener('mousedown', e => {
       const chat = chars.find(o => o.state === 'ok' && o.faction !== 'player' &&
         (o.scholar || (o.wanderKey && o.faction !== 'player') || o.immortal) &&
         visAt(o.x, o.y) === 2 && bodyHit(o, wx, wy, TALK_R));
-      if(chat && !hostile(movers[0], chat)){ approachAndTalk(movers, chat); return; }
+      /* ---------- HOLD IT, AND THEY ARE A PERSON RATHER THAN A CONVERSATION ----------
+         "A long (or held) right click on a named, non-hostile NPC should open up the menu for
+          various options, like tending, guarding, etc. instead of just defaulting to have the
+          player go talk to them. Sometimes I would like to guard certain NPCs just so that I
+          know where they are at."
+         A tap still talks, because that is what a click on somebody with something to say means
+         and it is right nine times in ten. The tenth time you want to put a body on them — the
+         scholar Lyre's arc needs alive, Albedo before her quest will close — and until now there
+         was no way to say so about anybody who was not already yours.
+         Deferred rather than modified: the timer opens the menu while the button is still down,
+         which is the feel a long-press is supposed to have, and releasing early cancels it and
+         talks. Everything else in this chain still fires on mousedown. */
+      if(chat && !hostile(movers[0], chat)){
+        holdCancel();
+        holdOn = {who: chat, crew: movers.slice(), px: e.clientX, py: e.clientY, fired: false};
+        holdOn.t = setTimeout(() => {
+          if(!holdOn) return;
+          holdOn.fired = true; holdOn.t = null;
+          npcOptions(holdOn.who, holdOn.crew, holdOn.px, holdOn.py);
+        }, HOLD_MS);
+        return;
+      }
     }
     /* a friendly local? stop and talk */
     if(!e.ctrlKey && !corpseFirst){
@@ -31393,8 +31490,33 @@ function makeRumor(speaker){
   }
   if(roll < 0.90 && menaceFlag) return 'The Bastion has patrols out. Someone\'s been dabbling in things they shouldn\'t.';
   if(roll < 0.90) return pick(['Quiet roads lately. Won\'t last.','Heard the slavers took another poor soul off the road.','Drifters keep going missing between here and the next town.']);
-  /* town lore + flavor */
-  return rnd() < 0.5 ? t.def.lore : pick(t.def.civBarks);
+  /* ---------- THE TAIL MUST NOT BE A BARK ----------
+     "The 'what is the news hereabouts?' shouldn't return basic barks, like 'spare a cat for a
+      pilgrim?' since that's not really news but just a basic return."
+     It ended `rnd() < 0.5 ? t.def.lore : pick(t.def.civBarks)` — so one ask in ten in a town, and
+     EVERY ask of a drifter, answered a direct question about the news with ambient chatter. The
+     two are different categories of line and the function that produces one should never produce
+     the other: a bark is what you overhear, a rumour is what you asked for and it has to be
+     worth the asking.
+     The town's own lore stays, because it IS something you learn by asking. Past that, fall back
+     to the one generator that can always produce — where a good sells dear — rather than to
+     somebody begging for a coin. */
+  if(rnd() < 0.55) return t.def.lore;
+  {
+    const goods = ['copper','hide','fabric','rum','fruit','meat'];
+    const k = pick(goods);
+    const best = [...towns].sort((a,b2) => priceBuy(b2,k) - priceBuy(a,k))[0];
+    return best !== t
+      ? `${ITEMS[k].name}? Fetches its best price in ${best.name}, if you can make the road.`
+      : `Folk come from all over to sell ${ITEMS[k].name.toLowerCase()} here. Best coin around.`;
+  }
+}
+/* AMBIENT CHATTER, WHICH IS THE OTHER CATEGORY AND KEEPS ITS OWN NAME. This is what a body says
+   to the air as you walk past — it fires on its own in `townTick` and it is exactly right there.
+   Named apart from `makeRumor` so the two can never be reached for interchangeably again. */
+function makeBark(speaker){
+  const t = speaker.homeTown;
+  return t ? pick(t.def.civBarks) : pick(DRIFTER_BARKS);
 }
 const LEADER_LINES = {
   warlike:   ['This town needs more soldiers, not more talk.', 'Peace is what you call the gap between wars.'],
@@ -31788,6 +31910,26 @@ function approachAndTalk(movers, o){
    AND WHO IS "YOU" IS A REAL QUESTION IN A SQUAD GAME. The person standing in front of them is
    the one who is speaking, so the gates read off THAT body: send the succubus and you get the
    succubus's options. That is a decision the player makes by choosing who walks over. */
+/* ---------- `c.guard` IS A PLACE TO STAND, NOT A RANK ----------
+   "Encountered a glitch where a gaunt was treated as a guard (?) or random civilian. He was
+    just chilling and I could talk to him."
+   He was. `c.guard` holds a POST — `{x, y}` — and it is set on nearly everything in the world
+   that stands somewhere: cave dwellers, wyrm keepers, reclusive scholars, the guildmaster,
+   flamewrights, dusters, choir kin posted at a rift, and the Watcher that takes up residence in
+   the Bastion yard after day 45. That last one is the gaunt in the report.
+   EVERY OTHER READ IN THE FILE PAIRS IT WITH THE FACTION — `c.faction === 'town' && c.guard` —
+   in five separate places. The two that did not were both mine, added with the conversation
+   trees, and the second bug is worse than the first: `npcNecro` bodies are given a post too, and
+   `if(t.guard)` is tested BEFORE `else if(t.npcNecro)`, so every necromancer in the world was
+   getting the WATCH conversation and the necromancer tree shipped last round was unreachable in
+   play. `discourse.js` passed it because the probe it builds has no post.
+   One predicate, named for the question it actually answers. */
+function isWatch(c){ return !!c && c.faction === 'town' && !!c.guard && !c.civ; }
+/* AND A GAUNT IS NOT A CONVERSATION. The Watcher in the Bastion yard is faction `purge` and
+   perfectly non-hostile, so removing the guard mistake alone would have dropped it into the
+   generic townsfolk tree instead — a different wrong answer to the same click. Anything with a
+   gaunt's shape is silent, whatever faction is currently holding its leash. */
+function speaksAtAll(c){ return !!c && c.faction !== 'gaunt' && !c.gauntKind; }
 function speakerFor(t){
   const near = chars.filter(o => o.faction === 'player' && o.state === 'ok' && (!o.undead || o.lich))
     .sort((a, b) => dist(a.x, a.y, t.x, t.y) - dist(b.x, b.y, t.x, t.y))[0];
@@ -31893,7 +32035,7 @@ function openDiscourse(t, key){
 }
 function talkTitleOf(t){
   if(t.isLeader >= 0 && towns[t.isLeader]) return `${towns[t.isLeader].leader.title} of ${towns[t.isLeader].name}`;
-  if(t.guard) return t.homeTown ? `Watch of ${t.homeTown.name}` : 'Watch';
+  if(isWatch(t)) return t.homeTown ? `Watch of ${t.homeTown.name}` : 'Watch';
   if(t.scholar) return 'A lettered one, far from a desk';
   return t.homeTown ? `Of ${t.homeTown.name}` : 'Out on the road';
 }
@@ -31911,7 +32053,16 @@ function drawTalk(){
   body.innerHTML = '';
   /* what they say */
   const said = document.createElement('div');
-  said.style.cssText = 'font-size:13px;line-height:1.6;color:var(--ink,#e8dcc4);margin-bottom:10px';
+  /* ---------- `--ink` IS THE DARKEST BACKGROUND IN THIS PALETTE, NOT THE TEXT ----------
+     "The dialogue is unreadable sometimes. Black text on a brown background."
+     Exactly that, and it was one token: `--ink` here is #0d0b09 and the modal sits on `--panel`
+     #1a1512, so the only line in the window that matters was near-black on dark brown. The
+     fallback I wrote after it — `var(--ink, #e8dcc4)` — never fired, because the variable is
+     defined; it just isn't the one that means "text". `--bone` is.
+     Set apart as speech while we are here: a rule down the left and a little more room, so the
+     thing the NPC actually said does not read as one more paragraph of interface. */
+  said.style.cssText = 'font-size:13px;line-height:1.65;color:var(--bone);margin:0 0 11px;' +
+    'padding:2px 0 2px 10px;border-left:2px solid var(--warn)';
   said.textContent = '"' + (typeof node.line === 'function' ? node.line(t, c) : node.line) + '"';
   body.appendChild(said);
   /* who is doing the talking, because the gates read off them */
@@ -32042,7 +32193,11 @@ const TALK_TREES = {
       ],
     },
     news: {
-      line: (t) => t.homeTown ? makeRumor(t) : pick(DRIFTER_BARKS),
+      /* A DRIFTER HAS THE BEST NEWS IN THE GAME AND WAS GIVING OUT THE WORST. They walk the
+         roads between every town on the map; asking one for news and being told "spare a cat
+         for a pilgrim?" is the report this batch opened with. `makeRumor` already copes with a
+         speaker who has no home town. */
+      line: (t) => makeRumor(t),
       opts: [{say:'Obliged.'}],
     },
     graves: {
@@ -32364,7 +32519,8 @@ function talkTo(t){
      THE ODD ONES KEEP THEIR BARKS, deliberately. A Coil cultist saying one strange thing and
      turning away is the whole characterisation; giving them a menu would make them ordinary.
      They are checked first, below, so the generic tree never swallows them. */
-  if(t.guard){ if(openDiscourse(t, 'guard')) return; }
+  if(!speaksAtAll(t)){ say(t, pick(['...', 'It does not turn its head.', 'Something behind its face declines to answer.'])); return; }
+  if(isWatch(t)){ if(openDiscourse(t, 'guard')) return; }
   /* THE OTHER PRACTITIONER GETS A CONVERSATION TOO. This was in the exclusion list beside the
      Coil cultist, and for the Coil that is right — one strange sentence and a turned back IS the
      characterisation. A necromancer is the opposite case: the only other person on the map who
@@ -32386,6 +32542,51 @@ function talkTo(t){
   log(`${t.name}: "${line}"`);
   /* people repeat what their town is chewing over, whether or not you asked */
   if(t.homeTown) newsFrom(t.homeTown, `told by ${t.name}`);
+}
+/* ---------- THE HELD RIGHT-CLICK ----------
+   One pending hold at a time, cleared by anything that could invalidate it: another press, the
+   release, or the cursor leaving the canvas. `fired` survives the release so the mouseup that
+   ends a long press does not also fire the tap. */
+const HOLD_MS = 320;
+let holdOn = null;
+function holdCancel(){ if(holdOn && holdOn.t) clearTimeout(holdOn.t); holdOn = null; }
+/* WHAT YOU CAN DO TO SOMEBODY WHO IS NOT YOURS. Deliberately short: this is the menu for a
+   person you do not command, so it offers the three things you can do about one — talk to them,
+   put somebody on them, and see what state they are in — and nothing that would read as an order
+   to them. */
+function npcOptions(t, crew, px, py){
+  const items = [];
+  const live = crew.filter(m => m.state === 'ok' && m.faction === 'player');
+  items.push({label:'TALK', fn:()=>approachAndTalk(live.length ? live : crew, t)});
+  const already = live.filter(m => m.guardTarget === t);
+  const free = live.filter(m => m.guardTarget !== t);
+  if(free.length) items.push({
+    label:`GUARD ${t.name.toUpperCase()}${free.length > 1 ? ' (' + free.length + ')' : ''}`,
+    fn:()=>{
+      const set = free.filter(m => setWard(m, t));
+      announceWards(set);
+      /* SAID PLAINLY, because guarding somebody who is not yours is a new thing the game can do
+         and the reason to do it is not the interposition — it is knowing where they are. */
+      if(set.length) log(`${set.length === 1 ? set[0].name + ' keeps' : set.length + ' of yours keep'} station on ${t.name}. You will know where ${t.sex === 'f' ? 'she' : 'they'} ${t.sex === 'f' ? 'is' : 'are'}.`, 'good');
+      refreshCharPanel(); refreshSquadBar();
+    }});
+  if(already.length) items.push({
+    label:`STOP GUARDING ${t.name.toUpperCase()}`,
+    fn:()=>{
+      for(const m of already){ m.guardTarget = null; m.job = null; }
+      log(`${already.length === 1 ? already[0].name + ' leaves' : already.length + ' leave'} ${t.name} to it.`, '');
+      refreshCharPanel(); refreshSquadBar();
+    }});
+  if(treatable(t)){
+    const medic = live.filter(m => m !== t && (!m.undead || m.lich)).sort((a,b)=>b.stats.medic-a.stats.medic)[0];
+    if(medic) items.push({label:`TEND ${t.name.toUpperCase()}`, fn:()=>{
+      clearOrders(medic); medic.healTarget = t;
+      log(`${medic.name} goes to stop ${t.name} bleeding.`, '');
+    }});
+  }
+  items.push({label:'EXAMINE', fn:()=>examine(t)});
+  items.push({label:'LEAVE THEM', fn:()=>{}});
+  showCtxMenu(px, py, items);
 }
 /* small context menu at the cursor */
 const ctxEl = document.getElementById('ctxmenu');
@@ -32485,6 +32686,13 @@ function gatherKindAt(wx, wy, f){
 }
 addEventListener('mouseup', e => {
   if(e.button === 1){ panDrag = null; return; }
+  if(e.button === 2){
+    /* released before the timer: it was a tap, and a tap on somebody with something to say
+       means talk to them. Released after: the menu is already open, so do nothing. */
+    if(holdOn && !holdOn.fired){ const h = holdOn; holdCancel(); approachAndTalk(h.crew, h.who); }
+    else holdCancel();
+    return;
+  }
   if(e.button !== 0){ return; }
   if(!dragStart) return;
   if(dragRect){
