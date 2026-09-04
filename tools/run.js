@@ -46,7 +46,7 @@ const ALL = [
   'reach.js', 'ceiling.js', 'study.js', 'carry.js', 'jail.js', 'mishap.js', 'command.js', 'menus.js', 'rightclick.js', 'cloak.js', 'sundered.js', 'charm.js', 'unstuck.js', 'clicks.js', 'rites.js', 'notes.js', 'discourse.js', 'tongue.js', 'parley.js', 'upkeep.js', 'orders2.js', 'warrens.js', 'board.js', 'chores.js', 'trades.js', 'charnel.js', 'cloth.js',
   'threads.js', 'beasts.js', 'wyrm.js', 'curse.js', 'siege.js', 'guild.js', 'purge.js', 'watchers.js', 'lieu.js', 'steeped.js', 'wanderers.js', 'survive.js', 'melee.js', 'press.js', 'patrol.js', 'pace.js', 'spiral.js', 'flank.js', 'kiting.js', 'lich.js', 'voices.js', 'pain.js', 'heads.js',
   'kit.js', 'slots.js', 'kitted.js', 'wepsoak.js', 'races.js', 'names.js', 'kin.js', 'kin2.js', 'lineage.js', 'cradle.js', 'livery.js', 'mimics.js', 'pins.js', 'mobile.js', 'start.js', 'touch.js', 'terrain.js', 'axes.js',
-  'civics.js', 'grafts.js',
+  'civics.js', 'grafts.js', 'maws.js',
 ];
 /* THE EDIT LOOP SET. Not "the fast ones" — the ones that would notice a broken build at all:
    the boot check, a save round trip, a fight, and the two broadest world probes. Cheap enough

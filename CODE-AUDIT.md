@@ -16,13 +16,13 @@ the Maw search in §2.1 likewise. Everything else is a finding, not a change.
 
 Ranked by what it buys against what it costs.
 
-1. **Fix the prosthetic scoping bug** (§1.1). Two declarations are inside the wrong function.
+1. **Fix the prosthetic scoping bug** (§1.1) — *done on this branch.* Two declarations are inside the wrong function.
    Fitting a graft consumes the item and then throws; a fighter with a grafted arm throws on
    every swing, and the throw aborts the rest of that sim step. Since 7c56501, twelve days.
 2. **Add ESLint to `prep.js`** (§3.2). `no-undef` alone would have caught §1.1 the day it
    was written. `no-dupe-keys` catches the five duplicated save keys. One dev dependency,
    two seconds per run, and it closes the class of bug this file is most exposed to.
-3. **Fix the Maw's quarry search** (§2.1). One feature is 45–51% of every sim step. It is
+3. **Fix the Maw's quarry search** (§2.1) — *done on this branch.* One feature is 45–51% of every sim step. It is
    an `O((down + corpses) × chars)` scan, re-run every tick by 151 bodies that found
    nothing last tick. Two small changes halve the step in the measured world and stop it
    scaling with the body count on a battlefield.
@@ -190,6 +190,25 @@ Two changes, both local to those two functions:
 Better still, do the search once per tick for all Maws (a world-level pass that hands out
 quarry), since every searcher is scanning the same two lists. But the two changes above
 are the ones that can be made without touching the design.
+
+**Fixed on this branch**, both changes, and measured interleaved three runs a side as the
+README asks:
+
+| | before | after |
+|---|---|---|
+| `simcost.js` direct, ms/step | 16.3 / 17.4 / 17.1 | 8.1 / 7.9 / 8.0 |
+| `simcost.js` 20 s soak, sim ms/frame | 35.1 / 34.5 / 39.6 | 19.0 / 16.7 / 20.7 |
+| sampling profile, ms/step | 19.4 | 8.2 |
+| `mawQuarry` calls per 90 steps | 5,435 | 269 |
+| one search, 6 corpses | ~60 µs | ~60 µs |
+| one search, 106 corpses + 10 down | 2,030 µs | 90 µs |
+
+On day one the retry timer is what halves the step; the claimed set is what keeps a search
+flat as the field fills. `tools/maws.js` pins the call count (a count, so it holds under suite
+load) and then asks the behaviour directly: a Maw that has already missed still takes a corpse
+put in front of it, 1.6 s later, and two Maws still never claim one body. After the change the
+next item on the profile is exactly §2.2: `isConcentrating` + `wardedFrom` at 10.3% of an
+8.2 ms step.
 
 ### 2.2 `wardedFrom` walks the roster for every body
 

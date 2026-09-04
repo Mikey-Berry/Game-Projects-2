@@ -15330,16 +15330,24 @@ function gauntDawn(){
    a friend who goes down is not lost — only on a clock, and likely to come back short a limb. */
 function mawQuarry(c){
   let best = null, bd = 40;
+  /* WHAT THE OTHERS HAVE ALREADY CLAIMED, read once. This was `chars.some(m => m.mawTarget
+     === o && m !== c)` inside BOTH loops below — the whole roster walked again for every
+     candidate, so one search cost (down + corpses) × chars and grew with the corpse count,
+     which is to say it was cheapest on a quiet day and worst on a battlefield. Chrome's
+     sampling profiler put the two `some` callbacks at 37% of every sim step on day one with
+     six corpses in the world. One pass builds the set; the loops ask it. */
+  const claimed = new Set();
+  for(const m of chars) if(m !== c && m.mawTarget) claimed.add(m.mawTarget);
   /* the fallen are better eating than the long dead */
   for(const o of chars){
     if(o.state !== 'down' || o.faction === 'gaunt') continue;
-    if(chars.some(m => m.mawTarget === o && m !== c)) continue;
+    if(claimed.has(o)) continue;
     const d = dist(o.x, o.y, c.x, c.y);
     if(d < bd * 0.75){ bd = d; best = o; }
   }
   if(best) return best;
   for(const b of corpses){
-    if(chars.some(m => m.mawTarget === b && m !== c)) continue;
+    if(claimed.has(b)) continue;
     const d = dist(b.x, b.y, c.x, c.y);
     if(d < bd){ bd = d; best = b; }
   }
@@ -15360,6 +15368,7 @@ function mawLair(c){
   return c.lairSpot;
 }
 const MAW_PARTS = ['larm', 'rarm', 'lleg', 'rleg'];
+const MAW_RETRY = 1.5;   /* seconds a searcher waits after finding nothing (see mawFeed) */
 function mawFeed(c, dt){
   if(!c.eatsDead || c.state !== 'ok') return false;
   if(c.target) return false;                     /* it will fight if pressed */
@@ -15369,9 +15378,16 @@ function mawFeed(c, dt){
     c.mawTarget = null; c.dragging = null; c.lairSpot = null;
   }
   if(!c.mawTarget){
+    /* AND A SEARCH THAT FOUND NOTHING IS NOT ASKED AGAIN NEXT TICK. 151 bodies carry
+       `eatsDead` in a fresh world and one of them had a quarry; the other 150 re-ran the
+       search thirty times a second and found the same nothing — measured at 60µs a search,
+       9ms of a 19ms step. A miss now waits MAW_RETRY before asking again, staggered off the
+       id so the pack does not all ask on the same tick. A Maw that notices a fresh corpse a
+       second and a half late is not a change anybody can see; a step half the size is. */
+    if(c.mawSearchT > 0){ c.mawSearchT -= dt; return false; }
     c.mawTarget = mawQuarry(c);
     c.dragging = null; c.lairSpot = null; c.mawT = 0;
-    if(!c.mawTarget) return false;
+    if(!c.mawTarget){ c.mawSearchT = MAW_RETRY + (c.id % 10) * 0.1; return false; }
   }
   const q = c.mawTarget;
 
