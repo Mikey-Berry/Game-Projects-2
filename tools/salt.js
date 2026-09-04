@@ -154,9 +154,28 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     /* ---- 6. AND THE FIRE IS NOT ONE OF THE ORDER'S POLES ---- */
     R.aFire = salt && salt.pyre ? `the standing fire burns at ${Math.round(salt.pyre.x)},${Math.round(salt.pyre.y)}` : '!! THERE IS NO STANDING FIRE';
-    R.notAPole = salt && salt.pyre && !pyres.some(q => dist(q.x, q.y, salt.pyre.x, salt.pyre.y) < 2)
-      ? 'and it is deliberately not in `pyres` — Albedo\'s gate reads that list, and a day-one pole would hand her a name off a fire nobody burned on'
-      : '!! THE STANDING FIRE IS IN `pyres` AND SATISFIES ALBEDO WITHOUT LEAVING TOWN';
+    /* ---------- AT WORLDGEN. The word matters and it did not use to. ----------
+       The fire is not a pole on day one, which is the thing being protected: Albedo's gate reads
+       `pyres`, and a pole standing in a walkable town from the first frame would hand her a name
+       off a fire nobody was burned on. It is NOT that a pole can never be here — the Order burns
+       people at this fire now, and when it does, a real pole with a real name goes up beside it.
+       See `albedo.js`, which drives that whole chain. */
+    R.notAPole = salt && salt.pyre && !pyres.some(q => dist(q.x, q.y, salt.pyre.x, salt.pyre.y) < 8)
+      ? 'and at worldgen it is not a pole — a fire nobody has been burned on cannot pay off Albedo'
+      : '!! THERE IS A POLE AT THE STANDING FIRE BEFORE ANYBODY WAS BURNED';
+    /* AND THE ORDER USES IT. A second burning ground that no town is nearer to is decoration. */
+    /* MEASURED BY BURNING SOMEBODY, not by comparing distances — the build before this sent
+       every body to the Bastion gate no matter which town it came out of, and a geometry check
+       passes on that. See the same note in `albedo.js`. */
+    const n0 = pyres.length;
+    const mk2 = makeChar('Suspect', 'town', t.x + 2, t.y + 2, {atk:5, def:5, tough:5});
+    mk2.civ = true; mk2.homeTown = t; chars.push(mk2);
+    if(typeof burnHeretic === 'function') burnHeretic(mk2);
+    const fresh = pyres[pyres.length - 1];
+    R.theOrderBurnsHere = pyres.length === n0 + 1 && salt && salt.pyre && dist(fresh.x, fresh.y, salt.pyre.x, salt.pyre.y) < 8
+      ? `and somebody taken out of ${t.name} burns on ${t.name}'s own fire rather than being walked to the Bastion`
+      : '!! A SUSPECT FROM SALTMERE IS STILL BURNED AT THE BASTION — THE FIRE IS A PROP';
+    pyres.length = n0;
     return R;
   });
 
