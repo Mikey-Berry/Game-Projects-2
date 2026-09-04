@@ -16427,6 +16427,9 @@ function bannerLoad(){
 }
 const BRANCHES = ['divine', 'destruction', 'dark', 'dust'];
 const ATT_THRESH = [100, 300, 700];   /* to initiate, to adept, to master */
+/* the magic a raised lieutenant must have LEFT, after the rot, to come up as a mage rather
+   than a swordsman who used to read. 8 is where the tier-2 arts begin in SPELLS. */
+const LIEU_MAGE_MAG = 8;
 function attOf(c, b){ return (c.att && c.att[b]) || 0; }
 function attCap(c, b){
   if(!canHoldGift(c.race, c.sub)) return 0;
@@ -17054,8 +17057,48 @@ function castRaise(c, body, o){
     /* every skill it earned, at what the rot left of it — and a floor, because a lieutenant
        that has forgotten its trade is not the same character coming back worse, it is a
        different and duller one */
-    r.stats = {...body.stats, magic: Math.max(1, body.stats.magic * 0.5)};
-    for(const k in r.stats) if(k !== 'magic') r.stats[k] = Math.max(1, Math.round(r.stats[k] * lieuRot));
+    /* ---------- MAGIC IS NO LONGER THE ONE STAT DEATH TAKES HALF OF ----------
+       It used to be `magic * 0.5`, exempt from `lieuRot`, while atk, def, tough and every
+       trade skill came up at whatever the rot left. Nobody chose that as a rule about
+       casters; it was a rule about a stat that did nothing. The attunements were never
+       carried across, so a raised alchemist had `magic` and no branch to spend it in, and
+       `spellsFor` handed back an empty list — the number on the panel was decoration. Halving
+       decoration is free. Now that the art comes across, magic is a stat like the others and
+       follows the same ladder down: whole the first time up, 44% on the fourth. */
+    r.stats = {...body.stats};
+    for(const k in r.stats) r.stats[k] = Math.max(1, Math.round(r.stats[k] * lieuRot));
+    /* ---------- WHAT IT WAS STEEPED IN COMES UP WITH IT ----------
+       "Allies with high magic (and trained in a certain branch) should keep that when raised
+        as a lieutenant — basically make them a skeleton mage."
+       The ART is knowledge and comes across WHOLE — an adept of the dark rises an adept of
+       the dark, however far the body has gone. What the rot takes is `magic`, which is the
+       strength to work it: a master four raisings deep still knows every formula it ever
+       knew and can no longer push most of them through. That split is the whole feel of the
+       thing, and it is why the tiers are not multiplied by `lieuRot` here.
+       `attXp` rides along too, because a lieutenant is still taught by example (`attGain`
+       admits anything `mindedDead`) and should not restart the climb to its next tier. */
+    r.gift = body.gift || null;
+    r.omni = !!body.omni;
+    r.onlyArt = body.onlyArt || null;
+    if(body.att)   r.att   = {...body.att};
+    if(body.attXp) r.attXp = {...body.attXp};
+    if(body.arts)  r.arts  = {...body.arts};
+    /* it fights the way it fought. A hallowed knight is not put on the back line because it
+       could read, and a bolt-thrower is not walked into a melee because nothing said not to. */
+    if(body.stance) r.stance = body.stance;
+    /* the pool is sized off the magic it actually came up with, not the `magic:1` makeChar
+       was handed before the stats above replaced it */
+    r.mana = maxMana(r);
+    /* ---------- AND IF IT IS STILL A MAGE, IT SHOULD LOOK LIKE ONE ----------
+       Trained at initiate or better, and `LIEU_MAGE_MAG` magic left after the rot — 8, which
+       is not a number invented here: it is where the tier-2 arts start in SPELLS (smite,
+       hallow, shroud, blink), so the test is "can still do more than throw a bolt".
+       `kin` is the rig selector the circle's own Skeleton Mage uses, and a lieutenant is
+       `undead && !lich && !beast && !construct`, so it takes the burnt-bone build, the
+       mantle and the ember at the ribs. It keeps its face and its name: this is somebody who
+       burned, not a numbered unit off a circle. */
+    const lieuAtt = Math.max(...BRANCHES.map(b => attOf(r, b)));
+    if(lieuAtt >= 1 && r.stats.magic >= LIEU_MAGE_MAG) r.kin = 'mage';
     if(body.inv) r.inv = {...body.inv};
     r.pack = body.pack || null;
     const left = DECAY.length - r.lieuWear;
@@ -17064,6 +17107,17 @@ function castRaise(c, body, o){
         ? `${body.name} comes up again — ${ldk.label}, at ${Math.round(lieuRot*100)}% of what they were. ` +
           (left > 0 ? `${left} more time${left>1?'s':''} in them.` : 'There will not be another.')
         : `${body.name} stands up again, and knows ${c === body ? 'their own' : c.name + "'s"} name. Death did not take the whole of them.`, 'good');
+    /* said separately and only when there is something to say, because "it still knows the
+       art" is the interesting half of the raising and would be lost at the end of the
+       sentence above */
+    if(lieuAtt >= 1){
+      const word = ['', 'initiate', 'adept', 'master'][lieuAtt];
+      const br = BRANCHES.filter(b => attOf(r, b) === lieuAtt)[0];
+      log(r.kin === 'mage'
+        ? `The ${br} art came up with ${r.name} — still ${word === 'master' ? 'a master' : 'an ' + word} of it, and strong enough to work it.`
+        : `${r.name} still knows the ${br} art. There is not enough left in them to push much through it.`,
+        r.kin === 'mage' ? 'good' : '');
+    }
   } else {
     /* A corpse is never stronger dead than it was in life; the necromancer's skill only
        closes the gap — and what the rot has already taken, it does not give back. */

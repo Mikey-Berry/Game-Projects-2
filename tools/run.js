@@ -44,7 +44,7 @@ const ALL = [
   'boot.js', 'origin.js', 'sister.js', 'hire.js', 'nights.js', 'focus.js', 'standoff.js', 'ironworks.js', 'muster.js', 'stumps.js', 'queue.js', 'charnelworks.js', 'haulers.js', 'scholars.js', 'orders.js', 'tears.js', 'vessels.js', 'sixfold.js', 'watchrigs.js', 'volley.js', 'towncheck.js', 'fight.js', 'roundtrip.js', 'save.js', 'walls.js',
   'world.js', 'host.js', 'raise.js', 'hosts.js', 'kitrot.js', 'craftwork.js', 'bound.js', 'anchored.js', 'descend.js', 'cave.js', 'deepaim.js', 'under.js', 'opaque.js', 'guns.js', 'arrow.js', 'gunnery.js', 'roads.js', 'aid.js',
   'reach.js', 'ceiling.js', 'study.js', 'carry.js', 'jail.js', 'mishap.js', 'command.js', 'menus.js', 'rightclick.js', 'cloak.js', 'sundered.js', 'charm.js', 'unstuck.js', 'clicks.js', 'rites.js', 'notes.js', 'discourse.js', 'tongue.js', 'parley.js', 'upkeep.js', 'orders2.js', 'warrens.js', 'board.js', 'chores.js', 'trades.js', 'charnel.js', 'cloth.js',
-  'threads.js', 'beasts.js', 'wyrm.js', 'curse.js', 'siege.js', 'guild.js', 'purge.js', 'watchers.js', 'lieu.js', 'wanderers.js', 'survive.js', 'melee.js', 'press.js', 'patrol.js', 'pace.js', 'spiral.js', 'flank.js', 'kiting.js', 'lich.js', 'voices.js', 'pain.js', 'heads.js',
+  'threads.js', 'beasts.js', 'wyrm.js', 'curse.js', 'siege.js', 'guild.js', 'purge.js', 'watchers.js', 'lieu.js', 'steeped.js', 'wanderers.js', 'survive.js', 'melee.js', 'press.js', 'patrol.js', 'pace.js', 'spiral.js', 'flank.js', 'kiting.js', 'lich.js', 'voices.js', 'pain.js', 'heads.js',
   'kit.js', 'wepsoak.js', 'races.js', 'names.js', 'kin.js', 'kin2.js', 'livery.js', 'mimics.js', 'pins.js', 'mobile.js', 'start.js', 'touch.js', 'terrain.js', 'axes.js',
   'civics.js',
 ];
