@@ -6297,6 +6297,148 @@ let arena = null;
     chars.push(gd);
   }
 })();
+/* ============================================================ THE LAST ORCHARD
+   "Greenrest with a dark secret. A mansion or estate, a servant answers the door, you need high
+    reputation to get in, reclusive."
+
+   THE SECRET WAS ALREADY WRITTEN AND NOBODY HAD NOTICED. Greenrest brags about exactly two
+   things, in its own civilian barks, and they are the same fact said twice:
+       "Harvest looks kind this season."
+       "Never seen a bandit inside these walls. Never will."
+   A town with the best ground in the country AND more watchmen than any town its size, which has
+   never once had trouble. The orchard is kind because of what is in it, and there has never been
+   a bandit inside those walls because none of them ever got that far. The Aldercotts have been
+   putting them under the rows for four generations, and the town has been eating the fruit.
+   THAT IS WHY IT IS AT GREENREST AND NOT ANYWHERE ELSE: this is the start town. It is the first
+   place a player walks into and the last place they would look, and the two lines that give it
+   away have been in the game since the beginning.
+   AND FOR A NECROMANCER IT IS NOT A SCANDAL, IT IS AN ORCHARD OF BODIES. Which is the choice the
+   whole thing exists to offer: the seat of the most decent town on the map is a mass grave, and
+   you are the one person in the world for whom that is good news. */
+const ORCHARD_REP = 45;            /* the standing at which the door is opened rather than argued */
+const ORCHARD_ROWS = 4, ORCHARD_PER_ROW = 5;
+let estate = null;
+(function seedOrchard(){
+  const t = towns.find(t2 => t2.def.key === 'greenrest');
+  if(!t) return;
+  const HW = 6, HH = 5;            /* the walled yard: 13 x 11 */
+  const need = Math.max(HW, HH) + 12;   /* the yard, and the rows behind it */
+  let cx = 0, cy = 0, ang = 0;
+  for(let ring = 0; ring < 12 && !cx; ring++){
+    const off = (t.clearR || 20) + 8 + ring * 3;
+    for(let k = 0; k < 16 && !cx; k++){
+      const a = (k / 16) * Math.PI * 2 + 0.35;
+      const x = Math.round(t.x + Math.cos(a) * off), y = Math.round(t.y + Math.sin(a) * off);
+      if(x < need + 3 || y < need + 3 || x >= W - need - 3 || y >= H - need - 3) continue;
+      if(arena && dist(arena.x, arena.y, x, y) < 40) continue;
+      if(oreFields.some(f => dist(f.x, f.y, x, y) < f.r + need)) continue;
+      let ok = true;
+      for(let j = -need; j <= need && ok; j++) for(let i = -need; i <= need && ok; i++){
+        if(tileAt(x + i, y + j) === 3) ok = false;
+        else if(isBlocked(x + i + 0.5, y + j + 0.5)) ok = false;
+      }
+      if(ok){ cx = x; cy = y; ang = a; }
+    }
+  }
+  if(!cx) return;
+  /* the gate faces the town; the rows are behind the house, away from the road */
+  const dx = t.x - cx, dy = t.y - cy;
+  const nx = Math.abs(dx) >= Math.abs(dy) ? Math.sign(dx) : 0;
+  const ny = nx ? 0 : (Math.sign(dy) || 1);
+  const gate = [{x: nx ? cx + nx * HW : cx, y: nx ? cy : cy + ny * HH}];
+  estate = {x: cx, y: cy, hw: HW, hh: HH, town: t, walls: [], gate,
+            admitted: false, told: false, opened: false, graves: [],
+            gx: cx - nx * (HW + 7), gy: cy - ny * (HH + 7)};   /* the orchard, out the back */
+  const gk = new Set(gate.map(q => q.x + ',' + q.y));
+  for(let j = -HH; j <= HH; j++) for(let i = -HW; i <= HW; i++){
+    const edge = (Math.abs(i) === HW || Math.abs(j) === HH);
+    if(!edge) continue;
+    const wx = cx + i, wy = cy + j;
+    if(gk.has(wx + ',' + wy)) continue;
+    blocked.add(bkey(wx, wy));
+    estate.walls.push({x: wx, y: wy});
+  }
+  /* the house itself, inside the yard — a real building so the renderer and the town planner
+     both already know what to do with it */
+  estate.house = placeBuilding(cx - 3, cy - 2, 7, 5, 'ALDERCOTT HOUSE', t);
+  /* ---------- THE ROWS ----------
+     Not corpses yet. Twenty bodies in `chars` from worldgen is twenty bodies in every save and
+     every scan for the rest of the game, for a thing the player may never find — so they are a
+     list of coordinates until somebody opens the ground, and then they are as real as anything
+     else in the world. */
+  for(let r = 0; r < ORCHARD_ROWS; r++) for(let i = 0; i < ORCHARD_PER_ROW; i++){
+    const px = estate.gx + (nx ? r * 2 - 3 : i * 2 - 4);
+    const py = estate.gy + (nx ? i * 2 - 4 : r * 2 - 3);
+    if(px < 3 || py < 3 || px >= W - 3 || py >= H - 3) continue;
+    estate.graves.push({x: px + 0.5, y: py + 0.5});
+  }
+  /* ---------- THE HOUSEHOLD ----------
+     The servant is at the GATE and the family is inside it, which is the whole shape of the
+     scene: you are turned away by somebody who is not allowed to decide, and the person who
+     could decide is not going to come out to you. */
+  const gm = gate[0];
+  const sp = findOpenNear(gm.x + nx * 1.5, gm.y + ny * 1.5, 2);
+  const serv = makeChar('Bellowes', 'town', sp.x, sp.y,
+    {atk: 8, def: 10, tough: 10, ath: 4, armor: 'a_lea', homeTown: t, guard: {x: sp.x, y: sp.y}, age: 61, sex: 'm'});
+  serv.civ = true; serv.orchardServant = true;
+  chars.push(serv);
+  estate.servant = serv;
+  const mp = findOpenNear(cx, cy + 1, 2);
+  const dame = makeChar('Dame Hessa Aldercott', 'town', mp.x, mp.y,
+    {atk: 6, def: 10, tough: 10, ath: 3, armor: 'a_lea', homeTown: t, guard: {x: mp.x, y: mp.y}, age: 74, sex: 'f'});
+  dame.civ = true; dame.orchardDame = true;
+  chars.push(dame);
+  estate.dame = dame;
+  for(let i = 0; i < 2; i++){
+    const q = findOpenNear(cx + ri(-3, 3), cy + ri(-2, 2), 3);
+    const k = makeChar(pickName(true), 'town', q.x, q.y,
+      {atk: 12, def: 14, tough: 14, ath: 5, weapon: 'w_club', armor: 'a_lea',
+       homeTown: t, guard: {x: q.x, y: q.y}, age: ri(28, 46)});
+    k.civ = true; k.orchardKin = true;
+    chars.push(k);
+  }
+})();
+/* ---------- WHETHER THE DOOR OPENS ----------
+   Standing with Greenrest, because the Aldercotts are Greenrest — four generations of it — and
+   a stranger who has done nothing for the town is a stranger. The talk check is the other way
+   in, and it is deliberately not easy: a house with that under its trees does not let people in
+   because they were charming. */
+function estateAdmits(){ return !!estate && (estate.admitted || (estate.town.rep || 0) >= ORCHARD_REP); }
+/* ---------- AND THE GROUND GIVES IT UP ----------
+   Three ways, and they are three different games. A necromancer standing in the orchard simply
+   KNOWS — that is what the gift is, and it would be strange for the one profession built around
+   sensing the dead to walk over twenty of them and notice nothing. Anybody else has to be told
+   by the Dame, or dig. */
+function orchardOpen(why){
+  if(!estate || estate.opened) return 0;
+  estate.opened = true;
+  let n = 0;
+  for(const g of estate.graves){
+    const b = makeChar(pick(['Drifter', 'Nobody', 'A Traveller', 'One of Them']), 'town', g.x, g.y,
+      {atk: ri(6, 14), def: ri(6, 12), tough: ri(6, 12)});
+    b.state = 'dead'; b.deadAt = day - ri(200, 3000) / 24; b.orchardDead = true;
+    chars.push(b); corpses.push(b);
+    n++;
+  }
+  log(why, 'bad');
+  log(`${n} of them, in rows, under the fruit trees. Greenrest has been eating this orchard for four generations.`, 'bad');
+  /* NO `deed` HERE. Finding a thing is not doing a thing, and `deed('graves')` would have been
+     a no-op anyway — it is a QUEST kind, not a deed kind, and both ledgers ignore what they do
+     not know. What the player does next is already covered: taking the bodies is `raise` and
+     `graverob`, and both of those have opinions attached to them. */
+  return n;
+}
+/* the gift feels them without being told. Throttled and once — this runs in the world tick. */
+function orchardTick(){
+  if(!estate || estate.opened) return;
+  for(const c of chars){
+    if(c.faction !== 'player' || c.state !== 'ok') continue;
+    if(c.gift !== 'dark' && !c.lich) continue;
+    if(dist(c.x, c.y, estate.gx, estate.gy) > 11) continue;
+    orchardOpen(`${c.name} stops walking. There is something wrong with the ground here, and ${c.sex === 'f' ? 'she' : 'they'} can feel exactly how much of it there is.`);
+    return;
+  }
+}
 /* ---------- THE CARDS ----------
    Four, in order, and the order is the whole progression: the house will not sell you a bout
    above the one you have won. `make` builds real bodies with the ordinary constructors — there
@@ -19741,6 +19883,7 @@ function update(dt){
   const wdt = wldT;             /* accumulated seconds for throttled world scans */
   const wdh = wldT / HOUR_SEC;
   if(wtick) wldT = 0;
+  if(wtick) orchardTick();    /* and the ground at Greenrest is felt by whoever can feel it */
   hourAcc += dt / HOUR_SEC;
   const dh = dt / HOUR_SEC;
   hour += dh;
@@ -24254,6 +24397,20 @@ const syncRedoubts = makeDynGroup(
         const y = groundY(q.x + 0.5, q.y + 0.5);
         box(g, 1, 0.32, 1, '#3a332b', q.x + 0.5, y + 0.16, q.y + 0.5, false);
         if(!arena.open) box(g, 1, 2.3, 1, '#7a5c2e', q.x + 0.5, y + 1.15, q.y + 0.5, true);
+      }
+    }
+    /* THE ALDERCOTT YARD. Its own list, like the pit's: a wall the town did not build and a
+       siege must not read as the town's ring. */
+    if(estate){
+      for(const w of estate.walls){
+        const y = groundY(w.x + 0.5, w.y + 0.5);
+        box(g, 1, 1.8, 1, '#6b5a3c', w.x + 0.5, y + 0.9, w.y + 0.5, true);
+      }
+      /* and the rows, once the ground has been opened — low mounds of turned earth between the
+         trees, which is the only thing about this the player ever sees from outside */
+      if(estate.opened) for(const q of estate.graves){
+        const y = groundY(q.x, q.y);
+        box(g, 1.3, 0.22, 0.8, '#4a3c28', q.x, y + 0.11, q.y, false);
       }
     }
     for(const rd of redoubts){
@@ -34113,6 +34270,135 @@ function drawTalk(){
    shape. The content is the cheap half — the predicate and the tagging above are what make the
    next twenty lines somebody writes cost nothing. */
 const TALK_TREES = {
+  /* ---------- THE MAN AT THE GATE ----------
+     He is not allowed to decide, which is the entire scene: everything he says is a polite way
+     of saying that the decision was made before you got here. The two ways past him are the two
+     ways past anybody — be somebody the house owes, or be better at this than he is — and the
+     third option, going round the back at night, is not offered by him because he would not
+     offer it. */
+  servant: {
+    root: {
+      line: (t) => estateAdmits()
+        ? 'Dame Hessa is in the long room. She said you would come up eventually, which from her is a compliment. Mind the step.'
+        : 'The family is not receiving. I am sorry to have to say it twice in one week, but there it is.',
+      opts: [
+        {say:'She is expecting me, then.', when: () => estateAdmits(), to:'shown'},
+        {say:'I have done a good deal for this town.', when: () => !estateAdmits(), to:'notenough'},
+        {say:'What is back there? Past the house.', to:'orchard'},
+        {say:'Open the door, Bellowes.', when: () => !estateAdmits(),
+         check:{dc:20}, win:'relented', lose:'firm'},
+        {say:'I know what is under those trees.', req:{gift:'dark'}, when: () => !!estate && estate.opened, to:'caught'},
+        {say:'Another time.'},
+      ],
+    },
+    shown: {
+      line: 'Through, then. And whatever she offers you — take it or refuse it, but do not haggle. She finds it common.',
+      opts: [{say:'Noted.', fn: () => { if(estate) estate.admitted = true; }}],
+    },
+    notenough: {
+      line: (t) => `You have. Greenrest knows it — I know it. The family is older than Greenrest. ` +
+        `They will receive you at ${ORCHARD_REP} and not a day before, and I am afraid the current figure is ${Math.round((estate && estate.town.rep) || 0)}.`,
+      opts: [{say:'Then I will come back with the figure.'}],
+    },
+    orchard: {
+      line: 'The orchard. Four generations of it. The oldest trees are the best croppers and nobody has ever worked out why — the Dame says it is the drainage.',
+      opts: [
+        {say:'The drainage.', to:'drainage'},
+        {say:'I see.'},
+      ],
+    },
+    drainage: {
+      line: 'The drainage. Yes. Will there be anything else?',
+      opts: [{say:'No. Nothing else.'}],
+    },
+    relented: {
+      line: 'On your own head. She is in the long room and she does not like to be kept.',
+      opts: [{say:'Thank you.', fn: () => { if(estate) estate.admitted = true; }}],
+    },
+    firm: {
+      line: 'No. I have been at this door for thirty-one years and I have never once opened it for a raised voice.',
+      opts: [{say:'Fine.'}],
+    },
+    caught: {
+      line: 'Ah. Then you have been in the orchard, and I would very much rather you told her than me. The door is open. It was always going to be, eventually.',
+      opts: [{say:'It was.', fn: () => { if(estate) estate.admitted = true; }}],
+    },
+  },
+  /* ---------- AND THE WOMAN WHO DECIDED ----------
+     She does not deny it and she is not ashamed of it, which is the only version of this scene
+     worth writing. The town has eaten well for four generations and no child in it has ever
+     seen a bandit; she considers the arithmetic settled and she is not wrong about the
+     arithmetic. What she wants to know is which of the three things you are going to do. */
+  dame: {
+    root: {
+      line: (t, c) => !estate ? 'Yes?'
+        : estate.opened
+          ? 'You have seen the rows, then. Sit down. No — you will not sit. Nobody ever sits, after.'
+          : estateAdmits()
+            ? 'You are the one they talk about at the well. Sit, if you like. What did you want from an old woman with an orchard?'
+            : 'I do not know you, and Bellowes let you in, which he will hear about.',
+      opts: [
+        {say:'The old trees crop best. Why?', when: () => !!estate && !estate.opened, to:'why'},
+        {say:'Tell me how many.', when: () => !!estate && estate.opened, to:'count'},
+        {say:'Greenrest deserves to know.', when: () => !!estate && estate.opened, to:'expose'},
+        {say:'I want them. All of them.', req:{gift:'dark'}, when: () => !!estate && estate.opened, to:'bargain'},
+        {say:'Nothing. Good day.'},
+      ],
+    },
+    why: {
+      line: (t, c) => 'Drainage, my husband used to say, and he was a coward. You want the true answer, so: because of what my grandmother put under them, ' +
+        'and her mother before her, and me. Come out to the rows and I will show you rather than say it, because saying it is vulgar and I am too old to be vulgar.',
+      opts: [
+        {say:'Show me.', fn: () => { if(estate) orchardOpen('Dame Hessa walks you out past the house, stops between two old trees, and points at the ground with her stick.'); }, to:'count'},
+        {say:'I have heard enough.'},
+      ],
+    },
+    count: {
+      line: (t) => `Twenty that are still worth counting. More that are not. Every one of them came over that wall or up that road meaning to do us harm, ` +
+        `and every one of them is a reason a child in Greenrest has never seen a bandit. You may think what you like about the arithmetic. I have had sixty years with it and I think it holds.`,
+      opts: [
+        {say:'It holds.', to:'ally'},
+        {say:'It does not.', to:'expose'},
+        {say:'I have no opinion. I have a use.', req:{gift:'dark'}, to:'bargain'},
+      ],
+    },
+    ally: {
+      line: 'Then you are welcome here, and the house is open to you, and I will not insult you by pretending that costs me anything. Take fruit on your way out. It is very good fruit.',
+      opts: [{say:'It is.', fn: (t2, c2) => {
+        if(!estate || estate.deal) return;
+        estate.deal = 'kept';
+        addItem('fruit', 24); addItem('rum', 3);
+        if(estate.town) estate.town.rep = clamp((estate.town.rep || 0) + 8, -100, 100);
+        log('The Aldercotts consider you a friend of the house. Greenrest follows the Aldercotts.', 'good');
+      }}],
+    },
+    expose: {
+      line: 'You will tell them. Yes. And they will hang me, and my son, and Bellowes who has never put anybody anywhere — ' +
+        'and next spring the fruit will be ordinary, and the spring after that somebody will come over that wall. Do it if you are going to.',
+      opts: [
+        {say:'I am going to.', fn: () => {
+          if(!estate || estate.deal) return;
+          estate.deal = 'told';
+          if(estate.town) estate.town.rep = clamp((estate.town.rep || 0) - 30, -100, 100);
+          log('Greenrest hears it by evening. The High Warden thanks you in front of the well and does not look at you while doing it.', '');
+          log('The Aldercotts are finished. So, quietly, is the harvest.', 'bad');
+          deed('town_saved', 0.5);
+        }},
+        {say:'No. Not today.'},
+      ],
+    },
+    bargain: {
+      line: 'A use. Well. That is the first honest thing anybody has said in this room in forty years. ' +
+        'Take them — they are no good to me and they were no good to anybody else — and do not come back, and do not ever say where you got them.',
+      opts: [{say:'Agreed.', fn: () => {
+        if(!estate || estate.deal) return;
+        estate.deal = 'taken';
+        orchardOpen('The Dame has the rows opened for you herself, and stands well back while it is done.');
+        for(const b of chars) if(b.orchardDead) b.freeToTake = true;
+        log('Twenty bodies, four generations in the ground, and the woman who buried them holding the lamp.', 'good');
+      }}],
+    },
+  },
   town: {
     root: {
       line: (t, c) => fameGreeting(t, c),
@@ -34508,6 +34794,10 @@ function talkTo(t){
   /* THE HOUSE SELLS BOUTS, NOT NEWS. Above the generic tree because the pit-master is faction
      'town' with a post and would otherwise get the watch conversation about the weather. */
   if(t.pitMaster){ openPit(t); return; }
+  /* THE DOOR, AND THE PERSON BEHIND IT. Both are faction 'town' with a post and would otherwise
+     get the watch's conversation about the weather. */
+  if(t.orchardServant){ if(openDiscourse(t, 'servant')) return; }
+  if(t.orchardDame){ if(openDiscourse(t, 'dame')) return; }
   if(!speaksAtAll(t)){ say(t, pick(['...', 'It does not turn its head.', 'Something behind its face declines to answer.'])); return; }
   if(isWatch(t)){ if(openDiscourse(t, 'guard')) return; }
   /* THE OTHER PRACTITIONER GETS A CONVERSATION TOO. This was in the exclusion list beside the
