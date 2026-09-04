@@ -8428,6 +8428,32 @@ function homeOf(a, b2){
   }
   return null;
 }
+/* the home ONE of them is standing at — a birth needs a roof over the mother, and the father
+   may be a hundred tiles away doing something else */
+function homeAt(c){
+  for(const h of pBuilds){
+    if(h.type !== 'home' || h.progress < 1) continue;
+    if(dist(c.x, c.y, h.x + 2, h.y + 2) < HOME_R) return h;
+  }
+  return null;
+}
+/* ---------- SOMEWHERE TO BE BORN ----------
+   "Maybe like M&B2 style, it can happen anytime while the married couple are TOGETHER... Then
+    the woman needs to visit an inn or a homestead to 'deliver' the baby. That way, a married
+    couple isn't basically out of play for half the game just to continue the family line."
+   The old rule put the whole cost at the FRONT: a player couple could not conceive at all
+   without a finished homestead and both of them standing in it, and then the child simply
+   appeared wherever they happened to be when the clock ran out. This moves the cost to the
+   END, where it is a journey you can plan instead of a building you must finish first.
+   An inn bed is a room for the night and always was — no fee is taken here, she is using the
+   roof rather than renting it. */
+const BIRTH_BED_R = 6;
+function birthPlace(c){
+  const h = homeAt(c);
+  if(h) return {kind: 'home', home: h};
+  for(const bd of beds) if(dist(c.x, c.y, bd.x, bd.y) < BIRTH_BED_R) return {kind: 'inn', town: bd.town};
+  return null;
+}
 
 /* ============================================================ PLAYER BUILDINGS */
 const pBuilds = [];
@@ -16475,6 +16501,13 @@ let castMode = null; /* {caster, spell} */
 /* (risenN hoisted above worldgen — roaming necromancers count against it too) */
 let muleN = 0;
 const AGE_YEAR_DAYS = 7;   /* a year passes in a week. Lives here are short and everyone knows it. */
+/* ---------- AND NINE MONTHS OF IT ----------
+   Twelve days was written without the calendar in front of it: a year here is SEVEN days, so
+   twelve was a pregnancy of one year and nine months, and half of "out of play for half the
+   game" was this number alone. Nine months on this world's own calendar is 5.25 days; six is
+   that rounded up, and it leaves the trip to a bed feeling like a deadline rather than a
+   formality. */
+const GESTATION = 6;
 /* the peoples of the dust */
 /* RACES, SUBRACES and their helpers now live above `makeChar` — worldgen builds bodies
    long before this point and a table in its temporal dead zone takes the script with it. */
@@ -19315,42 +19348,70 @@ function update(dt){
             c.pregnant = 3;   /* the world waits for room */
             continue;
           }
+          /* ---------- AND SHE HAS TO BE SOMEWHERE ----------
+             Only for YOUR people. The towns have their own roofs and the bands on the road
+             have whatever they have; gating the whole world on a bed would quietly stop the
+             population growing, which is not what was asked for and would be invisible until
+             the map emptied. Yours come to term and then need an inn or a homestead, and
+             `pregnant` is held at 1 so the clock asks again tomorrow — the same way it already
+             waits for room under the banner. */
+          if(c.faction === 'player' && !birthPlace(c)){
+            c.pregnant = 1;
+            c.overdue = (c.overdue || 0) + 1;
+            /* said when she comes to term and then once a week, not every midnight */
+            if(c.overdue === 1 || c.overdue % 7 === 0)
+              log(`${c.name} is at her term and there is no roof for it. Take her to an inn, or home.`, 'bad');
+            continue;
+          }
+          const where = c.faction === 'player' ? birthPlace(c) : null;
+          c.overdue = 0;
           const ksex = rnd() < 0.5 ? 'f' : 'm';
           /* a child takes the family name — that is what a family name is for */
           const surn = (c.name || '').split(' ').slice(1).join(' ');
           const kid = makeChar(pickNameFor(ksex, false, c.race, c.sub) + (surn ? ' ' + surn : ''), c.faction, c.x + 0.6, c.y,
             {atk:1, def:1, tough:2, ath:3, age: 0, sex: ksex});
           /* the house keeps the tally, not the parents — it is the house that fills up, and a
-             couple who build a second one have somewhere to put the next child */
-          if(c.faction === 'player'){
-            const sp = chars.find(o => o.id === c.spouse);
-            const h = sp ? homeOf(c, sp) : null;
-            if(h){ h.kids = (h.kids || 0) + 1; h.bornDay = day; }
+             couple who build a second one have somewhere to put the next child. Taken off the
+             house she DELIVERED in rather than off a `homeOf(c, spouse)` that needs the father
+             standing there too: a child born at the homestead is that homestead's child
+             whatever the father was doing at the time. */
+          if(c.faction === 'player' && where && where.kind === 'home'){
+            where.home.kids = (where.home.kids || 0) + 1; where.home.bornDay = day;
           }
+          /* and the season between children rides the MOTHER, because there is no longer
+             always a house to hang it on */
+          c.lastBorn = day;
           kid.wasChild = true;
           kid.race = c.race;
           kid.homeTown = c.homeTown || null;
           if(c.civ) kid.civ = true;
           chars.push(kid);
-          if(c.faction==='player') log(`A child is born to ${c.name}. The dust has a new name to learn.`, 'good');
+          if(c.faction==='player') log(where && where.kind === 'inn'
+            ? `A child is born to ${c.name} in an inn at ${where.town ? where.town.name : 'the crossroads'}. The dust has a new name to learn.`
+            : `A child is born to ${c.name}. The dust has a new name to learn.`, 'good');
         }
       }
     }
-    /* ---------- AND A CHILD NEEDS SOMEWHERE TO BE RAISED ----------
-       Reported: "there should be an easier way for a courting/wed couple to have kids. Right
-       now I do not see any means for them to actually do so, and I have waited for many days."
-       IT DID WORK, AND THAT IS THE POINT — measured before changing anything: a staged wed
-       couple standing together produced 5 pregnancies and 5 births over 200 game-days. At 2% a
-       day that is a fifty-day wait for the first one, and the pair had to be within eight
-       tiles AT THE MIDNIGHT TICK, which two people on different jobs frequently are not. So
-       the feature was invisible rather than absent, which is the worst way for one to be.
-       THE HOME IS THE FIX AND THE GATE AT ONCE. Build the couple a homestead and the rate goes
-       from one-in-fifty to one-in-eight, and the eight-tile test becomes "both of them are
-       home" — which two people who live somewhere are, every night. Without one, nothing: a
-       child needs a room, and that is a thing you can go and do something about, unlike a 2%
-       roll you cannot see.
-       AND THERE ARE LIMITS, because a homestead should not become a barracks: one at a time,
-       a season between them, and a house is full at three. */
+    /* ---------- WHERE A CHILD IS MADE, AND WHERE IT IS BORN ----------
+       Reported first: "there should be an easier way for a courting/wed couple to have kids.
+       Right now I do not see any means for them to actually do so." It DID work — a staged wed
+       couple standing together made 5 children over 200 game-days — but at 2% a day off a test
+       both of them had to pass AT THE MIDNIGHT TICK, so it was invisible rather than absent.
+       The answer then was the homestead: build one and the rate went to one-in-eight, and
+       without one, nothing.
+       Reported second, and it is the same rule seen from the other end: "a married couple isn't
+       basically out of play for half the game just to continue the family line." A gate at the
+       FRONT is exactly that. You cannot start a line until a building is finished, and then the
+       pair has to live in it, and the child appears wherever they happen to be standing when
+       the clock runs out — so the whole cost is paid up front and nothing about it is a scene.
+       SO THE COST MOVES TO THE END. Conception is what it should have been all along: two
+       married people TOGETHER, anywhere in the world, at a low rate. A homestead is now a
+       reason rather than a requirement — six times the rate, which is still the whole argument
+       for building one. And the child is not born on a road: she comes to term, and then she
+       needs an inn or a homestead, which is a journey with a deadline instead of a wait.
+       THE LIMITS STAY, and one of them had to move. A house is still full at three and still
+       wants a season between children — but a couple with no house had no tally to hang that on,
+       so the season now rides the MOTHER as well, wherever she lives. */
     for(const a of chars){
       if(!a.spouse || a.pregnant || a.state==='dead' || a.undead) continue;
       const b = chars.find(o => o.id === a.spouse && o.state !== 'dead');
@@ -19358,18 +19419,20 @@ function update(dt){
       if(a.id > b.id) continue;   /* roll each pair once */
       if(!pairBreeds(a, b)) continue;   /* a succubus is the exception — see pairBreeds */
       if(a.age < 18 || a.age > 50 || b.age < 18 || b.age > 50) continue;
-      /* a player couple needs a house; everybody else in the world goes on as before, since
-         the towns have their own roofs and are not the thing that was reported */
-      const mine = a.faction === 'player' || b.faction === 'player';
+      /* TOGETHER is the one thing that is never optional. A homestead they are both standing in
+         satisfies it by construction, and a pair on opposite sides of the map does not. */
+      if(dist(a.x, a.y, b.x, b.y) > 8) continue;
+      if(day - Math.max(a.lastBorn ?? -999, b.lastBorn ?? -999) < 90) continue;
       let rate = 0.02;
-      if(mine){
-        const h = homeOf(a, b);
-        if(!h) continue;
-        if(day - (h.bornDay || -999) < 90) continue;        /* a season between children */
-        if((h.kids || 0) >= 3) continue;                    /* and the house is full at three */
-        rate = 0.12;
-      } else if(dist(a.x, a.y, b.x, b.y) > 8) continue;
-      if(rnd() < rate){ (rnd() < 0.5 ? a : b).pregnant = 12; }
+      const h = (a.faction === 'player' || b.faction === 'player') ? homeOf(a, b) : null;
+      if(h && (h.kids || 0) < 3 && day - (h.bornDay || -999) >= 90) rate = 0.12;
+      if(rnd() < rate){
+        /* SHE CARRIES IT. This used to be a coin toss between the two of them, which put half
+           the pregnancies in the game on a husband. Where the pair gives no answer — two wives,
+           two husbands; this game marries who it likes — the coin comes back. */
+        const mum = a.sex === 'f' && b.sex !== 'f' ? a : b.sex === 'f' && a.sex !== 'f' ? b : (rnd() < 0.5 ? a : b);
+        mum.pregnant = GESTATION;
+      }
     }
     /* new lives: town couples raise children */
     for(const t of towns){
@@ -28532,7 +28595,7 @@ function refreshCharPanel(){
       relTxt = bd >= 250 ? ` · devoted to ${other.name}` : bd >= 100 ? ` · close with ${other.name}` : '';
     }
   }
-  if(c.pregnant) relTxt += ' · expecting';
+  if(c.pregnant) relTxt += c.overdue ? ' · DUE — needs a bed' : ' · expecting';
   if(c.grief) relTxt += ' · grieving';
   /* the LINE is the thing worth reading on a panel — 'Human' says nothing, 'Pitborn' says
      where the toughness came from and why the medicine is not coming */
@@ -33346,7 +33409,7 @@ function snapshot(){
     isLeader: c.isLeader ?? -1, captain: !!c.captain, omni: !!c.omni,
     npcNecro: !!c.npcNecro, roamNecro: !!c.roamNecro, rebel: !!c.rebel,
     age: c.age, goal: c.goal, wasChild: !!c.wasChild, legacyTrade: c.legacyTrade||null,
-    race: c.race||'human', sub: c.sub||null, construct: !!c.construct, sex: c.sex||'m', spouse: c.spouse||0, partner: c.partner||0, grief: c.grief||0, pregnant: c.pregnant||0,
+    race: c.race||'human', sub: c.sub||null, construct: !!c.construct, sex: c.sex||'m', spouse: c.spouse||0, partner: c.partner||0, grief: c.grief||0, pregnant: c.pregnant||0, lastBorn: c.lastBorn ?? null, overdue: c.overdue||0,
     pilgrimDestI: c.pilgrimage ? towns.indexOf(c.pilgrimage.dest) : -1,
   });
   return {
@@ -33769,7 +33832,7 @@ function restore(d){
     fixRace(s);
     c.race = s.race || 'human'; c.sub = s.sub || null; c.spouse = s.spouse || 0;
     c.construct = s.construct !== undefined ? !!s.construct : !!(RACES[c.race] || {}).construct;
-    c.sex = s.sex || 'm'; c.partner = s.partner || 0; c.grief = s.grief || 0; c.pregnant = s.pregnant || 0;
+    c.sex = s.sex || 'm'; c.partner = s.partner || 0; c.grief = s.grief || 0; c.pregnant = s.pregnant || 0; c.lastBorn = s.lastBorn ?? null; c.overdue = s.overdue || 0;
     if(c.civ) c.civT = rnd()*10;
     if(s.pilgrimDestI >= 0) c.pilgrimage = {dest: towns[s.pilgrimDestI], waitT: 0};
     c._mid = s.masterId; c._fid = s.followId; c._did = s.dragId; c._cid = s.carryId; c._gid = s.guardTargetId;

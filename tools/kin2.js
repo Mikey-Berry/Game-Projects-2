@@ -13,8 +13,18 @@
  * births happen" would have been green throughout.
  *
  * So every assertion here is a RATE or a LIMIT, and the two halves are tested against each
- * other: no house means no children, a house means children soon enough to see, and the limits
- * hold so a homestead cannot become a barracks.
+ * other: a house means children soon enough to see, and the limits hold so a homestead cannot
+ * become a barracks.
+ *
+ * REWRITTEN AFTER THE M&B2 REWORK, because two of these claims had become claims about a rule
+ * that no longer exists. The homestead used to be a GATE — no house, no conception at all —
+ * and it is now an INCENTIVE: two married people together anywhere conceive at 2% a night, a
+ * homestead they both stand in makes it 12%, and the cost moved to the far end, where the
+ * child has to be born under a roof. So "no house, no children" is still TRUE and no longer
+ * true for the reason it says: they conceive on the road and never deliver there. It is
+ * written out that way now. And "a full house takes no more" was flatly wrong under the new
+ * rule and failed, correctly — a full house stops being a bonus, it does not stop a couple.
+ * The hard stop that replaces it is the season, which now rides the mother.
  *
  *   node tools/kin2.js [game.html]
  */
@@ -67,26 +77,49 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* THE ROLLOVER IS `if(hour >= 24)` INSIDE `update`, so the clock is pushed to the boundary
        and one step taken — a whole game-day of bookkeeping without simulating the 192 real
        seconds a day costs at HOUR_SEC 8. */
+    /* AND THE AUTOSAVE IS STUBBED FOR THE DURATION. The day block ends with
+       `packSaveText(snapshot())` — the whole world serialised and then compressed — and this
+       file rolls several hundred midnights. It was 95 seconds, almost all of it writing saves
+       nobody reads, which is also why the windows below used to be too short to separate a
+       rate from a stop. Put back at the end. */
+    const _snap = snapshot, _pack = packSaveText;
+    snapshot = () => ({});
+    packSaveText = () => new Promise(() => {});
     const runDays = (n, keepAt) => {
       let births = 0;
       const real = log;
       window.log = (m, k) => { if (/child is born/i.test(String(m))) births++; return real(m, k); };
       for (let d = 0; d < n; d++) {
         hour = 23.999; update(1 / 30);
-        if (keepAt) for (const c of keepAt.who) { c.x = keepAt.x + (c.sex === 'f' ? 0 : 0.5); c.y = keepAt.y; }
+        if (keepAt) for (const c of keepAt.who) { c.x = keepAt.x + (c.sex === 'f' ? 0 : 0.5); c.y = keepAt.y; c.age = 26; }
       }
       window.log = real;
       return births;
     };
 
-    /* ---------- 1. NO HOUSE, NO CHILDREN ---------- */
-    guard(['aCoupleWithNowhereToLive'], () => {
+    /* ---------- 1. NOWHERE TO LIVE: A CHILD IS STARTED AND NEVER ARRIVES ----------
+       The same hundred and twenty days as before and the same zero at the end of it, for a
+       different reason. Both halves are asked, because the count alone cannot tell "the gate
+       is still at the front" from "the gate has moved to the back". */
+    guard(['aCoupleWithNowhereToLive', 'butTheyDoConceive'], () => {
       clean();
       const [w, h] = couple(me.x + 3, me.y + 3);
-      const births = runDays(120, { who: [w, h], x: me.x + 3, y: me.y + 3 });
+      let carried = 0;
+      const real = log;
+      let births = 0;
+      window.log = (m, k) => { if (/child is born/i.test(String(m))) births++; return real(m, k); };
+      for (let d = 0; d < 120; d++) {
+        hour = 23.999; update(1 / 30);
+        w.x = me.x + 3; w.y = me.y + 3; h.x = me.x + 3.5; h.y = me.y + 3; w.age = 26; h.age = 26;
+        if ((w.pregnant || 0) > 0 || (h.pregnant || 0) > 0) carried++;
+      }
+      window.log = real;
       R.aCoupleWithNowhereToLive = births === 0
-        ? 'a wed couple with nowhere to live have no children in a hundred and twenty days — the house is the gate'
-        : `!! ${births} CHILDREN WITH NO HOMESTEAD ANYWHERE`;
+        ? 'a wed couple with nowhere to live still have no children in a hundred and twenty days'
+        : `!! ${births} CHILDREN WITH NO ROOF ANYWHERE`;
+      R.butTheyDoConceive = carried > 0
+        ? `— but not because they cannot start one: she was carrying on ${carried} of those nights and had nowhere to deliver. The gate is at the far end now.`
+        : '!! AND THEY NEVER CONCEIVED EITHER — the homestead is still a gate at the front';
       clean();
     });
 
@@ -104,7 +137,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       window.log = (m, k) => { if (/child is born/i.test(String(m))) births++; return real(m, k); };
       for (let d = 0; d < 90; d++) {
         hour = 23.999; update(1 / 30);
-        w.x = hx; w.y = hy; h.x = hx + 0.5; h.y = hy;
+        w.x = hx; w.y = hy; h.x = hx + 0.5; h.y = hy; w.age = 26; h.age = 26;
         if (births > 0 && first < 0) first = d + 1;
       }
       window.log = real;
@@ -129,32 +162,49 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const hx = me.x + 20, hy = me.y + 20;
       const h2 = house(hx, hy);
       const [w, h] = couple(hx, hy);
-      const window40 = () => {
+      /* A HUNDRED NIGHTS, NOT FORTY. At 2% against 12% a forty-night window separates the two
+         rates by about four counts against one, which is not a margin — it is a coin landing
+         the way you wanted. A hundred puts roughly two against twelve between them. */
+      const window40 = (n = 100) => {
         let got = 0;
-        for (let d = 0; d < 40; d++) {
+        for (let d = 0; d < n; d++) {
           hour = 23.999; update(1 / 30);
-          w.x = hx; w.y = hy; h.x = hx + 0.5; h.y = hy;
+          /* AND THE AGE IS PINNED. Everything that breathes ages 1/7 of a year a midnight and
+             conception stops at fifty; four windows of a hundred nights carried this couple to
+             eighty-three, and the last two windows measured nothing but that. The forty-night
+             version was already at forty-nine by its last window — right on the edge, passing. */
+          w.x = hx; w.y = hy; h.x = hx + 0.5; h.y = hy; w.age = 26; h.age = 26;
           if ((w.pregnant || 0) > 0 || (h.pregnant || 0) > 0) { got++; w.pregnant = 0; h.pregnant = 0; }
         }
         return got;
       };
-      /* a full house */
-      h2.kids = 3; h2.bornDay = -999; w.pregnant = 0; h.pregnant = 0;
+      const clear = () => { w.pregnant = 0; h.pregnant = 0; w.lastBorn = null; h.lastBorn = null; };
+      /* a full house — under the new rule this is not a stop, it is the loss of a bonus */
+      h2.kids = 3; h2.bornDay = -999; clear();
       const whenFull = window40();
-      /* and a house that has just had one */
-      h2.kids = 0; h2.bornDay = day; w.pregnant = 0; h.pregnant = 0;
-      const whenFresh = window40();
-      /* and the control: neither, so the rule is not simply off */
-      h2.kids = 0; h2.bornDay = -999; w.pregnant = 0; h.pregnant = 0;
+      /* the same couple with no house at all, which is what a full house is now worth */
+      const hi = pBuilds.indexOf(h2); pBuilds.splice(hi, 1);
+      clear();
+      const whenNone = window40();
+      pBuilds.push(h2);
+      /* a mother who has just given birth — THIS is the hard stop now, and it rides her rather
+         than the building, because a couple on the road has no building to hang it on */
+      /* SIXTY, BECAUSE THE SEASON IS NINETY. Asked over a hundred nights this window runs out
+         the far side of the cooldown and counts the conceptions that are supposed to happen
+         after it — three of them, which is the rule working and the probe misreading it. */
+      h2.kids = 0; h2.bornDay = -999; clear(); w.lastBorn = day;
+      const whenFresh = window40(60);
+      /* and the control: none of it set, so the rule is not simply off */
+      h2.kids = 0; h2.bornDay = -999; clear();
       const whenFree = window40();
-      R.andAHouseFillsUp = whenFull === 0
-        ? 'and a house with three in it takes no more — a homestead is not a barracks'
-        : `!! ${whenFull} PREGNANCIES IN A FULL HOUSE`;
+      R.andAHouseFillsUp = whenFull < whenFree && Math.abs(whenFull - whenNone) <= Math.max(2, whenFree - whenFull)
+        ? `and a full house stops being worth anything — ${whenFull} in a hundred nights against ${whenFree} with room, which is what the same couple manage with no house at all (${whenNone}). A homestead is not a barracks.`
+        : `!! A FULL HOUSE IS STILL AS GOOD AS AN EMPTY ONE (full ${whenFull}, none ${whenNone}, free ${whenFree})`;
       R.andASeasonPassesBetween = whenFresh === 0
-        ? 'and a season has to pass after each one'
-        : `!! ${whenFresh} PREGNANCIES INSIDE THE COOLDOWN`;
+        ? 'and a season has to pass after each one — sixty nights of nothing, kept on the mother so it holds on the road too'
+        : `!! ${whenFresh} PREGNANCIES INSIDE THE SEASON`;
       R.andTheyComeOneAtATime = whenFree > 0
-        ? `while a house with room and no recent birth conceives ${whenFree} times in forty days — the limits are limits, not an off switch`
+        ? `while a house with room and no recent birth conceives ${whenFree} times in a hundred nights — the limits are limits, not an off switch`
         : '!! AN EMPTY HOUSE OFF COOLDOWN CONCEIVED NOTHING — THE RULE IS JUST OFF';
       clean();
     });
@@ -193,6 +243,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! IN BUILD_CATS: ${listed}, ON THE BAR: ${onBar}`;
     });
 
+    snapshot = _snap; packSaveText = _pack;
     return R;
   });
 
