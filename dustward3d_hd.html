@@ -2606,6 +2606,19 @@ function moveSpeed(c){
   const p = c._bandPace;
   return (p > 0 && p < s) ? Math.max(0.5, p) : s;
 }
+/* ---------- what a graft is worth ----------
+   tier 1 bone graft: it holds you up. Barely.
+   tier 2 skeleton limb: workmanlike.
+   tier 3 articulated: pre-Fracture engineering. Better than the arm you were born with.
+   TOP LEVEL, ON PURPOSE. This table and its reader sat INSIDE moveSpeedRaw for twelve days,
+   between two of its statements, so they were locals of the one function that happened to
+   surround them. `atkPower` and the WEAR button both read them as globals: a grafted arm
+   threw `prosVal is not defined` on every swing (and unwound the rest of that sim step with
+   it), and fitting a graft consumed the item, marked the limb, and then threw before the log
+   line. Nothing warned, because a function-scoped `const` is perfectly legal — it is just
+   invisible from anywhere else. tools/grafts.js pins all three readers. */
+const PROS_TIER = {1: 0.45, 2: 0.75, 3: 1.10};
+function prosVal(p){ return p.pros ? (PROS_TIER[p.prosTier || 2] || 0.75) : 0; }
 function moveSpeedRaw(c){
   let s = 3.4 * (1 + c.stats.ath*0.012);
   s *= 1 - armorPen(c);
@@ -2651,12 +2664,6 @@ function moveSpeedRaw(c){
     if(grade > 0.22) s *= 1 - Math.min(0.45, (grade - 0.22) * 0.5);
   }
   const ll = c.parts['l.leg'], rl = c.parts['r.leg'];
-/* ---------- what a graft is worth ----------
-   tier 1 bone graft: it holds you up. Barely.
-   tier 2 skeleton limb: workmanlike.
-   tier 3 articulated: pre-Fracture engineering. Better than the arm you were born with. */
-const PROS_TIER = {1: 0.45, 2: 0.75, 3: 1.10};
-function prosVal(p){ return p.pros ? (PROS_TIER[p.prosTier || 2] || 0.75) : 0; }
 /* no legs at all is not zero speed — it is a crawl */
 const legFactor = (leg) => leg.severed ? (leg.pros ? prosVal(leg) : 0.16) : leg.hp <= 0 ? .25 : leg.hp < 50 ? .65 : 1;
   s *= (legFactor(ll) + legFactor(rl)) / 2;
@@ -9581,12 +9588,23 @@ const charGrid = new Map();
 /* who is who, by id. Rebuilt in the same pass as the grid, so anything that holds an id
    instead of a reference stops paying a linear scan to cash it in. */
 const charById = new Map();
+/* WHO IS HOLDING A WARD, collected in the same pass. `wardedFrom` walked the entire roster for
+   every gaunt with a quarry, every tick, to find the two or three bodies (usually none) holding
+   Ainzopha'ar's Light — chars × hunters calls to `isConcentrating` a step, 10% of the sim in a
+   world with no light lit at all. The candidates are gathered here, where every body is
+   already being looked at, and `startConcentration` adds a light raised mid-step so it is seen
+   the same tick it is lit. The reader still asks the real predicate of each candidate, so a
+   caster who has let go or gone down since the pass is not found. Like the grid, this is only
+   as fresh as the last `rebuildCharGrid()`, which `update()` calls first thing. */
+const warders = [];
 function rebuildCharGrid(){
   charGrid.clear();
   charById.clear();
+  warders.length = 0;
   for(const c of chars){
     charById.set(c.id, c);
     if(c.state !== 'ok') continue;
+    if(c.concentrating && c.concentrating.key === 'warding') warders.push(c);
     const k = ((c.y/CELL)|0)*GW + ((c.x/CELL)|0);
     const a = charGrid.get(k);
     if(a) a.push(c); else charGrid.set(k, [c]);
@@ -11550,7 +11568,7 @@ function physics(c, dt){
      forward while quietly forgetting who it was walking at. */
   if(wardTurns(c)){
     if(c.target && wardedFrom(c.target)){ c.target = null; }
-    const ward = (function(){ for(const o of chars){ if(isConcentrating(o,'warding') && o.state==='ok' && (o.floor||0)===(c.floor||0) && dist(o.x,o.y,c.x,c.y) < WARD_RADIUS + 1.5) return o; } return null; })();
+    const ward = lightNear(c, WARD_RADIUS + 1.5);   /* was an inline walk of all of `chars`, per gaunt, per tick */
     if(ward){
       const d = Math.max(0.01, dist(c.x,c.y,ward.x,ward.y));
       stepToward(c, c.x + (c.x-ward.x)/d * 4, c.y + (c.y-ward.y)/d * 4, dt);
@@ -15323,16 +15341,24 @@ function gauntDawn(){
    a friend who goes down is not lost — only on a clock, and likely to come back short a limb. */
 function mawQuarry(c){
   let best = null, bd = 40;
+  /* WHAT THE OTHERS HAVE ALREADY CLAIMED, read once. This was `chars.some(m => m.mawTarget
+     === o && m !== c)` inside BOTH loops below — the whole roster walked again for every
+     candidate, so one search cost (down + corpses) × chars and grew with the corpse count,
+     which is to say it was cheapest on a quiet day and worst on a battlefield. Chrome's
+     sampling profiler put the two `some` callbacks at 37% of every sim step on day one with
+     six corpses in the world. One pass builds the set; the loops ask it. */
+  const claimed = new Set();
+  for(const m of chars) if(m !== c && m.mawTarget) claimed.add(m.mawTarget);
   /* the fallen are better eating than the long dead */
   for(const o of chars){
     if(o.state !== 'down' || o.faction === 'gaunt') continue;
-    if(chars.some(m => m.mawTarget === o && m !== c)) continue;
+    if(claimed.has(o)) continue;
     const d = dist(o.x, o.y, c.x, c.y);
     if(d < bd * 0.75){ bd = d; best = o; }
   }
   if(best) return best;
   for(const b of corpses){
-    if(chars.some(m => m.mawTarget === b && m !== c)) continue;
+    if(claimed.has(b)) continue;
     const d = dist(b.x, b.y, c.x, c.y);
     if(d < bd){ bd = d; best = b; }
   }
@@ -15353,6 +15379,7 @@ function mawLair(c){
   return c.lairSpot;
 }
 const MAW_PARTS = ['larm', 'rarm', 'lleg', 'rleg'];
+const MAW_RETRY = 1.5;   /* seconds a searcher waits after finding nothing (see mawFeed) */
 function mawFeed(c, dt){
   if(!c.eatsDead || c.state !== 'ok') return false;
   if(c.target) return false;                     /* it will fight if pressed */
@@ -15362,9 +15389,16 @@ function mawFeed(c, dt){
     c.mawTarget = null; c.dragging = null; c.lairSpot = null;
   }
   if(!c.mawTarget){
+    /* AND A SEARCH THAT FOUND NOTHING IS NOT ASKED AGAIN NEXT TICK. 151 bodies carry
+       `eatsDead` in a fresh world and one of them had a quarry; the other 150 re-ran the
+       search thirty times a second and found the same nothing — measured at 60µs a search,
+       9ms of a 19ms step. A miss now waits MAW_RETRY before asking again, staggered off the
+       id so the pack does not all ask on the same tick. A Maw that notices a fresh corpse a
+       second and a half late is not a change anybody can see; a step half the size is. */
+    if(c.mawSearchT > 0){ c.mawSearchT -= dt; return false; }
     c.mawTarget = mawQuarry(c);
     c.dragging = null; c.lairSpot = null; c.mawT = 0;
-    if(!c.mawTarget) return false;
+    if(!c.mawTarget){ c.mawSearchT = MAW_RETRY + (c.id % 10) * 0.1; return false; }
   }
   const q = c.mawTarget;
 
@@ -16564,6 +16598,7 @@ function concMobile(c){ return !!(c.concentrating && c.concentrating.mobile); }
 function startConcentration(c, key, lock, exclusive, mobile){
   if(c.concentrating) endConcentration(c, true);
   c.concentrating = {key, lock: lock || 0, exclusive: !!exclusive, mobile: !!mobile};
+  if(key === 'warding' && c.state === 'ok' && !warders.includes(c)) warders.push(c);   /* seen this tick, not the next — see rebuildCharGrid */
   if(c.mana > maxMana(c)) c.mana = maxMana(c);   /* the reserve is taken from what you have */
   const sp = SPELLS[key];
   log(`${c.name} begins to concentrate — ${sp ? sp.label : key}.`, '');
@@ -17950,18 +17985,29 @@ function castWarding(c){
    AND IT ASKS NOTHING ABOUT FACTION, unlike `wardedFrom` two lines down, which protects its
    own side. A paladin's light burns your risen and yours burns theirs. The dead are the dead. */
 const WARD_SEAR = 1.4;
-function wardSears(c){
-  if(!c || !c.undead) return null;
-  for(const o of chars){
+/* the nearest live light on this body's storey within r, whoever holds it. THE ONE LOOP; three
+   copies of it used to walk all of `chars` per call — here, in `wardedFrom`, and inline in
+   `physics` for every gaunt every tick, which was the copy the profiler filed under
+   `isConcentrating` (the callee) and so the one that hid. Reads the candidates rebuildCharGrid
+   gathered and still asks the real predicate of each, so a light let go this tick is not found. */
+function lightNear(c, r = WARD_RADIUS){
+  for(const o of warders){
     if(!isConcentrating(o, 'warding') || o.state !== 'ok') continue;
     if((o.floor||0) !== (c.floor||0)) continue;
-    if(dist(o.x, o.y, c.x, c.y) < WARD_RADIUS) return o;
+    if(dist(o.x, o.y, c.x, c.y) < r) return o;
   }
   return null;
 }
+function wardSears(c){
+  if(!c || !c.undead) return null;
+  return lightNear(c);
+}
 /* is this point inside a live warding aura held by a non-hostile caster? */
 function wardedFrom(c){
-  for(const o of chars){
+  /* the candidates are the few bodies rebuildCharGrid found holding a light (plus any lit since);
+     the predicate is still asked of each, so a light let go this tick is not found. This walked
+     all of `chars` for every hunter every tick, and was 10% of the step with nothing lit. */
+  for(const o of warders){
     if(!isConcentrating(o, 'warding') || o.state !== 'ok') continue;
     if(hostile(o, c)) continue;                 /* the ward protects its own side */
     if((o.floor||0) !== (c.floor||0)) continue;

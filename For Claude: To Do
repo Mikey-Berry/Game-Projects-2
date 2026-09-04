@@ -5617,3 +5617,85 @@ byte-identical geometry in two different tints. At playing distance a tint is no
 whole argument for the slot was that a drape reads before the face does — so the one that HIDES
 THE DEAD cannot be a recolour of a travelling coat. It is hooded now, longer, and cut ragged at
 the hem, and the hood hangs off `e.headG` so it turns with the head.
+
+[DONE] A GRAFT WAS A LIMB NOBODY COULD USE. `PROS_TIER` and `prosVal` sat BETWEEN TWO STATEMENTS
+OF `moveSpeedRaw` — after `const ll, rl` and before the line that uses `legFactor` — so they were
+locals of the one function that happened to surround them. Legal, and nothing warned, because a
+function-scoped `const` is invisible rather than wrong. Two other readers took them for globals:
+`atkPower` threw `prosVal is not defined` for any body with a grafted arm, on every swing, from
+inside `update()`, which unwound the rest of that sim step with it (and `frame()` stops logging
+after three, so after three swings it was silent); and the WEAR button spent the graft, marked the
+limb fitted, and threw on `PROS_TIER[tier]` before the log line, so the fit half-worked and the
+player saw nothing. Since 7c56501, the commit that wrote the table. Legs were fine the whole time,
+which is why nobody noticed.
+    THE TABLE IS AT THE TOP LEVEL NOW, above `moveSpeedRaw`, and tools/grafts.js pins all three
+readers plus the leg as a control. Red five ways on the build before it.
+    AND A PROBE THAT COUNTS HIT POINTS COUNTS WHATEVER MOVES THEM. The first sim case set the
+foe's blood to 400 so it could not go down and counted every drop as a blow — `bodyTick` settles
+blood back toward the body's real maximum, so it counted three "blows" in nineteen steps on the
+broken build before a single windup had finished, and went green. The signal is now a swing
+reaching `applyDamage`, which `attack()` only calls AFTER `atkPower`, so the throw lands first on
+the broken build and the counter stays at zero.
+    FOUND BY A LINTER, NOT A PLAYER. ESLint `no-undef` on the script block reports it in two
+seconds; `prep.js` runs a syntax check and nothing else. That is the argument for wiring one in.
+
+[DONE] THE CARRION MAW WAS HALF THE SIM. Not a report — a profile. Chrome's sampling profiler over
+six hundred steps of `update()` on day one, 1,067 bodies, put `mawQuarry` at 44.9% inclusive and
+`mawFeed` at 51.2%, with the two `chars.some(...)` callbacks inside the quarry search at 23.4% and
+13.5% SELF. Nothing else in the world was above 5%.
+    TWO FAULTS COMPOSED. The search checked "has another Maw claimed this body" by walking the whole
+roster again for every candidate, so one search cost (down + corpses) × chars and grew with the
+corpse count — cheapest on a quiet day, worst on a battlefield, which is when the sim is already
+loaded. And a searcher that found nothing asked again next tick: 151 bodies carry `eatsDead` in a
+fresh world (gaunts and their kin), one of them had a quarry, and the other 150 re-ran the search
+thirty times a second. 60µs a search, 150 searchers, 9ms of a 19ms step.
+    A CLAIMED SET BUILT ONCE PER SEARCH, AND MAW_RETRY (1.5s, staggered off the id so the pack
+does not all ask on the same tick) AFTER A MISS. Measured interleaved, three runs a side, per the
+README's own rule: `simcost.js` direct 16.3/17.4/17.1 → 8.1/7.9/8.0 ms a step, the 20s soak
+35/35/40 → 19/17/21. The sampling profile after is 8.2 ms a step and the Maw is off the list. On
+day one the two halves are not equal: one search still costs ~60µs (the claimed set is one pass
+over the roster and so was the old check, at six corpses), so the retry is what halved the step —
+and the claimed set is what stops it growing: with a hundred corpses and ten down bodies staged,
+one search was 2,030µs on the old build and 90µs on this one.
+    AND THE NEXT ONE IS ALREADY VISIBLE: `wardedFrom` walks every body for every body and is
+now 10% of the step (`isConcentrating` 6.1% + `wardedFrom` 4.2%) in a world with no warder
+concentrating at all. Same shape as the `_pl` precompute; not done here.
+    tools/maws.js pins it. THE COUNT IS THE ASSERTION, NOT THE TIME — searches per 90 steps
+(5,435 on the old build, 269 on this one, capped at four a searcher), because a timing under
+suite load is a coin and this file has already recorded that lesson twice. Then the behaviour,
+because a timer that never expires or a set that claims too much would ALSO make the sim faster:
+a corpse put down six tiles from a Maw that has already missed is taken 1.6s later, and two Maws
+beside one body still make one meal of it. The per-search cost is printed as a WATCH.
+
+[DONE] THE LIGHT WAS ASKED OF THE WHOLE WORLD, THREE TIMES OVER. After the Maw came off the profile,
+the next line was `isConcentrating` 6.1% + `wardedFrom` 4.2% of an 8.2ms step, in a world with no
+light lit. `wardedFrom(c)` walked all of `chars` for every gaunt with a quarry, every tick, to find
+the two or three bodies (that day, none) holding Ainzopha'ar's Light. The audit called it "the
+second-largest sim cost, a five-line fix".
+    THE FIRST ANSWER WAS WRONG, AND THE MEASUREMENT SAID SO. The five lines went in — the warders
+gathered once a step in `rebuildCharGrid`, `wardedFrom` reading that list — and three interleaved
+pairs of `simcost.js` came back 8.19 → 8.31 ms a step. Nothing. The count in the harness was
+right (each call asked 1,067 bodies before, 0 after) and the wall clock had not moved, because the
+live-world counter said 176,000 `isConcentrating` calls a step before and 121,000 after: the ward
+walk in `wardedFrom` was 55,000 of them, and the rest were somebody else's.
+    THE PROFILER FILES A LOOP UNDER ITS CALLEE. `wardSears(c)` — asked of every undead in
+`bodyTick` and on every blow in `mitigate` — was the same walk under a different name, and it was
+not the rest either. The rest was an INLINE IIFE in `physics`, three lines under the `wardedFrom`
+call, asked for every gaunt every tick whether a light was near enough to turn from: 113 gaunts ×
+1,067 bodies = 120,000 asks a step. It had no name, so the sampling profiler put every one of its
+samples on `isConcentrating`, and reading the profile by function name never finds it. The tell was
+arithmetic again: 121,000 calls a step is 113 a body, and nothing a body does to ITSELF costs 113.
+    ONE LIST, ONE READER. `lightNear(c, r)` reads the candidates; `wardSears` is `lightNear` gated
+on undead; the IIFE is `lightNear(c, WARD_RADIUS + 1.5)`; `wardedFrom` keeps its faction test.
+`startConcentration` pushes a light raised mid-step so it is seen the tick it is lit, and every
+reader still asks the real predicate of each candidate, so a light let go this tick is not found.
+Measured interleaved three a side: `simcost.js` direct 8.9/8.3/8.3 → 7.0/6.5/7.0 ms a step, the
+sampling profile 8.4 → 7.1, and the live-world predicate count 176,000 → 0 a step.
+    tools/wards.js pins it, COUNTS FIRST: bodies asked per call for all three readers (1,067 →
+0), and `isConcentrating` calls a step in the live world (176k → 0, capped at eight a body). Then
+everything a stale list could get wrong, because a list that is never rebuilt would ALSO be fast:
+a light raised after the pass with no rebuild is seen; a light let go with no rebuild is gone at
+once; the caster down, gone; the enemy beside it, the friend out of range, the friend a storey up,
+none warded; the sear reaches your risen and theirs and not the living; a lesser gaunt driven
+through the real `update()` still lets go of its quarry and walks off; and the caster still holds
+the light on the first step after a save. Red two ways on the build before.
