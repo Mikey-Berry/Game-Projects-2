@@ -130,14 +130,24 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? 'right-clicking the shed offers CRAFT on fabric'
         : `!! THE SHED'S PANEL HAS NO FABRIC BUTTON — it lists ${JSON.stringify(rows)}`;
       if (btn) {
-        btn.click();
+        /* ---------- A BATCH, BECAUSE ONE CRAFT IS A 4% COIN ----------
+           This pressed CRAFT once and asserted fabric appeared. `craftTick` ruins a
+           non-gear item 4% of the time, so the claim was a coin that had been landing the
+           right way — until the underground rework moved the worldgen random stream and it
+           landed the other way: 1 hide consumed, 0 fabric, "THE SHED PRODUCED NO FABRIC" on a
+           build where the shed works perfectly. Measured on the build before that rework, the
+           same probe read 1 hide and 2 fabric.
+           Shift-click is a full shift's work, which the panel itself advertises, and it is the
+           honest way to ask "does the shed weave" — the run stops when the six hide staged
+           above run out, so it also walks the materials-ran-out path on the way. */
+        btn.dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true }));
         /* the order is placed; the work happens at the bench, a bit at a time */
-        for (let i = 0; i < 60 * 30 && weaver.craftJob; i++) { weaver.state = 'ok'; craftTick(weaver, 1 / 30); }
+        for (let i = 0; i < 60 * 120 && weaver.craftJob; i++) { weaver.state = 'ok'; craftTick(weaver, 1 / 30); }
       }
       const gotCloth = campHas('fabric') - cloth0, spentHide = 6 - (campHas('hide') - hide0);
       R.weaving = `it consumed ${spentHide} hide and produced ${gotCloth} fabric`;
       R.andTheClothArrives = gotCloth > 0
-        ? `and pressing it puts ${gotCloth} fabric in the stores`
+        ? `and a shift at it puts ${gotCloth} fabric in the stores`
         : '!! THE SHED PRODUCED NO FABRIC';
       R.andItCostsHide = spentHide > 0
         ? `and it costs hide to do it — ${spentHide} of them`

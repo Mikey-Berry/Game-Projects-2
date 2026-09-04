@@ -850,7 +850,7 @@ function regrowNodes(){
 /* how heavy things are, in kg; anything unlisted weighs 1 */
 const KG = {wood:2, stone:3, copper:2, iron_ore:3.5, c_ingot:1.5, iron:2.5, coal:1.5, vflesh:2, mats:2.5, fabric:0.5, meat:0.6, fruit:0.4, fish:0.6,
   bandage:0.4, rum:1, hide:1, hide_lev:2, tome:1, remains:2, crown:1,
-  w_plank:2.5, w_club:2, w_kat:2, w_rkat:2, w_nod:3.5, w_bow:1.5, w_sinew:1.2, w_xbow:3, w_kingsfang:3, w_pyre:2.5,
+  w_plank:2.5, w_club:2, w_kat:2, w_rkat:2, w_sw:2, w_dag:0.8, w_nod:3.5, w_bow:1.5, w_sinew:1.2, w_xbow:3, w_kingsfang:3, w_pyre:2.5,
   w_lance:3, w_sever:3, aether_cell:0.3, salt:1, a_carap:5, codex:1, lead:4, gold_bar:2, formula_t:0.3, formula_w:0.3, formula_p:0.3, sunder:2, doctrine:0.5,
   a_rag:1, a_lea:3, a_pla:6, a_lev:3, a_shroud:1, a_baroness:5, a_marshal:6, pack_s:1.5, pack_l:3};
 const ITEMS = {
@@ -873,6 +873,19 @@ const ITEMS = {
   w_plank: {name:'Plank',         base:80,  type:'weapon', dmg:9,  wt:'blunt'},
   w_club:  {name:'Iron Club',     base:220, type:'weapon', dmg:14, wt:'blunt'},
   w_rkat:  {name:'Rusty Katana',  base:160, type:'weapon', dmg:12, wt:'cut'},
+  /* ---------- TWO WEAPONS THE WORLD HAS BEEN HANDING OUT FOR A LONG TIME ----------
+     `w_sw` and `w_dag` were spawned by seven different tables — town levies, mercenaries,
+     Bastion soldiers, Guild dusters, the mobile vendors' guards — and NEITHER WAS AN ITEM.
+     `ITEMS[c.weapon]` came back undefined, so every one of those bodies fought bare-handed
+     with a weapon name written on it, and `restore` quite correctly dropped the key on the
+     first reload ("drop gear the build no longer knows about"). Found by the save round-trip
+     probe in `lean.js`, which noticed the key changing across a load and had no idea it was
+     about to catch this instead.
+     They are written the way the spawn tables clearly meant them: an ordinary sword between
+     the rusty katana and the good one, and a sidearm for people whose real weapon is a
+     formula. */
+  w_sw:    {name:'Arming Sword',  base:400, type:'weapon', dmg:16, wt:'cut'},
+  w_dag:   {name:'Dagger',        base:90,  type:'weapon', dmg:7,  wt:'pierce'},
   w_kat:   {name:'Katana',        base:650, type:'weapon', dmg:20, wt:'cut'},
   w_nod:   {name:'Nodachi',       base:1500,type:'weapon', dmg:28, wt:'cut'},
   aether_cell:{name:'Aether Cell', base:220, type:'mat',
@@ -2334,11 +2347,22 @@ function bodiesOf(c){
   if(c.carryList) for(const b of c.carryList) out.push(b);
   return out;
 }
-function dropBodies(c){
+/* `at` PUTS THEM SOMEWHERE, and without it they stay where they were being dragged — which is
+   `c.x - 0.4, c.y + 0.25`, an offset that is invisible everywhere except at the edge of a
+   footprint, where it is the whole difference between a body on the racks and a body beside
+   them. Only the yard delivery passes it; every other caller means "let go here". */
+function dropBodies(c, at){
   const n = carried(c);
   if(!n) return false;
+  const held = (c.carryList ? c.carryList.slice() : []).concat(c.carry ? [c.carry] : []);
   releaseHaulCrew(c);
   c.carry = null; c.carryList = null;
+  if(at) for(let i = 0; i < held.length; i++){
+    /* fanned a little so a delivered pile is not one body drawn six times */
+    held[i].x = at.x + (i % 3 - 1) * 0.45;
+    held[i].y = at.y + (Math.floor(i / 3) - 0.5) * 0.45;
+    held[i].floor = c.floor || 0;
+  }
   log(`${c.name} set ${n > 1 ? n + ' bodies' : 'the body'} down.`, '');
   refreshCharPanel();
   return true;
@@ -2970,7 +2994,7 @@ function poolTake(k, n){
    nodachi and a katana is meant to be a choice about tempo and exposure, not a strictly
    better number. What changes is the grain of the fight. */
 const HEFT = {
-  w_plank: 0.85, w_rkat: 0.90, w_kat: 1.00, w_club: 1.15, w_pyre: 1.20,
+  w_dag: 0.72, w_plank: 0.85, w_rkat: 0.90, w_sw: 0.96, w_kat: 1.00, w_club: 1.15, w_pyre: 1.20,
   w_kingsfang: 1.35, w_sever: 1.40, w_nod: 1.60,
 };
 /* ---------- WHAT NEEDS BOTH HANDS ----------
@@ -9217,6 +9241,7 @@ function craftTick(c, dt){
   const sk = craftSkillFor(j.kind);
   xpGain(c, sk, 0.6);
   const gear = ITEMS[j.out].type === 'weapon' || ITEMS[j.out].type === 'armor';
+  let produced = false;
   if(gear){
     const q = rollQuality(c.stats[sk]);
     if(q === null) j.ruined++;
@@ -9224,6 +9249,7 @@ function craftTick(c, dt){
       const out = tierKey(j.out, q);
       addItem(out, r.n);
       j.made[out] = (j.made[out] || 0) + r.n;
+      produced = true;
       if(q === 'm') addFloat(c.x, c.y - 1, 'MASTERWORK', '#d4a040');
     }
   } else if(rnd() < 0.04) j.ruined++;
@@ -9231,11 +9257,17 @@ function craftTick(c, dt){
     if(ITEMS[j.out].type === 'mat') storeItem(j.out, r.n, c);
     else addItem(j.out, r.n);
     j.made[j.out] = (j.made[j.out] || 0) + r.n;
+    produced = true;
   }
   j.done++;
   /* the book is the shared truth: a hand working an order marks it off as it goes, so shutting
-     the game or losing the crafter does not lose the count */
-  if(j.order){
+     the game or losing the crafter does not lose the count.
+     AND AN ORDER COUNTS WHAT CAME OUT, NOT WHAT WAS TRIED. A shift-click batch is "spend a
+     shift at the bench" and a spoiled attempt is part of that; an ORDER is "I want three
+     ingots", and a 4% ruin quietly turning that into two is the order book failing at the one
+     thing it exists for. Found by `orders2.js` after the worldgen stream moved and the roll
+     landed differently — three ordered, two in the stash, the book empty. */
+  if(j.order && produced){
     j.order.done = Math.min(j.order.want, (j.order.done || 0) + 1);
     if(j.order.done >= j.order.want){
       const i = craftOrders.indexOf(j.order);
@@ -9243,7 +9275,12 @@ function craftTick(c, dt){
       log(`The order is filled — ${j.order.want} × ${ITEMS[j.order.out].name}.`, 'good');
     }
   }
-  if(j.done >= j.want) finishCraft(c, null);
+  /* AND AN ORDER ENDS WHEN THE ORDER IS FILLED, not when the attempts run out. `want` is the
+     right stop for a shift-click batch — that is a shift at the bench — but an order that
+     spoiled one attempt would otherwise stop one short with itself still on the book, which
+     reads to the player as a hand walking away from work it was given. The materials running
+     out is still the other way this ends, in `canAfford` above. */
+  if(j.order ? j.order.done >= j.order.want : j.done >= j.want) finishCraft(c, null);
   return true;
 }
 function benchCrew(b){
@@ -15646,7 +15683,7 @@ function cartDrop(c){
      circle. Bodies are set down INSIDE the footprint — `inBoneyard` reads a position, so a
      corpse stacked one tile short of the racks is a corpse in a field. */
   for(const b of pBuilds){
-    if(b.type === 'boneyard') return {x: b.x + BUILD_TYPES.boneyard.w/2, y: b.y + BUILD_TYPES.boneyard.h/2};
+    if(b.type === 'boneyard') return {yard: true, x: b.x + BUILD_TYPES.boneyard.w/2, y: b.y + BUILD_TYPES.boneyard.h/2};
   }
   const want = ['circle', 'crypt', 'ossuary', 'charnel'];
   let best = null, bd = 1e9;
@@ -15763,8 +15800,40 @@ function cartTick(c, dt){
   if(load > 0){
     const home = cartDrop(c);
     if(!home) return false;
-    if(dist(c.x, c.y, home.x, home.y) > 2.2){ travel(c, home.x, home.y, dt, 1.6); return true; }
-    dropBodies(c);
+    /* ---------- ARRIVING AT THE RACKS IS A PLACE, NOT A RADIUS ----------
+       `cartDrop`'s own comment says it: "bodies are set down INSIDE the footprint — a corpse
+       stacked one tile short of the racks is a corpse in a field". The tolerance here defeated
+       it. A boneyard is 3x3 and `boneyardAt` reaches half a tile past each edge, so the yard is
+       two tiles from its centre in each direction — and this dropped the load at 2.2. Whether a
+       body landed on the racks or beside them came down to which side the hauler walked in
+       from, which is nothing the player can see or do anything about, and a body set down
+       outside is picked straight back up on the next scan: the pick-up-and-drop loop again,
+       one tile further along.
+       Found by `haulers.js` going red after the underground rework — which touched none of
+       this. Seeding the warrens moved the worldgen random stream, the yard came down somewhere
+       else, the hauler approached from the other side, and a latent tolerance became a bug.
+       AND IT STILL HAS TO END. If the racks cannot be stood on — something in the way, a wall
+       against the footprint — ten seconds of trying is enough, and then it puts the body down
+       where it is and the ordinary AI has it. Better a corpse beside the yard than a hand
+       walking in circles for the rest of the game. */
+    const tight = !!home.yard;
+    /* THE CORE, NOT THE MARGIN. `boneyardAt` reaches half a tile past the footprint so that a
+       body set down at the edge still counts — which means a HAULER standing on that margin
+       also reads as "in the yard" while the body it lets go of, four tenths of a tile behind
+       its left shoulder, does not. Measured: hauler at 86.1 inside a yard starting at 86.4,
+       body at 85.7, outside; picked up again on the next scan, set down in the same place,
+       forever. Walk to within a tile of the centre instead. */
+    const arrived = tight ? dist(c.x, c.y, home.x, home.y) <= 1.0 : dist(c.x, c.y, home.x, home.y) <= 2.2;
+    if(!arrived){
+      c.cartHomeT = (c.cartHomeT || 0) + dt;
+      if(c.cartHomeT < 10){ travel(c, home.x, home.y, dt, tight ? 0.5 : 1.6); return true; }
+      /* AND IT STILL HAS TO END. If the racks cannot be reached — something in the way, a wall
+         against the footprint — ten seconds is enough, and the load goes onto the racks anyway
+         rather than beside them, because a body dropped short is a body fetched again. */
+      if(tight){ c.cartHomeT = 0; dropBodies(c, home); return true; }
+    }
+    c.cartHomeT = 0;
+    dropBodies(c, tight ? home : null);
     return true;
   }
   return false;
@@ -24006,6 +24075,18 @@ const WEAPONS = {
     {w:0.13, h:0.028,d:0.085, y:-0.19, col:'#6a5236'},
     {w:0.040,h:0.66, d:0.018, y:-0.53, col:WC.rust},
     {w:0.018,h:0.66, d:0.023, x:0.012, y:-0.53, col:WC.rustLt}]},
+  /* a plain crossguard and a straight blade — the sword everybody who is not somebody carries */
+  w_sw: {rest:{x:0.30, z:0.06}, parts:[
+    {w:0.045,h:0.20, d:0.045, y:-0.08, col:WC.wrapDk},
+    {w:0.17, h:0.032,d:0.045, y:-0.19, col:WC.iron},
+    {w:0.048,h:0.62, d:0.020, y:-0.51, col:WC.dull},
+    {w:0.018,h:0.62, d:0.024, x:0.014, y:-0.51, col:WC.steel}]},
+  /* a hand's length of it, and no guard worth the name */
+  w_dag: {rest:{x:0.26, z:0.05}, parts:[
+    {w:0.038,h:0.11, d:0.038, y:-0.05, col:WC.wrap},
+    {w:0.09, h:0.022,d:0.035, y:-0.11, col:WC.ironLt},
+    {w:0.034,h:0.26, d:0.016, y:-0.25, col:WC.dull},
+    {w:0.014,h:0.26, d:0.019, x:0.010, y:-0.25, col:WC.edge}]},
   /* wrapped grip, brass tsuba, an edge you can see from across a street */
   w_kat: {rest:{x:0.30, z:0.06}, parts:[
     {w:0.045,h:0.22, d:0.045, y:-0.09, col:WC.wrap},
@@ -33444,7 +33525,32 @@ addEventListener('mouseup', e => {
 
 /* ============================================================ SAVE / LOAD */
 function snapshot(){
-  const sChar = c => ({
+  /* ---------- A SAVE ONLY HAS TO WRITE WHAT IS NOT THE DEFAULT ----------
+     Measured when `mobile.js` went red at 4213KB: `chars` was 97.9% of the whole save, 1046
+     bodies at 4036 bytes each — and of that, 1138KB was the word `false`, 938KB was `null`, and
+     618KB was a `parts` block in which 7322 of 7322 entries were at full health and unsevered.
+     Every flag below is written for every body in the world whether it means anything or not.
+     `restore` reads all of them through a default — `!!s.foo`, `s.foo || null`, `s.foo ?? null`
+     — and a MISSING key gives exactly the same answer as a saved `false` or `null` through all
+     three, so leaving them out costs nothing and is not a format change: an old save still
+     loads, because the reader never distinguished the two cases.
+     `construct` IS THE ONE EXCEPTION and it is a real one: `restore` reads it as
+     `s.construct !== undefined ? !!s.construct : !!(RACES[c.race]||{}).construct`, so a golem
+     deliberately saved as not-a-construct would come back a construct if the key vanished. It
+     is kept whatever it holds.
+     `parts` is left alone for now, and it is the next lever if this ever creeps back: dropping
+     it needs `restore` to rebuild the block from the RESTORED stats, and it currently calls
+     `makeChar` with empty opts, so the fresh `parts` it would fall back on are sized off tough
+     2 rather than off the body being loaded. */
+  const SAVE_KEEP = new Set(['construct']);
+  const lean = r => {
+    for(const k in r){
+      const v = r[k];
+      if((v === false || v === null || v === undefined) && !SAVE_KEEP.has(k)) delete r[k];
+    }
+    return r;
+  };
+  const sChar = c => lean({
     id:c.id, name:c.name, faction:c.faction, x:c.x, y:c.y,
     stats:c.stats, gift:c.gift, mana:c.mana, stance:c.stance, parts:c.parts,
     blood:c.blood, maxBlood:c.maxBlood, hunger:c.hunger,

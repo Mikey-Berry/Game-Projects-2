@@ -236,7 +236,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     openBinding(window.__ceilCircle);
     const rows = () => [...document.querySelectorAll('#modalbody .trow')]
       .filter(r => /^(MASS|FORCE|HASTE|KNIT|PLATING|MIND)/.test(r.textContent.trim()));
-    if (!rows().length) { R.thePanelStopsAtTheCeiling = '!! THE BENCH DID NOT DRAW (no axis rows in the modal)'; return R; }
+    /* ---------- THE BENCH IS A PAGE OF ITS OWN NOW ----------
+       "I don't want the main 'default' page to allow for the slider for custom undead. It's
+        just too much and I sometimes forget about it and end up crafting a weirdly unbalanced
+        undead not suited for what I want."
+       So the axes moved off the first page behind a SHAPE / ADJUST button, and this probe —
+       which is about where the panel STOPS, not where it lives — has to walk in the way a
+       player does. Clicking through is the fix; asserting the rows are on the front page would
+       be asserting the thing that was deliberately removed. */
+    if (!rows().length) {
+      const toggle = [...document.querySelectorAll('#modalbody button')]
+        .find(b => /^(SHAPE|ADJUST)$/.test(b.textContent.trim()));
+      R._page = toggle ? `the axes are behind ${toggle.textContent.trim()}, one click in` : '!! NO SHAPE PAGE BUTTON ON THE CIRCLE';
+      if (toggle) toggle.click();
+    }
+    if (!rows().length) { R.thePanelStopsAtTheCeiling = '!! THE BENCH DID NOT DRAW (no axis rows behind the SHAPE page either)'; return R; }
     /* push every + until the panel refuses, exactly as a player would */
     let clicks = 0;
     for (let guard = 0; guard < 200; guard++) {
