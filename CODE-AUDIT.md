@@ -7,8 +7,8 @@ trusting it.
 
 Scope: `dustward3d_hd.html` (36,036 lines, 2.47 MB), the `tools/` harness suite (160 files,
 32,084 lines), and the repository around them. Nothing here is built. The one bug found is
-described, not fixed, because the fix wants a harness beside it and that is a decision for
-the author.
+described in §1.1 and fixed in a later commit on this branch, with a harness beside it;
+the Maw search in §2.1 likewise. Everything else is a finding, not a change.
 
 ---
 
@@ -78,10 +78,9 @@ Introduced by 7c56501 "Every kind names its own" (2026-08-23), which is the comm
 created the table. No harness covers prosthetics (`grep -l pros tools/*.js` finds only two
 incidental matches).
 
-The fix is to move lines 2658–2659 (and the comment above them) out of `moveSpeedRaw`;
-`legFactor` on 2661 can stay where it is. The harness beside it should fit a
-graft through the real button and read the log, and stage a grafted fighter against a
-target and count landed blows — both of which are zero on the current build.
+**Fixed on this branch.** The table and its reader are at the top level above `moveSpeedRaw`;
+`legFactor` stays where it was. `tools/grafts.js` pins all three readers and drives the swing
+through the real `update()`, and is red five ways on the build before the fix.
 
 ### 1.2 Duplicate keys in the save object
 
