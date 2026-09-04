@@ -1473,11 +1473,18 @@ let pyreRead = null;   /* {name, day, x, y} */
    fight inside somebody's walls has to put the shrine down first, in front of everyone, and
    that is a decision rather than vandalism. */
 const SHRINE_R = 19, SHRINE_HP = 220, RECONSECRATE_DAYS = 10;
+/* ---------- A SHRINE'S REACH IS THE SHRINE'S, NOT A CONSTANT ----------
+   It was one number for every stone on the map, which is fine while every town holds the same
+   opinion about the ground. Saltmere does not: it cures its dead in brine and considers the
+   brine holy, and the whole town is inside its own consecration rather than a ring around one
+   stone in the square. `sh.r` where a shrine has one, the constant everywhere else. */
+function shrineR(sh){ return sh.r || SHRINE_R; }
 function consecratedAt(x, y){
   for(const sh of shrines){
     if(sh.broken) continue;
-    if(Math.abs(x - sh.x) > SHRINE_R || Math.abs(y - sh.y) > SHRINE_R) continue;
-    if(dist(x, y, sh.x, sh.y) <= SHRINE_R) return sh;
+    const r = shrineR(sh);
+    if(Math.abs(x - sh.x) > r || Math.abs(y - sh.y) > r) continue;
+    if(dist(x, y, sh.x, sh.y) <= r) return sh;
   }
   return null;
 }
@@ -1552,7 +1559,13 @@ function placeBuilding(bx, by, w, h, label, town){
      undefined instead of a footprint. What it no longer does is consecrate. */
   const hallows = label === 'SHRINE' && !(town && town.def && town.def.undeadFriendly);
   if(hallows){
-    shrines.push({x: bx + w/2, y: by + h/2, town, hp: SHRINE_HP, maxHp: SHRINE_HP,
+    /* SALT IS HOLY AT SALTMERE, and holy ground is the whole town rather than a ring around the
+       stone in the square. Deliberately larger than the wall so that walking up to the gate is
+       already standing on it — a necromancer's first news of Saltmere should be the rite
+       refusing, outside, before anybody has said a word. */
+    const salt = town && town.def && town.def.key === 'saltmere';
+    shrines.push({x: bx + w/2, y: by + h/2, town, hp: salt ? 900 : SHRINE_HP, maxHp: salt ? 900 : SHRINE_HP,
+                  r: salt ? 34 : SHRINE_R, salt: !!salt,
                   broken: false, reT: 0, bx, by, w, h});
   }
   for(let j=by; j<by+h; j++) for(let i=bx; i<bx+w; i++){
@@ -6398,6 +6411,116 @@ let estate = null;
     chars.push(k);
   }
 })();
+/* ============================================================ SALTMERE, AND WHAT IT KEEPS
+   "Saltmere fanatically devoted to the Church and the Paladins. Salt is holy. Salted saints
+    awaiting resurrection. A standing pyre. Walled and picky. Ideas from 'the Ardent'."
+
+   THE TOWN ALREADY SAID ALL OF THIS AND MEANT NONE OF IT. Its own barks are "The flats give
+   salt, the salt gives everything else", "Outsiders taste of copper — we can tell", and "Cure it
+   in brine and it keeps till judgment". That last one is a doctrine, and until now it was a
+   pickling tip. Saltmere had exactly the same shrine as everywhere else, no Order in it, no
+   pyre, and its dead lay about in the street like anybody's.
+
+   FOUR THINGS, AND EACH IS A DIFFERENT KIND OF PROBLEM FOR THE PLAYER:
+     · THE WHOLE TOWN IS CONSECRATED. Not a ring around the stone in the square — 34 tiles,
+       wider than the wall, so a necromancer's first news of Saltmere is the rite refusing
+       OUTSIDE the gate, before anybody has said a word to them.
+     · IT BURNS ITS DEAD. Anything lying inside the sweep goes on the pyre at dawn. Every other
+       seat in this world is a supply; this one is a desert, and that is a fact you find out by
+       walking away from it empty-handed.
+     · THE SALTED SAINTS. Cured in brine and laid up in the salt house against the day they are
+       called back, which they believe and the game does not contradict: they are the best-kept
+       bodies on the map, and while the stone stands not one of them will answer. Break the
+       shrine and Saltmere becomes the single richest thing a necromancer can do — which is the
+       point of putting them there, and the reason the stone has four times the usual hit points.
+     · AND THE ORDER IS BILLETED IN IT. Not passing through. Living there. */
+const SAINT_N = 8;
+let saltmere = null;
+(function seedSaltmere(){
+  const t = towns.find(t2 => t2.def.key === 'saltmere');
+  if(!t) return;
+  saltmere = {town: t, saints: [], pyre: null, order: []};
+  /* ---- THE SALT HOUSE ----
+     Sited on the CURING HOUSE, which the town already builds and which is already where it puts
+     things it means to keep. The saints are laid along the back wall of it. */
+  const cure = buildings.find(b => b.town === t && b.label === 'CURING HOUSE');
+  const hx = cure ? cure.x + cure.w / 2 : t.x + 4, hy = cure ? cure.y + 1.4 : t.y + 4;
+  for(let i = 0; i < SAINT_N; i++){
+    const p = findOpenNear(hx + (i % 4) * 1.2 - 1.8, hy + Math.floor(i / 4) * 1.2, 3);
+    /* THEY WERE SOMEBODY, and the arithmetic has to say so: a saint is a better body than
+       anything you will dig up anywhere else, which is what makes the stone worth breaking. */
+    const b = makeChar('Saint ' + pickName(true), 'town', p.x, p.y,
+      {atk: ri(30, 44), def: ri(28, 40), tough: ri(30, 44), ath: 5, magic: ri(6, 20)});
+    b.state = 'dead';
+    b.deadAt = day - ri(400, 4000);      /* laid up long before anybody now living */
+    /* ---------- AND `salted` IS NOT A NEW MECHANIC, IT IS THE TOWN'S OWN ----------
+       Brine-curing a corpse was already in the game as something the PLAYER can do: `salted`
+       holds a body at the decay index it was cured at and takes it off the rot clock entirely.
+       The saints are the same verb, done by the town, four hundred years ago and never undone —
+       which is why "cure it in brine and it keeps till judgment" is a doctrine here and a
+       pickling tip everywhere else. `saltedAt: 0` is the whole of what makes one a saint: they
+       were laid up the day they died and they have not moved on from it since. */
+    b.salted = true; b.saltedAt = 0;
+    b.homeTown = t;
+    chars.push(b);
+    corpses.push(b);
+    saltmere.saints.push(b);
+  }
+  /* ---- THE STANDING PYRE ----
+     Not an event. The Order's pyres go up when somebody burns and stay as a pole; this one was
+     lit before anybody now living was born and has not been out since. */
+  const sq = findOpenNear(Math.round(t.x + 3), Math.round(t.y - 5), 4);
+  saltmere.pyre = {x: sq.x, y: sq.y};
+  /* ---------- AND IT IS DELIBERATELY *NOT* IN `pyres` ----------
+     That list is the ORDER'S poles, and two things read it: the count in Albedo's refusal
+     ("the Order has built N poles at the Bastion gate") and `pyreRead`, which is satisfied by
+     one of yours standing at one. The note above `pyreRead` records the whole point of that
+     gate — it exists so the player has to sneak into Bastion territory, replacing a version
+     that any burning anywhere in the world satisfied. Putting an always-there pole in a town
+     the player can walk into on day one would hand her the name off a fire nobody was burned
+     on, and quietly undo the fix. It has its own draw instead. */
+  /* ---- AND THE ORDER LIVES HERE ----
+     `purge` rather than `town`: they are the Church's, not Saltmere's, and everything in the
+     game that already knows what a Paladin is knows what these are. */
+  for(let i = 0; i < 4; i++){
+    const a = (i / 4) * Math.PI * 2 + 0.3;
+    const q = findOpenNear(t.x + Math.cos(a) * 9, t.y + Math.sin(a) * 9, 4);
+    const lvl = ri(26, 34);
+    const c = makeChar('Paladin', 'purge', q.x, q.y,
+      {atk: lvl, def: lvl, tough: lvl - 4, ath: 7, magic: 1, armr: 40,
+       weapon: rnd() < 0.4 ? 'w_nod' : 'w_kat', armor: 'a_pla', head: 'h_crest'});
+    c.guard = {x: q.x, y: q.y};
+    c.billeted = t;
+    chars.push(c);
+    saltmere.order.push(c);
+  }
+})();
+/* ---------- AND AT DAWN IT BURNS WHAT IS LYING ABOUT ----------
+   The doctrine, made into a rule the player runs into: nothing stays on the ground in Saltmere.
+   Every other seat in this world is somewhere a body can be collected from; this one is the
+   opposite of a supply, and you learn that by walking away from a battle in its streets with
+   nothing to show for it.
+   THE SAINTS ARE EXEMPT, obviously — they are the reason the fire is lit, not fuel for it. */
+function saltmereBurning(){
+  if(!saltmere || saltmere.town.sacked || saltmere.town.playerRuled) return 0;
+  const t = saltmere.town, R = (t.clearR || 20);
+  let n = 0;
+  for(const b of corpses.slice()){
+    if(b.salted) continue;
+    if(dist(b.x, b.y, t.x, t.y) > R) continue;
+    /* not out of somebody's arms, and not the great dead — a Sixfold does not go on a pole */
+    if(chars.some(o => o.carry === b || (o.carryList && o.carryList.includes(b)))) continue;
+    if(isGreatBody(b)) continue;
+    const i = corpses.indexOf(b); if(i >= 0) corpses.splice(i, 1);
+    const j = chars.indexOf(b); if(j >= 0) chars.splice(j, 1);
+    n++;
+  }
+  if(n){
+    addSpecks(saltmere.pyre.x, saltmere.pyre.y - 0.4, '#ff8a3a', 18);
+    log(`Saltmere's fire is fed at dawn. ${n} ${n === 1 ? 'body goes' : 'bodies go'} on it, and the flats are clean again.`, '');
+  }
+  return n;
+}
 /* ---------- WHETHER THE DOOR OPENS ----------
    Standing with Greenrest, because the Aldercotts are Greenrest — four generations of it — and
    a stranger who has done nothing for the town is a stranger. The talk check is the other way
@@ -19902,6 +20025,7 @@ function update(dt){
     bountyDecay();
     wandererDayTick();       /* she is on a different road today, which is the point of her */
     hollowmereBurials();     /* and the yard takes what the neighbours send it */
+    saltmereBurning();       /* while Saltmere feeds its fire and keeps its flats clean */
     /* a broken shrine is not broken forever. They come back and set the stone, unless
        somebody is standing on the ground to stop them — so desecration buys a window, not
        a permanent unmaking. */
@@ -24398,6 +24522,16 @@ const syncRedoubts = makeDynGroup(
         box(g, 1, 0.32, 1, '#3a332b', q.x + 0.5, y + 0.16, q.y + 0.5, false);
         if(!arena.open) box(g, 1, 2.3, 1, '#7a5c2e', q.x + 0.5, y + 1.15, q.y + 0.5, true);
       }
+    }
+    /* SALTMERE'S STANDING FIRE. Lit before anybody now living was born and not out since. Its
+       own geometry rather than the Order's pole, because it is not one of the Order's poles —
+       no crossbar and nothing hanging on it, just a stone bowl and a fire nobody lets die. */
+    if(typeof saltmere !== 'undefined' && saltmere && saltmere.pyre){
+      const q = saltmere.pyre, gy2 = groundY(q.x, q.y);
+      box(g, 2.4, 0.34, 2.4, '#6e6354', q.x, gy2 + 0.17, q.y, false);
+      box(g, 1.5, 0.5, 1.5, '#3a332b', q.x, gy2 + 0.55, q.y, false);
+      box(g, 0.9, 0.9, 0.9, '#c86a28', q.x, gy2 + 1.05, q.y, false);
+      box(g, 0.45, 0.6, 0.45, '#e8a340', q.x, gy2 + 1.6, q.y, false);
     }
     /* THE ALDERCOTT YARD. Its own list, like the pit's: a wall the town did not build and a
        siege must not read as the town's ring. */
