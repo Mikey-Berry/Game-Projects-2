@@ -1017,6 +1017,8 @@ const ITEMS = {
     desc:'Hangs the dead in a shape the eye forgives. Your risen stop reading as risen'},
   t_charm: {name:'Doorway Charm', base:180, type:'trinket', def:.02,
     desc:'Fallowend hangs one on every lintel. Nobody there will tell you whether it works'},
+  t_kept:  {name:'Kept Charm',    base:900, type:'trinket', def:.03, ward:true,
+    desc:'The same charm, held a night at the kami stone. It works. The gaunts will not close on whoever carries it'},
   t_lens:  {name:'Reading Lens',  base:520, type:'trinket', cap:2,
     desc:'Ground glass in a brass ring. A scholar carries one and never says where it came from'},
   t_marker:{name:'Guild Marker',  base:700, type:'trinket', cha:3,
@@ -1193,7 +1195,7 @@ const TOWNS = [
            iron_ore:0.45, coal:0.50, iron:0.60},   /* the pit sets the price of iron */
     civBarks:['Work off the debt or the debt works you off.','Copper is cheap here. So are we.','The pit took my brother. It is hiring.','Mercs eat first. Always have.','Nobody leaves Ironscar paid up.'],
     lore:'An open pit worked by the indebted, order kept by hired blades over a workforce that would knife them for a day off. Copper flows out cheap because someone bleeds for every ingot.'},
-  {key:'fallowend', name:'FALLOWEND',  pref:0, giftChance:.3,
+  {key:'fallowend', name:'FALLOWEND',  pref:0, giftChance:.3, kami:true,
     wall:{r:24, mat:'wood', hp:400}, guards:9, civs:21,
     mult:{copper:1.35, fabric:0.75, rum:1.0, rum_black:0.92, hide:0.85, meat:0.65, fruit:0.55},
     civBarks:['Last honest soil before the waste.','We salt the doorframes. You would too, out here.','Nothing good walks in from the dark.','Harvest is kind. The nights are not.','Charm on your saddle, traveler? You will want one.'],
@@ -1557,7 +1559,12 @@ function placeBuilding(bx, by, w, h, label, town){
      The BUILDING stays: it is a stone hall on the plaza and the town plan is laid out around
      it, and an early return here would skip the wall-raising below and hand the planner an
      undefined instead of a footprint. What it no longer does is consecrate. */
-  const hallows = label === 'SHRINE' && !(town && town.def && town.def.undeadFriendly);
+  /* ---------- AND THE GOOD KAMI ARE NOT THE CHURCH ----------
+     Same reasoning as Hollowmere's, arrived at from the opposite direction: Hollowmere's stone
+     does not hallow because the town would be consecrating against itself, and Fallowend's does
+     not because whatever is being asked for out there is not the thing the Order prays to. The
+     BUILDING stays either way — it is a stone on the plaza and the plan is laid out around it. */
+  const hallows = label === 'SHRINE' && !(town && town.def && (town.def.undeadFriendly || town.def.kami));
   if(hallows){
     /* SALT IS HOLY AT SALTMERE, and holy ground is the whole town rather than a ring around the
        stone in the square. Deliberately larger than the wall so that walking up to the gate is
@@ -6411,6 +6418,116 @@ let estate = null;
     chars.push(k);
   }
 })();
+/* ============================================================ FALLOWEND, AND THE VIOLET LIGHT
+   "Fallowend as the struggling farm counterpart [to Greenrest], with violet lanterns that turn
+    gaunts away, Good Kami worship, charms with genuine blessings, and pre-Fracture tech
+    refashioned as folk magic."
+
+   FALLOWEND ALREADY ASKED THE QUESTION AND THE GAME NEVER ANSWERED IT. Its Doorway Charm has
+   said, since it was written, "Fallowend hangs one on every lintel. Nobody there will tell you
+   whether it works." It did not work. It was two per cent of a defence number and a joke about
+   itself, in the one town whose entire identity is that its charms are the only thing between it
+   and the dark.
+
+   THE FOUR ASKS ARE ONE MECHANIC AND ONE REVEAL.
+     · THE LANTERNS ARE THE PRE-FRACTURE TECH. They are aether lamps. Fallowend has been keeping
+       them alight for four generations by hanging violet glass on them and saying the words, and
+       nobody there has any idea what they are — which is exactly the shape the note asked for:
+       old technology refashioned as folk magic by people who kept the ritual and lost the
+       manual. They burn `aether_cell`, the salvage the game already has, and the town's reserve
+       of them is finite and going down. That is what "struggling" means here in a number: not a
+       poor harvest, a countdown.
+     · A LIT ONE TURNS GAUNTS, thirteen tiles of it, through the same branch of the gaunt AI that
+       already turns them from Ainzopha'ar's Light. No new AI, no new predicate — one more thing
+       that answers the question the gaunts were already asking.
+     · A KEPT CHARM IS THE SAME LIGHT, CARRIED. A Doorway Charm held a night at the kami stone
+       comes back with it in. That is the blessing being genuine: it is not a bigger number, it
+       is the thing the lanterns do, on a person.
+     · AND THE GOOD KAMI ARE NOT THE CHURCH, so their stone does not consecrate. Fallowend is the
+       second place on this map where the rite will answer — which is a real fact about the world
+       and follows from the fiction rather than being granted to make the map easier. */
+const LANTERN_R = 13;              /* violet light: further than the Light, and it does far less */
+/* AND A CHARM IS THE SAME LIGHT IN SOMEBODY'S POCKET, at half the reach of a post. Six rather
+   than the four and a half it was first written at: four and a half plus the AI's own tile and a
+   half is a gaunt turning at almost exactly the distance it would have swung from, which is not
+   "they will not close on whoever carries it" — it is a coin flip resolved on the last step. */
+const CHARM_R = 6;
+const LANTERN_CELL_DAYS = 70;      /* how long one cell keeps a post burning */
+const lanterns = [];
+let fallowend = null;
+(function seedFallowend(){
+  const t = towns.find(t2 => t2.def.key === 'fallowend');
+  if(!t) return;
+  fallowend = {town: t, dark: 0};
+  for(let i = 0; i < 6; i++){
+    const a = (i / 6) * Math.PI * 2 + 0.25;
+    const q = findOpenNear(Math.round(t.x + Math.cos(a) * ((t.clearR || 20) - 2)),
+                           Math.round(t.y + Math.sin(a) * ((t.clearR || 20) - 2)), 4);
+    /* STAGGERED, so they do not all go out in the same week and the town's decline is a slope
+       rather than a cliff */
+    lanterns.push({x: q.x + 0.5, y: q.y + 0.5, town: t, fuel: ri(18, LANTERN_CELL_DAYS)});
+  }
+  /* the reserve, and it is not enough. Fallowend has been living off a box of salvage nobody
+     can make any more of, and it is down to the bottom of the box. */
+  t.stock.aether_cell = (t.stock.aether_cell || 0) + ri(3, 6);
+})();
+/* WHETHER THERE IS VIOLET LIGHT ON SOMEBODY. Two sources, one question, and both lists are
+   small and precomputed — `lanterns` is fixed at six and `charmed` is gathered once a tick in
+   `rebuildCharGrid`, for exactly the reason the ward readers were rewritten to do the same. */
+function violetNear(c, extra){
+  const e = extra || 0;
+  for(const L of lanterns){
+    if(!L.fuel) continue;
+    if((c.floor || 0) !== 0) continue;              /* a lamp on the surface lights the surface */
+    if(dist(L.x, L.y, c.x, c.y) < LANTERN_R + e) return L;
+  }
+  for(const o of charmed){
+    if((o.floor || 0) !== (c.floor || 0)) continue;
+    if(dist(o.x, o.y, c.x, c.y) < CHARM_R + e) return o;
+  }
+  return null;
+}
+/* ---------- AND THE LAMPS BURN DOWN ----------
+   Run at dawn with everything else. A post that goes out is said out loud, because a town whose
+   defences are quietly failing and never mentions it is a town the player will never help. */
+function lanternTick(){
+  if(!fallowend || !lanterns.length) return;
+  const t = fallowend.town;
+  for(const L of lanterns){
+    if(L.fuel > 0){ L.fuel--; if(L.fuel === 0 && !t.sacked)
+      log(`A lantern on the Fallowend road has gone out. The Elder says the words over it anyway.`, 'bad'); }
+    /* the town relights what it can, out of a box it cannot refill */
+    if(!L.fuel && (t.stock.aether_cell || 0) > 0 && rnd() < 0.5){
+      t.stock.aether_cell--;
+      L.fuel = LANTERN_CELL_DAYS;
+    }
+  }
+  fallowend.dark = lanterns.filter(L => !L.fuel).length;
+}
+/* what the player can do about it, and the only thing that will: a cell in a post. */
+function lanternFeed(){
+  if(!fallowend) return false;
+  const L = lanterns.find(l => !l.fuel);
+  if(!L){ log('Every post on the Fallowend road is burning.', ''); return false; }
+  if(!takeItem('aether_cell')){ log('You have no aether cell to put in it.', 'bad'); return false; }
+  L.fuel = LANTERN_CELL_DAYS;
+  fallowend.dark = lanterns.filter(l => !l.fuel).length;
+  fallowend.town.rep = clamp((fallowend.town.rep || 0) + 6, -100, 100);
+  log('The post takes the cell and comes up violet. Nobody in Fallowend asks how you knew where it went.', 'good');
+  return true;
+}
+/* ---------- AND THE STONE KEEPS A CHARM ----------
+   A night at the kami stone and the charm comes back with the light in it. Deliberately a trade
+   rather than a purchase: the charm has to be yours already, which means Fallowend's one export
+   is the raw material for its own only good. */
+function keepCharm(){
+  if(!fallowend) return false;
+  if((stash.t_charm || 0) < 1){ log('You have no Doorway Charm for them to keep.', 'bad'); return false; }
+  takeItem('t_charm');
+  addItem('t_kept', 1);
+  log('The stone keeps it overnight. In the morning it is the same charm, and it is not.', 'good');
+  return true;
+}
 /* ============================================================ SALTMERE, AND WHAT IT KEEPS
    "Saltmere fanatically devoted to the Church and the Paladins. Salt is holy. Salted saints
     awaiting resurrection. A standing pyre. Walled and picky. Ideas from 'the Ardent'."
@@ -10244,14 +10361,20 @@ const charById = new Map();
    caster who has let go or gone down since the pass is not found. Like the grid, this is only
    as fresh as the last `rebuildCharGrid()`, which `update()` calls first thing. */
 const warders = [];
+const charmed = [];
 function rebuildCharGrid(){
   charGrid.clear();
   charById.clear();
   warders.length = 0;
+  charmed.length = 0;
   for(const c of chars){
     charById.set(c.id, c);
     if(c.state !== 'ok') continue;
     if(c.concentrating && c.concentrating.key === 'warding') warders.push(c);
+    /* AND WHOEVER IS CARRYING A KEPT CHARM, gathered here for the same reason the warders are:
+       the gaunt AI asks "is there violet light near me" for every gaunt every tick, and the note
+       twenty lines up records what happens when a question like that walks all of `chars`. */
+    if(c.trinket === 't_kept') charmed.push(c);
     const k = ((c.y/CELL)|0)*GW + ((c.x/CELL)|0);
     const a = charGrid.get(k);
     if(a) a.push(c); else charGrid.set(k, [c]);
@@ -12249,7 +12372,11 @@ function physics(c, dt){
      forward while quietly forgetting who it was walking at. */
   if(wardTurns(c)){
     if(c.target && wardedFrom(c.target)){ c.target = null; }
-    const ward = lightNear(c, WARD_RADIUS + 1.5);   /* was an inline walk of all of `chars`, per gaunt, per tick */
+    /* AND FALLOWEND'S VIOLET LIGHT ANSWERS THE SAME QUESTION. Asked here and NOT in `wardSears`
+       on purpose: a lantern turns gaunts, which is all the town has ever claimed for it, and it
+       does not sear the dead. Making it sear would quietly turn the one town that will let a
+       necromancer work into the one town that burns his squad. */
+    const ward = lightNear(c, WARD_RADIUS + 1.5) || violetNear(c, 1.5);
     if(ward){
       const d = Math.max(0.01, dist(c.x,c.y,ward.x,ward.y));
       stepToward(c, c.x + (c.x-ward.x)/d * 4, c.y + (c.y-ward.y)/d * 4, dt);
@@ -20026,6 +20153,7 @@ function update(dt){
     wandererDayTick();       /* she is on a different road today, which is the point of her */
     hollowmereBurials();     /* and the yard takes what the neighbours send it */
     saltmereBurning();       /* while Saltmere feeds its fire and keeps its flats clean */
+    lanternTick();           /* and Fallowend's posts burn down another day's worth */
     /* a broken shrine is not broken forever. They come back and set the stone, unless
        somebody is standing on the ground to stop them — so desecration buys a window, not
        a permanent unmaking. */
@@ -34723,8 +34851,60 @@ const TALK_TREES = {
         {say:'I have closed tears. Ask anyone.', req:{reputeMin:25, known:34}, to:'respect'},
         {say:'Your walls are thinner than your neighbours think. I could make that untrue.',
          check:{dc:26}, win:'retained', lose:'dismissed'},
+        /* ---------- THE ELDER, AND THE THING SHE CANNOT SAY ----------
+           Only at Fallowend, and only when a post has actually gone dark: the Elder does not
+           tell strangers that the town's defences are failing, so the option to ask about it is
+           gated on you having a reason to. This is where the town's one real problem becomes a
+           thing the player can do something about. */
+        {say:'One of your posts on the road has gone out.',
+         when:(t2)=>!!(fallowend && towns[t2.isLeader] === fallowend.town && fallowend.dark > 0), to:'lanterns'},
+        {say:'I have a charm your people made. Will your stone keep it?',
+         when:(t2)=>!!(fallowend && towns[t2.isLeader] === fallowend.town && (stash.t_charm || 0) > 0), to:'keeping'},
         {say:'Nothing today.'},
       ],
+    },
+    lanterns: {
+      line: () => {
+        const dark = fallowend ? fallowend.dark : 0, box = fallowend ? (fallowend.town.stock.aether_cell || 0) : 0;
+        return `${dark === 1 ? 'It has.' : `${dark} of them have.`} My grandmother could say the words over a dead post and it would come up violet by morning. ` +
+          `I say the same words. ` + (box ? `There are ${box} of the old glass cells left in the box, and when they are gone I do not know what we do.`
+                                          : `The box is empty. I have not told anyone that the box is empty.`);
+      },
+      opts: [
+        /* THE REVEAL IS GATED ON BEING SOMEBODY WHO COULD KNOW, and there are two such people:
+           one who has studied what the old world made, and one who IS what the old world made.
+           A golem looking at a violet lamp and recognising the family resemblance is the better
+           of the two lines and it costs nothing to have both. */
+        {say:'It is not the words. It is what is inside them.', req:{tech:'transmutation'}, to:'truth'},
+        {say:'I know that light. Something like me runs on it.', req:{race:'golem'}, to:'truth'},
+        {say:'I have a cell. Put it in the post.', when:()=>(stash.aether_cell || 0) > 0,
+         fn:()=>{ lanternFeed(); }, to:'fed'},
+        {say:'I will find you some.'},
+      ],
+    },
+    truth: {
+      line: 'You are not the first to say so and you will not be the last, and I will tell you what I told the other one. ' +
+        'It does not matter whether it is a spirit or a machine. It matters that it burns. Bring me what makes it burn and call it whatever you like.',
+      opts: [
+        {say:'Fair.', when:()=>(stash.aether_cell || 0) > 0, fn:()=>{ lanternFeed(); }, to:'fed'},
+        {say:'Fair.'},
+      ],
+    },
+    fed: {
+      line: 'There. That is four generations of my family standing on this road, and a stranger did it in an afternoon. Take a charm off the lintel on your way. Take two.',
+      opts: [{say:'Thank you.'}],
+    },
+    keeping: {
+      line: 'It will. A night on the stone and the Good Kami look at it, and what they look at they keep. ' +
+        'You will want to be somewhere else while they do it — they are good, they are not gentle.',
+      opts: [
+        {say:'Keep it.', fn:()=>{ keepCharm(); }, to:'kept'},
+        {say:'Another time.'},
+      ],
+    },
+    kept: {
+      line: 'Same charm. Wear it out past the fences and see whether anything comes close enough to argue.',
+      opts: [{say:'I will.'}],
     },
     /* ---------- WHAT A SEAT ASKS FOR WHEN THE POST CANNOT CARRY IT ----------
        The board is public and everything on it is a thing a town is willing to admit it wants.
