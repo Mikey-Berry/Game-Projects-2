@@ -6134,6 +6134,240 @@ function hollowmereBurials(){
     corpses.push(b);
   }
 }
+/* ============================================================ THE PIT AT IRONSCAR
+   "Ironscar with a gladiator arena. Real risk. Isolated fights, proper entry and exit,
+    retrieval of downed allies. A guarded pit on the outskirts."
+
+   The town has been named for this since it was written and never had one: its seat is already
+   the PIT-BOSS, its lore is already an open pit worked by the indebted with hired blades over
+   them, and there was nowhere in it to fight anybody. Five things make this a PLACE rather than
+   a menu with a combat roll behind it, and each of them is a thing that can be measured:
+
+     · IT IS BUILT IN THE WORLD — a walled square outside the town, on the far side of the gate,
+       with the house's blades standing on it. You can walk up to it and be turned away from it.
+     · THE GATE IS REAL AND IT SHUTS. While a bout runs nothing outside can reach you and you
+       cannot leave. That is what "isolated" has to mean, or a pit is a patch of dirt where a
+       fight happens to occur.
+     · THE RISK IS REAL. Nothing in here is scripted to lose. The card names what is coming and
+       the purse is the house's opinion of your odds; the fight is the ordinary fight, with the
+       ordinary chance of it going badly. The stake is taken up front.
+     · IT OPENS AFTERWARDS, whoever won — and on a draw, and if everyone in it is down. A pit
+       that can stay shut is a way to lose a save.
+     · AND YOUR PEOPLE STAY WHERE THEY FELL. The gate opens, the bodies do not move, and you
+       walk in and carry them out with the same `bearTarget` you would use anywhere else. */
+const ARENA_R = 8;                 /* half-width of the ring; the sand inside is 15 x 15 */
+const PIT_TIMEOUT = 300;           /* seconds before the house calls a bout no-contest */
+let arena = null;
+(function seedArena(){
+  const t = towns.find(t2 => t2.def.key === 'ironscar');
+  if(!t) return;
+  /* ---------- OUTSIDE THE WALL, AND NOT ON TOP OF ANYTHING ----------
+     The pit is on the outskirts because that is where it was asked for and because it is the
+     one building in this world that the town wants near enough to walk to and far enough that
+     what happens in it is not happening in the square. Everything it must not land on is
+     checked rather than hoped for: water, the town's own sweep, the seam that pays for the
+     town, and any ground that is already solid. */
+  const need = ARENA_R + 2;
+  let cx = 0, cy = 0;
+  for(let ring = 0; ring < 14 && !cx; ring++){
+    const off = (t.clearR || 20) + 10 + ring * 3;
+    for(let k = 0; k < 16 && !cx; k++){
+      const a = (k / 16) * Math.PI * 2;
+      const x = Math.round(t.x + Math.cos(a) * off), y = Math.round(t.y + Math.sin(a) * off);
+      if(x < need + 3 || y < need + 3 || x >= W - need - 3 || y >= H - need - 3) continue;
+      if(oreFields.some(f => dist(f.x, f.y, x, y) < f.r + need)) continue;
+      if(towns.some(t2 => t2 !== t && dist(t2.x, t2.y, x, y) < 60)) continue;
+      let ok = true;
+      for(let j = -need; j <= need && ok; j++) for(let i = -need; i <= need && ok; i++){
+        if(tileAt(x + i, y + j) === 3) ok = false;
+        else if(isBlocked(x + i + 0.5, y + j + 0.5)) ok = false;
+      }
+      if(ok){ cx = x; cy = y; }
+    }
+  }
+  if(!cx) return;
+  /* THE GATE FACES THE TOWN, on whichever of the four sides actually points at it — a pit whose
+     only door is round the back is a pit nobody walks into by accident. */
+  const dx = t.x - cx, dy = t.y - cy;
+  const nx = Math.abs(dx) >= Math.abs(dy) ? Math.sign(dx) : 0;
+  const ny = nx ? 0 : Math.sign(dy) || 1;
+  const gate = [];
+  for(let d = -1; d <= 0; d++){
+    gate.push(nx ? {x: cx + nx * ARENA_R, y: cy + d} : {x: cx + d, y: cy + ny * ARENA_R});
+  }
+  const gk = new Set(gate.map(q => q.x + ',' + q.y));
+  arena = {x: cx, y: cy, r: ARENA_R, town: t, gate, walls: [], props: [], open: true,
+           bout: null, wins: 0, losses: 0, best: -1};
+  /* ---------- A CHEBYSHEV RING, WHICH IS SEALED BY CONSTRUCTION ----------
+     A circle of tiles laid down by radius leaves diagonal gaps, and everything in this game
+     moves orthogonally — the warren work spent four measurements learning that a wall which
+     touches only at a corner is not a wall. A square ring cannot have one. */
+  for(let j = -ARENA_R; j <= ARENA_R; j++) for(let i = -ARENA_R; i <= ARENA_R; i++){
+    if(Math.max(Math.abs(i), Math.abs(j)) !== ARENA_R) continue;
+    const wx = cx + i, wy = cy + j;
+    if(gk.has(wx + ',' + wy)) continue;
+    blocked.add(bkey(wx, wy));
+    arena.walls.push({x: wx, y: wy});
+  }
+  /* four standing stones on the sand, so the pit is somewhere to fight rather than an empty
+     box — cover to break a line of sight behind, which is the only tactic a bare floor has */
+  for(const [px, py] of [[-4,-4],[4,-4],[-4,4],[4,4]]){
+    blocked.add(bkey(cx + px, cy + py));
+    arena.props.push({x: cx + px, y: cy + py});
+  }
+  /* ---------- THE HOUSE ----------
+     The pit-master stands OUTSIDE the gate, because the whole shape of this is that you talk
+     your way in rather than wander in. The blades stand outside with him: they are Ironscar's,
+     they are not in the bout, and a fight in the pit is not their business until it is. */
+  const gm = gate[0];
+  const out = findOpenNear(gm.x + nx * 2, gm.y + ny * 2, 3);
+  const pm = makeChar('Pit-Master ' + pickName(), 'town', out.x, out.y,
+    {atk: 22, def: 22, tough: 24, ath: 5, weapon: 'w_kat', armor: 'a_lea', armr: 22,
+     head: 'h_armet', homeTown: t, guard: {x: out.x, y: out.y}});
+  pm.pitMaster = true;
+  pm.civ = true;                      /* he takes money, he does not walk a beat */
+  chars.push(pm);
+  arena.master = pm;
+  for(let i = 0; i < 4; i++){
+    const a = (i / 4) * Math.PI * 2 + 0.6;
+    const q = findOpenNear(cx + Math.cos(a) * (ARENA_R + 3), cy + Math.sin(a) * (ARENA_R + 3), 3);
+    const gd = makeChar('Pit Guard', 'town', q.x, q.y,
+      {atk: ri(18, 26), def: ri(18, 26), tough: ri(18, 26), ath: 5,
+       weapon: 'w_kat', armor: 'a_lea', armr: 24, head: 'h_kettle',
+       homeTown: t, guard: {x: q.x, y: q.y}});
+    gd.pitGuard = true;
+    chars.push(gd);
+  }
+})();
+/* ---------- THE CARDS ----------
+   Four, in order, and the order is the whole progression: the house will not sell you a bout
+   above the one you have won. `make` builds real bodies with the ordinary constructors — there
+   is no arena-only combat path and there is not going to be one, because the entire value of a
+   pit fight is that it is the game's own fight with the exits closed. */
+const PIT_CARDS = [
+  {key:'opener', name:'THE OPENER', stake:40, purse:180,
+   blurb:'Two off the debt rolls. They are not fighters. They are in arrears.',
+   make:(a) => [0,1].map(i => {
+     const c = makeChar('Debtor', 'pit', a.x + ri(-3,3), a.y - 4 + i, {atk:ri(10,16), def:ri(8,14), tough:ri(10,16), ath:5, weapon:'w_plank', armor:'a_rag'});
+     return c;
+   })},
+  {key:'pack', name:'THE PACK', stake:110, purse:460,
+   blurb:'Four hounds off the waste, kept hungry since the last card.',
+   make:(a) => [0,1,2,3].map(i => {
+     const c = makeChar('Pit Hound', 'pit', a.x + ri(-4,4), a.y - 4 + (i % 2), {atk:ri(14,20), def:ri(10,16), tough:ri(12,18), ath:14});
+     c.beast = true; c.kin = 'hound'; c.clawDmg = 11;
+     return c;
+   })},
+  {key:'champion', name:'THE CHAMPION', stake:300, purse:1200,
+   blurb:'The house fighter, and one second. He has not lost here.',
+   make:(a) => {
+     const ch = makeChar(pickName(true) + ' of the Pit', 'pit', a.x, a.y - 4,
+       {atk:ri(34,44), def:ri(32,42), tough:ri(34,44), ath:7, weapon:'w_kat', armor:'a_pla', armr:44, head:'h_armet'});
+     ch.big = 1.15;
+     const sec = makeChar('Second', 'pit', a.x + 3, a.y - 4,
+       {atk:ri(22,28), def:ri(20,26), tough:ri(22,28), ath:6, weapon:'w_sw', armor:'a_lea', armr:26, head:'h_kettle'});
+     return [ch, sec];
+   }},
+  {key:'maw', name:'WHAT THEY KEEP BELOW', stake:800, purse:3400,
+   blurb:'They will not say what it is. The floor of the pit is stained where it stands.',
+   make:(a) => {
+     const m = makeChar('The Thing Below', 'pit', a.x, a.y - 4,
+       {atk:ri(52,64), def:ri(30,38), tough:ri(60,74), ath:6});
+     m.beast = true; m.big = 2.3; m.clawDmg = 26;
+     m.blood = 420; m.maxBlood = 420;
+     return [m];
+   }},
+];
+function pitOpen(){
+  if(!arena) return;
+  arena.open = true;
+  for(const q of arena.gate) blocked.delete(bkey(q.x, q.y));
+}
+function pitShut(){
+  if(!arena) return;
+  arena.open = false;
+  for(const q of arena.gate) blocked.add(bkey(q.x, q.y));
+}
+/* who is standing close enough to be sold a bout. Selection first, because choosing who goes in
+   is the decision the card is asking you to make; everybody nearby otherwise, so a player who
+   has not learned to select is not simply refused. */
+function pitEntrants(){
+  if(!arena) return [];
+  const near = c => c.faction === 'player' && c.state === 'ok' && !c.borneBy &&
+    dist(c.x, c.y, arena.x, arena.y) < ARENA_R + 12;
+  const sel = selected.filter(near);
+  return (sel.length ? sel : chars.filter(near)).slice(0, 6);
+}
+function pitInside(c){ return !!arena && Math.abs(c.x - arena.x) < ARENA_R && Math.abs(c.y - arena.y) < ARENA_R; }
+function pitStart(card){
+  if(!arena || arena.bout) return false;
+  const crew = pitEntrants();
+  if(!crew.length){ log('Nobody of yours is standing near enough to the gate to be sold anything.', 'bad'); return false; }
+  if(cats < card.stake){ log(`The stake on ${card.name} is ${card.stake} and you do not have it.`, 'bad'); return false; }
+  cats -= card.stake;
+  /* IN THROUGH THE GATE, and stood on the near side of the sand — not scattered, because a
+     party that starts a fight already surrounded never had the fight the card advertised. */
+  const g0 = arena.gate[0];
+  const inx = Math.sign(arena.x - g0.x), iny = Math.sign(arena.y - g0.y);
+  crew.forEach((c, i) => {
+    clearOrders(c);
+    const q = findOpenNear(arena.x + inx * 5 + ((i % 3) - 1) * 1.4, arena.y + iny * 5 + Math.floor(i / 3) * 1.4, 3);
+    c.x = q.x; c.y = q.y; c.floor = 0;
+  });
+  const foes = card.make(arena);
+  for(const f of foes){
+    f.state = 'ok';
+    f.guard = {x: arena.x, y: arena.y};      /* it fights here; it does not run out of the gate */
+    f.pitFighter = true;
+    chars.push(f);
+  }
+  rebuildCharGrid();
+  pitShut();
+  arena.bout = {key: card.key, name: card.name, purse: card.purse, stake: card.stake,
+                ours: crew.slice(), theirs: foes.slice(), t: 0};
+  log(`The gate comes down behind ${crew.length === 1 ? crew[0].name : crew.length + ' of yours'}. ${card.name}.`, 'bad');
+  addFloat(arena.x, arena.y, card.name, '#c8a86a');
+  return true;
+}
+/* ---------- AND IT HAS TO END, EVERY WAY IT CAN END ----------
+   Four outcomes and all four open the gate: they are down, you are down, both, or nobody has
+   managed it inside five minutes. The last one is not a nicety — two ranged lines behind
+   standing stones can genuinely fail to resolve, and a pit with no timeout is a save with a
+   party locked in a box. */
+function arenaTick(dt){
+  if(!arena || !arena.bout) return;
+  const b = arena.bout;
+  b.t += dt;
+  const up = list => list.filter(c => c.state === 'ok' && chars.includes(c)).length;
+  const oursUp = up(b.ours), theirsUp = up(b.theirs);
+  if(theirsUp && oursUp && b.t < PIT_TIMEOUT) return;
+  const t = arena.town;
+  arena.bout = null;
+  pitOpen();
+  if(!theirsUp && oursUp){
+    arena.wins++;
+    arena.best = Math.max(arena.best, PIT_CARDS.findIndex(c => c.key === b.key));
+    cats += b.purse;
+    if(t) t.rep = clamp((t.rep || 0) + 4, -100, 100);
+    deed('gold', b.purse / 400);
+    log(`${b.name}: the pit is yours. The house pays ${b.purse}, and Ironscar has seen you do it.`, 'good');
+  } else if(!oursUp && theirsUp){
+    arena.losses++;
+    log(`${b.name}: the gate goes up on your people lying in the sand. The stake is the house's.`, 'bad');
+  } else if(!oursUp && !theirsUp){
+    arena.losses++;
+    cats += Math.round(b.purse * 0.35);
+    log(`${b.name}: nobody is left standing in there. The house pays out a third of the purse and says nothing else.`, '');
+  } else {
+    log(`${b.name}: the house calls it. No contest, and no purse — the stake is gone.`, '');
+  }
+  /* what is left of the house's side is cleared off the sand, dead or not: a pit fighter is
+     the card, and the card is over. Yours stay exactly where they fell. */
+  for(const f of b.theirs){
+    const i = chars.indexOf(f);
+    if(i >= 0 && f.state !== 'dead') chars.splice(i, 1);
+  }
+}
 /* drifters — pilgrims and prospectors walking the roads between towns */
 const DRIFTER_NAMES = ['Pale Iris','Old Cobb','Tam the Lesser','Whistler','Mirel','Sixtoe','Brother Hap','Dust-Blind Anna'];
 const DRIFTER_BARKS = ['Long road, this one.','Seen the King\'s procession once. Never again.','Spare a cat for a pilgrim?','The Bastion doesn\'t take kindly to your sort.','Water\'s two days east.'];
@@ -9848,6 +10082,15 @@ function hostile(a, b){
   if(guildOath(a) && guildOath(b)) return false;
   /* an immortal in your debt will not raise a hand to you */
   if((a.immortal && a.friendly && b.faction === 'player') || (b.immortal && b.friendly && a.faction === 'player')) return false;
+  /* ---------- THE PIT: THE BOUT IS THE ONLY QUARREL, AND IT ENDS WHEN THE BOUT DOES ----------
+     Asked high, above every provocation rule, because a pit fighter has no opinion about
+     anything except who the house put in front of it. It will not fight the town that owns it,
+     it will not be hunted by the Purge for standing there, and the moment the card is over it
+     is not fighting you either. */
+  if(a.faction === 'pit' || b.faction === 'pit'){
+    const o = a.faction === 'pit' ? b : a;
+    return o.faction === 'player' && !!(arena && arena.bout);
+  }
   /* the redoubt garrison has one order, nine generations old, and it is still following it */
   if(a.faction === 'redoubt' || b.faction === 'redoubt') return true;
   /* the gaunts did not come here to take sides */
@@ -19406,6 +19649,7 @@ function update(dt){
   if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
   gauntTick(dt / HOUR_SEC);   /* the dark is never empty for long */
   sixfoldTick(dt);            /* and the biggest thing in it has more than one way to kill you */
+  arenaTick(dt);              /* and the gate at Ironscar goes up again, however the card ended */
   wldT += dt;
   const wtick = wldT >= 0.25;
   const wdt = wldT;             /* accumulated seconds for throttled world scans */
@@ -23904,6 +24148,26 @@ const syncRedoubts = makeDynGroup(
             box(g, dr.nx ? 0.1 : 0.86, 0.16, dr.nx ? 0.86 : 0.1, '#8a7048',
                 dr.x + 0.5, gy + FLOOR_H*0.46, dr.y + 0.5, false);
         }
+      }
+    }
+    /* ---------- THE PIT ----------
+       Drawn from its own lists rather than the town's, because these walls are not the town's
+       ring: a siege must not read the arena as a breach in Ironscar, and an earthquake must not
+       shake it down. The gate is a bar across the gap and it is DIFFERENT when it is shut,
+       which is the only thing about the pit a player has to be able to read from outside. */
+    if(arena){
+      for(const w of arena.walls){
+        const y = groundY(w.x + 0.5, w.y + 0.5);
+        box(g, 1, 2.3, 1, '#4e463c', w.x + 0.5, y + 1.15, w.y + 0.5, true);
+      }
+      for(const w of arena.props){
+        const y = groundY(w.x + 0.5, w.y + 0.5);
+        box(g, 0.7, 3.1, 0.7, '#5b5346', w.x + 0.5, y + 1.55, w.y + 0.5, true);
+      }
+      for(const q of arena.gate){
+        const y = groundY(q.x + 0.5, q.y + 0.5);
+        box(g, 1, 0.32, 1, '#3a332b', q.x + 0.5, y + 0.16, q.y + 0.5, false);
+        if(!arena.open) box(g, 1, 2.3, 1, '#7a5c2e', q.x + 0.5, y + 1.15, q.y + 0.5, true);
       }
     }
     for(const rd of redoubts){
@@ -30353,6 +30617,59 @@ function armouryRun(who, slots){
   }
   return {fitted, done};
 }
+/* ---------- THE PIT-MASTER'S WINDOW ----------
+   Everything the card is going to do to you is on the button before you press it: what is
+   coming, what it costs, what it pays, and — the one that matters — WHO WALKS IN. A pit that
+   does not tell you who it is about to shut in with a hound pack is a pit that gets somebody
+   killed by a misclick rather than by a hound. */
+function openPit(t){
+  if(!arena){ say(t, 'There is no pit here worth the name.'); return; }
+  const line = arena.bout
+    ? 'There is a card running. Watch it or walk away — I am not opening that gate for you.'
+    : arena.wins
+      ? `You have won ${arena.wins} in there. The house remembers, which is not the same as being pleased.`
+      : 'Stake on the left, purse on the right, and the gate comes down behind you. Nobody has ever talked their way back out of it.';
+  openModal('THE PIT', line);
+  const body = $('modalbody');
+  const rndr = () => {
+    body.innerHTML = '';
+    const crew = pitEntrants();
+    const who = document.createElement('div');
+    who.style.cssText = 'color:var(--dust);margin-bottom:9px;line-height:1.5';
+    who.textContent = arena.bout
+      ? `${arena.bout.name} is running. The gate is down.`
+      : crew.length
+        ? `GOING IN: ${crew.map(c => c.name).join(', ')}${selected.length ? '' : ' — nobody was selected, so this is whoever is standing about'}`
+        : 'Nobody of yours is near enough the gate. Bring them over.';
+    body.appendChild(who);
+    for(let i = 0; i < PIT_CARDS.length; i++){
+      const card = PIT_CARDS[i];
+      /* THE HOUSE WILL NOT SELL YOU THE NEXT ONE UP. The progression is the whole shape of the
+         place, and it is also the only thing standing between a fresh party and the Thing. */
+      const locked = i > arena.best + 1;
+      const r = document.createElement('div'); r.className = 'trow';
+      r.innerHTML = `<span class="tn">${card.name} <span style="color:var(--dust)">— stake ${card.stake}, purse ${card.purse}</span>` +
+        `<br><span style="color:var(--dust);font-size:10px">${locked ? 'The house will not sell you this one yet.' : card.blurb}</span></span>`;
+      const b2 = document.createElement('button');
+      b2.textContent = locked ? 'NOT FOR YOU' : 'TAKE IT';
+      b2.disabled = locked || !!arena.bout || !crew.length || cats < card.stake;
+      b2.onclick = () => {
+        if(!pitStart(card)) return;
+        /* AND THE CLOCK STARTS. `openModal` pauses, and leaving it paused would drop the player
+           into a shut pit with a hound pack and a stopped world — which reads as a freeze. */
+        $('modal').style.display = 'none'; modalOpen = false;
+        paused = false; syncPauseBtn();
+      };
+      r.appendChild(b2);
+      body.appendChild(r);
+    }
+    const note = document.createElement('div');
+    note.style.cssText = 'color:var(--dust);margin-top:10px;font-size:10px;line-height:1.5';
+    note.textContent = 'The gate opens when the card is over, whoever won. Anyone of yours still on the sand stays where they fell — go in and carry them out.';
+    body.appendChild(note);
+  };
+  rndr();
+}
 function openArmoury(b){
   const who = armouryTakers();
   openModal('ARMOURY', who.length
@@ -34026,6 +34343,9 @@ function talkTo(t){
      THE ODD ONES KEEP THEIR BARKS, deliberately. A Coil cultist saying one strange thing and
      turning away is the whole characterisation; giving them a menu would make them ordinary.
      They are checked first, below, so the generic tree never swallows them. */
+  /* THE HOUSE SELLS BOUTS, NOT NEWS. Above the generic tree because the pit-master is faction
+     'town' with a post and would otherwise get the watch conversation about the weather. */
+  if(t.pitMaster){ openPit(t); return; }
   if(!speaksAtAll(t)){ say(t, pick(['...', 'It does not turn its head.', 'Something behind its face declines to answer.'])); return; }
   if(isWatch(t)){ if(openDiscourse(t, 'guard')) return; }
   /* THE OTHER PRACTITIONER GETS A CONVERSATION TOO. This was in the exclusion list beside the

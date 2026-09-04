@@ -142,17 +142,39 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     k0.x = k0.guard.x; k0.y = k0.guard.y;
     k0.mana = maxMana(k0); k0.castCd = 0; k0.moveTarget = null; k0.necroBody = null;
     for(const r of chars.filter(c2 => c2.master === k0)) r.master = null;   /* room under the cap */
-    const far = findOpenNear(k0.guard.x + 6.5, k0.guard.y, 3);
-    const bait = makeChar('Pauper', 'town', far.x, far.y, {atk:5, def:5, tough:5});
-    bait.state = 'dead'; bait.homeTown = hm; bait.deadAt = day + hour/24;
-    chars.push(bait); corpses.push(bait);
-    const gap0 = dist(k0.guard.x, k0.guard.y, bait.x, bait.y);
+    /* ---------- AND THE BAIT HAS TO SATISFY BOTH ENDS AT ONCE ----------
+       This used `findOpenNear(post.x + 6.5, post.y, 3)`, which is sixty random darts in a box —
+       the README's own lesson, ignored here. On one seed it threw the body 9.7 tiles from the
+       post, and a post sits 6 tiles from the square, so the corpse was outside the FOURTEEN the
+       scan looks in and the keeper was entirely right to ignore it. The probe reported a
+       gravekeeper doing the correct thing as a failure.
+       So the spot is searched for rather than thrown at: far enough out that standing on the
+       flagstone cannot reach it, near enough the square that it is in the yard at all, and
+       walked round the compass so that whichever quarter is clear on this seed is the one used. */
+    const px = k0.guard.x, py = k0.guard.y, want = SPELLS.raise.range + 1.6;
+    let bx = 0, by = 0;
+    for(let step = 0; step < 32 && !bx; step++){
+      const ang = (step / 32) * Math.PI * 2;
+      const qx = Math.round(px + Math.cos(ang) * want), qy = Math.round(py + Math.sin(ang) * want);
+      if(isBlocked(qx + 0.5, qy + 0.5)) continue;
+      if(dist(qx, qy, hm.x, hm.y) > 12) continue;
+      bx = qx + 0.5; by = qy + 0.5;
+    }
+    const bait = bx ? makeChar('Pauper', 'town', bx, by, {atk:5, def:5, tough:5}) : null;
+    if(bait){ bait.state = 'dead'; bait.homeTown = hm; bait.deadAt = day + hour/24;
+              chars.push(bait); corpses.push(bait); }
+    const gap0 = bait ? dist(px, py, bait.x, bait.y) : 0;
+    const inYardR = bait ? dist(bait.x, bait.y, hm.x, hm.y) : 99;
     for(let i = 0; i < 900; i++) update(0.1);
-    R.leashYields = gap0 > SPELLS.raise.range && !corpses.includes(bait)
-      ? `a body ${gap0.toFixed(1)} tiles out — past a ${SPELLS.raise.range}-tile rite — is fetched and raised anyway`
+    R.leashYields = !bait
+      ? '!! NOWHERE TO STAGE THE BAIT — THIS PROVES NOTHING'
       : gap0 <= SPELLS.raise.range
         ? `!! THE BAIT LANDED AT ${gap0.toFixed(1)}, INSIDE THE RITE — THIS PROVES NOTHING`
-        : `!! A KEEPER SAT AT ITS POST WHILE A BODY LAY ${gap0.toFixed(1)} TILES OFF`;
+        : inYardR >= 14
+          ? `!! THE BAIT LANDED ${inYardR.toFixed(1)} FROM THE SQUARE, OUTSIDE THE YARD — THIS PROVES NOTHING`
+          : !corpses.includes(bait)
+            ? `a body ${gap0.toFixed(1)} tiles past the post — and a ${SPELLS.raise.range}-tile rite — is fetched and raised anyway`
+            : `!! A KEEPER SAT AT ITS POST WHILE A BODY LAY ${gap0.toFixed(1)} TILES OFF, ${inYardR.toFixed(1)} FROM THE SQUARE`;
 
     /* DRAIN IT FIRST. By the end of the week above the field is sitting near its cap, and
        "8 became 10" is not evidence that a burial happens — the number has nowhere to go.
