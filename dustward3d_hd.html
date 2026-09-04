@@ -9588,12 +9588,23 @@ const charGrid = new Map();
 /* who is who, by id. Rebuilt in the same pass as the grid, so anything that holds an id
    instead of a reference stops paying a linear scan to cash it in. */
 const charById = new Map();
+/* WHO IS HOLDING A WARD, collected in the same pass. `wardedFrom` walked the entire roster for
+   every gaunt with a quarry, every tick, to find the two or three bodies (usually none) holding
+   Ainzopha'ar's Light — chars × hunters calls to `isConcentrating` a step, 10% of the sim in a
+   world with no light lit at all. The candidates are gathered here, where every body is
+   already being looked at, and `startConcentration` adds a light raised mid-step so it is seen
+   the same tick it is lit. The reader still asks the real predicate of each candidate, so a
+   caster who has let go or gone down since the pass is not found. Like the grid, this is only
+   as fresh as the last `rebuildCharGrid()`, which `update()` calls first thing. */
+const warders = [];
 function rebuildCharGrid(){
   charGrid.clear();
   charById.clear();
+  warders.length = 0;
   for(const c of chars){
     charById.set(c.id, c);
     if(c.state !== 'ok') continue;
+    if(c.concentrating && c.concentrating.key === 'warding') warders.push(c);
     const k = ((c.y/CELL)|0)*GW + ((c.x/CELL)|0);
     const a = charGrid.get(k);
     if(a) a.push(c); else charGrid.set(k, [c]);
@@ -11557,7 +11568,7 @@ function physics(c, dt){
      forward while quietly forgetting who it was walking at. */
   if(wardTurns(c)){
     if(c.target && wardedFrom(c.target)){ c.target = null; }
-    const ward = (function(){ for(const o of chars){ if(isConcentrating(o,'warding') && o.state==='ok' && (o.floor||0)===(c.floor||0) && dist(o.x,o.y,c.x,c.y) < WARD_RADIUS + 1.5) return o; } return null; })();
+    const ward = lightNear(c, WARD_RADIUS + 1.5);   /* was an inline walk of all of `chars`, per gaunt, per tick */
     if(ward){
       const d = Math.max(0.01, dist(c.x,c.y,ward.x,ward.y));
       stepToward(c, c.x + (c.x-ward.x)/d * 4, c.y + (c.y-ward.y)/d * 4, dt);
@@ -16587,6 +16598,7 @@ function concMobile(c){ return !!(c.concentrating && c.concentrating.mobile); }
 function startConcentration(c, key, lock, exclusive, mobile){
   if(c.concentrating) endConcentration(c, true);
   c.concentrating = {key, lock: lock || 0, exclusive: !!exclusive, mobile: !!mobile};
+  if(key === 'warding' && c.state === 'ok' && !warders.includes(c)) warders.push(c);   /* seen this tick, not the next — see rebuildCharGrid */
   if(c.mana > maxMana(c)) c.mana = maxMana(c);   /* the reserve is taken from what you have */
   const sp = SPELLS[key];
   log(`${c.name} begins to concentrate — ${sp ? sp.label : key}.`, '');
@@ -17973,18 +17985,29 @@ function castWarding(c){
    AND IT ASKS NOTHING ABOUT FACTION, unlike `wardedFrom` two lines down, which protects its
    own side. A paladin's light burns your risen and yours burns theirs. The dead are the dead. */
 const WARD_SEAR = 1.4;
-function wardSears(c){
-  if(!c || !c.undead) return null;
-  for(const o of chars){
+/* the nearest live light on this body's storey within r, whoever holds it. THE ONE LOOP; three
+   copies of it used to walk all of `chars` per call — here, in `wardedFrom`, and inline in
+   `physics` for every gaunt every tick, which was the copy the profiler filed under
+   `isConcentrating` (the callee) and so the one that hid. Reads the candidates rebuildCharGrid
+   gathered and still asks the real predicate of each, so a light let go this tick is not found. */
+function lightNear(c, r = WARD_RADIUS){
+  for(const o of warders){
     if(!isConcentrating(o, 'warding') || o.state !== 'ok') continue;
     if((o.floor||0) !== (c.floor||0)) continue;
-    if(dist(o.x, o.y, c.x, c.y) < WARD_RADIUS) return o;
+    if(dist(o.x, o.y, c.x, c.y) < r) return o;
   }
   return null;
 }
+function wardSears(c){
+  if(!c || !c.undead) return null;
+  return lightNear(c);
+}
 /* is this point inside a live warding aura held by a non-hostile caster? */
 function wardedFrom(c){
-  for(const o of chars){
+  /* the candidates are the few bodies rebuildCharGrid found holding a light (plus any lit since);
+     the predicate is still asked of each, so a light let go this tick is not found. This walked
+     all of `chars` for every hunter every tick, and was 10% of the step with nothing lit. */
+  for(const o of warders){
     if(!isConcentrating(o, 'warding') || o.state !== 'ok') continue;
     if(hostile(o, c)) continue;                 /* the ward protects its own side */
     if((o.floor||0) !== (c.floor||0)) continue;

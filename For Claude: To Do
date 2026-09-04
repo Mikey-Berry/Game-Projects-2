@@ -5666,3 +5666,36 @@ suite load is a coin and this file has already recorded that lesson twice. Then 
 because a timer that never expires or a set that claims too much would ALSO make the sim faster:
 a corpse put down six tiles from a Maw that has already missed is taken 1.6s later, and two Maws
 beside one body still make one meal of it. The per-search cost is printed as a WATCH.
+
+[DONE] THE LIGHT WAS ASKED OF THE WHOLE WORLD, THREE TIMES OVER. After the Maw came off the profile,
+the next line was `isConcentrating` 6.1% + `wardedFrom` 4.2% of an 8.2ms step, in a world with no
+light lit. `wardedFrom(c)` walked all of `chars` for every gaunt with a quarry, every tick, to find
+the two or three bodies (that day, none) holding Ainzopha'ar's Light. The audit called it "the
+second-largest sim cost, a five-line fix".
+    THE FIRST ANSWER WAS WRONG, AND THE MEASUREMENT SAID SO. The five lines went in — the warders
+gathered once a step in `rebuildCharGrid`, `wardedFrom` reading that list — and three interleaved
+pairs of `simcost.js` came back 8.19 → 8.31 ms a step. Nothing. The count in the harness was
+right (each call asked 1,067 bodies before, 0 after) and the wall clock had not moved, because the
+live-world counter said 176,000 `isConcentrating` calls a step before and 121,000 after: the ward
+walk in `wardedFrom` was 55,000 of them, and the rest were somebody else's.
+    THE PROFILER FILES A LOOP UNDER ITS CALLEE. `wardSears(c)` — asked of every undead in
+`bodyTick` and on every blow in `mitigate` — was the same walk under a different name, and it was
+not the rest either. The rest was an INLINE IIFE in `physics`, three lines under the `wardedFrom`
+call, asked for every gaunt every tick whether a light was near enough to turn from: 113 gaunts ×
+1,067 bodies = 120,000 asks a step. It had no name, so the sampling profiler put every one of its
+samples on `isConcentrating`, and reading the profile by function name never finds it. The tell was
+arithmetic again: 121,000 calls a step is 113 a body, and nothing a body does to ITSELF costs 113.
+    ONE LIST, ONE READER. `lightNear(c, r)` reads the candidates; `wardSears` is `lightNear` gated
+on undead; the IIFE is `lightNear(c, WARD_RADIUS + 1.5)`; `wardedFrom` keeps its faction test.
+`startConcentration` pushes a light raised mid-step so it is seen the tick it is lit, and every
+reader still asks the real predicate of each candidate, so a light let go this tick is not found.
+Measured interleaved three a side: `simcost.js` direct 8.9/8.3/8.3 → 7.0/6.5/7.0 ms a step, the
+sampling profile 8.4 → 7.1, and the live-world predicate count 176,000 → 0 a step.
+    tools/wards.js pins it, COUNTS FIRST: bodies asked per call for all three readers (1,067 →
+0), and `isConcentrating` calls a step in the live world (176k → 0, capped at eight a body). Then
+everything a stale list could get wrong, because a list that is never rebuilt would ALSO be fast:
+a light raised after the pass with no rebuild is seen; a light let go with no rebuild is gone at
+once; the caster down, gone; the enemy beside it, the friend out of range, the friend a storey up,
+none warded; the sear reaches your risen and theirs and not the living; a lesser gaunt driven
+through the real `update()` still lets go of its quarry and walks off; and the caster still holds
+the light on the first step after a save. Red two ways on the build before.

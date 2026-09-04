@@ -26,8 +26,9 @@ Ranked by what it buys against what it costs.
    an `O((down + corpses) × chars)` scan, re-run every tick by 151 bodies that found
    nothing last tick. Two small changes halve the step in the measured world and stop it
    scaling with the body count on a battlefield.
-4. **Precompute the warding casters** (§2.2). `wardedFrom` walks every body for every body.
-   Second-largest sim cost after the Maw, and a five-line fix.
+4. **Precompute the warding casters** (§2.2) — *done on this branch, and the audit had it wrong.*
+   `wardedFrom` walks every body for every body — and so did two other copies of the same loop
+   that the profiler filed under their callee. Fixing the named one alone measured nothing.
 5. **Rename the two files with colons in their names** (§6.1). The repository cannot be
    cloned on Windows.
 6. **A shared harness helper and a CI run of `check:fast`** (§4). 152 harnesses carry the
@@ -217,6 +218,31 @@ asked per body per tick, so it is `chars²` calls to `isConcentrating` — 3.3% 
 step for a feature that has, in this world, zero active casters. Collect the active warders
 once per tick (there are never more than a few) and have `wardedFrom` check against that
 list. Same shape as the `_pl` / `_nearSquad` precompute already done at 20203.
+
+**Fixed on this branch — and the paragraph above was wrong about where the cost was.**
+`wardedFrom` is asked only for gaunts with a quarry (51 a step here), so its walk was 55k
+predicate calls a step, not `chars²`. The candidate-list fix for it alone measured 8.19 →
+8.31 ms a step across three interleaved pairs: nothing. The live-world counter in
+`tools/wards.js` then said 176k `isConcentrating` calls a step before and 121k after, and
+121k over 1,067 bodies is 113 a body, which nothing a body does to itself costs. The rest was
+two more copies of the same loop: `wardSears` (asked of every undead in `bodyTick` and on every
+blow in `mitigate`) and an unnamed inline IIFE in `physics`, asked for every gaunt every tick
+whether a light was near enough to turn from — 113 gaunts × 1,067 bodies. A sampling profiler
+files a loop's cost under its callee, so both hid under `isConcentrating`, and reading the
+profile by function name never finds them. One list gathered in `rebuildCharGrid`, one reader
+(`lightNear`), and `startConcentration` adding a light lit mid-step:
+
+| | before | after |
+|---|---|---|
+| `simcost.js` direct, ms/step | 8.9 / 8.3 / 8.3 | 7.0 / 6.5 / 7.0 |
+| `simcost.js` 20 s soak, sim ms/frame | 16.4 / 16.9 / 16.9 | 17.9 / 13.4 / 14.6 |
+| sampling profile, ms/step | 8.36 | 7.05 |
+| `isConcentrating` calls per step, live world | 176,482 | 0 |
+| bodies asked per `wardedFrom` / `wardSears` call | 1,067 / 1,067 | 0 / 0 |
+
+The lesson belongs in this document rather than only in the To Do: when a profile puts a
+tiny predicate high on the list, the cost is in its callers, and the callers to look for are
+loops without names.
 
 ### 2.3 What is already good
 
