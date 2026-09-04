@@ -16508,6 +16508,8 @@ const AGE_YEAR_DAYS = 7;   /* a year passes in a week. Lives here are short and 
    that rounded up, and it leaves the trip to a bed feeling like a deadline rather than a
    formality. */
 const GESTATION = 6;
+/* and how often one does not arrive, before the nights she spends overdue are added to it */
+const BIRTH_LOSS = 0.05;
 /* the peoples of the dust */
 /* RACES, SUBRACES and their helpers now live above `makeChar` — worldgen builds bodies
    long before this point and a table in its temporal dead zone takes the script with it. */
@@ -19304,6 +19306,22 @@ function update(dt){
       /* coming of age: the young choose a road */
       if(c.age >= 16 && c.wasChild){
         c.wasChild = false;
+        /* ---------- AND A GIFT OPENS HERE ----------
+           A child born with an art carries `gift` and nothing else — see the birth block. The
+           attunement is what every other gifted body in this game is handed at the moment it
+           becomes one (`att[gift] = 2`, and a pool to work it with), and this is that moment.
+           `giftTwo` is the rare dual birth: it opens at the same time and caps at ADEPT rather
+           than master, because `attCap` reserves the top rung for the branch you ARE. */
+        if(c.gift && canHoldGift(c.race, c.sub)){
+          c.att = c.att || {divine:0, destruction:0, dark:0, dust:0};
+          c.attXp = c.attXp || {divine:0, destruction:0, dark:0, dust:0};
+          c.att[c.gift] = Math.max(c.att[c.gift] || 0, 2);
+          if(c.giftTwo) c.att[c.giftTwo] = Math.max(c.att[c.giftTwo] || 0, 2);
+          c.stats.magic = Math.max(c.stats.magic || 0, c.giftTwo ? 8 : 6);
+          c.mana = rawMaxMana(c);
+          if(c.faction === 'player')
+            log(`${c.name} has come into the ${c.gift} art${c.giftTwo ? ` — and the ${c.giftTwo} with it` : ''}.`, 'good');
+        }
         if(c.faction==='town' && c.civ && c.homeTown){
           const t = c.homeTown;
           const roll = rnd();
@@ -19364,6 +19382,23 @@ function update(dt){
             continue;
           }
           const where = c.faction === 'player' ? birthPlace(c) : null;
+          const dad = chars.find(o => o.id === c.spouse) || null;
+          /* ---------- NOT EVERY ONE OF THEM ARRIVES ----------
+             "we should include (tastefully) a chance of losing the baby."
+             Tastefully means one line, no scene, and a real cost that is not a punishment: the
+             season still has to pass, so it is time rather than blood. And it is not a flat
+             roll — `overdue` is the number of nights she has been dragged around the wastes at
+             her term looking for a roof, which is the one thing about this the player controls.
+             A birth on the night she comes to term is the safest one there is. */
+          const risk = Math.min(0.30, BIRTH_LOSS + (c.overdue || 0) * 0.012);
+          if(rnd() < risk){
+            c.pregnant = 0; c.overdue = 0; c.lastBorn = day;
+            c.grief = Math.max(c.grief || 0, 4);
+            if(dad) dad.grief = Math.max(dad.grief || 0, 3);
+            if(c.faction === 'player')
+              log(`${c.name}'s child did not live to be named. Give her the season.`, 'bad');
+            continue;
+          }
           c.overdue = 0;
           const ksex = rnd() < 0.5 ? 'f' : 'm';
           /* a child takes the family name — that is what a family name is for */
@@ -19383,12 +19418,65 @@ function update(dt){
           c.lastBorn = day;
           kid.wasChild = true;
           kid.race = c.race;
+          kid.sub = c.sub || null;
           kid.homeTown = c.homeTown || null;
           if(c.civ) kid.civ = true;
+          /* ---------- WHAT IT IS BORN WITH ----------
+             "possibly it being born with gifts inherited from parents, dual gifts, or possibly
+              even with high stats under rare occasions, like being born under a blood moon."
+             THE GIFT IS POTENTIAL, NOT TRAINING. A newborn is handed `gift` and nothing else —
+             no attunement, no mana, no spell list — and the branch opens at sixteen with the
+             rest of its road, which is where `att[gift] = 2` is written for every other gifted
+             body in the game. So a gifted child is a promise you watch grow up rather than an
+             infant that can throw fire, and `spellsFor` stays empty until then by itself.
+             A line that cannot hold an art does not inherit one: `canHoldGift` is asked of the
+             CHILD, so a Nullborn or a Fallen born to a caster is simply deaf, which is the
+             point of those lines. */
+          const marks = [];
+          if(canHoldGift(kid.race, kid.sub)){
+            const gA = c.gift || null, gB = dad ? (dad.gift || null) : null;
+            const both = gA && gB;
+            if(gA || gB){
+              /* one gifted parent is a coin; two is most of the way there */
+              if(rnd() < (both ? 0.60 : 0.32)) kid.gift = both ? (rnd() < 0.5 ? gA : gB) : (gA || gB);
+              /* AND THE RARE ONE: two parents, two different branches, and a child that gets
+                 both. Second branch caps at adept where the first caps at master (`attCap`),
+                 so a dual gift is wide rather than deep — which is the honest shape for it. */
+              if(kid.gift && both && gA !== gB && rnd() < 0.12){
+                kid.giftTwo = kid.gift === gA ? gB : gA;
+                marks.push('two arts in one child, which is not supposed to happen');
+              } else if(kid.gift) marks.push(`the ${kid.gift} art, from ${kid.gift === gA ? c.name : (dad ? dad.name : 'the line')}`);
+            }
+          }
+          /* ---------- AND WHAT THE SKY WAS DOING ----------
+             A blood moon is already the night the world turns strange, and it is on a cooldown,
+             so it is exactly the rare occasion the note asks for: half the children born under
+             one come up marked. The rest of the time it is a flat one-in-twenty-five, because
+             "rare" should still be able to surprise somebody who has never seen a blood moon.
+             The head start is REAL and it lasts: a newborn is atk 1 def 1 tough 2 ath 3, and a
+             player's child is given no stats at all when it comes of age — so this is the only
+             thing that separates one child from another sixteen years later. */
+          /* `strongborn` IS THE FLAG AND THE STATS ARE NOT. Measured while writing the probe for
+             this: `makeChar` already spreads a newborn's stats — on the build before any of
+             this, tough came out 1, 2, 5 or 6 across two hundred births — so "is this child
+             stronger than a newborn should be" cannot be answered by reading the number. It is
+             recorded rather than inferred. */
+          if(rnd() < (bloodMoon > 0 ? 0.5 : 0.04)){
+            kid.strongborn = true;
+            kid.moonborn = bloodMoon > 0;
+            for(const k of ['atk','def','tough','ath']) kid.stats[k] = kid.stats[k] * 3 + 2;
+            kid.stats.magic = Math.max(kid.stats.magic || 0, kid.gift ? 4 : 2);
+            marks.push(kid.moonborn ? 'born under the blood moon, and it shows in the child'
+                                    : 'born strong, for no reason anybody can name');
+          }
           chars.push(kid);
-          if(c.faction==='player') log(where && where.kind === 'inn'
-            ? `A child is born to ${c.name} in an inn at ${where.town ? where.town.name : 'the crossroads'}. The dust has a new name to learn.`
-            : `A child is born to ${c.name}. The dust has a new name to learn.`, 'good');
+          if(c.faction==='player'){
+            log(where && where.kind === 'inn'
+              ? `A child is born to ${c.name} in an inn at ${where.town ? where.town.name : 'the crossroads'}. The dust has a new name to learn.`
+              : `A child is born to ${c.name}. The dust has a new name to learn.`, 'good');
+            /* said separately, because a mark is the thing worth reading twice */
+            for(const m of marks) log(`${kid.name} — ${m}.`, 'good');
+          }
         }
       }
     }
@@ -28596,6 +28684,7 @@ function refreshCharPanel(){
     }
   }
   if(c.pregnant) relTxt += c.overdue ? ' · DUE — needs a bed' : ' · expecting';
+  if(c.moonborn) relTxt += ' · moonborn';
   if(c.grief) relTxt += ' · grieving';
   /* the LINE is the thing worth reading on a panel — 'Human' says nothing, 'Pitborn' says
      where the toughness came from and why the medicine is not coming */
@@ -33409,7 +33498,7 @@ function snapshot(){
     isLeader: c.isLeader ?? -1, captain: !!c.captain, omni: !!c.omni,
     npcNecro: !!c.npcNecro, roamNecro: !!c.roamNecro, rebel: !!c.rebel,
     age: c.age, goal: c.goal, wasChild: !!c.wasChild, legacyTrade: c.legacyTrade||null,
-    race: c.race||'human', sub: c.sub||null, construct: !!c.construct, sex: c.sex||'m', spouse: c.spouse||0, partner: c.partner||0, grief: c.grief||0, pregnant: c.pregnant||0, lastBorn: c.lastBorn ?? null, overdue: c.overdue||0,
+    race: c.race||'human', sub: c.sub||null, construct: !!c.construct, sex: c.sex||'m', spouse: c.spouse||0, partner: c.partner||0, grief: c.grief||0, pregnant: c.pregnant||0, lastBorn: c.lastBorn ?? null, overdue: c.overdue||0, giftTwo: c.giftTwo||null, moonborn: !!c.moonborn, strongborn: !!c.strongborn,
     pilgrimDestI: c.pilgrimage ? towns.indexOf(c.pilgrimage.dest) : -1,
   });
   return {
@@ -33832,7 +33921,7 @@ function restore(d){
     fixRace(s);
     c.race = s.race || 'human'; c.sub = s.sub || null; c.spouse = s.spouse || 0;
     c.construct = s.construct !== undefined ? !!s.construct : !!(RACES[c.race] || {}).construct;
-    c.sex = s.sex || 'm'; c.partner = s.partner || 0; c.grief = s.grief || 0; c.pregnant = s.pregnant || 0; c.lastBorn = s.lastBorn ?? null; c.overdue = s.overdue || 0;
+    c.sex = s.sex || 'm'; c.partner = s.partner || 0; c.grief = s.grief || 0; c.pregnant = s.pregnant || 0; c.lastBorn = s.lastBorn ?? null; c.overdue = s.overdue || 0; c.giftTwo = s.giftTwo || null; c.moonborn = !!s.moonborn; c.strongborn = !!s.strongborn;
     if(c.civ) c.civT = rnd()*10;
     if(s.pilgrimDestI >= 0) c.pilgrimage = {dest: towns[s.pilgrimDestI], waitT: 0};
     c._mid = s.masterId; c._fid = s.followId; c._did = s.dragId; c._cid = s.carryId; c._gid = s.guardTargetId;
