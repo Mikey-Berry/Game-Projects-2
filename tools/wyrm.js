@@ -166,15 +166,22 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       rebuildCharGrid();
     }
 
-    /* ---------- 5. AND NOTHING ELSE IN THE GAME QUIETLY GAINED A SWEEP ----------
-       `sweepAfter` runs on every landed blow of every body that carries the record. If
-       anything else picked one up, the whole melee changed and this file is the only place
-       that would say so. */
+    /* ---------- 5. AND NOTHING ORDINARY QUIETLY GAINED A SWEEP ----------
+       `sweepAfter` runs on every landed blow of every body that carries the record, so if this
+       spread the whole melee changed and this file is the only place that would say so.
+       WRITTEN AS "NOTHING ELSE HAS ONE" AND THAT WAS THE WRONG CLAIM. The Sixfold was given one
+       deliberately — its report is this file's own comment about a different creature, "six men
+       could stand shoulder to shoulder in front of a house-sized animal and take it in turns" —
+       and an exclusivity test turns the second correct use of a mechanism into a red build. The
+       claim worth holding is that a sweep stays a NAMED thing: great creatures, by hand, never
+       a townsman and never a wolf. */
     {
-      const swept = chars.filter(c => c.sweep && c.bossKey !== 'wyrm');
-      R.andNothingElseHasOne = swept.length === 0
-        ? 'and nothing else in the world carries a sweep — the melee everything else fights is the melee it fought yesterday'
-        : `!! ${swept.length} OTHER BODIES HAVE A SWEEP: ${swept.slice(0, 3).map(c => c.name).join(', ')}`;
+      const GREAT = ['wyrm', 'sixfold', 'brood'];
+      const swept = chars.filter(c => c.sweep);
+      const stray = swept.filter(c => !GREAT.includes(c.bossKey));
+      R.andNothingElseHasOne = stray.length === 0
+        ? `and a sweep is still a named thing — ${swept.length} in the world, every one of them great (${[...new Set(swept.map(c => c.bossKey))].join(', ')})`
+        : `!! ${stray.length} ORDINARY BODIES HAVE A SWEEP: ${stray.slice(0, 3).map(c => c.name).join(', ')}`;
     }
     return R;
   });

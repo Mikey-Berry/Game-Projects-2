@@ -193,6 +193,49 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : '!! THE RING OUTLIVES THE SPELL';
     });
 
+    /* ---------- 5. AND THE GREAT ONES WALK THROUGH IT ----------
+       "It needs to have some sort of weakness that can be circumvented."
+       Asserted as BEHAVIOUR and not just as a predicate, and in a PAIR: the ordinary gaunt has
+       to still be turned, or "the light no longer works" would pass this test just as cleanly
+       as "the light now has a ceiling". */
+    guard(['theLightStillTurnsTheSwarm', 'butNotTheGreatOnes'], () => {
+      wipe();
+      const u = put('Bearer', gx, gy, { magic: 30 });
+      u.gift = 'divine';
+      startConcentration(u, 'warding', 1, true, true);
+      const stage = (kind, at) => {
+        const g = spawnGaunt(kind, at.x, at.y);
+        if (!g) return null;
+        g.x = at.x; g.y = at.y; g.state = 'ok'; g.target = u; g.hunt = true;
+        made.push(g);
+        return g;
+      };
+      const near = { x: gx + 4, y: gy };
+      const small = stage('gaunt', near);
+      const big = stage('gaunt', { x: gx + 4, y: gy + 2 });
+      if (big) { big.big = 2.4; big.bossKey = null; }
+      const d0s = dist(small.x, small.y, u.x, u.y), d0b = dist(big.x, big.y, u.x, u.y);
+      /* RUN THE WORLD, NOT JUST THE DECISION. `ai` chooses; `physics` moves. Calling the
+         former on its own leaves both creatures standing exactly where they were staged and
+         the probe reads "nobody backed off" for a light that works perfectly. */
+      paused = false;
+      for (let i = 0; i < 60; i++) update(0.1);
+      paused = true;
+      const d1s = dist(small.x, small.y, u.x, u.y), d1b = dist(big.x, big.y, u.x, u.y);
+      R._ward = `the ordinary gaunt went ${d0s.toFixed(1)} -> ${d1s.toFixed(1)} tiles, the ${big.big}x one ${d0b.toFixed(1)} -> ${d1b.toFixed(1)}`;
+      R.theLightStillTurnsTheSwarm = (d1s > d0s + 0.5 && !small.target)
+        ? `an ordinary gaunt inside the light drops its target and backs off — ${d0s.toFixed(1)} to ${d1s.toFixed(1)} tiles`
+        : `!! THE LIGHT NO LONGER TURNS A COMMON GAUNT (${d0s.toFixed(1)} -> ${d1s.toFixed(1)}, target ${!!small.target})`;
+      R.butNotTheGreatOnes = (d1b < d0b && wardTurns(small) && !wardTurns(big))
+        ? `while a ${big.big}x one walks straight in — ${d0b.toFixed(1)} to ${d1b.toFixed(1)} tiles — so the light answers the many and the one still has to be killed`
+        : `!! turnsSmall=${wardTurns(small)} turnsBig=${wardTurns(big)} bigMoved ${d0b.toFixed(1)} -> ${d1b.toFixed(1)}`;
+      /* and a NAMED thing is never turned, whatever size it is */
+      const named = stage('gaunt', { x: gx + 4, y: gy - 2 });
+      named.bossKey = 'sixfold';
+      R._named = wardTurns(named) ? '!! A NAMED GAUNT IS STILL TURNED BY THE LIGHT' : 'and a named one is never turned, whatever it measures';
+      endConcentration(u, true);
+    });
+
     /* helpers for the out-of-page section, which needs a real modified click */
     window.__O = { gx, gy, put, wipe, seam };
     return R;
@@ -298,6 +341,240 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! living=${u.job || 'NONE'} risen=${d.job || 'NONE'}`;
     });
   }
+
+  /* ================= 6. AND A CHORD THE BROWSER DOES NOT TAKE AWAY =================
+     "When I right click on stuff in the browser game, I tend to get popups to 'save image' and
+      stuff like that... Notably, it mostly happens with shift + right click."
+     Section 5 above proves the shortcut WORKS on shift, and it does — but shift is the one
+     chord no page is allowed to keep. Both engines hand shift+right-click to the browser by
+     design (Gecko does not even fire the contextmenu event while shift is down), and the HTML
+     spec blesses it as the user's escape hatch, so the page-wide guard in `rightclick.js`
+     section 6 cannot reach it and never will. The order still lands; the browser's own menu
+     opens over the top of it.
+     So the fix is a second chord, and the assertions below are about the SHAPE of it: ctrl
+     does the same thing on a node, and does NOT trample the two things ctrl already means. */
+  const ctrlRight = async (q) => {
+    await p.keyboard.down('Control');
+    await p.mouse.move(q.x, q.y);
+    await p.mouse.down({ button: 'right' });
+    await p.mouse.up({ button: 'right' });
+    await p.keyboard.up('Control');
+  };
+  {
+    await p.evaluate(() => {
+      const u = chars.find(c => c.id === window.__T.uid);
+      u.job = null; selected = [u]; hideCtxMenu();
+    });
+    const q = await aimAt('seam');
+    await ctrlRight(q);
+    out.ctrlOnASeamSetsMineToo = await p.evaluate(() => {
+      const u = chars.find(c => c.id === window.__T.uid);
+      return u.job === 'mine'
+        ? 'ctrl+right-clicking a seam sets MINE exactly as shift does — the one chord the browser leaves alone'
+        : `!! THE JOB IS ${u.job || 'NONE'} AFTER CTRL+RIGHT-CLICKING A SEAM`;
+    });
+  }
+  /* AND IT DOES NOT EAT A FORCE ATTACK. Ctrl+right-click on a body means ATTACK ANYWAY, and an
+     enemy standing on an ore seam has to stay attackable — otherwise the new chord takes a
+     fight away to give you a job. The pair is the point: the SAME click on the SAME tile, once
+     with somebody standing on it and once without. Asserting only the first half would pass on
+     a build where ctrl had simply been wired to nothing at all. */
+  {
+    await p.evaluate(() => {
+      const u = chars.find(c => c.id === window.__T.uid);
+      u.job = null; selected = [u]; hideCtxMenu();
+      const t = window.__T.seamTile;
+      const foe = makeChar('Squatter', 'bandit', t.x, t.y, { atk: 6, def: 6, tough: 10 });
+      foe.state = 'ok'; foe.__probe = true;
+      chars.push(foe); window.__T.foeId = foe.id;
+      /* NO TICKS AFTER THIS. The fog over the seam was lifted during the staging for section 5
+         and `visAt` is about the TILE, so there is nothing left to run for — and running it
+         anyway is what broke the first version of this: six tenths of a second is enough for a
+         bandit dropped next to an armed stranger to walk a tile and a half, and the probe then
+         reported a force-attack guard that had failed when what had really happened is that
+         nobody was standing on the seam any more. */
+      rebuildCharGrid();
+    });
+    const q = await aimAt('seam');
+    await ctrlRight(q);
+    out._foe = await p.evaluate((q2) => {
+      const f = chars.find(c => c.id === window.__T.foeId);
+      const t = window.__T.seamTile;
+      const m = screenToWorld(q2.x, q2.y);
+      return f ? `the bandit stands ${dist(f.x, f.y, t.x, t.y).toFixed(2)} tiles off the seam, visAt ${visAt(f.x, f.y)}, ${dist(f.x, f.y, m.x, m.y).toFixed(2)} from where the click landed`
+               : '!! THE BANDIT IS GONE';
+    }, q);
+    out.butNotOverSomebodyStanding = await p.evaluate(() => {
+      const u = chars.find(c => c.id === window.__T.uid);
+      return !u.job
+        ? 'and with a bandit standing on that same seam the ctrl-click is still a FORCE ATTACK, not a job order'
+        : `!! CTRL+RIGHT-CLICK TOOK THE FIGHT AWAY AND HANDED OUT ${u.job.toUpperCase()} INSTEAD`;
+    });
+    await p.evaluate(() => {
+      const f = chars.find(c => c.id === window.__T.foeId);
+      if (f) chars.splice(chars.indexOf(f), 1);
+      const u = chars.find(c => c.id === window.__T.uid);
+      u.job = null; u.target = null; selected = [u]; hideCtxMenu();
+      rebuildCharGrid();
+    });
+    const q2 = await aimAt('seam');
+    await ctrlRight(q2);
+    out.andTheSameClickWorksOnceTheyMove = await p.evaluate(() => {
+      const u = chars.find(c => c.id === window.__T.uid);
+      return u.job === 'mine'
+        ? 'and the identical click on the identical tile sets MINE the moment nobody is standing there — the guard is the body, not the chord'
+        : `!! THE JOB IS ${u.job || 'NONE'} ON AN EMPTY SEAM`;
+    });
+  }
+  /* AND THE BUILDING KEEPS ITS FULLER MENU. Ctrl+right-click on a building already offered
+     ASSIGN, SHUT DOWN and DECONSTRUCT off this same `BUILD_JOB` table — that branch is where
+     the shortcut's own comment points. Letting the new chord claim buildings too would have
+     preempted three entries with one, silently, and nothing else here would have noticed. */
+  {
+    await p.evaluate(() => {
+      const u = chars.find(c => c.id === window.__T.uid);
+      u.job = null; selected = [u]; hideCtxMenu();
+    });
+    const q = await aimAt('bench');
+    await ctrlRight(q);
+    out.andABuildingKeepsItsOwnMenu = await p.evaluate(() => {
+      const el = document.getElementById('ctxmenu');
+      const open = el && el.style.display !== 'none';
+      const labels = open ? [...document.querySelectorAll('#ctxmenu button')].map(x => x.textContent) : [];
+      const has = (f) => labels.some(l => l.toUpperCase().includes(f));
+      return (open && has('ASSIGN') && has('SHUT DOWN') && has('DECONSTRUCT'))
+        ? `and ctrl on a Research Bench still opens the building's own three — ${labels.length} entries, assign/shut down/deconstruct — instead of being swallowed by the shortcut`
+        : `!! open=${open} labels=${JSON.stringify(labels)}`;
+    });
+  }
+
+  /* ================= 7. AND THE LIGHT SEARS THE DEAD =================
+     "Let's go with searing undead. Perhaps rather than damage, it's similar to hallowed edge in
+      that they simply take more damage while within range of it."
+     Sections 4 and 5 gave the light its radius and its first weakness — the great ones walk
+     through it. This is the second, and it is the one aimed at the PLAYER: the light's only
+     price was that its bearer could not act, which in a squad of eight is not a price. Now it
+     is paid by the army.
+     ASSERTED AT TWO DEPTHS ON PURPOSE. `mitigate` is where the multiplier lives and it is
+     deterministic, so the exact ratio is read there with no dice involved at all. But a
+     multiplier nothing calls is dead code, so the same claim is made again through
+     `applyDamage` — the one funnel every damage path in the game goes through. */
+  Object.assign(out, await p.evaluate(() => {
+    const R = {};
+    try {
+      paused = true;
+      /* READ DEFENSIVELY, so the NEGATIVE CONTROL still runs. Naming `WARD_SEAR` straight
+         throws on any build that predates it, the guard catches it, and the whole section
+         reports one ReferenceError — which proves a constant is new and says nothing at all
+         about behaviour. Degraded like this the old build runs every assertion and answers the
+         question actually being asked: it comes back with a ratio of 1.000. */
+      const SEAR = (typeof WARD_SEAR === 'number') ? WARD_SEAR : 1.4;
+      const me = player()[0];
+      const made = [];
+      const risen = (x, y) => {
+        const c = makeChar('Bones', 'player', x, y, { atk: 6, def: 6, tough: 8 });
+        c.state = 'ok'; c.undead = true; c.lich = false; c.master = me; c.__probe = true;
+        chars.push(c); made.push(c);
+        return c;
+      };
+      /* far from the staging ground, so no shrine's consecrated circle is quietly doing this */
+      const ox = me.x + 40, oy = me.y + 40;
+      const lamp = makeChar('Lantern', 'player', ox, oy, { atk: 6, def: 6, magic: 20 });
+      lamp.state = 'ok'; lamp.mana = 100; lamp.__probe = true;
+      chars.push(lamp); made.push(lamp);
+      const inside = risen(ox + 2, oy);
+      const outside = risen(ox + WARD_RADIUS + 3, oy);
+      const living = makeChar('Warm', 'player', ox + 2, oy + 0.5, { atk: 6, def: 6, tough: 8 });
+      living.state = 'ok'; living.__probe = true;
+      chars.push(living); made.push(living);
+      R._shrine = (consecratedAt(inside.x, inside.y) || consecratedAt(outside.x, outside.y))
+        ? '!! THE TEST GROUND IS CONSECRATED — 1.35 IS ALREADY IN THESE NUMBERS'
+        : 'staged on unconsecrated ground, so the only multiplier in play is the light';
+
+      castWarding(lamp);
+      const held = isConcentrating(lamp, 'warding');
+      const m = (d) => mitigate(d, 100, 'blunt', 0, me);
+      /* ONE BODY, WALKED ACROSS THE EDGE — not two bodies compared. `makeChar` rolls the stats
+         it is not handed, so two risen staged from the same literal are NOT identical: measured
+         side by side they came out 93.4 and 95.2 before any light was lit, and the ratio then
+         read 1.37 against a constant of 1.40. Close enough to pass a threshold and wrong enough
+         to hide a real drift later. The same body two tiles in and then twelve tiles out has
+         nothing different about it but the distance. */
+      const near = m(inside);
+      const fx = inside.x; inside.x = ox + WARD_RADIUS + 3;
+      const far = m(inside);
+      inside.x = fx;
+      const outD = far, warmD = m(living), inD = near;
+      R._sear = `held=${held} · the same risen: ${near.toFixed(2)} inside the light, ${far.toFixed(2)} outside it, ratio ${(near / far).toFixed(3)} against a WARD_SEAR of ${SEAR} · a living body inside takes ${warmD.toFixed(2)} (of 100 raw)`;
+      R.theLightSearsYourOwnDead = (held && Math.abs(near / far - SEAR) < 0.01)
+        ? `a risen carried into Ainzopha'ar's Light takes ${(near / far).toFixed(2)}x what that same risen takes outside it — the light is a liability the moment the dead are the ones fighting`
+        : `!! ${near.toFixed(2)} in against ${far.toFixed(2)} out — ratio ${(near / far).toFixed(3)}, wanted ${SEAR} (held=${held})`;
+      /* AND IT IS THE DEAD, not everyone standing there. A blanket "everything in the ring is
+         softer" would make the light useless rather than a trade. */
+      R.butTheLivingStandInItUnharmed = Math.abs(warmD - m(living)) < 0.01 && Math.abs(warmD / far - 1) < 0.03
+        ? 'while a living body on the same tile takes exactly what it takes anywhere else — the light is anathema to the dead, not a debuff on the ground'
+        : `!! A LIVING BODY IN THE LIGHT TOOK ${warmD.toFixed(2)} AGAINST ${outD.toFixed(2)} OUTSIDE`;
+      /* AND THE EDGE IS THE DRAWN RING. The ring on the ground is the promise; if the searing
+         reached further than the circle the player was shown, the drawing would be a lie. */
+      const edge = risen(ox + WARD_RADIUS - 0.4, oy), past = risen(ox + WARD_RADIUS + 0.4, oy);
+      const eD = m(edge), pD = m(past);
+      R.andItStopsAtTheRingThatIsDrawn = (eD > pD * 1.3)
+        ? `and it stops where the ring is drawn — seared at ${(WARD_RADIUS - 0.4)} tiles, clean at ${(WARD_RADIUS + 0.4)}`
+        : `!! edge ${eD.toFixed(2)} against just-past ${pD.toFixed(2)}`;
+
+      /* AND IT REACHES THROUGH THE REAL DAMAGE FUNNEL, not just through `mitigate` on its own */
+      const hp = (c) => Object.values(c.parts).reduce((n, q) => n + q.hp, 0);
+      seed = 90210;
+      const h0 = hp(inside), g0 = hp(outside);
+      for (let i = 0; i < 6; i++) applyDamage(me, inside, 'chest', 12, 'blunt', false, false, false, 0);
+      seed = 90210;
+      for (let i = 0; i < 6; i++) applyDamage(me, outside, 'chest', 12, 'blunt', false, false, false, 0);
+      const lostIn = h0 - hp(inside), lostOut = g0 - hp(outside);
+      R.andRealBlowsLandHarder = (lostIn > lostOut * 1.2)
+        ? `and six identical blows off the same dice take ${lostIn.toFixed(1)} from the one in the light against ${lostOut.toFixed(1)} from the one outside it`
+        : `!! inside lost ${lostIn.toFixed(1)}, outside lost ${lostOut.toFixed(1)}`;
+
+      /* AND IT ASKS NOTHING ABOUT FACTION. `wardedFrom` protects its own side and this
+         deliberately does not — a paladin's lantern burns your risen. The pair is the point:
+         the same lamp, turned hostile, still sears but no longer shelters. */
+      /* AN ENEMY BEARER, AND THE PRECONDITION IS ASSERTED RATHER THAN ASSUMED. The first
+         version of this set the faction to 'paladin', found `wardedFrom` still sheltering, and
+         reported that the ward had stopped caring about sides — when what had really happened
+         is that the two were not enemies. `hostile` is a real function with real rules and a
+         Bastion paladin is NOT your enemy for having a different banner; measured, a bare
+         faction swap to paladin, cult or town all come back false even with `provoked` set,
+         while bandit, wild, slaver and gaunt come back true. The claim here is about
+         faction-BLINDNESS, so it needs a bearer the game agrees is an enemy. */
+      lamp.faction = 'bandit';
+      const reallyHostile = hostile(lamp, inside);
+      R._hostileLamp = reallyHostile ? 'the lantern-bearer is now genuinely hostile to the risen'
+                                     : '!! THE STAGED "ENEMY" BEARER IS NOT HOSTILE — THE NEXT TWO CLAIMS ARE VACUOUS';
+      const hostileSear = m(inside);
+      R.andAnEnemysLanternBurnsThemToo = (reallyHostile && hostileSear > outD * 1.3)
+        ? 'and it never asks whose dead they are — turn the bearer into an enemy and your risen still sear in it, because the same light is the same light'
+        : `!! hostile=${reallyHostile}, seared ${hostileSear.toFixed(2)} against ${outD.toFixed(2)} outside`;
+      R.andItStillSheltersOnlyItsOwn = (reallyHostile && !wardedFrom(inside))
+        ? 'and that hostile lantern shelters nobody of yours — the searing and the sheltering are two relations and only one of them cares about sides'
+        : '!! A HOSTILE WARD IS STILL PROTECTING THE PLAYER FROM GAUNTS';
+
+      /* ON A FRESH BODY, AND THE SAME ONE BOTH TIMES. Read off `inside` this compared a risen
+         that had just taken six blows against one that had taken six lighter ones, and a body's
+         own damage feeds back into `mitigate` — it reported 93.40 against 95.20 and called the
+         searing "still on" when the two numbers were never comparable in the first place. One
+         undamaged body, lit and then unlit, has nothing else moving in it. */
+      const fresh = risen(ox + 2, oy + 1);
+      const lit = m(fresh);
+      endConcentration(lamp, true);
+      const dark = m(fresh);
+      R.andItGoesWhenTheLightGoesOut = (lit > dark * 1.3)
+        ? `and the moment the light is put down the risen is ordinary again — ${lit.toFixed(1)} while it burned, ${dark.toFixed(1)} after, nothing left painted on the body`
+        : `!! lit ${lit.toFixed(2)}, put down ${dark.toFixed(2)}`;
+      for (const c of made) { const i = chars.indexOf(c); if (i >= 0) chars.splice(i, 1); }
+    } catch (e) {
+      R.theLightSearsYourOwnDead = '!! ' + String(e.message).slice(0, 120).toUpperCase();
+    }
+    return R;
+  }));
 
   const bad = Object.values(out).filter(v => typeof v === 'string' && v.startsWith('!!'));
   for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(32) + v);

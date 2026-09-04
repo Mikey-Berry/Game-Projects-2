@@ -172,11 +172,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        The one table where a half-done split hides: a Charnel House offering FLESH would send
        the hand to the vats and leave the house cold, and nothing would log a word. */
     {
-      const src = (typeof onCtx === 'function' ? onCtx.toString() : document.documentElement.innerHTML);
-      const m = /JOB_OF\s*=\s*\{[^}]*\}/.exec(src);
-      R.theBuildingOffersItsOwnTrade = (m && /charnel:\s*'charnel'/.test(m[0]) && /ossuary:\s*'charnel'/.test(m[0]) && /vat:\s*'flesh'/.test(m[0]))
-        ? 'and right-clicking a house offers CHARNEL while a vat offers FLESH'
-        : `!! THE BUILDING-TO-TRADE TABLE STILL READS ${m ? m[0] : '(not found)'}`;
+      /* READ THE TABLE, NOT THE SOURCE THAT SPELLS IT. This grepped the page text for
+         `JOB_OF = {...}`, which stopped existing the day the table was hoisted to module scope
+         and shared with shift+right-click — so a refactor that made the rule MORE consistent
+         turned this red, and the message said the table "still reads (not found)". The object
+         is a global now; ask it. */
+      const T = typeof BUILD_JOB === 'object' ? BUILD_JOB : null;
+      R.theBuildingOffersItsOwnTrade = (T && T.charnel === 'charnel' && T.ossuary === 'charnel' && T.vat === 'flesh')
+        ? `and right-clicking a house offers CHARNEL while a vat offers FLESH (${Object.keys(T).length} buildings name a trade)`
+        : `!! THE BUILDING-TO-TRADE TABLE READS ${T ? JSON.stringify(T) : '(there is no table)'}`;
     }
 
     return R;

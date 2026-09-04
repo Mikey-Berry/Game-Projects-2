@@ -41,7 +41,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     /* ---------- ROLL THE DAWN, NOT THE WORLD ----------
        A day rollover is the heaviest tick in this game — every town, every civ, the whole
-       economy — and this needs thousands of them. `bloodMoonRoll` reads `day`, `rnd()` and
+       economy — and this needs thousands of them. `bloodMoonRise` reads `day`, `rnd()` and
        `eldritchTide()` and writes `bloodMoon`; drive exactly that and nothing else, or the
        probe measures the machine's patience instead of the clock. */
     const sweep = (days, stage) => {
@@ -50,7 +50,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       if (typeof bloodMoonLast !== 'undefined') bloodMoonLast = -999;
       const nights = [];
       const d0 = day;
-      for (let i = 0; i < days; i++) { day++; bloodMoonRoll(); if (bloodMoon > 0) nights.push(day); }
+      for (let i = 0; i < days; i++) { day++; bloodMoonSet(); bloodMoonRise(); if (bloodMoon > 0) nights.push(day); }
       day = d0;
       const gaps = nights.slice(1).map((n, i) => n - nights[i]);
       return { nights, gaps, n: nights.length, days };
@@ -90,6 +90,46 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! ${tight} PAIRS OF RED MOONS INSIDE A FORTNIGHT (of ${mid.gaps.length})`;
     });
 
+    /* ---------- 2b. AND ONE MOON IS ONE NIGHT ----------
+       THE HALF THE GAP TEST COULD NOT SEE, and the one the report was actually about. Counting
+       ROLLS says the cooldown works, and it does — no two rolls closer than sixteen days. But
+       the roll used to run at the DAY ROLLOVER while a night runs 19.5 to 5.5, so one moon
+       painted the last five and a half hours of the night in progress, went out at sunrise, and
+       came back at dusk for four and a half more before the calendar cleared it. Two red spans
+       0.6 days apart, neither of them a whole night, from a single roll — which is "blood moon
+       nights twice in a row" word for word, and which no cooldown on the roll could ever touch.
+       So this steps the CLOCK, a quarter hour at a time, and counts what a player counts: a
+       contiguous span of `bloodMoon && isNight()`. */
+    guard(['oneMoonIsOneNight', 'andTheSpanIsAWholeNight'], () => {
+      const keepDay = day, keepHour = hour;
+      fractureStage = 3; fracture = FRACTURE_STAGES[3].at;
+      bloodMoon = 0; bloodMoonLast = -999; day = 20; hour = 0;
+      const spans = [];
+      let inRed = false, from = 0;
+      for (let step = 0; step < 24 * 4 * 3000; step++) {
+        const prevH = hour;
+        hour += 0.25;
+        if (prevH <= DUSK_H && hour > DUSK_H) bloodMoonRise();
+        if (prevH < DAWN_H && hour >= DAWN_H) bloodMoonSet();
+        if (hour >= 24) { hour -= 24; day++; }
+        const red = !!bloodMoon && isNight();
+        if (red && !inRed) { inRed = true; from = day + hour / 24; }
+        if (!red && inRed) { inRed = false; spans.push({ from, to: day + hour / 24 }); }
+      }
+      const gaps = spans.slice(1).map((sp, i) => sp.from - spans[i].to).sort((a, b) => a - b);
+      const hoursOf = spans.map(sp => (sp.to - sp.from) * 24);
+      const shortSpan = Math.min(...hoursOf);
+      const backToBack = gaps.filter(g => g < 2).length;
+      day = keepDay; hour = keepHour; bloodMoon = 0; bloodMoonLast = -999;
+      R._spans = `${spans.length} red spans over 3000 nights; shortest gap ${gaps[0].toFixed(2)} days, median ${gaps[gaps.length >> 1].toFixed(1)}; spans run ${shortSpan.toFixed(1)}-${Math.max(...hoursOf).toFixed(1)}h`;
+      R.oneMoonIsOneNight = backToBack === 0
+        ? `not one red night follows another inside two days across ${gaps.length} intervals — a moon arrives once, not as a pre-dawn and an evening 0.6 days apart`
+        : `!! ${backToBack} RED NIGHTS ARRIVE WITHIN TWO DAYS OF THE LAST (of ${gaps.length})`;
+      R.andTheSpanIsAWholeNight = shortSpan > 8
+        ? `and each one runs the whole dark — ${shortSpan.toFixed(1)}h at the shortest, dusk to dawn, rather than being cut in half by the calendar`
+        : `!! THE SHORTEST RED SPAN IS ${shortSpan.toFixed(1)} HOURS — the moon is still being clipped by midnight`;
+    });
+
     /* ---------- 3. AND THE SKY OPENING STILL MAKES IT WORSE ----------
        The tide is meant to buy more of them as the Fracture nears. A cooldown must slow the
        clustering without flattening that curve into a constant. */
@@ -111,7 +151,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         /* `day > 12`, so the twelfth is the last quiet night and the thirteenth is fair game.
            Walking to 13 here reported "13 RED MOONS INSIDE THE OPENING GRACE" about a grace
            that was doing exactly what it says. Ask for the days the rule actually covers. */
-        for (let i = 0; i < 11; i++) { day++; bloodMoonRoll(); if (bloodMoon > 0) early++; }
+        for (let i = 0; i < 11; i++) { day++; bloodMoonSet(); bloodMoonRise(); if (bloodMoon > 0) early++; }
         day = d0;
       }
       R.theFirstFortnightIsQuiet = early === 0
@@ -124,7 +164,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     guard(['theFloorRidesTheSave'], () => {
       bloodMoon = 0; bloodMoonLast = -999;
       day = 400;
-      for (let i = 0; i < 200 && !bloodMoon; i++) { day++; bloodMoonRoll(); }
+      for (let i = 0; i < 200 && !bloodMoon; i++) { day++; bloodMoonSet(); bloodMoonRise(); }
       const fired = bloodMoonLast;
       restore(JSON.parse(JSON.stringify(snapshot())));
       R.theFloorRidesTheSave = (fired > 0 && bloodMoonLast === fired)

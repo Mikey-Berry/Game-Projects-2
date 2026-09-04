@@ -222,6 +222,19 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       }
       R.cartGround = ox ? `staged on open waste at ${ox},${oy}` : '!! NO GROUND CLEAR OF EVERY TOWN';
       cart.x = ox; cart.y = oy;
+      /* ---------- AND A YARD FOR IT TO TAKE THEM TO ----------
+         A cart with nowhere to put a body no longer starts a round at all: it used to pick one
+         up, find no yard, drop it, and pick it up again forever, which is a report in its own
+         right. So the round is now GATED on a boneyard within range, and a probe that stages a
+         cart on empty waste is staging the one condition where doing nothing is correct. Give it
+         somewhere to work. */
+      /* WELL CLEAR OF THE BODIES, or they count as already home: `cartFodder` skips anything
+         `inBoneyard`, so a yard dropped six tiles from the pile makes the pile its own
+         destination and the cart correctly has nothing to fetch. Twenty-five out — inside the
+         sixty-tile round, outside the racks. */
+      const yard = placeStructure ? placeStructure('boneyard', Math.round(ox) + 25, Math.round(oy) + 4) : null;
+      if (yard) yard.progress = 1;
+      R.cartYard = yard ? `a Boneyard twenty-five tiles off, which the round is now gated on` : '!! COULD NOT PLACE A BONEYARD';
       const far = [];
       for (let i = 0; i < 8; i++) far.push(mkCorpse(ox + 3 + i * 0.3, oy + 3, {}));
       cart.master = ritualist;

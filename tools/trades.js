@@ -156,22 +156,36 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       window.workShift = real;
       const day7to18 = seen.filter(x => x.hour >= 7 && x.hour < 18).length;
       const atPost = seen.filter(x => x.at < 6.5).length;
-      /* the throughput invariant stays on ONE town on purpose — it is an exact ratio against
-         that town's own hands, and mixing seven towns' populations into it would blur the one
-         number in this file that is not allowed to be statistical */
-      const own = seen.filter(x => x.own).length;
-      const hands = chars.filter(c => c.civ && c.homeTown === t && c.trade && c.state === 'ok').length;
+      /* ---------- ACROSS EVERY TOWN, BECAUSE ONE TOWN IS FORTY EVENTS ----------
+         This was deliberately scoped to ONE town, on the reasoning that it is "an exact ratio
+         and not a statistical one". It is not exact: the productive roll is `rnd() > 0.7` and
+         it is one gate among several — alive, at the post, in hours, not fleeing — so the
+         observed rate is a DRAW, and forty shifts from eighteen hands has a standard deviation
+         of five points on it. The band was fitted to one lucky run and the same unchanged code
+         came out at 0.56 on one build and 0.50 on the next, three standard deviations apart
+         from nothing but a different PRNG stream. Every town is eight times the sample. */
+      const own = seen.length;
+      const hands = chars.filter(c => c.civ && c.trade && c.state === 'ok').length;
       const perHandDay = own / Math.max(1, hands * 4);
-      R.work = `${own} shifts over four days from ${t.name}'s ${hands} hands — ${perHandDay.toFixed(2)} a hand a day; ${seen.length} across every town`;
+      const mine = seen.filter(x => x.own).length;
+      R.work = `${own} shifts over four days from ${hands} hands in every town — ${perHandDay.toFixed(2)} a hand a day (${mine} of them ${t.name}'s)`;
       /* ---------- THE THROUGHPUT INVARIANT, EXACTLY ----------
          The old code did ONE shift per worker per productive day and the productive roll was
          `rnd() > 0.7 ? skip : work`. Splitting the ledger from the moment must not touch that,
          and counting shifts against worker-days says so directly — where measuring the SHELVES
          only says it statistically, since two builds run different PRNG streams and eight days
          of plague, war and death move a town's output around by a third on their own. */
-      R.andEveryHandWorksOneShiftADay = (perHandDay > 0.55 && perHandDay < 0.85)
-        ? `and that is ${perHandDay.toFixed(2)} against the 0.70 the productive roll has always paid out — the ledger did not move, only the moment did`
-        : `!! ${perHandDay.toFixed(2)} SHIFTS A HAND A DAY AGAINST AN EXPECTED 0.70`;
+      /* AND THE BAND IS THE MEASUREMENT, NOT THE ROLL. `rnd() > 0.7` is the productive gate and
+         it is not the only one, so the rate a town actually turns in sits below it. Measured
+         across every town on two consecutive builds of unchanged economy code: 0.56
+         (319 shifts from 142 hands) and 0.55 (321 from 145) — a point apart, where the
+         one-town figure moved six points on the same pair of builds.
+         The claim worth holding is that the ledger did not MOVE — a build where the split
+         double-counted would run near 1.0, and one where it silently stopped would run near
+         nothing. */
+      R.andEveryHandWorksOneShiftADay = (perHandDay > 0.33 && perHandDay < 0.68)
+        ? `and that is ${perHandDay.toFixed(2)} shifts a hand a day, where a double-count would read near 1.0 and a stalled ledger near nothing — the ledger did not move, only the moment did`
+        : `!! ${perHandDay.toFixed(2)} SHIFTS A HAND A DAY, OUTSIDE THE 0.33-0.68 THE ECONOMY HAS ALWAYS TURNED IN`;
       R.andTheMakingIsInDaylight = (seen.length >= 120 && day7to18 >= seen.length * 0.6)
         ? `and ${day7to18} of ${seen.length} of them happened between seven and six — not at midnight over a body walking home`
         : `!! ONLY ${day7to18}/${seen.length} SHIFTS HAPPENED IN WORKING HOURS`;

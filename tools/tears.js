@@ -87,6 +87,83 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! THE SEAL COSTS ${costText(cost)} — the premise of this file no longer holds`;
     });
 
+    /* ---------- 0b. AND THE EARLY GAME IS QUIET ----------
+       "Tears seem to happen extremely frequently, even in the very early game, and even when
+        attention is at unnoticed. The idea is a slow buildup to an apocalypse, so early game
+        shouldn't have quite so many eldritch beings, with threats primarily being fauna and
+        bandits etc."
+       The rate was ONE NUMBER for the whole run with the Fracture and Attention together worth
+       an additive rounding error on top of it, so day three and THE SKY LEANS were within a
+       quarter of each other. Measured here as tears per hundred days, which is the unit the
+       report is written in. */
+    guard(['theDustFallsQuietly', 'andTheSkyOpeningBuysThem', 'andAttentionIsNotARoundingError', 'nothingTearsInTheFirstWeek'], () => {
+      const rate = (stage, tier, d) => {
+        const ks = fractureStage, kn = noticeTier, kd = day;
+        fractureStage = stage; noticeTier = tier; day = d === undefined ? 60 : d;
+        const perDay = riftOdds() * 24;
+        fractureStage = ks; noticeTier = kn; day = kd;
+        return perDay * 100;
+      };
+      const quiet = rate(0, 0), watched = rate(0, 3), late = rate(3, 0);
+      R._rates = `tears per 100 days: THE DUST FALLS unnoticed ${quiet.toFixed(1)}, the same stage SEEN ${watched.toFixed(1)}, THE WATCHERS WAKE unnoticed ${late.toFixed(1)}`;
+      R.theDustFallsQuietly = quiet < 1.5
+        ? `a quiet camp in the first stage sees ${quiet.toFixed(1)} tears per hundred days — the waste, and bandits in it`
+        : `!! ${quiet.toFixed(1)} TEARS PER HUNDRED DAYS ON DAY ONE`;
+      R.andTheSkyOpeningBuysThem = late > quiet * 6
+        ? `and the sky opening buys ${(late / quiet).toFixed(0)}x more of them — a slope, not a constant`
+        : `!! THE STAGE BARELY MOVES IT (${quiet.toFixed(2)} -> ${late.toFixed(2)})`;
+      R.andAttentionIsNotARoundingError = watched > quiet * 2
+        ? `and being SEEN more than doubles it at the same stage (${quiet.toFixed(1)} -> ${watched.toFixed(1)}) — "even when attention is at unnoticed" means something now`
+        : `!! ATTENTION IS WORTH ${(watched / quiet).toFixed(2)}x`;
+      R.nothingTearsInTheFirstWeek = rate(3, 3, 4) === 0
+        ? `and nothing tears at all before day ${RIFT_FIRST_DAY}, whatever the stage or the Attention`
+        : `!! THE SKY CAN TEAR ON DAY 4 (${rate(3, 3, 4).toFixed(2)} per 100 days)`;
+    });
+
+    /* ---------- 0c. AND BEFORE THE THINNING THEY DRIFT SHUT ----------
+       Stage 2's own announcement is "The tears are not closing on their own any more" — a
+       promise about stages 0 and 1 that nothing in the code kept. Asserted in a PAIR, because
+       "every tear closes itself" would be a worse game than the one that shipped. */
+    guard(['aSmallTearDriftsShut', 'butNotAfterTheThinning'], () => {
+      /* DRIFTING SHUT AND BIRTHING A SIXFOLD BOTH TAKE A RIFT OUT OF `rifts`, and the first
+         version of this read the second as the first: at stage 2 the tear reached full width,
+         delivered, and the probe reported "a tear closed itself at stage 2". The direction the
+         WIDTH moved is the thing being claimed, so that is what gets measured. */
+      const run = (stage) => {
+        wipe();
+        const ks = fractureStage;
+        fractureStage = stage;
+        const rf = tear(6);
+        const r0 = rf.r;
+        let h = 0, narrowest = rf.r;
+        for (; h < 2400 && rifts.includes(rf); h++) { riftTick(1); narrowest = Math.min(narrowest, rf.r); }
+        const gone = !rifts.includes(rf);
+        fractureStage = ks;
+        return { gone, h, r: rf.r, r0, narrowest, birthed: !!rf.birthed };
+      };
+      const early = run(0), later = run(2);
+      R._drift = `at THE DUST FALLS a fresh tear narrowed to ${early.narrowest.toFixed(1)} and ${early.gone && !early.birthed ? 'drew shut after ' + (early.h / 24).toFixed(0) + ' days' : 'did not'}; at THE THINNING it went ${later.r0} -> ${later.r.toFixed(1)}${later.birthed ? ' and birthed' : ''}`;
+      R.aSmallTearDriftsShut = (early.gone && !early.birthed && early.h < 1200)
+        ? `a tear left alone in the first stage draws itself shut in ${(early.h / 24).toFixed(0)} days without delivering anything — which is what the game has always told the player happens`
+        : `!! A FIRST-STAGE TEAR ${early.birthed ? 'BIRTHED A SIXFOLD' : 'NEVER CLOSED'} (${early.h}h, width ${early.r.toFixed(1)})`;
+      R.butNotAfterTheThinning = (later.narrowest >= later.r0)
+        ? `and past THE THINNING it never narrows by so much as half a stride — ${later.r0} to ${later.r.toFixed(1)}, exactly as that stage announces`
+        : `!! A STAGE-2 TEAR NARROWED TO ${later.narrowest.toFixed(1)} FROM ${later.r0}`;
+      wipe();
+    });
+
+    /* ---------- 0d. AND A FRESH CRACK IS NOT PRICED LIKE A DOORWAY ----------
+       "Attempting to close a tear manually is REALLY tough right now. It's almost easier to
+        just let it grow and spit out a Sixfold to fight." */
+    guard(['aFreshTearIsCheapToShut'], () => {
+      const small = riftSealCost({r: 6}), full = riftSealCost({r: 16}), bare = riftSealCost();
+      const sum = (o) => Object.values(o).reduce((a, b2) => a + b2, 0);
+      R._price = `a six-wide tear costs ${costText(small)}; a full-width one ${costText(full)}`;
+      R.aFreshTearIsCheapToShut = (sum(small) * 2.5 < sum(full) && sum(bare) === sum(full))
+        ? `shutting a fresh crack costs ${sum(small)} units against ${sum(full)} for a doorway — the price is the wound, and a bare call still quotes the headline figure`
+        : `!! small ${sum(small)}, full ${sum(full)}, bare ${sum(bare)}`;
+    });
+
     /* ---------- 1. BOTH WAYS ARE ON OFFER, AND THE RITE WANTS NOTHING ---------- */
     guard(['theRiteNeedsNoMaterials', 'butTheSealStillDoes'], () => {
       wipe();

@@ -319,6 +319,96 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     return R;
   }));
 
+  /* ================= 6. AND THE BROWSER STAYS OUT OF IT =================
+     "When I right click on stuff in the browser game, I tend to get popups to save image and
+      stuff like that."
+     Right-click is a primary control here, and the browser answers a good many of them with its
+     own menu — "Save image as..." over a canvas, "Back / Reload" over everything else. Only the
+     two canvases suppressed it, and the canvases are not most of the screen.
+     ASKED OF FOUR PLACES, because the interesting half is the EXEMPTION: a guard that kills the
+     native menu everywhere would take copy and paste off the save-transfer boxes, which is the
+     one place in the game a player genuinely needs it. `defaultPrevented` is the whole answer —
+     it is exactly what decides whether Chrome draws the menu. */
+  Object.assign(R, await p.evaluate(() => {
+    const R = {};
+    const ask = (el) => {
+      const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      el.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    };
+    const canvas = document.getElementById('game');
+    const mini = document.getElementById('minimap') || document.getElementById('mmcanvas');
+    const hud = document.getElementById('log') || document.getElementById('squadbar') || document.body;
+    const box = document.createElement('textarea');
+    document.body.appendChild(box);
+    const onCanvas = ask(canvas), onMini = mini ? ask(mini) : true, onHud = ask(hud), onText = ask(box);
+    box.remove();
+    R._nativeMenu = `suppressed on: canvas ${onCanvas}, minimap ${onMini}, HUD ${onHud}; textarea ${onText}`;
+    R.theBrowserMenuIsSuppressed = (onCanvas && onMini && onHud)
+      ? 'the browser\'s own menu is refused over the canvas, the minimap and the HUD alike — not just over the two canvases that used to guard themselves'
+      : `!! canvas ${onCanvas}, minimap ${onMini}, HUD ${onHud}`;
+    R.butNotOverATextBox = !onText
+      ? 'and a textarea keeps it, so copying a save out of the transfer box and pasting one back in still works'
+      : '!! A TEXTAREA HAS LOST ITS COPY AND PASTE MENU';
+    return R;
+  }));
+
+  /* ================= 7. AND THE CHORD THE BROWSER WILL NOT GIVE BACK =================
+     Section 6 suppresses the native menu, and it CANNOT suppress it on shift+right-click. Both
+     engines reserve that chord for the user on purpose — Gecko does not even fire the
+     contextmenu event while shift is down, so there is no event to refuse — and the HTML spec
+     blesses it outright as the escape hatch out of pages that steal the menu. Nothing written
+     on this page will ever change that.
+     Which means any feature bound to shift+RIGHT-click is broken by design, and the stores
+     panel had one: "take the whole stack" read `ev.shiftKey` inside an `oncontextmenu` handler,
+     so in Firefox it never ran at all — the tooltip advertised a gear the engine had taken away.
+     THIS IS ASSERTED THROUGH THE BUTTON, not the handler, and on all three levels at once,
+     because the bug that reached the player was not "ctrl is missing" but "the top gear is
+     unreachable" — and a test that only asked about ctrl would pass on a build where ctrl took
+     ten and nothing took all. */
+  Object.assign(R, await p.evaluate(() => {
+    const R = {};
+    try {
+      const c = player()[0];
+      selected = [c];
+      c.inv = c.inv || {};
+      const key = 'remains';
+      /* THE PANEL, NOT THE STASH. These buttons are built by `mkBulk` inside `openInventory` —
+         one body's BACKPACK, in the modal — and not by `refreshInv`, which draws the shared
+         squad stash and has no such control. The first version of this probe filled the pack,
+         called `refreshInv`, found no button and reported the feature missing on a build where
+         it was working: the panel under test was never open. */
+      const give = (n) => { c.inv[key] = n; openInventory(c); };
+      const btn = () => [...document.querySelectorAll('#modalbody button, #invbody button')]
+        /* MATCHED ON THE STABLE HALF OF THE TOOLTIP. Looking for the word "ctrl" would make the
+           negative control fail on a CHANGED STRING rather than on changed behaviour — the old
+           build would simply report no button, which proves nothing about what its chord did.
+           Every build that has this feature at all says "for all". */
+        .find(x => x.title && x.title.includes('for all'));
+      give(40);
+      const b0 = btn();
+      R._bulk = b0 ? `the stack button reads "${b0.title.split('—').pop().trim()}"` : '!! NO BULK BUTTON ON A STACK OF 40';
+      if (!b0) { R.ctrlRightTakesTheWholeStack = '!! not reached'; R.andPlainRightStillTakesTen = '!! not reached'; return R; }
+      const press = (ev) => {
+        const el = btn();
+        el.dispatchEvent(new MouseEvent(ev.type, { bubbles: true, cancelable: true, shiftKey: !!ev.shift, ctrlKey: !!ev.ctrl }));
+      };
+      give(40); press({ type: 'contextmenu', ctrl: true });
+      const afterCtrl = 40 - (c.inv[key] || 0);
+      give(40); press({ type: 'contextmenu' });
+      const afterPlain = 40 - (c.inv[key] || 0);
+      R.ctrlRightTakesTheWholeStack = afterCtrl === 40
+        ? 'ctrl+right-click on a stack of 40 moves all 40 — the top gear is back on a chord the browser does not reserve'
+        : `!! CTRL+RIGHT-CLICK MOVED ${afterCtrl} OF 40`;
+      R.andPlainRightStillTakesTen = afterPlain === 10
+        ? 'and a plain right-click still takes ten, so the middle gear is untouched'
+        : `!! A PLAIN RIGHT-CLICK MOVED ${afterPlain}, NOT 10`;
+    } catch (e) {
+      R.ctrlRightTakesTheWholeStack = '!! ' + String(e.message).slice(0, 110).toUpperCase();
+    }
+    return R;
+  }));
+
   console.log('=== WHAT A RIGHT-CLICK OFFERS ===\n');
   for (const [k, v] of Object.entries(R)) console.log('  ' + (k.startsWith('_') ? ('· ' + k.slice(1)).padEnd(34) : k.padEnd(34)) + v);
   const bad = Object.values(R).map(String).filter(v => v.startsWith('!!'));
