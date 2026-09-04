@@ -21511,9 +21511,9 @@ const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24
   if(!U.halls.length) return;
   const pool = U.halls.slice().sort(() => rnd() - 0.5);
   const want = Math.max(4, Math.round(U.halls.length * 0.34));
-  let made = 0;
+  const caves = [];
   for(const h of pool){
-    if(made >= want) break;
+    if(caves.length >= want) break;
     /* how far this hall is from the nearest way out of the ground, 0..1 — the warren's menace,
        which replaces the old "how many floors down are you" now that there is only one floor */
     let near = 1e9;
@@ -21521,50 +21521,103 @@ const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24
     const cv = placeCave(h);
     if(!cv) continue;
     cv.menace = clamp(near / 190, 0, 1);
-    /* re-stock at the menace this hall actually has: `placeCave` populated at the default
-       while it was carving, before anybody could know where the shafts were */
-    made++;
-    /* ---------- WALLS FIRST, THEN THE WAYS IN, IN THAT ORDER ----------
-       Three measurements got this to the right shape and each one moved the number:
-         · run the tunnel to the door tile itself and 93 of 106 chambers were reachable WITH
-           EVERY DOOR SHUT. `bore` lays a three-wide wandering tunnel and its last disc was
-           centred on the doorway, so it ate the wall either side. The doors were decorative.
-         · stop short and re-raise the ring, and shut doors sealed properly (0) — but only 20 of
-           106 were reachable with them OPEN, because the outward normal was derived from
-           `sign(door - centre)` and came out DIAGONAL for a door on a side wall.
-         · take the normal from the edge the door was actually snapped to and it went to 28 —
-           exactly one chamber per warren, which is the tell: the approach tunnels were being
-           severed by the re-raise, because a wandering three-wide bore to chamber C crosses
-           chamber A's ring on the way and the ring goes back up afterwards.
-       So the ring goes up FIRST and the approaches are cut LAST, straight and one tile wide.
-       Nothing is put back over them, and a narrow passage into a chamber reads better than a
-       tunnel mouth anyway. */
-    for(const w of cv.walls){
-      const k = bkey(w.x, w.y, w.f);
-      blocked.add(k); baseBlocked.add(k);
+    caves.push(cv);
+  }
+  /* ---------- ONE RING DOES NOT KNOW WHAT ANOTHER ONE WAS BUILT ACROSS ----------
+     This was three separate measurements inside a single warren and then, once the world's
+     random stream moved under it, a fourth across TWO of them — which is the one that mattered
+     and the one the original shape could not express.
+       · run the tunnel to the door tile itself and 93 of 106 chambers were reachable WITH
+         EVERY DOOR SHUT. `bore` lays a three-wide wandering tunnel and its last disc was
+         centred on the doorway, so it ate the wall either side. The doors were decorative.
+       · stop short and re-raise the ring, and shut doors sealed (0) — but only 20 of 106 opened,
+         because the outward normal came out DIAGONAL for a door on a side wall.
+       · take the normal from the edge the door was snapped to and it went to 28, exactly one
+         per warren: the re-raise was severing the approaches.
+       · so the ring went up first and the approaches were cut last, PER WARREN — and warren
+         N+1's approach then cut clean through warren N's ring, after N's wall list had already
+         been filtered. That tile was walkable and still drawn as rock: the leak `warrens.js`
+         measures and the ROCK/DRAWN mismatch `under.js` measures are the same hole counted from
+         two sides. It read 0 of 112 open for a year on one seed and 33 of 120 on the next.
+     THE SHAPE THAT ACTUALLY HOLDS: place every warren first, so every ring is known before any
+     approach is cut; ROUTE the approaches around every ring that is not their own door; then
+     raise every ring once, at the end, with the doors the only gap in it. A shut door is then
+     the only way in BY CONSTRUCTION rather than by the tunnels happening to miss. */
+  const doorK = new Set(), ringK = new Set();
+  for(const cv of caves) for(const d of cv.doors) doorK.add(bkey(d.x, d.y, d.f || 0));
+  for(const cv of caves) for(const w of cv.walls){
+    const k = bkey(w.x, w.y, w.f);
+    if(!doorK.has(k)) ringK.add(k);
+  }
+  /* ---------- AND A DOOR IS AS UNROUTABLE AS A WALL ----------
+     `U.put` opens whatever it is handed — and for a SHUT door, `decks.has(k) && !blocked.has(k)`
+     is false, so it does not bail out: it deletes the block from `blocked` AND `baseBlocked`
+     and the door is quietly gone. The door object still says `open: false`, so the tile is
+     walkable until you reload and `setDoor` puts it back — which `under.js` reads as twelve
+     MORE rock tiles after a save than before, on a warren that looked fine. A route may end
+     at nothing but hall floor. */
+  const walled = (x, y) => { const k = bkey(x, y, UNDER); return ringK.has(k) || doorK.has(k); };
+  /* a four-connected route from the doorstep to the hall that never opens somebody else's wall.
+     Bounded to a box around the two ends, because this runs once per chamber and the floor is
+     ninety thousand tiles. Rock is passable to a ROUTE — we are carving, not walking. */
+  const route = (sx, sy, tx, ty) => {
+    const pad = 30;
+    const x0 = Math.max(2, Math.min(sx, tx) - pad), x1 = Math.min(W - 3, Math.max(sx, tx) + pad);
+    const y0 = Math.max(2, Math.min(sy, ty) - pad), y1 = Math.min(H - 3, Math.max(sy, ty) + pad);
+    const seen = new Map(), q = [[sx, sy]];
+    seen.set(sy * W + sx, null);
+    while(q.length){
+      const [x, y] = q.shift();
+      if(x === tx && y === ty) break;
+      for(const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+        const nx = x + dx, ny = y + dy;
+        if(nx < x0 || nx > x1 || ny < y0 || ny > y1) continue;
+        const id = ny * W + nx;
+        if(seen.has(id)) continue;
+        if(walled(nx, ny) && !(nx === tx && ny === ty)) continue;   /* never through a ring */
+        seen.set(id, [x, y]);
+        q.push([nx, ny]);
+      }
     }
+    if(!seen.has(ty * W + tx)) return null;
+    const path = [];
+    for(let c = [tx, ty]; c; c = seen.get(c[1] * W + c[0])) path.push(c);
+    return path;
+  };
+  let routed = 0, straight = 0;
+  for(const cv of caves){
     for(const [ax, ay, bx, by, ux, uy] of (cv.links || [])){
-      /* the doorstep, four tiles out on the door's own axis */
-      const sxo = bx + ux * 4, syo = by + uy * 4;
-      for(let t = 0; t <= 4; t++) U.put(bx + ux * t, by + uy * t);
-      /* ---------- AND IT HAS TO BE FOUR-CONNECTED ----------
-         A rounded straight line steps DIAGONALLY, and two tiles that touch only at a corner are
-         not a passage: the flood, the pathfinder and a body walking all move orthogonally. Every
-         approach thread measured fully open, and only 66 of 112 doorsteps were reachable — the
-         same fault as the corner doors, one step further out. Walk x, then y, one tile at a
-         time, so consecutive tiles always share an edge. */
-      let px = sxo, py = syo;
-      U.put(px, py);
-      while(px !== ax){ px += Math.sign(ax - px); U.put(px, py); }
-      while(py !== ay){ py += Math.sign(ay - py); U.put(px, py); }
+      /* the door and its doorstep, out along the door's own axis. These are outside the room by
+         construction; the only thing that can be in the way is a NEIGHBOUR's ring, so it stops
+         short rather than punching through one. */
+      let sx = bx, sy = by, t = 0;
+      U.put(bx, by);
+      for(t = 1; t <= 4; t++){
+        const nx = bx + ux * t, ny = by + uy * t;
+        if(walled(nx, ny)) break;
+        U.put(nx, ny); sx = nx; sy = ny;
+      }
+      const path = route(sx, sy, ax, ay);
+      if(path){ for(const [px, py] of path) U.put(px, py); routed++; }
+      else {
+        /* nothing legal reaches the hall — carve it straight and let the wall win at the end.
+           `warrens.js` then reports it as a chamber you cannot get INTO, loudly, which is the
+           failure worth having: an unreachable room is visible and a leaking one is not. */
+        let px = sx, py = sy;
+        while(px !== ax){ px += Math.sign(ax - px); U.put(px, py); }
+        while(py !== ay){ py += Math.sign(ay - py); U.put(px, py); }
+        straight++;
+      }
     }
-    for(const d of cv.doors) setDoor(d, false);
-    /* AND THE DRAWN LIST HAS TO MATCH THE COLLISION. The approach threads are cut after the ring
-       goes up, so a thread that crossed a ring tile opened it — and `cv.walls` still listed it,
-       which draws a block of rock standing in a passage you can walk through. `rebuildCaveWalls`
-       derives the list from `blocked` after a reload and got it right, so a save quietly repaired
-       four phantom rocks per world and `under.js` caught the difference as DRAWN 3234 → 3230. */
-    cv.walls = cv.walls.filter(w => blocked.has(bkey(w.x, w.y, w.f)) || cv.doors.some(d => d.x === w.x && d.y === w.y && d.f === w.f));
+  }
+  /* AND NOW THE RINGS GO UP, once, over everything that has been cut */
+  for(const k of ringK){ blocked.add(k); baseBlocked.add(k); }
+  for(const cv of caves) for(const d of cv.doors) setDoor(d, false);
+  U.warrenRouted = routed; U.warrenStraight = straight;
+  for(const cv of caves){
+    /* AND THE DRAWN LIST HAS TO MATCH THE COLLISION, which is the same bookkeeping as before —
+       a door is drawn as a door and everything else is drawn only where it is actually solid. */
+    cv.walls = cv.walls.filter(w => blocked.has(bkey(w.x, w.y, w.f)) || doorK.has(bkey(w.x, w.y, w.f)));
   }
   /* ---------- AND THE NETWORK IS STILL ONE PLACE AFTERWARDS ----------
      A chamber's wall ring does not know what it was built across. Cutting warrens into the halls
@@ -21602,11 +21655,26 @@ const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24
           if(d2 < bd){ bd = d2; best = o; }
         }
         if(!best) continue;
+        /* AND THE REPAIR MUST NOT OPEN A RING EITHER. This runs after the rings are up, so a
+           thread walked straight from hall to hall would punch the same hole the approaches
+           used to — the leak, reintroduced by the thing that exists to fix a different one.
+           It steps around, and gives up rather than cutting through. */
         let px = Math.round(h.x), py = Math.round(h.y);
         const tx = Math.round(best.x), ty = Math.round(best.y);
+        const wall2 = (x, y) => { const k = bkey(x, y, UNDER); return ringK.has(k) || doorK.has(k); };
         U.put(px, py);
-        while(px !== tx){ px += Math.sign(tx - px); U.put(px, py); }
-        while(py !== ty){ py += Math.sign(ty - py); U.put(px, py); }
+        let guard2 = 0;
+        while((px !== tx || py !== ty) && guard2++ < 4000){
+          const dx = Math.sign(tx - px), dy = Math.sign(ty - py);
+          let nx = px + dx, ny = py;
+          if(!dx || wall2(nx, ny)){ nx = px; ny = py + dy; }
+          if((!dy && nx === px) || wall2(nx, ny)){
+            /* both ways forward are somebody's wall — sidestep once and try again */
+            ny = py + (dy || 1); nx = px;
+            if(wall2(nx, ny)){ nx = px + (dx || 1); ny = py; if(wall2(nx, ny)) break; }
+          }
+          px = nx; py = ny; U.put(px, py);
+        }
       }
     }
   }
