@@ -5081,22 +5081,66 @@ function placeDeepRedoubt(){
    (-1, -2, -3...), each a walled warren of chambers connected by stairs. The danger deepens
    as you descend — bandits shelter in the shallows, monsters keep the dark below them, and
    the deepest cut holds a sealed Golden-Age bunker and what it was built to keep. */
-const caves = [];
-function placeCave(mtn){
-  /* a cave belongs to a mountain: the mouth sits on a walkable tile at its foot */
-  let mouth = null;
-  for(let tries = 0; tries < 200 && !mouth; tries++){
-    const a = rnd() * Math.PI * 2, r = mtn.r * (0.9 + rnd() * 0.5);
-    const mx = Math.round(clamp(mtn.x + Math.cos(a) * r, 3, W-4));
-    const my = Math.round(clamp(mtn.y + Math.sin(a) * r, 3, H-4));
-    if(!isBlocked(mx, my, 0) && tileAt(mx, my) !== 3 && !towns.some(t => dist(t.x, t.y, mx, my) < 20))
-      mouth = {x: mx, y: my};
-  }
-  if(!mouth) return null;
+/* ============================================================ DOORS THAT ARE ACTUALLY SHUT
+   "Maybe we could experiment with actual doors for the vaults etc to see how that works."
 
-  const depth = ri(3, 4);              /* how many floors down */
-  const cave = {id: caves.length + 1, x: mouth.x, y: mouth.y, mouth, depth,
-                walls: [], rooms: [], doors: [], floors: depth, mtnId: mtn ? 1 : 0};
+   A door was a hole. `chamber` carved the doorway open and pushed an entry onto `cave.doors`
+   that nothing but the renderer ever read — two little posts drawn in a gap you walked straight
+   through. Making it real costs nothing in the movement code, which is the pleasant surprise
+   here: `isBlocked` on a storey is `decks.has(k) && !blocked.has(k)`, so a SHUT door is simply a
+   decked tile that is also in `blocked`. Pathing, collision and the AI all refuse it already.
+   WHAT IT BUYS is that a room becomes a room. A chamber with a shut door is a place with an
+   inside and an outside — the thing that separates it from the twelve tiles of corridor either
+   side of it — and a BARRED one is a decision: you can hear something behind it, and getting in
+   is going to be loud. */
+const doors = [];
+function doorAt(x, y, f){
+  const xi = Math.floor(x), yi = Math.floor(y);
+  return doors.find(d => d.x === xi && d.y === yi && (d.f || 0) === (f || 0)) || null;
+}
+/* THE ONE PLACE THE FLAG AND THE WORLD ARE PUT IN AGREEMENT. Every other path — the world
+   generator, the save loader, the right-click, the forcing — goes through this, so the flag can
+   never disagree with what a body walking at the tile actually finds. */
+function setDoor(d, open){
+  if(!d) return;
+  d.open = !!open;
+  const k = bkey(d.x, d.y, d.f || 0);
+  decks.add(k);                       /* there is always something to stand on in a doorway */
+  if(open){ blocked.delete(k); } else { blocked.add(k); }
+  /* NOT `baseBlocked`. A door's state is the player's business and travels in the save with the
+     door; the base world is what the generator made. Writing it here is how you get a door that
+     silently re-bars itself on the next reload. */
+}
+const FORCE_SECS = 6.5;              /* how long a barred door takes to break open */
+/* the undercroft's storey. `UNDER` is declared with the lattice some fifteen thousand lines
+   below and is the same number; this one exists so the warren generator above it does not have
+   to reach forward into a `const` that has not been evaluated yet. */
+const UNDER_F = -1;
+const caves = [];
+/* ---------- AND THEY ARE NOT UNDER MOUNTAINS ANY MORE ----------
+   "The little 'tunnels' that supposedly lead underneath a mountain are broken. Like I cannot use
+    them. And I think I shouldn't, honestly. That whole experiment hasn't worked from the start.
+    Let's kill that section and focus more on developing the 'general' underground rooms and
+    areas, which right now, are barren. I'm wondering if that randomization is happening where
+    the mountains are at and I just can't reach it."
+   IT WAS, AND THAT IS THE WHOLE BUG IN ONE SENTENCE. Measured on the shipped build: the lattice
+   you actually reach — 81 halls, 94,344 tiles, entered by 81 shafts — contained ZERO rooms.
+   Every chamber, every vault, every warden and keeper in the game was in seven warrens on floors
+   -2 to -4, behind seven mouths at the feet of mountains. 35 of the 81 halls had neither a
+   monster nor a chest in them. The randomisation was happening exactly where he guessed, and it
+   was unreachable, so the part of the world he could walk into was bare corridor.
+   SO THE WARRENS MOVE TO WHERE THE PLAYER IS. A warren is now a cluster of chambers carved into
+   an undercroft hall, all on floor -1, with no surface mouth and no descent — you walk into it
+   because you were already walking down there. The chamber, stocking and vault machinery is
+   unchanged; only where it is put has changed. */
+function placeCave(h){
+  if(!h) return null;
+  const hallR = h.r || 8;
+  /* the hall IS the mouth: the reference point the renderer lights the warren from */
+  const mouth = {x: Math.round(h.x), y: Math.round(h.y)};
+  const depth = 1;                     /* one storey. There is no down from here any more. */
+  const cave = {id: caves.length + 1, x: mouth.x, y: mouth.y, mouth, depth, deep: true,
+                walls: [], rooms: [], doors: [], links: [], floors: 1, mtnId: 0};
 
   /* ---------- AND THE ROCK HAS TO BE IN `baseBlocked` ----------
      `baseBlocked` is the world AS GENERATED and `restore` rebuilds `blocked` from it — but it
@@ -5130,15 +5174,39 @@ function placeCave(mtn){
     /* snap the door to the nearest edge */
     let dx2 = clamp(wantDoor.x, ax, bx), dy2 = clamp(wantDoor.y, ay, by);
     const dl = dx2-ax, dr = bx-dx2, dt = dy2-ay, db = by-dy2, mm = Math.min(dl, dr, dt, db);
-    if(mm === dl) dx2 = ax; else if(mm === dr) dx2 = bx; else if(mm === dt) dy2 = ay; else dy2 = by;
-    const door = {x: dx2, y: dy2};
+    /* ---------- THE NORMAL IS KNOWN HERE AND NOWHERE ELSE ----------
+       Which EDGE the door was snapped to is decided on this line and then thrown away, and the
+       approach tunnel outside needs it: derived later from `sign(door - centre)` it comes out
+       DIAGONAL for a door on a side wall (the y difference is rarely zero), so the tunnel
+       arrived at a corner instead of at the doorstep. Measured: 20 of 106 chambers reachable
+       with every door standing open. Record the axis while it is still known. */
+    let nx2 = 0, ny2 = 0;
+    if(mm === dl){ dx2 = ax; nx2 = -1; }
+    else if(mm === dr){ dx2 = bx; nx2 = 1; }
+    else if(mm === dt){ dy2 = ay; ny2 = -1; }
+    else { dy2 = by; ny2 = 1; }
+    /* ---------- AND NEVER ON A CORNER ----------
+       The snap above fixes one axis to an edge and leaves the other wherever it was clamped, so
+       a door aimed diagonally at the room lands at (ax, ay) — a corner. A corner tile's only
+       neighbours inside the room are DIAGONAL, and the flood, the pathfinder and a body walking
+       all move orthogonally, so opening that door connects the doorstep to nothing at all.
+       Measured: 73 of 112 doorsteps were reachable and only 26 chambers opened through them.
+       Slide the free axis one tile off each end. */
+    if(nx2) dy2 = clamp(dy2, ay + 1, by - 1);
+    else    dx2 = clamp(dx2, ax + 1, bx - 1);
+    const door = {x: dx2, y: dy2, nx: nx2, ny: ny2};
     for(let i = ax; i <= bx; i++){ if(!(i===door.x && ay===door.y)) wall(i, ay, fl); if(!(i===door.x && by===door.y)) wall(i, by, fl); }
     for(let j = ay; j <= by; j++){ if(!(ax===door.x && j===door.y)) wall(ax, j, fl); if(!(bx===door.x && j===door.y)) wall(bx, j, fl); }
     blocked.delete(bkey(door.x, door.y, fl)); baseBlocked.delete(bkey(door.x, door.y, fl));
     deck(door.x, door.y, fl);
     cave.walls = cave.walls.filter(w => !(w.x===door.x && w.y===door.y && w.f===fl));
     const rm = {x0:ax, y0:ay, x1:bx, y1:by, f:fl, cx, cy, door, id:cave.rooms.length};
-    cave.doors.push({x:door.x, y:door.y, f:fl, roomId:rm.id, open:false});
+    /* SHUT, AND REGISTERED IN THE ONE LIST EVERYTHING READS. `cave.doors` was a renderer's
+       decoration; `doors` is the mechanic. The chamber ring carved this tile open a moment ago,
+       which is right — a doorway needs floor — and `setDoor` puts the rock back across it. */
+    const dd = {x:door.x, y:door.y, f:fl, roomId:rm.id, caveId:cave.id, open:false, barred:false};
+    doors.push(dd); cave.doors.push(dd);
+    setDoor(dd, false);
     cave.rooms.push(rm);
     if(populate) populate(rm);
     return rm;
@@ -5146,8 +5214,14 @@ function placeCave(mtn){
 
   /* the layered population: shallow = bandits, mid = monsters, deep = the worst, and the
      final floor is the sealed bunker. `d01` is 0 at the mouth, 1 at the bottom. */
+  /* ---------- HOW BAD IT IS, NOW THAT THERE IS NO DEPTH ----------
+     `d01` used to be how far down you were, which is meaningless in a warren one storey thick —
+     it computed to 1 for every room, so every chamber in the world would have drawn from the
+     deepest table. REMOTENESS replaces it: how far this warren is from the nearest way out.
+     Same curve, same three bands, and it reads the same way in play — the ones near a shaft are
+     bandits sheltering, and the ones you had to walk for are not. */
   const stockRoom = (rm, fl) => {
-    const d01 = depth <= 1 ? 1 : (-fl - 1) / (depth - 1);
+    const d01 = cave.menace === undefined ? 0.5 : cave.menace;
     const n = ri(2, 4);
     for(let k = 0; k < n; k++){
       const q = findOpenNear(ri(rm.x0+1, rm.x1-1), ri(rm.y0+1, rm.y1-1), 2);
@@ -5169,44 +5243,49 @@ function placeCave(mtn){
     }
   };
 
-  /* carve each floor: a central chamber the stair drops into, plus a couple of side rooms */
+  /* ---------- ONE FLOOR, A RING OF CHAMBERS AROUND A HALL ----------
+     No stair, no mouth, no descent. The hall is already open floor and already connected to the
+     rest of the network; the chambers are cut into the rock around its edge, so walking into a
+     warren is something that happens to you while you are going somewhere else. */
   let sx = mouth.x, sy = mouth.y;
-  stairs.push({x: mouth.x, y: mouth.y, from: 0, to: -1});   /* the mouth is the first stair */
-  carve(mouth.x, mouth.y, -1);
-  for(let fl = -1; fl >= -depth; fl--){
-    /* the landing chamber, centred a little off the stair so you don't drop into a wall */
-    const cx = clamp(sx + ri(-2, 2), 6, W-7), cy = clamp(sy + ri(-2, 2), 6, H-7);
-    const main = chamber(cx, cy, ri(4,6), ri(3,5), fl, {x: sx, y: sy}, (rm) => stockRoom(rm, fl));
-    /* a side chamber or two */
-    for(let s2 = 0; s2 < ri(1, 2); s2++){
-      const ox = cx + (rnd()<0.5?-1:1) * ri(6, 9), oy = cy + (rnd()<0.5?-1:1) * ri(5, 8);
-      const scx = clamp(ox, 6, W-7), scy = clamp(oy, 6, H-7);
-      chamber(scx, scy, ri(3,4), ri(2,4), fl, {x: cx, y: cy}, (rm) => stockRoom(rm, fl));
+  carve(mouth.x, mouth.y, UNDER_F);
+  for(let fl = UNDER_F; fl >= UNDER_F; fl--){
+    /* the chambers sit AROUND the hall rather than on top of it — the hall stays open floor
+       so the network still runs through, and the rooms are things you find off it */
+    const ring = ri(3, 5);
+    const rooms = [];
+    for(let s2 = 0; s2 < ring; s2++){
+      /* ---------- CLEAR OF THE HALL, OR THE RING WALLS OFF THE HALL ITSELF ----------
+         A hall's radius runs to ten and a chamber's half-width to five, so a chamber centred
+         eleven tiles out puts its wall ring six tiles from the hall centre — INSIDE the hall,
+         across the open floor the lattice tunnels arrive on. Raising that ring sealed the hall
+         off from the network, which is why only about one chamber per warren could be reached
+         no matter what was done to the doors. Measured at 28, then 35, of 114 before this line
+         was the thing that was wrong.
+         Push them out past the hall's own edge plus the widest ring they can have. */
+      const a = (s2 / ring) * Math.PI * 2 + rnd() * 0.8;
+      const d2 = (h.r || 8) + 9 + rnd() * 8;
+      const scx = clamp(Math.round(sx + Math.cos(a) * d2), 7, W-8);
+      const scy = clamp(Math.round(sy + Math.sin(a) * d2), 7, H-8);
+      const rm = chamber(scx, scy, ri(3,5), ri(3,4), fl, {x: sx, y: sy}, (r2) => stockRoom(r2, fl));
+      rooms.push(rm);
+      /* and a way to it, because a chamber the tunnels never reached is a sealed box */
+      cave.links.push([sx, sy, rm.door.x, rm.door.y, rm.door.nx, rm.door.ny]);
     }
-    /* THE LANDING, CARVED LAST. It used to be decked immediately after the main chamber,
-       which left the side chambers — carved above, and free to overlap — able to put a wall
-       straight back on top of the tile you arrive on. Nothing carved on this floor comes
-       after this line. */
     carve(sx, sy, fl);
-    /* the stair down to the next floor, unless this is the bottom */
-    if(fl > -depth){
-      /* INSIDE the chamber, not merely near its centre. `cx + ri(-3,3)` against a room whose
-         half-height is as little as 3 put the stair on the wall ring itself — which `carve`
-         would now open, but opening a hole in a chamber wall to hold a stairwell is a worse
-         room than simply putting the stair in the floor. Same two `ri()` draws as before, so
-         nothing downstream in the worldgen stream moves. */
-      const nsx = clamp(ri(main.x0 + 1, main.x1 - 1), 5, W-6);
-      const nsy = clamp(ri(main.y0 + 1, main.y1 - 1), 5, H-6);
-      carve(nsx, nsy, fl); carve(nsx, nsy, fl-1);
-      stairs.push({x: nsx, y: nsy, from: fl, to: fl-1});
-      sx = nsx; sy = nsy;
-    } else {
-      /* THE BOTTOM: a sealed Golden-Age bunker. The best loot in the world, and it is guarded. */
+    /* ---------- THE VAULT, BEHIND A BARRED DOOR ----------
+       One of the ring is the Golden-Age bunker, and its door does not simply open. It is the
+       first thing in the game you have to get THROUGH rather than walk past, and the noise of
+       getting through it is the price. */
+    {
+      const main = rooms[rooms.length - 1] || rooms[0];
+      const cx = main.cx, cy = main.cy;
       cave.vault = {x: cx, y: cy, f: fl};
+      const vd = cave.doors.find(d => d.roomId === main.id);
+      if(vd){ vd.barred = true; vd.vault = true; setDoor(vd, false); }
       chests.push({x: cx, y: cy, opened:false, vault:true, floor: fl,
         loot:{cats: ri(600,1200), items:{codex: ri(1,2), tome: ri(2,4), formula_p: ri(1,2),
           c_ingot: ri(12,20), a_carap: 1, ...(rnd()<0.7?{w_kingsfang:1}:{}), doctrine: 1}}});
-      /* and its keeper */
       const warden = spawnAutomaton(cx, cy - 1, cave);
       warden.floor = fl; warden.roomId = main.id; warden.caveId = cave.id;
       warden.guard = {x: cx, y: cy}; warden.homeRoom = main; warden.big = 1.7;
@@ -5217,7 +5296,6 @@ function placeCave(mtn){
   }
 
   caves.push(cave);
-  worldEvent('cave', mouth.x, mouth.y, 'A mouth opens in the rock at the mountain\'s foot. Something has been using it. The air that comes out is wrong.');
   return cave;
 }
 /* ---------- AND THE ROCK YOU CAN SEE, AFTER A RELOAD ----------
@@ -12164,6 +12242,7 @@ function physics(c, dt){
      — a corpse you rendered is a corpse you cannot raise, and which of those it is should stay
      your decision rather than a chore's. It also will not touch a townsman, because `takeBody`
      books that as grave-robbery and a cart earning bounties on its own is a trap. */
+  if(c.forcing && c.state === 'ok'){ if(forceTick(c, dt)) return; }
   if(c.cart && c.faction === 'player' && c.state === 'ok'){ if(cartTick(c, dt)) return; }
   /* ---------- THE STITCH-HAND'S ROUNDS ----------
      The only repair in this world. It mends what you bound — limbs included — and charges
@@ -15561,6 +15640,37 @@ const CART_RANGE = 60;
 /* how far a standing BUILD order will send somebody. A town runs about 42 tiles across its
    buildings, so this is a bit over two of them. */
 const BUILD_REACH = 95;
+/* ---------- FORCING ONE, WHICH IS THE POINT OF BARRING IT ----------
+   A barred door is the first thing in the game you have to get THROUGH rather than walk past,
+   and the price is that it takes a while and it is LOUD. `c.noise` is what the deep already
+   listens to, so the warren hears you coming — which is the whole scene: you know what is behind
+   the door, and it now knows about you. */
+function forceTick(c, dt){
+  const F = c.forcing;
+  if(!F) return false;
+  const dr = doorAt(F.x, F.y, F.f);
+  if(!dr || dr.open || !dr.barred){ c.forcing = null; return false; }
+  if(dist(c.x, c.y, F.x + 0.5, F.y + 0.5) > 1.9){ travel(c, F.x + 0.5, F.y + 0.5, dt, 0.5); return true; }
+  c._working = 0.5;
+  F.t += dt * (1 + (c.stats.labor + c.stats.atk) * 0.012);
+  c.noise = Math.max(c.noise || 0, 6);
+  if(rnd() < dt * 1.4) AU.hammer && AU.hammer(c.x, c.y);
+  if(rnd() < dt * 0.9) addSpecks(F.x + 0.5, F.y + 0.5, '#6a5a44', 3);
+  if(F.t >= FORCE_SECS){
+    dr.barred = false;
+    setDoor(dr, true);
+    c.forcing = null;
+    log(`${c.name} breaks the bar. The door swings in on what has been waiting behind it.`, 'bad');
+    addFloat(F.x + 0.5, F.y + 0.5, 'THE DOOR GIVES', '#d4a040');
+    /* everything in that chamber knows */
+    for(const o of chars){
+      if(o.faction === 'player' || o.state !== 'ok') continue;
+      if((o.floor || 0) !== (dr.f || 0)) continue;
+      if(dist(o.x, o.y, F.x, F.y) < 22){ o.provoked = true; o.target = o.target || c; }
+    }
+  }
+  return true;
+}
 function cartTick(c, dt){
   const cap = carryCap(c);
   const load = carried(c);
@@ -20735,14 +20845,9 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
     }
   }
 })();
-/* caves burrow into the feet of the mountains — seeded here, AFTER the ranges exist. */
-(function seedCaves(){
-  if(!mountains.length) return;
-  const pool = mountains.slice().sort(() => rnd() - 0.5);
-  const want = Math.max(2, Math.round(mountains.length * 0.5));
-  let made = 0;
-  for(const m of pool){ if(made >= want) break; if(placeCave(m)) made++; }
-})();
+/* THE WARRENS USED TO BE SEEDED HERE, at the feet of the mountains, before the lattice
+   existed. They are cut into the lattice now — see `seedWarrens` after `digUndercroft`, which
+   is the only place that can know where the halls are. */
 /* ============================================================ THE UNDERCROFT
    "The 'cave under mountains' system is still terribly broken. I'm starting to think the
     'floor transfer' should be taken FAR more extreme (think an elevator lol) and an entirely
@@ -20857,17 +20962,10 @@ const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24
     if(i + 1 < NX) bore(nd.x, nd.y, node[j][i+1].x, node[j][i+1].y);
     if(j + 1 < NY) bore(nd.x, nd.y, node[j+1][i].x, node[j+1][i].y);
   }
-  /* and the warrens are joined to the nearest hall, so the seven pockets become the deep
-     ends of one place instead of seven sealed rooms with a ladder each */
-  for(const cv of caves){
-    let best = null, bd = 1e9;
-    for(const h of U.halls){ const d2 = dist(h.x, h.y, cv.mouth.x, cv.mouth.y); if(d2 < bd){ bd = d2; best = h; } }
-    if(!best) continue;
-    disc(cv.mouth.x, cv.mouth.y, 2.4);
-    bore(cv.mouth.x, cv.mouth.y, best.x, best.y);
-    /* a tunnel that broke into a chamber must not still have rock drawn standing in it */
-    cv.walls = cv.walls.filter(w => w.f !== UNDER || blocked.has(bkey(w.x, w.y, UNDER)));
-  }
+  /* THE WARRENS ARE NOT JOINED TO THE LATTICE ANY MORE — they are cut INTO it, after this
+     runs, by `seedWarrens`. This loop used to bore a tunnel from each mountain mouth to its
+     nearest hall; there are no mouths now and `caves` is empty at this point. */
+  U.bore = bore; U.disc = disc; U.put = put;   /* the warren cutter needs the same tools */
 
   /* ---------- THE SHAFTS ----------
      The elevator. One stair, `from: 0, to: -1`, which the transfer code already handles
@@ -20911,6 +21009,119 @@ const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24
              ...(rnd() < 0.18 ? {tome: 1} : {})}}});
   }
   U.ms = (typeof performance !== 'undefined' ? performance.now() : 0) - _t0;
+})();
+/* ---------- AND THE WARRENS ARE CUT INTO IT ----------
+   The old seeding put seven of these at the feet of mountains, behind mouths, on floors -2 to
+   -4 — which is where every room in the game was, and none of it reachable. They go where the
+   player walks now: a third of the halls get a ring of chambers cut into the rock around them,
+   each with a shut door, one of them a barred vault.
+   AFTER the lattice, because it needs to know where the halls are, and because `put` opens rock
+   — a tunnel bored across a chamber wall would erase it. The tunnels are older than the rooms
+   this way round, which is also the way round the fiction wants. */
+(function seedWarrens(){
+  const U = undercroft;
+  if(!U.halls.length) return;
+  const pool = U.halls.slice().sort(() => rnd() - 0.5);
+  const want = Math.max(4, Math.round(U.halls.length * 0.34));
+  let made = 0;
+  for(const h of pool){
+    if(made >= want) break;
+    /* how far this hall is from the nearest way out of the ground, 0..1 — the warren's menace,
+       which replaces the old "how many floors down are you" now that there is only one floor */
+    let near = 1e9;
+    for(const sh of U.shafts) near = Math.min(near, dist(sh.x, sh.y, h.x, h.y));
+    const cv = placeCave(h);
+    if(!cv) continue;
+    cv.menace = clamp(near / 190, 0, 1);
+    /* re-stock at the menace this hall actually has: `placeCave` populated at the default
+       while it was carving, before anybody could know where the shafts were */
+    made++;
+    /* ---------- WALLS FIRST, THEN THE WAYS IN, IN THAT ORDER ----------
+       Three measurements got this to the right shape and each one moved the number:
+         · run the tunnel to the door tile itself and 93 of 106 chambers were reachable WITH
+           EVERY DOOR SHUT. `bore` lays a three-wide wandering tunnel and its last disc was
+           centred on the doorway, so it ate the wall either side. The doors were decorative.
+         · stop short and re-raise the ring, and shut doors sealed properly (0) — but only 20 of
+           106 were reachable with them OPEN, because the outward normal was derived from
+           `sign(door - centre)` and came out DIAGONAL for a door on a side wall.
+         · take the normal from the edge the door was actually snapped to and it went to 28 —
+           exactly one chamber per warren, which is the tell: the approach tunnels were being
+           severed by the re-raise, because a wandering three-wide bore to chamber C crosses
+           chamber A's ring on the way and the ring goes back up afterwards.
+       So the ring goes up FIRST and the approaches are cut LAST, straight and one tile wide.
+       Nothing is put back over them, and a narrow passage into a chamber reads better than a
+       tunnel mouth anyway. */
+    for(const w of cv.walls){
+      const k = bkey(w.x, w.y, w.f);
+      blocked.add(k); baseBlocked.add(k);
+    }
+    for(const [ax, ay, bx, by, ux, uy] of (cv.links || [])){
+      /* the doorstep, four tiles out on the door's own axis */
+      const sxo = bx + ux * 4, syo = by + uy * 4;
+      for(let t = 0; t <= 4; t++) U.put(bx + ux * t, by + uy * t);
+      /* ---------- AND IT HAS TO BE FOUR-CONNECTED ----------
+         A rounded straight line steps DIAGONALLY, and two tiles that touch only at a corner are
+         not a passage: the flood, the pathfinder and a body walking all move orthogonally. Every
+         approach thread measured fully open, and only 66 of 112 doorsteps were reachable — the
+         same fault as the corner doors, one step further out. Walk x, then y, one tile at a
+         time, so consecutive tiles always share an edge. */
+      let px = sxo, py = syo;
+      U.put(px, py);
+      while(px !== ax){ px += Math.sign(ax - px); U.put(px, py); }
+      while(py !== ay){ py += Math.sign(ay - py); U.put(px, py); }
+    }
+    for(const d of cv.doors) setDoor(d, false);
+    /* AND THE DRAWN LIST HAS TO MATCH THE COLLISION. The approach threads are cut after the ring
+       goes up, so a thread that crossed a ring tile opened it — and `cv.walls` still listed it,
+       which draws a block of rock standing in a passage you can walk through. `rebuildCaveWalls`
+       derives the list from `blocked` after a reload and got it right, so a save quietly repaired
+       four phantom rocks per world and `under.js` caught the difference as DRAWN 3234 → 3230. */
+    cv.walls = cv.walls.filter(w => blocked.has(bkey(w.x, w.y, w.f)) || cv.doors.some(d => d.x === w.x && d.y === w.y && d.f === w.f));
+  }
+  /* ---------- AND THE NETWORK IS STILL ONE PLACE AFTERWARDS ----------
+     A chamber's wall ring does not know what it was built across. Cutting warrens into the halls
+     walled one hall in eighty-one off from the rest of the lattice — `under.js` says "and you can
+     walk from any of it to any of it", and that is a promise the whole undercroft rests on, so it
+     cannot be left to whether the rings happened to miss.
+     Flood the network, and thread any hall that got cut off back to the nearest one that did not.
+     Carved last, four-connected, same as the approaches. Cheap: one flood over ninety thousand
+     tiles at worldgen, and normally it finds nothing to do. */
+  {
+    const reach = () => {
+      const s0 = U.shafts[0]; if(!s0) return new Set();
+      const seen = new Set(); const q = [[Math.round(s0.x), Math.round(s0.y)]];
+      seen.add(Math.round(s0.y) * W + Math.round(s0.x));
+      while(q.length){
+        const [x, y] = q.pop();
+        for(const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+          const nx = x + dx, ny = y + dy, id = ny * W + nx;
+          if(seen.has(id) || isBlocked(nx, ny, UNDER)) continue;
+          seen.add(id); q.push([nx, ny]);
+        }
+        if(seen.size > 400000) break;
+      }
+      return seen;
+    };
+    for(let pass = 0; pass < 3; pass++){
+      const seen = reach();
+      const off = U.halls.filter(h => !seen.has(Math.round(h.y) * W + Math.round(h.x)));
+      if(!off.length) break;
+      for(const h of off){
+        let best = null, bd = 1e9;
+        for(const o of U.halls){
+          if(!seen.has(Math.round(o.y) * W + Math.round(o.x))) continue;
+          const d2 = dist(o.x, o.y, h.x, h.y);
+          if(d2 < bd){ bd = d2; best = o; }
+        }
+        if(!best) continue;
+        let px = Math.round(h.x), py = Math.round(h.y);
+        const tx = Math.round(best.x), ty = Math.round(best.y);
+        U.put(px, py);
+        while(px !== tx){ px += Math.sign(tx - px); U.put(px, py); }
+        while(py !== ty){ py += Math.sign(ty - py); U.put(px, py); }
+      }
+    }
+  }
 })();
 function heightAt(wx, wy){
   const x = clamp(wx, 0, W-0.001), y = clamp(wy, 0, H-0.001);
@@ -22973,18 +23184,9 @@ const syncRedoubts = makeDynGroup(
        are drawn only for the floor a unit of yours currently stands on, so the world isn't
        a permanent x-ray of every tunnel. */
     for(const cv of caves){
-      /* the mouth: a dark ring in the rock, always shown */
-      const my = groundY(cv.mouth.x, cv.mouth.y);
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.28, 6, 12),
-        new THREE.MeshLambertMaterial({color: 0x241f28}));
-      ring.rotation.x = Math.PI/2;
-      ring.position.set(cv.mouth.x + 0.5, my + 0.12, cv.mouth.y + 0.5);
-      g.add(ring);
-      const hole = new THREE.Mesh(new THREE.CircleGeometry(0.66, 12),
-        new THREE.MeshBasicMaterial({color: 0x000000}));
-      hole.rotation.x = -Math.PI/2;
-      hole.position.set(cv.mouth.x + 0.5, my + 0.14, cv.mouth.y + 0.5);
-      g.add(hole);
+      /* NO MOUTH ANY MORE. A warren is cut into an undercroft hall and has no surface opening —
+         drawing a ring and a black hole on the grass above one would be marking an entrance that
+         does not exist, which is most of what "the tunnels are broken, I cannot use them" was. */
       /* ---------- WHICH FLOORS OF *THIS* CAVE ----------
        Every player body below ground used to light every warren in the world on that storey,
        which was harmless while a cave floor was a sealed pocket under one mountain and each
@@ -23010,11 +23212,25 @@ const syncRedoubts = makeDynGroup(
         const gy = groundY(w.x+0.5, w.y+0.5);
         box(g, 0.98, FLOOR_H*0.85, 0.98, '#322c36', w.x+0.5, gy + floorY(w.f) + FLOOR_H*0.42, w.y+0.5);
       }
-      /* doorway posts on lit floors */
+      /* ---------- THE DOORS THEMSELVES ----------
+         Posts either side, and — when it is shut — a slab across the gap, which is the whole
+         point: a shut door has to LOOK shut from down the corridor, because deciding whether to
+         open it is the only interesting thing about it. Barred ones are darker and banded. */
       for(const dr of cv.doors){
         if(!occ[dr.f]) continue;
-        const gy = groundY(dr.x+0.5, dr.y+0.5);
-        box(g, 0.16, FLOOR_H*0.8, 0.16, '#5a4a38', dr.x+0.5, gy + floorY(dr.f) + FLOOR_H*0.4, dr.y+0.5, false);
+        const gy = groundY(dr.x+0.5, dr.y+0.5) + floorY(dr.f);
+        const along = dr.nx ? 0.16 : 0.94, across = dr.nx ? 0.94 : 0.16;
+        box(g, dr.nx ? 0.16 : 0.2, FLOOR_H*0.8, dr.nx ? 0.2 : 0.16, '#5a4a38',
+            dr.x + 0.5 + (dr.nx ? 0 : -0.42), gy + FLOOR_H*0.4, dr.y + 0.5 + (dr.nx ? -0.42 : 0), false);
+        box(g, dr.nx ? 0.16 : 0.2, FLOOR_H*0.8, dr.nx ? 0.2 : 0.16, '#5a4a38',
+            dr.x + 0.5 + (dr.nx ? 0 : 0.42), gy + FLOOR_H*0.4, dr.y + 0.5 + (dr.nx ? 0.42 : 0), false);
+        if(!dr.open){
+          box(g, along, FLOOR_H*0.74, across, dr.barred ? '#3a2f26' : '#6b5637',
+              dr.x + 0.5, gy + FLOOR_H*0.37, dr.y + 0.5, false);
+          if(dr.barred)
+            box(g, dr.nx ? 0.1 : 0.86, 0.16, dr.nx ? 0.86 : 0.1, '#8a7048',
+                dr.x + 0.5, gy + FLOOR_H*0.46, dr.y + 0.5, false);
+        }
       }
     }
     for(const rd of redoubts){
@@ -31251,6 +31467,37 @@ cv.addEventListener('mousedown', e => {
       showCtxMenu(e.clientX, e.clientY, items);
       return;
     }
+    /* ---------- A DOOR IS A THING YOU DO SOMETHING TO ----------
+       Checked here, above the frames and the walls, because a door standing in a chamber's
+       doorway is the most specific thing that can be under the cursor on that tile. */
+    {
+      const dr = doorAt(wx, wy, activeFloor);
+      if(dr){
+        const items = [];
+        if(dr.open){
+          items.push({label:'CLOSE THE DOOR', fn:()=>{
+            if(chars.some(o => o.state !== 'dead' && Math.floor(o.x) === dr.x && Math.floor(o.y) === dr.y && (o.floor||0) === (dr.f||0))){
+              log('Somebody is standing in the doorway.', 'bad'); return;
+            }
+            setDoor(dr, false); log('The door swings shut.', '');
+          }});
+        } else if(dr.barred){
+          const hand = movers.filter(m => m.state === 'ok').sort((a,b2) => (b2.stats.labor + b2.stats.atk) - (a.stats.labor + a.stats.atk))[0];
+          items.push({label:'FORCE IT', fn:()=>{
+            if(!hand){ log('Nobody here to put a shoulder to it.', 'bad'); return; }
+            clearOrders(hand);
+            hand.forcing = {x: dr.x, y: dr.y, f: dr.f || 0, t: 0};
+            log(`${hand.name} sets to work on the door. It will be heard.`, '');
+          }});
+          items.push({label:'(IT IS BARRED FROM THE OTHER SIDE)', fn:()=>{}});
+        } else {
+          items.push({label:'OPEN THE DOOR', fn:()=>{ setDoor(dr, true); log('The door gives.', ''); }});
+        }
+        items.push({label:'LEAVE IT', fn:()=>{}});
+        showCtxMenu(e.clientX, e.clientY, items);
+        return;
+      }
+    }
     /* an unbuilt frame? right-clicking it IS the order to build — no job menu detour */
     const bpHit = blueprints.find(b => wx >= b.x - 0.4 && wx <= b.x + b.w + 0.4 &&
                                        wy >= b.y - 0.4 && wy <= b.y + b.h + 0.4);
@@ -33248,6 +33495,17 @@ function restore(d){
     /* `walls: []` was not a placeholder, it was the bug: the renderer draws this list and
        nothing refilled it, so every warren came back off a save with its rock invisible. */
     for(const cv of caves) rebuildCaveWalls(cv);
+    /* ---------- AND THE DOORS, WHICH ARE NOW A MECHANIC RATHER THAN A DECORATION ----------
+       `cv.doors` was already saved, back when nothing read it but the renderer. It is the world's
+       collision now, so the global list has to be rebuilt from it AND every door's state pushed
+       back into `blocked` — `setDoor` is the only thing that puts the flag and the world in
+       agreement, so a restore that sets the flag without calling it produces doors that read shut
+       and are walked straight through. */
+    doors.length = 0;
+    for(const cv of caves) for(const dr of cv.doors){
+      doors.push(dr);
+      setDoor(dr, !!dr.open);
+    }
   }
   squadGroups.length = 0;
   if(Array.isArray(d.squadGroups)) for(const g of d.squadGroups) squadGroups.push({name:g.name, open:g.open !== false});
