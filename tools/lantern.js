@@ -66,7 +66,24 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        quarry it wants, outside the light, and see whether it closes. Then put the lamp out and
        stage it identically. The DARK case is the control: without it, "the gaunt did not come"
        could be the geography, the pathing, or anything else. */
+    /* ---------- STAGE ON GROUND YOU HAVE CHECKED, NOT ON GROUND YOU FOUND ----------
+       This put the bait on the first post where it stands in the world, and the moment
+       Copperhold's placement shifted every seed the post landed somewhere the gaunt could not
+       walk to: the DARK control read "closest 3.3" and the file reported the lantern working
+       when what it had measured was a rock in the way. A lamp is a coordinate — move it onto a
+       patch of waste this probe has verified is clear, and the two runs differ only in the lamp. */
+    let ox = 0, oy = 0;
+    outer:
+    for(let y = 40; y < H - 40; y += 7) for(let x = 40; x < W - 40; x += 7){
+      if(towns.some(t2 => dist(t2.x, t2.y, x, y) < 70)) continue;
+      let ok = true;
+      for(let j = -10; j <= 10 && ok; j++) for(let i = -10; i <= 10 && ok; i++)
+        if(isBlocked(x + i + 0.5, y + j + 0.5)) ok = false;
+      if(ok && !chars.some(c => c.state !== 'dead' && dist(c.x, c.y, x, y) < 16)){ ox = x; oy = y; break outer; }
+    }
+    if(!ox){ R.litTurns = R.darkDoesNot = '!! NO CLEAR GROUND TO STAGE ON — THIS PROVES NOTHING'; return R; }
     const L = lamps[0];
+    L.x = ox + 0.5; L.y = oy + 0.5;
     const bait = player().find(c => c.state === 'ok');
     bait.x = L.x; bait.y = L.y; bait.floor = 0;
     const walk = (lit) => {
@@ -101,7 +118,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     /* ---- 3. THE CHARM IS THE SAME LIGHT, CARRIED ---- */
     for(const o of lamps) o.fuel = 0;
-    bait.x = 40.5; bait.y = 40.5;      /* well away from every post */
+    bait.x = ox + 0.5; bait.y = oy + 0.5;      /* the same verified waste, with every post out */
     const carry = (trink) => {
       bait.trinket = trink;
       rebuildCharGrid();

@@ -789,7 +789,19 @@ function oreAt(x, y){
   }
   return null;
 }
+/* ---------- THE ONE PLACE A TOWN'S OWN STREETS DO NOT GET SWEPT ----------
+   Copperhold is built round a hole. `rawDecorAt` clears everything wild inside a town's
+   `clearR` — which is right for trees in the road and wrong for the working the town exists
+   because of, so the pit is checked first and it is checked with an AABB, because this function
+   is asked about every tile the renderer and the pathing touch. */
+let copperPit = null;
 function rawDecorAt(x,y){
+  if(copperPit && Math.abs(copperPit.x - x) <= copperPit.r && Math.abs(copperPit.y - y) <= copperPit.r){
+    const o2 = oreAt(x, y);
+    /* a worked face, not a hillside: far denser than the 0.90 an outcrop in the waste needs */
+    return (o2 && hash2(x*3+7, y*3+13) > 0.62) ? o2 : null;
+  }
+  
   /* ---------- NOTHING WILD GROWS INSIDE A TOWN ----------
      This used to clear a flat fifteen tiles around the centre, and the walls run to
      twenty-seven — so every walled town had a ring of trees, boulders and ore outcrops
@@ -1770,6 +1782,9 @@ function placeTownAt(def, cx0, cy0){
   while(spots.length < N && tries++ < 20000){
     const x = ri(18, W-18), y = ri(18, H-18);
     if(!areaClear(x-19, y-18, 38, 36)) continue;   /* the whole plan, second ring included */
+    /* the first spot found is Copperhold's, and it is held further from everything else so a
+       ring of massifs can stand round it without walling a neighbour in */
+    if(spots.length && dist(spots[0].x, spots[0].y, x, y) < 130) continue;
     if(spots.some(s => dist(s.x,s.y,x,y) < 95)) continue;   /* wider spacing = more wild between towns */
     spots.push({x,y});
   }
@@ -1781,7 +1796,24 @@ function placeTownAt(def, cx0, cy0){
       spots.push({x: Math.round(30 + gx*(W-60)), y: Math.round(30 + gy*(H-60))});
     }
   }
-  for(let i=0;i<N;i++) placeTownAt(TOWNS[i], spots[i].x, spots[i].y);
+  /* ---------- ONE SEAT NEEDS ROOM AROUND IT, AND IT IS NOT AN ORDINARY ONE ----------
+     "Copperhold with a central mine and mountainous terrain (may require moving towns —
+      Fallowend is close.)"
+     He was right that it needs moving somebody, and the honest fix is not to shove a neighbour
+     afterwards: the FIRST spot is found with a 130-tile exclusion instead of the usual 95, and
+     Copperhold is given that one. Everybody else is placed exactly as before, in the same order,
+     so `towns[i]` still lines up with `TOWNS[i]` — which matters, because town INDEX is what
+     `rebelOf`, `isLeader` and a warband's target are all stored as, in the save. */
+  const ci = TOWNS.findIndex(d => d.key === 'copperhold');
+  const order = [];
+  for(let i = 0, k = 1; i < N; i++) order[i] = (i === ci) ? spots[0] : spots[k++];
+  for(let i=0;i<N;i++) placeTownAt(TOWNS[i], order[i].x, order[i].y);
+  /* and the hole it is built around. Seven tiles, just off the well, in the one block of the
+     town plan that no building stands in. */
+  {
+    const cop = towns.find(t => t.def.key === 'copperhold');
+    if(cop) copperPit = {x: cop.x - 1, y: cop.y - 1, r: 3, town: cop, depth: 3.9};
+  }
 })();
 
 /* ---------- geology: the reason the map's politics look the way they do ---------- */
@@ -1801,6 +1833,14 @@ function placeTownAt(def, cx0, cy0){
     const off = (t.clearR || 15) + Math.round(r * 0.7);
     oreFields.push({x: Math.round(t.x + Math.cos(a)*off), y: Math.round(t.y + Math.sin(a)*off), r, kind, home: key});
   }
+  /* ---------- AND COPPERHOLD'S OTHER ONE IS UNDER ITS OWN SQUARE ----------
+     The seam above is the LODE — the one that built the walls, out past the gate where a pit
+     belongs. This is the working the town grew around: a small, very rich face at the bottom of
+     the hole in the middle of it, which is the whole reason the streets bend the way they do.
+     `rawDecorAt` exempts the pit from the street sweep, or this would be deleted on the way in
+     exactly the way both mining towns' ore was once deleted. */
+  if(copperPit) oreFields.push({x: Math.round(copperPit.x), y: Math.round(copperPit.y),
+                                r: copperPit.r + 1, kind: 'cvein', home: 'copperhold', pit: true});
   /* wild seams out in the waste: no one's yet, and worth a war */
   let tries = 0;
   while(oreFields.length < 7 && tries++ < 4000){
@@ -22024,6 +22064,30 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
     const peak = 5.5 + Math.min(9, r * 0.5) + rnd() * 3;
     mountains.push({x: cx, y: cy, r, peak});
   }
+  /* ---------- AND ONE SEAT SITS IN A BOWL, ON PURPOSE ----------
+     "Copperhold with a central mine and mountainous terrain."
+     Every massif above is FOUND — the biggest regions of rock the noise happened to make — and
+     the loop that finds them refuses any within `r*1.4 + 20` of a town, for the good reason that
+     a range's cliffs would wall people into their own homes. So no town in this world could ever
+     have mountains, which is fine for six of them and wrong for the one whose entire economy is
+     a hole in the ground.
+     Four are placed by hand, at fifty tiles, which is far enough out that the town keeps its
+     flat streets and near enough that the horizon in every direction is rock. FOUR AND NOT A
+     RING: at that radius the circumference is over three hundred tiles and four footprints
+     cover under two hundred of it, so there are passes between them. A seat you cannot walk out
+     of is a prison, not a valley. */
+  if(copperPit){
+    for(let i = 0; i < 6; i++){
+      const a = (i / 6) * Math.PI * 2 + 0.5;
+      const mx = Math.round(copperPit.town.x + Math.cos(a) * 50);
+      const my = Math.round(copperPit.town.y + Math.sin(a) * 50);
+      if(mx < 20 || my < 20 || mx >= W - 20 || my >= H - 20) continue;
+      /* and never on top of somebody else, which is what the 130-tile exclusion on
+         Copperhold's own spot was bought for */
+      if(towns.some(t2 => t2 !== copperPit.town && dist(t2.x, t2.y, mx, my) < 34)) continue;
+      mountains.push({x: mx, y: my, r: 15, peak: 12 + rnd() * 2, cirque: true});
+    }
+  }
   /* raise the height field: a smooth dome per massif, tallest at the centre. Vertices, not
      tiles, so the terrain mesh (which reads HV per vertex) lifts with it. */
   for(let vy=0; vy<=H; vy++) for(let vx=0; vx<=W; vx++){
@@ -22043,6 +22107,43 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
       lift = Math.max(lift, m.peak * dome + m.peak * ridge * 0.4);
     }
     if(lift > 0.01) HV[vy*(W+1)+vx] += lift;
+  }
+  /* ---------- AND THE SEAT ITSELF IS UPLAND, WHICH IS WHY THERE IS ANYTHING TO DIG INTO ----
+     The first attempt dug the working straight into the ground Copperhold happened to be
+     standing on, and measured ZERO UNITS DEEP: the town sits near sea level, `groundY` clamps at
+     -0.1, and a four-unit hole in ground that is already at the floor is not a hole. A town in a
+     ring of massifs is on high ground by any reading of a map, so it is put there: a wide, gentle
+     dome — five units over forty tiles is an eighth of a unit per tile, nothing a body would
+     notice walking — and the terraces are then cut into that. */
+  if(copperPit){
+    const T = copperPit.town, PR = 46;
+    for(let vy = Math.max(0, T.y - PR); vy <= Math.min(H, T.y + PR); vy++)
+    for(let vx = Math.max(0, T.x - PR); vx <= Math.min(W, T.x + PR); vx++){
+      const d = Math.hypot(vx - T.x, vy - T.y);
+      if(d > PR) continue;
+      const u = clamp(1 - d / PR, 0, 1);
+      HV[vy*(W+1)+vx] += 5.5 * (u * u * (3 - 2 * u));
+    }
+  }
+  /* ---------- THEN DIG THE HOLE, AFTER THE LIFT AND NOT BEFORE ----------
+     Same ordering lesson the trails learned the hard way: anything carved before the terrain is
+     finished gets filled back in by whatever runs after it. Three terraces rather than a shaft,
+     because a four-unit drop in one tile is a wall and the point of an open working is that you
+     can walk down into it. */
+  if(copperPit){
+    const P = copperPit;
+    for(let vy = Math.max(0, P.y - P.r - 1); vy <= Math.min(H, P.y + P.r + 1); vy++)
+    for(let vx = Math.max(0, P.x - P.r - 1); vx <= Math.min(W, P.x + P.r + 1); vx++){
+      const d = Math.max(Math.abs(vx - P.x), Math.abs(vy - P.y));
+      /* rim, then a step per tile inward, floor at the bottom */
+      const step = clamp(P.r - d, 0, P.r);
+      if(step <= 0) continue;
+      HV[vy*(W+1)+vx] -= P.depth * (step / P.r);
+    }
+    for(let y = P.y - P.r; y <= P.y + P.r; y++) for(let x = P.x - P.r; x <= P.x + P.r; x++){
+      if(x < 0 || y < 0 || x >= W || y >= H) continue;
+      if(terr[y*W+x] !== 3) terr[y*W+x] = 2;      /* it reads as cut rock, because it is */
+    }
   }
   /* mark the steep heart of each massif impassable: where the ground is high AND the local
      slope is severe, that is a cliff. The flanks stay open so a range can be skirted. */
@@ -22142,6 +22243,9 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
       if(onTrail.has(y*W + x)) continue;              /* the way up stays open */
       if(stepAt(x, y) > CLIFF){
         if(towns.some(t => dist(t.x, t.y, x, y) < 16)) continue;   /* never wall a town */
+        /* nor the working in the middle of one: the terraces are a severe local step by
+           construction and this rule would seal every one of them */
+        if(copperPit && Math.abs(copperPit.x - x) <= copperPit.r + 1 && Math.abs(copperPit.y - y) <= copperPit.r + 1) continue;
         blocked.add(bkey(x, y, 0));
         /* The peaks are raised after baseBlocked was taken, and restore() rebuilds the world
            from baseBlocked — so without this every range quietly became walkable the moment
@@ -22302,6 +22406,34 @@ const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24
     if(stairAt(sx, sy)) continue;
     stairs.push({x: sx, y: sy, from: 0, to: UNDER, shaft: true});
     U.shafts.push({x: sx, y: sy, hall: h});
+  }
+  /* ---------- AND COPPERHOLD'S HOLE GOES SOMEWHERE ----------
+     Every other shaft in the world is a crack in the waste that somebody fell down. This one is
+     the bottom of a working, in the middle of a town, and it is the only way into the undercroft
+     that you can reach without leaving a street. Best-effort by construction: the lattice is
+     generated by noise and there may be no hall under the square, in which case the pit is
+     simply a pit and the town still makes sense. */
+  if(copperPit){
+    const P = copperPit;
+    let put = false;
+    /* SEARCHED OUT TO THE TOWN'S OWN SWEEP, not just the pit. The lattice is noise and there may
+       be no hall under the seven tiles of the working itself; what the town is promised is a way
+       down you can reach without leaving a street, and any tile inside its own walls keeps that
+       promise. The rings go outward from the pit floor, so the working wins when it can. */
+    const RMAX = Math.round((P.town.clearR || 20) - 2);
+    for(let rad = 0; rad <= RMAX && !put; rad++)
+    for(let dy = -rad; dy <= rad && !put; dy++) for(let dx = -rad; dx <= rad && !put; dx++){
+      if(Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;
+      const sx = Math.round(P.x) + dx, sy = Math.round(P.y) + dy;
+      if(sx < 4 || sy < 4 || sx >= W-4 || sy >= H-4) continue;
+      if(isBlocked(sx + 0.5, sy + 0.5, 0) || tileAt(sx, sy) === 3) continue;
+      if(!decks.has(bkey(sx, sy, UNDER))) continue;
+      if(stairAt(sx, sy)) continue;
+      stairs.push({x: sx, y: sy, from: 0, to: UNDER, shaft: true});
+      U.shafts.push({x: sx, y: sy, hall: null, pit: true});
+      P.shaft = {x: sx, y: sy, inPit: Math.max(Math.abs(dx), Math.abs(dy)) <= P.r};
+      put = true;
+    }
   }
   /* ---------- AND SOMETHING LIVES DOWN THERE ----------
      Not in every hall. A network you can cross is worth having on its own, and a monster in
