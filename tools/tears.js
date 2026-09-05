@@ -307,6 +307,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const O = window.__R;
     O.wipe();
     const rf = O.tear(8);
+    /* ---------- AND SWEEP THE BODIES OFF IT ----------
+       The right-click handler is a chain of `find`s ordered by specificity and the tear sits a
+       long way down it — anything standing on the same ground answers first and returns without
+       a menu. `O.wipe()` clears what this probe made; it does not clear the WORLD, and when a
+       worldgen change moved things about, THE SIXFOLD ended up on the staged tear. The menu came
+       back empty and this file blamed the tear for it. Clear the ground the click is aimed at. */
+    for(let i = chars.length - 1; i >= 0; i--){
+      const o = chars[i];
+      if(o.faction === 'player') continue;
+      if(dist(o.x, o.y, rf.x, rf.y) < 14) chars.splice(i, 1);
+    }
+    for(let i = corpses.length - 1; i >= 0; i--)
+      if(dist(corpses[i].x, corpses[i].y, rf.x, rf.y) < 14) corpses.splice(i, 1);
+    rebuildCharGrid();
     const c = O.caster(rf.x + 6, rf.y + 6, 20);
     window.__M = { rid: rf.id, cid: c.id, x: rf.x, y: rf.y };
     selected = [c];
@@ -323,17 +337,58 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const b1 = screenToWorld(s0.x, s0.y);
     s0 = to(m.x - (b1.x - m.x), m.y - (b1.y - m.y)) || s0;
     const back = screenToWorld(s0.x, s0.y);
-    return { x: s0.x, y: s0.y, off: dist(back.x, back.y, m.x, m.y) };
+    /* ---------- AND THE POINT HAS TO BE ON THE CANVAS ----------
+       `off` says the maths round-trips; it says nothing about whether a HUD div is sitting on
+       top of that pixel, and a right-click the canvas never receives produces no menu and no log
+       line — which is exactly what this file reported when a worldgen change moved the tear and
+       its projected point slid under a panel. `touch.js` carries the same note.
+       The tear is 8 across, so anywhere inside `r * 0.55` opens the same menu: walk a small
+       spiral out from the ideal pixel until one of them is actually the map. */
+    const clear = (px, py) => {
+      const el = document.elementFromPoint(px, py);
+      if(!el || el.id !== 'game') return false;
+      const w = screenToWorld(px, py);
+      return !!w && dist(w.x, w.y, m.x, m.y) < 3.6;      /* still inside r*0.55 of an r=8 tear */
+    };
+    if(!clear(s0.x, s0.y)){
+      outer2:
+      for(let rad = 8; rad <= 160; rad += 8) for(let a = 0; a < 16; a++){
+        const px = Math.round(s0.x + Math.cos(a / 16 * 6.283) * rad);
+        const py = Math.round(s0.y + Math.sin(a / 16 * 6.283) * rad);
+        if(px < 2 || py < 2) continue;
+        if(clear(px, py)){ s0 = {x: px, y: py}; break outer2; }
+      }
+    }
+    const back2 = screenToWorld(s0.x, s0.y);
+    const onMap = (() => { const el = document.elementFromPoint(s0.x, s0.y); return !!el && el.id === 'game'; })();
+    return { x: s0.x, y: s0.y, off: dist(back2.x, back2.y, m.x, m.y), onMap };
   });
+  await p.evaluate((c2) => { window.__QX = c2.x; window.__QY = c2.y; }, q);
   await p.mouse.move(q.x, q.y);
   await p.mouse.down({ button: 'right' });
   await p.mouse.up({ button: 'right' });
   const menu = await p.evaluate(() => {
     const el = document.getElementById('ctxmenu');
     const shown = !!el && getComputedStyle(el).display !== 'none';
+    window.__SAID = [...document.querySelectorAll('#log div')].slice(-3).map(d => d.textContent.trim()).join(' // ');
     return shown ? [...el.querySelectorAll('button')].map(x => x.textContent) : [];
   });
-  out._menu = `right-clicking a tear offers: ${menu.join(' | ') || '(nothing)'} — the click landed ${q.off.toFixed(2)} tiles off`;
+  /* AND WHAT THE GAME SAID INSTEAD. The right-click handler is a chain of `find`s ordered by
+     specificity and every branch above the tear returns without opening a menu — so "the menu is
+     empty" on its own cannot tell you whether the tear branch was never reached or reached and
+     refused. The last thing in the log says which. */
+  const said = await p.evaluate(() => window.__SAID || '(nothing)');
+  const why = await p.evaluate(() => {
+    const m = window.__M;
+    const w = screenToWorld(window.__QX, window.__QY) || {x: m.x, y: m.y};
+    const rf = rifts.find(r => dist(r.x, r.y, w.x, w.y) < r.r * 0.55);
+    const near = chars.filter(o => o.state !== 'dead' && bodyHit(o, w.x, w.y, 2.2)).map(o => o.name + '/' + o.faction);
+    return `wx,wy ${w.x.toFixed(1)},${w.y.toFixed(1)} · tear matched ${!!rf} · selected ${selected.length}` +
+      ` (gifted ${selected.filter(c2 => c2.gift && (!c2.undead || c2.lich)).length})` +
+      ` · castMode ${!!castMode} buildMode ${!!buildMode} attackMove ${!!attackMoveMode} guardMode ${!!guardMode}` +
+      ` · bodies within 2.2: ${near.join(', ') || 'none'}`;
+  });
+  out._menu = `right-clicking a tear offers: ${menu.join(' | ') || '(nothing)'} — the click landed ${q.off.toFixed(2)} tiles off, on the map: ${q.onMap}; the game said: ${said}\n                                 ${why}`;
   out.bothRoadsAreOffered = (menu.some(x => /SEAL IT/.test(x)) && menu.some(x => /LONG RITE/.test(x)))
     ? 'right-clicking a tear offers the seal with its price on it and the long rite beside it — the choice the note is about, made where the player makes it'
     : `!! THE MENU IS ${menu.join(' | ') || 'EMPTY'}`;

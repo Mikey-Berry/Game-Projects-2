@@ -1365,6 +1365,22 @@ the truth was 45%.
   direction — 3.5 tiles from a warm start and 5.5 (outside a five-tile rite, forever) from a cold
   one, on the SAME build. A behaviour that depends on which way a body drifted is not a
   behaviour. Give the claim ownership of the walk, with a give-up timer.
+- **`isBlocked` knows about terrain and nothing about who is standing on it.** Three separate
+  harnesses failed the same way in one session after a worldgen change moved the world's
+  population: `tears.js` staged a tear with **the Sixfold standing on it** (the right-click chain
+  is ordered by specificity and a body answers long before a tear, so the menu came back empty),
+  `flank.js` staged a surround with somebody parked in one of the octants, and `melee.js` staged
+  a picket line the world's wanderers could walk into. Every one of them checked the rocks and
+  none of them checked the people. If a probe stages a scene, it must clear the field.
+- **A probe can assert the opposite of the design and pass for months on luck.** `melee.js`
+  required an *ordered* charge to stop and fight an interposing line — while the interpose branch
+  in `physics` is gated `!(c.targetManual && c.faction === 'player')` and its comment reads "a
+  player's own explicit order is never overridden: the passing cuts are the price you chose". It
+  passed whenever some other branch happened to take the target away. Measured on three builds
+  with the field swept *and the ground flattened*, so neither bodies nor terrain could get a vote,
+  it read 93 cuts / 3 cuts / 94 cuts — the dice deciding whether a claim about a rule held. Both
+  promises an order actually makes already had their own claims in the same file. **When a claim
+  and the code disagree, read the code's comment before assuming the code is wrong.**
 - **When a worldgen change moves the random stream, the probes that break are the ones that were
   riding on luck — and re-tuning their thresholds is the wrong fix.** The town work added the
   largest single batch of worldgen draws this project has taken and eight harnesses went red; all
