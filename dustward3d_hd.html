@@ -108,6 +108,7 @@
   .dslot .dv.empty{color:#ffffff44}
   .dfig{border:1px solid var(--edge);background:#ffffff06;display:flex;align-items:center;justify-content:center;padding:6px}
   .dfig svg{width:100%;height:auto;display:block}
+  .dfig canvas{display:block;margin:0 auto}
   .dnote{color:var(--dust);font-size:11px;margin:2px 0 6px}
   /* build bar */
   #buildbar{left:50%;bottom:10px;transform:translateX(-50%);display:none;
@@ -31214,6 +31215,88 @@ function dollSvg(c){
    text. A second window would have meant two answers to "what is this person wearing" and
    two places to keep in step, so this replaces that section instead. `redraw` is the host
    screen's own render, passed in, because equipping changes the load line above it. */
+/* ---------- A SECOND, VERY SMALL RENDERER ----------
+   Its own WebGL context rather than a second pass on the main one, because the world's camera,
+   fog, shadow map and post state would all have to be saved and restored around it — and the
+   portrait wants none of them. One context, 200-odd pixels, a hemisphere light and a key: what
+   is being looked at is the SILHOUETTE and the gear on it, not the weather.
+   IT CLEANS UP AFTER ITSELF BY WATCHING THE DOM. There are half a dozen ways to shut the kit
+   window and every one of them would otherwise need to remember to stop this loop; instead the
+   frame checks whether its own canvas is still on the page and stands down when it is not. */
+let _doll = null, _dollGen = 0;
+function dollPortrait(c, host){
+  if(typeof THREE === 'undefined' || !host) return;
+  const W2 = 132, H2 = 178;
+  /* ---------- ONE CANVAS AND ONE CONTEXT, RE-PARENTED ----------
+     The first version made a fresh canvas and a fresh `WebGLRenderer` on every redraw of the
+     kit window — and the window redraws on every click in it. A browser hands out about
+     sixteen WebGL contexts and then starts dropping the oldest, so equipping four things in a
+     row was a countdown to the MAIN renderer's context being taken away. There is one canvas
+     for the life of the page and it moves into whichever panel is currently asking. */
+  if(!_doll){
+    let r;
+    const cvp = document.createElement('canvas');
+    cvp.width = W2 * 2; cvp.height = H2 * 2;        /* drawn at 2x, shown at 1x: cheap AA */
+    cvp.style.cssText = `width:${W2}px;height:${H2}px;display:block`;
+    try { r = new THREE.WebGLRenderer({canvas: cvp, antialias: true, alpha: true}); }
+    catch(e){ return; }                              /* no context to spare: no portrait */
+    const sc = new THREE.Scene();
+    const cam = new THREE.PerspectiveCamera(28, W2 / H2, 0.1, 60);
+    sc.add(new THREE.HemisphereLight(0xa9a292, 0x3d362e, 1.15));
+    const key = new THREE.DirectionalLight(0xd8c9a4, 0.85);
+    key.position.set(2.4, 4.2, 2.8); sc.add(key);
+    const fill = new THREE.DirectionalLight(0x8fb5d4, 0.30);
+    fill.position.set(-3, 1.4, -2); sc.add(fill);
+    r.setPixelRatio(1);
+    r.setSize(cvp.width, cvp.height, false);
+    r.setClearColor(0x000000, 0);
+    _doll = {r, sc, cam, cv: cvp, ent: null, pivot: null, rot: 0, raf: 0};
+  }
+  const D = _doll;
+  host.appendChild(D.cv);
+  /* AND A GENERATION, so a loop left over from the previous redraw cannot tear down the body
+     the current one just built — which is exactly what happened when they shared one object:
+     the stale frame found its canvas re-parented, called that "closed", and disposed the mesh
+     the live panel was about to show. */
+  const gen = ++_dollGen;
+  if(D.pivot){ D.sc.remove(D.pivot); if(D.ent) disposeTree(D.ent.g); D.pivot = null; D.ent = null; }
+  let ent;
+  try { ent = buildCharMesh(c); } catch(e){ return; }
+  const pivot = new THREE.Group();
+  pivot.add(ent.g);
+  D.sc.add(pivot);
+  D.ent = ent; D.pivot = pivot;
+  /* FRAME WHATEVER IT TURNED OUT TO BE. A Longdead and a Cairn Beast are not the same height,
+     so the bounding box decides rather than a constant. */
+  ent.g.position.set(0, 0, 0);
+  ent.g.rotation.set(0, 0, 0);
+  ent.g.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(ent.g);
+  const size = bb.getSize(new THREE.Vector3());
+  const mid = bb.getCenter(new THREE.Vector3());
+  const span = Math.max(size.y || 0, Math.max(size.x || 0, size.z || 0) * (H2 / W2)) || 2;
+  ent.g.position.set(-mid.x, -mid.y, -mid.z);
+  /* 1.06 rather than 1.20: the box is already the body, so the padding is pure margin and at
+     1.20 the figure sat in the middle of a lot of nothing. Close up was the ask. */
+  D.cam.position.set(0, span * 0.06, (span * 0.5) / Math.tan(28 * Math.PI / 360) * 1.06);
+  D.cam.lookAt(0, 0, 0);
+  if(D.raf) cancelAnimationFrame(D.raf);
+  /* A SLOW TURN, because half the point of showing the body is showing the CLOAK on the back of
+     it — and a still three-quarter view hides the very slot that prompted this. */
+  const step = () => {
+    if(gen !== _dollGen){ return; }                 /* somebody else owns the canvas now */
+    if(!D.cv.isConnected){
+      D.raf = 0;
+      if(D.pivot){ D.sc.remove(D.pivot); if(D.ent) disposeTree(D.ent.g); D.pivot = null; D.ent = null; }
+      return;
+    }
+    D.rot += 0.006;
+    pivot.rotation.y = D.rot;
+    try { D.r.render(D.sc, D.cam); } catch(e){ D.raf = 0; return; }
+    D.raf = requestAnimationFrame(step);
+  };
+  step();
+}
 function gearBlock(c2, body, redraw){
   {
     gearSlot = gearSlot || 'weapon';
@@ -31232,10 +31315,23 @@ function gearBlock(c2, body, redraw){
       return d;
     };
     wrap.appendChild(col(['head', 'armor', 'cloak']));
-    const fig = document.createElement('div'); fig.className = 'dfig'; fig.innerHTML = dollSvg(c2);
+    /* ---------- THE FIGURE IS THE BODY, NOT A DRAWING OF ONE ----------
+       "It would be nice if it showed a model of the actual character selected, close up, and
+        with the same equipment. No placeholder T-pose picture."
+       It was an SVG of six coloured regions — a head, a torso, a hood, a hand — tinted by what
+       was in each slot. It told you a cloak was equipped and nothing about which cloak, and it
+       was the same figure for a Choir Kin, a golem and a Sixfold. Everything needed to do this
+       properly was already here: `buildCharMesh` builds the real rig from the real gear, and
+       three.js will happily render it into a second small canvas. */
+    const fig = document.createElement('div'); fig.className = 'dfig';
     wrap.appendChild(fig);
     wrap.appendChild(col(['weapon', 'trinket', 'pack']));
     body.appendChild(wrap);
+    /* AFTER the wrap is in the document, and that is not a detail: the portrait's first frame
+       checks `isConnected` to decide whether the panel is still open, and a canvas inside a
+       `<div>` that has not been appended yet is not connected. Called two lines earlier it
+       cleaned itself up before it had drawn anything, every single time. */
+    dollPortrait(c2, fig);
     /* what the kit adds up to, said once rather than left to be inferred from six rows */
     const sd = slotDef(c2), pen = armorPen(c2);
     const note = document.createElement('div'); note.className = 'dnote';
@@ -31667,11 +31763,25 @@ function openInventory(c){
         b.oncontextmenu = (ev) => { ev.preventDefault(); ev.stopPropagation(); fn(n(ev)); };
         return b;
       };
-      if(it.type==='weapon'||it.type==='armor'||it.type==='pack'){
-        const slot = it.type==='weapon'?'weapon':it.type==='pack'?'pack':'armor';
-        mk(it.type==='pack'?'SHOULDER':it.type==='armor'?'WEAR':'EQUIP', () => {
+      /* ---------- ALL SIX SLOTS, NOT THE THREE THERE USED TO BE ----------
+         "There's no way to equip cloaks right now from the main [I] menu. Just GIVE or STASH. I
+          have to go to the stash to equip it."
+         Exactly that, and it is the same list said twice: `EQ_SLOTS` was added with head, cloak
+         and trinket and this row was left hand-written against `weapon|armor|pack`. A cloak in
+         somebody's own pack could be given away, stashed or dropped — every verb except the one
+         it is for. It reads `slotFor` now, which is the single place that answers "what does
+         this go in", so the next slot anybody adds arrives here for free.
+         AND THE REFUSALS COME FROM THE SAME PLACE THE PAPERDOLL USES. `gearRefusal` is what
+         stops a Longdead putting on a crested helm; equipping out of the pack has to ask it too,
+         or the pack is a way round the rule. */
+      {
+        const slot = slotFor(k);
+        if(slot) mk(EQ_VERB[slot], () => {
+          const no = gearRefusal(c, k);
+          if(no){ log(`${c.name} cannot use that — ${no}.`, 'bad'); return; }
           invTake(c,k); if(c[slot]) invAdd(c,c[slot]); c[slot]=k;
-          log(`${c.name} equipped ${it.name}.`,'good'); render(); refreshCharPanel();
+          log(`${c.name} ${slot === 'weapon' ? 'took up' : 'put on'} ${it.name}.`,'good');
+          render(); refreshCharPanel();
         });
       }
       if(it.type==='food') mk('EAT', () => {
