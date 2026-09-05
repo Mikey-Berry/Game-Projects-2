@@ -239,10 +239,23 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       for (let i = 0; i < 8; i++) far.push(mkCorpse(ox + 3 + i * 0.3, oy + 3, {}));
       cart.master = ritualist;
       clearOrders(cart);
-      for (let i = 0; i < 2400; i++) { cart.state = 'ok'; physics(cart, 1 / 30); }
-      R.cartFetches = carried(cart) > 0
-        ? `it went and got them — ${carried(cart)} of ${carryCap(cart)} on the bed`
+      /* ---------- WATCH THE ROUND, DO NOT PHOTOGRAPH THE END OF IT ----------
+         This read `carried(cart) > 0` after eighty seconds, and it only ever passed because the
+         cart COULD NOT FINISH: it aimed at the yard centre and let go at 2.2 tiles, a 3x3 yard
+         reaches 2.0, so it circled the racks holding the load forever and the probe called that
+         a working cart. The delivery fix landed and the assertion inverted — eight bodies racked,
+         an empty bed, and a report that the cart never picked anything up.
+         What the cart is FOR is the round: fill the bed, take it to the yard, come back. So
+         measure the fullest the bed ever got, and then measure where the bodies ended up. */
+      let peak = 0;
+      for (let i = 0; i < 2400; i++) { cart.state = 'ok'; physics(cart, 1 / 30); peak = Math.max(peak, carried(cart)); }
+      R.cartFetches = peak > 0
+        ? `it went and got them — ${peak} of ${carryCap(cart)} on the bed at the fullest`
         : '!! THE CART NEVER PICKED ANYTHING UP';
+      const racked = far.filter(o => inBoneyard(o)).length;
+      R.cartRacks = racked === far.length
+        ? `and all ${racked} of them ended up on the racks, twenty-five tiles away`
+        : `!! ONLY ${racked}/${far.length} BODIES REACHED THE YARD`;
       R.cartKeepsThem = far.every(o => corpses.includes(o))
         ? 'and every body is still a body — it carries, it does not render'
         : `!! THE CART DESTROYED ${far.filter(o => !corpses.includes(o)).length} BODIES`;

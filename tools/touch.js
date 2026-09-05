@@ -210,6 +210,41 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
         ? 'a tap on your own selects them' : '!! TAP DID NOT SELECT (' + selected.length + ' selected)');
     }
 
+    /* ---------- DON'T HUNT FOR EMPTY GROUND, GO AND STAND ON SOME ----------
+       The note below already records this failing once, when a change upstream added draws at
+       worldgen and everybody shifted. It happened again the moment town shelves started being
+       seeded — and this time the scan found NOTHING, `openPt` came back null, and the file
+       crashed on `openPt.x` two lines after setting a message about it.
+       Looking for a screen point that happens to be clear makes the probe a hostage to where
+       the world put people. Move the camera over open waste first, and the scan is then asking
+       about a patch of dirt chosen for being empty rather than for being on screen. */
+    await p.evaluate(() => {
+      let bx = 0, by = 0;
+      outer:
+      for(let y = 40; y < H - 40; y += 5) for(let x = 40; x < W - 40; x += 5){
+        if(isBlocked(x + 0.5, y + 0.5)) continue;
+        if(towns.some(t => dist(t.x, t.y, x, y) < 60)) continue;
+        let ok = true;
+        for(let j = -4; j <= 4 && ok; j += 2) for(let i = -4; i <= 4 && ok; i += 2)
+          if(isBlocked(x + i + 0.5, y + j + 0.5)) ok = false;
+        if(ok && !chars.some(c => c.state !== 'dead' && dist(c.x, c.y, x, y) < 12)){ bx = x; by = y; break outer; }
+      }
+      /* ---------- AND BRING THE UNIT WITH THE CAMERA ----------
+         Panning ALONE was half a fix. The attack assertions below stand a bandit on this patch
+         of dirt and tap him, and the order they are testing for is gated on `visAt(foe) === 2` —
+         current sight, not memory. Leaving the selected unit sixty tiles back put the target in
+         fog, the handler correctly refused to hand out an attack order, and the probe reported
+         the touch layer dead about a game doing exactly the right thing.
+         So move them here too. The empty patch was chosen for having nobody on it; the one body
+         that belongs on it is the one giving the orders. */
+      if(bx){
+        camFollow = false; camX = camSX = bx; camY = camSY = by;
+        const me = chars.find(c => c.id === window.__me);
+        if(me){ me.x = bx; me.y = by; clearOrders(me); }
+        rebuildCharGrid(); computeVision();
+      }
+    });
+    await p.waitForTimeout(500);
     /* Somewhere on the map that is not covered by a panel. Tapping blind at (200,400) hit a
        HUD div, the canvas never saw the event, and every gesture below reported dead. */
     const openPt = await p.evaluate(() => {
@@ -244,7 +279,18 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
       }
       return null;
     });
-    if(!openPt) { R.openGround = '!! NO UNCOVERED CANVAS ANYWHERE ON THE SCREEN'; }
+    if(!openPt) {
+      /* AND IF THERE IS STILL NOTHING, SAY SO AND STOP. This used to set the message and then
+         dereference `openPt` on the very next line, so the run ended in a TypeError and every
+         claim after it went unreported — a probe that cannot find its subject should report
+         that it could not, not take the whole file down. */
+      R.openGround = '!! NO UNCOVERED CANVAS ANYWHERE ON THE SCREEN';
+      console.log('=== TOUCH ===\n');
+      for(const [k, v] of Object.entries(R)) console.log('  ' + k.padEnd(26) + v);
+      console.log('\n*** ' + R.openGround);
+      await b.close();
+      process.exit(1);
+    }
 
     /* --- TAP ELSEWHERE WITH A SELECTION: that is the order --- */
     await p.evaluate(() => { const me = chars.find(c => c.id === window.__me); selected = [me]; clearOrders(me); });

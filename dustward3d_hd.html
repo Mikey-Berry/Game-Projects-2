@@ -108,6 +108,7 @@
   .dslot .dv.empty{color:#ffffff44}
   .dfig{border:1px solid var(--edge);background:#ffffff06;display:flex;align-items:center;justify-content:center;padding:6px}
   .dfig svg{width:100%;height:auto;display:block}
+  .dfig canvas{display:block;margin:0 auto}
   .dnote{color:var(--dust);font-size:11px;margin:2px 0 6px}
   /* build bar */
   #buildbar{left:50%;bottom:10px;transform:translateX(-50%);display:none;
@@ -789,7 +790,19 @@ function oreAt(x, y){
   }
   return null;
 }
+/* ---------- THE ONE PLACE A TOWN'S OWN STREETS DO NOT GET SWEPT ----------
+   Copperhold is built round a hole. `rawDecorAt` clears everything wild inside a town's
+   `clearR` — which is right for trees in the road and wrong for the working the town exists
+   because of, so the pit is checked first and it is checked with an AABB, because this function
+   is asked about every tile the renderer and the pathing touch. */
+let copperPit = null;
 function rawDecorAt(x,y){
+  if(copperPit && Math.abs(copperPit.x - x) <= copperPit.r && Math.abs(copperPit.y - y) <= copperPit.r){
+    const o2 = oreAt(x, y);
+    /* a worked face, not a hillside: far denser than the 0.90 an outcrop in the waste needs */
+    return (o2 && hash2(x*3+7, y*3+13) > 0.62) ? o2 : null;
+  }
+  
   /* ---------- NOTHING WILD GROWS INSIDE A TOWN ----------
      This used to clear a flat fifteen tiles around the centre, and the walls run to
      twenty-seven — so every walled town had a ring of trees, boulders and ore outcrops
@@ -885,7 +898,8 @@ const ITEMS = {
   iron:    {name:'Iron Ingot',    base:190, type:'mat'},
   vflesh:  {name:'Quickened Flesh', base:110, type:'mat'},
   fabric:  {name:'Fabric',        base:48,  type:'trade'},
-  rum:     {name:'Rum',           base:75,  type:'trade'},
+  rum:     {name:'Rum',           base:75,  type:'trade', drink:'rum'},
+  rum_black:{name:'Harbourblack',  base:145, type:'trade', drink:'black'},
   hide:    {name:'Hound Hide',    base:28,  type:'trade'},
   w_plank: {name:'Plank',         base:80,  type:'weapon', dmg:9,  wt:'blunt'},
   w_club:  {name:'Iron Club',     base:220, type:'weapon', dmg:14, wt:'blunt'},
@@ -1016,6 +1030,8 @@ const ITEMS = {
     desc:'Hangs the dead in a shape the eye forgives. Your risen stop reading as risen'},
   t_charm: {name:'Doorway Charm', base:180, type:'trinket', def:.02,
     desc:'Fallowend hangs one on every lintel. Nobody there will tell you whether it works'},
+  t_kept:  {name:'Kept Charm',    base:900, type:'trinket', def:.03, ward:true,
+    desc:'The same charm, held a night at the kami stone. It works. The gaunts will not close on whoever carries it'},
   t_lens:  {name:'Reading Lens',  base:520, type:'trinket', cap:2,
     desc:'Ground glass in a brass ring. A scholar carries one and never says where it came from'},
   t_marker:{name:'Guild Marker',  base:700, type:'trinket', cha:3,
@@ -1163,38 +1179,38 @@ function raceName(full, race, sub, sex){
 function pickNameFor(sex, full, race, sub){ return raceName(full, race || 'human', sub || null, sex || 'm'); }
 /* ============================================================ TOWNS */
 const TOWNS = [
-  {key:'dustport',  name:'DUSTPORT',   pref:1, giftChance:.35, mult:{copper:1.5, fabric:0.8, rum:0.65, hide:1.2, meat:1.0, fruit:1.1, iron_ore:1.35, iron:1.25},
+  {key:'dustport',  name:'DUSTPORT',   pref:1, giftChance:.35, mult:{copper:1.5, fabric:0.8, rum:0.65, rum_black:0.75, hide:1.2, meat:1.0, fruit:1.1, iron_ore:1.35, iron:1.25},
     wall:{r:25, mat:'wood', hp:400}, guards:11, civs:19,
     civBarks:['Nets came up empty again.','Storm coming off the water, mark me.','Rum\'s cheap, everything else costs blood.','Watch the docks after dark.'],
     lore:'A rough harbor town. Everything washes up here eventually — cargo, drifters, bodies.'},
-  {key:'copperhold',name:'COPPERHOLD', pref:2, giftChance:.35, mult:{copper:0.5, fabric:1.35, rum:1.3, hide:1.0, meat:1.3, fruit:1.4,
+  {key:'copperhold',name:'COPPERHOLD', pref:2, giftChance:.35, mult:{copper:0.5, fabric:1.35, rum:1.3, rum_black:1.0, hide:1.0, meat:1.3, fruit:1.4,
            iron_ore:1.15, coal:1.05, iron:0.85},   /* it smelts, but it does not dig iron */
     wall:{r:27, mat:'stone', hp:900}, guards:13, civs:21, mercs:true,
     civBarks:['The vein runs deep this year.','Mercenary pay is triple guard pay. Triple.','Copper buys anything. Even quiet.','New shipment of arms at the smelter.'],
     lore:'Mine money built these walls, and mine money hires the blades on them.'},
-  {key:'greenrest', name:'GREENREST',  pref:0, giftChance:.35, mult:{copper:1.3, fabric:0.6, rum:1.1, hide:0.7, meat:0.6, fruit:0.5},
+  {key:'greenrest', name:'GREENREST',  pref:0, giftChance:.35, mult:{copper:1.3, fabric:0.6, rum:1.1, rum_black:0.92, hide:0.7, meat:0.6, fruit:0.5},
     wall:{r:24, mat:'wood', hp:400}, guards:15, civs:23,
     civBarks:['Harvest looks kind this season.','My grandmother planted that orchard.','Never seen a bandit inside these walls. Never will.','Fresh bread at the bar, if you\'re quick.'],
     lore:'Quiet fields, full granaries, and more watchmen than any town its size. They like it that way.'},
   {key:'hollowmere',name:'HOLLOWMERE', pref:0, giftChance:.7, undeadFriendly:true,
     wall:null, guards:11, civs:18,
-    mult:{copper:1.1, fabric:1.2, rum:0.9, hide:0.9, meat:1.2, fruit:1.2, tome:0.75},
+    mult:{copper:1.1, fabric:1.2, rum:0.9, rum_black:0.9, hide:0.9, meat:1.2, fruit:1.2, tome:0.75},
     civBarks:['Walls? What would climb over that the wardens couldn\'t burn?','The bog keeps its own gate.','Osric raised my uncle. He\'s better company now.','Mind the standing stones after midnight.'],
     lore:'No walls, no fear. The wardens\' fire and the gravekeepers\' dead are gate enough.'},
   {key:'saltmere',  name:'SALTMERE',   pref:1, giftChance:.28,
     wall:{r:23, mat:'wood', hp:400}, guards:11, civs:20,
-    mult:{copper:1.4, fabric:1.05, rum:0.85, hide:1.3, meat:1.15, fruit:1.25, fish:0.55, salt:0.35},
+    mult:{copper:1.4, fabric:1.05, rum:0.85, rum_black:0.96, hide:1.3, meat:1.15, fruit:1.25, fish:0.55, salt:0.35},
     civBarks:['The flats give salt, the salt gives everything else.','We mind the tide-marks. You should too.','Outsiders taste of copper. We can tell.','Cure it in brine and it keeps till judgment.','Low tide at dusk. Stay off the pans.'],
     lore:'A shuttered town on the salt flats, curing fish and hoarding brine. They marry among themselves, bury among themselves, and count every stranger twice.'},
   {key:'ironscar',  name:'IRONSCAR',   pref:2, giftChance:.42, mercs:true,
     wall:{r:26, mat:'stone', hp:900}, guards:13, civs:17,
-    mult:{copper:0.55, fabric:1.35, rum:1.25, hide:1.15, meat:1.4, fruit:1.5,
+    mult:{copper:0.55, fabric:1.35, rum:1.25, rum_black:0.98, hide:1.15, meat:1.4, fruit:1.5,
            iron_ore:0.45, coal:0.50, iron:0.60},   /* the pit sets the price of iron */
     civBarks:['Work off the debt or the debt works you off.','Copper is cheap here. So are we.','The pit took my brother. It is hiring.','Mercs eat first. Always have.','Nobody leaves Ironscar paid up.'],
     lore:'An open pit worked by the indebted, order kept by hired blades over a workforce that would knife them for a day off. Copper flows out cheap because someone bleeds for every ingot.'},
-  {key:'fallowend', name:'FALLOWEND',  pref:0, giftChance:.3,
+  {key:'fallowend', name:'FALLOWEND',  pref:0, giftChance:.3, kami:true,
     wall:{r:24, mat:'wood', hp:400}, guards:9, civs:21,
-    mult:{copper:1.35, fabric:0.75, rum:1.0, hide:0.85, meat:0.65, fruit:0.55},
+    mult:{copper:1.35, fabric:0.75, rum:1.0, rum_black:0.92, hide:0.85, meat:0.65, fruit:0.55},
     civBarks:['Last honest soil before the waste.','We salt the doorframes. You would too, out here.','Nothing good walks in from the dark.','Harvest is kind. The nights are not.','Charm on your saddle, traveler? You will want one.'],
     lore:'The final farmstead before the map runs out into wild country. Fat fields, thin walls, and every lintel hung with old charms against whatever the wardens missed.'},
 ];
@@ -1390,6 +1406,46 @@ function useBandageCharge(){
   kitOpen--; return true;
 }
 function bandageChargesTotal(){ return kitOpen + (stash.bandage||0)*8; }
+/* ---------- AND A DRINK IS NOT A TRADE GOOD ----------
+   "We need to make rum more useful in general."
+   It has been in this game since the beginning as `type:'trade'` — a thing you buy in one town
+   and sell in another at a markup, with no other verb attached to it anywhere in the file. The
+   bar sold it, the brewer made it, the shelves stocked it, and in three hundred days of play
+   nobody ever DRANK any.
+   What a drink is for, in a game about bodies coming apart, is the twenty seconds after a blow
+   lands. Both halves are read off numbers that already existed and were already single reads:
+   `downAt`, the blood at which you go down, and the 50 at which you get back up. A measure
+   moves both, and it also puts blood back in you on the spot — which is why the headline use is
+   pouring it into somebody lying in the dirt.
+   AND IT COSTS SOMETHING, or it is a free buff and not a decision. A body running on drink
+   swings wide and is easier to hit, for as long as it lasts. */
+const DRINKS = {
+  rum:   {blood: 16, grit: 75,  wob: 0.09, name: 'rum'},
+  black: {blood: 34, grit: 170, wob: 0.17, name: 'Harbourblack'},
+};
+const GRIT_DOWN = 12;      /* how much further past the drop line a drinker keeps going */
+const GRIT_RISE = 12;      /* and how much sooner they get back up */
+function gritted(c){ return !!c && (c.gritT || 0) > 0; }
+function gritWobble(c){ return gritted(c) ? (c.gritWob || 0) : 0; }
+/* one measure into one body. Returns false with a reason logged, so every caller — the pack,
+   the bar's round, a hand poured into somebody on the ground — refuses the same way. */
+function drinkFrom(c, key){
+  const d = DRINKS[(ITEMS[key] || {}).drink];
+  if(!d) return false;
+  if(c.state === 'dead'){ log('There is no one in there to drink it.', 'bad'); return false; }
+  if(c.undead && !c.lich){ log(`${c.name} has no throat to put it down.`, 'bad'); return false; }
+  if(c.construct){ log(`${c.name} is not built to take that.`, 'bad'); return false; }
+  const was = c.state;
+  c.blood = Math.min(c.maxBlood, (c.blood || 0) + d.blood);
+  c.gritT = Math.max(c.gritT || 0, d.grit);
+  c.gritWob = Math.max(c.gritWob || 0, d.wob);
+  updateState(c);
+  addFloat(c.x, c.y - 1.1, 'A MEASURE', '#c4884a');
+  if(was === 'down' && c.state === 'ok')
+    log(`${c.name} takes a measure of ${d.name} and gets up out of the dirt.`, 'good');
+  else log(`${c.name} drinks a measure of ${d.name}.`, '');
+  return true;
+}
 
 const towns = [], buildings = [], vendors = [], beds = [], drops = [], phylacteries = [];
 /* Cells live here, beside `beds`, because the town planner fills both while it lays a town
@@ -1432,11 +1488,18 @@ let pyreRead = null;   /* {name, day, x, y} */
    fight inside somebody's walls has to put the shrine down first, in front of everyone, and
    that is a decision rather than vandalism. */
 const SHRINE_R = 19, SHRINE_HP = 220, RECONSECRATE_DAYS = 10;
+/* ---------- A SHRINE'S REACH IS THE SHRINE'S, NOT A CONSTANT ----------
+   It was one number for every stone on the map, which is fine while every town holds the same
+   opinion about the ground. Saltmere does not: it cures its dead in brine and considers the
+   brine holy, and the whole town is inside its own consecration rather than a ring around one
+   stone in the square. `sh.r` where a shrine has one, the constant everywhere else. */
+function shrineR(sh){ return sh.r || SHRINE_R; }
 function consecratedAt(x, y){
   for(const sh of shrines){
     if(sh.broken) continue;
-    if(Math.abs(x - sh.x) > SHRINE_R || Math.abs(y - sh.y) > SHRINE_R) continue;
-    if(dist(x, y, sh.x, sh.y) <= SHRINE_R) return sh;
+    const r = shrineR(sh);
+    if(Math.abs(x - sh.x) > r || Math.abs(y - sh.y) > r) continue;
+    if(dist(x, y, sh.x, sh.y) <= r) return sh;
   }
   return null;
 }
@@ -1509,9 +1572,20 @@ function placeBuilding(bx, by, w, h, label, town){
      The BUILDING stays: it is a stone hall on the plaza and the town plan is laid out around
      it, and an early return here would skip the wall-raising below and hand the planner an
      undefined instead of a footprint. What it no longer does is consecrate. */
-  const hallows = label === 'SHRINE' && !(town && town.def && town.def.undeadFriendly);
+  /* ---------- AND THE GOOD KAMI ARE NOT THE CHURCH ----------
+     Same reasoning as Hollowmere's, arrived at from the opposite direction: Hollowmere's stone
+     does not hallow because the town would be consecrating against itself, and Fallowend's does
+     not because whatever is being asked for out there is not the thing the Order prays to. The
+     BUILDING stays either way — it is a stone on the plaza and the plan is laid out around it. */
+  const hallows = label === 'SHRINE' && !(town && town.def && (town.def.undeadFriendly || town.def.kami));
   if(hallows){
-    shrines.push({x: bx + w/2, y: by + h/2, town, hp: SHRINE_HP, maxHp: SHRINE_HP,
+    /* SALT IS HOLY AT SALTMERE, and holy ground is the whole town rather than a ring around the
+       stone in the square. Deliberately larger than the wall so that walking up to the gate is
+       already standing on it — a necromancer's first news of Saltmere should be the rite
+       refusing, outside, before anybody has said a word. */
+    const salt = town && town.def && town.def.key === 'saltmere';
+    shrines.push({x: bx + w/2, y: by + h/2, town, hp: salt ? 900 : SHRINE_HP, maxHp: salt ? 900 : SHRINE_HP,
+                  r: salt ? 34 : SHRINE_R, salt: !!salt,
                   broken: false, reT: 0, bx, by, w, h});
   }
   for(let j=by; j<by+h; j++) for(let i=bx; i<bx+w; i++){
@@ -1523,6 +1597,16 @@ function placeBuilding(bx, by, w, h, label, town){
   return b;
 }
 /* ---------- town leaders: the mantle has a name ---------- */
+/* ---------- ONE TOWN'S BAR IS NOT A ROOM WITH A COUNTER IN IT ----------
+   "Dustport with a REAL bar, and a local brew."
+   Every seat in this world had a BAR in its plan at the same offset, the same eight by six, with
+   the same barkeep called `Barkeep` standing behind it — which is the whole town problem in one
+   building. Dustport's is a NAMED HOUSE with twice the floor and its own drink on the shelves,
+   and the plan reads this table rather than the constant, so the next town that deserves one
+   costs a line. */
+const BAR_PLAN = {
+  dustport: {label:'THE DROWNED MAN', w:11, h:8, keep:'Sella Vane', brew:'rum_black'},
+};
 const LEADER_TITLES = { saltmere:'Saltreeve', ironscar:'Pit-Boss', fallowend:'Elder', copperhold:'Magnate', greenrest:'High Warden', dustport:'Harbormaster', hollowmere:'Keeper' };
 const LEADER_TRAITS = {
   warlike:    'hungry for conquest',
@@ -1588,7 +1672,8 @@ function placeTownAt(def, cx0, cy0){
   const plan = [
     [-10,-9, 6, 5, 'general',  'TRADE GOODS'],
     [  5,-9, 6, 5, def.undeadFriendly ? 'occult' : 'weapons', def.undeadFriendly ? 'OCCULTIST' : 'ARMOURY'],
-    [-11, 3, 8, 6, 'bar',      'BAR'],      /* the biggest roof in town */
+    [-11, 3, BAR_PLAN[def.key] ? BAR_PLAN[def.key].w : 8, BAR_PLAN[def.key] ? BAR_PLAN[def.key].h : 6,
+              'bar', BAR_PLAN[def.key] ? BAR_PLAN[def.key].label : 'BAR'],   /* the biggest roof in town */
     [  4, 3, 7, 5, null,       'INN'],
     [ -2,-11,5, 4, null,       'HALL'],     /* the seat of whoever runs this place */
     [  4,-3, 4, 4, null,       'BARRACKS'], /* the watch sleeps somewhere */
@@ -1646,8 +1731,10 @@ function placeTownAt(def, cx0, cy0){
     const bx = cx0+dx, by = cy0+dy;
     placeBuilding(bx, by, w, h, label, t);
     if(vt){
+      const bp = BAR_PLAN[def.key];
       vendors.push({x:bx+w/2, y:by+1.6, vt, town:t,
-        name: vt==='bar' ? 'Barkeep' : vt==='robotics' ? 'Roboticist' : vt==='weapons' ? 'Smith' : 'Trader'});
+        house: (vt==='bar' && bp) ? bp.label : null,
+        name: vt==='bar' ? ((bp && bp.keep) || 'Barkeep') : vt==='robotics' ? 'Roboticist' : vt==='weapons' ? 'Smith' : 'Trader'});
     } else if(label==='INN'){
       for(let i=0;i<5;i++) beds.push({x:bx+1.2+i*1.1, y:by+1.5, fee: def.undeadFriendly ? 10 : 25, user:null, town:t});
     } else if(label==='GAOL'){
@@ -1696,6 +1783,9 @@ function placeTownAt(def, cx0, cy0){
   while(spots.length < N && tries++ < 20000){
     const x = ri(18, W-18), y = ri(18, H-18);
     if(!areaClear(x-19, y-18, 38, 36)) continue;   /* the whole plan, second ring included */
+    /* the first spot found is Copperhold's, and it is held further from everything else so a
+       ring of massifs can stand round it without walling a neighbour in */
+    if(spots.length && dist(spots[0].x, spots[0].y, x, y) < 130) continue;
     if(spots.some(s => dist(s.x,s.y,x,y) < 95)) continue;   /* wider spacing = more wild between towns */
     spots.push({x,y});
   }
@@ -1707,7 +1797,24 @@ function placeTownAt(def, cx0, cy0){
       spots.push({x: Math.round(30 + gx*(W-60)), y: Math.round(30 + gy*(H-60))});
     }
   }
-  for(let i=0;i<N;i++) placeTownAt(TOWNS[i], spots[i].x, spots[i].y);
+  /* ---------- ONE SEAT NEEDS ROOM AROUND IT, AND IT IS NOT AN ORDINARY ONE ----------
+     "Copperhold with a central mine and mountainous terrain (may require moving towns —
+      Fallowend is close.)"
+     He was right that it needs moving somebody, and the honest fix is not to shove a neighbour
+     afterwards: the FIRST spot is found with a 130-tile exclusion instead of the usual 95, and
+     Copperhold is given that one. Everybody else is placed exactly as before, in the same order,
+     so `towns[i]` still lines up with `TOWNS[i]` — which matters, because town INDEX is what
+     `rebelOf`, `isLeader` and a warband's target are all stored as, in the save. */
+  const ci = TOWNS.findIndex(d => d.key === 'copperhold');
+  const order = [];
+  for(let i = 0, k = 1; i < N; i++) order[i] = (i === ci) ? spots[0] : spots[k++];
+  for(let i=0;i<N;i++) placeTownAt(TOWNS[i], order[i].x, order[i].y);
+  /* and the hole it is built around. Seven tiles, just off the well, in the one block of the
+     town plan that no building stands in. */
+  {
+    const cop = towns.find(t => t.def.key === 'copperhold');
+    if(cop) copperPit = {x: cop.x - 1, y: cop.y - 1, r: 3, town: cop, depth: 3.9};
+  }
 })();
 
 /* ---------- geology: the reason the map's politics look the way they do ---------- */
@@ -1727,6 +1834,14 @@ function placeTownAt(def, cx0, cy0){
     const off = (t.clearR || 15) + Math.round(r * 0.7);
     oreFields.push({x: Math.round(t.x + Math.cos(a)*off), y: Math.round(t.y + Math.sin(a)*off), r, kind, home: key});
   }
+  /* ---------- AND COPPERHOLD'S OTHER ONE IS UNDER ITS OWN SQUARE ----------
+     The seam above is the LODE — the one that built the walls, out past the gate where a pit
+     belongs. This is the working the town grew around: a small, very rich face at the bottom of
+     the hole in the middle of it, which is the whole reason the streets bend the way they do.
+     `rawDecorAt` exempts the pit from the street sweep, or this would be deleted on the way in
+     exactly the way both mining towns' ore was once deleted. */
+  if(copperPit) oreFields.push({x: Math.round(copperPit.x), y: Math.round(copperPit.y),
+                                r: copperPit.r + 1, kind: 'cvein', home: 'copperhold', pit: true});
   /* wild seams out in the waste: no one's yet, and worth a war */
   let tries = 0;
   while(oreFields.length < 7 && tries++ < 4000){
@@ -3423,6 +3538,10 @@ for(const t of towns){
   /* a hunting town has pelts to sell, and Fallowend hangs charms on every lintel it owns */
   if(t.def.key==='greenrest' || t.def.key==='fallowend') seed(tierKey('k_pelt', pick(['c','n'])), 1);
   if(t.def.key==='fallowend') seed('t_charm', ri(3,6));
+  /* AND THE HOUSE MEASURE, WHERE THE HOUSE IS. Same rule as the aether cell and the head slot
+     before it: the bar's window LISTS this and would have shown a price against an empty
+     counter, because a vendor's list is not a shelf. */
+  { const bp2 = BAR_PLAN[t.def.key]; if(bp2 && bp2.brew) seed(bp2.brew, ri(14, 24)); }
   if(t.def.key==='copperhold'){ seed(tierKey('w_nod','f'), 1); seed(tierKey('a_pla', pick(['n','f'])), 2); seed('w_xbow', 2); }
   if(t.def.undeadFriendly){ seed('tome', 3); seed('remains', 4); seed('a_shroud', 2); }
   /* ---------- AETHER CELLS, AND WHY THERE WERE NEVER ANY ----------
@@ -4872,8 +4991,35 @@ function seizeSuspect(t){
 }
 /* the stake, and what it leaves. Called at the burn date, and once more by hand if the player
    is standing there to watch — the world does not care whether anybody came. */
+/* ---------- WHERE THE ORDER BURNS SOMEBODY ----------
+   "I cannot ever seem to get Albedo's quest done."
+   It is wired and it works — measured end to end: seizures happen, burns happen, the pole
+   stands, standing at it sets `pyreRead`, her gate opens. What it is NOT is reachable. Every
+   pole in the world stood at the Bastion gate, which on the measured seed was 777 TILES from
+   where Albedo was, on Paladin ground that hunts necromancers, and the first one did not go up
+   until day 63. So the quest was a two-month wait followed by a fortnight's round trip through
+   the one faction that wants you dead, for a recruit.
+   THE ANSWER IS NOT A FAKE POLE. Handing her a name off a fire nobody was burned on is exactly
+   what the note above `pyreRead` records fixing, and Saltmere's standing fire is deliberately
+   not in `pyres` for that reason. The answer is that the ORDER HAS A SECOND PLACE TO DO THIS —
+   a town fanatically devoted to it, with four Paladins billeted in it and a fire that has been
+   burning since before anybody now living was born. Of course they burn people there. The
+   suspect goes to whichever ground is nearer the town they were taken from, which is both what
+   the Order would actually do and what spreads the poles across a map instead of stacking all
+   of them in one corner of it.
+   The pole is still real, the name on it is still somebody who was taken and held for seven
+   days, and nothing about Albedo's gate is relaxed. It is only possible to walk to now. */
+function burnGround(c){
+  const grounds = [];
+  if(bastion && bastion.pyre) grounds.push(bastion.pyre);
+  if(typeof saltmere !== 'undefined' && saltmere && saltmere.pyre && !saltmere.town.sacked)
+    grounds.push(saltmere.pyre);
+  if(!grounds.length) return {x: c.x, y: c.y};
+  const home = c.homeTown || (c.jailedAt && c.jailedAt.town) || c;
+  return grounds.sort((a, b) => dist(a.x, a.y, home.x, home.y) - dist(b.x, b.y, home.x, home.y))[0];
+}
 function burnHeretic(c){
-  const at = (bastion && bastion.pyre) || {x: c.x, y: c.y};
+  const at = burnGround(c);
   const p2 = findOpenNear(Math.round(at.x + ri(-3, 3)), Math.round(at.y + ri(-1, 1)), 4) || at;
   pyres.push({x: p2.x, y: p2.y, name: c.name, day});
   if(c.jailedAt){ c.jailedAt.holds = 0; c.jailedAt = null; }
@@ -4881,14 +5027,19 @@ function burnHeretic(c){
   c.x = p2.x; c.y = p2.y;
   addSpecks(p2.x, p2.y - 0.4, '#ff8a3a', 26);
   kill(c, null);
+  /* AND SAY WHICH GROUND, because "at the Bastion" was true when there was only one and is a
+     wrong direction the moment there are two. */
+  const where = (typeof saltmere !== 'undefined' && saltmere && saltmere.pyre &&
+                 dist(p2.x, p2.y, saltmere.pyre.x, saltmere.pyre.y) < 8)
+    ? `${saltmere.town.name}, on the standing fire` : 'the Bastion gate';
   worldEvent('purge', p2.x, p2.y,
-    `${c.name} burned at the Bastion gate. The Order leaves the pole standing, which is the point of the pole.`);
-  log(`${c.name} has been burned at the Bastion. The stake is still standing.`, 'bad');
+    `${c.name} burned at ${where}. The Order leaves the pole standing, which is the point of the pole.`);
+  log(`${c.name} has been burned at ${where}. The stake is still standing.`, 'bad');
   /* WHERE, and recomputed as a bearing every time the journal draws it. A world event scrolls
      past in the feed; a thread with a mark on it is a place you can walk to. */
   if(!pyreRead)
     threadSet('pyre', 'The poles at the gate',
-      `The Order burned ${c.name} and left the pole standing at the Bastion gate. `
+      `The Order burned ${c.name} and left the pole standing at ${where}. `
       + (pyres.length > 1 ? `There are ${pyres.length} of them now. ` : '')
       + 'Somebody of yours has to stand at one and read the name off it.',
       {mark: {x: p2.x, y: p2.y},
@@ -4936,7 +5087,24 @@ function bastionGuestTick(){
   if(chars.some(c => c.bastionGuest && c.state !== 'dead')) return;
   if(chars.filter(o => (o.gauntKind === 'messenger' || o.gauntKind === 'herald') && o.state !== 'dead').length >= 2) return;
   if(rnd() > 0.14) return;
-  const q = findOpenNear(bastion.x + ri(-5, 5), bastion.y + ri(-4, 4), 5);
+  /* ---------- IN THE YARD, WHICH IS THE WHOLE OF WHAT IT IS ----------
+     "It stands in the yard where the Order drills and none of them will cross in front of it."
+     A five-tile jitter on top of sixty random darts in a radius-5 box can put it well past the
+     compound, and `purge.js` asks for under fourteen from the centre because a Watcher in a
+     field outside is not the scene. Ringed outward from the middle of the yard instead. */
+  let q = null;
+  outerGuest:
+  for(let ring = 2; ring <= 8; ring++){
+    for(let dy = -ring; dy <= ring; dy++) for(let dx = -ring; dx <= ring; dx++){
+      if(Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+      const gx2 = Math.round(bastion.x) + dx, gy2 = Math.round(bastion.y) + dy;
+      if(gx2 < 2 || gy2 < 2 || gx2 >= W - 2 || gy2 >= H - 2) continue;
+      if(isBlocked(gx2 + 0.5, gy2 + 0.5)) continue;
+      q = {x: gx2 + 0.5, y: gy2 + 0.5};
+      break outerGuest;
+    }
+  }
+  if(!q) q = {x: bastion.x, y: bastion.y};
   const m = spawnGaunt('messenger', q.x, q.y);
   if(!m) return;
   m.faction = 'purge'; m.nightborn = false; m.bastionGuest = true;
@@ -5105,6 +5273,7 @@ function bossSpot(minTown, minStart){
    Three branches of the golden age went looking for immortality. The Dark found lichdom —
    that is your road. These two took the others, and they are still paying for it. */
 const immortals = [];
+let demilich = null;                /* the one who went all the way through the door */
 /* ============================================================ THE REDOUBTS
    Some scholars saw it coming. They built bunkers, grew soldiers, forged weapons the
    like of which nobody has managed since — and it made no difference whatsoever.
@@ -5775,6 +5944,7 @@ function openScholar(sc, who){
       hb.onclick = () => {
         if(cats < fee) return;
         cats -= fee;
+        paidHire(fee);
         sc.faction = 'player'; sc.neutral = false; sc.scholar = false;
         clearOrders(sc);
         log(`${sc.name} shoulders their satchel. "I want to see how this ends. Professionally."`, 'good');
@@ -5833,6 +6003,73 @@ function spawnImmortals(){
       worldEvent('immortal', c.x, c.y, 'A suit of armour walks the deep waste alone. It speaks. Nobody has seen it open.');
     }
   }
+  spawnDemilich();
+}
+/* ---------- THE DEMILICH — DARK. He finished, and finished badly. ----------
+   He does not walk, does not fight, and has not moved in four hundred years. Everything about
+   the placement is therefore about being FINDABLE: a ruin, far from the start, and not the
+   King's ruin — the two of them are the same story told from either side of the door and they
+   should not be in the same room.
+
+   ---------- AND HE MUST NOT MOVE ANYBODY ELSE ----------
+   `makeChar` spends numbers off the world stream whatever it is handed — that invariant is
+   documented at the top of it — so ADDING ONE BODY HERE shifts every draw after it and
+   re-rolls the rest of worldgen: the Dustport Archivist's sex, three bone golems, four
+   Hollowmere keepers, the arena, the orchard, the saints, the lanterns and the mine. That is
+   the single most expensive mistake this file records and it has been made repeatedly.
+   So the stream is POCKETED. `seed` is a plain global; the spawn borrows it and puts it back
+   exactly as found, and every draw downstream comes out the number it would have been if he
+   were not here. The placement inside the pocket is deterministic anyway — a sort and a ring
+   walk, no `pick`, no `findOpenNear` — so he lands on the same tile every build of a seed,
+   which is what a harness needs to stage anything beside him. */
+function spawnDemilich(){
+  const pocket = seed;                       /* borrowed. Put back below, whatever happens. */
+  try {
+    const king = chars.find(x => x.bossKey === 'king');
+    /* farthest ruin from the start town that is not already holding a king */
+    const cand = ruins.filter(r => !king || dist(r.x, r.y, king.x, king.y) > 18)
+      .sort((a, b) => dist(b.x, b.y, startTown.x, startTown.y) - dist(a.x, a.y, startTown.x, startTown.y));
+    const home = cand[0] || ruins[0];
+    if(!home) return;
+    /* a deterministic ring walk outward: first open tile on the smallest ring, north first.
+       `findOpenNear` is sixty random darts and its draw count is data-dependent, so it is the
+       wrong tool even inside a pocket — the tile it returns would move with the terrain. */
+    let px = null, py = null;
+    for(let r = 2; r <= 9 && px === null; r++){
+      for(let k = 0; k < 8; k++){
+        const a = (k / 8) * Math.PI * 2;
+        const x = Math.round(home.x + Math.cos(a) * r), y = Math.round(home.y + Math.sin(a) * r);
+        if(x < 3 || y < 3 || x > W - 4 || y > H - 4) continue;
+        if(tileAt(x, y) === 3 || isBlocked(x, y)) continue;
+        px = x; py = y; break;
+      }
+    }
+    if(px === null){ px = home.x; py = home.y; }
+    const c = makeChar('The Demilich', 'immortal', px, py,
+      {atk:8, def:14, tough:90, ath:0, magic:95, gift:'dark', sex:'m'});
+    c.neutral = true;
+    c.bossKey = 'demilich';
+    c.immortal = 'dark';
+    c.demilich = true;                 /* furniture: its own rig, and the AI leaves it alone */
+    c.undead = true; c.lich = true;    /* it went all the way through. That is the whole point. */
+    c.minded = true;
+    c.big = 1.0;
+    c.blood = 260; c.maxBlood = 260;
+    c.mana = 200; c.maxMana = 200;
+    c.guard = {x: px, y: py};
+    c.hunger = 100;
+    c.bindWeight = 0;
+    c.dropItems = {tome:3, remains:8, formula_p:1};
+    c.questGive = 'dark';
+    c.barks = ['I have no lungs and I am still talking. Work out for yourself which part of that is the trick.',
+               'Four hundred years. Ask me what I did with them. The answer is this sentence.',
+               'The King would not finish. I did. Between us we have covered every mistake there is.'];
+    chars.push(c);
+    immortals.push(c);
+    demilich = c;
+    worldEvent('immortal', c.x, c.y,
+      'In one of the far ruins there is a skull that talks. It has not moved in living memory and it knows your name before you give it.');
+  } finally { seed = pocket; }
 }
 (function spawnBosses(){
   /* The Ossuary King — dead royalty, holding court in a ruin far from the Bastion */
@@ -5996,18 +6233,59 @@ spawnImmortals();
     chars.push(g);
   }
 })();
-/* Hollowmere's own gravekeepers — they compete with you for corpses */
+/* ---------- HOLLOWMERE'S OWN GRAVEKEEPERS — they compete with you for corpses ----------
+   "Hollowmere is fine as is, but more wardens/necromancers. Should check on the necromancers
+   there — sometimes I feel that they don't properly raise corpses as guards."
+   MEASURED FIRST, AND THE RITE IS FINE. Six paupers in the yard, two keepers at full mana: the
+   first is up 3.5 game-seconds in and all six are standing 40 seconds later, five of them
+   posted around the town. (The read that said otherwise was a live render watched for less
+   than one 3-second scan interval, which is a fact about the observer.)
+   WHAT IS ACTUALLY WRONG IS THE ARITHMETIC. Two keepers at a cap of three is a standing dead
+   of exactly SIX, seeded once on day one from a paupers' field that never refilled — so the
+   town whose whole boast is that its dead are its walls fields six of them for the entire
+   game, and by the time a player walks in there is nothing left in the yard to watch anybody
+   raise. Four keepers, a larger cap for a keeper who is building a wall rather than driving
+   stock, and a yard that keeps receiving. */
+const KEEPER_NAMES = [['Gravekeeper Osric','m'], ['Gravekeeper Wenna','f'],
+                      ['Gravekeeper Halloran','m'], ['Gravekeeper Mabb','f']];
 (function spawnTownNecros(){
   const hm = towns.find(t => t.def.undeadFriendly);
   if(!hm) return;
-  for(let i=0;i<2;i++){
-    const p = findOpenNear(hm.x + 2 + i*2, hm.y + 3, 4);
-    const n = makeChar(i===0 ? 'Gravekeeper Osric' : 'Gravekeeper Wenna', 'town', p.x, p.y,
-      {atk:14, def:18, tough:14, ath:6, magic:18, gift:'dark', weapon:'w_club', armor:'a_lea', armr:10, sex: i===0 ? 'm' : 'f',
+  for(let i=0;i<KEEPER_NAMES.length;i++){
+    const a = (i / KEEPER_NAMES.length) * Math.PI * 2 + 0.7;
+    const p = findOpenNear(hm.x + Math.cos(a) * 6, hm.y + Math.sin(a) * 6, 4);
+    const n = makeChar(KEEPER_NAMES[i][0], 'town', p.x, p.y,
+      {atk:14, def:18, tough:14, ath:6, magic:18, gift:'dark', weapon:'w_club', armor:'a_lea', armr:10, sex: KEEPER_NAMES[i][1],
        guard:{x:p.x, y:p.y}, homeTown:hm});
     n.npcNecro = true;
     n.stance = 'ranged';
     chars.push(n);
+  }
+})();
+/* ---------- AND THE WARDENS, WHO WERE ONLY EVER A LINE OF LORE ----------
+   "No walls, no fear. The wardens' fire and the gravekeepers' dead are gate enough." Half of
+   that sentence was true. The gravekeepers' dead were real; the wardens did not exist — a
+   fresh world put three bone golems and two keepers in Hollowmere and not one warden, so the
+   single sentence that explains why a town on a bog has no ramparts was fiction on the side
+   that carries the fire.
+   They stand at the approaches, and they are Flamewrights by trade: a warden is not a new kind
+   of person, it is one of the people already walking the wastes, posted. Fire is also the one
+   argument a bog and a graveyard both respect, which is why the boast works. */
+(function spawnBogWardens(){
+  const hm = towns.find(t => t.def.undeadFriendly);
+  if(!hm) return;
+  for(let i = 0; i < 4; i++){
+    const a = (i / 4) * Math.PI * 2 + 0.4;
+    const q = findOpenNear(hm.x + Math.cos(a) * 19, hm.y + Math.sin(a) * 19, 5);
+    const c = makeChar(pickName(true), 'town', q.x, q.y,
+      {atk: ri(16, 22), def: ri(16, 22), tough: ri(16, 22), ath: 6, magic: ri(18, 24),
+       weapon: 'w_club', armor: 'a_lea', armr: 16, head: 'h_kettle'});
+    makeFlamewright(c);
+    c.name = 'Bog Warden ' + c.name.split(' ').slice(-1)[0];
+    c.guard = {x: q.x, y: q.y};
+    c.homeTown = hm;
+    c.bogWarden = true;
+    chars.push(c);
   }
 })();
 let risenN = 0;
@@ -6070,6 +6348,630 @@ for(let i=0; i<3; i++){
     corpses.push(b);
   }
 })();
+/* ---------- AND THE YARD KEEPS RECEIVING ----------
+   Seeding six paupers once was seeding a SCENE, not a graveyard. Measured: the keepers clear
+   all six inside a minute of the first morning, and from then on the field reads zero for the
+   rest of the game — so a player who arrives on day four finds a mortuary with nothing in it
+   and four necromancers standing about with nothing to do, which is exactly what "they don't
+   properly raise corpses" looks like from the outside.
+   Hollowmere is where the other seats send what they will not bury themselves; that is the
+   whole reason the town exists and it costs one arrival a night to make it true. Capped at
+   what the keepers can actually stand up, so the field is a working yard rather than a pile. */
+const YARD_CAP = 10;
+function hollowmereBurials(){
+  const hm = towns.find(t => t.def.undeadFriendly);
+  if(!hm || hm.sacked) return;
+  const lying = corpses.filter(b => raisableBody(b) && dist(b.x, b.y, hm.x, hm.y) < 14).length;
+  if(lying >= YARD_CAP) return;
+  for(let i = 0, n = ri(1, 2); i < n; i++){
+    const p = findOpenNear(hm.x + ri(-8, 8), hm.y + ri(-8, 8), 5);
+    const b = makeChar('Pauper', 'town', p.x, p.y, {atk:ri(4,9), def:ri(4,8), tough:ri(4,8)});
+    b.state = 'dead'; b.homeTown = hm; b.deadAt = day + hour/24;
+    chars.push(b);
+    corpses.push(b);
+  }
+}
+/* ============================================================ THE PIT AT IRONSCAR
+   "Ironscar with a gladiator arena. Real risk. Isolated fights, proper entry and exit,
+    retrieval of downed allies. A guarded pit on the outskirts."
+
+   The town has been named for this since it was written and never had one: its seat is already
+   the PIT-BOSS, its lore is already an open pit worked by the indebted with hired blades over
+   them, and there was nowhere in it to fight anybody. Five things make this a PLACE rather than
+   a menu with a combat roll behind it, and each of them is a thing that can be measured:
+
+     · IT IS BUILT IN THE WORLD — a walled square outside the town, on the far side of the gate,
+       with the house's blades standing on it. You can walk up to it and be turned away from it.
+     · THE GATE IS REAL AND IT SHUTS. While a bout runs nothing outside can reach you and you
+       cannot leave. That is what "isolated" has to mean, or a pit is a patch of dirt where a
+       fight happens to occur.
+     · THE RISK IS REAL. Nothing in here is scripted to lose. The card names what is coming and
+       the purse is the house's opinion of your odds; the fight is the ordinary fight, with the
+       ordinary chance of it going badly. The stake is taken up front.
+     · IT OPENS AFTERWARDS, whoever won — and on a draw, and if everyone in it is down. A pit
+       that can stay shut is a way to lose a save.
+     · AND YOUR PEOPLE STAY WHERE THEY FELL. The gate opens, the bodies do not move, and you
+       walk in and carry them out with the same `bearTarget` you would use anywhere else. */
+const ARENA_R = 8;                 /* half-width of the ring; the sand inside is 15 x 15 */
+const PIT_TIMEOUT = 300;           /* seconds before the house calls a bout no-contest */
+let arena = null;
+(function seedArena(){
+  const t = towns.find(t2 => t2.def.key === 'ironscar');
+  if(!t) return;
+  /* ---------- OUTSIDE THE WALL, AND NOT ON TOP OF ANYTHING ----------
+     The pit is on the outskirts because that is where it was asked for and because it is the
+     one building in this world that the town wants near enough to walk to and far enough that
+     what happens in it is not happening in the square. Everything it must not land on is
+     checked rather than hoped for: water, the town's own sweep, the seam that pays for the
+     town, and any ground that is already solid. */
+  const need = ARENA_R + 2;
+  let cx = 0, cy = 0;
+  for(let ring = 0; ring < 14 && !cx; ring++){
+    const off = (t.clearR || 20) + 10 + ring * 3;
+    for(let k = 0; k < 16 && !cx; k++){
+      const a = (k / 16) * Math.PI * 2;
+      const x = Math.round(t.x + Math.cos(a) * off), y = Math.round(t.y + Math.sin(a) * off);
+      if(x < need + 3 || y < need + 3 || x >= W - need - 3 || y >= H - need - 3) continue;
+      if(oreFields.some(f => dist(f.x, f.y, x, y) < f.r + need)) continue;
+      if(towns.some(t2 => t2 !== t && dist(t2.x, t2.y, x, y) < 60)) continue;
+      let ok = true;
+      for(let j = -need; j <= need && ok; j++) for(let i = -need; i <= need && ok; i++){
+        if(tileAt(x + i, y + j) === 3) ok = false;
+        else if(isBlocked(x + i + 0.5, y + j + 0.5)) ok = false;
+      }
+      if(ok){ cx = x; cy = y; }
+    }
+  }
+  if(!cx) return;
+  /* THE GATE FACES THE TOWN, on whichever of the four sides actually points at it — a pit whose
+     only door is round the back is a pit nobody walks into by accident. */
+  const dx = t.x - cx, dy = t.y - cy;
+  const nx = Math.abs(dx) >= Math.abs(dy) ? Math.sign(dx) : 0;
+  const ny = nx ? 0 : Math.sign(dy) || 1;
+  const gate = [];
+  for(let d = -1; d <= 0; d++){
+    gate.push(nx ? {x: cx + nx * ARENA_R, y: cy + d} : {x: cx + d, y: cy + ny * ARENA_R});
+  }
+  const gk = new Set(gate.map(q => q.x + ',' + q.y));
+  arena = {x: cx, y: cy, r: ARENA_R, town: t, gate, walls: [], props: [], open: true,
+           bout: null, wins: 0, losses: 0, best: -1};
+  /* ---------- A CHEBYSHEV RING, WHICH IS SEALED BY CONSTRUCTION ----------
+     A circle of tiles laid down by radius leaves diagonal gaps, and everything in this game
+     moves orthogonally — the warren work spent four measurements learning that a wall which
+     touches only at a corner is not a wall. A square ring cannot have one. */
+  for(let j = -ARENA_R; j <= ARENA_R; j++) for(let i = -ARENA_R; i <= ARENA_R; i++){
+    if(Math.max(Math.abs(i), Math.abs(j)) !== ARENA_R) continue;
+    const wx = cx + i, wy = cy + j;
+    if(gk.has(wx + ',' + wy)) continue;
+    blocked.add(bkey(wx, wy));
+    arena.walls.push({x: wx, y: wy});
+  }
+  /* four standing stones on the sand, so the pit is somewhere to fight rather than an empty
+     box — cover to break a line of sight behind, which is the only tactic a bare floor has */
+  for(const [px, py] of [[-4,-4],[4,-4],[-4,4],[4,4]]){
+    blocked.add(bkey(cx + px, cy + py));
+    arena.props.push({x: cx + px, y: cy + py});
+  }
+  /* ---------- THE HOUSE ----------
+     The pit-master stands OUTSIDE the gate, because the whole shape of this is that you talk
+     your way in rather than wander in. The blades stand outside with him: they are Ironscar's,
+     they are not in the bout, and a fight in the pit is not their business until it is. */
+  const gm = gate[0];
+  const out = findOpenNear(gm.x + nx * 2, gm.y + ny * 2, 3);
+  const pm = makeChar('Pit-Master ' + pickName(), 'town', out.x, out.y,
+    {atk: 22, def: 22, tough: 24, ath: 5, weapon: 'w_kat', armor: 'a_lea', armr: 22,
+     head: 'h_armet', homeTown: t, guard: {x: out.x, y: out.y}});
+  pm.pitMaster = true;
+  pm.civ = true;                      /* he takes money, he does not walk a beat */
+  chars.push(pm);
+  arena.master = pm;
+  for(let i = 0; i < 4; i++){
+    const a = (i / 4) * Math.PI * 2 + 0.6;
+    const q = findOpenNear(cx + Math.cos(a) * (ARENA_R + 3), cy + Math.sin(a) * (ARENA_R + 3), 3);
+    const gd = makeChar('Pit Guard', 'town', q.x, q.y,
+      {atk: ri(18, 26), def: ri(18, 26), tough: ri(18, 26), ath: 5,
+       weapon: 'w_kat', armor: 'a_lea', armr: 24, head: 'h_kettle',
+       homeTown: t, guard: {x: q.x, y: q.y}});
+    gd.pitGuard = true;
+    chars.push(gd);
+  }
+})();
+/* ============================================================ THE LAST ORCHARD
+   "Greenrest with a dark secret. A mansion or estate, a servant answers the door, you need high
+    reputation to get in, reclusive."
+
+   THE SECRET WAS ALREADY WRITTEN AND NOBODY HAD NOTICED. Greenrest brags about exactly two
+   things, in its own civilian barks, and they are the same fact said twice:
+       "Harvest looks kind this season."
+       "Never seen a bandit inside these walls. Never will."
+   A town with the best ground in the country AND more watchmen than any town its size, which has
+   never once had trouble. The orchard is kind because of what is in it, and there has never been
+   a bandit inside those walls because none of them ever got that far. The Aldercotts have been
+   putting them under the rows for four generations, and the town has been eating the fruit.
+   THAT IS WHY IT IS AT GREENREST AND NOT ANYWHERE ELSE: this is the start town. It is the first
+   place a player walks into and the last place they would look, and the two lines that give it
+   away have been in the game since the beginning.
+   AND FOR A NECROMANCER IT IS NOT A SCANDAL, IT IS AN ORCHARD OF BODIES. Which is the choice the
+   whole thing exists to offer: the seat of the most decent town on the map is a mass grave, and
+   you are the one person in the world for whom that is good news. */
+const ORCHARD_REP = 45;            /* the standing at which the door is opened rather than argued */
+const ORCHARD_ROWS = 4, ORCHARD_PER_ROW = 5;
+let estate = null;
+(function seedOrchard(){
+  const t = towns.find(t2 => t2.def.key === 'greenrest');
+  if(!t) return;
+  const HW = 6, HH = 5;            /* the walled yard: 13 x 11 */
+  const need = Math.max(HW, HH) + 12;   /* the yard, and the rows behind it */
+  let cx = 0, cy = 0, ang = 0;
+  for(let ring = 0; ring < 12 && !cx; ring++){
+    const off = (t.clearR || 20) + 8 + ring * 3;
+    for(let k = 0; k < 16 && !cx; k++){
+      const a = (k / 16) * Math.PI * 2 + 0.35;
+      const x = Math.round(t.x + Math.cos(a) * off), y = Math.round(t.y + Math.sin(a) * off);
+      if(x < need + 3 || y < need + 3 || x >= W - need - 3 || y >= H - need - 3) continue;
+      if(arena && dist(arena.x, arena.y, x, y) < 40) continue;
+      if(oreFields.some(f => dist(f.x, f.y, x, y) < f.r + need)) continue;
+      let ok = true;
+      for(let j = -need; j <= need && ok; j++) for(let i = -need; i <= need && ok; i++){
+        if(tileAt(x + i, y + j) === 3) ok = false;
+        else if(isBlocked(x + i + 0.5, y + j + 0.5)) ok = false;
+      }
+      if(ok){ cx = x; cy = y; ang = a; }
+    }
+  }
+  if(!cx) return;
+  /* the gate faces the town; the rows are behind the house, away from the road */
+  const dx = t.x - cx, dy = t.y - cy;
+  const nx = Math.abs(dx) >= Math.abs(dy) ? Math.sign(dx) : 0;
+  const ny = nx ? 0 : (Math.sign(dy) || 1);
+  const gate = [{x: nx ? cx + nx * HW : cx, y: nx ? cy : cy + ny * HH}];
+  estate = {x: cx, y: cy, hw: HW, hh: HH, town: t, walls: [], gate,
+            admitted: false, told: false, opened: false, graves: [],
+            gx: cx - nx * (HW + 7), gy: cy - ny * (HH + 7)};   /* the orchard, out the back */
+  const gk = new Set(gate.map(q => q.x + ',' + q.y));
+  for(let j = -HH; j <= HH; j++) for(let i = -HW; i <= HW; i++){
+    const edge = (Math.abs(i) === HW || Math.abs(j) === HH);
+    if(!edge) continue;
+    const wx = cx + i, wy = cy + j;
+    if(gk.has(wx + ',' + wy)) continue;
+    blocked.add(bkey(wx, wy));
+    estate.walls.push({x: wx, y: wy});
+  }
+  /* the house itself, inside the yard — a real building so the renderer and the town planner
+     both already know what to do with it */
+  estate.house = placeBuilding(cx - 3, cy - 2, 7, 5, 'ALDERCOTT HOUSE', t);
+  /* ---------- THE ROWS ----------
+     Not corpses yet. Twenty bodies in `chars` from worldgen is twenty bodies in every save and
+     every scan for the rest of the game, for a thing the player may never find — so they are a
+     list of coordinates until somebody opens the ground, and then they are as real as anything
+     else in the world. */
+  for(let r = 0; r < ORCHARD_ROWS; r++) for(let i = 0; i < ORCHARD_PER_ROW; i++){
+    const px = estate.gx + (nx ? r * 2 - 3 : i * 2 - 4);
+    const py = estate.gy + (nx ? i * 2 - 4 : r * 2 - 3);
+    if(px < 3 || py < 3 || px >= W - 3 || py >= H - 3) continue;
+    estate.graves.push({x: px + 0.5, y: py + 0.5});
+  }
+  /* ---------- THE HOUSEHOLD ----------
+     The servant is at the GATE and the family is inside it, which is the whole shape of the
+     scene: you are turned away by somebody who is not allowed to decide, and the person who
+     could decide is not going to come out to you. */
+  const gm = gate[0];
+  const sp = findOpenNear(gm.x + nx * 1.5, gm.y + ny * 1.5, 2);
+  const serv = makeChar('Bellowes', 'town', sp.x, sp.y,
+    {atk: 8, def: 10, tough: 10, ath: 4, armor: 'a_lea', homeTown: t, guard: {x: sp.x, y: sp.y}, age: 61, sex: 'm'});
+  serv.civ = true; serv.orchardServant = true;
+  chars.push(serv);
+  estate.servant = serv;
+  const mp = findOpenNear(cx, cy + 1, 2);
+  const dame = makeChar('Dame Hessa Aldercott', 'town', mp.x, mp.y,
+    {atk: 6, def: 10, tough: 10, ath: 3, armor: 'a_lea', homeTown: t, guard: {x: mp.x, y: mp.y}, age: 74, sex: 'f'});
+  dame.civ = true; dame.orchardDame = true;
+  chars.push(dame);
+  estate.dame = dame;
+  for(let i = 0; i < 2; i++){
+    const q = findOpenNear(cx + ri(-3, 3), cy + ri(-2, 2), 3);
+    const k = makeChar(pickName(true), 'town', q.x, q.y,
+      {atk: 12, def: 14, tough: 14, ath: 5, weapon: 'w_club', armor: 'a_lea',
+       homeTown: t, guard: {x: q.x, y: q.y}, age: ri(28, 46)});
+    k.civ = true; k.orchardKin = true;
+    chars.push(k);
+  }
+})();
+/* ============================================================ FALLOWEND, AND THE VIOLET LIGHT
+   "Fallowend as the struggling farm counterpart [to Greenrest], with violet lanterns that turn
+    gaunts away, Good Kami worship, charms with genuine blessings, and pre-Fracture tech
+    refashioned as folk magic."
+
+   FALLOWEND ALREADY ASKED THE QUESTION AND THE GAME NEVER ANSWERED IT. Its Doorway Charm has
+   said, since it was written, "Fallowend hangs one on every lintel. Nobody there will tell you
+   whether it works." It did not work. It was two per cent of a defence number and a joke about
+   itself, in the one town whose entire identity is that its charms are the only thing between it
+   and the dark.
+
+   THE FOUR ASKS ARE ONE MECHANIC AND ONE REVEAL.
+     · THE LANTERNS ARE THE PRE-FRACTURE TECH. They are aether lamps. Fallowend has been keeping
+       them alight for four generations by hanging violet glass on them and saying the words, and
+       nobody there has any idea what they are — which is exactly the shape the note asked for:
+       old technology refashioned as folk magic by people who kept the ritual and lost the
+       manual. They burn `aether_cell`, the salvage the game already has, and the town's reserve
+       of them is finite and going down. That is what "struggling" means here in a number: not a
+       poor harvest, a countdown.
+     · A LIT ONE TURNS GAUNTS, thirteen tiles of it, through the same branch of the gaunt AI that
+       already turns them from Ainzopha'ar's Light. No new AI, no new predicate — one more thing
+       that answers the question the gaunts were already asking.
+     · A KEPT CHARM IS THE SAME LIGHT, CARRIED. A Doorway Charm held a night at the kami stone
+       comes back with it in. That is the blessing being genuine: it is not a bigger number, it
+       is the thing the lanterns do, on a person.
+     · AND THE GOOD KAMI ARE NOT THE CHURCH, so their stone does not consecrate. Fallowend is the
+       second place on this map where the rite will answer — which is a real fact about the world
+       and follows from the fiction rather than being granted to make the map easier. */
+const LANTERN_R = 13;              /* violet light: further than the Light, and it does far less */
+/* AND A CHARM IS THE SAME LIGHT IN SOMEBODY'S POCKET, at half the reach of a post. Six rather
+   than the four and a half it was first written at: four and a half plus the AI's own tile and a
+   half is a gaunt turning at almost exactly the distance it would have swung from, which is not
+   "they will not close on whoever carries it" — it is a coin flip resolved on the last step. */
+const CHARM_R = 6;
+const LANTERN_CELL_DAYS = 70;      /* how long one cell keeps a post burning */
+const lanterns = [];
+let fallowend = null;
+(function seedFallowend(){
+  const t = towns.find(t2 => t2.def.key === 'fallowend');
+  if(!t) return;
+  fallowend = {town: t, dark: 0};
+  for(let i = 0; i < 6; i++){
+    const a = (i / 6) * Math.PI * 2 + 0.25;
+    const q = findOpenNear(Math.round(t.x + Math.cos(a) * ((t.clearR || 20) - 2)),
+                           Math.round(t.y + Math.sin(a) * ((t.clearR || 20) - 2)), 4);
+    /* STAGGERED, so they do not all go out in the same week and the town's decline is a slope
+       rather than a cliff */
+    lanterns.push({x: q.x + 0.5, y: q.y + 0.5, town: t, fuel: ri(18, LANTERN_CELL_DAYS)});
+  }
+  /* ---------- THE BOX, AND IT IS NOT A SHELF ----------
+     This was `t.stock.aether_cell`, and `gunnery.js` was entirely right to go red on it: a
+     town's `stock` is what a town SELLS, and the rule that file protects is that an aether cell
+     is salvage rather than merchandise — only an occult dealer has one, because nobody makes
+     them any more. Putting Fallowend's reserve on the shelf meant you could walk in and buy the
+     thing keeping the lanterns lit, which is the opposite of the fiction as well as against the
+     rule. It is the town's own box, on the town's own object, and it is not for sale. */
+  fallowend.cells = ri(3, 6);
+})();
+/* WHETHER THERE IS VIOLET LIGHT ON SOMEBODY. Two sources, one question, and both lists are
+   small and precomputed — `lanterns` is fixed at six and `charmed` is gathered once a tick in
+   `rebuildCharGrid`, for exactly the reason the ward readers were rewritten to do the same. */
+function violetNear(c, extra){
+  const e = extra || 0;
+  for(const L of lanterns){
+    if(!L.fuel) continue;
+    if((c.floor || 0) !== 0) continue;              /* a lamp on the surface lights the surface */
+    if(dist(L.x, L.y, c.x, c.y) < LANTERN_R + e) return L;
+  }
+  for(const o of charmed){
+    if((o.floor || 0) !== (c.floor || 0)) continue;
+    if(dist(o.x, o.y, c.x, c.y) < CHARM_R + e) return o;
+  }
+  return null;
+}
+/* ---------- AND THE LAMPS BURN DOWN ----------
+   Run at dawn with everything else. A post that goes out is said out loud, because a town whose
+   defences are quietly failing and never mentions it is a town the player will never help. */
+function lanternTick(){
+  if(!fallowend || !lanterns.length) return;
+  const t = fallowend.town;
+  for(const L of lanterns){
+    if(L.fuel > 0){ L.fuel--; if(L.fuel === 0 && !t.sacked)
+      log(`A lantern on the Fallowend road has gone out. The Elder says the words over it anyway.`, 'bad'); }
+    /* the town relights what it can, out of a box it cannot refill */
+    if(!L.fuel && (fallowend.cells || 0) > 0 && rnd() < 0.5){
+      fallowend.cells--;
+      L.fuel = LANTERN_CELL_DAYS;
+    }
+  }
+  fallowend.dark = lanterns.filter(L => !L.fuel).length;
+}
+/* what the player can do about it, and the only thing that will: a cell in a post. */
+function lanternFeed(){
+  if(!fallowend) return false;
+  const L = lanterns.find(l => !l.fuel);
+  if(!L){ log('Every post on the Fallowend road is burning.', ''); return false; }
+  if(!takeItem('aether_cell')){ log('You have no aether cell to put in it.', 'bad'); return false; }
+  L.fuel = LANTERN_CELL_DAYS;
+  fallowend.dark = lanterns.filter(l => !l.fuel).length;
+  fallowend.town.rep = clamp((fallowend.town.rep || 0) + 6, -100, 100);
+  log('The post takes the cell and comes up violet. Nobody in Fallowend asks how you knew where it went.', 'good');
+  return true;
+}
+/* ---------- AND THE STONE KEEPS A CHARM ----------
+   A night at the kami stone and the charm comes back with the light in it. Deliberately a trade
+   rather than a purchase: the charm has to be yours already, which means Fallowend's one export
+   is the raw material for its own only good. */
+function keepCharm(){
+  if(!fallowend) return false;
+  if((stash.t_charm || 0) < 1){ log('You have no Doorway Charm for them to keep.', 'bad'); return false; }
+  takeItem('t_charm');
+  addItem('t_kept', 1);
+  log('The stone keeps it overnight. In the morning it is the same charm, and it is not.', 'good');
+  return true;
+}
+/* ============================================================ SALTMERE, AND WHAT IT KEEPS
+   "Saltmere fanatically devoted to the Church and the Paladins. Salt is holy. Salted saints
+    awaiting resurrection. A standing pyre. Walled and picky. Ideas from 'the Ardent'."
+
+   THE TOWN ALREADY SAID ALL OF THIS AND MEANT NONE OF IT. Its own barks are "The flats give
+   salt, the salt gives everything else", "Outsiders taste of copper — we can tell", and "Cure it
+   in brine and it keeps till judgment". That last one is a doctrine, and until now it was a
+   pickling tip. Saltmere had exactly the same shrine as everywhere else, no Order in it, no
+   pyre, and its dead lay about in the street like anybody's.
+
+   FOUR THINGS, AND EACH IS A DIFFERENT KIND OF PROBLEM FOR THE PLAYER:
+     · THE WHOLE TOWN IS CONSECRATED. Not a ring around the stone in the square — 34 tiles,
+       wider than the wall, so a necromancer's first news of Saltmere is the rite refusing
+       OUTSIDE the gate, before anybody has said a word to them.
+     · IT BURNS ITS DEAD. Anything lying inside the sweep goes on the pyre at dawn. Every other
+       seat in this world is a supply; this one is a desert, and that is a fact you find out by
+       walking away from it empty-handed.
+     · THE SALTED SAINTS. Cured in brine and laid up in the salt house against the day they are
+       called back, which they believe and the game does not contradict: they are the best-kept
+       bodies on the map, and while the stone stands not one of them will answer. Break the
+       shrine and Saltmere becomes the single richest thing a necromancer can do — which is the
+       point of putting them there, and the reason the stone has four times the usual hit points.
+     · AND THE ORDER IS BILLETED IN IT. Not passing through. Living there. */
+const SAINT_N = 8;
+let saltmere = null;
+(function seedSaltmere(){
+  const t = towns.find(t2 => t2.def.key === 'saltmere');
+  if(!t) return;
+  saltmere = {town: t, saints: [], pyre: null, order: []};
+  /* ---- THE SALT HOUSE ----
+     Sited on the CURING HOUSE, which the town already builds and which is already where it puts
+     things it means to keep. The saints are laid along the back wall of it. */
+  const cure = buildings.find(b => b.town === t && b.label === 'CURING HOUSE');
+  const hx = cure ? cure.x + cure.w / 2 : t.x + 4, hy = cure ? cure.y + 1.4 : t.y + 4;
+  for(let i = 0; i < SAINT_N; i++){
+    const p = findOpenNear(hx + (i % 4) * 1.2 - 1.8, hy + Math.floor(i / 4) * 1.2, 3);
+    /* THEY WERE SOMEBODY, and the arithmetic has to say so: a saint is a better body than
+       anything you will dig up anywhere else, which is what makes the stone worth breaking. */
+    const b = makeChar('Saint ' + pickName(true), 'town', p.x, p.y,
+      {atk: ri(30, 44), def: ri(28, 40), tough: ri(30, 44), ath: 5, magic: ri(6, 20)});
+    b.state = 'dead';
+    b.deadAt = day - ri(400, 4000);      /* laid up long before anybody now living */
+    /* ---------- AND `salted` IS NOT A NEW MECHANIC, IT IS THE TOWN'S OWN ----------
+       Brine-curing a corpse was already in the game as something the PLAYER can do: `salted`
+       holds a body at the decay index it was cured at and takes it off the rot clock entirely.
+       The saints are the same verb, done by the town, four hundred years ago and never undone —
+       which is why "cure it in brine and it keeps till judgment" is a doctrine here and a
+       pickling tip everywhere else. `saltedAt: 0` is the whole of what makes one a saint: they
+       were laid up the day they died and they have not moved on from it since. */
+    b.salted = true; b.saltedAt = 0;
+    b.homeTown = t;
+    chars.push(b);
+    corpses.push(b);
+    saltmere.saints.push(b);
+  }
+  /* ---- THE STANDING PYRE ----
+     Not an event. The Order's pyres go up when somebody burns and stay as a pole; this one was
+     lit before anybody now living was born and has not been out since. */
+  const sq = findOpenNear(Math.round(t.x + 3), Math.round(t.y - 5), 4);
+  saltmere.pyre = {x: sq.x, y: sq.y};
+  /* ---------- AND IT IS DELIBERATELY *NOT* IN `pyres` ----------
+     That list is the ORDER'S poles, and two things read it: the count in Albedo's refusal
+     ("the Order has built N poles at the Bastion gate") and `pyreRead`, which is satisfied by
+     one of yours standing at one. The note above `pyreRead` records the whole point of that
+     gate — it exists so the player has to sneak into Bastion territory, replacing a version
+     that any burning anywhere in the world satisfied. Putting an always-there pole in a town
+     the player can walk into on day one would hand her the name off a fire nobody was burned
+     on, and quietly undo the fix. It has its own draw instead. */
+  /* ---- AND THE ORDER LIVES HERE ----
+     `purge` rather than `town`: they are the Church's, not Saltmere's, and everything in the
+     game that already knows what a Paladin is knows what these are. */
+  for(let i = 0; i < 4; i++){
+    const a = (i / 4) * Math.PI * 2 + 0.3;
+    const q = findOpenNear(t.x + Math.cos(a) * 9, t.y + Math.sin(a) * 9, 4);
+    const lvl = ri(26, 34);
+    const c = makeChar('Paladin', 'purge', q.x, q.y,
+      {atk: lvl, def: lvl, tough: lvl - 4, ath: 7, magic: 1, armr: 40,
+       weapon: rnd() < 0.4 ? 'w_nod' : 'w_kat', armor: 'a_pla', head: 'h_crest'});
+    c.guard = {x: q.x, y: q.y};
+    c.billeted = t;
+    chars.push(c);
+    saltmere.order.push(c);
+  }
+})();
+/* ---------- AND AT DAWN IT BURNS WHAT IS LYING ABOUT ----------
+   The doctrine, made into a rule the player runs into: nothing stays on the ground in Saltmere.
+   Every other seat in this world is somewhere a body can be collected from; this one is the
+   opposite of a supply, and you learn that by walking away from a battle in its streets with
+   nothing to show for it.
+   THE SAINTS ARE EXEMPT, obviously — they are the reason the fire is lit, not fuel for it. */
+function saltmereBurning(){
+  if(!saltmere || saltmere.town.sacked || saltmere.town.playerRuled) return 0;
+  const t = saltmere.town, R = (t.clearR || 20);
+  let n = 0;
+  for(const b of corpses.slice()){
+    if(b.salted) continue;
+    if(dist(b.x, b.y, t.x, t.y) > R) continue;
+    /* not out of somebody's arms, and not the great dead — a Sixfold does not go on a pole */
+    if(chars.some(o => o.carry === b || (o.carryList && o.carryList.includes(b)))) continue;
+    if(isGreatBody(b)) continue;
+    const i = corpses.indexOf(b); if(i >= 0) corpses.splice(i, 1);
+    const j = chars.indexOf(b); if(j >= 0) chars.splice(j, 1);
+    n++;
+  }
+  if(n){
+    addSpecks(saltmere.pyre.x, saltmere.pyre.y - 0.4, '#ff8a3a', 18);
+    log(`Saltmere's fire is fed at dawn. ${n} ${n === 1 ? 'body goes' : 'bodies go'} on it, and the flats are clean again.`, '');
+  }
+  return n;
+}
+/* ---------- WHETHER THE DOOR OPENS ----------
+   Standing with Greenrest, because the Aldercotts are Greenrest — four generations of it — and
+   a stranger who has done nothing for the town is a stranger. The talk check is the other way
+   in, and it is deliberately not easy: a house with that under its trees does not let people in
+   because they were charming. */
+function estateAdmits(){ return !!estate && (estate.admitted || (estate.town.rep || 0) >= ORCHARD_REP); }
+/* ---------- AND THE GROUND GIVES IT UP ----------
+   Three ways, and they are three different games. A necromancer standing in the orchard simply
+   KNOWS — that is what the gift is, and it would be strange for the one profession built around
+   sensing the dead to walk over twenty of them and notice nothing. Anybody else has to be told
+   by the Dame, or dig. */
+function orchardOpen(why){
+  if(!estate || estate.opened) return 0;
+  estate.opened = true;
+  let n = 0;
+  for(const g of estate.graves){
+    const b = makeChar(pick(['Drifter', 'Nobody', 'A Traveller', 'One of Them']), 'town', g.x, g.y,
+      {atk: ri(6, 14), def: ri(6, 12), tough: ri(6, 12)});
+    b.state = 'dead'; b.deadAt = day - ri(200, 3000) / 24; b.orchardDead = true;
+    chars.push(b); corpses.push(b);
+    n++;
+  }
+  log(why, 'bad');
+  log(`${n} of them, in rows, under the fruit trees. Greenrest has been eating this orchard for four generations.`, 'bad');
+  /* NO `deed` HERE. Finding a thing is not doing a thing, and `deed('graves')` would have been
+     a no-op anyway — it is a QUEST kind, not a deed kind, and both ledgers ignore what they do
+     not know. What the player does next is already covered: taking the bodies is `raise` and
+     `graverob`, and both of those have opinions attached to them. */
+  return n;
+}
+/* the gift feels them without being told. Throttled and once — this runs in the world tick. */
+function orchardTick(){
+  if(!estate || estate.opened) return;
+  for(const c of chars){
+    if(c.faction !== 'player' || c.state !== 'ok') continue;
+    if(c.gift !== 'dark' && !c.lich) continue;
+    if(dist(c.x, c.y, estate.gx, estate.gy) > 11) continue;
+    orchardOpen(`${c.name} stops walking. There is something wrong with the ground here, and ${c.sex === 'f' ? 'she' : 'they'} can feel exactly how much of it there is.`);
+    return;
+  }
+}
+/* ---------- THE CARDS ----------
+   Four, in order, and the order is the whole progression: the house will not sell you a bout
+   above the one you have won. `make` builds real bodies with the ordinary constructors — there
+   is no arena-only combat path and there is not going to be one, because the entire value of a
+   pit fight is that it is the game's own fight with the exits closed. */
+const PIT_CARDS = [
+  {key:'opener', name:'THE OPENER', stake:40, purse:180,
+   blurb:'Two off the debt rolls. They are not fighters. They are in arrears.',
+   make:(a) => [0,1].map(i => {
+     const c = makeChar('Debtor', 'pit', a.x + ri(-3,3), a.y - 4 + i, {atk:ri(10,16), def:ri(8,14), tough:ri(10,16), ath:5, weapon:'w_plank', armor:'a_rag'});
+     return c;
+   })},
+  {key:'pack', name:'THE PACK', stake:110, purse:460,
+   blurb:'Four hounds off the waste, kept hungry since the last card.',
+   make:(a) => [0,1,2,3].map(i => {
+     const c = makeChar('Pit Hound', 'pit', a.x + ri(-4,4), a.y - 4 + (i % 2), {atk:ri(14,20), def:ri(10,16), tough:ri(12,18), ath:14});
+     c.beast = true; c.kin = 'hound'; c.clawDmg = 11;
+     return c;
+   })},
+  {key:'champion', name:'THE CHAMPION', stake:300, purse:1200,
+   blurb:'The house fighter, and one second. He has not lost here.',
+   make:(a) => {
+     const ch = makeChar(pickName(true) + ' of the Pit', 'pit', a.x, a.y - 4,
+       {atk:ri(34,44), def:ri(32,42), tough:ri(34,44), ath:7, weapon:'w_kat', armor:'a_pla', armr:44, head:'h_armet'});
+     ch.big = 1.15;
+     const sec = makeChar('Second', 'pit', a.x + 3, a.y - 4,
+       {atk:ri(22,28), def:ri(20,26), tough:ri(22,28), ath:6, weapon:'w_sw', armor:'a_lea', armr:26, head:'h_kettle'});
+     return [ch, sec];
+   }},
+  {key:'maw', name:'WHAT THEY KEEP BELOW', stake:800, purse:3400,
+   blurb:'They will not say what it is. The floor of the pit is stained where it stands.',
+   make:(a) => {
+     const m = makeChar('The Thing Below', 'pit', a.x, a.y - 4,
+       {atk:ri(52,64), def:ri(30,38), tough:ri(60,74), ath:6});
+     m.beast = true; m.big = 2.3; m.clawDmg = 26;
+     m.blood = 420; m.maxBlood = 420;
+     return [m];
+   }},
+];
+function pitOpen(){
+  if(!arena) return;
+  arena.open = true;
+  for(const q of arena.gate) blocked.delete(bkey(q.x, q.y));
+}
+function pitShut(){
+  if(!arena) return;
+  arena.open = false;
+  for(const q of arena.gate) blocked.add(bkey(q.x, q.y));
+}
+/* who is standing close enough to be sold a bout. Selection first, because choosing who goes in
+   is the decision the card is asking you to make; everybody nearby otherwise, so a player who
+   has not learned to select is not simply refused. */
+function pitEntrants(){
+  if(!arena) return [];
+  const near = c => c.faction === 'player' && c.state === 'ok' && !c.borneBy &&
+    dist(c.x, c.y, arena.x, arena.y) < ARENA_R + 12;
+  const sel = selected.filter(near);
+  return (sel.length ? sel : chars.filter(near)).slice(0, 6);
+}
+function pitInside(c){ return !!arena && Math.abs(c.x - arena.x) < ARENA_R && Math.abs(c.y - arena.y) < ARENA_R; }
+function pitStart(card){
+  if(!arena || arena.bout) return false;
+  const crew = pitEntrants();
+  if(!crew.length){ log('Nobody of yours is standing near enough to the gate to be sold anything.', 'bad'); return false; }
+  if(cats < card.stake){ log(`The stake on ${card.name} is ${card.stake} and you do not have it.`, 'bad'); return false; }
+  cats -= card.stake;
+  /* IN THROUGH THE GATE, and stood on the near side of the sand — not scattered, because a
+     party that starts a fight already surrounded never had the fight the card advertised. */
+  const g0 = arena.gate[0];
+  const inx = Math.sign(arena.x - g0.x), iny = Math.sign(arena.y - g0.y);
+  crew.forEach((c, i) => {
+    clearOrders(c);
+    const q = findOpenNear(arena.x + inx * 5 + ((i % 3) - 1) * 1.4, arena.y + iny * 5 + Math.floor(i / 3) * 1.4, 3);
+    c.x = q.x; c.y = q.y; c.floor = 0;
+  });
+  const foes = card.make(arena);
+  for(const f of foes){
+    f.state = 'ok';
+    f.guard = {x: arena.x, y: arena.y};      /* it fights here; it does not run out of the gate */
+    f.pitFighter = true;
+    chars.push(f);
+  }
+  rebuildCharGrid();
+  pitShut();
+  arena.bout = {key: card.key, name: card.name, purse: card.purse, stake: card.stake,
+                ours: crew.slice(), theirs: foes.slice(), t: 0};
+  log(`The gate comes down behind ${crew.length === 1 ? crew[0].name : crew.length + ' of yours'}. ${card.name}.`, 'bad');
+  addFloat(arena.x, arena.y, card.name, '#c8a86a');
+  return true;
+}
+/* ---------- AND IT HAS TO END, EVERY WAY IT CAN END ----------
+   Four outcomes and all four open the gate: they are down, you are down, both, or nobody has
+   managed it inside five minutes. The last one is not a nicety — two ranged lines behind
+   standing stones can genuinely fail to resolve, and a pit with no timeout is a save with a
+   party locked in a box. */
+function arenaTick(dt){
+  if(!arena || !arena.bout) return;
+  const b = arena.bout;
+  b.t += dt;
+  const up = list => list.filter(c => c.state === 'ok' && chars.includes(c)).length;
+  const oursUp = up(b.ours), theirsUp = up(b.theirs);
+  if(theirsUp && oursUp && b.t < PIT_TIMEOUT) return;
+  const t = arena.town;
+  arena.bout = null;
+  pitOpen();
+  if(!theirsUp && oursUp){
+    arena.wins++;
+    arena.best = Math.max(arena.best, PIT_CARDS.findIndex(c => c.key === b.key));
+    cats += b.purse;
+    if(t) t.rep = clamp((t.rep || 0) + 4, -100, 100);
+    deed('gold', b.purse / 400);
+    log(`${b.name}: the pit is yours. The house pays ${b.purse}, and Ironscar has seen you do it.`, 'good');
+  } else if(!oursUp && theirsUp){
+    arena.losses++;
+    log(`${b.name}: the gate goes up on your people lying in the sand. The stake is the house's.`, 'bad');
+  } else if(!oursUp && !theirsUp){
+    arena.losses++;
+    cats += Math.round(b.purse * 0.35);
+    log(`${b.name}: nobody is left standing in there. The house pays out a third of the purse and says nothing else.`, '');
+  } else {
+    log(`${b.name}: the house calls it. No contest, and no purse — the stake is gone.`, '');
+  }
+  /* what is left of the house's side is cleared off the sand, dead or not: a pit fighter is
+     the card, and the card is over. Yours stay exactly where they fell. */
+  for(const f of b.theirs){
+    const i = chars.indexOf(f);
+    if(i >= 0 && f.state !== 'dead') chars.splice(i, 1);
+  }
+}
 /* drifters — pilgrims and prospectors walking the roads between towns */
 const DRIFTER_NAMES = ['Pale Iris','Old Cobb','Tam the Lesser','Whistler','Mirel','Sixtoe','Brother Hap','Dust-Blind Anna'];
 const DRIFTER_BARKS = ['Long road, this one.','Seen the King\'s procession once. Never again.','Spare a cat for a pilgrim?','The Bastion doesn\'t take kindly to your sort.','Water\'s two days east.'];
@@ -7362,6 +8264,24 @@ function theStop(c, g, t, found){
       log(`${g.name} decides, correctly, that this is above ${g.sex === 'f' ? 'her' : 'them'}.`, 'good');
     } else lost('Everybody knows somebody.');
   });
+  /* ---------- AND A BOTTLE IS A BRIBE ----------
+     "We need to make rum more useful in general." A guard on a cold road at the end of a shift
+     is the oldest use it has, and it is a strictly better line than the coin one when you happen
+     to be carrying the stuff: it costs a bottle instead of a purse and it does not cost you the
+     town's standing, because nobody writes a bottle into a ledger. */
+  {
+    const bot = ['rum_black', 'rum'].find(k2 => (c.inv && c.inv[k2]) || stash[k2]);
+    if(bot) mk(`OFFER A BOTTLE — ${ITEMS[bot].name}`, 'the oldest currency on a cold road', () => {
+      if(c.inv && c.inv[bot]) invTake(c, bot); else if(!takeItem(bot)){ refuse('It has gone.'); return; }
+      const p2 = clamp(0.5 + chaOf(c) * 0.02 + (bot === 'rum_black' ? 0.22 : 0), 0.3, 0.95);
+      const ok2 = rnd() < p2;
+      socialTried(c, ok2);
+      if(ok2){
+        say(g, bot === 'rum_black' ? 'Harbourblack. All right. On your way.' : 'Cold night. Go on.');
+        log(`${g.name} takes the bottle and stops looking. Nothing goes in the ledger.`, 'good');
+      } else lost('He takes it, drinks none of it, and opens the pack anyway.');
+    });
+  }
   mk(`BRIBE — ${bribe}g`, cats >= bribe ? 'coin, quietly' : 'you do not have it', () => {
     if(cats < bribe){ log('You do not have it, and counting it out in front of them made that plain.', 'bad'); theReckoning(c, g, t, what); return; }
     cats -= bribe;
@@ -7663,7 +8583,10 @@ function hitChance(a, d){
      and there is no getting it back once it is going. Skill buys that back entirely, which
      is why a master with a nodachi is frightening and a farmhand with one is a liability. */
   const wild = Math.max(0, heftOf(a) - 1) * 0.30 * clamp(1 - sk/70, 0, 1);
-  return clamp(0.55 + (a.stats.atk - d.stats.def)*0.02 + skillEdge + love - wild, 0.15, 0.94);
+  /* AND THE PRICE OF THE DRINK, BOTH WAYS, IN THE ONE PLACE A BLOW IS DECIDED. A body running
+     on it swings wide; a body running on it is also not guarding itself. */
+  return clamp(0.55 + (a.stats.atk - d.stats.def)*0.02 + skillEdge + love - wild
+               - gritWobble(a) + gritWobble(d), 0.15, 0.94);
 }
 /* combat feedback: floating text + particle specks */
 const particles = [], projectiles = [];
@@ -8135,7 +9058,11 @@ function updateState(c, loud){
   if(c.blood <= 0){ kill(c, null); return; }
   let severedN = 0;
   for(const k in c.parts) if(c.parts[k].severed) severedN++;
-  const downAt = c.race==='hollow' ? (c.hollowTier >= 1 ? 5 : 8) : c.race==='chimera' ? 25 : 40;
+  let downAt = c.race==='hollow' ? (c.hollowTier >= 1 ? 5 : 8) : c.race==='chimera' ? 25 : 40;
+  /* A DRINK IS TWO NUMBERS, AND THESE ARE THEM. Both were already single reads, which is the
+     only reason the whole mechanic is four lines: you keep going past where you would have
+     dropped, and you come round sooner than you would have. */
+  if(gritted(c)) downAt = Math.max(4, downAt - GRIT_DOWN);
   if(c.state==='ok' && (vitalDown || c.blood < downAt || (c.race==='hollow' && severedN >= 2))){
     if(c.undead){
       /* a lich is a spark in a jar. Break the jar and the spark goes looking for the next one. */
@@ -8150,7 +9077,8 @@ function updateState(c, loud){
     AU.bodyfall(c.x, c.y, (c.big || 1) > 1.3);
     if(loud || c.faction==='player') log(`${c.name} is down.`, c.faction==='player'?'bad':'');
   }
-  if(c.state==='down' && !vitalDown && c.blood > (c.race==='hollow' ? 20 : 50) && !c.captured && !(c.race==='hollow' && severedN >= 2)) {
+  const riseAt = (c.race==='hollow' ? 20 : 50) - (gritted(c) ? GRIT_RISE : 0);
+  if(c.state==='down' && !vitalDown && c.blood > riseAt && !c.captured && !(c.race==='hollow' && severedN >= 2)) {
     c.state = 'ok';
     if(c.faction==='player') log(`${c.name} is back on their feet.`, 'good');
   }
@@ -9073,7 +10001,12 @@ const TECHS = {
     desc:'Fold the light around a body. VEIL: an ally vanishes until they strike or the fold decays'},
   dust_unwalled:{name:'The Unwalled',      cost:1400,hours:88, req:'dust_veil',    rp:50,
     desc:'Conjure a squad that was never there. Enemies bite at nothing while yours do the cutting'},
-  last_rite:    {name:'The Last Rite',     cost:2500,hours:120, req:'rites_deep',   rp:60, desc:'Ascension to lichdom — at a price'},
+  /* THE ONE ASCENSION WITH NO QUEST ON IT. The other two carry `needsQuest` and each has five
+     stages and a person at the end; this had a shopping list and a line of italic text, which
+     is why the door that ends the game did not read as a door. The gate already existed —
+     `last_rite` simply did not use it. See IMMORTAL_LINES.dark. */
+  last_rite:    {name:'The Last Rite',     cost:2500,hours:120, req:'rites_deep',   rp:60, needsQuest:'dark',
+    desc:'Ascension to lichdom — at a price. The demilich has been through the door and will not let you walk it unwarned'},
 };
 /* ---------- THE TWO ROSTER LINES, WRITTEN OFF THE ROSTER ----------
    Reported: the Marrow Archer's line in the circle is stale. It was — Deeper Rites still sold
@@ -9597,14 +10530,20 @@ const charById = new Map();
    caster who has let go or gone down since the pass is not found. Like the grid, this is only
    as fresh as the last `rebuildCharGrid()`, which `update()` calls first thing. */
 const warders = [];
+const charmed = [];
 function rebuildCharGrid(){
   charGrid.clear();
   charById.clear();
   warders.length = 0;
+  charmed.length = 0;
   for(const c of chars){
     charById.set(c.id, c);
     if(c.state !== 'ok') continue;
     if(c.concentrating && c.concentrating.key === 'warding') warders.push(c);
+    /* AND WHOEVER IS CARRYING A KEPT CHARM, gathered here for the same reason the warders are:
+       the gaunt AI asks "is there violet light near me" for every gaunt every tick, and the note
+       twenty lines up records what happens when a question like that walks all of `chars`. */
+    if(c.trinket === 't_kept') charmed.push(c);
     const k = ((c.y/CELL)|0)*GW + ((c.x/CELL)|0);
     const a = charGrid.get(k);
     if(a) a.push(c); else charGrid.set(k, [c]);
@@ -9782,8 +10721,25 @@ function hostile(a, b){
      put two oaths on opposite sides, which is the whole of the Guild's neutrality expressed
      as one line. */
   if(guildOath(a) && guildOath(b)) return false;
+  /* ---------- NOTHING QUARRELS WITH THE DEMILICH ----------
+     Asked before the neutrality rules because the neutrality rules would not save him: he is
+     `undead`, and `pierceNeutral` hands anything undead to the Purge and to Sister Ash whether
+     it is provoked or not. He has been sitting in that ruin for four hundred years with no
+     legs, no weapon and nothing anybody wants, and the one thing the questline cannot survive
+     is a purge squad wandering past and closing the only door in the game that has a person
+     behind it. He does not fight. Nothing fights him. */
+  if(a.demilich || b.demilich) return false;
   /* an immortal in your debt will not raise a hand to you */
   if((a.immortal && a.friendly && b.faction === 'player') || (b.immortal && b.friendly && a.faction === 'player')) return false;
+  /* ---------- THE PIT: THE BOUT IS THE ONLY QUARREL, AND IT ENDS WHEN THE BOUT DOES ----------
+     Asked high, above every provocation rule, because a pit fighter has no opinion about
+     anything except who the house put in front of it. It will not fight the town that owns it,
+     it will not be hunted by the Purge for standing there, and the moment the card is over it
+     is not fighting you either. */
+  if(a.faction === 'pit' || b.faction === 'pit'){
+    const o = a.faction === 'pit' ? b : a;
+    return o.faction === 'player' && !!(arena && arena.bout);
+  }
   /* the redoubt garrison has one order, nine generations old, and it is still following it */
   if(a.faction === 'redoubt' || b.faction === 'redoubt') return true;
   /* the gaunts did not come here to take sides */
@@ -9852,6 +10808,7 @@ function ai(c, dt){
   }
   if(c.state !== 'ok' || c.faction === 'player') return;
   if(c.vt) return; /* vendors don't move */
+  if(c.demilich) return; /* and furniture moves less than that */
   /* THE SNATCH. A Larder-Kin does not finish anyone. It waits for the fight to put someone
      on the ground, takes them, and leaves. It will not grab while it is being watched by
      something still standing — hence the check for a live enemy nearby. */
@@ -9996,6 +10953,29 @@ function ai(c, dt){
      returns to their own post as before. */
   if(c.guard){
     if(c.drag) return;                       /* the cells first; the post is still there after */
+    /* ---------- A GRAVEKEEPER'S POST IS THE YARD, NOT THE FLAGSTONE ----------
+       "Sometimes I feel that they don't properly raise corpses as guards."
+       The claim scan sets a `moveTarget` toward a body it has picked; this branch overwrote it
+       on the very next tick, because a posted body is dragged back the moment it is more than
+       1.5 tiles from its flagstone. Whether that mattered came down to GEOMETRY — if `travel`
+       happened to overshoot the post toward the corpse, they landed inside the rite's five
+       tiles and cast; if it did not, they oscillated and settled 5.5 tiles from the nearest
+       body and stood there for the rest of the game. Measured both ways on the same build.
+       That is not a thing to leave to luck. While a keeper has a body claimed, the claim owns
+       the walk — bounded by a give-up timer so a corpse dragged away cannot lead the town's
+       necromancers off the map, and stopping INSIDE the range rather than at the edge of it,
+       because arriving at exactly 5.0 and drifting to 5.05 is the same bug with a smaller
+       number on it. */
+    if(c.npcNecro && c.necroBody){
+      const nb = c.necroBody;
+      c.necroGiveUp = (c.necroGiveUp || 0) - dt;
+      if(nb.state === 'dead' && corpses.includes(nb) && raisableBody(nb) && c.necroGiveUp > 0){
+        if(dist(c.x, c.y, nb.x, nb.y) > SPELLS.raise.range - 1.4) c.moveTarget = {x: nb.x, y: nb.y};
+        else c.moveTarget = null;
+        return;
+      }
+      c.necroBody = null;
+    }
     const t2 = c.homeTown;
     if(t2 && t2.gaolPost && cells.some(cl => cl.town === t2 && cl.holds)){
       const gp = t2.gaolPost;
@@ -11501,6 +12481,8 @@ function physics(c, dt){
   c._ox = c.x; c._oy = c.y;   /* remember where the feet were: passing blades punish movers */
   c.atkCd -= dt;
   if(c.oppCd > 0) c.oppCd -= dt; c.castCd -= dt;
+  /* the drink wears off, and the hand steadies with it */
+  if(c.gritT > 0 && (c.gritT -= dt) <= 0){ c.gritT = 0; c.gritWob = 0; }
   if(c.hitT > 0) c.hitT -= dt;
   /* the threat mark fades on its own, and the bar is told ONCE when it does — see markThreat */
   if(c.threatT > 0 && (c.threatT -= dt) <= 0){ c.threatT = 0; queueSquadRefresh(); }
@@ -11568,7 +12550,11 @@ function physics(c, dt){
      forward while quietly forgetting who it was walking at. */
   if(wardTurns(c)){
     if(c.target && wardedFrom(c.target)){ c.target = null; }
-    const ward = lightNear(c, WARD_RADIUS + 1.5);   /* was an inline walk of all of `chars`, per gaunt, per tick */
+    /* AND FALLOWEND'S VIOLET LIGHT ANSWERS THE SAME QUESTION. Asked here and NOT in `wardSears`
+       on purpose: a lantern turns gaunts, which is all the town has ever claimed for it, and it
+       does not sear the dead. Making it sear would quietly turn the one town that will let a
+       necromancer work into the one town that burns his squad. */
+    const ward = lightNear(c, WARD_RADIUS + 1.5) || violetNear(c, 1.5);
     if(ward){
       const d = Math.max(0.01, dist(c.x,c.y,ward.x,ward.y));
       stepToward(c, c.x + (c.x-ward.x)/d * 4, c.y + (c.y-ward.y)/d * 4, dt);
@@ -14872,7 +15858,27 @@ function spawnWanderers(){
       const t2 = pick(towns.filter(t3 => !t3.def.undeadFriendly));
       if(t2) p = findOpenNear(Math.round(t2.x + ri(-3, 3)), Math.round(t2.y + ri(-3, 3)), 5);
     } else if(w.where === 'shrine'){
-      if(coilShrine) p = findOpenNear(Math.round(coilShrine.x + ri(-2, 2)), Math.round(coilShrine.y + ri(-2, 2)), 5);
+      /* ---------- AT THE STONE, WHICH IS WHAT "AT THE STONE" MEANS ----------
+         This was `findOpenNear(stone + ri(-2,2), 5)` — a two-tile jitter, and then sixty random
+         darts inside a radius-5 box, which is the "sixty random darts" this README warns about.
+         Worst case lands him SEVEN tiles off, and `kin.js` asserts under six because the whole
+         characterisation is that he is standing at the serpent stone rather than in a field near
+         one. Search outward from the stone itself and take the first open tile: he ends up as
+         close to it as the ground allows, every time, on every seed. */
+      if(coilShrine){
+        const sx0 = Math.round(coilShrine.x), sy0 = Math.round(coilShrine.y);
+        outerRub:
+        for(let ring = 1; ring <= 4; ring++){
+          for(let dy = -ring; dy <= ring; dy++) for(let dx = -ring; dx <= ring; dx++){
+            if(Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+            const qx = sx0 + dx, qy = sy0 + dy;
+            if(qx < 2 || qy < 2 || qx >= W - 2 || qy >= H - 2) continue;
+            if(isBlocked(qx + 0.5, qy + 0.5)) continue;
+            p = {x: qx + 0.5, y: qy + 0.5};
+            break outerRub;
+          }
+        }
+      }
     }
     /* 'road' and every failed placement fall back to open waste. A wanderer who did not get
        placed is a wanderer who does not exist, and the promise is that they always do. */
@@ -14926,9 +15932,15 @@ function wandererGate(c){
      faster if you have been careless where a town could see you. */
   if(w.want === 'pyre'){
     if(pyreRead) return {ok:true, label:`TELL HER IT WAS ${pyreRead.name.toUpperCase()}`};
-    return pyres.length
-      ? {ok:false, why:`the Order has ${pyres.length === 1 ? 'built one pole' : 'built ' + pyres.length + ' poles'} at the Bastion gate and nobody of yours has stood at ${pyres.length === 1 ? 'it' : 'one'} to read the name`}
-      : {ok:false, why:'the Order has not built a fire for anybody yet, and until it does she has nothing to hear'};
+    if(!pyres.length)
+      return {ok:false, why:'the Order has not built a fire for anybody yet, and until it does she has nothing to hear'};
+    /* AND WHERE THE NEAREST ONE IS, in the words the rest of the game uses for a place. The
+       original fault this gate was written to fix was that a burning went past in the feed and
+       nothing ever said where to go; telling her seeker "there are three of them" and not which
+       way is the same fault with a bigger number on it. */
+    const near = pyres.slice().sort((a, b) =>
+      dist(a.x, a.y, c.x, c.y) - dist(b.x, b.y, c.x, c.y))[0];
+    return {ok:false, why:`the Order has ${pyres.length === 1 ? 'built one pole' : 'built ' + pyres.length + ' poles'} and nobody of yours has stood at ${pyres.length === 1 ? 'it' : 'one'} to read the name — the nearest is ${placeHint(c.x, c.y, near.x, near.y)}`};
   }
   /* AND HIS IS THE ONE THING IN THIS WORLD YOU CANNOT SHORTCUT: somebody who grew. */
   if(w.want === 'beat'){
@@ -16910,6 +17922,13 @@ function beginCast(c, spellKey){
   castMode = {caster, spell:key, bench};
   log(`${sp.label}: ${sp.hint}. Right-click or ESC to cancel.`);
 }
+/* how many dead a working NPC necromancer keeps on its feet. See the scan for why these are
+   two numbers rather than one. */
+const ROAMER_RISEN_CAP = 3, KEEPER_RISEN_CAP = 7;
+/* how long a gravekeeper will chase one claimed body before letting it go. The leash is what
+   stops the claim becoming a way to walk a town's necromancers off the map by dragging a
+   corpse away from it; forty seconds crosses a graveyard several times over. */
+const NECRO_CHASE = 40;
 function risenCount(caster){
   return chars.filter(x => x.undead && !x.lieutenant && x.state!=='dead' && x.master===caster).length;
 }
@@ -18432,7 +19451,49 @@ function openBoneMarket(necro){
    wants to hear what you found.
 
    Four objective kinds, all reading ledgers the game now keeps: `fetch` off the stores,
-   `slay` and `destroy` off bossSlain, `visit` off placesSeen. */
+   `slay` and `destroy` off bossSlain, `visit` off placesSeen.
+
+   AND FOUR MORE FOR THE THIRD ROAD, which asks about your camp rather than the map: `bring`
+   reads your roster, `hired` reads a counter, `show` reads the stores WITHOUT SPENDING THEM,
+   and `kept` reads how long a lieutenant has stood. The demilich's whole method is to name the
+   price early in a form you can still walk away from, so not one of his stages can be
+   satisfied by shopping. */
+/* ---------- HOW LONG A SEASON IS ----------
+   Long enough that keeping a lieutenant is a decision and not an afternoon, short enough that
+   the stage finishes inside an ordinary game. A year of a life passes in fifteen days of dust;
+   this is most of a year of standing beside something that has its own opinions. */
+const LIEU_SEASON = 12;
+/* ---------- WHAT A HIRE COST, KEPT ----------
+   The demilich's second stage wants a hire made AFTER he asked for one, which is a counter and
+   a mark rather than "do you have anybody". One counter, bumped everywhere gold buys a body,
+   so the stage cannot be satisfied by somebody who was already on the payroll. */
+const hiresPaid = {n: 0, last: 0};
+function paidHire(fee){ hiresPaid.n++; hiresPaid.last = Math.round(fee) || 0; }
+/* ---------- "SOMETHING STILL WARM AND STILL YOURS" ----------
+   Every word of that ask is a filter. STILL WARM: not a risen, not a construct, not a corpse
+   over somebody's shoulder. STILL YOURS: on your banner. WALKED HERE ON THEIR OWN FEET: a mule
+   did not walk here on its own account and neither did a body being carried. AND NOT YOU —
+   the point of the stage is whether there is anybody left BESIDES you, so the one person who
+   cannot answer it is the one asking. */
+const WITNESS_R = 6;
+function livingWitness(giver){
+  if(!giver) return null;
+  return chars.find(o => o.faction === 'player' && o.state === 'ok' &&
+    !o.undead && !o.beast && !o.construct && !o.mule && !o.protagonist && !o.captured &&
+    dist(o.x, o.y, giver.x, giver.y) <= WITNESS_R) || null;
+}
+/* the longest-standing lieutenant on your banner, and how long it has stood. `lieuSince` is
+   stamped by `promote`; a body that predates the stamp reads as raised TODAY, so an old save
+   owes the season rather than being handed it. */
+function keptLieutenant(){
+  let best = null;
+  for(const o of chars){
+    if(o.faction !== 'player' || !o.lieutenant || o.state === 'dead') continue;
+    if(!best || (o.lieuSince ?? day) < (best.lieuSince ?? day)) best = o;
+  }
+  return best;
+}
+function lieuHeld(u){ return u ? Math.max(0, day - (u.lieuSince ?? day)) : 0; }
 const IMMORTAL_LINES = {
   radiant: {
     open: 'Verity, the Unclouded',
@@ -18534,21 +19595,124 @@ const IMMORTAL_LINES = {
         giveTxt:'Kingsfang, a Preserved Formula, 3000 gold — and The Sigil Rite' },
     ],
   },
+  /* ---------- THE DARK, AND THE DOOR THAT DID NOT READ AS A DOOR ----------
+     The two roads the player will never walk each had a person on them. The one road the game
+     is actually about had a shopping list: 2,500 gold, 120 hours, a crown, ten remains, and
+     one line of italic text under a button. `last_rite` was the only ascension in the file
+     with no `needsQuest` at all.
+
+     The questgiver already had a shadow in it. The Sigil-Bound sends you for the Ossuary
+     King's crown and reads the inner band: ELEVEN NAMES AND HIS HAND UNDER ALL OF THEM. The
+     King is the one who WOULD NOT FINISH. So the demilich is the one who did, and finished
+     badly — kept the mind, lost everything the mind was for. Where the King stopped halfway and
+     became a boss, this one went all the way and became furniture. He is the only creature in
+     the world with a first-hand account of the far side of the door, and the only one who
+     cannot show you it, because he has nothing left to show.
+
+     So he tells you instead, five times, in the only way that survives being told: he makes
+     you spend the thing before it is gone. A living companion while you still have one. A
+     hired body while there is still a market. A crown you have to READ. A lieutenant you have
+     to KEEP. And then the decision itself, out loud, in front of a witness, which is what the
+     confirm box was pretending to be. */
+  dark: {
+    open: 'The Demilich',
+    stages: [
+      { kind:'bring',
+        ask:'You want the rite. Everyone does. First bring me something that is still warm and still yours — ' +
+            'a living companion, walked here on their own feet, who knows what you are asking. ' +
+            'I want to see whether you have anybody left.',
+        hint:'Bring a living companion of yours — not a risen, not a beast, not you — to stand where the demilich can see them.',
+        done:'The jaw does not move. The voice arrives anyway, from somewhere behind your own teeth. ' +
+             '"Good. Now look at them. THAT is the shape of what it costs — not the gold, not the crown. ' +
+             'I had four of those. I could not give you one of their names."',
+        give: () => { addItem('remains', 6); addItem('bandage', 6); cats += 800; },
+        giveTxt:'6 Mortal Remains, 6 bandages, 800 gold' },
+      { kind:'hired',
+        arm: (c) => { if(c.hireMark == null) c.hireMark = hiresPaid.n; },
+        ask:'Now go and hire somebody. Anybody. A guild blade, a farmhand, a drunk off the docks. ' +
+            'Come back and tell me what it cost you. Remember the number. ' +
+            'It is the last time you will ever be quoted one.',
+        hint:'Pay to take somebody on — a town recruit, a scholar, anyone with a price — and then come back and say what it cost.',
+        done:'"How much?" You tell him the number. "Hm. Cheap. They all are, from this side." ' +
+             'Nothing in the room moves for a while. "Nobody will quote you a price again. They do not haggle ' +
+             'with what I am. They run, or they kneel, and neither one of those is a number you can pay."',
+        give: () => { addItem('tome', 1); addItem('formula_w', 2); cats += 1400; },
+        giveTxt:'a Codex, 2 Worn Formulae, 1400 gold' },
+      { kind:'show', need:{crown:1},
+        ask:'There is a crown in a ruin on a king who would not finish. Take it. ' +
+            'Read the inner band before you bring it to me, and do not tell me what it says — ' +
+            'I want to know whether you looked.',
+        hint:'Take the Sunken Crown off the Ossuary King and bring it here. He does not want to keep it.',
+        done:'He never asks what was written. He asks whether you read it, and you say yes, and that was all of it. ' +
+             '"Eleven names. I am the ninth. He would not sign and they wrote him in regardless, which is ' +
+             'the only reason he is still angry about it." A pause. "Put it back in your pack. It is a key, and you will want it."',
+        give: () => { addItem('formula_p', 1); addItem('remains', 10); cats += 2000; },
+        giveTxt:'a Preserved Formula, 10 Mortal Remains, 2000 gold — and the crown, back' },
+      { kind:'kept',
+        ask:'Raise one up. Not a labourer — a lieutenant, with a name and a mind and a grudge. ' +
+            'Keep it a season. Then come back and tell me whether you commanded it, ' +
+            'or whether it did as it liked and you called that command.',
+        hint:`Raise a lieutenant and keep it standing ${LIEU_SEASON} days. He wants to know which of you was giving the orders.`,
+        done:'"And you are certain it was you." He lets that sit far longer than is comfortable. ' +
+             '"Well. You will have sixty of them before the end, and one mouth to answer them all with. ' +
+             'I am not warning you. I am telling you what the work is."',
+        give: () => { addItem('tome', 2); addItem('formula_p', 1); cats += 2600; },
+        giveTxt:'2 Codices, a Preserved Formula, 2600 gold' },
+      { kind:'fetch', need:{},
+        ask:'Ask me anything. I have had four hundred years and no mouth to spend them on. ' +
+            'Then decide in front of me — I will not have you do it alone in a cellar somewhere ' +
+            'and call it an accident.',
+        hint:'The demilich wants nothing brought. Go and stand with him, and decide where he can see it.',
+        done:'You ask, and he answers all of it — flatly, without persuasion, for a day and most of a night. ' +
+             'What goes. What stays. What the fourth century of a morning is like. None of it is a warning ' +
+             'and none of it is a lie. At the end: "Now. In front of me." And whatever you say, ' +
+             'he says the same thing back. "Then you were told." THE LAST RITE is yours to study.',
+        give: () => { addItem('crown', 1); addItem('formula_p', 2); cats += 3200; },
+        giveTxt:'a Sunken Crown, 2 Preserved Formulae, 3200 gold — and The Last Rite' },
+    ],
+  },
 };
-/* is the stage in front of them satisfied? */
-function stageMet(st){
+/* is the stage in front of them satisfied?
+   `giver` is the immortal doing the asking, and only the dark line's stages read it — they ask
+   about your camp rather than the map, and two of them ask it FROM WHERE HE IS SITTING. It is
+   optional so the two older lines (and anything that already calls this with one argument)
+   read exactly as they did. */
+function stageMet(st, giver){
   if(!st) return false;
-  if(st.kind === 'fetch')  return canAfford(st.need || {});
+  /* `show` is `fetch` for the purposes of the gate and NOT for the purposes of the till: he
+     wants to know whether you looked at the crown, and then he hands it back. */
+  if(st.kind === 'fetch' || st.kind === 'show') return canAfford(st.need || {});
   if(st.kind === 'slay' || st.kind === 'destroy') return !!bossSlain[st.boss];
   if(st.kind === 'visit')  return !!placesSeen[st.at] && canAfford(st.also || {});
+  if(st.kind === 'bring')  return !!livingWitness(giver);
+  /* A HIRE THAT HAPPENED BEFORE HE ASKED PROVES NOTHING about a market that is about to close.
+     AND AN UNARMED STAGE IS NOT A SATISFIED ONE: `hireMark || 0` read a null mark as zero, so a
+     player who had ever hired anybody arrived at this stage with it already green — the exact
+     opposite of what the stage is for. No mark, no answer; the mark is taken when he speaks. */
+  if(st.kind === 'hired')  return !!giver && giver.hireMark != null && hiresPaid.n > giver.hireMark;
+  if(st.kind === 'kept')   return lieuHeld(keptLieutenant()) >= LIEU_SEASON;
   return false;
 }
-function stageProgress(st){
+function stageProgress(st, giver){
   if(!st) return '';
-  if(st.kind === 'fetch'){
+  if(st.kind === 'fetch' || st.kind === 'show'){
     const ks = Object.keys(st.need || {});
-    return ks.length ? ks.map(k => `${ITEMS[k].name} ${campHas(k)}/${st.need[k]}`).join(' · ')
-                     : 'nothing to bring — only your presence';
+    if(!ks.length) return 'nothing to bring — only your presence';
+    const have = ks.map(k => `${ITEMS[k].name} ${campHas(k)}/${st.need[k]}`).join(' · ');
+    return st.kind === 'show' ? `${have} — he does not keep it` : have;
+  }
+  if(st.kind === 'bring'){
+    const w = livingWitness(giver);
+    return w ? `${w.name} is standing with you` : 'nobody living of yours is here';
+  }
+  if(st.kind === 'hired'){
+    if(!giver || giver.hireMark == null) return 'he has not asked yet';
+    const n = hiresPaid.n - giver.hireMark;
+    return n > 0 ? `you paid ${hiresPaid.last} gold for the last one` : 'nobody hired since he asked';
+  }
+  if(st.kind === 'kept'){
+    const u = keptLieutenant();
+    return u ? `${u.name} — ${Math.floor(lieuHeld(u))}/${LIEU_SEASON} days` : 'no lieutenant on your banner';
   }
   if(st.kind === 'slay')    return bossSlain[st.boss] ? 'it is done' : 'not yet dead';
   if(st.kind === 'destroy') return bossSlain[st.boss] ? 'it is down' : 'still walking';
@@ -18559,12 +19723,14 @@ function stageProgress(st){
   }
   return '';
 }
+const STAGE_VERB = {show:'SHOW HIM', bring:'PRESENT THEM', hired:'TELL HIM', kept:'TELL HIM'};
 function openImmortal(c){
   const line = IMMORTAL_LINES[c.questGive];
   if(!line) return;
   const total = line.stages.length;
   openModal(c.name.toUpperCase(),
     c.immortal === 'divine' ? 'She has not aged in ninety years. She cannot look at the sun.'
+    : c.immortal === 'dark' ? 'A skull on a heap of bones, wearing a crown nobody put there. It has been talking for four hundred years with nobody in the room.'
                             : 'A suit of armour with somebody still in it. Most of somebody.');
   const body = $('modalbody');
   const draw = () => {
@@ -18588,16 +19754,25 @@ function openImmortal(c){
       return;
     }
     const st = line.stages[at];
+    /* ---------- A STAGE THAT HAS TO BE ARMED IS ARMED WHEN HE SAYS THE WORDS ----------
+       "Come back and tell me what it COST you" is about a hire made after the asking, so the
+       stage needs a mark, and the honest moment to take it is the moment the player reads the
+       ask. Not on load, not on advance — a stage nobody has opened has not been asked for.
+       Idempotent, because `draw` runs on every redraw of this window. */
+    if(st.arm) st.arm(c);
     say2.textContent = st.ask;
     body.appendChild(say2);
     const row = document.createElement('div'); row.className = 'trow';
-    row.innerHTML = `<span class="tn">${stageProgress(st)} <span style="color:var(--dust)">→ ${st.giveTxt}</span></span>`;
+    row.innerHTML = `<span class="tn">${stageProgress(st, c)} <span style="color:var(--dust)">→ ${st.giveTxt}</span></span>`;
     const btn = document.createElement('button');
-    const ok = stageMet(st);
-    btn.textContent = st.kind === 'fetch' && !Object.keys(st.need || {}).length ? 'STAY' : 'GIVE';
+    const ok = stageMet(st, c);
+    /* GIVE is the wrong word for four of the five things the demilich asks: he takes none of
+       them. The verb is the stage's, and only a real handover says GIVE. */
+    btn.textContent = STAGE_VERB[st.kind] ||
+      (st.kind === 'fetch' && !Object.keys(st.need || {}).length ? 'STAY' : 'GIVE');
     btn.disabled = !ok;
     btn.onclick = () => {
-      if(!stageMet(st)) return;
+      if(!stageMet(st, c)) return;
       /* a fetch stage is paid for; a slay or a visit was paid for out there */
       if(st.kind === 'fetch' && Object.keys(st.need || {}).length && !campSpend(st.need)) return;
       if(st.kind === 'visit' && Object.keys(st.also || {}).length && !campSpend(st.also)) return;
@@ -18819,6 +19994,7 @@ function promote(u, caster){
   campSpend(PROMOTE_COST);
   u.lieutenant = true;                 /* and so it stops counting against the binding */
   u.minded = true;                     /* a lieutenant keeps a mind. That is the difference. */
+  u.lieuSince = day;                   /* and the demilich wants to know how long you kept it */
   u.shortTag = 'LT';
   u.stats.atk   *= 1.15;
   u.stats.def   *= 1.15;
@@ -19312,11 +20488,13 @@ function update(dt){
   if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
   gauntTick(dt / HOUR_SEC);   /* the dark is never empty for long */
   sixfoldTick(dt);            /* and the biggest thing in it has more than one way to kill you */
+  arenaTick(dt);              /* and the gate at Ironscar goes up again, however the card ended */
   wldT += dt;
   const wtick = wldT >= 0.25;
   const wdt = wldT;             /* accumulated seconds for throttled world scans */
   const wdh = wldT / HOUR_SEC;
   if(wtick) wldT = 0;
+  if(wtick) orchardTick();    /* and the ground at Greenrest is felt by whoever can feel it */
   hourAcc += dt / HOUR_SEC;
   const dh = dt / HOUR_SEC;
   hour += dh;
@@ -19334,6 +20512,9 @@ function update(dt){
     bastionGuestTick();      /* and something may have moved into the yard */
     bountyDecay();
     wandererDayTick();       /* she is on a different road today, which is the point of her */
+    hollowmereBurials();     /* and the yard takes what the neighbours send it */
+    saltmereBurning();       /* while Saltmere feeds its fire and keeps its flats clean */
+    lanternTick();           /* and Fallowend's posts burn down another day's worth */
     /* a broken shrine is not broken forever. They come back and set the stone, unless
        somebody is standing on the ground to stop them — so desecration buys a window, not
        a permanent unmaking. */
@@ -20504,7 +21685,11 @@ function update(dt){
     c.necroScanT = (c.necroScanT || 0) - wdt;
     if(c.necroScanT > 0) continue;
     c.necroScanT = 3;
-    if(risenCount(c) >= 3) continue;
+    /* ---------- A KEEPER IS BUILDING A WALL; A ROAMER IS DRIVING STOCK ----------
+       One number for both made Hollowmere's standing dead exactly six — two keepers times
+       three — for the whole game, in the one town whose entire boast is that its dead are its
+       ramparts. A roamer's three travel with them and three is right for that. */
+    if(risenCount(c) >= (c.roamNecro ? ROAMER_RISEN_CAP : KEEPER_RISEN_CAP)) continue;
     /* ---------- WHOSE GROUND IS THIS ONE WORKING? ----------
        `c.homeTown` for a town's gravekeeper, ITSELF for a roamer whose graveyard is the road,
        and the yard for the Guild's own — they took the work indoors and did not stop doing it.
@@ -20521,12 +21706,17 @@ function update(dt){
       const d2 = dist(b.x, b.y, c.x, c.y);
       if(d2 < bd){ bd = d2; body = b; }
     }
+    /* THE CLAIM, WHICH IS WHAT THE WALK READS. A scan that only sets a `moveTarget` is making
+       a suggestion, and a posted body's leash outvotes a suggestion every tick — see `ai`. */
+    if(body !== c.necroBody){ c.necroBody = body || null; c.necroGiveUp = NECRO_CHASE; }
     if(!body) continue;
     if(dist(c.x, c.y, body.x, body.y) > SPELLS.raise.range){
+      /* the guardless roamers still walk from here; a posted keeper's walk is `ai`'s */
       if(!c.moveTarget) c.moveTarget = {x: body.x, y: body.y};
     } else if(c.mana >= SPELLS.raise.cost && c.castCd <= 0){
       c.moveTarget = null;
       castRaise(c, body);
+      c.necroBody = null;
       if(!c.roamNecro){
         const r = chars.find(o => o.master === c && o.undead && !o.guard);
         if(r){ r.guard = {x: hm.x + ri(-5,5), y: hm.y + ri(-5,5)}; r.homeTown = hm; r.guardTarget = null; }
@@ -21195,6 +22385,30 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
     const peak = 5.5 + Math.min(9, r * 0.5) + rnd() * 3;
     mountains.push({x: cx, y: cy, r, peak});
   }
+  /* ---------- AND ONE SEAT SITS IN A BOWL, ON PURPOSE ----------
+     "Copperhold with a central mine and mountainous terrain."
+     Every massif above is FOUND — the biggest regions of rock the noise happened to make — and
+     the loop that finds them refuses any within `r*1.4 + 20` of a town, for the good reason that
+     a range's cliffs would wall people into their own homes. So no town in this world could ever
+     have mountains, which is fine for six of them and wrong for the one whose entire economy is
+     a hole in the ground.
+     Four are placed by hand, at fifty tiles, which is far enough out that the town keeps its
+     flat streets and near enough that the horizon in every direction is rock. FOUR AND NOT A
+     RING: at that radius the circumference is over three hundred tiles and four footprints
+     cover under two hundred of it, so there are passes between them. A seat you cannot walk out
+     of is a prison, not a valley. */
+  if(copperPit){
+    for(let i = 0; i < 6; i++){
+      const a = (i / 6) * Math.PI * 2 + 0.5;
+      const mx = Math.round(copperPit.town.x + Math.cos(a) * 50);
+      const my = Math.round(copperPit.town.y + Math.sin(a) * 50);
+      if(mx < 20 || my < 20 || mx >= W - 20 || my >= H - 20) continue;
+      /* and never on top of somebody else, which is what the 130-tile exclusion on
+         Copperhold's own spot was bought for */
+      if(towns.some(t2 => t2 !== copperPit.town && dist(t2.x, t2.y, mx, my) < 34)) continue;
+      mountains.push({x: mx, y: my, r: 15, peak: 12 + rnd() * 2, cirque: true});
+    }
+  }
   /* raise the height field: a smooth dome per massif, tallest at the centre. Vertices, not
      tiles, so the terrain mesh (which reads HV per vertex) lifts with it. */
   for(let vy=0; vy<=H; vy++) for(let vx=0; vx<=W; vx++){
@@ -21214,6 +22428,43 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
       lift = Math.max(lift, m.peak * dome + m.peak * ridge * 0.4);
     }
     if(lift > 0.01) HV[vy*(W+1)+vx] += lift;
+  }
+  /* ---------- AND THE SEAT ITSELF IS UPLAND, WHICH IS WHY THERE IS ANYTHING TO DIG INTO ----
+     The first attempt dug the working straight into the ground Copperhold happened to be
+     standing on, and measured ZERO UNITS DEEP: the town sits near sea level, `groundY` clamps at
+     -0.1, and a four-unit hole in ground that is already at the floor is not a hole. A town in a
+     ring of massifs is on high ground by any reading of a map, so it is put there: a wide, gentle
+     dome — five units over forty tiles is an eighth of a unit per tile, nothing a body would
+     notice walking — and the terraces are then cut into that. */
+  if(copperPit){
+    const T = copperPit.town, PR = 46;
+    for(let vy = Math.max(0, T.y - PR); vy <= Math.min(H, T.y + PR); vy++)
+    for(let vx = Math.max(0, T.x - PR); vx <= Math.min(W, T.x + PR); vx++){
+      const d = Math.hypot(vx - T.x, vy - T.y);
+      if(d > PR) continue;
+      const u = clamp(1 - d / PR, 0, 1);
+      HV[vy*(W+1)+vx] += 5.5 * (u * u * (3 - 2 * u));
+    }
+  }
+  /* ---------- THEN DIG THE HOLE, AFTER THE LIFT AND NOT BEFORE ----------
+     Same ordering lesson the trails learned the hard way: anything carved before the terrain is
+     finished gets filled back in by whatever runs after it. Three terraces rather than a shaft,
+     because a four-unit drop in one tile is a wall and the point of an open working is that you
+     can walk down into it. */
+  if(copperPit){
+    const P = copperPit;
+    for(let vy = Math.max(0, P.y - P.r - 1); vy <= Math.min(H, P.y + P.r + 1); vy++)
+    for(let vx = Math.max(0, P.x - P.r - 1); vx <= Math.min(W, P.x + P.r + 1); vx++){
+      const d = Math.max(Math.abs(vx - P.x), Math.abs(vy - P.y));
+      /* rim, then a step per tile inward, floor at the bottom */
+      const step = clamp(P.r - d, 0, P.r);
+      if(step <= 0) continue;
+      HV[vy*(W+1)+vx] -= P.depth * (step / P.r);
+    }
+    for(let y = P.y - P.r; y <= P.y + P.r; y++) for(let x = P.x - P.r; x <= P.x + P.r; x++){
+      if(x < 0 || y < 0 || x >= W || y >= H) continue;
+      if(terr[y*W+x] !== 3) terr[y*W+x] = 2;      /* it reads as cut rock, because it is */
+    }
   }
   /* mark the steep heart of each massif impassable: where the ground is high AND the local
      slope is severe, that is a cliff. The flanks stay open so a range can be skirted. */
@@ -21313,6 +22564,9 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
       if(onTrail.has(y*W + x)) continue;              /* the way up stays open */
       if(stepAt(x, y) > CLIFF){
         if(towns.some(t => dist(t.x, t.y, x, y) < 16)) continue;   /* never wall a town */
+        /* nor the working in the middle of one: the terraces are a severe local step by
+           construction and this rule would seal every one of them */
+        if(copperPit && Math.abs(copperPit.x - x) <= copperPit.r + 1 && Math.abs(copperPit.y - y) <= copperPit.r + 1) continue;
         blocked.add(bkey(x, y, 0));
         /* The peaks are raised after baseBlocked was taken, and restore() rebuilds the world
            from baseBlocked — so without this every range quietly became walkable the moment
@@ -21474,6 +22728,34 @@ const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24
     stairs.push({x: sx, y: sy, from: 0, to: UNDER, shaft: true});
     U.shafts.push({x: sx, y: sy, hall: h});
   }
+  /* ---------- AND COPPERHOLD'S HOLE GOES SOMEWHERE ----------
+     Every other shaft in the world is a crack in the waste that somebody fell down. This one is
+     the bottom of a working, in the middle of a town, and it is the only way into the undercroft
+     that you can reach without leaving a street. Best-effort by construction: the lattice is
+     generated by noise and there may be no hall under the square, in which case the pit is
+     simply a pit and the town still makes sense. */
+  if(copperPit){
+    const P = copperPit;
+    let put = false;
+    /* SEARCHED OUT TO THE TOWN'S OWN SWEEP, not just the pit. The lattice is noise and there may
+       be no hall under the seven tiles of the working itself; what the town is promised is a way
+       down you can reach without leaving a street, and any tile inside its own walls keeps that
+       promise. The rings go outward from the pit floor, so the working wins when it can. */
+    const RMAX = Math.round((P.town.clearR || 20) - 2);
+    for(let rad = 0; rad <= RMAX && !put; rad++)
+    for(let dy = -rad; dy <= rad && !put; dy++) for(let dx = -rad; dx <= rad && !put; dx++){
+      if(Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;
+      const sx = Math.round(P.x) + dx, sy = Math.round(P.y) + dy;
+      if(sx < 4 || sy < 4 || sx >= W-4 || sy >= H-4) continue;
+      if(isBlocked(sx + 0.5, sy + 0.5, 0) || tileAt(sx, sy) === 3) continue;
+      if(!decks.has(bkey(sx, sy, UNDER))) continue;
+      if(stairAt(sx, sy)) continue;
+      stairs.push({x: sx, y: sy, from: 0, to: UNDER, shaft: true});
+      U.shafts.push({x: sx, y: sy, hall: null, pit: true});
+      P.shaft = {x: sx, y: sy, inPit: Math.max(Math.abs(dx), Math.abs(dy)) <= P.r};
+      put = true;
+    }
+  }
   /* ---------- AND SOMETHING LIVES DOWN THERE ----------
      Not in every hall. A network you can cross is worth having on its own, and a monster in
      every room turns a place into a corridor of encounters — which is what the warrens
@@ -21511,9 +22793,9 @@ const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24
   if(!U.halls.length) return;
   const pool = U.halls.slice().sort(() => rnd() - 0.5);
   const want = Math.max(4, Math.round(U.halls.length * 0.34));
-  let made = 0;
+  const caves = [];
   for(const h of pool){
-    if(made >= want) break;
+    if(caves.length >= want) break;
     /* how far this hall is from the nearest way out of the ground, 0..1 — the warren's menace,
        which replaces the old "how many floors down are you" now that there is only one floor */
     let near = 1e9;
@@ -21521,50 +22803,103 @@ const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24
     const cv = placeCave(h);
     if(!cv) continue;
     cv.menace = clamp(near / 190, 0, 1);
-    /* re-stock at the menace this hall actually has: `placeCave` populated at the default
-       while it was carving, before anybody could know where the shafts were */
-    made++;
-    /* ---------- WALLS FIRST, THEN THE WAYS IN, IN THAT ORDER ----------
-       Three measurements got this to the right shape and each one moved the number:
-         · run the tunnel to the door tile itself and 93 of 106 chambers were reachable WITH
-           EVERY DOOR SHUT. `bore` lays a three-wide wandering tunnel and its last disc was
-           centred on the doorway, so it ate the wall either side. The doors were decorative.
-         · stop short and re-raise the ring, and shut doors sealed properly (0) — but only 20 of
-           106 were reachable with them OPEN, because the outward normal was derived from
-           `sign(door - centre)` and came out DIAGONAL for a door on a side wall.
-         · take the normal from the edge the door was actually snapped to and it went to 28 —
-           exactly one chamber per warren, which is the tell: the approach tunnels were being
-           severed by the re-raise, because a wandering three-wide bore to chamber C crosses
-           chamber A's ring on the way and the ring goes back up afterwards.
-       So the ring goes up FIRST and the approaches are cut LAST, straight and one tile wide.
-       Nothing is put back over them, and a narrow passage into a chamber reads better than a
-       tunnel mouth anyway. */
-    for(const w of cv.walls){
-      const k = bkey(w.x, w.y, w.f);
-      blocked.add(k); baseBlocked.add(k);
+    caves.push(cv);
+  }
+  /* ---------- ONE RING DOES NOT KNOW WHAT ANOTHER ONE WAS BUILT ACROSS ----------
+     This was three separate measurements inside a single warren and then, once the world's
+     random stream moved under it, a fourth across TWO of them — which is the one that mattered
+     and the one the original shape could not express.
+       · run the tunnel to the door tile itself and 93 of 106 chambers were reachable WITH
+         EVERY DOOR SHUT. `bore` lays a three-wide wandering tunnel and its last disc was
+         centred on the doorway, so it ate the wall either side. The doors were decorative.
+       · stop short and re-raise the ring, and shut doors sealed (0) — but only 20 of 106 opened,
+         because the outward normal came out DIAGONAL for a door on a side wall.
+       · take the normal from the edge the door was snapped to and it went to 28, exactly one
+         per warren: the re-raise was severing the approaches.
+       · so the ring went up first and the approaches were cut last, PER WARREN — and warren
+         N+1's approach then cut clean through warren N's ring, after N's wall list had already
+         been filtered. That tile was walkable and still drawn as rock: the leak `warrens.js`
+         measures and the ROCK/DRAWN mismatch `under.js` measures are the same hole counted from
+         two sides. It read 0 of 112 open for a year on one seed and 33 of 120 on the next.
+     THE SHAPE THAT ACTUALLY HOLDS: place every warren first, so every ring is known before any
+     approach is cut; ROUTE the approaches around every ring that is not their own door; then
+     raise every ring once, at the end, with the doors the only gap in it. A shut door is then
+     the only way in BY CONSTRUCTION rather than by the tunnels happening to miss. */
+  const doorK = new Set(), ringK = new Set();
+  for(const cv of caves) for(const d of cv.doors) doorK.add(bkey(d.x, d.y, d.f || 0));
+  for(const cv of caves) for(const w of cv.walls){
+    const k = bkey(w.x, w.y, w.f);
+    if(!doorK.has(k)) ringK.add(k);
+  }
+  /* ---------- AND A DOOR IS AS UNROUTABLE AS A WALL ----------
+     `U.put` opens whatever it is handed — and for a SHUT door, `decks.has(k) && !blocked.has(k)`
+     is false, so it does not bail out: it deletes the block from `blocked` AND `baseBlocked`
+     and the door is quietly gone. The door object still says `open: false`, so the tile is
+     walkable until you reload and `setDoor` puts it back — which `under.js` reads as twelve
+     MORE rock tiles after a save than before, on a warren that looked fine. A route may end
+     at nothing but hall floor. */
+  const walled = (x, y) => { const k = bkey(x, y, UNDER); return ringK.has(k) || doorK.has(k); };
+  /* a four-connected route from the doorstep to the hall that never opens somebody else's wall.
+     Bounded to a box around the two ends, because this runs once per chamber and the floor is
+     ninety thousand tiles. Rock is passable to a ROUTE — we are carving, not walking. */
+  const route = (sx, sy, tx, ty) => {
+    const pad = 30;
+    const x0 = Math.max(2, Math.min(sx, tx) - pad), x1 = Math.min(W - 3, Math.max(sx, tx) + pad);
+    const y0 = Math.max(2, Math.min(sy, ty) - pad), y1 = Math.min(H - 3, Math.max(sy, ty) + pad);
+    const seen = new Map(), q = [[sx, sy]];
+    seen.set(sy * W + sx, null);
+    while(q.length){
+      const [x, y] = q.shift();
+      if(x === tx && y === ty) break;
+      for(const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+        const nx = x + dx, ny = y + dy;
+        if(nx < x0 || nx > x1 || ny < y0 || ny > y1) continue;
+        const id = ny * W + nx;
+        if(seen.has(id)) continue;
+        if(walled(nx, ny) && !(nx === tx && ny === ty)) continue;   /* never through a ring */
+        seen.set(id, [x, y]);
+        q.push([nx, ny]);
+      }
     }
+    if(!seen.has(ty * W + tx)) return null;
+    const path = [];
+    for(let c = [tx, ty]; c; c = seen.get(c[1] * W + c[0])) path.push(c);
+    return path;
+  };
+  let routed = 0, straight = 0;
+  for(const cv of caves){
     for(const [ax, ay, bx, by, ux, uy] of (cv.links || [])){
-      /* the doorstep, four tiles out on the door's own axis */
-      const sxo = bx + ux * 4, syo = by + uy * 4;
-      for(let t = 0; t <= 4; t++) U.put(bx + ux * t, by + uy * t);
-      /* ---------- AND IT HAS TO BE FOUR-CONNECTED ----------
-         A rounded straight line steps DIAGONALLY, and two tiles that touch only at a corner are
-         not a passage: the flood, the pathfinder and a body walking all move orthogonally. Every
-         approach thread measured fully open, and only 66 of 112 doorsteps were reachable — the
-         same fault as the corner doors, one step further out. Walk x, then y, one tile at a
-         time, so consecutive tiles always share an edge. */
-      let px = sxo, py = syo;
-      U.put(px, py);
-      while(px !== ax){ px += Math.sign(ax - px); U.put(px, py); }
-      while(py !== ay){ py += Math.sign(ay - py); U.put(px, py); }
+      /* the door and its doorstep, out along the door's own axis. These are outside the room by
+         construction; the only thing that can be in the way is a NEIGHBOUR's ring, so it stops
+         short rather than punching through one. */
+      let sx = bx, sy = by, t = 0;
+      U.put(bx, by);
+      for(t = 1; t <= 4; t++){
+        const nx = bx + ux * t, ny = by + uy * t;
+        if(walled(nx, ny)) break;
+        U.put(nx, ny); sx = nx; sy = ny;
+      }
+      const path = route(sx, sy, ax, ay);
+      if(path){ for(const [px, py] of path) U.put(px, py); routed++; }
+      else {
+        /* nothing legal reaches the hall — carve it straight and let the wall win at the end.
+           `warrens.js` then reports it as a chamber you cannot get INTO, loudly, which is the
+           failure worth having: an unreachable room is visible and a leaking one is not. */
+        let px = sx, py = sy;
+        while(px !== ax){ px += Math.sign(ax - px); U.put(px, py); }
+        while(py !== ay){ py += Math.sign(ay - py); U.put(px, py); }
+        straight++;
+      }
     }
-    for(const d of cv.doors) setDoor(d, false);
-    /* AND THE DRAWN LIST HAS TO MATCH THE COLLISION. The approach threads are cut after the ring
-       goes up, so a thread that crossed a ring tile opened it — and `cv.walls` still listed it,
-       which draws a block of rock standing in a passage you can walk through. `rebuildCaveWalls`
-       derives the list from `blocked` after a reload and got it right, so a save quietly repaired
-       four phantom rocks per world and `under.js` caught the difference as DRAWN 3234 → 3230. */
-    cv.walls = cv.walls.filter(w => blocked.has(bkey(w.x, w.y, w.f)) || cv.doors.some(d => d.x === w.x && d.y === w.y && d.f === w.f));
+  }
+  /* AND NOW THE RINGS GO UP, once, over everything that has been cut */
+  for(const k of ringK){ blocked.add(k); baseBlocked.add(k); }
+  for(const cv of caves) for(const d of cv.doors) setDoor(d, false);
+  U.warrenRouted = routed; U.warrenStraight = straight;
+  for(const cv of caves){
+    /* AND THE DRAWN LIST HAS TO MATCH THE COLLISION, which is the same bookkeeping as before —
+       a door is drawn as a door and everything else is drawn only where it is actually solid. */
+    cv.walls = cv.walls.filter(w => blocked.has(bkey(w.x, w.y, w.f)) || doorK.has(bkey(w.x, w.y, w.f)));
   }
   /* ---------- AND THE NETWORK IS STILL ONE PLACE AFTERWARDS ----------
      A chamber's wall ring does not know what it was built across. Cutting warrens into the halls
@@ -21602,11 +22937,26 @@ const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24
           if(d2 < bd){ bd = d2; best = o; }
         }
         if(!best) continue;
+        /* AND THE REPAIR MUST NOT OPEN A RING EITHER. This runs after the rings are up, so a
+           thread walked straight from hall to hall would punch the same hole the approaches
+           used to — the leak, reintroduced by the thing that exists to fix a different one.
+           It steps around, and gives up rather than cutting through. */
         let px = Math.round(h.x), py = Math.round(h.y);
         const tx = Math.round(best.x), ty = Math.round(best.y);
+        const wall2 = (x, y) => { const k = bkey(x, y, UNDER); return ringK.has(k) || doorK.has(k); };
         U.put(px, py);
-        while(px !== tx){ px += Math.sign(tx - px); U.put(px, py); }
-        while(py !== ty){ py += Math.sign(ty - py); U.put(px, py); }
+        let guard2 = 0;
+        while((px !== tx || py !== ty) && guard2++ < 4000){
+          const dx = Math.sign(tx - px), dy = Math.sign(ty - py);
+          let nx = px + dx, ny = py;
+          if(!dx || wall2(nx, ny)){ nx = px; ny = py + dy; }
+          if((!dy && nx === px) || wall2(nx, ny)){
+            /* both ways forward are somebody's wall — sidestep once and try again */
+            ny = py + (dy || 1); nx = px;
+            if(wall2(nx, ny)){ nx = px + (dx || 1); ny = py; if(wall2(nx, ny)) break; }
+          }
+          px = nx; py = ny; U.put(px, py);
+        }
       }
     }
   }
@@ -22141,7 +23491,10 @@ function headKeyOf(c){
 }
 /* A named lich keeps its own body. Everything that would otherwise strip the built one — the
    robe assembly, the box-hiding, the float-instead-of-walk — asks this first. */
-function robedLich(c){ return !!c && !!c.lich && !LICHFACE[c.face]; }
+/* AND THE DEMILICH IS NOT ROBED. He is `lich` and then some — he went further through the
+   door than anything else in the game — but there is no body under the robe to hide and no
+   robe to hang: he is a skull, a crown and a heap of bones, built by his own branch. */
+function robedLich(c){ return !!c && !!c.lich && !c.demilich && !LICHFACE[c.face]; }
 /* ---------- AND THE HELMETS ----------
    Same numbers, same meaning, and hung on the same bone — a helm replaces the whole built
    head exactly as an authored face does.
@@ -23734,6 +25087,50 @@ const syncRedoubts = makeDynGroup(
         }
       }
     }
+    /* ---------- THE PIT ----------
+       Drawn from its own lists rather than the town's, because these walls are not the town's
+       ring: a siege must not read the arena as a breach in Ironscar, and an earthquake must not
+       shake it down. The gate is a bar across the gap and it is DIFFERENT when it is shut,
+       which is the only thing about the pit a player has to be able to read from outside. */
+    if(arena){
+      for(const w of arena.walls){
+        const y = groundY(w.x + 0.5, w.y + 0.5);
+        box(g, 1, 2.3, 1, '#4e463c', w.x + 0.5, y + 1.15, w.y + 0.5, true);
+      }
+      for(const w of arena.props){
+        const y = groundY(w.x + 0.5, w.y + 0.5);
+        box(g, 0.7, 3.1, 0.7, '#5b5346', w.x + 0.5, y + 1.55, w.y + 0.5, true);
+      }
+      for(const q of arena.gate){
+        const y = groundY(q.x + 0.5, q.y + 0.5);
+        box(g, 1, 0.32, 1, '#3a332b', q.x + 0.5, y + 0.16, q.y + 0.5, false);
+        if(!arena.open) box(g, 1, 2.3, 1, '#7a5c2e', q.x + 0.5, y + 1.15, q.y + 0.5, true);
+      }
+    }
+    /* SALTMERE'S STANDING FIRE. Lit before anybody now living was born and not out since. Its
+       own geometry rather than the Order's pole, because it is not one of the Order's poles —
+       no crossbar and nothing hanging on it, just a stone bowl and a fire nobody lets die. */
+    if(typeof saltmere !== 'undefined' && saltmere && saltmere.pyre){
+      const q = saltmere.pyre, gy2 = groundY(q.x, q.y);
+      box(g, 2.4, 0.34, 2.4, '#6e6354', q.x, gy2 + 0.17, q.y, false);
+      box(g, 1.5, 0.5, 1.5, '#3a332b', q.x, gy2 + 0.55, q.y, false);
+      box(g, 0.9, 0.9, 0.9, '#c86a28', q.x, gy2 + 1.05, q.y, false);
+      box(g, 0.45, 0.6, 0.45, '#e8a340', q.x, gy2 + 1.6, q.y, false);
+    }
+    /* THE ALDERCOTT YARD. Its own list, like the pit's: a wall the town did not build and a
+       siege must not read as the town's ring. */
+    if(estate){
+      for(const w of estate.walls){
+        const y = groundY(w.x + 0.5, w.y + 0.5);
+        box(g, 1, 1.8, 1, '#6b5a3c', w.x + 0.5, y + 0.9, w.y + 0.5, true);
+      }
+      /* and the rows, once the ground has been opened — low mounds of turned earth between the
+         trees, which is the only thing about this the player ever sees from outside */
+      if(estate.opened) for(const q of estate.graves){
+        const y = groundY(q.x, q.y);
+        box(g, 1.3, 0.22, 0.8, '#4a3c28', q.x, y + 0.11, q.y, false);
+      }
+    }
     for(const rd of redoubts){
       if(rd.deep){
         /* an upper storey is only made see-through when one of YOUR people is up there —
@@ -24774,7 +26171,113 @@ function buildCharMesh(c){
   const ROT_LIMB = {fresh:1.22, cooling:1.06, spoiled:0.92, bones:0.78};
   const rotLimb = (risen && c.rot && ROT_LIMB[c.rot]) ? ROT_LIMB[c.rot] : 1;
   const LIMB = (fem ? 0.88 : 1) * ((BLD && BLD.limb) || 1) * (risen ? 0.66 * kinLimb * rotLimb : 1);   /* limb thickness — bone is thin */
-  if(c.beast){
+  /* ---------- THE DEMILICH — A SKULL, A CROWN, AND WHAT IS LEFT OF EVERYTHING ELSE ----------
+     "A single skull, crowned, with bejeweled eyes, seated upon a pile of sunbleached bones."
+     Its own branch and not a costume on the humanoid rig, because there is no humanoid left:
+     no spine, no arms, no legs, no gait. He does not walk, so he gets no walk — `e.still`
+     tells the animator there is nothing here to pose, which is also what stops it reaching for
+     `e.armL` on a body that has no arms.
+     THE PILE IS HASHED, NOT ROLLED. `hash2` off the bone's index gives a heap that is
+     different from every other heap and IDENTICAL on every rebuild — a body that walks out of
+     view and back has the same bones in the same places, and worldgen's stream never learns
+     that anybody looked at him. See the note on `phase` above: this is the same trap.
+     The gems are the one lit part of him. Everything else is chalk. */
+  if(c.demilich){
+    e.still = true;
+    const BONE = ['#e8e1c9', '#ded5b8', '#d2c8a8', '#c6bb9a'];   /* sun-bleached, four shades of nothing */
+    const GOLD = '#d8b048', GOLD_DK = '#9a7a2c', GEM = '#b46cff';
+    /* ---- the heap: fifty-two bones thrown down and left ----
+       IT MUST READ AS A MOUND AND NOT AS A SPIDER. The first pass put long bones on a radial
+       position with a free yaw and a radius up to 1.05, which is the recipe for eight legs:
+       anything long, out at the rim, pointing anywhere, reads as a limb. So the heap is built
+       in FOUR COURSES instead — each one a smaller ring at a greater height, the bones short
+       enough that none of them out-reaches the pile, and every one of them lying nearly flat.
+       The yaw is offset FROM THE PLACEMENT ANGLE rather than free of it, so they lie across
+       the slope the way a thrown bone settles, not out from the centre like spokes. */
+    const heap = new THREE.Group(); g.add(heap);
+    const COURSES = 4;
+    for(let i = 0; i < 52; i++){
+      const cs = Math.floor(i / 13);                  /* 0 at the ground, 3 at the crest */
+      const t = cs / (COURSES - 1);
+      const ha = hash2(c.id * 7 + i, i * 31), hb = hash2(i * 17, c.id * 3 + i), hc = hash2(i * 53 + 11, i * 5);
+      const ang = ((i % 13) / 13 + ha * 0.09) * Math.PI * 2;
+      const rad = (0.68 - t * 0.44) * (0.55 + hb * 0.55);
+      const len = 0.20 + hc * 0.24;                   /* short. Nothing here out-reaches the pile. */
+      const o = obox(len, 0.065 + hb * 0.04, 0.070 + hc * 0.035,
+        BONE[(i + Math.floor(hc * 4)) % 4],
+        Math.cos(ang) * rad, 0.055 + t * 0.50 + hb * 0.06, Math.sin(ang) * rad, heap);
+      o.rotation.y = -ang + Math.PI / 2 + (hb - 0.5) * 1.5;   /* across the slope, not out from it */
+      o.rotation.z = (hc - 0.5) * 0.34;               /* nearly flat, and never on end */
+      o.rotation.x = (ha - 0.5) * 0.30;
+    }
+    /* knuckle-ends and joint heads scattered through it, so it reads as bodies and not firewood */
+    for(let i = 0; i < 12; i++){
+      const ha = hash2(c.id * 13 + i, i * 97), hb = hash2(i * 41 + 7, c.id);
+      const ang = ha * Math.PI * 2, rad = 0.22 + hb * 0.46;
+      mk(SPHG, ownBone(BONE[i % 4]), 0.115, 0.10, 0.115,
+         Math.cos(ang) * rad, 0.08 + hb * 0.46, Math.sin(ang) * rad, heap);
+    }
+    /* two lesser skulls half-buried in it — he is not the only one who tried */
+    for(const sx of [-0.44, 0.38]){
+      const sk = obox(0.23, 0.19, 0.25, BONE[2], sx, 0.19, sx > 0 ? -0.28 : 0.26, heap);
+      sk.rotation.y = sx > 0 ? 0.9 : -1.4; sk.rotation.z = 0.35;
+      obox(0.055, 0.05, 0.02, '#241d16', -0.05, 0.02, 0.13, sk);
+      obox(0.055, 0.05, 0.02, '#241d16',  0.05, 0.02, 0.13, sk);
+    }
+    /* ---- the skull, seated on top ----
+       On its own group so the whole head turns in one place — the animator swings this rig by
+       the group, and a portrait can frame it without hunting for boxes.
+       THE FIRST PASS WAS A BOX UNDER A TRAY. A cube cranium with a slab of gold laid flat
+       across it read as a crate with a lid on, and the brow — a wide plate at full skull width
+       — walled the sockets in so the gems could not be seen at all, which is the one feature
+       that was asked for by name. So: the cranium is a DOME, the brow is a narrow ridge that
+       overhangs rather than covers, the sockets are cut deep and dark, and the crown is a ROUND
+       band that sits ON the dome instead of a plate balanced over a square. */
+    const S = new THREE.Group(); S.position.set(0, 0.84, 0); g.add(S);
+    e.head = null;                                   /* nothing here is a head bone */
+    e.skull = S;
+    mk(SPHG, ownBone('#efe8d2'), 0.47, 0.46, 0.49, 0, 0.09, 0, S);   /* the cranium */
+    obox(0.38, 0.19, 0.38, '#eae2cc', 0, -0.085, 0.005, S);          /* the face, under the dome */
+    obox(0.33, 0.05, 0.12, '#ded4b6', 0, 0.020, 0.165, S);           /* the brow, out OVER the sockets */
+    obox(0.10, 0.13, 0.14, '#e3dabe', -0.135, -0.145, 0.125, S);     /* cheekbones */
+    obox(0.10, 0.13, 0.14, '#e3dabe',  0.135, -0.145, 0.125, S);
+    obox(0.055, 0.09, 0.07, '#1d1710', 0, -0.118, 0.180, S);         /* the nasal hollow */
+    /* the sockets, cut back into the bone so the gems sit INSIDE a shadow */
+    for(const sx of [-1, 1]){
+      obox(0.125, 0.125, 0.11, '#17120c', sx * 0.118, -0.070, 0.140, S);
+      /* ---- the bejewelled eyes ----
+         Not painted on: a faceted stone set into each socket, lit, with a brighter core. They
+         are the only thing on this body that is not four hundred years of chalk, and they are
+         the reason you can tell across a ruin that the skull is looking at you. */
+      const gem = mk(OCTG, ownGlow(GEM), 0.135, 0.135, 0.10, sx * 0.118, -0.070, 0.178, S);
+      gem.rotation.z = Math.PI / 4;
+      mk(SPHG, ownGlow('#e6bcff'), 0.035, 0.035, 0.028, sx * 0.118, -0.070, 0.206, S);
+      (e.gems = e.gems || []).push(gem);
+    }
+    for(let i = 0; i < 6; i++)                                        /* the upper teeth */
+      obox(0.030, 0.042, 0.03, '#f4eeda', -0.115 + i * 0.046, -0.190, 0.190, S);
+    /* the jaw, hung slightly open and going nowhere — he has no mouth and is still talking */
+    const jw = obox(0.30, 0.09, 0.28, '#e3dabe', 0, -0.255, 0.030, S);
+    jw.rotation.x = 0.13;
+    /* ---- the crown ----
+       Nobody put it there. A round band, five points, and a stone in the front one — the same
+       violet as the eyes, because whatever is in them is what is holding the thing on. It sits
+       DOWN on the dome and tips slightly, the way a crown does on a head that stopped moving. */
+    const CR = new THREE.Group(); CR.position.set(0, 0.265, 0); CR.rotation.z = -0.055; CR.rotation.x = 0.045; S.add(CR);
+    mk(CYLG, ownMetal(GOLD),    0.475, 0.090, 0.475, 0, 0, 0, CR);    /* the band */
+    mk(CYLG, ownMetal(GOLD_DK), 0.492, 0.024, 0.492, 0, -0.049, 0, CR);   /* its lower rim */
+    mk(CYLG, ownMetal(GOLD_DK), 0.482, 0.020, 0.482, 0, 0.043, 0, CR);
+    for(let k = 0; k < 5; k++){
+      const a = (k / 5) * Math.PI * 2;
+      const tall = 0.19 - (k % 2) * 0.06;
+      const pt = obox(0.080, tall, 0.070, GOLD,
+        Math.cos(a) * 0.205, 0.045 + tall * 0.5, Math.sin(a) * 0.205, CR);
+      pt.rotation.y = -a;
+      pt.rotation.z = Math.cos(a) * -0.13;
+      pt.rotation.x = Math.sin(a) * 0.13;
+    }
+    mk(OCTG, ownGlow(GEM), 0.095, 0.11, 0.095, 0, 0.012, 0.232, CR);  /* the stone in the front */
+  } else if(c.beast){
     if(c.soulbound){
       /* A SIMULACRUM: a small blank figure with no face and no feet, hung in the air inside a
          ring of its master's binding. It is deliberately the least threatening thing on the
@@ -27027,13 +28530,37 @@ function syncChars(dt){
         for(const b2 of e.spineBits) b2.rotation.x = 0;
         e.sigil.visible = false;
       }
-      if(!c.beast){
+      /* AND NOTHING THAT HAS NO ARMS. `e.still` is a rig with no limb bones at all — the
+         demilich is a skull on a heap — so this reached straight into `e.armL.rotation` and
+         took the frame down. A body that cannot be posed is not posed. */
+      if(!c.beast && !e.still){
         e.armL.rotation.x = 0.2; e.armR.rotation.x = -0.15;
         e.elbL.rotation.x = 0.3; e.elbR.rotation.x = 0.2;
         e.legL.rotation.x = 0.1; e.legR.rotation.x = -0.2;
         e.kneeL.rotation.x = 0.3; e.kneeR.rotation.x = 0.15;
         e.spine.rotation.x = 0;
       }
+    } else if(e.still){
+      /* ---------- IT DOES NOT MOVE. IT LOOKS. ----------
+         Four hundred years in one spot is a pose in itself: no gait, no bob, no crouch, and
+         nothing on this rig that a pose could be applied to anyway. The one thing it does is
+         TURN THE SKULL, slowly, toward whoever came into the ruin — which is the entire
+         performance and the only thing that separates it from set dressing. It keeps facing
+         wherever it last looked once you leave, because it has nothing better to do.
+         The gems light themselves; that is the material's business, not the animator's. */
+      let look = null, lookD = 15;
+      for(const o of chars){
+        if(o.faction !== 'player' || o.state === 'dead') continue;
+        const dd = dist(o.x, o.y, c.x, c.y);
+        if(dd < lookD){ lookD = dd; look = o; }
+      }
+      if(look){
+        const want2 = Math.atan2(look.x - c.x, look.y - c.y);
+        let dy = ((want2 - e.rotY + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        e.rotY += dy * Math.min(1, dt * 1.6);        /* slowly. Nothing about him is in a hurry. */
+      }
+      e.g.rotation.set(0, e.rotY, 0);
+      e.g.position.y = gy;
     } else if(e.floats){
       /* ---------- IT DOES NOT WALK ----------
          It hangs at reading height and drifts, and the loose parts of it lag behind the turn,
@@ -27468,8 +28995,15 @@ function syncChars(dt){
          past the crouch, so a fight pose still sinks it and the float still holds it up. */
       if(e.lichLift) e.g.position.y += e.lichLift;
     }
-    /* limbs & gear */
-    if(!c.beast){
+    /* limbs & gear.
+       AND NOTHING THAT HAS NO LIMBS. `!c.beast` was the whole test for "this rig has arms",
+       which held for as long as every non-beast in the game was a person. `e.still` is a rig
+       with no arm bones, no leg bones, no shield and no weapon — a skull on a heap — and this
+       reached straight through `e.armL` into `.visible`, which threw INSIDE the frame's
+       try/catch: the world kept turning and the screen stopped repainting. A frozen render
+       with a live sim is the hardest failure in this file to read, so the rule is stated the
+       same way in all three places that pose a body: no limbs, no posing. */
+    if(!c.beast && !e.still){
       const lim = (part, grp, m) => {
         const p = c.parts[part];
         grp.visible = !(p.severed && !p.pros);
@@ -30061,6 +31595,88 @@ function dollSvg(c){
    text. A second window would have meant two answers to "what is this person wearing" and
    two places to keep in step, so this replaces that section instead. `redraw` is the host
    screen's own render, passed in, because equipping changes the load line above it. */
+/* ---------- A SECOND, VERY SMALL RENDERER ----------
+   Its own WebGL context rather than a second pass on the main one, because the world's camera,
+   fog, shadow map and post state would all have to be saved and restored around it — and the
+   portrait wants none of them. One context, 200-odd pixels, a hemisphere light and a key: what
+   is being looked at is the SILHOUETTE and the gear on it, not the weather.
+   IT CLEANS UP AFTER ITSELF BY WATCHING THE DOM. There are half a dozen ways to shut the kit
+   window and every one of them would otherwise need to remember to stop this loop; instead the
+   frame checks whether its own canvas is still on the page and stands down when it is not. */
+let _doll = null, _dollGen = 0;
+function dollPortrait(c, host){
+  if(typeof THREE === 'undefined' || !host) return;
+  const W2 = 132, H2 = 178;
+  /* ---------- ONE CANVAS AND ONE CONTEXT, RE-PARENTED ----------
+     The first version made a fresh canvas and a fresh `WebGLRenderer` on every redraw of the
+     kit window — and the window redraws on every click in it. A browser hands out about
+     sixteen WebGL contexts and then starts dropping the oldest, so equipping four things in a
+     row was a countdown to the MAIN renderer's context being taken away. There is one canvas
+     for the life of the page and it moves into whichever panel is currently asking. */
+  if(!_doll){
+    let r;
+    const cvp = document.createElement('canvas');
+    cvp.width = W2 * 2; cvp.height = H2 * 2;        /* drawn at 2x, shown at 1x: cheap AA */
+    cvp.style.cssText = `width:${W2}px;height:${H2}px;display:block`;
+    try { r = new THREE.WebGLRenderer({canvas: cvp, antialias: true, alpha: true}); }
+    catch(e){ return; }                              /* no context to spare: no portrait */
+    const sc = new THREE.Scene();
+    const cam = new THREE.PerspectiveCamera(28, W2 / H2, 0.1, 60);
+    sc.add(new THREE.HemisphereLight(0xa9a292, 0x3d362e, 1.15));
+    const key = new THREE.DirectionalLight(0xd8c9a4, 0.85);
+    key.position.set(2.4, 4.2, 2.8); sc.add(key);
+    const fill = new THREE.DirectionalLight(0x8fb5d4, 0.30);
+    fill.position.set(-3, 1.4, -2); sc.add(fill);
+    r.setPixelRatio(1);
+    r.setSize(cvp.width, cvp.height, false);
+    r.setClearColor(0x000000, 0);
+    _doll = {r, sc, cam, cv: cvp, ent: null, pivot: null, rot: 0, raf: 0};
+  }
+  const D = _doll;
+  host.appendChild(D.cv);
+  /* AND A GENERATION, so a loop left over from the previous redraw cannot tear down the body
+     the current one just built — which is exactly what happened when they shared one object:
+     the stale frame found its canvas re-parented, called that "closed", and disposed the mesh
+     the live panel was about to show. */
+  const gen = ++_dollGen;
+  if(D.pivot){ D.sc.remove(D.pivot); if(D.ent) disposeTree(D.ent.g); D.pivot = null; D.ent = null; }
+  let ent;
+  try { ent = buildCharMesh(c); } catch(e){ return; }
+  const pivot = new THREE.Group();
+  pivot.add(ent.g);
+  D.sc.add(pivot);
+  D.ent = ent; D.pivot = pivot;
+  /* FRAME WHATEVER IT TURNED OUT TO BE. A Longdead and a Cairn Beast are not the same height,
+     so the bounding box decides rather than a constant. */
+  ent.g.position.set(0, 0, 0);
+  ent.g.rotation.set(0, 0, 0);
+  ent.g.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(ent.g);
+  const size = bb.getSize(new THREE.Vector3());
+  const mid = bb.getCenter(new THREE.Vector3());
+  const span = Math.max(size.y || 0, Math.max(size.x || 0, size.z || 0) * (H2 / W2)) || 2;
+  ent.g.position.set(-mid.x, -mid.y, -mid.z);
+  /* 1.06 rather than 1.20: the box is already the body, so the padding is pure margin and at
+     1.20 the figure sat in the middle of a lot of nothing. Close up was the ask. */
+  D.cam.position.set(0, span * 0.06, (span * 0.5) / Math.tan(28 * Math.PI / 360) * 1.06);
+  D.cam.lookAt(0, 0, 0);
+  if(D.raf) cancelAnimationFrame(D.raf);
+  /* A SLOW TURN, because half the point of showing the body is showing the CLOAK on the back of
+     it — and a still three-quarter view hides the very slot that prompted this. */
+  const step = () => {
+    if(gen !== _dollGen){ return; }                 /* somebody else owns the canvas now */
+    if(!D.cv.isConnected){
+      D.raf = 0;
+      if(D.pivot){ D.sc.remove(D.pivot); if(D.ent) disposeTree(D.ent.g); D.pivot = null; D.ent = null; }
+      return;
+    }
+    D.rot += 0.006;
+    pivot.rotation.y = D.rot;
+    try { D.r.render(D.sc, D.cam); } catch(e){ D.raf = 0; return; }
+    D.raf = requestAnimationFrame(step);
+  };
+  step();
+}
 function gearBlock(c2, body, redraw){
   {
     gearSlot = gearSlot || 'weapon';
@@ -30079,10 +31695,23 @@ function gearBlock(c2, body, redraw){
       return d;
     };
     wrap.appendChild(col(['head', 'armor', 'cloak']));
-    const fig = document.createElement('div'); fig.className = 'dfig'; fig.innerHTML = dollSvg(c2);
+    /* ---------- THE FIGURE IS THE BODY, NOT A DRAWING OF ONE ----------
+       "It would be nice if it showed a model of the actual character selected, close up, and
+        with the same equipment. No placeholder T-pose picture."
+       It was an SVG of six coloured regions — a head, a torso, a hood, a hand — tinted by what
+       was in each slot. It told you a cloak was equipped and nothing about which cloak, and it
+       was the same figure for a Choir Kin, a golem and a Sixfold. Everything needed to do this
+       properly was already here: `buildCharMesh` builds the real rig from the real gear, and
+       three.js will happily render it into a second small canvas. */
+    const fig = document.createElement('div'); fig.className = 'dfig';
     wrap.appendChild(fig);
     wrap.appendChild(col(['weapon', 'trinket', 'pack']));
     body.appendChild(wrap);
+    /* AFTER the wrap is in the document, and that is not a detail: the portrait's first frame
+       checks `isConnected` to decide whether the panel is still open, and a canvas inside a
+       `<div>` that has not been appended yet is not connected. Called two lines earlier it
+       cleaned itself up before it had drawn anything, every single time. */
+    dollPortrait(c2, fig);
     /* what the kit adds up to, said once rather than left to be inferred from six rows */
     const sd = slotDef(c2), pen = armorPen(c2);
     const note = document.createElement('div'); note.className = 'dnote';
@@ -30180,6 +31809,59 @@ function armouryRun(who, slots){
     }
   }
   return {fitted, done};
+}
+/* ---------- THE PIT-MASTER'S WINDOW ----------
+   Everything the card is going to do to you is on the button before you press it: what is
+   coming, what it costs, what it pays, and — the one that matters — WHO WALKS IN. A pit that
+   does not tell you who it is about to shut in with a hound pack is a pit that gets somebody
+   killed by a misclick rather than by a hound. */
+function openPit(t){
+  if(!arena){ say(t, 'There is no pit here worth the name.'); return; }
+  const line = arena.bout
+    ? 'There is a card running. Watch it or walk away — I am not opening that gate for you.'
+    : arena.wins
+      ? `You have won ${arena.wins} in there. The house remembers, which is not the same as being pleased.`
+      : 'Stake on the left, purse on the right, and the gate comes down behind you. Nobody has ever talked their way back out of it.';
+  openModal('THE PIT', line);
+  const body = $('modalbody');
+  const rndr = () => {
+    body.innerHTML = '';
+    const crew = pitEntrants();
+    const who = document.createElement('div');
+    who.style.cssText = 'color:var(--dust);margin-bottom:9px;line-height:1.5';
+    who.textContent = arena.bout
+      ? `${arena.bout.name} is running. The gate is down.`
+      : crew.length
+        ? `GOING IN: ${crew.map(c => c.name).join(', ')}${selected.length ? '' : ' — nobody was selected, so this is whoever is standing about'}`
+        : 'Nobody of yours is near enough the gate. Bring them over.';
+    body.appendChild(who);
+    for(let i = 0; i < PIT_CARDS.length; i++){
+      const card = PIT_CARDS[i];
+      /* THE HOUSE WILL NOT SELL YOU THE NEXT ONE UP. The progression is the whole shape of the
+         place, and it is also the only thing standing between a fresh party and the Thing. */
+      const locked = i > arena.best + 1;
+      const r = document.createElement('div'); r.className = 'trow';
+      r.innerHTML = `<span class="tn">${card.name} <span style="color:var(--dust)">— stake ${card.stake}, purse ${card.purse}</span>` +
+        `<br><span style="color:var(--dust);font-size:10px">${locked ? 'The house will not sell you this one yet.' : card.blurb}</span></span>`;
+      const b2 = document.createElement('button');
+      b2.textContent = locked ? 'NOT FOR YOU' : 'TAKE IT';
+      b2.disabled = locked || !!arena.bout || !crew.length || cats < card.stake;
+      b2.onclick = () => {
+        if(!pitStart(card)) return;
+        /* AND THE CLOCK STARTS. `openModal` pauses, and leaving it paused would drop the player
+           into a shut pit with a hound pack and a stopped world — which reads as a freeze. */
+        $('modal').style.display = 'none'; modalOpen = false;
+        paused = false; syncPauseBtn();
+      };
+      r.appendChild(b2);
+      body.appendChild(r);
+    }
+    const note = document.createElement('div');
+    note.style.cssText = 'color:var(--dust);margin-top:10px;font-size:10px;line-height:1.5';
+    note.textContent = 'The gate opens when the card is over, whoever won. Anyone of yours still on the sand stays where they fell — go in and carry them out.';
+    body.appendChild(note);
+  };
+  rndr();
 }
 function openArmoury(b){
   const who = armouryTakers();
@@ -30461,11 +32143,25 @@ function openInventory(c){
         b.oncontextmenu = (ev) => { ev.preventDefault(); ev.stopPropagation(); fn(n(ev)); };
         return b;
       };
-      if(it.type==='weapon'||it.type==='armor'||it.type==='pack'){
-        const slot = it.type==='weapon'?'weapon':it.type==='pack'?'pack':'armor';
-        mk(it.type==='pack'?'SHOULDER':it.type==='armor'?'WEAR':'EQUIP', () => {
+      /* ---------- ALL SIX SLOTS, NOT THE THREE THERE USED TO BE ----------
+         "There's no way to equip cloaks right now from the main [I] menu. Just GIVE or STASH. I
+          have to go to the stash to equip it."
+         Exactly that, and it is the same list said twice: `EQ_SLOTS` was added with head, cloak
+         and trinket and this row was left hand-written against `weapon|armor|pack`. A cloak in
+         somebody's own pack could be given away, stashed or dropped — every verb except the one
+         it is for. It reads `slotFor` now, which is the single place that answers "what does
+         this go in", so the next slot anybody adds arrives here for free.
+         AND THE REFUSALS COME FROM THE SAME PLACE THE PAPERDOLL USES. `gearRefusal` is what
+         stops a Longdead putting on a crested helm; equipping out of the pack has to ask it too,
+         or the pack is a way round the rule. */
+      {
+        const slot = slotFor(k);
+        if(slot) mk(EQ_VERB[slot], () => {
+          const no = gearRefusal(c, k);
+          if(no){ log(`${c.name} cannot use that — ${no}.`, 'bad'); return; }
           invTake(c,k); if(c[slot]) invAdd(c,c[slot]); c[slot]=k;
-          log(`${c.name} equipped ${it.name}.`,'good'); render(); refreshCharPanel();
+          log(`${c.name} ${slot === 'weapon' ? 'took up' : 'put on'} ${it.name}.`,'good');
+          render(); refreshCharPanel();
         });
       }
       if(it.type==='food') mk('EAT', () => {
@@ -30476,6 +32172,20 @@ function openInventory(c){
         invTake(c,k); c.hunger = Math.min(100, c.hunger + GOLEM_FEED[k]);
         log(`${c.name} takes the ${it.name}. The etchings settle.`, 'good');
         render(); refreshCharPanel(); });
+      if(it.drink) mk('DRINK', () => {
+        if(!drinkFrom(c, k)) return;
+        invTake(c, k); render(); refreshCharPanel();
+      });
+      /* AND POURING IT INTO SOMEBODY ELSE, which is what it is actually for: the body that
+         needs a measure is usually not the body holding the bottle. */
+      if(it.drink) mk('POUR IT INTO SOMEBODY', () => {
+        const hurt = chars.filter(o => o.faction === 'player' && o !== c && o.state !== 'dead' &&
+          !o.undead && !o.construct && dist(o.x, o.y, c.x, c.y) < 3.5)
+          .sort((a2, b2) => (a2.state === 'down' ? 0 : 1) - (b2.state === 'down' ? 0 : 1) || a2.blood - b2.blood)[0];
+        if(!hurt){ log('Nobody of yours is within arm\'s reach.', 'bad'); return; }
+        if(!drinkFrom(hurt, k)) return;
+        invTake(c, k); render(); refreshCharPanel();
+      });
       if(it.type==='tome') mk('READ', () => { if(c.undead){ log('The risen cannot read.','bad'); return; } invTake(c,k); readBook(c,k); render(); refreshCharPanel(); });
       mkBulk('GIVE', 'hand it to the nearest of yours', (n) => {
         const to = nearestSquadmate(c); if(!to){ log('No squadmate within reach.','bad'); return; }
@@ -30807,17 +32517,71 @@ function openCaravanTrade(tr){
   };
   rndr();
 }
+/* what it costs to put a measure in front of everybody standing with you. Read off the town's
+   own price for the drink, so a round in Dustport — where the stuff is made — is what a round in
+   Dustport ought to be, and one at Copperhold is what the mine charges for it. */
+function roundCost(town, key, n){ return Math.max(1, Math.round(priceBuy(town, key) * n * 0.8)); }
+function roundTakers(v){
+  return chars.filter(c => c.faction === 'player' && c.state !== 'dead' && !c.undead && !c.construct &&
+    dist(c.x, c.y, v.x, v.y) < 12);
+}
 function openBar(v){
   const town = v.town;
-  openModal(`BAR — ${town.name}`, 'Food, drink, and people desperate enough to work for you.');
+  openModal(v.house ? `${v.house} — ${town.name}` : `BAR — ${town.name}`,
+    v.house ? `${v.name} keeps it. Food, drink, a house measure you will not get anywhere else, and people desperate enough to work for you.`
+            : 'Food, drink, and people desperate enough to work for you.');
   const body = $('modalbody');
   const render = () => {
     body.innerHTML = '';
+    /* ---------- THE HOUSE MEASURE ----------
+       A local brew that is only local if you cannot buy it anywhere else, so it is listed here
+       and nowhere else — and it is on the SHELF, not merely in the list. A vendor's stock list
+       is not a shelf; listing without seeding is how the aether cell went on sale in a town that
+       had never seen one. */
+    const brew = v.house && BAR_PLAN[town.def.key] && BAR_PLAN[town.def.key].brew;
+    if(brew && (stockOf(town, brew) > 0)){
+      const it = ITEMS[brew], bp = priceBuy(town, brew);
+      const row = document.createElement('div'); row.className='trow';
+      row.innerHTML = `<span class="tn">${it.name} <span style="color:var(--dust)">the house measure — ${stockOf(town, brew)} behind the counter</span></span>` +
+        `<span class="tc">own ${stash[brew]||0}</span><button data-buy="${brew}">BUY ${bp}</button>`;
+      body.appendChild(row);
+    }
     for(const k of VENDOR_STOCK.bar){
       const it = ITEMS[k], bp = priceBuy(town,k);
       const row = document.createElement('div'); row.className='trow';
       row.innerHTML = `<span class="tn">${it.name}</span><span class="tc">own ${stash[k]||0}</span><button data-buy="${k}">BUY ${bp}</button>`;
       body.appendChild(row);
+    }
+    /* ---------- STANDING A ROUND ----------
+       The one thing a bar is FOR that a shop is not: you buy it for other people. Everyone of
+       yours in the room gets the measure — which is a real effect on a real body, not a morale
+       number — and they remember that you did it. */
+    {
+      const takers = roundTakers(v);
+      const brew2 = v.house && BAR_PLAN[town.def.key] && BAR_PLAN[town.def.key].brew;
+      for(const key of (brew2 && stockOf(town, brew2) >= takers.length ? [brew2, 'rum'] : ['rum'])){
+        if(!takers.length) break;
+        const it = ITEMS[key], cost = roundCost(town, key, takers.length);
+        const row = document.createElement('div'); row.className = 'trow';
+        row.innerHTML = `<span class="tn">Stand a round of ${it.name} <span style="color:var(--dust)">${takers.length} of yours in the room</span></span>` +
+          `<button data-round="${key}">${cost}</button>`;
+        body.appendChild(row);
+        row.querySelector('[data-round]').onclick = () => {
+          const who = roundTakers(v);
+          if(!who.length){ refuse('There is nobody of yours in here to drink it.'); return; }
+          const c2 = roundCost(town, key, who.length);
+          if(cats < c2){ refuse('Not enough gold for the round.'); return; }
+          if(stockOf(town, key) < who.length){ refuse(`${v.name} has not got that much of it behind the counter.`); return; }
+          cats -= c2;
+          town.stock[key] -= who.length;
+          for(const m of who) drinkFrom(m, key);
+          /* AND THEY REMEMBER IT. `deed` is how everything else in this game changes what your
+             people think of you, and standing a round is a small, cheap, entirely genuine one. */
+          deed('gold', 0.4);
+          log(`${v.name} pours ${who.length}, and ${who.length === 1 ? who[0].name + ' drinks' : 'they drink'}.`, 'good');
+          refreshTop(); render();
+        };
+      }
     }
     if(town.rep < 0){
       const fine = Math.ceil(-town.rep * 8);
@@ -30934,6 +32698,7 @@ function openBar(v){
       if(bannerLoad() >= SQUAD_CAP){ log(`Squad is full (${SQUAD_CAP}).`, 'bad'); return; }
       if(cats < r.cost){ refuse('Not enough gold.'); return; }
       cats -= r.cost;
+      paidHire(r.cost);
       town.recruits.splice(i,1);
       const p = findOpenNear(v.x, v.y+1, 2);
       const c = makeChar(r.name, 'player', p.x, p.y, {...r.stats, gift:r.gift, race: r.race || 'human', sub: r.sub || null, sex: r.sex || 'm',
@@ -32664,7 +34429,15 @@ function workShift(t, c){
       put('stone');
       break;
     }
-    case 'brewer': if(take('fruit', 2)){ put('rum', 1 + (sk>25?1:0)); } break;
+    case 'brewer': {
+      /* A HOUSE MEASURE IS MADE BY A HOUSE. Dustport's brewers put up Harbourblack alongside
+         the ordinary stuff, which is what makes it worth crossing the map for and what keeps
+         the counter from running dry the first time somebody stands a round. */
+      const bp3 = BAR_PLAN[t.def.key];
+      if(bp3 && bp3.brew && rnd() < 0.45){ if(take('fruit', 3)){ put(bp3.brew, 1); } break; }
+      if(take('fruit', 2)){ put('rum', 1 + (sk>25?1:0)); }
+      break;
+    }
     case 'crafter':
       /* a road cloak is four cloth and a hide, and a crafter with a full basket makes one
          rather than another bandage nobody is buying */
@@ -33462,6 +35235,135 @@ function drawTalk(){
    shape. The content is the cheap half — the predicate and the tagging above are what make the
    next twenty lines somebody writes cost nothing. */
 const TALK_TREES = {
+  /* ---------- THE MAN AT THE GATE ----------
+     He is not allowed to decide, which is the entire scene: everything he says is a polite way
+     of saying that the decision was made before you got here. The two ways past him are the two
+     ways past anybody — be somebody the house owes, or be better at this than he is — and the
+     third option, going round the back at night, is not offered by him because he would not
+     offer it. */
+  servant: {
+    root: {
+      line: (t) => estateAdmits()
+        ? 'Dame Hessa is in the long room. She said you would come up eventually, which from her is a compliment. Mind the step.'
+        : 'The family is not receiving. I am sorry to have to say it twice in one week, but there it is.',
+      opts: [
+        {say:'She is expecting me, then.', when: () => estateAdmits(), to:'shown'},
+        {say:'I have done a good deal for this town.', when: () => !estateAdmits(), to:'notenough'},
+        {say:'What is back there? Past the house.', to:'orchard'},
+        {say:'Open the door, Bellowes.', when: () => !estateAdmits(),
+         check:{dc:20}, win:'relented', lose:'firm'},
+        {say:'I know what is under those trees.', req:{gift:'dark'}, when: () => !!estate && estate.opened, to:'caught'},
+        {say:'Another time.'},
+      ],
+    },
+    shown: {
+      line: 'Through, then. And whatever she offers you — take it or refuse it, but do not haggle. She finds it common.',
+      opts: [{say:'Noted.', fn: () => { if(estate) estate.admitted = true; }}],
+    },
+    notenough: {
+      line: (t) => `You have. Greenrest knows it — I know it. The family is older than Greenrest. ` +
+        `They will receive you at ${ORCHARD_REP} and not a day before, and I am afraid the current figure is ${Math.round((estate && estate.town.rep) || 0)}.`,
+      opts: [{say:'Then I will come back with the figure.'}],
+    },
+    orchard: {
+      line: 'The orchard. Four generations of it. The oldest trees are the best croppers and nobody has ever worked out why — the Dame says it is the drainage.',
+      opts: [
+        {say:'The drainage.', to:'drainage'},
+        {say:'I see.'},
+      ],
+    },
+    drainage: {
+      line: 'The drainage. Yes. Will there be anything else?',
+      opts: [{say:'No. Nothing else.'}],
+    },
+    relented: {
+      line: 'On your own head. She is in the long room and she does not like to be kept.',
+      opts: [{say:'Thank you.', fn: () => { if(estate) estate.admitted = true; }}],
+    },
+    firm: {
+      line: 'No. I have been at this door for thirty-one years and I have never once opened it for a raised voice.',
+      opts: [{say:'Fine.'}],
+    },
+    caught: {
+      line: 'Ah. Then you have been in the orchard, and I would very much rather you told her than me. The door is open. It was always going to be, eventually.',
+      opts: [{say:'It was.', fn: () => { if(estate) estate.admitted = true; }}],
+    },
+  },
+  /* ---------- AND THE WOMAN WHO DECIDED ----------
+     She does not deny it and she is not ashamed of it, which is the only version of this scene
+     worth writing. The town has eaten well for four generations and no child in it has ever
+     seen a bandit; she considers the arithmetic settled and she is not wrong about the
+     arithmetic. What she wants to know is which of the three things you are going to do. */
+  dame: {
+    root: {
+      line: (t, c) => !estate ? 'Yes?'
+        : estate.opened
+          ? 'You have seen the rows, then. Sit down. No — you will not sit. Nobody ever sits, after.'
+          : estateAdmits()
+            ? 'You are the one they talk about at the well. Sit, if you like. What did you want from an old woman with an orchard?'
+            : 'I do not know you, and Bellowes let you in, which he will hear about.',
+      opts: [
+        {say:'The old trees crop best. Why?', when: () => !!estate && !estate.opened, to:'why'},
+        {say:'Tell me how many.', when: () => !!estate && estate.opened, to:'count'},
+        {say:'Greenrest deserves to know.', when: () => !!estate && estate.opened, to:'expose'},
+        {say:'I want them. All of them.', req:{gift:'dark'}, when: () => !!estate && estate.opened, to:'bargain'},
+        {say:'Nothing. Good day.'},
+      ],
+    },
+    why: {
+      line: (t, c) => 'Drainage, my husband used to say, and he was a coward. You want the true answer, so: because of what my grandmother put under them, ' +
+        'and her mother before her, and me. Come out to the rows and I will show you rather than say it, because saying it is vulgar and I am too old to be vulgar.',
+      opts: [
+        {say:'Show me.', fn: () => { if(estate) orchardOpen('Dame Hessa walks you out past the house, stops between two old trees, and points at the ground with her stick.'); }, to:'count'},
+        {say:'I have heard enough.'},
+      ],
+    },
+    count: {
+      line: (t) => `Twenty that are still worth counting. More that are not. Every one of them came over that wall or up that road meaning to do us harm, ` +
+        `and every one of them is a reason a child in Greenrest has never seen a bandit. You may think what you like about the arithmetic. I have had sixty years with it and I think it holds.`,
+      opts: [
+        {say:'It holds.', to:'ally'},
+        {say:'It does not.', to:'expose'},
+        {say:'I have no opinion. I have a use.', req:{gift:'dark'}, to:'bargain'},
+      ],
+    },
+    ally: {
+      line: 'Then you are welcome here, and the house is open to you, and I will not insult you by pretending that costs me anything. Take fruit on your way out. It is very good fruit.',
+      opts: [{say:'It is.', fn: (t2, c2) => {
+        if(!estate || estate.deal) return;
+        estate.deal = 'kept';
+        addItem('fruit', 24); addItem('rum', 3);
+        if(estate.town) estate.town.rep = clamp((estate.town.rep || 0) + 8, -100, 100);
+        log('The Aldercotts consider you a friend of the house. Greenrest follows the Aldercotts.', 'good');
+      }}],
+    },
+    expose: {
+      line: 'You will tell them. Yes. And they will hang me, and my son, and Bellowes who has never put anybody anywhere — ' +
+        'and next spring the fruit will be ordinary, and the spring after that somebody will come over that wall. Do it if you are going to.',
+      opts: [
+        {say:'I am going to.', fn: () => {
+          if(!estate || estate.deal) return;
+          estate.deal = 'told';
+          if(estate.town) estate.town.rep = clamp((estate.town.rep || 0) - 30, -100, 100);
+          log('Greenrest hears it by evening. The High Warden thanks you in front of the well and does not look at you while doing it.', '');
+          log('The Aldercotts are finished. So, quietly, is the harvest.', 'bad');
+          deed('town_saved', 0.5);
+        }},
+        {say:'No. Not today.'},
+      ],
+    },
+    bargain: {
+      line: 'A use. Well. That is the first honest thing anybody has said in this room in forty years. ' +
+        'Take them — they are no good to me and they were no good to anybody else — and do not come back, and do not ever say where you got them.',
+      opts: [{say:'Agreed.', fn: () => {
+        if(!estate || estate.deal) return;
+        estate.deal = 'taken';
+        orchardOpen('The Dame has the rows opened for you herself, and stands well back while it is done.');
+        for(const b of chars) if(b.orchardDead) b.freeToTake = true;
+        log('Twenty bodies, four generations in the ground, and the woman who buried them holding the lamp.', 'good');
+      }}],
+    },
+  },
   town: {
     root: {
       line: (t, c) => fameGreeting(t, c),
@@ -33652,8 +35554,60 @@ const TALK_TREES = {
         {say:'I have closed tears. Ask anyone.', req:{reputeMin:25, known:34}, to:'respect'},
         {say:'Your walls are thinner than your neighbours think. I could make that untrue.',
          check:{dc:26}, win:'retained', lose:'dismissed'},
+        /* ---------- THE ELDER, AND THE THING SHE CANNOT SAY ----------
+           Only at Fallowend, and only when a post has actually gone dark: the Elder does not
+           tell strangers that the town's defences are failing, so the option to ask about it is
+           gated on you having a reason to. This is where the town's one real problem becomes a
+           thing the player can do something about. */
+        {say:'One of your posts on the road has gone out.',
+         when:(t2)=>!!(fallowend && towns[t2.isLeader] === fallowend.town && fallowend.dark > 0), to:'lanterns'},
+        {say:'I have a charm your people made. Will your stone keep it?',
+         when:(t2)=>!!(fallowend && towns[t2.isLeader] === fallowend.town && (stash.t_charm || 0) > 0), to:'keeping'},
         {say:'Nothing today.'},
       ],
+    },
+    lanterns: {
+      line: () => {
+        const dark = fallowend ? fallowend.dark : 0, box = fallowend ? (fallowend.cells || 0) : 0;
+        return `${dark === 1 ? 'It has.' : `${dark} of them have.`} My grandmother could say the words over a dead post and it would come up violet by morning. ` +
+          `I say the same words. ` + (box ? `There are ${box} of the old glass cells left in the box, and when they are gone I do not know what we do.`
+                                          : `The box is empty. I have not told anyone that the box is empty.`);
+      },
+      opts: [
+        /* THE REVEAL IS GATED ON BEING SOMEBODY WHO COULD KNOW, and there are two such people:
+           one who has studied what the old world made, and one who IS what the old world made.
+           A golem looking at a violet lamp and recognising the family resemblance is the better
+           of the two lines and it costs nothing to have both. */
+        {say:'It is not the words. It is what is inside them.', req:{tech:'transmutation'}, to:'truth'},
+        {say:'I know that light. Something like me runs on it.', req:{race:'golem'}, to:'truth'},
+        {say:'I have a cell. Put it in the post.', when:()=>(stash.aether_cell || 0) > 0,
+         fn:()=>{ lanternFeed(); }, to:'fed'},
+        {say:'I will find you some.'},
+      ],
+    },
+    truth: {
+      line: 'You are not the first to say so and you will not be the last, and I will tell you what I told the other one. ' +
+        'It does not matter whether it is a spirit or a machine. It matters that it burns. Bring me what makes it burn and call it whatever you like.',
+      opts: [
+        {say:'Fair.', when:()=>(stash.aether_cell || 0) > 0, fn:()=>{ lanternFeed(); }, to:'fed'},
+        {say:'Fair.'},
+      ],
+    },
+    fed: {
+      line: 'There. That is four generations of my family standing on this road, and a stranger did it in an afternoon. Take a charm off the lintel on your way. Take two.',
+      opts: [{say:'Thank you.'}],
+    },
+    keeping: {
+      line: 'It will. A night on the stone and the Good Kami look at it, and what they look at they keep. ' +
+        'You will want to be somewhere else while they do it — they are good, they are not gentle.',
+      opts: [
+        {say:'Keep it.', fn:()=>{ keepCharm(); }, to:'kept'},
+        {say:'Another time.'},
+      ],
+    },
+    kept: {
+      line: 'Same charm. Wear it out past the fences and see whether anything comes close enough to argue.',
+      opts: [{say:'I will.'}],
     },
     /* ---------- WHAT A SEAT ASKS FOR WHEN THE POST CANNOT CARRY IT ----------
        The board is public and everything on it is a thing a town is willing to admit it wants.
@@ -33854,6 +35808,13 @@ function talkTo(t){
      THE ODD ONES KEEP THEIR BARKS, deliberately. A Coil cultist saying one strange thing and
      turning away is the whole characterisation; giving them a menu would make them ordinary.
      They are checked first, below, so the generic tree never swallows them. */
+  /* THE HOUSE SELLS BOUTS, NOT NEWS. Above the generic tree because the pit-master is faction
+     'town' with a post and would otherwise get the watch conversation about the weather. */
+  if(t.pitMaster){ openPit(t); return; }
+  /* THE DOOR, AND THE PERSON BEHIND IT. Both are faction 'town' with a post and would otherwise
+     get the watch's conversation about the weather. */
+  if(t.orchardServant){ if(openDiscourse(t, 'servant')) return; }
+  if(t.orchardDame){ if(openDiscourse(t, 'dame')) return; }
   if(!speaksAtAll(t)){ say(t, pick(['...', 'It does not turn its head.', 'Something behind its face declines to answer.'])); return; }
   if(isWatch(t)){ if(openDiscourse(t, 'guard')) return; }
   /* THE OTHER PRACTITIONER GETS A CONVERSATION TOO. This was in the exclusion list beside the
@@ -34134,7 +36095,7 @@ function snapshot(){
     bindWeight:c.bindWeight, shortTag:c.shortTag, tempT:c.tempT??null, propped:!!c.propped,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
-    immortal:c.immortal||null, wanderKey:c.wanderKey||null, wanderMet:c.wanderMet||0, wanderSeen:c.wanderSeen?{...c.wanderSeen}:null, wanderJoined:!!c.wanderJoined, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, golem:!!c.golem, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
+    immortal:c.immortal||null, demilich:!!c.demilich, hireMark:(c.hireMark ?? null), wanderKey:c.wanderKey||null, wanderMet:c.wanderMet||0, wanderSeen:c.wanderSeen?{...c.wanderSeen}:null, wanderJoined:!!c.wanderJoined, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, golem:!!c.golem, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
     carryId: c.carry ? c.carry.id : null, yardRun: !!c.yardRun, tearRiftId: c.tearTarget ? c.tearTarget.id : null,
     skinShift: c.skinShift || null, shiftN: c.shiftN || 0,
     bearingId: c.bearing ? c.bearing.id : null,
@@ -34148,7 +36109,7 @@ function snapshot(){
     guardTargetId: c.guardTarget ? c.guardTarget.id : null,
     /* somebody you were paid to keep alive, and who they were walking to */
     vip: !!c.vip, escortTo: c.escortTo ?? null, escortId: c.escortId || 0, attendant: !!c.attendant,
-    npcNecro: !!c.npcNecro, lieutenant: !!c.lieutenant, civ: !!c.civ, merc: !!c.merc,
+    npcNecro: !!c.npcNecro, lieutenant: !!c.lieutenant, lieuSince: (c.lieuSince ?? null), civ: !!c.civ, merc: !!c.merc,
     guildHire: !!c.guildHire, guildLicensed: !!c.guildLicensed, guildmaster: !!c.guildmaster, wage: c.wage||0,
     heretic: !!c.heretic, burnDay: c.burnDay||0, bastionGuest: !!c.bastionGuest,
     inv: {...c.inv}, pack: c.pack, mule: !!c.mule, fleeOnHit: !!c.fleeOnHit,
@@ -34164,7 +36125,7 @@ function snapshot(){
     v:20, cats, bloodMoon, bloodMoonLast, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields, nodeUses:[...nodeUses], phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
-    favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen},
+    favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen}, hiresPaid: {...hiresPaid},
     rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang,tearWork:r.tearWork||0,tearWave:r.tearWave})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, fame: {...fame}, craftOrders: craftOrders.map(o => ({kind:o.kind, out:o.out, want:o.want, done:o.done})), lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], pyres: pyres.map(q=>({x:q.x, y:q.y, name:q.name, day:q.day, read:q.read||0})), pyreRead: pyreRead ? {...pyreRead} : null, necroSeen: towns.map(t=>t.necroSeen||0), coilHeld: towns.map(t=>!!t.coilHeld), coilShrine, coilExposed, coilStruck, coilN,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
     camps: camps.map(c => ({id:c.id, x:c.x, y:c.y, fac:c.fac, cap:c.cap, tents:c.tents})),
@@ -34393,6 +36354,7 @@ function restore(d){
   Object.assign(favors, d.favors || {});
   Object.assign(bossSlain, d.bossSlain || {});
   Object.assign(placesSeen, d.placesSeen || {});
+  Object.assign(hiresPaid, {n: 0, last: 0}, d.hiresPaid || {});
   bloodMoon = d.bloodMoon || 0;
   /* A FLOOR THAT RESETS ON LOAD IS A FLOOR YOU CAN WALK THROUGH BY SAVING. `?? -999` rather
      than `|| -999`: night 0 is a real night, and `||` would send it back to never. */
@@ -34547,7 +36509,8 @@ function restore(d){
     c.doorborn = !!s.doorborn; c.doorWork = !!s.doorWork;
     c.neutral = !!s.neutral; c.provoked = !!s.provoked; c.bossKey = s.bossKey || null; c.dropItems = s.dropItems || null;
     c.scholar = !!s.scholar; c.quest = s.quest || null; c.questsDone = s.questsDone || 0; c.offered = !!s.offered;
-    c.immortal = s.immortal || null; c.questGive = s.questGive || null; c.questDone = !!s.questDone; c.questStage = s.questStage || 0;
+    c.immortal = s.immortal || null; c.demilich = !!s.demilich; c.hireMark = (s.hireMark ?? null);
+    c.questGive = s.questGive || null; c.questDone = !!s.questDone; c.questStage = s.questStage || 0;
     c.wanderKey = s.wanderKey || null; c.wanderMet = s.wanderMet || 0;
     c.wanderSeen = s.wanderSeen ? {...s.wanderSeen} : null; c.wanderJoined = !!s.wanderJoined;
     /* saves from before the questlines: a finished single-step quest counts as the road walked */
@@ -34564,6 +36527,7 @@ function restore(d){
     c.att = s.att || {divine:0, destruction:0, dark:0, dust:0, ...((s.gift && s.race!=='chimera') ? {[s.gift]: 2} : {})};
     c.attXp = s.attXp || {divine:0, destruction:0, dark:0, dust:0};
     c.npcNecro = !!s.npcNecro; c.lieutenant = !!s.lieutenant; c.civ = !!s.civ; c.merc = !!s.merc;
+    c.lieuSince = (s.lieuSince ?? null);
     c.guildHire = !!s.guildHire; c.guildLicensed = !!s.guildLicensed; c.guildmaster = !!s.guildmaster; c.wage = s.wage || 0;
     c.heretic = !!s.heretic; c.burnDay = s.burnDay || 0; c.bastionGuest = !!s.bastionGuest;
     c.vip = !!s.vip; c.escortTo = s.escortTo ?? null; c.escortId = s.escortId || 0; c.attendant = !!s.attendant;

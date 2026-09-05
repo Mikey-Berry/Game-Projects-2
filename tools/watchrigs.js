@@ -39,11 +39,24 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     await p.evaluate((k) => {
       paused = true;
       for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__rig) chars.splice(i, 1);
+      /* ---------- A RIG IS ONLY BUILT FOR A BODY SOMEBODY CAN SEE ----------
+         `syncChars` opens with `inSight = faction === 'player' || visAt(c.x, c.y) === 2` and
+         skips everything else — correctly, because an unseen body should not cost a mesh. This
+         probe asked for a spot with `findOpenNear(me.x + 6, ..., 6)` and `spawnGaunt` then calls
+         `findOpenNear` AGAIN on that, so the body can end up a dozen tiles from where it was
+         wanted. The larder landed in fog and this file reported "no mesh" — after two hundred
+         renders — about a renderer doing exactly the right thing.
+         Put it beside the player and recompute vision, then say so if it is STILL unseen rather
+         than blaming the rig. */
       const me = player()[0];
       const q = findOpenNear(Math.round(me.x) + 6, Math.round(me.y), 6);
       const g = spawnGaunt(k, q.x, q.y);
       g.__rig = true; g.state = 'ok';
+      g.x = me.x + 2.5; g.y = me.y;
+      g.floor = me.floor || 0;
+      rebuildCharGrid(); computeVision();
       window.__G = g;
+      window.__SEEN = visAt(g.x, g.y) === 2;
       camX = camSX = g.x; camY = camSY = g.y; camDist = camDistTarget = 8;
       camPitch = camPitchT = 0.4; camYaw = camYawT = 0; camFollow = false;
     }, k);
@@ -54,9 +67,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     rigs[k] = await p.evaluate(() => {
       const mine = () => (window.__G ? charMeshes.get(window.__G.id) : null);
       let e = null;
-      for (let i = 0; i < 40 && !e; i++) { try { render(); } catch (er) { return { err: String(er.message).slice(0, 90) }; } e = mine(); }
+      /* ---------- AND FORTY RENDERS IS STILL A COUNT ----------
+         The note above is right that a fixed number of frames is a bet on how busy the machine
+         is — and then bets forty of them. `syncChars` builds at most eight rigs a frame and
+         spends that budget on the WORLD first, so the ceiling has to be generous enough that a
+         busier world cannot exhaust it: the town work added about twenty-five bodies to
+         worldgen and the larder stopped getting a rig inside forty. Two hundred costs nothing
+         when the rig turns up on the third, which is every other kind. */
+      let waited = 0;
+      for (let i = 0; i < 200 && !e; i++) { waited = i; try { render(); } catch (er) { return { err: String(er.message).slice(0, 90) }; } e = mine(); }
       if (e) { try { render(); } catch (er) { return { err: String(er.message).slice(0, 90) }; } e = mine(); }
-      if (!e) return { none: true };
+      if (!e) return { none: true, waited, unseen: !window.__SEEN };
       /* ---------- MEASURE THE SILHOUETTE, WHICH IS WHAT THE NOTE IS ABOUT ----------
          An earlier version counted emissive meshes to prove the choir is "made of throats",
          and every rig in the game came back with zero: `bakeBoxes` merges the boxes and the
@@ -85,7 +106,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       /* count the ARMS the pose machine knows about, and whether it stands up */
       const arms = ['armL', 'armR'].filter(k2 => e[k2]).length;
       const tall = maxY - minY, wide = Math.max(maxX - minX, maxZ - minZ);
-      return { boxes, tall: +tall.toFixed(2), wide: +wide.toFixed(2),
+      return { boxes, waited, tall: +tall.toFixed(2), wide: +wide.toFixed(2),
                upright: +(tall / Math.max(0.01, wide)).toFixed(2),
                biped: !!e.bipedGaunt, arms, shard: !!e.shard, head: !!e.head,
                legs2: !!(e.legL2 || e.legR2) };
@@ -98,7 +119,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const broke = kinds.filter(k => rigs[k].err || rigs[k].none);
   R.everyWatcherBuildsABody = broke.length === 0
     ? `all ${kinds.length} kinds build a rig without throwing`
-    : `!! ${broke.map(k => k + ': ' + (rigs[k].err || 'no mesh')).join(' | ')}`;
+    : `!! ${broke.map(k => k + ': ' + (rigs[k].err || (rigs[k].unseen ? 'STAGED IN FOG — nothing rigs what nobody can see, so this proves nothing'
+                                       : 'no mesh after ' + rigs[k].waited + ' renders'))).join(' | ')}`;
 
   /* ---------- 1. THE CHOIR HAS ITS OWN BODY ---------- */
   R.theChoirIsNotABaselineGaunt = (!rigs.choir.err && !rigs.gaunt.err && rigs.choir.boxes !== rigs.gaunt.boxes)

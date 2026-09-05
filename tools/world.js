@@ -73,16 +73,31 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        mountain landed on "mine that instead", and stone was infinite because terrain does not
        deplete. */
     {
-      let inWall = 0;
+      /* ---------- WITH EXACTLY ONE EXEMPTION, AND IT IS ASSERTED RATHER THAN ALLOWED ----------
+         Copperhold is built round a working, and the working must not be swept — the note in
+         `seedOre` records both mining towns' ore being deleted by this very sweep once already.
+         So the rule is not relaxed, it is SPLIT: nothing wild anywhere inside any wall, except
+         the seven tiles of the pit, where there had better be something. Skipping the pit and
+         leaving it at that would let the exemption grow silently. */
+      const P = (typeof copperPit !== 'undefined') ? copperPit : null;
+      const inPit = (x, y) => !!P && Math.abs(P.x - x) <= P.r && Math.abs(P.y - y) <= P.r;
+      let inWall = 0, inWorking = 0;
       for (const t of towns) {
         const wr = t.def.wall ? t.def.wall.r : 15;
         for (let y = Math.floor(t.y - wr); y <= t.y + wr; y++)
-          for (let x = Math.floor(t.x - wr); x <= t.x + wr; x++)
-            if (x >= 0 && y >= 0 && x < W && y < H && dist(t.x, t.y, x, y) < wr && rawDecorAt(x, y)) inWall++;
+          for (let x = Math.floor(t.x - wr); x <= t.x + wr; x++){
+            if (!(x >= 0 && y >= 0 && x < W && y < H && dist(t.x, t.y, x, y) < wr)) continue;
+            if (!rawDecorAt(x, y)) continue;
+            if (inPit(x, y)) inWorking++; else inWall++;
+          }
       }
       R.townsAreSwept = inWall === 0
         ? 'not one tree, boulder or outcrop inside any town wall'
         : `!! ${inWall} DECOR TILES ARE GROWING INSIDE TOWN WALLS`;
+      R.theWorkingIsNot = !P ? 'no working to exempt on this build'
+        : inWorking > 0
+          ? `and ${inWorking} tiles of copper face in Copperhold's pit, which is the one place the sweep must not reach`
+          : '!! THE SWEEP ATE COPPERHOLD\'S OWN WORKING';
     }
     {
       /* find a bare rocky tile with no boulder on it — the mountainside that used to be a mine */
