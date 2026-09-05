@@ -47,14 +47,29 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        and a body that joins in is the difference between "they orbited" and "something got in
        the way" — the same fault guns.js carries a note about. */
     const me = player()[0];
+    /* ---------- CHECK THE CORRIDOR, NOT THE CAR PARK ----------
+       This verified a 29x29 box around the START and then sent the squad to `spot.x + 26` —
+       twelve tiles beyond anything it had looked at. The moment a worldgen change put a massif
+       out that way, the walk turned into a detour round a cliff, the bodies came round the
+       group's centre, and this file reported them ORBITING: 2.06 turns and a wander of 6.0x
+       against 1.0 on the build before. That is a probe measuring terrain it never checked.
+       The whole route is swept now, start to goal and a margin either side. */
     let spot = null;
-    for (let r = 30; r < 200 && !spot; r += 5) for (let a = 0; a < 16 && !spot; a++) {
+    const clear = (x, y, x1, y1, pad) => {
+      const lo = (a2, b2) => Math.min(a2, b2) - pad, hi = (a2, b2) => Math.max(a2, b2) + pad;
+      for (let j = lo(y, y1); j <= hi(y, y1); j += 2) for (let i = lo(x, x1); i <= hi(x, x1); i += 2) {
+        if (i < 2 || j < 2 || i >= W - 2 || j >= H - 2) return false;
+        if (isBlocked(i + 0.5, j + 0.5, 0) || terr[j * W + i] === 3) return false;
+      }
+      return true;
+    };
+    for (let r = 30; r < 260 && !spot; r += 5) for (let a = 0; a < 16 && !spot; a++) {
       const x = Math.round(me.x + Math.cos(a / 16 * 6.283) * r), y = Math.round(me.y + Math.sin(a / 16 * 6.283) * r);
-      if (x < 40 || y < 40 || x > W - 40 || y > H - 40) continue;
-      let ok = true;
-      for (let j = -14; j <= 14 && ok; j += 2) for (let i = -14; i <= 14 && ok; i += 2)
-        if (isBlocked(x + i + 0.5, y + j + 0.5, 0) || terr[(y + j) * W + (x + i)] === 3) ok = false;
-      if (ok) spot = { x, y };
+      if (x < 40 || y < 40 || x > W - 70 || y > H - 40) continue;
+      /* the start box AND the twenty-six tiles the squad is about to be marched across */
+      if (!clear(x, y, x, y, 14)) continue;
+      if (!clear(x, y, x + 26, y, 8)) continue;
+      spot = { x, y };
     }
     if (!spot) { R.ground = '!! NO OPEN GROUND'; return R; }
     let cleared = 0;

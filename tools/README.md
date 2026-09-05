@@ -1365,6 +1365,24 @@ the truth was 45%.
   direction — 3.5 tiles from a warm start and 5.5 (outside a five-tile rite, forever) from a cold
   one, on the SAME build. A behaviour that depends on which way a body drifted is not a
   behaviour. Give the claim ownership of the walk, with a give-up timer.
+- **When a worldgen change moves the random stream, the probes that break are the ones that were
+  riding on luck — and re-tuning their thresholds is the wrong fix.** The town work added the
+  largest single batch of worldgen draws this project has taken and eight harnesses went red; all
+  eight passed on the previous commit, so none of it was ambient flake. One was a real bug
+  (`gunnery.js`, cells on a shelf that must not have them), two were the *game* being vague about
+  places it describes as exact (Rubido "at the serpent stone" and the Bastion Watcher "in the
+  yard", both placed by sixty random darts), and five were probes staging themselves against
+  whatever the world happened to put there. Each of those five was fixed by making the staging
+  deterministic — sweep the corridor you will actually walk, clear the people as well as the
+  rocks, give a contested roll enough attempts that it is not a coin flip, stop a journey before
+  it completes if the claim is about it being unfinished. **A probe that depends on the seed is
+  measuring the seed.**
+- **Counting occupied buckets is a brittle way to ask "is this spread out".** `flank.js` asked
+  whether eight bodies surrounding a quarry occupied seven of eight 45-degree sectors — which
+  allows exactly one collision, and two bodies sharing a wedge is not a column. It called a clean
+  surround a column (all eight arrived inside 53 ticks, no grinding). The robust question has a
+  direct answer: the **mean of the unit bearings** from the centre, which cancels toward zero for
+  a ring and adds toward one for a queue, and no shared bucket can fool it.
 - **Geometry is not behaviour.** `albedo.js` first checked that two towns were *nearer* Saltmere's
   fire than the Bastion, and called that proof the Order burns people there — a claim that passes
   on a build where `burnHeretic` walks every body to the Bastion regardless of where it came from.

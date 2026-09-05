@@ -5086,7 +5086,24 @@ function bastionGuestTick(){
   if(chars.some(c => c.bastionGuest && c.state !== 'dead')) return;
   if(chars.filter(o => (o.gauntKind === 'messenger' || o.gauntKind === 'herald') && o.state !== 'dead').length >= 2) return;
   if(rnd() > 0.14) return;
-  const q = findOpenNear(bastion.x + ri(-5, 5), bastion.y + ri(-4, 4), 5);
+  /* ---------- IN THE YARD, WHICH IS THE WHOLE OF WHAT IT IS ----------
+     "It stands in the yard where the Order drills and none of them will cross in front of it."
+     A five-tile jitter on top of sixty random darts in a radius-5 box can put it well past the
+     compound, and `purge.js` asks for under fourteen from the centre because a Watcher in a
+     field outside is not the scene. Ringed outward from the middle of the yard instead. */
+  let q = null;
+  outerGuest:
+  for(let ring = 2; ring <= 8; ring++){
+    for(let dy = -ring; dy <= ring; dy++) for(let dx = -ring; dx <= ring; dx++){
+      if(Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+      const gx2 = Math.round(bastion.x) + dx, gy2 = Math.round(bastion.y) + dy;
+      if(gx2 < 2 || gy2 < 2 || gx2 >= W - 2 || gy2 >= H - 2) continue;
+      if(isBlocked(gx2 + 0.5, gy2 + 0.5)) continue;
+      q = {x: gx2 + 0.5, y: gy2 + 0.5};
+      break outerGuest;
+    }
+  }
+  if(!q) q = {x: bastion.x, y: bastion.y};
   const m = spawnGaunt('messenger', q.x, q.y);
   if(!m) return;
   m.faction = 'purge'; m.nightborn = false; m.bastionGuest = true;
@@ -6539,9 +6556,14 @@ let fallowend = null;
        rather than a cliff */
     lanterns.push({x: q.x + 0.5, y: q.y + 0.5, town: t, fuel: ri(18, LANTERN_CELL_DAYS)});
   }
-  /* the reserve, and it is not enough. Fallowend has been living off a box of salvage nobody
-     can make any more of, and it is down to the bottom of the box. */
-  t.stock.aether_cell = (t.stock.aether_cell || 0) + ri(3, 6);
+  /* ---------- THE BOX, AND IT IS NOT A SHELF ----------
+     This was `t.stock.aether_cell`, and `gunnery.js` was entirely right to go red on it: a
+     town's `stock` is what a town SELLS, and the rule that file protects is that an aether cell
+     is salvage rather than merchandise — only an occult dealer has one, because nobody makes
+     them any more. Putting Fallowend's reserve on the shelf meant you could walk in and buy the
+     thing keeping the lanterns lit, which is the opposite of the fiction as well as against the
+     rule. It is the town's own box, on the town's own object, and it is not for sale. */
+  fallowend.cells = ri(3, 6);
 })();
 /* WHETHER THERE IS VIOLET LIGHT ON SOMEBODY. Two sources, one question, and both lists are
    small and precomputed — `lanterns` is fixed at six and `charmed` is gathered once a tick in
@@ -6569,8 +6591,8 @@ function lanternTick(){
     if(L.fuel > 0){ L.fuel--; if(L.fuel === 0 && !t.sacked)
       log(`A lantern on the Fallowend road has gone out. The Elder says the words over it anyway.`, 'bad'); }
     /* the town relights what it can, out of a box it cannot refill */
-    if(!L.fuel && (t.stock.aether_cell || 0) > 0 && rnd() < 0.5){
-      t.stock.aether_cell--;
+    if(!L.fuel && (fallowend.cells || 0) > 0 && rnd() < 0.5){
+      fallowend.cells--;
       L.fuel = LANTERN_CELL_DAYS;
     }
   }
@@ -15752,7 +15774,27 @@ function spawnWanderers(){
       const t2 = pick(towns.filter(t3 => !t3.def.undeadFriendly));
       if(t2) p = findOpenNear(Math.round(t2.x + ri(-3, 3)), Math.round(t2.y + ri(-3, 3)), 5);
     } else if(w.where === 'shrine'){
-      if(coilShrine) p = findOpenNear(Math.round(coilShrine.x + ri(-2, 2)), Math.round(coilShrine.y + ri(-2, 2)), 5);
+      /* ---------- AT THE STONE, WHICH IS WHAT "AT THE STONE" MEANS ----------
+         This was `findOpenNear(stone + ri(-2,2), 5)` — a two-tile jitter, and then sixty random
+         darts inside a radius-5 box, which is the "sixty random darts" this README warns about.
+         Worst case lands him SEVEN tiles off, and `kin.js` asserts under six because the whole
+         characterisation is that he is standing at the serpent stone rather than in a field near
+         one. Search outward from the stone itself and take the first open tile: he ends up as
+         close to it as the ground allows, every time, on every seed. */
+      if(coilShrine){
+        const sx0 = Math.round(coilShrine.x), sy0 = Math.round(coilShrine.y);
+        outerRub:
+        for(let ring = 1; ring <= 4; ring++){
+          for(let dy = -ring; dy <= ring; dy++) for(let dx = -ring; dx <= ring; dx++){
+            if(Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+            const qx = sx0 + dx, qy = sy0 + dy;
+            if(qx < 2 || qy < 2 || qx >= W - 2 || qy >= H - 2) continue;
+            if(isBlocked(qx + 0.5, qy + 0.5)) continue;
+            p = {x: qx + 0.5, y: qy + 0.5};
+            break outerRub;
+          }
+        }
+      }
     }
     /* 'road' and every failed placement fall back to open waste. A wanderer who did not get
        placed is a wanderer who does not exist, and the promise is that they always do. */
@@ -35035,7 +35077,7 @@ const TALK_TREES = {
     },
     lanterns: {
       line: () => {
-        const dark = fallowend ? fallowend.dark : 0, box = fallowend ? (fallowend.town.stock.aether_cell || 0) : 0;
+        const dark = fallowend ? fallowend.dark : 0, box = fallowend ? (fallowend.cells || 0) : 0;
         return `${dark === 1 ? 'It has.' : `${dark} of them have.`} My grandmother could say the words over a dead post and it would come up violet by morning. ` +
           `I say the same words. ` + (box ? `There are ${box} of the old glass cells left in the box, and when they are gone I do not know what we do.`
                                           : `The box is empty. I have not told anyone that the box is empty.`);

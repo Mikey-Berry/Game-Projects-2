@@ -147,16 +147,25 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     /* ---- 4. THE COUNTDOWN ---- */
     for(const o of lamps) o.fuel = 3;
-    t.stock.aether_cell = 0;
+    fe.cells = 0;
     for(let d = 0; d < 5; d++) lanternTick();
     R.theyBurnDown = lamps.every(o => !o.fuel) && fe.dark === lamps.length
       ? `with the box empty, five nights puts all ${lamps.length} of them out`
       : `!! ${lamps.filter(o => o.fuel).length} STILL BURNING WITH NO CELLS LEFT`;
-    t.stock.aether_cell = 2;
+    fe.cells = 2;
     for(let d = 0; d < 12; d++) lanternTick();
-    R.theBoxRunsOut = (t.stock.aether_cell === 0) && lamps.filter(o => o.fuel).length > 0 && lamps.filter(o => o.fuel).length < lamps.length
+    R.theBoxRunsOut = (fe.cells === 0) && lamps.filter(o => o.fuel).length > 0 && lamps.filter(o => o.fuel).length < lamps.length
       ? `two cells relight two posts and then the box is empty — ${lamps.filter(o => o.fuel).length} of ${lamps.length} burning, and no way to make more`
-      : `!! THE BOX DID NOT RUN OUT (${t.stock.aether_cell} left, ${lamps.filter(o => o.fuel).length} lit)`;
+      : `!! THE BOX DID NOT RUN OUT (${fe.cells} left, ${lamps.filter(o => o.fuel).length} lit)`;
+
+    /* AND THE BOX IS NOT A SHELF. `gunnery.js` protects the rule that an aether cell is salvage
+       rather than merchandise — only an occult dealer has one, because nobody makes them any
+       more. The first version of this put Fallowend's reserve in `t.stock`, which is precisely
+       the list a vendor sells from, so you could walk in and buy the thing keeping the lanterns
+       lit. Asserted here as well as there, because it is this town's rule to break. */
+    R.notForSale = !(t.stock && t.stock.aether_cell)
+      ? 'and the box is the town\'s own, not on any shelf — nobody in Fallowend will sell you one'
+      : `!! FALLOWEND IS SELLING ${t.stock.aether_cell} AETHER CELLS OVER A COUNTER`;
 
     /* ---- 5. AND THE PLAYER CAN DO SOMETHING ABOUT IT ---- */
     for(const o of lamps) o.fuel = 0;
