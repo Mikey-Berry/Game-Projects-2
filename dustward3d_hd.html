@@ -5273,6 +5273,7 @@ function bossSpot(minTown, minStart){
    Three branches of the golden age went looking for immortality. The Dark found lichdom —
    that is your road. These two took the others, and they are still paying for it. */
 const immortals = [];
+let demilich = null;                /* the one who went all the way through the door */
 /* ============================================================ THE REDOUBTS
    Some scholars saw it coming. They built bunkers, grew soldiers, forged weapons the
    like of which nobody has managed since — and it made no difference whatsoever.
@@ -5943,6 +5944,7 @@ function openScholar(sc, who){
       hb.onclick = () => {
         if(cats < fee) return;
         cats -= fee;
+        paidHire(fee);
         sc.faction = 'player'; sc.neutral = false; sc.scholar = false;
         clearOrders(sc);
         log(`${sc.name} shoulders their satchel. "I want to see how this ends. Professionally."`, 'good');
@@ -6001,6 +6003,73 @@ function spawnImmortals(){
       worldEvent('immortal', c.x, c.y, 'A suit of armour walks the deep waste alone. It speaks. Nobody has seen it open.');
     }
   }
+  spawnDemilich();
+}
+/* ---------- THE DEMILICH — DARK. He finished, and finished badly. ----------
+   He does not walk, does not fight, and has not moved in four hundred years. Everything about
+   the placement is therefore about being FINDABLE: a ruin, far from the start, and not the
+   King's ruin — the two of them are the same story told from either side of the door and they
+   should not be in the same room.
+
+   ---------- AND HE MUST NOT MOVE ANYBODY ELSE ----------
+   `makeChar` spends numbers off the world stream whatever it is handed — that invariant is
+   documented at the top of it — so ADDING ONE BODY HERE shifts every draw after it and
+   re-rolls the rest of worldgen: the Dustport Archivist's sex, three bone golems, four
+   Hollowmere keepers, the arena, the orchard, the saints, the lanterns and the mine. That is
+   the single most expensive mistake this file records and it has been made repeatedly.
+   So the stream is POCKETED. `seed` is a plain global; the spawn borrows it and puts it back
+   exactly as found, and every draw downstream comes out the number it would have been if he
+   were not here. The placement inside the pocket is deterministic anyway — a sort and a ring
+   walk, no `pick`, no `findOpenNear` — so he lands on the same tile every build of a seed,
+   which is what a harness needs to stage anything beside him. */
+function spawnDemilich(){
+  const pocket = seed;                       /* borrowed. Put back below, whatever happens. */
+  try {
+    const king = chars.find(x => x.bossKey === 'king');
+    /* farthest ruin from the start town that is not already holding a king */
+    const cand = ruins.filter(r => !king || dist(r.x, r.y, king.x, king.y) > 18)
+      .sort((a, b) => dist(b.x, b.y, startTown.x, startTown.y) - dist(a.x, a.y, startTown.x, startTown.y));
+    const home = cand[0] || ruins[0];
+    if(!home) return;
+    /* a deterministic ring walk outward: first open tile on the smallest ring, north first.
+       `findOpenNear` is sixty random darts and its draw count is data-dependent, so it is the
+       wrong tool even inside a pocket — the tile it returns would move with the terrain. */
+    let px = null, py = null;
+    for(let r = 2; r <= 9 && px === null; r++){
+      for(let k = 0; k < 8; k++){
+        const a = (k / 8) * Math.PI * 2;
+        const x = Math.round(home.x + Math.cos(a) * r), y = Math.round(home.y + Math.sin(a) * r);
+        if(x < 3 || y < 3 || x > W - 4 || y > H - 4) continue;
+        if(tileAt(x, y) === 3 || isBlocked(x, y)) continue;
+        px = x; py = y; break;
+      }
+    }
+    if(px === null){ px = home.x; py = home.y; }
+    const c = makeChar('The Demilich', 'immortal', px, py,
+      {atk:8, def:14, tough:90, ath:0, magic:95, gift:'dark', sex:'m'});
+    c.neutral = true;
+    c.bossKey = 'demilich';
+    c.immortal = 'dark';
+    c.demilich = true;                 /* furniture: its own rig, and the AI leaves it alone */
+    c.undead = true; c.lich = true;    /* it went all the way through. That is the whole point. */
+    c.minded = true;
+    c.big = 1.0;
+    c.blood = 260; c.maxBlood = 260;
+    c.mana = 200; c.maxMana = 200;
+    c.guard = {x: px, y: py};
+    c.hunger = 100;
+    c.bindWeight = 0;
+    c.dropItems = {tome:3, remains:8, formula_p:1};
+    c.questGive = 'dark';
+    c.barks = ['I have no lungs and I am still talking. Work out for yourself which part of that is the trick.',
+               'Four hundred years. Ask me what I did with them. The answer is this sentence.',
+               'The King would not finish. I did. Between us we have covered every mistake there is.'];
+    chars.push(c);
+    immortals.push(c);
+    demilich = c;
+    worldEvent('immortal', c.x, c.y,
+      'In one of the far ruins there is a skull that talks. It has not moved in living memory and it knows your name before you give it.');
+  } finally { seed = pocket; }
 }
 (function spawnBosses(){
   /* The Ossuary King — dead royalty, holding court in a ruin far from the Bastion */
@@ -9932,7 +10001,12 @@ const TECHS = {
     desc:'Fold the light around a body. VEIL: an ally vanishes until they strike or the fold decays'},
   dust_unwalled:{name:'The Unwalled',      cost:1400,hours:88, req:'dust_veil',    rp:50,
     desc:'Conjure a squad that was never there. Enemies bite at nothing while yours do the cutting'},
-  last_rite:    {name:'The Last Rite',     cost:2500,hours:120, req:'rites_deep',   rp:60, desc:'Ascension to lichdom — at a price'},
+  /* THE ONE ASCENSION WITH NO QUEST ON IT. The other two carry `needsQuest` and each has five
+     stages and a person at the end; this had a shopping list and a line of italic text, which
+     is why the door that ends the game did not read as a door. The gate already existed —
+     `last_rite` simply did not use it. See IMMORTAL_LINES.dark. */
+  last_rite:    {name:'The Last Rite',     cost:2500,hours:120, req:'rites_deep',   rp:60, needsQuest:'dark',
+    desc:'Ascension to lichdom — at a price. The demilich has been through the door and will not let you walk it unwarned'},
 };
 /* ---------- THE TWO ROSTER LINES, WRITTEN OFF THE ROSTER ----------
    Reported: the Marrow Archer's line in the circle is stale. It was — Deeper Rites still sold
@@ -10647,6 +10721,14 @@ function hostile(a, b){
      put two oaths on opposite sides, which is the whole of the Guild's neutrality expressed
      as one line. */
   if(guildOath(a) && guildOath(b)) return false;
+  /* ---------- NOTHING QUARRELS WITH THE DEMILICH ----------
+     Asked before the neutrality rules because the neutrality rules would not save him: he is
+     `undead`, and `pierceNeutral` hands anything undead to the Purge and to Sister Ash whether
+     it is provoked or not. He has been sitting in that ruin for four hundred years with no
+     legs, no weapon and nothing anybody wants, and the one thing the questline cannot survive
+     is a purge squad wandering past and closing the only door in the game that has a person
+     behind it. He does not fight. Nothing fights him. */
+  if(a.demilich || b.demilich) return false;
   /* an immortal in your debt will not raise a hand to you */
   if((a.immortal && a.friendly && b.faction === 'player') || (b.immortal && b.friendly && a.faction === 'player')) return false;
   /* ---------- THE PIT: THE BOUT IS THE ONLY QUARREL, AND IT ENDS WHEN THE BOUT DOES ----------
@@ -10726,6 +10808,7 @@ function ai(c, dt){
   }
   if(c.state !== 'ok' || c.faction === 'player') return;
   if(c.vt) return; /* vendors don't move */
+  if(c.demilich) return; /* and furniture moves less than that */
   /* THE SNATCH. A Larder-Kin does not finish anyone. It waits for the fight to put someone
      on the ground, takes them, and leaves. It will not grab while it is being watched by
      something still standing — hence the check for a live enemy nearby. */
@@ -19368,7 +19451,49 @@ function openBoneMarket(necro){
    wants to hear what you found.
 
    Four objective kinds, all reading ledgers the game now keeps: `fetch` off the stores,
-   `slay` and `destroy` off bossSlain, `visit` off placesSeen. */
+   `slay` and `destroy` off bossSlain, `visit` off placesSeen.
+
+   AND FOUR MORE FOR THE THIRD ROAD, which asks about your camp rather than the map: `bring`
+   reads your roster, `hired` reads a counter, `show` reads the stores WITHOUT SPENDING THEM,
+   and `kept` reads how long a lieutenant has stood. The demilich's whole method is to name the
+   price early in a form you can still walk away from, so not one of his stages can be
+   satisfied by shopping. */
+/* ---------- HOW LONG A SEASON IS ----------
+   Long enough that keeping a lieutenant is a decision and not an afternoon, short enough that
+   the stage finishes inside an ordinary game. A year of a life passes in fifteen days of dust;
+   this is most of a year of standing beside something that has its own opinions. */
+const LIEU_SEASON = 12;
+/* ---------- WHAT A HIRE COST, KEPT ----------
+   The demilich's second stage wants a hire made AFTER he asked for one, which is a counter and
+   a mark rather than "do you have anybody". One counter, bumped everywhere gold buys a body,
+   so the stage cannot be satisfied by somebody who was already on the payroll. */
+const hiresPaid = {n: 0, last: 0};
+function paidHire(fee){ hiresPaid.n++; hiresPaid.last = Math.round(fee) || 0; }
+/* ---------- "SOMETHING STILL WARM AND STILL YOURS" ----------
+   Every word of that ask is a filter. STILL WARM: not a risen, not a construct, not a corpse
+   over somebody's shoulder. STILL YOURS: on your banner. WALKED HERE ON THEIR OWN FEET: a mule
+   did not walk here on its own account and neither did a body being carried. AND NOT YOU —
+   the point of the stage is whether there is anybody left BESIDES you, so the one person who
+   cannot answer it is the one asking. */
+const WITNESS_R = 6;
+function livingWitness(giver){
+  if(!giver) return null;
+  return chars.find(o => o.faction === 'player' && o.state === 'ok' &&
+    !o.undead && !o.beast && !o.construct && !o.mule && !o.protagonist && !o.captured &&
+    dist(o.x, o.y, giver.x, giver.y) <= WITNESS_R) || null;
+}
+/* the longest-standing lieutenant on your banner, and how long it has stood. `lieuSince` is
+   stamped by `promote`; a body that predates the stamp reads as raised TODAY, so an old save
+   owes the season rather than being handed it. */
+function keptLieutenant(){
+  let best = null;
+  for(const o of chars){
+    if(o.faction !== 'player' || !o.lieutenant || o.state === 'dead') continue;
+    if(!best || (o.lieuSince ?? day) < (best.lieuSince ?? day)) best = o;
+  }
+  return best;
+}
+function lieuHeld(u){ return u ? Math.max(0, day - (u.lieuSince ?? day)) : 0; }
 const IMMORTAL_LINES = {
   radiant: {
     open: 'Verity, the Unclouded',
@@ -19470,21 +19595,124 @@ const IMMORTAL_LINES = {
         giveTxt:'Kingsfang, a Preserved Formula, 3000 gold — and The Sigil Rite' },
     ],
   },
+  /* ---------- THE DARK, AND THE DOOR THAT DID NOT READ AS A DOOR ----------
+     The two roads the player will never walk each had a person on them. The one road the game
+     is actually about had a shopping list: 2,500 gold, 120 hours, a crown, ten remains, and
+     one line of italic text under a button. `last_rite` was the only ascension in the file
+     with no `needsQuest` at all.
+
+     The questgiver already had a shadow in it. The Sigil-Bound sends you for the Ossuary
+     King's crown and reads the inner band: ELEVEN NAMES AND HIS HAND UNDER ALL OF THEM. The
+     King is the one who WOULD NOT FINISH. So the demilich is the one who did, and finished
+     badly — kept the mind, lost everything the mind was for. Where the King stopped halfway and
+     became a boss, this one went all the way and became furniture. He is the only creature in
+     the world with a first-hand account of the far side of the door, and the only one who
+     cannot show you it, because he has nothing left to show.
+
+     So he tells you instead, five times, in the only way that survives being told: he makes
+     you spend the thing before it is gone. A living companion while you still have one. A
+     hired body while there is still a market. A crown you have to READ. A lieutenant you have
+     to KEEP. And then the decision itself, out loud, in front of a witness, which is what the
+     confirm box was pretending to be. */
+  dark: {
+    open: 'The Demilich',
+    stages: [
+      { kind:'bring',
+        ask:'You want the rite. Everyone does. First bring me something that is still warm and still yours — ' +
+            'a living companion, walked here on their own feet, who knows what you are asking. ' +
+            'I want to see whether you have anybody left.',
+        hint:'Bring a living companion of yours — not a risen, not a beast, not you — to stand where the demilich can see them.',
+        done:'The jaw does not move. The voice arrives anyway, from somewhere behind your own teeth. ' +
+             '"Good. Now look at them. THAT is the shape of what it costs — not the gold, not the crown. ' +
+             'I had four of those. I could not give you one of their names."',
+        give: () => { addItem('remains', 6); addItem('bandage', 6); cats += 800; },
+        giveTxt:'6 Mortal Remains, 6 bandages, 800 gold' },
+      { kind:'hired',
+        arm: (c) => { if(c.hireMark == null) c.hireMark = hiresPaid.n; },
+        ask:'Now go and hire somebody. Anybody. A guild blade, a farmhand, a drunk off the docks. ' +
+            'Come back and tell me what it cost you. Remember the number. ' +
+            'It is the last time you will ever be quoted one.',
+        hint:'Pay to take somebody on — a town recruit, a scholar, anyone with a price — and then come back and say what it cost.',
+        done:'"How much?" You tell him the number. "Hm. Cheap. They all are, from this side." ' +
+             'Nothing in the room moves for a while. "Nobody will quote you a price again. They do not haggle ' +
+             'with what I am. They run, or they kneel, and neither one of those is a number you can pay."',
+        give: () => { addItem('tome', 1); addItem('formula_w', 2); cats += 1400; },
+        giveTxt:'a Codex, 2 Worn Formulae, 1400 gold' },
+      { kind:'show', need:{crown:1},
+        ask:'There is a crown in a ruin on a king who would not finish. Take it. ' +
+            'Read the inner band before you bring it to me, and do not tell me what it says — ' +
+            'I want to know whether you looked.',
+        hint:'Take the Sunken Crown off the Ossuary King and bring it here. He does not want to keep it.',
+        done:'He never asks what was written. He asks whether you read it, and you say yes, and that was all of it. ' +
+             '"Eleven names. I am the ninth. He would not sign and they wrote him in regardless, which is ' +
+             'the only reason he is still angry about it." A pause. "Put it back in your pack. It is a key, and you will want it."',
+        give: () => { addItem('formula_p', 1); addItem('remains', 10); cats += 2000; },
+        giveTxt:'a Preserved Formula, 10 Mortal Remains, 2000 gold — and the crown, back' },
+      { kind:'kept',
+        ask:'Raise one up. Not a labourer — a lieutenant, with a name and a mind and a grudge. ' +
+            'Keep it a season. Then come back and tell me whether you commanded it, ' +
+            'or whether it did as it liked and you called that command.',
+        hint:`Raise a lieutenant and keep it standing ${LIEU_SEASON} days. He wants to know which of you was giving the orders.`,
+        done:'"And you are certain it was you." He lets that sit far longer than is comfortable. ' +
+             '"Well. You will have sixty of them before the end, and one mouth to answer them all with. ' +
+             'I am not warning you. I am telling you what the work is."',
+        give: () => { addItem('tome', 2); addItem('formula_p', 1); cats += 2600; },
+        giveTxt:'2 Codices, a Preserved Formula, 2600 gold' },
+      { kind:'fetch', need:{},
+        ask:'Ask me anything. I have had four hundred years and no mouth to spend them on. ' +
+            'Then decide in front of me — I will not have you do it alone in a cellar somewhere ' +
+            'and call it an accident.',
+        hint:'The demilich wants nothing brought. Go and stand with him, and decide where he can see it.',
+        done:'You ask, and he answers all of it — flatly, without persuasion, for a day and most of a night. ' +
+             'What goes. What stays. What the fourth century of a morning is like. None of it is a warning ' +
+             'and none of it is a lie. At the end: "Now. In front of me." And whatever you say, ' +
+             'he says the same thing back. "Then you were told." THE LAST RITE is yours to study.',
+        give: () => { addItem('crown', 1); addItem('formula_p', 2); cats += 3200; },
+        giveTxt:'a Sunken Crown, 2 Preserved Formulae, 3200 gold — and The Last Rite' },
+    ],
+  },
 };
-/* is the stage in front of them satisfied? */
-function stageMet(st){
+/* is the stage in front of them satisfied?
+   `giver` is the immortal doing the asking, and only the dark line's stages read it — they ask
+   about your camp rather than the map, and two of them ask it FROM WHERE HE IS SITTING. It is
+   optional so the two older lines (and anything that already calls this with one argument)
+   read exactly as they did. */
+function stageMet(st, giver){
   if(!st) return false;
-  if(st.kind === 'fetch')  return canAfford(st.need || {});
+  /* `show` is `fetch` for the purposes of the gate and NOT for the purposes of the till: he
+     wants to know whether you looked at the crown, and then he hands it back. */
+  if(st.kind === 'fetch' || st.kind === 'show') return canAfford(st.need || {});
   if(st.kind === 'slay' || st.kind === 'destroy') return !!bossSlain[st.boss];
   if(st.kind === 'visit')  return !!placesSeen[st.at] && canAfford(st.also || {});
+  if(st.kind === 'bring')  return !!livingWitness(giver);
+  /* A HIRE THAT HAPPENED BEFORE HE ASKED PROVES NOTHING about a market that is about to close.
+     AND AN UNARMED STAGE IS NOT A SATISFIED ONE: `hireMark || 0` read a null mark as zero, so a
+     player who had ever hired anybody arrived at this stage with it already green — the exact
+     opposite of what the stage is for. No mark, no answer; the mark is taken when he speaks. */
+  if(st.kind === 'hired')  return !!giver && giver.hireMark != null && hiresPaid.n > giver.hireMark;
+  if(st.kind === 'kept')   return lieuHeld(keptLieutenant()) >= LIEU_SEASON;
   return false;
 }
-function stageProgress(st){
+function stageProgress(st, giver){
   if(!st) return '';
-  if(st.kind === 'fetch'){
+  if(st.kind === 'fetch' || st.kind === 'show'){
     const ks = Object.keys(st.need || {});
-    return ks.length ? ks.map(k => `${ITEMS[k].name} ${campHas(k)}/${st.need[k]}`).join(' · ')
-                     : 'nothing to bring — only your presence';
+    if(!ks.length) return 'nothing to bring — only your presence';
+    const have = ks.map(k => `${ITEMS[k].name} ${campHas(k)}/${st.need[k]}`).join(' · ');
+    return st.kind === 'show' ? `${have} — he does not keep it` : have;
+  }
+  if(st.kind === 'bring'){
+    const w = livingWitness(giver);
+    return w ? `${w.name} is standing with you` : 'nobody living of yours is here';
+  }
+  if(st.kind === 'hired'){
+    if(!giver || giver.hireMark == null) return 'he has not asked yet';
+    const n = hiresPaid.n - giver.hireMark;
+    return n > 0 ? `you paid ${hiresPaid.last} gold for the last one` : 'nobody hired since he asked';
+  }
+  if(st.kind === 'kept'){
+    const u = keptLieutenant();
+    return u ? `${u.name} — ${Math.floor(lieuHeld(u))}/${LIEU_SEASON} days` : 'no lieutenant on your banner';
   }
   if(st.kind === 'slay')    return bossSlain[st.boss] ? 'it is done' : 'not yet dead';
   if(st.kind === 'destroy') return bossSlain[st.boss] ? 'it is down' : 'still walking';
@@ -19495,12 +19723,14 @@ function stageProgress(st){
   }
   return '';
 }
+const STAGE_VERB = {show:'SHOW HIM', bring:'PRESENT THEM', hired:'TELL HIM', kept:'TELL HIM'};
 function openImmortal(c){
   const line = IMMORTAL_LINES[c.questGive];
   if(!line) return;
   const total = line.stages.length;
   openModal(c.name.toUpperCase(),
     c.immortal === 'divine' ? 'She has not aged in ninety years. She cannot look at the sun.'
+    : c.immortal === 'dark' ? 'A skull on a heap of bones, wearing a crown nobody put there. It has been talking for four hundred years with nobody in the room.'
                             : 'A suit of armour with somebody still in it. Most of somebody.');
   const body = $('modalbody');
   const draw = () => {
@@ -19524,16 +19754,25 @@ function openImmortal(c){
       return;
     }
     const st = line.stages[at];
+    /* ---------- A STAGE THAT HAS TO BE ARMED IS ARMED WHEN HE SAYS THE WORDS ----------
+       "Come back and tell me what it COST you" is about a hire made after the asking, so the
+       stage needs a mark, and the honest moment to take it is the moment the player reads the
+       ask. Not on load, not on advance — a stage nobody has opened has not been asked for.
+       Idempotent, because `draw` runs on every redraw of this window. */
+    if(st.arm) st.arm(c);
     say2.textContent = st.ask;
     body.appendChild(say2);
     const row = document.createElement('div'); row.className = 'trow';
-    row.innerHTML = `<span class="tn">${stageProgress(st)} <span style="color:var(--dust)">→ ${st.giveTxt}</span></span>`;
+    row.innerHTML = `<span class="tn">${stageProgress(st, c)} <span style="color:var(--dust)">→ ${st.giveTxt}</span></span>`;
     const btn = document.createElement('button');
-    const ok = stageMet(st);
-    btn.textContent = st.kind === 'fetch' && !Object.keys(st.need || {}).length ? 'STAY' : 'GIVE';
+    const ok = stageMet(st, c);
+    /* GIVE is the wrong word for four of the five things the demilich asks: he takes none of
+       them. The verb is the stage's, and only a real handover says GIVE. */
+    btn.textContent = STAGE_VERB[st.kind] ||
+      (st.kind === 'fetch' && !Object.keys(st.need || {}).length ? 'STAY' : 'GIVE');
     btn.disabled = !ok;
     btn.onclick = () => {
-      if(!stageMet(st)) return;
+      if(!stageMet(st, c)) return;
       /* a fetch stage is paid for; a slay or a visit was paid for out there */
       if(st.kind === 'fetch' && Object.keys(st.need || {}).length && !campSpend(st.need)) return;
       if(st.kind === 'visit' && Object.keys(st.also || {}).length && !campSpend(st.also)) return;
@@ -19755,6 +19994,7 @@ function promote(u, caster){
   campSpend(PROMOTE_COST);
   u.lieutenant = true;                 /* and so it stops counting against the binding */
   u.minded = true;                     /* a lieutenant keeps a mind. That is the difference. */
+  u.lieuSince = day;                   /* and the demilich wants to know how long you kept it */
   u.shortTag = 'LT';
   u.stats.atk   *= 1.15;
   u.stats.def   *= 1.15;
@@ -23251,7 +23491,10 @@ function headKeyOf(c){
 }
 /* A named lich keeps its own body. Everything that would otherwise strip the built one — the
    robe assembly, the box-hiding, the float-instead-of-walk — asks this first. */
-function robedLich(c){ return !!c && !!c.lich && !LICHFACE[c.face]; }
+/* AND THE DEMILICH IS NOT ROBED. He is `lich` and then some — he went further through the
+   door than anything else in the game — but there is no body under the robe to hide and no
+   robe to hang: he is a skull, a crown and a heap of bones, built by his own branch. */
+function robedLich(c){ return !!c && !!c.lich && !c.demilich && !LICHFACE[c.face]; }
 /* ---------- AND THE HELMETS ----------
    Same numbers, same meaning, and hung on the same bone — a helm replaces the whole built
    head exactly as an authored face does.
@@ -25928,7 +26171,113 @@ function buildCharMesh(c){
   const ROT_LIMB = {fresh:1.22, cooling:1.06, spoiled:0.92, bones:0.78};
   const rotLimb = (risen && c.rot && ROT_LIMB[c.rot]) ? ROT_LIMB[c.rot] : 1;
   const LIMB = (fem ? 0.88 : 1) * ((BLD && BLD.limb) || 1) * (risen ? 0.66 * kinLimb * rotLimb : 1);   /* limb thickness — bone is thin */
-  if(c.beast){
+  /* ---------- THE DEMILICH — A SKULL, A CROWN, AND WHAT IS LEFT OF EVERYTHING ELSE ----------
+     "A single skull, crowned, with bejeweled eyes, seated upon a pile of sunbleached bones."
+     Its own branch and not a costume on the humanoid rig, because there is no humanoid left:
+     no spine, no arms, no legs, no gait. He does not walk, so he gets no walk — `e.still`
+     tells the animator there is nothing here to pose, which is also what stops it reaching for
+     `e.armL` on a body that has no arms.
+     THE PILE IS HASHED, NOT ROLLED. `hash2` off the bone's index gives a heap that is
+     different from every other heap and IDENTICAL on every rebuild — a body that walks out of
+     view and back has the same bones in the same places, and worldgen's stream never learns
+     that anybody looked at him. See the note on `phase` above: this is the same trap.
+     The gems are the one lit part of him. Everything else is chalk. */
+  if(c.demilich){
+    e.still = true;
+    const BONE = ['#e8e1c9', '#ded5b8', '#d2c8a8', '#c6bb9a'];   /* sun-bleached, four shades of nothing */
+    const GOLD = '#d8b048', GOLD_DK = '#9a7a2c', GEM = '#b46cff';
+    /* ---- the heap: fifty-two bones thrown down and left ----
+       IT MUST READ AS A MOUND AND NOT AS A SPIDER. The first pass put long bones on a radial
+       position with a free yaw and a radius up to 1.05, which is the recipe for eight legs:
+       anything long, out at the rim, pointing anywhere, reads as a limb. So the heap is built
+       in FOUR COURSES instead — each one a smaller ring at a greater height, the bones short
+       enough that none of them out-reaches the pile, and every one of them lying nearly flat.
+       The yaw is offset FROM THE PLACEMENT ANGLE rather than free of it, so they lie across
+       the slope the way a thrown bone settles, not out from the centre like spokes. */
+    const heap = new THREE.Group(); g.add(heap);
+    const COURSES = 4;
+    for(let i = 0; i < 52; i++){
+      const cs = Math.floor(i / 13);                  /* 0 at the ground, 3 at the crest */
+      const t = cs / (COURSES - 1);
+      const ha = hash2(c.id * 7 + i, i * 31), hb = hash2(i * 17, c.id * 3 + i), hc = hash2(i * 53 + 11, i * 5);
+      const ang = ((i % 13) / 13 + ha * 0.09) * Math.PI * 2;
+      const rad = (0.68 - t * 0.44) * (0.55 + hb * 0.55);
+      const len = 0.20 + hc * 0.24;                   /* short. Nothing here out-reaches the pile. */
+      const o = obox(len, 0.065 + hb * 0.04, 0.070 + hc * 0.035,
+        BONE[(i + Math.floor(hc * 4)) % 4],
+        Math.cos(ang) * rad, 0.055 + t * 0.50 + hb * 0.06, Math.sin(ang) * rad, heap);
+      o.rotation.y = -ang + Math.PI / 2 + (hb - 0.5) * 1.5;   /* across the slope, not out from it */
+      o.rotation.z = (hc - 0.5) * 0.34;               /* nearly flat, and never on end */
+      o.rotation.x = (ha - 0.5) * 0.30;
+    }
+    /* knuckle-ends and joint heads scattered through it, so it reads as bodies and not firewood */
+    for(let i = 0; i < 12; i++){
+      const ha = hash2(c.id * 13 + i, i * 97), hb = hash2(i * 41 + 7, c.id);
+      const ang = ha * Math.PI * 2, rad = 0.22 + hb * 0.46;
+      mk(SPHG, ownBone(BONE[i % 4]), 0.115, 0.10, 0.115,
+         Math.cos(ang) * rad, 0.08 + hb * 0.46, Math.sin(ang) * rad, heap);
+    }
+    /* two lesser skulls half-buried in it — he is not the only one who tried */
+    for(const sx of [-0.44, 0.38]){
+      const sk = obox(0.23, 0.19, 0.25, BONE[2], sx, 0.19, sx > 0 ? -0.28 : 0.26, heap);
+      sk.rotation.y = sx > 0 ? 0.9 : -1.4; sk.rotation.z = 0.35;
+      obox(0.055, 0.05, 0.02, '#241d16', -0.05, 0.02, 0.13, sk);
+      obox(0.055, 0.05, 0.02, '#241d16',  0.05, 0.02, 0.13, sk);
+    }
+    /* ---- the skull, seated on top ----
+       On its own group so the whole head turns in one place — the animator swings this rig by
+       the group, and a portrait can frame it without hunting for boxes.
+       THE FIRST PASS WAS A BOX UNDER A TRAY. A cube cranium with a slab of gold laid flat
+       across it read as a crate with a lid on, and the brow — a wide plate at full skull width
+       — walled the sockets in so the gems could not be seen at all, which is the one feature
+       that was asked for by name. So: the cranium is a DOME, the brow is a narrow ridge that
+       overhangs rather than covers, the sockets are cut deep and dark, and the crown is a ROUND
+       band that sits ON the dome instead of a plate balanced over a square. */
+    const S = new THREE.Group(); S.position.set(0, 0.84, 0); g.add(S);
+    e.head = null;                                   /* nothing here is a head bone */
+    e.skull = S;
+    mk(SPHG, ownBone('#efe8d2'), 0.47, 0.46, 0.49, 0, 0.09, 0, S);   /* the cranium */
+    obox(0.38, 0.19, 0.38, '#eae2cc', 0, -0.085, 0.005, S);          /* the face, under the dome */
+    obox(0.33, 0.05, 0.12, '#ded4b6', 0, 0.020, 0.165, S);           /* the brow, out OVER the sockets */
+    obox(0.10, 0.13, 0.14, '#e3dabe', -0.135, -0.145, 0.125, S);     /* cheekbones */
+    obox(0.10, 0.13, 0.14, '#e3dabe',  0.135, -0.145, 0.125, S);
+    obox(0.055, 0.09, 0.07, '#1d1710', 0, -0.118, 0.180, S);         /* the nasal hollow */
+    /* the sockets, cut back into the bone so the gems sit INSIDE a shadow */
+    for(const sx of [-1, 1]){
+      obox(0.125, 0.125, 0.11, '#17120c', sx * 0.118, -0.070, 0.140, S);
+      /* ---- the bejewelled eyes ----
+         Not painted on: a faceted stone set into each socket, lit, with a brighter core. They
+         are the only thing on this body that is not four hundred years of chalk, and they are
+         the reason you can tell across a ruin that the skull is looking at you. */
+      const gem = mk(OCTG, ownGlow(GEM), 0.135, 0.135, 0.10, sx * 0.118, -0.070, 0.178, S);
+      gem.rotation.z = Math.PI / 4;
+      mk(SPHG, ownGlow('#e6bcff'), 0.035, 0.035, 0.028, sx * 0.118, -0.070, 0.206, S);
+      (e.gems = e.gems || []).push(gem);
+    }
+    for(let i = 0; i < 6; i++)                                        /* the upper teeth */
+      obox(0.030, 0.042, 0.03, '#f4eeda', -0.115 + i * 0.046, -0.190, 0.190, S);
+    /* the jaw, hung slightly open and going nowhere — he has no mouth and is still talking */
+    const jw = obox(0.30, 0.09, 0.28, '#e3dabe', 0, -0.255, 0.030, S);
+    jw.rotation.x = 0.13;
+    /* ---- the crown ----
+       Nobody put it there. A round band, five points, and a stone in the front one — the same
+       violet as the eyes, because whatever is in them is what is holding the thing on. It sits
+       DOWN on the dome and tips slightly, the way a crown does on a head that stopped moving. */
+    const CR = new THREE.Group(); CR.position.set(0, 0.265, 0); CR.rotation.z = -0.055; CR.rotation.x = 0.045; S.add(CR);
+    mk(CYLG, ownMetal(GOLD),    0.475, 0.090, 0.475, 0, 0, 0, CR);    /* the band */
+    mk(CYLG, ownMetal(GOLD_DK), 0.492, 0.024, 0.492, 0, -0.049, 0, CR);   /* its lower rim */
+    mk(CYLG, ownMetal(GOLD_DK), 0.482, 0.020, 0.482, 0, 0.043, 0, CR);
+    for(let k = 0; k < 5; k++){
+      const a = (k / 5) * Math.PI * 2;
+      const tall = 0.19 - (k % 2) * 0.06;
+      const pt = obox(0.080, tall, 0.070, GOLD,
+        Math.cos(a) * 0.205, 0.045 + tall * 0.5, Math.sin(a) * 0.205, CR);
+      pt.rotation.y = -a;
+      pt.rotation.z = Math.cos(a) * -0.13;
+      pt.rotation.x = Math.sin(a) * 0.13;
+    }
+    mk(OCTG, ownGlow(GEM), 0.095, 0.11, 0.095, 0, 0.012, 0.232, CR);  /* the stone in the front */
+  } else if(c.beast){
     if(c.soulbound){
       /* A SIMULACRUM: a small blank figure with no face and no feet, hung in the air inside a
          ring of its master's binding. It is deliberately the least threatening thing on the
@@ -28181,13 +28530,37 @@ function syncChars(dt){
         for(const b2 of e.spineBits) b2.rotation.x = 0;
         e.sigil.visible = false;
       }
-      if(!c.beast){
+      /* AND NOTHING THAT HAS NO ARMS. `e.still` is a rig with no limb bones at all — the
+         demilich is a skull on a heap — so this reached straight into `e.armL.rotation` and
+         took the frame down. A body that cannot be posed is not posed. */
+      if(!c.beast && !e.still){
         e.armL.rotation.x = 0.2; e.armR.rotation.x = -0.15;
         e.elbL.rotation.x = 0.3; e.elbR.rotation.x = 0.2;
         e.legL.rotation.x = 0.1; e.legR.rotation.x = -0.2;
         e.kneeL.rotation.x = 0.3; e.kneeR.rotation.x = 0.15;
         e.spine.rotation.x = 0;
       }
+    } else if(e.still){
+      /* ---------- IT DOES NOT MOVE. IT LOOKS. ----------
+         Four hundred years in one spot is a pose in itself: no gait, no bob, no crouch, and
+         nothing on this rig that a pose could be applied to anyway. The one thing it does is
+         TURN THE SKULL, slowly, toward whoever came into the ruin — which is the entire
+         performance and the only thing that separates it from set dressing. It keeps facing
+         wherever it last looked once you leave, because it has nothing better to do.
+         The gems light themselves; that is the material's business, not the animator's. */
+      let look = null, lookD = 15;
+      for(const o of chars){
+        if(o.faction !== 'player' || o.state === 'dead') continue;
+        const dd = dist(o.x, o.y, c.x, c.y);
+        if(dd < lookD){ lookD = dd; look = o; }
+      }
+      if(look){
+        const want2 = Math.atan2(look.x - c.x, look.y - c.y);
+        let dy = ((want2 - e.rotY + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        e.rotY += dy * Math.min(1, dt * 1.6);        /* slowly. Nothing about him is in a hurry. */
+      }
+      e.g.rotation.set(0, e.rotY, 0);
+      e.g.position.y = gy;
     } else if(e.floats){
       /* ---------- IT DOES NOT WALK ----------
          It hangs at reading height and drifts, and the loose parts of it lag behind the turn,
@@ -28622,8 +28995,15 @@ function syncChars(dt){
          past the crouch, so a fight pose still sinks it and the float still holds it up. */
       if(e.lichLift) e.g.position.y += e.lichLift;
     }
-    /* limbs & gear */
-    if(!c.beast){
+    /* limbs & gear.
+       AND NOTHING THAT HAS NO LIMBS. `!c.beast` was the whole test for "this rig has arms",
+       which held for as long as every non-beast in the game was a person. `e.still` is a rig
+       with no arm bones, no leg bones, no shield and no weapon — a skull on a heap — and this
+       reached straight through `e.armL` into `.visible`, which threw INSIDE the frame's
+       try/catch: the world kept turning and the screen stopped repainting. A frozen render
+       with a live sim is the hardest failure in this file to read, so the rule is stated the
+       same way in all three places that pose a body: no limbs, no posing. */
+    if(!c.beast && !e.still){
       const lim = (part, grp, m) => {
         const p = c.parts[part];
         grp.visible = !(p.severed && !p.pros);
@@ -32318,6 +32698,7 @@ function openBar(v){
       if(bannerLoad() >= SQUAD_CAP){ log(`Squad is full (${SQUAD_CAP}).`, 'bad'); return; }
       if(cats < r.cost){ refuse('Not enough gold.'); return; }
       cats -= r.cost;
+      paidHire(r.cost);
       town.recruits.splice(i,1);
       const p = findOpenNear(v.x, v.y+1, 2);
       const c = makeChar(r.name, 'player', p.x, p.y, {...r.stats, gift:r.gift, race: r.race || 'human', sub: r.sub || null, sex: r.sex || 'm',
@@ -35714,7 +36095,7 @@ function snapshot(){
     bindWeight:c.bindWeight, shortTag:c.shortTag, tempT:c.tempT??null, propped:!!c.propped,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
-    immortal:c.immortal||null, wanderKey:c.wanderKey||null, wanderMet:c.wanderMet||0, wanderSeen:c.wanderSeen?{...c.wanderSeen}:null, wanderJoined:!!c.wanderJoined, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, golem:!!c.golem, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
+    immortal:c.immortal||null, demilich:!!c.demilich, hireMark:(c.hireMark ?? null), wanderKey:c.wanderKey||null, wanderMet:c.wanderMet||0, wanderSeen:c.wanderSeen?{...c.wanderSeen}:null, wanderJoined:!!c.wanderJoined, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, construct:!!c.construct, golem:!!c.golem, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
     carryId: c.carry ? c.carry.id : null, yardRun: !!c.yardRun, tearRiftId: c.tearTarget ? c.tearTarget.id : null,
     skinShift: c.skinShift || null, shiftN: c.shiftN || 0,
     bearingId: c.bearing ? c.bearing.id : null,
@@ -35728,7 +36109,7 @@ function snapshot(){
     guardTargetId: c.guardTarget ? c.guardTarget.id : null,
     /* somebody you were paid to keep alive, and who they were walking to */
     vip: !!c.vip, escortTo: c.escortTo ?? null, escortId: c.escortId || 0, attendant: !!c.attendant,
-    npcNecro: !!c.npcNecro, lieutenant: !!c.lieutenant, civ: !!c.civ, merc: !!c.merc,
+    npcNecro: !!c.npcNecro, lieutenant: !!c.lieutenant, lieuSince: (c.lieuSince ?? null), civ: !!c.civ, merc: !!c.merc,
     guildHire: !!c.guildHire, guildLicensed: !!c.guildLicensed, guildmaster: !!c.guildmaster, wage: c.wage||0,
     heretic: !!c.heretic, burnDay: c.burnDay||0, bastionGuest: !!c.bastionGuest,
     inv: {...c.inv}, pack: c.pack, mule: !!c.mule, fleeOnHit: !!c.fleeOnHit,
@@ -35744,7 +36125,7 @@ function snapshot(){
     v:20, cats, bloodMoon, bloodMoonLast, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields, nodeUses:[...nodeUses], phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
-    favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen},
+    favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen}, hiresPaid: {...hiresPaid},
     rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang,tearWork:r.tearWork||0,tearWave:r.tearWave})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, fame: {...fame}, craftOrders: craftOrders.map(o => ({kind:o.kind, out:o.out, want:o.want, done:o.done})), lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], pyres: pyres.map(q=>({x:q.x, y:q.y, name:q.name, day:q.day, read:q.read||0})), pyreRead: pyreRead ? {...pyreRead} : null, necroSeen: towns.map(t=>t.necroSeen||0), coilHeld: towns.map(t=>!!t.coilHeld), coilShrine, coilExposed, coilStruck, coilN,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
     camps: camps.map(c => ({id:c.id, x:c.x, y:c.y, fac:c.fac, cap:c.cap, tents:c.tents})),
@@ -35973,6 +36354,7 @@ function restore(d){
   Object.assign(favors, d.favors || {});
   Object.assign(bossSlain, d.bossSlain || {});
   Object.assign(placesSeen, d.placesSeen || {});
+  Object.assign(hiresPaid, {n: 0, last: 0}, d.hiresPaid || {});
   bloodMoon = d.bloodMoon || 0;
   /* A FLOOR THAT RESETS ON LOAD IS A FLOOR YOU CAN WALK THROUGH BY SAVING. `?? -999` rather
      than `|| -999`: night 0 is a real night, and `||` would send it back to never. */
@@ -36127,7 +36509,8 @@ function restore(d){
     c.doorborn = !!s.doorborn; c.doorWork = !!s.doorWork;
     c.neutral = !!s.neutral; c.provoked = !!s.provoked; c.bossKey = s.bossKey || null; c.dropItems = s.dropItems || null;
     c.scholar = !!s.scholar; c.quest = s.quest || null; c.questsDone = s.questsDone || 0; c.offered = !!s.offered;
-    c.immortal = s.immortal || null; c.questGive = s.questGive || null; c.questDone = !!s.questDone; c.questStage = s.questStage || 0;
+    c.immortal = s.immortal || null; c.demilich = !!s.demilich; c.hireMark = (s.hireMark ?? null);
+    c.questGive = s.questGive || null; c.questDone = !!s.questDone; c.questStage = s.questStage || 0;
     c.wanderKey = s.wanderKey || null; c.wanderMet = s.wanderMet || 0;
     c.wanderSeen = s.wanderSeen ? {...s.wanderSeen} : null; c.wanderJoined = !!s.wanderJoined;
     /* saves from before the questlines: a finished single-step quest counts as the road walked */
@@ -36144,6 +36527,7 @@ function restore(d){
     c.att = s.att || {divine:0, destruction:0, dark:0, dust:0, ...((s.gift && s.race!=='chimera') ? {[s.gift]: 2} : {})};
     c.attXp = s.attXp || {divine:0, destruction:0, dark:0, dust:0};
     c.npcNecro = !!s.npcNecro; c.lieutenant = !!s.lieutenant; c.civ = !!s.civ; c.merc = !!s.merc;
+    c.lieuSince = (s.lieuSince ?? null);
     c.guildHire = !!s.guildHire; c.guildLicensed = !!s.guildLicensed; c.guildmaster = !!s.guildmaster; c.wage = s.wage || 0;
     c.heretic = !!s.heretic; c.burnDay = s.burnDay || 0; c.bastionGuest = !!s.bastionGuest;
     c.vip = !!s.vip; c.escortTo = s.escortTo ?? null; c.escortId = s.escortId || 0; c.attendant = !!s.attendant;
