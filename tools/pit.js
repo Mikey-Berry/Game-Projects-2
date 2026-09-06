@@ -52,10 +52,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     R.built = `a ${a.r * 2 + 1}-tile pit at ${Math.round(a.x)},${Math.round(a.y)}`;
 
     /* ---- 1. OUTSIDE, AND ON GROUND THAT WAS FREE ---- */
+    /* ---------- THIS CLAIM USED TO SAY THE OPPOSITE, AND IT WAS RIGHT TO ----------
+       "outside the wall and the sweep both" was the ask when the pit was built: a place the
+       town wants near enough to walk to and far enough that what happens in it is not happening
+       in the square. It is not the ask any more — "I would rather rebuild the WHOLE town to be
+       bigger and have the arena INSIDE of it. Right now it looks like a taped-on addition." —
+       and the town whose seat is the PIT-BOSS was always the wrong one to put it outside of.
+       Inverted rather than deleted: where the pit stands is still the load-bearing fact.
+       `seats.js` holds the rest of the rework. */
     const off = dist(a.x, a.y, t.x, t.y);
-    R.outside = off > (t.clearR || 20) + a.r
-      ? `${Math.round(off)} tiles from the square — outside the wall and the sweep both`
-      : `!! THE PIT IS ${Math.round(off)} TILES OUT, INSIDE THE TOWN'S OWN GROUND`;
+    R.atTheCentre = off < 2 && off + a.r < (t.def.wall ? t.def.wall.r : 0)
+      ? `on Ironscar's own centre, inside a wall of ${t.def.wall.r} — the town is built round it`
+      : `!! THE PIT IS ${Math.round(off)} TILES FROM THE SQUARE (wall ${t.def.wall && t.def.wall.r})`;
     R.notOnTheSeam = !oreFields.some(f => dist(f.x, f.y, a.x, a.y) < f.r + a.r)
       ? 'and not sitting on the seam that pays for the town'
       : '!! THE PIT WAS BUILT ON AN ORE FIELD';

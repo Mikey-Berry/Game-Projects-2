@@ -1772,7 +1772,13 @@ function placeTownAt(def, cx0, cy0){
   }
   /* the well: on the plaza normally, and out of the way where the plaza is spoken for */
   t.wellX = cx0 + 2.5; t.wellY = cy0 + 2.5;
-  if(keep){ t.wellX = cx0 + keep + 2.5; t.wellY = cy0 + keep + 2.5; }
+  /* ---------- INTO THE LANE, NOT ONTO THE RING ----------
+     The buildings begin at Chebyshev `keep + 3`, so the clear lane is `keep + 1` to `keep + 2`.
+     `keep + 2.5` rounds to `keep + 3` — the first tile a building can occupy — and put both
+     towns' notice boards inside a wall, which is what `board.js` caught. `keep + 1.5` rounds to
+     `keep + 2` and is in the middle of the lane by construction, clear of the centrepiece's own
+     ring (11 and 10 against a pit wall at 8 and a yard wall at 7) at both ends. */
+  if(keep){ t.wellX = cx0 + keep + 1.5; t.wellY = cy0 + keep + 1.5; }
   for(const [dx,dy,w,h,vt,label] of plan){
     const bx = cx0+dx, by = cy0+dy;
     placeBuilding(bx, by, w, h, label, t);
@@ -1876,8 +1882,16 @@ function placeTownAt(def, cx0, cy0){
        left `findNode` returning nothing for iron anywhere in the world. So the seam is pushed
        out past the wall, where a pit belongs anyway — the town owns it, the town does not
        stand on it, and the ore is still the first thing you walk into leaving the gate. */
+    /* ---------- AND THE OFFSET IS TO THE FIELD'S NEAR EDGE, NOT ITS CENTRE ----------
+       `clearR + r*0.7` put the field's centre a fixed distance out, which meant its NEAR edge
+       moved inward as the field grew and outward as the town did. When Ironscar's wall went to
+       37 for the pit, its seam centre landed 50 tiles from the square and the whole field was
+       past every scanner in the game — `findNode` returned nothing for iron anywhere, exactly
+       the failure this comment was written about the first time.
+       State the thing that actually matters instead: the seam BEGINS two tiles past the swept
+       ring. It is the first thing you walk into leaving the gate whatever size the town is. */
     const a = rnd() * Math.PI * 2;
-    const off = (t.clearR || 15) + Math.round(r * 0.7);
+    const off = (t.clearR || 15) + 2 + r;
     oreFields.push({x: Math.round(t.x + Math.cos(a)*off), y: Math.round(t.y + Math.sin(a)*off), r, kind, home: key});
   }
   /* ---------- AND COPPERHOLD'S OTHER ONE IS UNDER ITS OWN SQUARE ----------
@@ -6507,7 +6521,20 @@ let arena = null;
      your way in rather than wander in. The blades stand outside with him: they are Ironscar's,
      they are not in the bout, and a fight in the pit is not their business until it is. */
   const gm = gate[0];
-  const out = findOpenNear(gm.x + nx * 2, gm.y + ny * 2, 3);
+  /* ---------- AND HE STANDS OUTSIDE HIS OWN GATE ----------
+     `findOpenNear(gate + 2, r = 3)` is sixty random darts inside a radius that REACHES BACK
+     THROUGH THE GATE, and with the pit in the middle of a town there is a great deal more open
+     ground than there used to be — so the darts started landing him on his own sand, where
+     `hostile` puts him in the bout. Walk out along the gate's own normal instead and take the
+     first open tile past the wall. Deterministic, and it cannot be inside by construction. */
+  let out = {x: gm.x + nx * 2, y: gm.y + ny * 2};
+  for(let d = 2; d <= 7; d++){
+    const q = {x: gm.x + nx * d, y: gm.y + ny * d};
+    if(q.x < 3 || q.y < 3 || q.x >= W - 3 || q.y >= H - 3) break;
+    if(Math.max(Math.abs(q.x - cx), Math.abs(q.y - cy)) <= ARENA_R) continue;   /* still on the sand */
+    if(tileAt(q.x, q.y) === 3 || isBlocked(q.x + 0.5, q.y + 0.5)) continue;
+    out = q; break;
+  }
   const pm = makeChar('Pit-Master ' + pickName(), 'town', out.x, out.y,
     {atk: 22, def: 22, tough: 24, ath: 5, weapon: 'w_kat', armor: 'a_lea', armr: 22,
      head: 'h_armet', homeTown: t, guard: {x: out.x, y: out.y}});
@@ -16669,9 +16696,18 @@ function mawFeed(c, dt){
   return true;
 }
 /* spiral out from the worker looking for a matching resource *//* spiral out from the worker looking for a matching resource */
+/* ---------- HOW FAR A WORKER LOOKS ----------
+   Thirty-four was set when the biggest town on the map was twenty-seven tiles to its wall, so a
+   hand standing in the square could see well past the gate. Ironscar's wall is thirty-seven now
+   and Greenrest's thirty-five: at 34 a miner in the square cannot see over his own town's
+   ramparts, and the seam that town exists because of is invisible to the job that exists to
+   work it. Fifty-two clears the largest town plus its skirts.
+   IT IS NOT A PER-FRAME COST. The scan returns on the first hit, and a worker who finds nothing
+   re-asks once every five seconds (`jobNodeT`), not every tick. */
+const NODE_SCAN_R = 52;
 function findNode(c, kind){
   const cx0 = Math.floor(c.x), cy0 = Math.floor(c.y);
-  for(let r=1;r<=34;r++){
+  for(let r=1;r<=NODE_SCAN_R;r++){
     const steps = r*8;
     for(let i=0;i<steps;i++){
       const ang = i/steps * Math.PI*2;

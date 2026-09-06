@@ -50,13 +50,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       return R;
     }
     const e = estate, t = e.town;
-    R.built = `the Aldercott yard, ${e.hw*2+1}x${e.hh*2+1}, ${Math.round(dist(e.x, e.y, t.x, t.y))} tiles out from ${t.name}`;
+    R.built = `the Aldercott yard, ${e.hw*2+1}x${e.hh*2+1}, on ${t.name}'s own centre`;
     R.itIsTheStart = towns.indexOf(t) === towns.indexOf(startTown)
       ? 'and it is the START TOWN, which is the whole reason it is there'
       : '!! THE SECRET IS NOT AT THE TOWN THE PLAYER BEGINS BESIDE';
-    R.outside = dist(e.x, e.y, t.x, t.y) > (t.clearR || 20)
-      ? 'outside the wall — reclusive, as asked'
-      : '!! THE ESTATE IS INSIDE THE TOWN';
+    /* ---------- THIS CLAIM USED TO SAY THE OPPOSITE, AND IT WAS RIGHT TO ----------
+       "outside the wall — reclusive, as asked" held for as long as reclusive was the ask. It
+       is not any more: "I hate that the estate is outside the town — rework the whole town so
+       that it is centered around the estate." A family nobody in Greenrest is powerful enough
+       to question cannot be somewhere you have to leave Greenrest to reach. The claim is
+       inverted rather than deleted, because where the house stands is still the load-bearing
+       fact about it — and `seats.js` holds the rest of the rework. */
+    R.atTheCentre = dist(e.x, e.y, t.x, t.y) < 2 && dist(e.x, e.y, t.x, t.y) + e.hw < (t.def.wall ? t.def.wall.r : 0)
+      ? `on the town's own centre, inside a wall of ${t.def.wall.r} — the town is built round it`
+      : `!! THE ESTATE IS NOT THE MIDDLE OF THE TOWN (${dist(e.x, e.y, t.x, t.y).toFixed(1)} tiles out, wall ${t.def.wall && t.def.wall.r})`;
     R.walled = e.walls.length > 20 && e.gate.length
       ? `${e.walls.length} tiles of yard wall with one gate in it`
       : `!! THE YARD IS ${e.walls.length} TILES OF WALL AND ${e.gate.length} GATE(S)`;
