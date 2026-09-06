@@ -92,17 +92,40 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       /* AGAINST WHAT IS ACTUALLY OPEN DOWN THERE, not against the dig's own counter. The
          counter skips tiles that were already open, and the warrens deck this floor too, so
          the flood reached 100.4% of it — a denominator that can be exceeded is not a
-         denominator. Count the open floor of storey F the way `isBlocked` counts it. */
-      let openTiles = 0;
+         denominator. Count the open floor of storey F the way `isBlocked` counts it.
+         ---------- AND NOT AGAINST GROUND THAT IS SHUT ON PURPOSE ----------
+         The denominator used to include every warren chamber interior, which is floor the flood
+         is SUPPOSED to be unable to reach: a warren's door is shut at worldgen and the whole of
+         `warrens.js` exists to hold that it stays shut. So this number was two facts added
+         together — "is the network one piece" and "how much floor is behind a closed door" —
+         and it read 93.5% only because the chambers were small. Widening them to something a
+         host can fight in moved it to 88.9% with nothing whatever wrong, which is the
+         threshold measuring room size.
+         Take the sealed rooms out of the denominator and the claim says the thing it was
+         written to say, and says it far more strictly: not 92% of everything, but essentially
+         ALL of the ground that is meant to be walkable. */
+      const sealed = new Set();
+      for (const cv of caves) for (const rm of (cv.rooms || [])) {
+        if ((rm.f ?? F) !== F) continue;
+        for (let y = rm.y0; y <= rm.y1; y++) for (let x = rm.x0; x <= rm.x1; x++) sealed.add(y * W + x);
+      }
+      let openTiles = 0, netTiles = 0, netSeen = 0;
       for (const k of decks) {
         if (Math.floor(k / FLOOR_SPAN) - 4 !== F) continue;
-        if (!blocked.has(k)) openTiles++;
+        if (blocked.has(k)) continue;
+        openTiles++;
+        /* rebuild the plain tile index from the floor key so it can be tested against `sealed` */
+        const kk = k - (F + 4) * FLOOR_SPAN;
+        if (sealed.has(kk)) continue;
+        netTiles++;
+        if (seen.has(kk)) netSeen++;
       }
-      const frac = seen.size / Math.max(1, openTiles);
-      R._flood = `one flood from one tile reaches ${seen.size} of ${openTiles} open tiles on storey ${F}`;
-      R.andItIsOnePlace = frac > 0.92
+      const frac = netSeen / Math.max(1, netTiles);
+      R._flood = `one flood reaches ${netSeen} of ${netTiles} tiles of open NETWORK ` +
+                 `(${openTiles - netTiles} more are warren chambers, shut on purpose)`;
+      R.andItIsOnePlace = frac > 0.99
         ? `and you can walk from any of it to any of it — one flood reaches ${(frac * 100).toFixed(1)}% of the network`
-        : `!! IT IS IN PIECES — ONE FLOOD REACHES ${(frac * 100).toFixed(1)}%`;
+        : `!! IT IS IN PIECES — ONE FLOOD REACHES ${(frac * 100).toFixed(1)}% OF THE WALKABLE NETWORK`;
       /* and the halls are IN it, which the flood above cannot say on its own: a network that
          is connected to itself but leaves half the halls walled off is still broken */
       const orphan = U.halls.filter(h => !seen.has(Math.round(h.y) * W + Math.round(h.x)));

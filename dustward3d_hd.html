@@ -5591,10 +5591,29 @@ function placeCave(h){
          was the thing that was wrong.
          Push them out past the hall's own edge plus the widest ring they can have. */
       const a = (s2 / ring) * Math.PI * 2 + rnd() * 0.8;
-      const d2 = (h.r || 8) + 9 + rnd() * 8;
-      const scx = clamp(Math.round(sx + Math.cos(a) * d2), 7, W-8);
-      const scy = clamp(Math.round(sy + Math.sin(a) * d2), 7, H-8);
-      const rm = chamber(scx, scy, ri(3,5), ri(3,4), fl, {x: sx, y: sy}, (r2) => stockRoom(r2, fl));
+      /* ---------- AND THE RING GREW, SO THE OFFSET HAD TO ----------
+         This "+9" was derived from a chamber half-width of 5: push the ring out past the hall's
+         own edge plus the widest room that can be centred on it, or the room's WALL lands
+         inside the hall and seals the network off from itself. The rooms are half-widths of 7
+         now and the vault's is 10, so the old offset put a wall ring back inside the hall —
+         measured immediately: one hall in 81 walled off, one warren in 28 unreachable, and a
+         shaft dropping into solid rock. The bound is the room's own CORNER (√(10²+9²) ≈ 13.5),
+         not its half-width, because a chamber presented corner-on to the hall reaches further
+         than one presented face-on. */
+      const d2 = (h.r || 8) + 15 + rnd() * 8;
+      const scx = clamp(Math.round(sx + Math.cos(a) * d2), 9, W-10);
+      const scy = clamp(Math.round(sy + Math.sin(a) * d2), 9, H-10);
+      /* AND THE CHAMBERS THEMSELVES. Seven-by-seven at the small end is a cell, not a room —
+         four bodies and a doorway and there is nowhere left to stand. Eleven-by-nine at the
+         small end is a room a fight can happen in. Same number of dice, so the ring is laid out
+         in the same places; only the walls moved.
+         THE LAST OF THE RING IS THE VAULT and it is built to be a boss room rather than
+         promoted into one afterwards: seventeen by fifteen at the small end, which is the
+         difference between fighting the Deep Warden and being in a cupboard with it. */
+      const isVault = (s2 === ring - 1);
+      const rm = chamber(scx, scy, isVault ? ri(8,10) : ri(5,7), isVault ? ri(7,9) : ri(4,6),
+                         fl, {x: sx, y: sy}, (r2) => stockRoom(r2, fl));
+      rm.vault = isVault;
       rooms.push(rm);
       /* and a way to it, because a chamber the tunnels never reached is a sealed box */
       cave.links.push([sx, sy, rm.door.x, rm.door.y, rm.door.nx, rm.door.ny]);
@@ -8558,6 +8577,17 @@ function xpGain(c, stat, amt){
      labourer from raw to capped. It earns like a trade now: flat while you are learning the
      work, and grudging once you know it. */
   if(stat === 'labor') amt *= 0.55 * clamp(1 - c.stats.labor / 118, 0.1, 1);
+  /* ---------- AND THE SAME LAW AT THE DESK ----------
+     "Study skill levels up WAY too quickly. They max out at 100 quite easily."
+     Measured, and it was the fastest skill in the game by some distance — faster than labour
+     ever was. The bench paid `dt * 0.16` EVERY TICK with no roll in front of it, where farming
+     pays 0.3 on a 6% chance per second: 0.16 a second against 0.018, nine times the rate, for
+     the skill whose whole job is to be the long one. A hundred points was about ten minutes of
+     sitting down, or two at 5x.
+     It earns like the shovel now — flat while you are learning to read and grudging once you
+     can — and the base rate at the bench comes down to match. The Scriptorium's tuition is on
+     the same curve, because a course that teaches a master as much as a novice is not a course. */
+  if(stat === 'study') amt *= 0.5 * clamp(1 - c.stats.study / 112, 0.08, 1);
   if(c.age < 16) amt *= 1.6;
   else if(c.age > traitOf(c, 'deathAge', 62) - 7) amt *= 0.6;
   if(c.goal === stat) amt *= 1.25;
@@ -12790,7 +12820,10 @@ function physics(c, dt){
   /* chest order */
   if(c.chestTarget){
     const t = c.chestTarget;
-    if(t.opened){ c.chestTarget = null; }
+    /* AND THE WALK MUST END ON THE CHEST'S OWN FLOOR. Belt and braces beside the order gate:
+       `travel` is a 2D walk and will report arrival the moment x and y line up, so a body that
+       took a staircase mid-errand would otherwise loot through the ceiling. */
+    if(t.opened || (t.floor || 0) !== (c.floor || 0)){ c.chestTarget = null; }
     else if(travel(c, t.x, t.y, dt, 1.1)){ lootChest(t); c.chestTarget = null; }
     else return;
   }
@@ -12922,8 +12955,18 @@ function physics(c, dt){
     c.target = null; c.targetManual = false; c.attackMove = null;
   }
   /* auto-acquire: attack-move, tanks, the mindless dead, and the few risen built to pick
-     their own fights (the skeleton mage) — never medics, and never a servitor */
-  if(!c.target && !c.manning && !c.mule && !c.drag && c.stance!=='medic' && !boundForAWeapon(c) &&
+     their own fights (the skeleton mage) — never medics, and never a servitor.
+     ---------- AND NEVER SOMETHING BOUND NOT TO FIGHT ----------
+     "Death Eaters have the mindless feature, which is fine, as they should not be considered
+     intelligent. However this makes them attack any and all enemies when their primary duty
+     should be harvesting."
+     Exactly right, and the flag that says so was already on the body: a Death Eater is issued
+     `noFight`, and so are the Stitcher, the Soulbound and the Wisp. `ai()` clears the target of
+     anything carrying it — but `ai()` returns two lines in for `faction === 'player'`, so the
+     rule reached every noFight body in the world EXCEPT the ones the player paid for. This test
+     asked "does it have a mind", and mindlessness is not the same question as belligerence: the
+     thing has no mind AND no business in a fight, and only one of those was being read. */
+  if(!c.target && !c.manning && !c.mule && !c.noFight && !c.drag && c.stance!=='medic' && !boundForAWeapon(c) &&
      (c.attackMove || c.stance==='tank' || c.autoFight || (!mindedDead(c) && !c.mule))){
     /* HOW FAR A FIGHT REACHES. Seven tiles is close enough to be stabbed and not close
        enough to be a battle: a line of your own people would stand and watch a scrap eleven
@@ -13536,7 +13579,7 @@ function physics(c, dt){
          bench is the whole of "I don't see anything in the UI that indicates someone can
          improve in studying". Only while there is work on the table — a bench nobody has given
          a project to teaches nothing. */
-      else if(bench && (research.active || research.study)) xpGain(c, 'study', dt * 0.16);
+      else if(bench && (research.active || research.study)) xpGain(c, 'study', dt * 0.055);
     } else if(ej==='farm'){
       const farm = pBuilds.filter(b => b.type==='farm')
         .sort((a,b2) => dist(a.x,a.y,c.x,c.y) - dist(b2.x,b2.y,c.x,c.y))[0];
@@ -13727,32 +13770,21 @@ function physics(c, dt){
         if(dist(c.x, c.y, j.bx, j.by) > 2.4){ travel(c, j.bx, j.by + 1.4, dt, 0.4); return; }
         return;                     /* craftTick does the work — it runs before the job tick */
       }
-      /* ---------- AND THE STANDING WORK WHEN THE BOOK IS EMPTY ----------
-         Turning wood and stone into build materials was ALL this job ever did. It stays, as the
-         thing a spare pair of hands falls back to, because a camp always wants more mats and an
-         idle crafter with nothing ordered should not simply stand there. */
-      const bench = pBuilds.filter(b => b.type==='workbench')
-        .sort((a,b2) => dist(a.x,a.y,c.x,c.y) - dist(b2.x,b2.y,c.x,c.y))[0];
-      if(!bench){ if(rnd() < dt*0.05) log(`${c.name} has nothing ordered and no Workbench to fall back on.`, 'bad'); return; }
-      if(dist(c.x, c.y, bench.x+1, bench.y+1) > 2.2){ travel(c, bench.x+1, bench.y+2.4, dt, 0.4); return; }
-      /* stationed at the bench: turn the woodpile and the stone heap into something you can build with */
-      if(!canAfford(MATS_RECIPE)){
-        c.craftT = 0;
-        if(rnd() < dt*0.04) log(`${c.name} idles at the bench — no wood or stone left.`, '');
-        return;
-      }
-      c.craftT = (c.craftT || 0) + dt * (1 + c.stats.crafting * 0.05);
-      c.swingT = (c.swingT || 0) - dt;
-      if(c.swingT <= 0){ c.swingT = 0.9 + rnd() * 0.5; AU.hammer(c.x, c.y); }
-      if(c.craftT >= MATS_SECS){
-        c.craftT = 0;
-        if(campSpend(MATS_RECIPE)){
-          storeItem('mats', 1, c);
-          xpGain(c, 'crafting', 0.3);
-          addFloat(c.x, c.y-1, '+1 mats', '#d4c8a0');
-          refreshInv();
-        }
-      }
+      /* ---------- AND NOTHING AT ALL WHEN THE BOOK IS EMPTY ----------
+         "Craft should NOT default to just pumping out building materials. That should also be
+         order only. Otherwise I deplete all my reserves of wood/stone and get infinite build
+         mats that may or may not be needed."
+         Turning wood and stone into build materials was all this job ever did before the order
+         book existed, and it was left in as a fallback — which made CRAFT the one job in the
+         game that SPENDS the stores without being told to, and it never stops: two wood and two
+         stone every six seconds, for as long as anybody is standing there, whether or not a
+         single mat is wanted.
+         The book already sells the same thing. `{out:'mats', cost:{wood:2, stone:2}}` is the
+         second line of the workbench's recipes, so nothing is lost by deleting the fallback
+         except the part nobody asked for. An idle crafter stands there and says the book is
+         empty, which is what an idle crafter should do. */
+      c.craftT = 0;
+      if(rnd() < dt * 0.03) log(`${c.name} has nothing ordered. The book is empty.`, '');
       return;
     } else if(!c.gather){
       c.jobNodeT -= dt;
@@ -22620,7 +22652,7 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
    caves, and the carve opens rock, so a tunnel that runs into a warren's wall breaks into it.
    The tunnels were here first. */
 const UNDER = -1;
-const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24, ms: 0};
+const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0, bucket: 24, ms: 0};
 (function digUndercroft(){
   const _t0 = (typeof performance !== 'undefined' ? performance.now() : 0);
   const U = undercroft, B = U.bucket;
@@ -22646,9 +22678,22 @@ const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24
     for(let j = -ri2; j <= ri2; j++) for(let i = -ri2; i <= ri2; i++)
       if(i*i + j*j <= r*r) put(cx + i, cy + j);
   };
-  /* a tunnel: three wide, and it WANDERS. A straight line between two halls is a corridor in
-     a building; the wobble is a couple of tiles and it is the whole difference between a
-     tunnel and a hallway. */
+  /* ---------- A TUNNEL YOU CAN MARCH A HOST DOWN ----------
+     "The paths and each room are honestly quite narrow. It's hard to navigate and hard to
+     really march a host down there."
+     It was three wide — a radius of 1.6 — which is a corridor for one body and a queue for
+     everybody behind it. A necromancer's whole proposition is that they arrive with forty of
+     something, and three tiles turns forty into a single file that takes a minute to get round
+     a corner. Five to six now (radius 2.7), which is a road: two ranks abreast with room for
+     the fight to have a shape.
+     THE RADIUS COSTS NO RANDOM NUMBERS. `disc` draws none and `bore` draws exactly three
+     whatever width it lays, so the tunnel is wider without the stream noticing — the shafts
+     downstream still pick their tiles with the same darts. (The tiles they land ON do change,
+     because `findOpenNear` returns on the first unblocked hit and there is more open ground
+     now. That is a real shift and everything after it moves; it is the price of the change
+     rather than an accident.)
+     And it still WANDERS. A straight line between two halls is a corridor in a building; the
+     wobble is the whole difference between a tunnel and a hallway. */
   const bore = (ax, ay, bx, by) => {
     const dx = bx - ax, dy = by - ay;
     const n = Math.max(Math.abs(dx), Math.abs(dy));
@@ -22659,7 +22704,7 @@ const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24
       const t = s2 / n;
       const off = Math.sin(ph + t * Math.PI * 2 * per) * amp * Math.sin(t * Math.PI);
       const px = Math.round(ax + dx * t + nx * off), py = Math.round(ay + dy * t + ny * off);
-      disc(px, py, 1.6);
+      disc(px, py, 2.7);
     }
   };
 
@@ -22692,7 +22737,7 @@ const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24
     if(rnd() < 0.62){
       const a = rnd() * Math.PI * 2, d2 = r + 3 + rnd() * 7;
       const ox = Math.round(nd.x + Math.cos(a) * d2), oy = Math.round(nd.y + Math.sin(a) * d2);
-      disc(ox, oy, 3 + rnd() * 3);
+      disc(ox, oy, 4.5 + rnd() * 3);          /* a side chamber, not an alcove */
       bore(nd.x, nd.y, ox, oy);
     }
     nd.r = r;
@@ -22777,6 +22822,29 @@ const undercroft = {halls: [], shafts: [], grid: new Map(), tiles: 0, bucket: 24
     chests.push({x: h.x + ri(-2, 2), y: h.y + ri(-2, 2), opened: false, floor: UNDER,
       loot: {cats: ri(60, 260), items: {remains: ri(1, 3), ...(rnd() < 0.34 ? {c_ingot: ri(2, 5)} : {}),
              ...(rnd() < 0.18 ? {tome: 1} : {})}}});
+  }
+  /* ---------- AND SOMETHING GROWS DOWN HERE ----------
+     "Maybe some glowing fauna or something down there for effect? Let's experiment."
+     PALEFROND. Not a monster and not a light source the player controls — a sessile thing that
+     was here before the halls were cut, growing out of the seams where water gets in, and the
+     only reason you can see the shape of a room before you are standing in the middle of it.
+     Nothing about it fights, wants anything, or can be harvested. It is atmosphere with a
+     position, and after fifty thousand tiles of identical dark that is worth more than another
+     creature.
+     PLACED WITH `hash2`, NOT `rnd()`. Every stand's position, size and colour comes off the
+     hall's own coordinates, so the same world always grows the same fronds AND the world's
+     random stream never learns that any of this happened — which is the trap this file has
+     paid for repeatedly. A hundred and sixty stands cost zero dice. */
+  for(const h of U.halls){
+    const n = 3 + Math.floor(hash2(h.x * 31, h.y * 17) * 4);
+    for(let k = 0; k < n; k++){
+      const ha = hash2(h.x + k * 13, h.y * 7 + k), hb = hash2(k * 41 + h.x, h.y + k * 3);
+      const a = ha * Math.PI * 2, rr = (h.r || 8) * (0.45 + hb * 0.5);
+      const fx = Math.round(h.x + Math.cos(a) * rr), fy = Math.round(h.y + Math.sin(a) * rr);
+      if(!decks.has(bkey(fx, fy, UNDER)) || blocked.has(bkey(fx, fy, UNDER))) continue;
+      U.flora.push({x: fx + 0.5, y: fy + 0.5, h: 0.5 + hb * 0.9, n: 3 + Math.floor(ha * 4),
+                    hue: hash2(fx, fy)});
+    }
   }
   U.ms = (typeof performance !== 'undefined' ? performance.now() : 0) - _t0;
 })();
@@ -24933,6 +25001,39 @@ const syncUndercroft = makeDynGroup(
     }
     /* ---------- AND THE FLOOR YOU ARE STANDING ON ---------- */
     if(activeFloor !== UNDER) return;
+    /* ---------- PALEFROND ----------
+       The one thing down here that is not rock, bone or something trying to eat you. A stand of
+       pale fronds on a short stalk, lit from inside, growing where water gets into the seam.
+       Emissive rather than a real light: fifty stands in the camera window at one PointLight
+       each would be fifty shadow-casting lights in a scene budgeted for three, and the read the
+       player wants — "there is something alive down here and it is not me" — is entirely
+       carried by the colour. Camera-local like everything else in this group. */
+    {
+      const fy0 = floorY(UNDER), FR = undercroft.bucket * 2.6;
+      for(const F of undercroft.flora){
+        if(Math.abs(F.x - camSX) > FR || Math.abs(F.y - camSY) > FR) continue;
+        const gy2 = groundY(F.x, F.y) + fy0;
+        box(g, 0.16, F.h * 0.35, 0.16, '#4d5a48', F.x, gy2 + F.h * 0.175, F.y, false);   /* the stool */
+        for(let k = 0; k < F.n; k++){
+          const a = (k / F.n) * Math.PI * 2 + F.hue * 6.28;
+          const lean = 0.30 + F.hue * 0.22;
+          /* SATURATED, because `MeshBasicMaterial` shows exactly the hex it is given and the
+             first pass used three pale tints that came out as three shades of white against
+             grey rock. A glow in the dark has to be a COLOUR. */
+          const col = F.hue < 0.42 ? '#19e0a8' : F.hue < 0.78 ? '#2f9dff' : '#a03cff';
+          const m = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color: col}));
+          m.scale.set(0.075, F.h, 0.075);
+          m.position.set(F.x + Math.cos(a) * lean * 0.5, gy2 + F.h * 0.55 + F.h * 0.18, F.y + Math.sin(a) * lean * 0.5);
+          m.rotation.set(Math.sin(a) * lean, 0, -Math.cos(a) * lean);
+          g.add(m);
+          /* the bulb at the tip, which is the part you actually see from across a hall */
+          const b2 = new THREE.Mesh(SPHG, new THREE.MeshBasicMaterial({color: col}));
+          b2.scale.set(0.26, 0.26, 0.26);
+          b2.position.set(F.x + Math.cos(a) * lean * 1.05, gy2 + F.h * 1.05, F.y + Math.sin(a) * lean * 1.05);
+          g.add(b2);
+        }
+      }
+    }
     const B = undercroft.bucket, R = 2;
     const bx0 = Math.floor(camSX / B), by0 = Math.floor(camSY / B);
     const lit = new Set();
@@ -25471,11 +25572,21 @@ const syncBastion = makeDynGroup(
     box(g, 0.7, 0.4, 0.05, '#f0ead8', bastion.x+0.9, py+2.4, bastion.y, false);
   }
 );
+/* ---------- A CHEST IS ON A FLOOR, AND THIS DID NOT KNOW IT ----------
+   "There's an issue with the underground treasure chests. They are at the surface rather than
+   below where they are probably supposed to be. Which gives amazing loot at zero risk."
+   Exactly so, and it was one missing term. Every chest in the world was drawn at `groundY(x,y)`
+   with no `floorY` — the term every other floor-aware thing in this renderer adds — so the
+   undercroft's chests and the warren vaults were sitting on the grass twenty-two units above
+   the halls they belong to. The order handler had the matching hole (see the right-click
+   chain), so the box you could see was also a box you could open, without ever going down.
+   `forageFind` had it right all along: `(ch.floor || 0) !== 0` and skip. */
 const syncChests = makeDynGroup(
-  () => chests.map(t => t.opened?1:0).join(''),
+  () => chests.map(t => t.opened?1:0).join('') + ':' + activeFloor,
   (g) => { for(const t of chests){
-    box(g, 0.55, 0.4, 0.4, t.opened ? '#4a443c' : '#7a5426', t.x, groundY(t.x,t.y)+0.2, t.y);
-    if(!t.opened) box(g, 0.57, 0.08, 0.42, '#d4a040', t.x, groundY(t.x,t.y)+0.3, t.y, false);
+    const fy = floorY(t.floor || 0);
+    box(g, 0.55, 0.4, 0.4, t.opened ? '#4a443c' : '#7a5426', t.x, groundY(t.x,t.y)+fy+0.2, t.y);
+    if(!t.opened) box(g, 0.57, 0.08, 0.42, '#d4a040', t.x, groundY(t.x,t.y)+fy+0.3, t.y, false);
   }}
 );
 const syncBeds = makeDynGroup(
@@ -30619,7 +30730,12 @@ function refreshCharPanel(){
      called it mindless instead. The job row beside it has been asking the right question all
      along, which is why STUDY worked and the stance did not. */
   if(!mindedDead(c)){
-    sr.innerHTML = '<span style="color:var(--dust)">☠ mindless — always aggressive</span>';
+    /* AND "ALWAYS AGGRESSIVE" IS NOT TRUE OF ALL OF THEM. Four bound kinds carry `noFight` and
+       will not pick a fight at all; saying otherwise on their own panel is the readout telling
+       the player the opposite of what the body does. */
+    sr.innerHTML = c.noFight
+      ? '<span style="color:var(--dust)">☠ mindless — bound to its work, and will not start a fight</span>'
+      : '<span style="color:var(--dust)">☠ mindless — always aggressive</span>';
   } else {
     for(const [st, icon] of Object.entries(STANCE_ICONS)){
       const b = document.createElement('button');
@@ -34135,8 +34251,14 @@ cv.addEventListener('mousedown', e => {
         return;
       }
     }
-    /* ruin chest? */
-    const chest = chests.find(t => !t.opened && dist(t.x,t.y,wx,wy) < 0.9);
+    /* ruin chest? — ON THE FLOOR THE ORDER IS BEING GIVEN FROM. Without this a party standing
+       on the grass could be sent to open a vault in the undercroft directly beneath them, walk
+       nowhere, and take the loot: `travel` arrives the moment the x/y match, and it never had a
+       z to disagree about. Amazing loot at zero risk, and the deepest chests in the game are the
+       richest ones. The floor of the body being ordered, not `activeFloor` — the camera can be
+       looking anywhere. */
+    const ordFloor = movers[0] ? (movers[0].floor || 0) : 0;
+    const chest = chests.find(t => !t.opened && (t.floor || 0) === ordFloor && dist(t.x,t.y,wx,wy) < 0.9);
     if(chest){ clearOrders(movers[0]); movers[0].chestTarget = chest; return; }
     /* travelling caravaneer? */
     const car = chars.find(c => c.mobileVendor && c.state==='ok' && bodyHit(c, wx, wy, 1.0));
