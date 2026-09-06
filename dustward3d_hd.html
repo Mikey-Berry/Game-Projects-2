@@ -1189,8 +1189,12 @@ const TOWNS = [
     civBarks:['The vein runs deep this year.','Mercenary pay is triple guard pay. Triple.','Copper buys anything. Even quiet.','New shipment of arms at the smelter.'],
     lore:'Mine money built these walls, and mine money hires the blades on them.'},
   {key:'greenrest', name:'GREENREST',  pref:0, giftChance:.35, mult:{copper:1.3, fabric:0.6, rum:1.1, rum_black:0.92, hide:0.7, meat:0.6, fruit:0.5},
-    wall:{r:24, mat:'wood', hp:400}, guards:15, civs:23,
-    civBarks:['Harvest looks kind this season.','My grandmother planted that orchard.','Never seen a bandit inside these walls. Never will.','Fresh bread at the bar, if you\'re quick.'],
+    /* THE TOWN IS BUILT ROUND THE HOUSE, so the wall goes out to hold the house and the streets
+       both — and the guard is heavy because Greenrest has always had more watchmen than a quiet
+       farm town needs, and now the reason is in the middle of it. */
+    wall:{r:35, mat:'wood', hp:400}, guards:21, civs:31,
+    civBarks:['Harvest looks kind this season.','My grandmother planted that orchard.','Never seen a bandit inside these walls. Never will.','Fresh bread at the bar, if you\'re quick.',
+              'The Aldercotts have fed this town four generations. Say what you like about them, not to me.','They sent for the Marrows last winter. Lovely people. Moved on somewhere warmer, I heard.'],
     lore:'Quiet fields, full granaries, and more watchmen than any town its size. They like it that way.'},
   {key:'hollowmere',name:'HOLLOWMERE', pref:0, giftChance:.7, undeadFriendly:true,
     wall:null, guards:11, civs:18,
@@ -1203,7 +1207,9 @@ const TOWNS = [
     civBarks:['The flats give salt, the salt gives everything else.','We mind the tide-marks. You should too.','Outsiders taste of copper. We can tell.','Cure it in brine and it keeps till judgment.','Low tide at dusk. Stay off the pans.'],
     lore:'A shuttered town on the salt flats, curing fish and hoarding brine. They marry among themselves, bury among themselves, and count every stranger twice.'},
   {key:'ironscar',  name:'IRONSCAR',   pref:2, giftChance:.42, mercs:true,
-    wall:{r:26, mat:'stone', hp:900}, guards:13, civs:17,
+    /* THE PIT IS THE MIDDLE OF THE TOWN, not an outbuilding, so the walls stand well back from
+       it: seventeen tiles of sand, a lane round the pit, and the streets outside that. */
+    wall:{r:37, mat:'stone', hp:900}, guards:19, civs:26,
     mult:{copper:0.55, fabric:1.35, rum:1.25, rum_black:0.98, hide:1.15, meat:1.4, fruit:1.5,
            iron_ore:0.45, coal:0.50, iron:0.60},   /* the pit sets the price of iron */
     civBarks:['Work off the debt or the debt works you off.','Copper is cheap here. So are we.','The pit took my brother. It is hiring.','Mercs eat first. Always have.','Nobody leaves Ironscar paid up.'],
@@ -1661,6 +1667,9 @@ function warBias(t){
   const tr = t.leader && t.leader.trait;
   return tr==='warlike' ? 2.2 : tr==='ironfisted' ? 1.5 : tr==='craven' ? 0.25 : tr==='mercantile' ? 0.5 : tr==='pious' ? 0.8 : 1;
 }
+/* How big a square each town keeps clear at its own middle, and therefore what is standing in
+   it. Ironscar's pit is 17 across and Greenrest's estate yard is 15, plus a lane. */
+const CENTREPIECE = {ironscar: 11, greenrest: 10};
 function placeTownAt(def, cx0, cy0){
   const t = {def, x:cx0, y:cy0, name:def.name, mult:def.mult, posts:[], rep:0, walls:[],
     /* how far out the streets are swept — the wall and a little past it, so nothing wild
@@ -1727,6 +1736,43 @@ function placeTownAt(def, cx0, cy0){
   if(SIGNATURE[def.key]) plan.push([-17,-12, 5, 4, null, SIGNATURE[def.key]]);
   if(def.key==='copperhold') plan.push([12,3,6,5,'robotics','ROBOTICS']);
   if(def.key==='dustport') plan.push([11,7,5,4,'occult','THE LOW ROOM']);
+  /* ---------- A TOWN CAN BE BUILT AROUND SOMETHING ----------
+     "I would rather rebuild the WHOLE town to be bigger and have the arena INSIDE of it. Right
+     now it looks like a taped-on addition." And, for Greenrest: "I hate that the estate is
+     outside the town — rework the whole town so that it is centered around the estate."
+     Both are the same complaint and it is a fair one: the pit and the estate were each seeded
+     by walking a ring OUTWARD from the town until they found ground nobody was using, which is
+     how you place a thing that has nothing to do with the place it is near. A town whose whole
+     lore is the pit should have the pit in the middle of it and the streets bent around it.
+     So a town may reserve a square at its own centre. The hand-authored plan stays exactly as
+     it is — it is a good plan and it reads as a town — and every building in it that would
+     stand inside the reservation is pushed straight out along whichever axis it already leans
+     on, which opens a plaza without turning the layout into a ring of identical sheds. The
+     wall goes out to match (see TOWNS), and the well moves off the middle, because a well in
+     the centre of an arena is a hole in the sand.
+     One number per town, and the two things that go in the middle are seeded into it rather
+     than searching for somewhere to be. */
+  const keep = CENTREPIECE[def.key] || 0;
+  if(keep){
+    t.keepR = keep;
+    /* the plaza's edge, plus a lane to walk round it */
+    const need = keep + 3;
+    for(const e of plan){
+      const [dx, dy, w, h] = e;
+      /* how far the building's NEAR edge is from the centre on each axis; zero if it straddles */
+      const nx = dx >= 0 ? dx : Math.max(0, -(dx + w - 1));
+      const ny = dy >= 0 ? dy : Math.max(0, -(dy + h - 1));
+      if(Math.max(nx, ny) >= need) continue;
+      const gap = need - Math.max(nx, ny);
+      /* push along the axis it already leans on, so the plan keeps its shape */
+      const mx = dx + w / 2, my = dy + h / 2;
+      if(Math.abs(mx) >= Math.abs(my)) e[0] = dx + (mx >= 0 ? gap : -gap);
+      else                             e[1] = dy + (my >= 0 ? gap : -gap);
+    }
+  }
+  /* the well: on the plaza normally, and out of the way where the plaza is spoken for */
+  t.wellX = cx0 + 2.5; t.wellY = cy0 + 2.5;
+  if(keep){ t.wellX = cx0 + keep + 2.5; t.wellY = cy0 + keep + 2.5; }
   for(const [dx,dy,w,h,vt,label] of plan){
     const bx = cx0+dx, by = cy0+dy;
     placeBuilding(bx, by, w, h, label, t);
@@ -6417,36 +6463,21 @@ let arena = null;
 (function seedArena(){
   const t = towns.find(t2 => t2.def.key === 'ironscar');
   if(!t) return;
-  /* ---------- OUTSIDE THE WALL, AND NOT ON TOP OF ANYTHING ----------
-     The pit is on the outskirts because that is where it was asked for and because it is the
-     one building in this world that the town wants near enough to walk to and far enough that
-     what happens in it is not happening in the square. Everything it must not land on is
-     checked rather than hoped for: water, the town's own sweep, the seam that pays for the
-     town, and any ground that is already solid. */
-  const need = ARENA_R + 2;
-  let cx = 0, cy = 0;
-  for(let ring = 0; ring < 14 && !cx; ring++){
-    const off = (t.clearR || 20) + 10 + ring * 3;
-    for(let k = 0; k < 16 && !cx; k++){
-      const a = (k / 16) * Math.PI * 2;
-      const x = Math.round(t.x + Math.cos(a) * off), y = Math.round(t.y + Math.sin(a) * off);
-      if(x < need + 3 || y < need + 3 || x >= W - need - 3 || y >= H - need - 3) continue;
-      if(oreFields.some(f => dist(f.x, f.y, x, y) < f.r + need)) continue;
-      if(towns.some(t2 => t2 !== t && dist(t2.x, t2.y, x, y) < 60)) continue;
-      let ok = true;
-      for(let j = -need; j <= need && ok; j++) for(let i = -need; i <= need && ok; i++){
-        if(tileAt(x + i, y + j) === 3) ok = false;
-        else if(isBlocked(x + i + 0.5, y + j + 0.5)) ok = false;
-      }
-      if(ok){ cx = x; cy = y; }
-    }
-  }
-  if(!cx) return;
-  /* THE GATE FACES THE TOWN, on whichever of the four sides actually points at it — a pit whose
-     only door is round the back is a pit nobody walks into by accident. */
-  const dx = t.x - cx, dy = t.y - cy;
-  const nx = Math.abs(dx) >= Math.abs(dy) ? Math.sign(dx) : 0;
-  const ny = nx ? 0 : Math.sign(dy) || 1;
+  /* ---------- IT IS THE MIDDLE OF THE TOWN ----------
+     "Honestly I would rather rebuild the WHOLE town to be bigger and have the arena INSIDE of
+     it. Right now it looks like a taped-on addition."
+     It was, and the seeding said so: a ring walked outward from the wall until it found ground
+     nobody was using, which is how you place a thing that has nothing to do with the town it
+     is next to. Ironscar's seat is the PIT-BOSS and its lore is an open pit worked by the
+     indebted — the pit is not near the town, the pit is why the town is there.
+     So it goes on the town's own centre, `placeTownAt` keeps that square clear for it (see
+     CENTREPIECE), the wall stands well back, and the streets bend round it. No search: the
+     square is reserved before a single building is placed, so there is nothing to search for
+     and nothing to collide with. */
+  const cx = Math.round(t.x), cy = Math.round(t.y);
+  /* THE GATE FACES SOUTH, onto the town's own high street. There is no "toward the town" any
+     more — the town is all four sides of it — so it faces the way the gates in the wall do. */
+  const nx = 0, ny = 1;
   const gate = [];
   for(let d = -1; d <= 0; d++){
     gate.push(nx ? {x: cx + nx * ARENA_R, y: cy + d} : {x: cx + d, y: cy + ny * ARENA_R});
@@ -6484,9 +6515,9 @@ let arena = null;
   pm.civ = true;                      /* he takes money, he does not walk a beat */
   chars.push(pm);
   arena.master = pm;
-  for(let i = 0; i < 4; i++){
-    const a = (i / 4) * Math.PI * 2 + 0.6;
-    const q = findOpenNear(cx + Math.cos(a) * (ARENA_R + 3), cy + Math.sin(a) * (ARENA_R + 3), 3);
+  for(let i = 0; i < 6; i++){
+    const a = (i / 6) * Math.PI * 2 + 0.6;
+    const q = findOpenNear(cx + Math.cos(a) * (ARENA_R + 2), cy + Math.sin(a) * (ARENA_R + 2), 3);
     const gd = makeChar('Pit Guard', 'town', q.x, q.y,
       {atk: ri(18, 26), def: ri(18, 26), tough: ri(18, 26), ath: 5,
        weapon: 'w_kat', armor: 'a_lea', armr: 24, head: 'h_kettle',
@@ -6519,34 +6550,26 @@ let estate = null;
 (function seedOrchard(){
   const t = towns.find(t2 => t2.def.key === 'greenrest');
   if(!t) return;
-  const HW = 6, HH = 5;            /* the walled yard: 13 x 11 */
-  const need = Math.max(HW, HH) + 12;   /* the yard, and the rows behind it */
-  let cx = 0, cy = 0, ang = 0;
-  for(let ring = 0; ring < 12 && !cx; ring++){
-    const off = (t.clearR || 20) + 8 + ring * 3;
-    for(let k = 0; k < 16 && !cx; k++){
-      const a = (k / 16) * Math.PI * 2 + 0.35;
-      const x = Math.round(t.x + Math.cos(a) * off), y = Math.round(t.y + Math.sin(a) * off);
-      if(x < need + 3 || y < need + 3 || x >= W - need - 3 || y >= H - need - 3) continue;
-      if(arena && dist(arena.x, arena.y, x, y) < 40) continue;
-      if(oreFields.some(f => dist(f.x, f.y, x, y) < f.r + need)) continue;
-      let ok = true;
-      for(let j = -need; j <= need && ok; j++) for(let i = -need; i <= need && ok; i++){
-        if(tileAt(x + i, y + j) === 3) ok = false;
-        else if(isBlocked(x + i + 0.5, y + j + 0.5)) ok = false;
-      }
-      if(ok){ cx = x; cy = y; ang = a; }
-    }
-  }
-  if(!cx) return;
-  /* the gate faces the town; the rows are behind the house, away from the road */
-  const dx = t.x - cx, dy = t.y - cy;
-  const nx = Math.abs(dx) >= Math.abs(dy) ? Math.sign(dx) : 0;
-  const ny = nx ? 0 : (Math.sign(dy) || 1);
+  /* ---------- IT IS THE MIDDLE OF THE TOWN ----------
+     "I hate that the estate is outside the town — rework the whole town so that it is centered
+     around the estate."
+     It was outside because it was SEEDED outside: a ring walked from the wall until it found
+     empty ground, which put the seat of the family that has fed Greenrest for four generations
+     in a field with its back to the place. The whole point of the Aldercotts is that the town
+     is theirs — that nobody in it is powerful enough to ask them a question — and a house you
+     have to leave town to reach cannot carry that.
+     So the yard is the town's own centre. `placeTownAt` reserves the square before a single
+     building goes down (see CENTREPIECE), the wall stands well back, and Greenrest's streets
+     are laid out around the Aldercott yard the way a market town is laid out around a church. */
+  const HW = 7, HH = 6;            /* the walled yard: 15 x 13 */
+  const cx = Math.round(t.x), cy = Math.round(t.y);
+  /* the gate faces south onto the high street; the rows are behind the house, out the back */
+  const nx = 0, ny = 1;
   const gate = [{x: nx ? cx + nx * HW : cx, y: nx ? cy : cy + ny * HH}];
   estate = {x: cx, y: cy, hw: HW, hh: HH, town: t, walls: [], gate,
             admitted: false, told: false, opened: false, graves: [],
-            gx: cx - nx * (HW + 7), gy: cy - ny * (HH + 7)};   /* the orchard, out the back */
+            invites: [], taken: 0, nextInvite: 6 + ri(0, 5),
+            gx: cx - nx * (HW + 9), gy: cy - ny * (HH + 9)};   /* the orchard, out the back */
   const gk = new Set(gate.map(q => q.x + ',' + q.y));
   for(let j = -HH; j <= HH; j++) for(let i = -HW; i <= HW; i++){
     const edge = (Math.abs(i) === HW || Math.abs(j) === HH);
@@ -6556,9 +6579,57 @@ let estate = null;
     blocked.add(bkey(wx, wy));
     estate.walls.push({x: wx, y: wy});
   }
-  /* the house itself, inside the yard — a real building so the renderer and the town planner
-     both already know what to do with it */
-  estate.house = placeBuilding(cx - 3, cy - 2, 7, 5, 'ALDERCOTT HOUSE', t);
+  /* ---------- THE HOUSE, AND IT HAS AN UPSTAIRS ----------
+     "Make it a multi-story building with an NPC guard/servant out front who doesn't let you
+     into the building until you have met a certain reputation or requirement."
+     Three storeys: the ground floor where you are received, the first where the family lives,
+     and the attic under the roof. The game already knows how to do this — a town wall's rampart
+     is `decks.add(bkey(x, y, 1))` and a stair is `stairs.push({from, to})` — so the house is
+     built out of the same two primitives the walls are, and every system that already handles
+     floors (sight, pathing, the floor-aware renderer, the opacity that lifts a roof) handles
+     the house for free.
+     WHY THIS AND NOT A BIGGER FOOTPRINT: the thing that makes a great house feel like one is
+     that most of it is somewhere you have not been. A wide bungalow is a barn. */
+  estate.house = placeBuilding(cx - 4, cy - 3, 9, 6, 'ALDERCOTT HOUSE', t);
+  {
+    const hb = estate.house;
+    estate.floors = 3;
+    for(let f = 1; f <= 2; f++){
+      for(let j = hb.y; j < hb.y + hb.h; j++) for(let i = hb.x; i < hb.x + hb.w; i++){
+        decks.add(bkey(i, j, f));
+        /* an upper storey is a room with walls, not a platform: the same ring the ground floor
+           has, so nobody walks off the landing into the yard */
+        const edge = (i === hb.x || i === hb.x + hb.w - 1 || j === hb.y || j === hb.y + hb.h - 1);
+        /* NO `baseBlocked` HERE. It is captured from `blocked` a thousand lines below this
+           point — touching it now is a temporal-dead-zone throw that aborts the whole seeder
+           silently inside an IIFE, which is how the first version of this shipped a house with
+           no upstairs, no stairs and no door. Everything added to `blocked` before that capture
+           is in `baseBlocked` by construction, which is what this wanted anyway. */
+        if(edge) blocked.add(bkey(i, j, f));
+      }
+    }
+    /* the stairs, inside, one flight per storey and both on the same corner so the house reads
+       as having a staircase rather than two unrelated holes */
+    const stx = hb.x + 1, sty = hb.y + 1;
+    for(let f = 0; f < 2; f++){
+      for(const k of [bkey(stx, sty, f), bkey(stx, sty, f + 1)]){ blocked.delete(k); decks.add(k); }
+      stairs.push({x: stx, y: sty, from: f, to: f + 1});
+    }
+    estate.stair = {x: stx, y: sty};
+    /* ---------- AND THE DOOR IS KEPT ----------
+       The doorway `placeBuilding` leaves open is sealed until Bellowes opens it. This is the
+       one place in the game where a building's own door is shut against you, and it is shut
+       with the same `blocked` set as everything else, so there is no special case anywhere —
+       you are not "refused entry" by a dialogue check that a walk order can go round. You
+       cannot get in. `estateAdmit` below is the only thing that lifts it. */
+    estate.doorTiles = [];
+    for(const dxk of [0, 1]){
+      const k = bkey(hb.door.x + dxk, hb.door.y, 0);
+      blocked.add(k); estate.doorTiles.push(hb.door.x + dxk);
+    }
+    estate.doorY = hb.door.y;
+    estate.doorOpen = false;
+  }
   /* ---------- THE ROWS ----------
      Not corpses yet. Twenty bodies in `chars` from worldgen is twenty bodies in every save and
      every scan for the rest of the game, for a thing the player may never find — so they are a
@@ -6827,6 +6898,16 @@ function saltmereBurning(){
    in, and it is deliberately not easy: a house with that under its trees does not let people in
    because they were charming. */
 function estateAdmits(){ return !!estate && (estate.admitted || (estate.town.rep || 0) >= ORCHARD_REP); }
+/* Bellowes steps aside, and the door is a door again. Idempotent, and it is the ONLY caller
+   that clears those tiles — which is what makes "he does not let you in" a fact about the
+   world rather than a line of dialogue. */
+function estateAdmit(why){
+  if(!estate || estate.doorOpen) return false;
+  for(const dx2 of estate.doorTiles) blocked.delete(bkey(dx2, estate.doorY, 0));
+  estate.doorOpen = true; estate.admitted = true;
+  if(why) log(why, 'good');
+  return true;
+}
 /* ---------- AND THE GROUND GIVES IT UP ----------
    Three ways, and they are three different games. A necromancer standing in the orchard simply
    KNOWS — that is what the gift is, and it would be strange for the one profession built around
@@ -6844,12 +6925,81 @@ function orchardOpen(why){
     n++;
   }
   log(why, 'bad');
-  log(`${n} of them, in rows, under the fruit trees. Greenrest has been eating this orchard for four generations.`, 'bad');
+  log(`${n} of them, in rows, under the fruit trees — and not one of them whole. ` +
+      `Greenrest has been eating this orchard for four generations, and the orchard has been eating whoever came up the front path.`, 'bad');
   /* NO `deed` HERE. Finding a thing is not doing a thing, and `deed('graves')` would have been
      a no-op anyway — it is a QUEST kind, not a deed kind, and both ledgers ignore what they do
      not know. What the player does next is already covered: taking the bodies is `raise` and
      `graverob`, and both of those have opinions attached to them. */
   return n;
+}
+/* ============================================================ THE INVITATIONS
+   "Occasional invitations to the estate lead to the invitee never being seen again — though no
+   one is powerful enough to truly oppose them."
+
+   THE ROWS WERE A FACT ABOUT THE PAST AND NOTHING ELSE. Twenty coordinates, laid down at
+   worldgen, discovered or not discovered — and once you had seen them the Aldercotts were done.
+   A secret that finished the moment you learned it is a set-piece, not a thing living in the
+   world beside you.
+   So it is still happening. Every eight to fourteen days the house sends an invitation to
+   somebody in Greenrest, that person walks up to the door in the evening, and they are not seen
+   again. It is a real body off the town's own roster — the population goes down by one, their
+   name is remembered, and a new row goes in under the trees — which means a player who never
+   goes near the estate can still notice that Greenrest is quietly getting smaller, and a player
+   who has been in the orchard can watch the next one walk in.
+   AND NOBODY STOPS IT, which is the other half of the ask. The watch is Aldercott money. The
+   leader dines there. The only person on the map with any reason to object is the one who eats
+   corpses professionally, and the game has already decided what they think of a mass grave. */
+const INVITE_GAP = [8, 14];
+function inviteCandidates(){
+  if(!estate) return [];
+  const t = estate.town;
+  return chars.filter(c => c.civ && c.homeTown === t && c.state === 'ok' &&
+    (c.age || 20) >= 16 && !c.orchardKin && !c.orchardDame && !c.orchardServant &&
+    c.isLeader < 0 && !c.bossKey);
+}
+function estateInviteTick(){
+  if(!estate || estate.town.sacked) return;
+  /* SAYING IT OUT LOUD BUYS EXACTLY ONE THING. Nobody arrests them and nothing is proved — but
+   the house is not going to hand out invitations with somebody standing in the square telling
+   people what they are for. It is the smallest possible victory and it is a real one. */
+  if(estate.watched && chars.some(c => c.faction === 'player' && c.state !== 'dead' &&
+      dist(c.x, c.y, estate.x, estate.y) < (estate.town.clearR || 24) + 10)) return;
+  /* the pending invitation lands first: whoever was asked last time does not come back */
+  if(estate.pending && day >= estate.pending.at){
+    const v = chars.find(c => c.id === estate.pending.id);
+    estate.pending = null;
+    if(v && v.state === 'ok'){
+      /* a row goes in under the trees. If the ground has already been opened, the body is
+         REAL and lying there, because a player who knows should be able to watch it fill. */
+      const g = {x: estate.gx + ((estate.taken % 5) * 2) - 4 + 0.5,
+                 y: estate.gy + Math.floor((estate.taken % 20) / 5) * 2 - 3 + 0.5};
+      estate.graves.push(g);
+      estate.taken++;
+      estate.invites.push({name: v.name, day: Math.floor(day)});
+      if(estate.opened){
+        v.x = g.x; v.y = g.y; v.state = 'dead'; v.deadAt = day; v.orchardDead = true;
+        corpses.push(v);
+      } else {
+        const i = chars.indexOf(v); if(i >= 0) chars.splice(i, 1);
+      }
+      log(`${v.name} of Greenrest went up to the Aldercott house for dinner and has not come home.`,
+          estate.opened ? 'bad' : '');
+      worldEvent('missing', estate.x, estate.y,
+        `${v.name} has not been seen in Greenrest since the evening they were asked to dine at the house.`);
+    }
+  }
+  if(estate.pending) return;
+  estate.nextInvite--;
+  if(estate.nextInvite > 0) return;
+  estate.nextInvite = ri(INVITE_GAP[0], INVITE_GAP[1]);
+  const pool = inviteCandidates();
+  if(!pool.length) return;
+  const v = pool[ri(0, pool.length - 1)];
+  estate.pending = {id: v.id, name: v.name, at: day + 2};
+  /* the invitation itself is public. That is the horror of it: it is not a kidnapping, it is
+     an honour, and the whole town is pleased for them. */
+  log(`Bellowes carries an invitation across the square. ${v.name} is to dine at the Aldercott house.`, '');
 }
 /* the gift feels them without being told. Throttled and once — this runs in the world tick. */
 function orchardTick(){
@@ -6914,17 +7064,38 @@ function pitShut(){
 /* who is standing close enough to be sold a bout. Selection first, because choosing who goes in
    is the decision the card is asking you to make; everybody nearby otherwise, so a player who
    has not learned to select is not simply refused. */
-function pitEntrants(){
-  if(!arena) return [];
-  const near = c => c.faction === 'player' && c.state === 'ok' && !c.borneBy &&
-    dist(c.x, c.y, arena.x, arena.y) < ARENA_R + 12;
-  const sel = selected.filter(near);
-  return (sel.length ? sel : chars.filter(near)).slice(0, 6);
+/* ---------- ONE FIGHTER, AND IT IS THE ONE WHO ASKED ----------
+   "There should be a guard/npc of some kind outside you can talk to and arrange a fight. (Only
+   the person talking can fight in the arena.)"
+   It used to take the whole selection — up to six — which is a skirmish the party wins by
+   arithmetic, and it made the pit the safest fight in the game rather than the most dangerous.
+   The house sells a bout to a PERSON. Whoever walked up and spoke is who goes in; everyone else
+   stands at the rail and watches, which is also the only way a pit has any tension in it.
+   The speaker is threaded from the talk when there is one, and falls back to whoever of yours
+   is standing nearest the master — which is the same rule `approachAndTalk` uses to decide who
+   does the talking in the first place. */
+function pitSpeaker(who){
+  if(!arena) return null;
+  const able = c => c && c.faction === 'player' && c.state === 'ok' && !c.borneBy && !c.mule &&
+    dist(c.x, c.y, arena.x, arena.y) < ARENA_R + 14;
+  if(able(who)) return who;
+  const post = arena.master || arena;
+  let best = null, bd = 1e9;
+  for(const c of chars){
+    if(!able(c)) continue;
+    const d = dist(c.x, c.y, post.x, post.y);
+    if(d < bd){ bd = d; best = c; }
+  }
+  return best;
+}
+function pitEntrants(who){
+  const one = pitSpeaker(who);
+  return one ? [one] : [];
 }
 function pitInside(c){ return !!arena && Math.abs(c.x - arena.x) < ARENA_R && Math.abs(c.y - arena.y) < ARENA_R; }
-function pitStart(card){
+function pitStart(card, who){
   if(!arena || arena.bout) return false;
-  const crew = pitEntrants();
+  const crew = pitEntrants(who);
   if(!crew.length){ log('Nobody of yours is standing near enough to the gate to be sold anything.', 'bad'); return false; }
   if(cats < card.stake){ log(`The stake on ${card.name} is ${card.stake} and you do not have it.`, 'bad'); return false; }
   cats -= card.stake;
@@ -11122,7 +11293,7 @@ const BOARD_REFRESH = 4;         /* days between the board being rewritten */
 function townBoardPos(t){
   /* the plaza's reserved square — the town plan keeps +2.5,+2.5 clear of every building,
      every wall and every guard post, which is exactly why it is the plaza */
-  return {x: t.x + 2.5, y: t.y + 2.5};
+  return {x: (t.wellX ?? t.x + 2.5), y: (t.wellY ?? t.y + 2.5)};
 }
 function boardOpen(t){
   return !t.necroHostile && (t.rep || 0) > -25 && !t.sacked;
@@ -20545,6 +20716,7 @@ function update(dt){
     bountyDecay();
     wandererDayTick();       /* she is on a different road today, which is the point of her */
     hollowmereBurials();     /* and the yard takes what the neighbours send it */
+    estateInviteTick();      /* and the Aldercotts have somebody up to dinner */
     saltmereBurning();       /* while Saltmere feeds its fire and keeps its flats clean */
     lanternTick();           /* and Fallowend's posts burn down another day's worth */
     /* a broken shrine is not broken forever. They come back and set the stone, unless
@@ -23991,6 +24163,13 @@ const BUILD_STYLE = {
   'NET LOFT':       {pitch: 0.50, wallH: 2.2, kind: 'trade',   prop: 'sign'},
   'COUNTING HOUSE': {pitch: 0.80, wallH: 2.4, kind: 'civic',   prop: 'banners'},
   'ORCHARD HOUSE':  {pitch: 0.68, wallH: 2.2, kind: 'trade',   prop: 'crates'},
+  /* ---------- THE ONE HOUSE IN THE WORLD WITH AN UPSTAIRS ----------
+     The floors are real — decks and stairs on storeys 1 and 2, walked and pathed like a
+     rampart — and the renderer has to say so or the tallest thing in Greenrest is drawn as a
+     bungalow. Three storeys of wall at a shallow pitch: it stands over the yard wall, over the
+     houses on the square, and over the town's own gate towers, which is the entire point of a
+     family nobody is powerful enough to ask a question. */
+  'ALDERCOTT HOUSE':{pitch: 0.55, wallH: 8.4, kind: 'civic',   prop: 'banners'},
   'MORTUARY':       {pitch: 0.95, wallH: 2.2, kind: 'occult',  prop: 'stones'},
   'CURING HOUSE':   {pitch: 0,    wallH: 2.2, kind: 'craft',   prop: 'crates'},
   'DEBT HOUSE':     {pitch: 0,    wallH: 2.4, kind: 'martial', prop: 'spears'},
@@ -24375,7 +24554,7 @@ const syncWells = makeDynGroup(
     const stone = new THREE.MeshLambertMaterial({color: 0x6b6560});
     const wood = new THREE.MeshLambertMaterial({color: 0x4a3b28});
     for(const t of towns){
-      const wx = t.x + 2.5, wy = t.y + 2.5;
+      const wx = (t.wellX ?? t.x + 2.5), wy = (t.wellY ?? t.y + 2.5);
       const gy2 = groundY(wx, wy);
       const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.75, 0.5, 8), stone);
       ring.position.set(wx, gy2 + 0.25, wy); ring.castShadow = true;
@@ -31931,7 +32110,7 @@ function armouryRun(who, slots){
    coming, what it costs, what it pays, and — the one that matters — WHO WALKS IN. A pit that
    does not tell you who it is about to shut in with a hound pack is a pit that gets somebody
    killed by a misclick rather than by a hound. */
-function openPit(t){
+function openPit(t, who){
   if(!arena){ say(t, 'There is no pit here worth the name.'); return; }
   const line = arena.bout
     ? 'There is a card running. Watch it or walk away — I am not opening that gate for you.'
@@ -31942,15 +32121,16 @@ function openPit(t){
   const body = $('modalbody');
   const rndr = () => {
     body.innerHTML = '';
-    const crew = pitEntrants();
-    const who = document.createElement('div');
-    who.style.cssText = 'color:var(--dust);margin-bottom:9px;line-height:1.5';
-    who.textContent = arena.bout
+    const crew = pitEntrants(who);
+    const line2 = document.createElement('div');
+    line2.style.cssText = 'color:var(--dust);margin-bottom:9px;line-height:1.5';
+    line2.textContent = arena.bout
       ? `${arena.bout.name} is running. The gate is down.`
       : crew.length
-        ? `GOING IN: ${crew.map(c => c.name).join(', ')}${selected.length ? '' : ' — nobody was selected, so this is whoever is standing about'}`
+        ? `GOING IN: ${crew[0].name}, alone. The house sells a bout to a person, not to a company — ` +
+          `the rest of yours can stand at the rail.`
         : 'Nobody of yours is near enough the gate. Bring them over.';
-    body.appendChild(who);
+    body.appendChild(line2);
     for(let i = 0; i < PIT_CARDS.length; i++){
       const card = PIT_CARDS[i];
       /* THE HOUSE WILL NOT SELL YOU THE NEXT ONE UP. The progression is the whole shape of the
@@ -31963,7 +32143,7 @@ function openPit(t){
       b2.textContent = locked ? 'NOT FOR YOU' : 'TAKE IT';
       b2.disabled = locked || !!arena.bout || !crew.length || cats < card.stake;
       b2.onclick = () => {
-        if(!pitStart(card)) return;
+        if(!pitStart(card, who)) return;
         /* AND THE CLOCK STARTS. `openModal` pauses, and leaving it paused would drop the player
            into a shut pit with a hound pack and a stopped world — which reads as a freeze. */
         $('modal').style.display = 'none'; modalOpen = false;
@@ -35108,7 +35288,7 @@ function openTalk(o, who){
     return;
   }
   if(o.immortal){ openImmortal(o); return; }
-  talkTo(o);
+  talkTo(o, who);
 }
 function approachAndTalk(movers, o){
   if(!o) return;
@@ -35380,7 +35560,7 @@ const TALK_TREES = {
     },
     shown: {
       line: 'Through, then. And whatever she offers you — take it or refuse it, but do not haggle. She finds it common.',
-      opts: [{say:'Noted.', fn: () => { if(estate) estate.admitted = true; }}],
+      opts: [{say:'Noted.', fn: () => estateAdmit('Bellowes stands aside. The Aldercott door is open to you.')}],
     },
     notenough: {
       line: (t) => `You have. Greenrest knows it — I know it. The family is older than Greenrest. ` +
@@ -35391,6 +35571,7 @@ const TALK_TREES = {
       line: 'The orchard. Four generations of it. The oldest trees are the best croppers and nobody has ever worked out why — the Dame says it is the drainage.',
       opts: [
         {say:'The drainage.', to:'drainage'},
+        {say:'Who else has the family had to dinner lately?', to:'guests'},
         {say:'I see.'},
       ],
     },
@@ -35398,9 +35579,35 @@ const TALK_TREES = {
       line: 'The drainage. Yes. Will there be anything else?',
       opts: [{say:'No. Nothing else.'}],
     },
+    /* HE IS NOT LYING AND HE IS NOT TELLING YOU EITHER. Thirty-one years at that door and a
+       perfect memory for names is exactly the man who has noticed and decided not to have. */
+    guests: {
+      line: (t) => {
+        const n = (estate && estate.taken) || 0;
+        const last = estate && estate.invites.length ? estate.invites[estate.invites.length - 1] : null;
+        return n === 0
+          ? 'The family entertains. Not often — the Dame tires. There was a surveyor in the spring and a wool factor before him, and both of them very pleased to be asked.'
+          : `${last ? last.name : 'Somebody'} came up last, and the Dame was in fine form that evening. ` +
+            `${n === 1 ? 'They went on to Copperhold, I understand.' : 'They mostly go on to Copperhold, I understand. It is remarkable how many of them do.'}`;
+      },
+      opts: [
+        {say:'Nobody ever comes back from Copperhold, do they.', to:'copperhold'},
+        {say:'How many is "mostly"?', when: () => !!estate && estate.taken >= 2, to:'howmany'},
+        {say:'Quite.'},
+      ],
+    },
+    copperhold: {
+      line: 'It is a long road and the country between is not kind. I would not read anything into it and I would advise you not to either.',
+      opts: [{say:'I will bear that in mind.'}],
+    },
+    howmany: {
+      line: (t) => `I could not say. I do not keep the invitations — I only carry them.` +
+        (estate && estate.taken >= 3 ? ' ...I carried eleven, the year before last.' : ''),
+      opts: [{say:'You could say. You just did.'}],
+    },
     relented: {
       line: 'On your own head. She is in the long room and she does not like to be kept.',
-      opts: [{say:'Thank you.', fn: () => { if(estate) estate.admitted = true; }}],
+      opts: [{say:'Thank you.', fn: () => estateAdmit('Bellowes stands aside. The Aldercott door is open to you.')}],
     },
     firm: {
       line: 'No. I have been at this door for thirty-one years and I have never once opened it for a raised voice.',
@@ -35408,7 +35615,7 @@ const TALK_TREES = {
     },
     caught: {
       line: 'Ah. Then you have been in the orchard, and I would very much rather you told her than me. The door is open. It was always going to be, eventually.',
-      opts: [{say:'It was.', fn: () => { if(estate) estate.admitted = true; }}],
+      opts: [{say:'It was.', fn: () => estateAdmit('Bellowes stands aside. The Aldercott door is open to you.')}],
     },
   },
   /* ---------- AND THE WOMAN WHO DECIDED ----------
@@ -35433,21 +35640,53 @@ const TALK_TREES = {
       ],
     },
     why: {
-      line: (t, c) => 'Drainage, my husband used to say, and he was a coward. You want the true answer, so: because of what my grandmother put under them, ' +
-        'and her mother before her, and me. Come out to the rows and I will show you rather than say it, because saying it is vulgar and I am too old to be vulgar.',
+      line: (t, c) => 'Drainage, my husband used to say, and he was a coward. You want the true answer, so: what goes under the roots is what comes off ' +
+        'this table, and what comes off this table has fed Greenrest for four generations. Come out to the rows and I will show you rather than say it. ' +
+        'Saying it is vulgar and I am far too old to be vulgar.',
       opts: [
         {say:'Show me.', fn: () => { if(estate) orchardOpen('Dame Hessa walks you out past the house, stops between two old trees, and points at the ground with her stick.'); }, to:'count'},
         {say:'I have heard enough.'},
       ],
     },
+    /* ---------- AND IT IS NOT A BURIAL GROUND ----------
+       "Bodies under the estate is… alright as a dark secret. Let's go with that they are secret
+       cannibals. Occasional invitations to the estate lead to the invitee never being seen
+       again — though no one is powerful enough to truly oppose them."
+       The first version made the rows a war grave — bandits who came over the wall — which is
+       a secret about the PAST and a defensible one. It is not defensible now and it has not
+       stopped: the rows are what is left after dinner, they are still filling, and the reason
+       nobody does anything is not that nobody knows. */
     count: {
-      line: (t) => `Twenty that are still worth counting. More that are not. Every one of them came over that wall or up that road meaning to do us harm, ` +
-        `and every one of them is a reason a child in Greenrest has never seen a bandit. You may think what you like about the arithmetic. I have had sixty years with it and I think it holds.`,
+      line: (t) => {
+        const n = (estate && estate.taken) || 0;
+        const names = (estate && estate.invites.slice(-2).map(i => i.name)) || [];
+        return `Twenty that are still worth counting, and more that are not. Some of them came over that wall meaning us harm. ` +
+          `Most of them came up the front path, in their good coat, delighted to have been asked.` +
+          (names.length ? ` ${names.join(' was one. ')} was another.` : '') +
+          ` Nothing is wasted in this house and nothing ever has been. You may think what you like about the arithmetic. ` +
+          `I have had sixty years of it and every child in this town has grown up fed.`;
+      },
       opts: [
         {say:'It holds.', to:'ally'},
         {say:'It does not.', to:'expose'},
+        {say:'Who eats it? Besides you.', to:'whoeats'},
         {say:'I have no opinion. I have a use.', req:{gift:'dark'}, to:'bargain'},
       ],
+    },
+    whoeats: {
+      line: 'Everyone. That is the part people cannot hold in their heads, so they decide not to. We keep the orchard, the orchard keeps the town, ' +
+        'and the town has never once asked what a tree eats. The Warden dines here on the quarter-day. His father did. ' +
+        'You are the only person in eleven years to ask me a direct question, and you are a stranger, and that is not an accident.',
+      opts: [
+        {say:'Somebody must have tried to stop it.', to:'tried'},
+        {say:'That is enough.'},
+      ],
+    },
+    tried: {
+      line: 'A cooper, about thirty years ago. He went to the Warden. The Warden is my cousin. He went to Copperhold and came back with a writ, ' +
+        'and Copperhold buys our fruit. He was a determined man and I was sorry about him. ' +
+        'There is no one within a hundred miles of this house who can afford to be right about it.',
+      opts: [{say:'There is now.', to:'root'}],
     },
     ally: {
       line: 'Then you are welcome here, and the house is open to you, and I will not insult you by pretending that costs me anything. Take fruit on your way out. It is very good fruit.',
@@ -35459,17 +35698,25 @@ const TALK_TREES = {
         log('The Aldercotts consider you a friend of the house. Greenrest follows the Aldercotts.', 'good');
       }}],
     },
+    /* ---------- TELLING THEM DOES NOT WORK, AND THAT IS THE POINT ----------
+       "though no one is powerful enough to truly oppose them." So the expose branch no longer
+       finishes the Aldercotts — it costs you the town instead. The old version handed the
+       player a clean win for saying a true thing out loud, in a town where saying it is the one
+       thing that has never worked. What it does buy is that the house now knows what you are,
+       and the invitations stop while you are anywhere near it. */
     expose: {
-      line: 'You will tell them. Yes. And they will hang me, and my son, and Bellowes who has never put anybody anywhere — ' +
-        'and next spring the fruit will be ordinary, and the spring after that somebody will come over that wall. Do it if you are going to.',
+      line: 'You will tell them. Of course you will. Tell the Warden — he was here on the quarter-day. Tell the watch, whose wages come out of this orchard. ' +
+        'Tell the woman at the well whose boy has eaten our fruit every autumn of his life and ask her to be shocked. ' +
+        'I am not threatening you, child. I am telling you what will happen, which is nothing.',
       opts: [
-        {say:'I am going to.', fn: () => {
+        {say:'Tell them anyway.', fn: () => {
           if(!estate || estate.deal) return;
           estate.deal = 'told';
-          if(estate.town) estate.town.rep = clamp((estate.town.rep || 0) - 30, -100, 100);
-          log('Greenrest hears it by evening. The High Warden thanks you in front of the well and does not look at you while doing it.', '');
-          log('The Aldercotts are finished. So, quietly, is the harvest.', 'bad');
-          deed('town_saved', 0.5);
+          estate.watched = true;
+          if(estate.town) estate.town.rep = clamp((estate.town.rep || 0) - 35, -100, 100);
+          log('You say it in the square, at the well, to anybody who will stand still. Greenrest listens politely and goes back to work.', '');
+          log('Nobody calls you a liar. That is somehow worse. By evening the watch has been told to keep an eye on you.', 'bad');
+          log('The invitations stop while you are in town. It is the only thing that changes.', '');
         }},
         {say:'No. Not today.'},
       ],
@@ -35896,7 +36143,7 @@ const TALK_TREES = {
     },
   },
 };
-function talkTo(t){
+function talkTo(t, who){
   let line;
   /* SHE HAS BEEN WATCHING THE NEWS COME IN. What she says is not about the crown, it is
      about what her brother did with the time. There is nothing to accept here and no marker
@@ -35932,7 +36179,7 @@ function talkTo(t){
      They are checked first, below, so the generic tree never swallows them. */
   /* THE HOUSE SELLS BOUTS, NOT NEWS. Above the generic tree because the pit-master is faction
      'town' with a post and would otherwise get the watch conversation about the weather. */
-  if(t.pitMaster){ openPit(t); return; }
+  if(t.pitMaster){ openPit(t, who); return; }
   /* THE DOOR, AND THE PERSON BEHIND IT. Both are faction 'town' with a post and would otherwise
      get the watch's conversation about the weather. */
   if(t.orchardServant){ if(openDiscourse(t, 'servant')) return; }
@@ -36248,6 +36495,19 @@ function snapshot(){
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen}, hiresPaid: {...hiresPaid},
+    /* ---------- THE TWO HOUSES, WHICH WERE NOT BEING KEPT ----------
+       Neither the pit's ledger nor the estate's was in the save. The arena's is an old gap and
+       it cost the player their card progression on every reload — `best` is the whole shape of
+       that place. The estate's is new and matters more: the door being open, the count of
+       people who have gone up to dinner, and their names. Reloading used to shut the door on
+       somebody who had been let in and put the row count back to what worldgen laid down. */
+    arenaS: arena ? {wins: arena.wins, losses: arena.losses, best: arena.best} : null,
+    estateS: estate ? {admitted: !!estate.admitted, opened: !!estate.opened, doorOpen: !!estate.doorOpen,
+                       told: !!estate.told, taken: estate.taken || 0,
+                       invites: (estate.invites || []).map(i => ({...i})),
+                       pending: estate.pending ? {...estate.pending} : null,
+                       nextInvite: estate.nextInvite,
+                       graves: (estate.graves || []).map(g => ({x: g.x, y: g.y}))} : null,
     rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang,tearWork:r.tearWork||0,tearWave:r.tearWave})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, fame: {...fame}, craftOrders: craftOrders.map(o => ({kind:o.kind, out:o.out, want:o.want, done:o.done})), lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], pyres: pyres.map(q=>({x:q.x, y:q.y, name:q.name, day:q.day, read:q.read||0})), pyreRead: pyreRead ? {...pyreRead} : null, necroSeen: towns.map(t=>t.necroSeen||0), coilHeld: towns.map(t=>!!t.coilHeld), coilShrine, coilExposed, coilStruck, coilN,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
     camps: camps.map(c => ({id:c.id, x:c.x, y:c.y, fac:c.fac, cap:c.cap, tents:c.tents})),
@@ -36476,6 +36736,21 @@ function restore(d){
   Object.assign(favors, d.favors || {});
   Object.assign(bossSlain, d.bossSlain || {});
   Object.assign(placesSeen, d.placesSeen || {});
+  if(arena && d.arenaS){ arena.wins = d.arenaS.wins || 0; arena.losses = d.arenaS.losses || 0; arena.best = d.arenaS.best ?? -1; }
+  if(estate && d.estateS){
+    const E = d.estateS;
+    estate.admitted = !!E.admitted; estate.opened = !!E.opened; estate.told = !!E.told;
+    estate.taken = E.taken || 0;
+    estate.invites = (E.invites || []).map(i => ({...i}));
+    estate.pending = E.pending ? {...E.pending} : null;
+    estate.nextInvite = E.nextInvite ?? estate.nextInvite;
+    if(E.graves && E.graves.length) estate.graves = E.graves.map(g => ({x: g.x, y: g.y}));
+    /* the door is a set of `blocked` tiles, so restoring it is opening or shutting them —
+       `blocked` was rebuilt from `baseBlocked` above and the doorway is sealed again by
+       default, which is the right starting point for both cases */
+    if(E.doorOpen){ estate.doorOpen = false; estateAdmit(null); }
+    else { estate.doorOpen = false; for(const dx2 of estate.doorTiles) blocked.add(bkey(dx2, estate.doorY, 0)); }
+  }
   Object.assign(hiresPaid, {n: 0, last: 0}, d.hiresPaid || {});
   bloodMoon = d.bloodMoon || 0;
   /* A FLOOR THAT RESETS ON LOAD IS A FLOOR YOU CAN WALK THROUGH BY SAVING. `?? -999` rather
