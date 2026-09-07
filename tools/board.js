@@ -136,21 +136,41 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           R.waitsForYou = Math.abs(aloneD - startD) < 6 ? 'they will not set off without you'
             : `!! THE WARD WALKED ${Math.round(startD - aloneD)} TILES WITH NOBODY ESCORTING THEM`;
           /* and with somebody of yours in sight, they go */
+          /* ---------- WALK THEM, BUT DO NOT LET THEM ARRIVE ----------
+             Six hundred unconditional ticks is however far the road happens to be: on a world
+             where the destination was nearer, the ward GOT THERE, the contract completed and
+             left `contracts` — and the failure test below then read a delivered job as a failed
+             one with no penalty and reported "losing the ward costs nothing". Stop once they
+             have plainly covered ground and while the job is still running, which is the state
+             both of the claims below are about. */
           for (let i = 0; i < 600; i++) {
             esc.x = w.x + 1; esc.y = w.y + 1;
             contractTick(0.2);
             if (w.moveTarget) { physics(w, 0.2); }
+            if (!contracts.includes(j)) break;                       /* delivered or failed */
+            if (dist(w.x, w.y, towns[j.toTown].x, towns[j.toTown].y) < startD - 12) break;
           }
           const nowD = dist(w.x, w.y, towns[j.toTown].x, towns[j.toTown].y);
           R.theyTravel = nowD < startD - 5 ? `they covered ${Math.round(startD - nowD)} tiles of road`
             : `!! THE WARD DID NOT MOVE (${Math.round(startD)} → ${Math.round(nowD)})`;
-          /* and losing them is a failure with a cost */
-          const repWas = t.rep || 0;
-          kill(w, null);
-          contractTick(0.2);
-          R.losingThem = (!contracts.includes(j) && (t.rep || 0) < repWas)
-            ? `a dead ward fails the job and costs ${Math.round(repWas - t.rep)} standing`
-            : '!! LOSING THE WARD COSTS NOTHING';
+          /* ---------- AND THE LOSS HAS TO BE STAGED ON A JOB THAT IS STILL RUNNING ----------
+             This killed the ward straight after the six hundred ticks above, and those ticks
+             exist to walk them down the road — so on a world where the road happened to be
+             shorter they ARRIVED, the contract completed and left `contracts`, and the check
+             `!contracts.includes(j) && rep < repWas` read a finished job as a failed one with
+             no penalty. It reported "losing the ward costs nothing" about a job that had been
+             delivered successfully. Take a fresh contract that has not been walked anywhere,
+             and kill that one. */
+          if(!contracts.includes(j)){
+            R.losingThem = '!! THE JOB FINISHED BEFORE THE FAILURE COULD BE STAGED — THIS PROVES NOTHING';
+          } else {
+            const repWas = t.rep || 0;
+            kill(w, null);
+            contractTick(0.2);
+            R.losingThem = (!contracts.includes(j) && (t.rep || 0) < repWas)
+              ? `a dead ward fails the job and costs ${Math.round(repWas - t.rep)} standing`
+              : `!! LOSING THE WARD COSTS NOTHING (still listed ${contracts.includes(j)}, standing ${Math.round(repWas)} -> ${Math.round(t.rep || 0)})`;
+          }
         }
       }
     }

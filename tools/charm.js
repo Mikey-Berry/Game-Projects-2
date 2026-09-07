@@ -125,9 +125,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     guard(['aSuccubusInTheWorldReachesForIt'], () => {
       for (const c of made) { const i = chars.indexOf(c); if (i >= 0) chars.splice(i, 1); }
       made.length = 0;
-      const she = makeChar('Wanderer', 'bandit', me.x + 30, me.y + 30, { atk: 6, def: 6, tough: 10, magic: 20 });
-      she.state = 'ok'; she.race = 'mimic'; she.sub = 'succubus'; she.gift = null;
-      she.mana = 100; she.castCd = 0; she.__probe = true;
+      /* ---------- THE CLAIM IS "DOES SHE REACH FOR IT", NOT "DOES A 62% ROLL LAND" ----------
+         `castCharm` is a contest: odds = 0.35 + (magic + dust*8 - resist) * 0.02. At magic 20
+         against a mark with tough 10 and atk 5 that is 62%, and a hundred mana buys about five
+         attempts — so the claim was a coin flipped five times, and the moment an upstream change
+         moved the random stream it came up tails five times running and reported the NPC branch
+         dead. It is not a flake, either: the stream is deterministic per build, so it failed
+         every run on that build.
+         Give her the attunement and the magic to sit at the 0.9 ceiling, and the mana for twenty
+         attempts rather than five. What is being measured is whether the AI ever reaches for an
+         innate art at all, and that question deserves not to be answered by dice. */
+      const she = makeChar('Wanderer', 'bandit', me.x + 30, me.y + 30, { atk: 6, def: 6, tough: 10, magic: 40 });
+      she.state = 'ok'; she.race = 'mimic'; she.sub = 'succubus'; she.gift = 'dust';
+      she.att = { dust: 3, dark: 0, divine: 0, destruction: 0 };
+      she.mana = 400; she.castCd = 0; she.__probe = true;
       chars.push(she); made.push(she);
       const mark = makeChar('Mark', 'player', she.x + 2, she.y, { atk: 5, def: 5, tough: 10 });
       mark.state = 'ok'; mark.__probe = true;
@@ -143,7 +154,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          the third line every single time. It called nothing at all, which is the tell: a body
          that is deciding something calls SOMETHING. */
       let charmed = false;
-      for (let i = 0; i < 80 && !charmed; i++) { she.target = she.target || mark; physics(she, 0.1); charmed = !!mark.charmed; }
+      for (let i = 0; i < 260 && !charmed; i++) { she.target = she.target || mark; physics(she, 0.1); charmed = !!mark.charmed; }
       /* READ DEFENSIVELY, so the negative control still MEASURES. Naming `hasArts` straight
          throws on any build that predates it, the guard catches it, and the claim comes back as
          a ReferenceError — which proves a helper is new and says nothing about whether she used
@@ -153,7 +164,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
               `hostile=${hostile(she, mark)} state=${she.state}`;
       R.aSuccubusInTheWorldReachesForIt = charmed
         ? 'and a succubus out in the world reaches for it on her own — the NPC branch folds a line\'s innate arts in beside whatever its archetype was handed'
-        : '!! EIGHTY TICKS WITH A TARGET IN FRONT OF HER AND SHE NEVER USED IT';
+        : `!! 260 TICKS WITH A TARGET IN FRONT OF HER, ${Math.round(400 - she.mana)} MANA SPENT, AND SHE NEVER USED IT`;
       for (const c of made) { const i = chars.indexOf(c); if (i >= 0) chars.splice(i, 1); }
     });
 

@@ -64,9 +64,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const _log = log; window.log = (m, k) => { logs.push(String(m)); return _log(m, k); };
     paused = false;
 
-    /* open waste well clear of every town, so nothing in the world wanders into the test */
+    /* Open waste well clear of every town, so nothing in the world wanders into the test.
+       ---------- AND CLEAR OF EVERY STAIR, WHICH SECTION 3 ACTUALLY DEPENDS ON ----------
+       The predicate only asked about TOWNS, and section 3's whole claim is "with no way up,
+       nobody walks off across the map" — asserted by checking that the nearest stair in the
+       world is more than twenty tiles off. That held only because "far from a town" used to
+       imply "far from a stair". It does not: the undercroft puts eighty-two shafts across the
+       open waste, and the moment the dig moved they started landing near the staged wall and
+       the section reported THE TEST IS NOT SET UP. Sweep the ground you are going to use for
+       the thing you are going to claim about it. */
     let gx = 700, gy = 700;
-    const away = (x, y) => towns.every(t => dist(t.x, t.y, x, y) > 110);
+    const away = (x, y) => towns.every(t => dist(t.x, t.y, x, y) > 110)
+                        && stairs.every(s2 => dist(s2.x, s2.y, x, y) > 34);
     for (let r = 0; r < 6000 && !away(gx, gy); r++) { gx = 80 + ri(0, W - 160); gy = 80 + ri(0, W - 160); }
     R.ground = `staged on open waste at ${gx},${gy}`;
 

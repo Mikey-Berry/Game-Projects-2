@@ -53,11 +53,31 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       for (let j = -8; j <= 8 && ok; j++) for (let i = -3; i <= 12; i++) if (isBlocked(x + i, y + j, 0)) { ok = false; break; }
       if (ok) { S = { x, y }; break outer; }
     }
+    /* ---------- AND CLEAR THE PEOPLE OFF IT, NOT JUST CHECK THE ROCKS ----------
+       The note above already records this file going red when bodies were added to worldgen,
+       and pins the subrace so the DRAW cannot decide the fight. That is half of it: the search
+       above asks `isBlocked`, which knows about terrain and nothing about who is standing on
+       it, so the world's own wanderers were still free to walk into the middle of a staged
+       picket line and take the runner's attention — or shove the line out of his path so that
+       he never has to deal with it at all, which is what "an ordered unit walks through a line
+       untouched by the idea" turned out to mean. Nobody but this probe's own bodies is on the
+       field now. */
+    for (let i = chars.length - 1; i >= 0; i--)
+      if (dist(chars[i].x, chars[i].y, S.x, S.y) < 40) chars.splice(i, 1);
+    for (let i = corpses.length - 1; i >= 0; i--)
+      if (dist(corpses[i].x, corpses[i].y, S.x, S.y) < 40) corpses.splice(i, 1);
+    /* AND FLATTEN THE FIELD, so the only thing left that can differ between two builds is the
+       fight itself. The search above accepts the first box that happens to be clear, which is a
+       different box on every world — and a self-contained fight on verified-open ground should
+       not care where it is held. Carving it removes the last way the map can get a vote. */
+    for (let j = -12; j <= 12; j++) for (let i = -8; i <= 20; i++)
+      blocked.delete(bkey(Math.round(S.x) + i, Math.round(S.y) + j, 0));
+    rebuildCharGrid();
 
     /* ---------- 1. THE RUN THROUGH THE LINE ----------
        A runner, a quarry ten tiles away, and six hostiles standing between them. Count the
        passing cuts the runner takes and whether it ever turns on anybody. */
-    const charge = (manual) => {
+    const charge = (manual, withLine = true) => {
       /* ---------- BLOOD IS NOT THE ONLY WAY TO GO DOWN ----------
          `blood = 1e6` was meant to make these bodies unkillable so the file could count cuts
          instead of deaths, and it does not: `updateState` drops anybody whose VITAL PARTS are
@@ -80,13 +100,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const quarry = mk('bandit', { atk: 4, def: 8, tough: 40, ath: 2 }, S.x + 10, S.y);
       unkillable(quarry);
       const line = [];
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; withLine && i < 6; i++) {
         const o = mk('bandit', { atk: 16, def: 12, tough: 12, ath: 8, blades: 15 },
           S.x + 4 + (i % 2) * 0.9, S.y - 2.5 + i * 1.0);
         o.weapon = 'w_kat'; unkillable(o);
         line.push(o);
       }
       runner.target = quarry; runner.targetManual = manual;
+      /* A REAL ORDER SETS `orderTarget` TOO — see the right-click chain, which writes
+         `m.target = foe; m.targetManual = true; m.orderTarget = foe`. Setting only the first two
+         is not an order, it is half of one, and the "an order deferred is not an order lost"
+         branch in `physics` reads the third. */
+      if (manual) runner.orderTarget = quarry;
       rebuildCharGrid();
       /* Count the cuts taken ON THE WAY IN, not the cuts taken once the brawl has started.
          The first version counted every jab across the whole run, which with unkillable
@@ -108,7 +133,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         closest = Math.min(closest, dist(runner.x, runner.y, quarry.x, quarry.y));
         rebuildCharGrid();
       }
-      const r = { cuts, everSwitched, closest: +closest.toFixed(1) };
+      const r = { cuts, everSwitched, closest: +closest.toFixed(1),
+                  remembered: runner.orderTarget === quarry };
       clean();
       return r;
     };
@@ -129,11 +155,34 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        with blades; being unable to is the whole point of the note. What an order has to
        guarantee is that it is not silently eaten: on clear ground it is carried out, and
        when something interrupts it, it resumes once the interruption is dealt with. */
-    const man = charge(true);
-    R.manualOrder = `ordered through a picket line: ${man.cuts} cuts, and the line ${man.everSwitched ? 'still had to be fought' : 'was walked through'}`;
-    R.orderNotSuicide = man.everSwitched
-      ? 'even an ordered charge stops for the men in the way'
-      : '!! AN ORDERED UNIT STILL WALKS THROUGH A LINE UNTOUCHED BY THE IDEA';
+    /* ---------- WHAT AN ORDER ACTUALLY PROMISES, WHICH IS NOT WHAT THIS USED TO ASK ----------
+       The old claim required an ORDERED charge to stop and fight the men in the way. That is
+       the opposite of the rule: the interpose branch in `physics` is gated
+       `!(c.targetManual && c.faction === 'player')`, with the comment "a player's own explicit
+       order is never overridden — right-clicking a particular man means that man, and the
+       passing cuts are the price you chose". It passed only when some other branch happened to
+       take the target away, and measured across three builds with the field swept and the
+       ground flattened it came out 93 cuts / 3 cuts / 94 cuts.
+       Requiring the runner to REACH the quarry through the line is no better, and this file's
+       own preamble says why: "Nobody walks through six men with blades; being unable to is the
+       whole point of the note." Measured, that is 3 to 4 times in five.
+       The preamble also states the two things an order really guarantees, and they are the two
+       claims below: ON CLEAR GROUND it is carried out, and WHEN SOMETHING INTERRUPTS IT the
+       order is remembered rather than silently eaten — which is the `orderTarget` branch in
+       `physics`, "an order deferred, not an order lost". Both are rules, and neither is a
+       coin. */
+    const open = charge(true, false);
+    const man = charge(true, true);
+    R.manualOrder = `ordered on clear ground: closest ${open.closest}; ordered through a picket line: ` +
+      `closest ${man.closest}, ${man.cuts} cuts, order ${man.remembered ? 'still held' : 'DROPPED'}`;
+/* NO ASSERTION HERE, AND THAT IS THE FIX. Both promises an order actually makes already have
+       their own claims below and both of them set up a REAL order: 1b, that it is carried out on
+       clear ground, and 1c, that it resumes once an interruption is dealt with. What section 1
+       had instead was a third claim requiring an ordered charge to stop for the men in the way —
+       the opposite of the rule, whose own comment reads "a player's own explicit order is never
+       overridden: the passing cuts are the price you chose" — and it passed only when some other
+       branch took the target away. The number stays as a READING, because "you chose this" is
+       only fair if the price is visible. */
 
     /* ---------- 1b. ON CLEAR GROUND, AN ORDER IS AN ORDER ---------- */
     {

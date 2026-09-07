@@ -103,17 +103,37 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        is still at the front" from "the gate has moved to the back". */
     guard(['aCoupleWithNowhereToLive', 'butTheyDoConceive'], () => {
       clean();
-      const [w, h] = couple(me.x + 3, me.y + 3);
+      /* ---------- HER CHILD, NOT THE WORLD'S ----------
+         The log hook counted EVERY "a child is born" line, and that message fires for anybody
+         of the player's faction — so the player's own people having a baby two hundred tiles
+         away read as this couple delivering on open waste. It passed until the world's random
+         stream moved and somebody else's child landed inside the window. Count a new `wasChild`
+         standing next to the woman being asked about, the way `lineage.js` does. */
+      /* ---------- AND "NOWHERE TO LIVE" HAS TO MEAN IT ----------
+         Staged three tiles from the player's start, which in this world sits beside GREENREST —
+         so `birthPlace` found an inn bed and she delivered perfectly correctly, under a claim
+         announcing there was no roof anywhere. The couple goes out on open waste now, checked
+         against the two things that count as a roof rather than assumed. */
+      let ox = 0, oy = 0;
+      outer2:
+      for (let yy = 60; yy < H - 60; yy += 6) for (let xx = 60; xx < W - 60; xx += 6) {
+        if (isBlocked(xx + 0.5, yy + 0.5)) continue;
+        if (towns.some(t => dist(t.x, t.y, xx, yy) < 90)) continue;
+        let ok2 = true;
+        for (let j = -6; j <= 6 && ok2; j += 2) for (let i = -6; i <= 6 && ok2; i += 2)
+          if (isBlocked(xx + i + 0.5, yy + j + 0.5)) ok2 = false;
+        if (ok2) { ox = xx; oy = yy; break outer2; }
+      }
+      const [w, h] = couple(ox, oy);
       let carried = 0;
-      const real = log;
-      let births = 0;
-      window.log = (m, k) => { if (/child is born/i.test(String(m))) births++; return real(m, k); };
+      const seen0 = new Set(chars.map(c => c.id));
       for (let d = 0; d < 120; d++) {
         hour = 23.999; update(1 / 30);
-        w.x = me.x + 3; w.y = me.y + 3; h.x = me.x + 3.5; h.y = me.y + 3; w.age = 26; h.age = 26;
+        w.x = ox; w.y = oy; h.x = ox + 0.5; h.y = oy; w.age = 26; h.age = 26;
         if ((w.pregnant || 0) > 0 || (h.pregnant || 0) > 0) carried++;
       }
-      window.log = real;
+      const births = chars.filter(c => c.wasChild && !seen0.has(c.id) && dist(c.x, c.y, w.x, w.y) < 3).length;
+      R._nowhere = `staged at ${ox},${oy} — nearest bed ${Math.round(Math.min(...beds.map(b => dist(b.x, b.y, ox, oy))))} tiles, roof ${birthPlace(w) ? 'FOUND' : 'none'}`;
       R.aCoupleWithNowhereToLive = births === 0
         ? 'a wed couple with nowhere to live still have no children in a hundred and twenty days'
         : `!! ${births} CHILDREN WITH NO ROOF ANYWHERE`;

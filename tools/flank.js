@@ -70,7 +70,23 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       if (clear(x, y, 14)) { S = { x, y }; break outer; }
     }
     if (!S) { R.noGround = true; return R; }
-    R.ground = { x: S.x, y: S.y };
+    /* ---------- AND CLEAR THE PEOPLE OFF IT, NOT JUST THE ROCKS ----------
+       The note above is right that a cliff at the quarry's back makes this measure the map
+       rather than the approach — and `clear` only ever asked `isBlocked`, which knows about
+       terrain and nothing about who is standing on it. A drifter, a hound or a corpse parked in
+       one octant takes an approach lane exactly as a boulder would, and the surround claim then
+       reports "they came from 6 of 8 sides — a column, not a surround" about a squad that had
+       nowhere to put the seventh body. It went red the first time a worldgen change moved the
+       world's population around. Move everything that is not this probe's off the field. */
+    let swept = 0;
+    for (let i = chars.length - 1; i >= 0; i--) {
+      const c = chars[i];
+      if (dist(c.x, c.y, S.x, S.y) < 45) { chars.splice(i, 1); swept++; }
+    }
+    for (let i = corpses.length - 1; i >= 0; i--)
+      if (dist(corpses[i].x, corpses[i].y, S.x, S.y) < 45) corpses.splice(i, 1);
+    rebuildCharGrid();
+    R.ground = { x: S.x, y: S.y, swept };
 
     /* one tick of the world, for the bodies this probe owns */
     const step = (cast, dt) => {
@@ -135,6 +151,23 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         closeBodies++;
         sectors.add(Math.floor(((Math.atan2(c.y - py, c.x - px) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 4)));
       }
+      /* ---------- AND A SECOND METRIC, BECAUSE COUNTING OCCUPIED SECTORS IS BRITTLE ----------
+         Eight bodies into eight 45-degree sectors needs a PERFECT deal to reach eight, and the
+         claim asks for seven — which allows exactly one collision. Two bodies happening to
+         settle in the same sector is not a column, and this file reported one as a column the
+         first time an upstream change moved where they started from: sectors 6, with all eight
+         arriving inside 53 ticks and no grinding at all.
+         What "a column, not a surround" actually means is that they are all on ONE SIDE, and
+         that has a direct measure: the mean of the unit bearings from the quarry to each body.
+         A ring cancels out toward zero; a column adds up toward one. It cannot be fooled by two
+         bodies sharing a sector, and it cannot be passed by a queue. */
+      let sx2 = 0, sy2 = 0, ring = 0;
+      for(const c of squad){
+        const d2 = dist(c.x, c.y, px, py);
+        if(d2 > 1.9 || d2 < 0.01) continue;
+        sx2 += (c.x - px) / d2; sy2 += (c.y - py) / d2; ring++;
+      }
+      const lopsided = ring ? Math.hypot(sx2, sy2) / ring : 1;
       const got = arrival.filter(a => a >= 0);
       const last = got.length ? Math.max(...got) : 500;
       return {
@@ -145,6 +178,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         arrival,
         closeAtEnd: closeBodies,
         sectors: sectors.size,
+        lopsided: +lopsided.toFixed(2),
         grind: marchTicks ? +(stuckTicks / marchTicks).toFixed(3) : 0,
       };
     };
@@ -347,7 +381,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
      three probes below all passed before any of this was written, and the point of keeping
      them is that a flanking rule is exactly the kind of thing that would break them. */
   const P = out.pile || {};
-  if (!(P.sectors >= 7)) fails.push(`the squad arrived from ${P.sectors} of 8 sides — a column, not a surround`);
+  /* SIDES IS THE READING, LOPSIDEDNESS IS THE CLAIM — see the note beside `lopsided`. A ring of
+     eight cancels to near zero; a column adds up toward one. 0.5 is comfortably a surround and
+     nowhere near a queue, and it does not turn on two bodies sharing a 45-degree wedge. */
+  if (!(P.lopsided !== undefined && P.lopsided <= 0.5))
+    fails.push(`the squad piled onto one side of him — lopsidedness ${P.lopsided}, from ${P.sectors} of 8 sides (0 is a ring, 1 is a column)`);
+  if (!(P.sectors >= 5)) fails.push(`the squad arrived from only ${P.sectors} of 8 sides — a column, not a surround`);
   if (!(P.everReached >= 8)) fails.push(`only ${P.everReached}/8 of the squad ever reached striking distance`);
   if (!(P.lastArrival !== null && P.lastArrival <= 90)) fails.push(`the last of the eight took ${P.lastArrival} ticks to arrive (was 53 before the ring)`);
   if (!(P.grind <= 0.15)) fails.push(`${Math.round(P.grind * 100)}% of marching ticks went nowhere — they are grinding on each other`);

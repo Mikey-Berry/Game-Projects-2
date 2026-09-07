@@ -72,8 +72,16 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* THE ALCHEMIST, built the way the world builds one: a gift, a trained branch, an art in
        the hand, and the ranged stance that goes with all three. */
     const born = { atk: 9, def: 7, tough: 22, ath: 8, magic: 20, labor: 6 };
+    /* ---------- PIN THE LINE, AND MEASURE THE BODY YOU ACTUALLY GOT ----------
+       `makeChar` draws a race and a subrace, and their modifiers move the stats — so comparing
+       a raised lieutenant against the LITERAL asked for at staging compares two different
+       bodies. It passed for as long as the world's random stream happened to hand this probe a
+       plain human, and read "MAGIC IS STILL TAXED (magic 20 of 20, atk 12 of 9)" the moment the
+       stream moved: magic, the thing under test, was perfect, and atk was somebody else's. */
     const mkAlch = (name, x, y) => {
       const a = mk(name, 'player', x, y, { ...born });
+      a.race = 'human'; a.sub = null;
+      Object.assign(a.stats, born);
       a.gift = 'destruction';
       a.att = { divine: 0, destruction: 2, dark: 0, dust: 0 };
       a.attXp = { divine: 0, destruction: 140, dark: 0, dust: 0 };
@@ -85,6 +93,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     /* ---------- 1. THE CONTROL: ALIVE, SHE IS A CASTER ---------- */
     const alive = mkAlch('Verrin Sallow', gx + 2, gy);
+    const wasAlive = { ...alive.stats };   /* what she ACTUALLY had, not what was asked for */
     const aliveSpells = spellsFor(alive).map(e => e[0]);
     R.aliveSheIsACaster = aliveSpells.length >= 2 && aliveSpells.includes('firebolt')
       ? `a living adept of destruction, magic ${alive.stats.magic}, knows ${aliveSpells.length}: ${aliveSpells.join(' ')}`
@@ -124,9 +133,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* ---------- 3. THE FIRST RAISING TAKES NOTHING SHE HAD ----------
        `lieuRot` is 1.00 off the fresh body, and every other stat comes up whole at that rung.
        Magic used to be the one exemption — a flat half — which is the number this asks about. */
-    R.deathDoesNotHalveHer = lt && lt.stats.magic === born.magic && lt.stats.atk === born.atk
+    R.deathDoesNotHalveHer = lt && lt.stats.magic === wasAlive.magic && lt.stats.atk === wasAlive.atk
       ? `fresh off the ground she is whole: magic ${lt.stats.magic} and atk ${lt.stats.atk}, as she was`
-      : `!! MAGIC IS STILL TAXED APART FROM EVERYTHING ELSE (magic ${lt && lt.stats.magic} of ${born.magic}, atk ${lt && lt.stats.atk} of ${born.atk})`;
+      : `!! MAGIC IS STILL TAXED APART FROM EVERYTHING ELSE (magic ${lt && lt.stats.magic} of ${wasAlive.magic}, atk ${lt && lt.stats.atk} of ${wasAlive.atk})`;
 
     /* ---------- 4. AND SHE LOOKS LIKE WHAT SHE IS ---------- */
     R.sheComesUpAMage = lt && lt.kin === 'mage'
@@ -171,7 +180,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const tiersHeld = rungs.length >= 2 && rungs.every(r => r.tier === 2);
     const magicFell = rungs.length >= 2 && rungs[rungs.length - 1].magic < rungs[0].magic;
     R.sheRemembersMoreThanSheCanWork = tiersHeld && magicFell
-      ? `four rungs down she is still an adept, and can do less with it every time: magic ${born.magic} -> ${rungs.map(r => r.magic).join(' -> ')}`
+      ? `four rungs down she is still an adept, and can do less with it every time: magic ${wasAlive.magic} -> ${rungs.map(r => r.magic).join(' -> ')}`
       : `!! THE ART AND THE STRENGTH DID NOT COME APART (${JSON.stringify(rungs)})`;
     /* and the frame follows the strength, not the knowledge */
     /* THIS HAS TO SEE THE FRAME CHANGE, NOT MERELY BE ABSENT. Asking only "is the weakest rung
