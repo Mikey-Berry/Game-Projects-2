@@ -881,7 +881,7 @@ const KG = {wood:2, stone:3, copper:2, iron_ore:3.5, c_ingot:1.5, iron:2.5, coal
   h_cap:0.6, h_kettle:2, h_armet:3.5, h_crest:3, h_wreath:0.8, k_road:1.5, k_pelt:3, k_grave:1,
   t_charm:0.2, t_lens:0.3, t_marker:0.2, t_phial:0.4,
   w_plank:2.5, w_club:2, w_kat:2, w_rkat:2, w_sw:2, w_dag:0.8, w_nod:3.5, w_bow:1.5, w_sinew:1.2, w_xbow:3, w_kingsfang:3, w_pyre:2.5,
-  w_leaf:2.5, w_socket:2.5,
+  w_leaf:2.5, w_socket:2.5, w_torch:1.2,
   w_lance:3, w_sever:3, aether_cell:0.3, salt:1, a_carap:5, codex:1, lead:4, gold_bar:2, formula_t:0.3, formula_w:0.3, formula_p:0.3, sunder:2, doctrine:0.5,
   a_rag:1, a_lea:3, a_pla:6, a_lev:3, a_shroud:1, a_baroness:5, a_marshal:6, pack_s:1.5, pack_l:3};
 const ITEMS = {
@@ -904,6 +904,17 @@ const ITEMS = {
   hide:    {name:'Hound Hide',    base:28,  type:'trade'},
   w_plank: {name:'Plank',         base:80,  type:'weapon', dmg:9,  wt:'blunt'},
   w_club:  {name:'Iron Club',     base:220, type:'weapon', dmg:14, wt:'blunt'},
+  /* ---------- THE CHEAPEST THING IN THE GAME, AND THE ONE YOU FORGET TO BRING ----------
+     A torch is a WEAPON, in the hand, in the same slot as the sword you would rather be
+     holding. That is the whole design: nine points of damage against a katana's twenty-two,
+     so a torchbearer is a body that has given up fighting well in order that anybody can
+     fight at all. The answer to that tension is a Pitch Post you built, a Wisp walked out
+     ahead of the column, Ainzopha'ar's Light, or a host that never needed any of them.
+     It burns for ten hours UNDERGROUND and does not burn at all in daylight (see torchTick),
+     which makes the count you set out with the clock on the expedition rather than a tax on
+     walking around a town. */
+  w_torch: {name:'Torch',         base:24,  type:'weapon', dmg:9,  wt:'burn', torch:true,
+    desc:'A yard of ash, a head of tow soaked in pitch. It is a poor club and the only reason anyone comes back up.'},
   w_rkat:  {name:'Rusty Katana',  base:160, type:'weapon', dmg:12, wt:'cut'},
   /* ---------- TWO WEAPONS THE WORLD HAS BEEN HANDING OUT FOR A LONG TIME ----------
      `w_sw` and `w_dag` were spawned by seven different tables — town levies, mercenaries,
@@ -1395,12 +1406,12 @@ const VENDOR_STOCK = {
      nothing could reach it. Measured before this: 7 of 7 seats holding iron, 0 of 7 selling
      it, exactly like the aether cells two notes down. Copper was listed and iron was not,
      which is the whole of why one of them felt like it existed. */
-  general: ['meat','fruit','fish','bandage','mats','wood','stone','copper','iron','iron_ore','coal','fabric','rum','hide','salt','pack_s','pack_l','h_cap','k_road','t_charm'],
+  general: ['meat','fruit','fish','bandage','mats','wood','stone','copper','iron','iron_ore','coal','fabric','rum','hide','salt','pack_s','pack_l','h_cap','k_road','t_charm','w_torch'],
   /* AND THE NEW SLOTS HAVE TO BE BUYABLE SOMEWHERE, or they are three empty boxes on a
      paperdoll. A smith sells hats and cloaks; the occultist sells the two that are about the
      craft rather than the fight, and the general trader carries the cheap end. */
   weapons: ['w_plank','w_club','w_rkat','w_sw','w_kat','w_nod','w_bow','w_xbow','w_dag','a_rag','a_lea','a_pla',
-            'h_cap','h_kettle','h_armet','k_road','k_pelt'],
+            'h_cap','h_kettle','h_armet','k_road','k_pelt','w_torch'],
   robotics:['p_arm','p_leg','bandage'],
   occult:  ['tome','formula_t','formula_w','sunder','bandage','fabric','rum','mats','meat','remains','a_shroud','aether_cell','k_grave','t_phial','t_lens','h_wreath'],
   bar:     ['meat','fruit','rum'],
@@ -2833,6 +2844,10 @@ function moveSpeedRaw(c){
   if(c.frayed) s *= 1 - 0.35 * (c.frayT || 0);
   if(c.phyl) s *= 0.92;   /* it is heavier than it looks */
   if(weather.storm > 0 && (c.floor || 0) >= 0) s *= 0.85;   /* a storm does not blow underground */
+  /* and neither does the sun. Walking rock you cannot see is a hand on the wall and a foot
+     put down carefully — see THE DARK. The storm line above and this one are the two things
+     the world does to a pace, and they are on opposite sides of the ceiling. */
+  if(inTheDark(c)) s *= DARK_MOVE_K;
   s *= traitOf(c, 'speed', 1);        /* the line overrides the race: an ox-bound chimera is not a houndkin */
   if(c.race==='hollow' && c.blood < 60) s *= 1.1;   /* the rider spurs the host */
   const ld = invWeight(c) / Math.max(1, invCap(c));
@@ -3296,6 +3311,7 @@ function poolTake(k, n){
    nodachi and a katana is meant to be a choice about tempo and exposure, not a strictly
    better number. What changes is the grain of the fight. */
 const HEFT = {
+  w_torch: 0.80,
   w_dag: 0.72, w_plank: 0.85, w_rkat: 0.90, w_sw: 0.96, w_kat: 1.00, w_club: 1.15, w_pyre: 1.20,
   w_kingsfang: 1.35, w_sever: 1.40, w_nod: 1.60,
 };
@@ -5628,6 +5644,35 @@ function placeCave(h){
         /* the shallows: bandits and exiles sheltering out of the wind */
         c = makeChar(pickName(true), 'bandit', q.x, q.y,
           {atk:ri(10,16), def:ri(8,14), tough:ri(10,16), ath:6, weapon: rnd()<0.5?'w_club':'w_kat', armor:'a_lea'});
+        /* ---------- AND THEY BROUGHT A FIRE, BECAUSE THEY ARE PEOPLE ----------
+           These are the one hostile thing underground that does not see in the dark, and a room
+           of blind men is not a fight, it is a chore. So about one in three is holding the
+           light instead of a weapon — which lights the room for the rest of the band (a torch
+           reaches 5.5 and a chamber's half-width is 5 to 7), reads from a corridor away as
+           "there are people in there", and gives the fight a shape: kill the one with the
+           torch and the rest of them are suddenly in the same trouble you would be.
+           OFF `hash2`, NOT `rnd()`. The weapon roll above still happens and is still spent —
+           this OVERWRITES the result for the chosen ones rather than branching around the
+           draw, so the world's random stream never learns that any of this was decided. The
+           trap this file has paid for repeatedly.
+           AND IT DOES NOT NAME `TORCH_HOURS`. That is a `const` declared fourteen thousand
+           lines below this one and worldgen runs inside an IIFE, so reading it here would throw
+           `Cannot access before initialization` and swallow the rest of the seeder in silence —
+           which is precisely how the Aldercott house shipped with no stairs. `torchHours` reads
+           an unset torch as a full one, so there is nothing to write.
+           ---------- AND NOTHING REACHES THIS BRANCH TODAY ----------
+           Measured while writing the line above: there is not one bandit under the world. The
+           three bands are dead, twice over, and neither fault is this feature's.
+             · `cv.menace` is assigned by `seedWarrens` AFTER `placeCave` returns — and
+               `placeCave` is what runs this function. So `cave.menace` is `undefined` at stock
+               time, `d01` falls to its 0.5 default, and EVERY room in EVERY warren draws from
+               the middle table. 447 gaunts under the world and no bandits at all.
+             · and if that were fixed it would still be wrong: `near / 190` came out between
+               0.01 and 0.05 for all 28 caves in the sampled world, because there are enough
+               shafts that the nearest one is always close. Every warren would then be shallow.
+           This line is left in place deliberately, correct and unreached, because it is where
+           the answer belongs the day the bands are put back — see the ledger. */
+        if(hash2(q.x * 13 + 7, q.y * 29) < 0.34) c.weapon = 'w_torch';
       } else if(d01 < 0.72){
         /* the middle dark: things that live down here */
         c = spawnGaunt(pick(['stalker','maw','gaunt']), q.x, q.y);
@@ -8824,7 +8869,15 @@ function hitChance(a, d){
   const wild = Math.max(0, heftOf(a) - 1) * 0.30 * clamp(1 - sk/70, 0, 1);
   /* AND THE PRICE OF THE DRINK, BOTH WAYS, IN THE ONE PLACE A BLOW IS DECIDED. A body running
      on it swings wide; a body running on it is also not guarding itself. */
-  return clamp(0.55 + (a.stats.atk - d.stats.def)*0.02 + skillEdge + love - wild
+  /* ---------- AND YOU HAVE TO SEE THE THING TO HIT IT ----------
+     One term, the attacker's own. A blow struck by somebody who cannot see where the other
+     body is goes wide, and a SHOT struck the same way has further to be wrong over — a bow
+     is the weapon that most needs eyes and the one the dark punishes hardest. The defender's
+     darkness is deliberately NOT a second term: everything down here is either blind or is
+     one of the things that never was, and stacking both would put an ordinary swing under
+     the 0.15 floor and turn a fight into a stalemate rather than a bad idea. */
+  const blind = inTheDark(a) ? ((wepOf(a) || {}).range ? DARK_RANGED : DARK_MELEE) : 0;
+  return clamp(0.55 + (a.stats.atk - d.stats.def)*0.02 + skillEdge + love - wild - blind
                - gritWobble(a) + gritWobble(d), 0.15, 0.94);
 }
 /* combat feedback: floating text + particle specks */
@@ -9862,6 +9915,18 @@ const BUILD_TYPES = {
     desc:'Golden-age ordnance, emplaced. It punches a hole clean through a column — and a gifted hand cannot touch it'},
   tower:   {name:'Watchtower',   cost:{stone:30, mats:18, wood:10}, w:3, h:3,
     desc:'Two storeys and a stair. Archers on the deck shoot over walls; nothing on the ground can reach them'},
+  /* ---------- THE ONE THING YOU CAN BUILD UNDER THE WORLD ----------
+     "Portable light comes from torches. They can be built as emplacements, but also held as
+      weapons."
+     Deliberately NOT an `empl`. That machinery is about a weapon somebody stands behind — a
+     facing, a cooldown, a gunner id, a GUNNERY job — and a fire on a stand wants none of it.
+     What it borrows from the emplacements is the one thing it needs, which is that a structure
+     can belong to a storey; see `placeStructure` and the floor stamp on the blueprint.
+     A post is what turns a tunnel into ground you HOLD: eight and a half tiles of light that
+     does not walk off with the man carrying it, four days to a filling, and a log of wood a
+     day out of the stores after that. Run the stores dry and your outpost goes dark. */
+  torchpost:{name:'Pitch Post',  cost:{wood:6, mats:2}, w:1, h:1, light:true,
+    desc:'A cresset on an iron stand, kept fed with pitch. The only thing that will stand underground and go on burning without a hand on it — and it eats a log a day to do it'},
 };
 /* crafted undead: bound at the circle from remains + materials + a necromancer's mana */
 const UNDEAD_TYPES = {
@@ -9961,7 +10026,7 @@ function completeBlueprint(bp){
   const i = blueprints.indexOf(bp);
   if(i < 0) return;
   blueprints.splice(i, 1);
-  const built = placeStructure(bp.type, bp.x, bp.y);
+  const built = placeStructure(bp.type, bp.x, bp.y, bp.floor || 0);
   AU.raised(bp.x + (bp.w || 1) / 2, bp.y + (bp.h || 1) / 2);
   log(`${BUILD_TYPES[bp.type].name} raised — the crew steps back and it stands on its own.`, 'good');
   /* ---------- A WEAPON NOBODY CAN CLIMB TO ----------
@@ -10039,9 +10104,14 @@ function deconstruct(b){
   log(`The ${BUILD_TYPES[b.type].name} comes down. Recovered: ${back.length ? back.join(', ') : 'nothing worth carrying'}.`, 'good');
   refreshInv();
 }
-function placeStructure(type, tx, ty){
+function placeStructure(type, tx, ty, fl){
   const bt = BUILD_TYPES[type];
   const b = {type, x:tx, y:ty, w:bt.w, h:bt.h, growth:0};
+  /* the storey the frame was staked on. Emplacements work theirs out from what is under them
+     a few lines down; everything else is on the ground it was raised on, which is floor zero
+     for all of them except the one thing allowed underground. */
+  if(fl) b.floor = fl;
+  if(BUILD_TYPES[type].light) b.fuel = POST_HOURS;
   if(type==='wall'){ b.hp = 250; b.maxHp = 250; }
   if(type==='cell') cells.push({x: tx + 0.9, y: ty + 0.9, town: null, holds: 0, kind: 'player', build: b,
     hp: CELL_HP, maxHp: CELL_HP});
@@ -10181,8 +10251,22 @@ function tryBuild(type, tx, ty, quiet){
       refuse('That mount is already staked out.'); return false;
     }
   }
+  /* ---------- WHICH STOREY THIS IS BEING STAKED ON ----------
+     Every blueprint in this file was floor-blind: `isBlocked(i+.5, j+.5)` defaults to floor
+     zero, `placeStructure` never wrote a floor for anything but an emplacement, and the
+     renderer drew at `groundY` regardless. So staking a Storage Bin while the camera was down
+     the shaft tested surface rock, built on the surface, and drew twenty-two units over your
+     head — a thing you could do, that silently did something else.
+     A blueprint carries its storey now. Only the Pitch Post may be staked below ground, and
+     everything else is refused OUT LOUD rather than quietly built somewhere you were not
+     looking. That is a gate on a thing that never worked, not a capability taken away. */
+  const bfl = (activeFloor < 0 && BUILD_TYPES[type].light) ? activeFloor : 0;
+  if(activeFloor < 0 && bfl === 0){
+    refuse(`A ${bt.name.toLowerCase()} cannot be raised down here. Only a Pitch Post will stand under the world.`);
+    return false;
+  }
   if(!onWall) for(let j=ty;j<ty+bt.h;j++) for(let i=tx;i<tx+bt.w;i++){
-    if(isBlocked(i+.5, j+.5)) { refuse('Blocked ground.'); return false; }
+    if(isBlocked(i+.5, j+.5, bfl)) { refuse('Blocked ground.'); return false; }
   }
   if(type==='rampart' && decks.has(bkey(tx, ty, 1))){ refuse('There is already a way up there.'); return false; }
   /* not inside towns you don't own; your own city is yours to build in */
@@ -10193,7 +10277,7 @@ function tryBuild(type, tx, ty, quiet){
   if(type==='charnel' && !research.done.carrion_rites){ log('Requires research: Carrion Rites.', 'bad'); return false; }
   if(type==='ossuary' && !research.done.ossuary_rites){ log('Requires research: Ossuary Rites.', 'bad'); return false; }
   /* nothing is spent yet — the stores pay as the builders draw from them */
-  blueprints.push({type, x: tx, y: ty, w: bt.w, h: bt.h, need: {...buildCost(type)}, got: {}, progress: 0});
+  blueprints.push({type, x: tx, y: ty, w: bt.w, h: bt.h, floor: bfl, need: {...buildCost(type)}, got: {}, progress: 0});
   log(`${bt.name} staked out. It needs ${costText(buildCost(type))} and hands on the BUILD job.`, 'good');
   return true;
 }
@@ -10392,6 +10476,10 @@ const RECIPES = {
     /* the two small things anybody can make: a padded cap and a lintel charm */
     {out:'h_cap',   n:1, cost:{fabric:2, hide:1},  tech:'construction'},
     {out:'t_charm', n:1, cost:{wood:1, remains:1}, tech:'construction'},
+    /* TWO OFF A STICK AND A RAG. Torches have to be cheap enough that the answer to running
+       out is "make forty more", not "abandon the expedition" — the pressure is meant to be
+       remembering to bring them, not affording them. */
+    {out:'w_torch', n:2, cost:{wood:1, fabric:1},  tech:'construction'},
   ],
   kiln: [
     {out:'coal',    n:2, cost:{wood:3},               tech:'smelting'},
@@ -10568,6 +10656,8 @@ function craftTick(c, dt){
   /* THE WORK HAPPENS AT THE BENCH. Wander off and it waits rather than cancelling — the
      player did not take the order back, they just moved. */
   if(dist(c.x, c.y, j.bx, j.by) > 2.6) return false;
+  /* a bench is eyes-down work. It waits for a light rather than running slower — see THE DARK */
+  if(darkStops(c, 'craft')) return true;
   c._working = 0.5;
   j.t += dt;
   if(j.t < j.dur) return true;
@@ -10774,6 +10864,16 @@ const charById = new Map();
    as fresh as the last `rebuildCharGrid()`, which `update()` calls first thing. */
 const warders = [];
 const charmed = [];
+/* ---------- AND WHATEVER IS BURNING DOWN THERE ----------
+   The same bargain as `warders` and `lamps` above: "is there a light on me" is asked of every
+   living body underground every tick, and walking `chars` and `pBuilds` for it would be the
+   fourth copy of a loop this file has already paid for three times. Both are empty in every
+   world where nobody has gone down with a torch, which is most of them.
+   DECLARED HERE, beside the two lists that are filled in the same pass, and not down beside
+   the darkness rules that read them — a `const` is not hoisted, and this file has lost a whole
+   worldgen seeder to naming one from above its declaration. */
+const torchers = [];
+const litPosts = [];
 function rebuildCharGrid(){
   charGrid.clear();
   charById.clear();
@@ -10790,12 +10890,17 @@ function rebuildCharGrid(){
      when nobody is down there. */
   belowFolk.length = 0;
   lamps.length = 0;
+  torchers.length = 0;
+  litPosts.length = 0;
+  for(const b of pBuilds) if(b.type === 'torchpost' && (b.fuel || 0) > 0 &&
+                             (b.progress === undefined || b.progress >= 1)) litPosts.push(b);
   for(const c of chars){
     charById.set(c.id, c);
     if(c.state !== 'ok') continue;
     if(c.concentrating && c.concentrating.key === 'warding') warders.push(c);
     if(c.faction === 'player' && (c.floor || 0) < 0) belowFolk.push(c);
     if(c.lamp && (c.floor || 0) < 0) lamps.push(c);
+    if(torchLit(c)) torchers.push(c);
     /* AND WHOEVER IS CARRYING A KEPT CHARM, gathered here for the same reason the warders are:
        the gaunt AI asks "is there violet light near me" for every gaunt every tick, and the note
        twenty lines up records what happens when a question like that walks all of `chars`. */
@@ -12936,7 +13041,7 @@ function physics(c, dt){
          one, which is not a skill, it is a second game speed. A root curve keeps the early
          points feeling like something — the first twenty-five are worth a full doubling — and
          puts a soft ceiling at three times rather than six. */
-      c.gatherT += dt * (1 + Math.sqrt(Math.max(0, c.stats.labor)) * 0.20);
+      c.gatherT += dt * (1 + Math.sqrt(Math.max(0, c.stats.labor)) * 0.20) * darkWorkK(c);
       /* the SWING, not the yield. A tick every five seconds is a payout; work needs a beat
          under it or a camp full of labourers sounds like an empty field. */
       c.swingT = (c.swingT || 0) - dt;
@@ -13927,7 +14032,7 @@ function physics(c, dt){
       /* THE WORK IS THE WORK. A second and a half a body made a HARVEST hand a tap that never
          stopped running; a rendering is a job, and a thing the size of a barn is an afternoon.
          Halved on the racks, because that is what the racks are for. */
-      c.carrT = harvestSecs(body) * (inBoneyard(body) ? 0.5 : 1);
+      c.carrT = harvestSecs(body) * (inBoneyard(body) ? 0.5 : 1) / darkWorkK(c);
       /* ---------- A GREAT BODY IN THE OPEN IS ONE PASS, THEN IT IS THE CART'S PROBLEM ----------
          The old line here read `body.looted`, which for a great body in a field is a flag that
          can never be set — `lootCorpse` refuses to go through one out there. So the job fell
@@ -13969,8 +14074,11 @@ function physics(c, dt){
          town measures about 42 tiles across its buildings, so BUILD_REACH is a bit over two of
          them: far enough that a camp and its outworks are one job, short enough that a frame
          raised on the far side of the world is not this hand's business. */
+      /* AND ON THIS STOREY. A frame twenty-two units under your feet is nought tiles away in
+         plan and unreachable in fact — the builder would have walked to the spot above it and
+         hammered the dirt. Now that a blueprint carries a floor, the reach test has to ask. */
       const bp = blueprints
-        .filter(b2 => dist(b2.x, b2.y, c.x, c.y) <= BUILD_REACH)
+        .filter(b2 => (b2.floor || 0) === (c.floor || 0) && dist(b2.x, b2.y, c.x, c.y) <= BUILD_REACH)
         .sort((a,b2) => dist(a.x,a.y,c.x,c.y) - dist(b2.x,b2.y,c.x,c.y))[0];
       if(bp){
         const cx2 = bp.x + bp.w/2, cy2 = bp.y + bp.h/2;
@@ -13985,6 +14093,7 @@ function physics(c, dt){
               if(campSpend({[want]: 1})) bp.got[want] = (bp.got[want] || 0) + 1;
             }
           } else {
+            if(darkStops(c, 'build')) return;   /* you cannot raise a frame you cannot see */
             c._working = 0.5;
             /* the raising: labor swings the hammer faster */
             bp.progress += dt * (0.025 + c.stats.labor * 0.0012);
@@ -19712,6 +19821,178 @@ function wardedFrom(c){
   }
   return null;
 }
+/* ============================================================ THE DARK ============
+   "Let's build out the darkness mechanics properly so that going into the underground feels
+    like a genuine expedition."
+
+   THE TOLL IS ON THE BODY, NOT ON THE CAMERA. "For the player, it should feel dark but not
+   impossible to see. The real toll of darkness is exacted upon the characters in it, not the
+   player's own view." So the fog does not close to a pinhole — eleven tiles unlit against the
+   surface's seventeen-to-thirty, which is a room you can read rather than a letterbox — and
+   the bite is in what a blind hand can DO. It swings wide, it cannot work, and it picks its
+   way over ground it cannot see.
+
+   AND IT FIXES A STANDING LIE. Sight underground was `17 + dayness*13`, the surface curve,
+   read off an `hour` that means nothing twenty-two units down: you could see further in a
+   sealed tunnel at noon than at midnight. Below zero the sky is not consulted at all.
+
+   UNDERGROUND ONLY, on purpose. The penalties here are severe, and applying them to every
+   night in the world would be a different game — every farm shift, every patrol, every town.
+   The expedition is the thing being built.
+
+   THE DEAD DO NOT NEED A LAMP, which is the whole reason a necromancer is the right person to
+   go down there. Your risen, the gaunts born of the tear, the Kept who have never seen a sun,
+   and anything that lives in the rock read the dark as ordinary ground. A living hireling does
+   not. So the underground quietly rewards the host you were building anyway and punishes the
+   mercenary company you hired to carry the shovels. */
+const DARK_SIGHT_BLIND = 11;   /* what a living body with no light sees down here */
+const DARK_SIGHT_LIT   = 22;   /* and what a torch opens for it */
+const DARK_SIGHT_DEAD  = 18;   /* what needs no light sees regardless — good, but not a torch */
+const TORCH_R      = 5.5;      /* the pool a held torch throws */
+const TORCH_POST_R = 8.5;      /* a post is a bigger fire on a stand, and it does not walk off */
+/* NOT `WISP_R`, which is taken: that one is how far a Wisp's DETONATION reaches, and this is
+   how far its glow does. Two numbers about the same body meaning opposite things, and this
+   file has already paid for `e.servitor`, `raised` and `wisp` itself carrying two meanings
+   apiece. `LAMP_R` matches `c.lamp`, which is the flag that says "this body is a light". */
+const LAMP_R       = 9;
+const TORCH_HOURS  = 10;       /* game-hours in one torch, burnt only below ground */
+const POST_HOURS   = 96;       /* four days in a post, and a log of wood a day to keep it */
+const DARK_MOVE_K  = 0.55;     /* picking your way over rock you cannot see */
+const DARK_WORK_K  = 0.18;     /* labour by feel */
+const DARK_MELEE   = 0.20;     /* what the dark takes off a swing */
+const DARK_RANGED  = 0.34;     /* and off a shot, which needed to see the target */
+/* ---------- THE TRADES THAT STOP RATHER THAN SLOW ----------
+   Gathering is swinging a tool at something big enough to find by touch, so it crawls (see
+   `darkWorkK`). Raising a frame and working a bench are eyes-down work with a measurement in
+   them, so they WAIT for a light instead.
+   Only these two, and that is not an oversight: STUDY, FLESH and CHARNEL are done standing at
+   a building, and no building goes below ground except the post that makes the light. Listing
+   them here would be a rule with nothing on the other side of it. */
+const DARK_STOPS = new Set(['build', 'craft']);
+
+function darkFloor(c){ return (c.floor || 0) < 0; }
+/* ---------- WHO READS THE DARK AS ORDINARY GROUND ----------
+   `undead` covers every risen thing you ever bound. The rest are the things that were BORN down
+   here: gaunts (by faction OR by kind, because a raised gaunt keeps `gauntKind` and loses the
+   faction), and everything of the Deep — the Kept, the Stonewake and the shoal all carry the
+   faction, so one clause covers the lot.
+   AND NOT `caveDweller`, which was the first version of this list and is the wrong question.
+   That flag means "this body's AI lives in this warren" and worldgen puts it on everything a
+   room is stocked with — INCLUDING the bandits and exiles in the shallows, who are people who
+   came down out of the wind. Reading it here made every hostile thing underground exempt and
+   left the dark as a tax paid only by your own hires, which is the version of this feature
+   that is no fun to be on the receiving end of. The bandits get a fire instead (see
+   `stockRoom`), which is both the truth about them and a better fight: their room is lit
+   because one of them is holding the light, and you can put it out.
+   AND THE REDOUBT SEES, by faction rather than by any property of the bodies in it. A sealed
+   Golden-Age complex still has its own power — it is the place the aether cells that keep
+   Fallowend's lanterns burning are scavenged FROM — so a Warden Automaton standing a corridor
+   inside one is not groping about in the dark. Caught by asking who this change had newly
+   blinded rather than by a bug report: dropping `caveDweller` above took the whole garrison
+   with it. */
+function seesInDark(c){
+  return !!(c.undead || c.pureblood || c.gauntKind ||
+            c.faction === 'gaunt' || c.faction === 'deep' || c.faction === 'redoubt');
+}
+/* A torch that has never been lit reads as full, so a body handed one mid-frame — by a trade,
+   a loot, a save — is never briefly holding an unlit stick. */
+function torchHours(c){ return c.torchH === undefined ? TORCH_HOURS : c.torchH; }
+function torchLit(c){ return !!(c && c.weapon === 'w_torch' && c.state === 'ok' && torchHours(c) > 0); }
+/* the nearest live light on this body's storey, of any kind and anybody's. A fire lights the
+   room for whoever is standing in it, including the people it was not lit for. */
+function litNear(c){
+  if(torchLit(c)) return c;
+  const f = c.floor || 0;
+  for(const o of torchers){
+    if(o === c || (o.floor || 0) !== f) continue;
+    if(dist(o.x, o.y, c.x, c.y) < TORCH_R) return o;
+  }
+  for(const p of litPosts){
+    if((p.floor || 0) !== f) continue;
+    if(dist(p.x + 0.5, p.y + 0.5, c.x, c.y) < TORCH_POST_R) return p;
+  }
+  for(const o of lamps){
+    if(o === c || (o.floor || 0) !== f || o.state !== 'ok') continue;
+    if(dist(o.x, o.y, c.x, c.y) < LAMP_R) return o;
+  }
+  return lightNear(c);            /* and Ainzopha'ar's, which was always a lantern too */
+}
+/* THE ONE PREDICATE. Gated on the floor first and on the body second, because the floor test
+   is a subtraction and the body test is three loops — and everything in the world above is on
+   floor zero, so the whole mechanism costs one comparison per body in a world nobody has gone
+   underground in. */
+function inTheDark(c){
+  if(!c || !darkFloor(c) || c.state !== 'ok') return false;
+  if(seesInDark(c)) return false;
+  return !litNear(c);
+}
+function darkWorkK(c){ return inTheDark(c) ? DARK_WORK_K : 1; }
+/* the precision trades, refused rather than slowed — and said out loud at most once an hour
+   per body, because a camp of eight blind builders would otherwise write the log by itself */
+function darkStops(c, job){
+  if(!DARK_STOPS.has(job) || !inTheDark(c)) return false;
+  if(c.faction === 'player' && nowH() - (c.darkNagH || -99) > 1){
+    c.darkNagH = nowH();
+    log(`${c.name} cannot work in this dark. Bring a light, or set a post.`, 'bad');
+  }
+  return true;
+}
+/* ---------- A TORCH BURNS WHERE IT IS DOING SOMETHING ----------
+   Only below ground. A torch that burnt down while its bearer walked across a field at noon
+   would tax carrying one at all and teach the player to unequip it at every stair — which is
+   micromanagement wearing the costume of a resource. Down here the count you set out with IS
+   the clock, and that is the whole of the logistics.
+   AND IT RELIGHTS ITSELF from the pack, which is what "carry spares" has to mean if it is not
+   to be forty clicks. Run the pack dry and the hand goes empty, and that is the moment the
+   expedition was always walking towards. */
+let darkToldH = -999;    /* when the game last explained itself about the dark */
+function torchTick(dh){
+  if(dh <= 0) return;
+  let blind = null;
+  for(const c of chars){
+    /* ---------- AND IT HAS TO SAY SO ONCE ----------
+       Every penalty in THE DARK is a multiplier on something that already happens, so a player
+       who walks down a shaft with no light sees a squad that misses, crawls and refuses to
+       build, and nothing anywhere tells them why. Once a day, naming the fix. Free: it rides
+       the loop that was already walking `chars`, and `inTheDark` costs one comparison for
+       everything standing on the surface. */
+    if(!blind && c.faction === 'player' && inTheDark(c)) blind = c;
+    if(c.weapon !== 'w_torch' || c.state !== 'ok' || !darkFloor(c)) continue;
+    const h = torchHours(c) - dh;
+    if(h > 0){ c.torchH = h; continue; }
+    c.torchH = 0;
+    c.weapon = null;
+    if(c.faction === 'player' && takeItem('w_torch')){
+      c.weapon = 'w_torch'; c.torchH = TORCH_HOURS;
+      log(`${c.name}'s torch gutters out and they light another. ${stash.w_torch || 0} left in the pack.`,
+          (stash.w_torch || 0) <= 2 ? 'bad' : '');
+    } else if(c.faction === 'player'){
+      log(`${c.name}'s torch is out, and there is not another in the pack.`, 'bad');
+      addFloat(c.x, c.y - 1, 'dark', '#6a6258');
+    }
+  }
+  if(blind && nowH() - darkToldH > 20){
+    darkToldH = nowH();
+    log(`${blind.name} cannot see down here. Hands working in the dark swing wide, work at a crawl and cannot build at all — put a torch in somebody's hand, raise a Pitch Post, or send the dead ahead.`, 'bad');
+  }
+}
+/* and the posts burn down a day's worth, and eat a log to keep doing it */
+function postTick(){
+  for(const b of pBuilds){
+    if(b.type !== 'torchpost') continue;
+    if(b.progress !== undefined && b.progress < 1) continue;
+    if(b.fuel === undefined) b.fuel = POST_HOURS;
+    b.fuel -= 24;
+    if(b.fuel > 0) continue;
+    /* the stores keep it lit if the stores can reach it — one log a day, which is the standing
+       cost of holding ground underground and the reason an outpost down there is a commitment */
+    if(campSpend({wood: 1})) b.fuel = POST_HOURS;
+    else {
+      b.fuel = 0;
+      log(`A pitch post has burnt out. There is no wood in the stores to feed it.`, 'bad');
+    }
+  }
+}
 function craftUndead(kind, caster, circle, shape){
   const ut = UNDEAD_TYPES[kind];
   if(!research.done[ut.tech]){ log(`Requires research: ${TECHS[ut.tech].name}.`, 'bad'); return false; }
@@ -21184,6 +21465,7 @@ function update(dt){
   hourAcc += dt / HOUR_SEC;
   const dh = dt / HOUR_SEC;
   hour += dh;
+  torchTick(dh);           /* and whatever is burning underground burns down by that much */
   /* THE MOON KEEPS THE NIGHT'S HOURS. Checked on the EDGES rather than in the day block, and
      before the midnight wrap, so a rise at 19.5 and a set at 5.5 are one span across it. */
   {
@@ -21202,6 +21484,7 @@ function update(dt){
     estateInviteTick();      /* and the Aldercotts have somebody up to dinner */
     saltmereBurning();       /* while Saltmere feeds its fire and keeps its flats clean */
     lanternTick();           /* and Fallowend's posts burn down another day's worth */
+    postTick();              /* as do yours, and yours eat a log of wood to keep going */
     /* a broken shrine is not broken forever. They come back and set the stone, unless
        somebody is standing on the ground to stop them — so desecration buys a window, not
        a permanent unmaking. */
@@ -22726,6 +23009,22 @@ function computeVision(){
   const stormK = weather.storm > 0 ? 0.55 : 1;
   for(const c of chars){
     if(c.faction!=='player' || c.state==='dead') continue;
+    /* ---------- AND BELOW ZERO THERE IS NO SKY TO ASK ----------
+       This whole function is a surface function: a day curve, a mountain, a storm. Underground
+       it was computing `17 + dayness*13` off an `hour` that means nothing twenty-two units
+       down, so a sealed tunnel was brighter at noon than at midnight — and at noon it was
+       brighter than a room with a torch in it is now.
+       Three numbers, and the ordering is the design: a torch (22) beats what the dead see
+       without one (18) beats a living body with nothing (11). The blind number is deliberately
+       still a ROOM — the toll of the dark is meant to land on the body, not on the camera.
+       Nothing below this line applies: there is no hill to climb, no storey to stand on and no
+       storm to swallow it, so the whole surface stack is skipped rather than gated line by
+       line — the same wholesale override the sky itself gets in `updateSky`. */
+    if(darkFloor(c)){
+      stampVision(c.x, c.y, seesInDark(c) ? DARK_SIGHT_DEAD
+                          : litNear(c)    ? DARK_SIGHT_LIT : DARK_SIGHT_BLIND);
+      continue;
+    }
     let r = base;
     const h = heightAt(c.x, c.y);
     if(h > 1.2) r += Math.min(18, (h - 1.2) * 1.9);   /* the view from up there */
@@ -22870,6 +23169,62 @@ const hemi = new THREE.HemisphereLight(0x8e8a7e, 0x3d362e, 1.00);   /* no blue s
 scene.add(hemi);
 const rim = new THREE.DirectionalLight(0x8fb5d4, 0.35);
 scene.add(rim); scene.add(rim.target);
+/* ---------- THREE FIRES, AND NEVER A FOURTH ----------
+   A pool of light painted on the floor says where the light REACHES; a real point light is
+   what makes the rock beside it look wet and the far wall stay black, and that is the whole
+   difference between a dark room and a grey one. The palefrond note upstairs records the
+   bound this works inside: fifty stands each holding a PointLight would be fifty lights in a
+   scene budgeted for three, so this is a POOL of exactly three, reassigned every frame to the
+   three nearest fires and dimmed to nothing when there are fewer.
+   Created once and never added or removed, because adding a light to a three.js scene
+   recompiles every Lambert shader in it — and the moment that would happen is the moment you
+   walk into a dark room with a torch, which is the worst frame in the game to drop. They cast
+   no shadows: a shadow map per fire is a different budget entirely. */
+const TORCH_LIGHTS = [];
+for(let _i = 0; _i < 3; _i++){
+  /* LEFT VISIBLE FOREVER, AND DIMMED TO ZERO INSTEAD. A light with `visible = false` is
+     skipped when three.js walks the scene, so the shader is rebuilt with a different light
+     count the moment it comes back — which is exactly the frame you carry a torch into a
+     dark room. Intensity is a uniform and costs nothing to change. */
+  const pl = new THREE.PointLight(0xffb060, 0, 15, 1.7);
+  scene.add(pl);
+  TORCH_LIGHTS.push(pl);
+}
+/* ---------- AND THE POOL IT PUTS ON THE FLOOR ----------
+   A flat disc has a hard rim, and a fire does not: the first pass drew a dinner plate with a
+   crisp edge at exactly TORCH_R and the eye read it as a decal rather than as light. The same
+   radial gradient the sun and the moon are drawn with, on a circle whose UVs run corner to
+   corner, so it falls off the way a fire falls off. Built once and shared by every torch in
+   the world. LAZY, because `radialTex` builds a canvas and there is no reason to build one
+   in a world nobody has taken a torch into. */
+let _torchTex = null;
+function torchTex(){
+  if(!_torchTex) _torchTex = radialTex('rgba(255,186,110,1)', 'rgba(255,140,50,0)');
+  return _torchTex;
+}
+/* the fires worth spending one on: whatever is burning on the storey the camera is looking at,
+   nearest first. Held torches and posts both, because the player cannot tell which is which by
+   looking and should not have to. */
+function syncTorchLights(){
+  if(activeFloor >= 0){
+    for(const pl of TORCH_LIGHTS) pl.intensity = 0;
+    return;
+  }
+  const fires = [];
+  for(const o of torchers) if((o.floor || 0) === activeFloor) fires.push({x: o.x, y: o.y, h: 1.5, k: 1});
+  for(const b of litPosts) if((b.floor || 0) === activeFloor) fires.push({x: b.x + 0.5, y: b.y + 0.5, h: 1.2, k: 1.5});
+  fires.sort((a, b) => (Math.abs(a.x-camSX) + Math.abs(a.y-camSY)) - (Math.abs(b.x-camSX) + Math.abs(b.y-camSY)));
+  const t = Date.now();
+  for(let i = 0; i < TORCH_LIGHTS.length; i++){
+    const pl = TORCH_LIGHTS[i], f = fires[i];
+    if(!f){ pl.intensity = 0; continue; }
+    pl.position.set(f.x, groundY(f.x, f.y) + floorY(activeFloor) + f.h, f.y);
+    pl.distance = f.k > 1 ? TORCH_POST_R * 2.1 : TORCH_R * 2.4;
+    /* the same guttering the pool on the floor has, on a different phase per light so three
+       fires in one room do not breathe in unison */
+    pl.intensity = (1.5 * f.k) * (0.88 + Math.sin(t * 0.009 + i * 2.1) * 0.09 + Math.sin(t * 0.023 + i) * 0.05);
+  }
+}
 scene.fog = new THREE.Fog(0x8f8878, 34, 142);
 scene.background = new THREE.Color(0xd8c8a8);
 const dayCol = {sky:new THREE.Color(0x8a8271), dawn:new THREE.Color(0x9c6f4f), night:new THREE.Color(0x080a12), storm:new THREE.Color(0x554b40)};
@@ -22991,10 +23346,19 @@ function updateSky(){
   if(activeFloor < 0){
     scene.background.copy(caveCol);
     scene.fog.color.copy(caveCol);
-    scene.fog.near = 20; scene.fog.far = 82;
+    /* ---------- AND IT HAS TO LOOK LIKE THE THING THE RULES SAY IT IS ----------
+       A flat 0.62 of hemisphere light was a lit basement: every tunnel evenly grey to the
+       horizon, which is a fine READ of a place and a terrible one of a dark place — and it
+       made the whole of THE DARK a set of numbers with nothing on screen agreeing with them.
+       0.20 is the floor of legibility: shapes, edges, where the rock is, and no detail. It is
+       deliberately not zero, because "the toll of the dark is on the characters, not on the
+       player's view" — this is meant to be a hard place to work in, not a black screen.
+       What makes it readable again is a fire, and the difference between standing in one and
+       standing outside it is now the most visible thing underground. */
+    scene.fog.near = 14; scene.fog.far = 58;
     sun.intensity = 0; moon.intensity = 0;
-    hemi.intensity = 0.62;
-    rim.intensity = 0.20; rim.color.setHSL(0.60, 0.18, 0.45);
+    hemi.intensity = 0.20;
+    rim.intensity = 0.07; rim.color.setHSL(0.60, 0.18, 0.30);
     sunSprite.material.opacity = 0;
     moonSprite.material.opacity = 0;
     starMat.opacity = 0;
@@ -25297,13 +25661,15 @@ const syncSundered = makeDynGroup(
     }
   });
 const syncBlueprints = makeDynGroup(
-  () => blueprints.map(b => b.type + b.x + ',' + b.y + '|' + (bpNeeded(b) ? 'wait' : 'go')).join(';'),
+  () => blueprints.map(b => b.type + b.x + ',' + b.y + ',' + (b.floor || 0) + '|' + (bpNeeded(b) ? 'wait' : 'go')).join(';'),
   g => {
     for(const bp of blueprints){
       const m = new THREE.Mesh(BOXG, new THREE.MeshLambertMaterial({
         color: bpNeeded(bp) ? 0x8a7a50 : 0x7a9a6a, transparent: true, opacity: 0.28, wireframe: true}));
       m.scale.set(bp.w, 1.4, bp.h);
-      m.position.set(bp.x + bp.w/2, groundY(bp.x + bp.w/2, bp.y + bp.h/2) + 0.7, bp.y + bp.h/2);
+      /* a frame staked underground stands underground — see the floor stamp in `tryBuild` */
+      m.position.set(bp.x + bp.w/2,
+        groundY(bp.x + bp.w/2, bp.y + bp.h/2) + floorY(bp.floor || 0) + 0.7, bp.y + bp.h/2);
       g.add(m);
     }
   });
@@ -25526,7 +25892,8 @@ const syncPBuilds = makeDynGroup(
      so both belong in the rebuild key — but aim is a continuous angle and this group is the
      whole camp. Quantise to eight octants: the weapon visibly swings, and the group rebuilds
      when it crosses a boundary rather than on every degree of every frame. */
-  () => pBuilds.map(b => b.type + b.x + ',' + b.y + ',' + (b.hp|0)
+  () => pBuilds.map(b => b.type + b.x + ',' + b.y + ',' + (b.hp|0) + ',' + (b.floor||0)
+        + (b.type === 'torchpost' ? ((b.fuel || 0) > 0 ? 'L' : 'D') : '')
         + (b.facing !== undefined ? ',' + Math.round(b.facing / (Math.PI/4)) + (b.gunnerId ? 'M' : '') : '')
         /* a tower's deck turns to glass only while one of yours is under it, so walking in
            has to rebuild the group — otherwise the floor stays solid over your own head */
@@ -25634,6 +26001,32 @@ const syncPBuilds = makeDynGroup(
             box(g, 0.14, 0.10, 0.9, '#54453a',
                 cxp + dx * 0.55 + lx * sgn * 0.5, fy + 0.86, czp + dz * 0.55 + lz * sgn * 0.5, false);
           box(g, 0.34, 0.24, 0.30, '#4a4640', cxp - dx * 0.2, fy + 0.82, czp - dz * 0.2, false);  /* the winch */
+        }
+      }
+      /* ---------- A CRESSET ON A STAND ----------
+         Three legs, a bowl and a fire in it. Drawn at its own storey like the emplacements
+         above, because this is the one structure that goes below the world — and the flame is
+         `MeshBasicMaterial`, which shows exactly the hex it is given, because a fire that
+         takes its colour from the room is not a light source, it is a shape. */
+      else if(b.type==='torchpost'){
+        const fy = y + floorY(b.floor || 0);
+        const lit = (b.fuel || 0) > 0;
+        for(let i = 0; i < 3; i++){
+          const a2 = i * (Math.PI * 2 / 3) + 0.4;
+          box(g, 0.07, 0.86, 0.07, '#3c3a38',
+              cxp + Math.cos(a2) * 0.20, fy + 0.43, czp + Math.sin(a2) * 0.20, false);
+        }
+        box(g, 0.34, 0.10, 0.34, '#4c4740', cxp, fy + 0.90, czp, false);        /* the bowl */
+        box(g, 0.24, 0.09, 0.24, lit ? '#7a3a18' : '#2a2622', cxp, fy + 0.98, czp, false);
+        if(lit){
+          const fl = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color: 0xffb04a}));
+          fl.scale.set(0.20, 0.30, 0.20);
+          fl.position.set(cxp, fy + 1.16, czp);
+          g.add(fl);
+          const tip = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color: 0xfff0c0}));
+          tip.scale.set(0.10, 0.16, 0.10);
+          tip.position.set(cxp, fy + 1.34, czp);
+          g.add(tip);
         }
       }
       else if(b.type==='circle'){
@@ -26589,6 +26982,16 @@ const WEAPONS = {
     {w:0.105,h:0.24, d:0.028, y:-0.68, col:'#a8823a'},                     /* the taper */
     {w:0.038,h:0.11, d:0.024, y:-0.85, col:'#b8933f'},                     /* the point */
     {w:0.020,h:0.54, d:0.034, x:0.010, y:-0.52, col:'#d8b45c'}]},          /* the edge, lit */
+  /* ---------- AND THE THING YOU HOLD INSTEAD OF A SWORD ----------
+     Ash shaft, a bound collar of wire, and a head of tow. The head is drawn in the merged
+     geometry as a dull ember colour and the LIVE flame is a separate emissive mesh added in
+     `rebuildWeapon` — a merged box can only ever be the hex it is given, and a fire that does
+     not glow in a dark room is a orange stick. */
+  w_torch: {rest:{x:0.26, z:0.05}, parts:[
+    {w:0.040,h:0.62, d:0.040, y:-0.26, col:'#7a6244'},                     /* the ash shaft */
+    {w:0.052,h:0.05, d:0.052, y:-0.58, col:'#6a6258'},                     /* the wire collar */
+    {w:0.090,h:0.16, d:0.090, y:-0.68, col:'#3a2a20'},                     /* the tow, charred */
+    {w:0.070,h:0.10, d:0.070, y:-0.79, col:'#c8621e'}]},                   /* and the ember in it */
   w_socket: {rest:{x:0.62, z:0.12}, parts:[
     {w:0.042,h:1.10, d:0.042, y:-0.42, col:'#cfc5a8'},                     /* the shaft */
     {w:0.062,h:0.09, d:0.062, y:-0.94, col:'#8c6a2e'},                     /* the socket */
@@ -26709,6 +27112,11 @@ function shieldGeo(){
 function rebuildWeapon(e, c){
   if(e.weapon){ e.weapon.parent.remove(e.weapon); disposeTree(e.weapon); e.weapon = null; }
   e.wepRest = e.wepAim = null;    /* cleared on every swap, before any early return */
+  /* and the flame with them. It is a CHILD of the mesh disposed one line up, so leaving the
+     reference behind after an early return (`!c.weapon` — the torch that just burnt out is
+     exactly that case) leaves `syncChars` writing a scale onto a detached object every frame.
+     Harmless and wrong, which is the kind that survives. */
+  e.torchFlame = null;
   e.builtWeapon = c.weapon || null;
   if(!c.weapon || c.beast || !e.elbR) return;
   const geo = weaponGeo(c.weapon);
@@ -26748,6 +27156,24 @@ function rebuildWeapon(e, c){
   e.elbR.add(m);
   e.weapon = m;
   e.weaponMat = m.material;
+  /* ---------- AND A TORCH HAS TO BE ON FIRE ----------
+     The merged geometry is one Lambert mesh with vertex colours, which is the right thing for
+     steel and the wrong thing for a flame: in a room lit at 0.20 of hemisphere the head came
+     out the same grey as the haft. Two basic-material boxes on top of it, which show exactly
+     the hex they are given whatever the room is doing — the same reason the palefrond is
+     drawn this way. Children of the weapon mesh, so a swap disposes them with it, and NOT
+     registered in `e.mats`: that list is walked every frame writing `m.emissive`, which a
+     MeshBasicMaterial does not have, and this file has frozen its own renderer on that once
+     already. */
+  if(c.weapon === 'w_torch'){
+    const fl = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color: 0xffae42}));
+    fl.scale.set(0.13, 0.20, 0.13); fl.position.set(0, -0.90, 0);
+    m.add(fl);
+    const tip = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color: 0xfff0c8}));
+    tip.scale.set(0.07, 0.11, 0.07); tip.position.set(0, -1.02, 0);
+    m.add(tip);
+    e.torchFlame = fl;
+  }
 }
 
 /* visible armor: overlay geometry per worn piece. THE swap-point for future real meshes —
@@ -30074,6 +30500,32 @@ function syncChars(dt){
       e.wardRing.position.set(0, 0.07 / sy, 0);
       e.wardRing.material.opacity = 0.30 + Math.sin(Date.now() * 0.0025) * 0.12;
     } else if(e.wardRing){ e.wardRing.visible = false; }
+    /* ---------- AND THE GROUND A TORCH ACTUALLY REACHES ----------
+       The same argument the ward ring won, for the same reason: `TORCH_R` is the number that
+       decides whether a body can see, work and hit, and there was nothing on screen saying
+       where it ended. A filled disc rather than a ring, because this one is a POOL — the
+       thing it wants to show is the lit ground, not the boundary — and additive, so it warms
+       whatever it lies over instead of painting a flat plate on it.
+       Only below ground. On the surface a torch is a stick with a fire on it and the sun is
+       doing the work; drawing an orange dinner plate under everyone at noon would be noise. */
+    if(torchLit(c) && darkFloor(c)){
+      if(!e.torchPool){
+        e.torchPool = new THREE.Mesh(new THREE.CircleGeometry(TORCH_R, 40),
+          new THREE.MeshBasicMaterial({map: torchTex(), color: 0xffffff, transparent: true,
+            opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false}));
+        e.torchPool.rotation.x = -Math.PI / 2;
+        e.torchPool.renderOrder = 3;
+        e.g.add(e.torchPool);
+      }
+      e.torchPool.visible = true;
+      const sx2 = e.g.scale.x || 1, sy2 = e.g.scale.y || 1;
+      e.torchPool.scale.setScalar(1 / sx2);
+      e.torchPool.position.set(0, 0.05 / sy2, 0);
+      /* a fire is never still, and the flicker is most of what sells it */
+      const fk = 0.34 + Math.sin(Date.now() * 0.011) * 0.05 + Math.sin(Date.now() * 0.027) * 0.035;
+      e.torchPool.material.opacity = fk;
+      if(e.torchFlame) e.torchFlame.scale.set(0.13, 0.19 + fk * 0.5, 0.13);
+    } else if(e.torchPool){ e.torchPool.visible = false; }
     /* AFFECTED MARKER: it must be obvious who is charmed (turned to your side) or shrouded
        (a risen wearing a living face). A small bead below the head, distinct from the caster's. */
     const affected = c.charmed ? 0x8fd0ff : c.shrouded ? 0x9a7ac0 : 0;
@@ -31027,6 +31479,7 @@ function render(){
     camSY + Math.cos(camYaw) * horiz + camKickY * camKick);
   camera.lookAt(camSX, focusY, camSY);
   updateSky();
+  syncTorchLights();      /* and the three fires nearest the camera, if the camera is under the world */
   water.position.y = -0.22 + Math.sin(now*0.001)*0.03;
   syncPBuilds(); syncBlueprints(); syncSundered(); syncWells(); syncPyres(); syncBastion(); syncChests(); syncBeds(); syncTownWalls(); syncCamps(); syncSlaverCamp(); syncRoofs(); syncVertical(); syncRifts(); syncStairs(); syncUndercroft(); syncRedoubts();
   if(fogDirty) redrawFog();
@@ -31173,6 +31626,7 @@ const $ = id => document.getElementById(id);
    One delegated listener over the whole HUD. Anything with data-tip gets a panel; the
    text may carry a <b>title</b> and <i>aside</i>. Nothing else has to know about it. */
 const TIPS = {
+  torch:'<b>TORCH</b>Hours of pitch left in it. A torch only burns below ground, and when it goes out the next one in the pack is lit without asking. Run the pack dry and this hand is in the dark: it will miss, it will crawl, and it will not build.',
   atk:  '<b>ATK</b>How hard and how often this one lands a blow. Raises with use.',
   def:  '<b>DEF</b>Chance to turn a blow aside entirely. Skill, not armour.',
   tough:'<b>TOUGH</b>How much punishment a limb takes before it fails, and how quickly stagger wears off.',
@@ -31570,7 +32024,20 @@ function refreshCharPanel(){
      news. The paperdoll on [I] is where you go to see all six at once. */
   const wornTxt = ['head', 'cloak', 'trinket'].filter(sl => c[sl] && ITEMS[c[sl]])
     .map(sl => ` · ${EQ_LABEL[sl]} <b>${ITEMS[c[sl]].name}</b>`).join('');
-  $('equip').innerHTML = `<b>${ageTxt}</b>${c.goal ? ' · goal: '+c.goal : ''} · WPN <b>${(wepOf(c)||{}).name || 'Fists'}</b> · ARM <b>${(c.armor&&ITEMS[c.armor]?ITEMS[c.armor].name:'None')}</b>` +
+  /* ---------- AND HOW MUCH OF THE TORCH IS LEFT ----------
+     "Carry spares" is only a decision if the player can see the clock. Without this the whole
+     resource is invisible until the log says it went out, which is the moment it has stopped
+     being a decision. It rides beside the weapon because the torch IS the weapon, and it turns
+     amber under three hours — an hour of walking back is worth knowing about before you spend
+     it. Shown only while it is burning, which is only underground. */
+  let torchTxt = '';
+  if(typeof torchLit === 'function' && torchLit(c)){
+    const left = torchHours(c);
+    const col = left < 3 ? 'var(--warn)' : 'var(--dust)';
+    torchTxt = ` · <span style="color:${col}" data-tip="torch">TORCH ${left.toFixed(1)}h` +
+      ((stash.w_torch || 0) ? ` <span style="color:var(--dust)">(+${stash.w_torch} packed)</span>` : '') + '</span>';
+  }
+  $('equip').innerHTML = `<b>${ageTxt}</b>${c.goal ? ' · goal: '+c.goal : ''} · WPN <b>${(wepOf(c)||{}).name || 'Fists'}</b>${torchTxt} · ARM <b>${(c.armor&&ITEMS[c.armor]?ITEMS[c.armor].name:'None')}</b>` +
     wornTxt +
     (c.pack ? ` · PACK <b>${ITEMS[c.pack].name}</b>` : '') +
     `${giftTxt}${bindTxt}${convTxt}<br><span style="color:${+ldNow > +ldCap ? 'var(--rust)' : 'var(--dust)'}">LOAD ${ldNow}/${ldCap}kg${invTxt}</span>`;
@@ -33708,7 +34175,7 @@ const BUILD_CATS = [
      thing — every part of it reachable only by a harness calling past the build bar.
      tools/kin2.js asks the BAR for it now, not the table. */
   ['STRUCTURE',  ['wall', 'rampart', 'shack', 'home', 'tower', 'cell', 'wartable']],
-  ['DEFENCE',    ['turret', 'lance']],
+  ['DEFENCE',    ['turret', 'lance', 'torchpost']],
   ['LABOUR',     ['farm', 'workbench', 'armoury', 'loom', 'forge', 'kiln', 'smelter']],
   ['STUDY',      ['r_bench', 'script']],
   ['THE CRAFT',  ['circle', 'crypt', 'boneyard', 'vat', 'charnel', 'ossuary']],
@@ -37126,6 +37593,7 @@ function snapshot(){
     stats:c.stats, gift:c.gift, mana:c.mana, stance:c.stance, parts:c.parts,
     blood:c.blood, maxBlood:c.maxBlood, hunger:c.hunger,
     weapon:c.weapon, armor:c.armor, head:c.head||null, cloak:c.cloak||null, trinket:c.trinket||null, state:c.state, undead:c.undead,
+    torchH: c.torchH,   /* how much of the torch is left — a fresh one on every reload is not a resource */
     /* A sentence that does not survive a save is a sentence you serve by reloading, and
        kit held at the gaol would simply vanish. The cell is stored by index. */
     jailCell: c.jailedAt ? cells.indexOf(c.jailedAt) : -1, jailT: c.jailT || 0, barsT: c.barsT || 0,
@@ -37260,6 +37728,9 @@ function snapshot(){
              spoken: mother.spoken, reads: mother.reads, toldPrice: mother.toldPrice},
     shrines: shrines.map(sh => ({broken: !!sh.broken, hp: Math.round(sh.hp), reT: sh.reT || 0})),
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
+      /* how much pitch is left in a post. Without this every post in the world came back
+         brimming, and an outpost you had let go dark relit itself on a reload. */
+      fuel: b.fuel,
       store: b.store ? {...b.store} : undefined,
       /* a course at the Scriptorium is forty hours of somebody's life — it rides the save */
       tuition: b.tuition ? {...b.tuition} : undefined,
@@ -37333,6 +37804,13 @@ function restore(d){
        here, because the save may list the turret before the wall it is bolted to. Take the
        saved answer instead of re-deriving one from a half-built camp. */
     if(isEmpl(b.type) && b.floor !== undefined) pb.floor = b.floor;
+    /* AND THE POST'S OWN STOREY, which nothing can re-derive: a Pitch Post underground stands
+       on tunnel floor that looks exactly like the surface tile above it. The save is the only
+       record that it went down there. */
+    if(BUILD_TYPES[b.type] && BUILD_TYPES[b.type].light){
+      if(b.floor !== undefined) pb.floor = b.floor;
+      if(b.fuel !== undefined) pb.fuel = b.fuel;
+    }
     if(b.tuition) pb.tuition = {...b.tuition};
   }
   /* a night's work on a bar is not undone by loading the game */
@@ -37519,6 +37997,7 @@ function restore(d){
     if(s.jailCell >= 0 && cells[s.jailCell]){ c.jailedAt = cells[s.jailCell]; cells[s.jailCell].holds = c.id; }
     else c.jailedAt = null;
     c.weapon = (s.weapon && ITEMS[s.weapon]) ? s.weapon : null;
+    if(s.torchH !== undefined) c.torchH = s.torchH;
     for(const sl of ['head', 'cloak', 'trinket']) c[sl] = (s[sl] && ITEMS[s[sl]]) ? s[sl] : null;
     c.armor  = (s.armor  && ITEMS[s.armor])  ? s.armor  : null;
     if(s.weapon && !ITEMS[s.weapon]) console.warn('dropped unknown weapon from save:', s.weapon);
