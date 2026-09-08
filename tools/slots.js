@@ -122,7 +122,16 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       openInventory(c);
       const slots = [...document.querySelectorAll('#modalbody .dslot')];
       const labels = slots.map(s2 => (s2.querySelector('.dk') || {}).textContent);
-      const fig = document.querySelectorAll('#modalbody .dfig svg').length;
+      /* ---------- THE FIGURE IS A CANVAS NOW, NOT AN SVG ----------
+         When this claim was written the paperdoll drew a flat SVG silhouette. "Six slots, and
+         the body that wears them" replaced it with `dollPortrait` — the REAL rig, built by
+         `buildCharMesh` out of the real gear and rendered into a second small canvas — because
+         one silhouette was the same figure for a Choir Kin, a golem and a Sixfold. The claim
+         went on asking for an `svg` and has been red ever since, which is a stale assertion
+         rather than a missing figure: `kitdoll.js` measures the portrait itself.
+         Asked as "a figure, of either kind", so this passes whichever way it is drawn and
+         still fails if nothing is drawn at all. */
+      const fig = document.querySelectorAll('#modalbody .dfig svg, #modalbody .dfig canvas').length;
       R._doll = `${slots.length} slot buttons (${labels.join(',')}) and ${fig} figure`;
       R.theInventoryIsAPaperdoll = slots.length === 6 && fig === 1 && labels.includes('HEAD') && labels.includes('CLOAK') && labels.includes('TRINKET')
         ? `[I] draws a figure and all six slots — empty ones included, which is the half a list of what you happen to be wearing cannot do`

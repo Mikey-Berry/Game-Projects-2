@@ -1467,6 +1467,17 @@ the truth was 45%.
   standing inside a sealed Golden-Age complex that still has its own power. The claim that caught
   it is the general one (*nothing down there is groping about*), not a claim about the redoubt.
   When a rule is subtractive, enumerate the survivors.
+- **A fixture that leaves a light burning poisons every claim after it.** `wards.js` lights a
+  caster in one section and leaves it lit on purpose, because two later sections reuse it — so
+  everything downstream was measuring inside a nine-tile glow it never asked for, and only the
+  accident that two `open()` calls landed far enough apart kept it honest. Enlarging two towns
+  moved those tiles and the sear claim started reading the *older* light: "own-undead false,
+  and STILL SEARED after let-go", which is what a second light looks like from inside. A claim
+  about one light must not be made inside another one.
+- **A stale assertion looks exactly like a broken feature.** `slots.js` asked for `.dfig svg`
+  and the paperdoll had become a canvas two features earlier. It reported "THE PAPERDOLL DID NOT
+  DRAW" for weeks while the paperdoll drew fine and `kitdoll.js` said so. When a claim goes red,
+  bisect it to the commit that changed it before believing what it says.
 - **A doused light is not an absent light.** `dark.js` zeroed every Pitch Post's fuel between
   sections to clear the room — which is a post with no pitch in it, and the next `postTick`
   correctly puts a log in each one. Four posts left over from earlier claims ate the whole

@@ -47,11 +47,24 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       try { fn(); } catch (e) { for (const k of keys) if (R[k] === undefined) R[k] = '!! ' + String(e.message).slice(0, 120).toUpperCase(); }
     };
     const home = player()[0];
-    const open = (r0) => {
-      for (let r = r0; r < r0 + 12; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    /* ---------- AND `dark` MEANS CLEAR OF EVERY OTHER LIGHT ----------
+       `aBodyInsideTheLightIsWarded` lights a caster and deliberately leaves it lit, because two
+       later sections reuse it. So every section after it is measuring somewhere inside a nine
+       tile glow it did not ask for — which was survivable only for as long as `open(4)` and
+       `open(7)` happened to land more than `WARD_RADIUS` apart. The town enlargement changed
+       which tiles are open near the start and they stopped: the sear claim then read the OLDER
+       caster as the light on its risen, and read it again after dousing its own, which is
+       exactly the two symptoms it reported (own-undead false, and STILL SEARED afterwards).
+       Nothing was wrong with the light. A claim about one light must not be made inside
+       another one, and now it cannot be. */
+    const open = (r0, dark) => {
+      for (let r = r0; r < r0 + 60; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
         const x = Math.floor(home.x) + dx + 0.5, y = Math.floor(home.y) + dy + 0.5;
-        if (!isBlocked(x, y, 0) && !charsNear(x, y, 2).length) return { x, y };
+        if (isBlocked(x, y, 0) || charsNear(x, y, 2).length) continue;
+        if (dark && chars.some(o => o.state === 'ok' && isConcentrating(o, 'warding') &&
+                                    dist(o.x, o.y, x, y) < WARD_RADIUS * 2 + 6)) continue;
+        return { x, y };
       }
       return null;
     };
@@ -118,7 +131,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     guard(['andTheSearStillBurnsTheDead'], () => {
       /* the sear asks nothing about faction — a paladin's light burns your risen and yours burns
          theirs — and nothing at all about the living */
-      const s = open(7);
+      const s = open(7, true);
       const mine = mk('player', s.x + 2, s.y); mine.undead = true;
       const theirs = mk('bandit', s.x - 2, s.y); theirs.undead = true;
       const living = mk('bandit', s.x, s.y + 2);
@@ -138,7 +151,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     guard(['andALesserGauntStillTurnsFromIt'], () => {
       /* the inline copy in physics is what made a gaunt turn away. Drive the real loop: a gaunt
          put down beside a lit caster should be further from it a second later, not closer. */
-      const s = open(11);
+      const s = open(11, true);
       const c4 = mk('player', s.x, s.y);
       startConcentration(c4, 'warding', 1, true, true);
       const g = spawnGaunt('gaunt', s.x + 4, s.y); g.__probe = true; born.push(g);
@@ -156,7 +169,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     guard(['andALightRaisedThisTickIsSeenThisTick'], () => {
       /* no rebuild between the raise and the ask — this is the mid-step case */
-      const s = open(9);
+      /* clear of every other light, for the reason `open` records: the caster two sections up
+         is still burning on purpose (the section BELOW this one reuses it), and a body three
+         tiles from that one is warded before this claim has raised anything at all — which is
+         precisely the "before warded" it reported. */
+      const s = open(9, true);
       const c2 = mk('player', s.x, s.y), f2 = mk('player', s.x + 2, s.y);
       rebuildCharGrid();                       /* the pass ran BEFORE the light was lit */
       const before = wardedFrom(f2);
