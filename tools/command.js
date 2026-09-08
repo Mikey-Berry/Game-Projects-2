@@ -306,6 +306,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         'foe ' + (() => { const f = nearestEnemy(band[1], 14); return f ? f.faction : 'none'; })(),
         'healTarget ' + (band[1].healTarget ? band[1].healTarget.name : 'none'),
         'day ' + day + ' hour ' + Math.round(hour),
+        /* AND THE PHASE, which is the whole answer: `fieldSurgeon` is called from `rest` and
+           from the default `out` leg, and from NEITHER `home` (marching back) nor `down` (the
+           captain on the floor). Without this the failure cannot distinguish "the surgeon
+           refused" from "the surgeon was never asked". */
+        'phase ' + (cdr.cmd ? cdr.cmd.phase : 'NO COMMAND'),
+        'cdr ' + cdr.state,
+        'standing ' + bandStanding(cdr).toFixed(2) + ' vs grit ' + grit(cdr).toFixed(2),
+        'band ' + bandOf(cdr).length,
       ].join(', ');
       R.fieldSurgery = treated ? 'she goes to work in the field' : 'NOBODY EVER TREATED ANYBODY (' + why + ')';
       const before = band[2].parts['l.arm'].bleed;
