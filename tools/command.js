@@ -272,7 +272,29 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     } catch(e){ R.dutyBlock = 'THREW: ' + e.message; }
     /* ---------------- 7. WHAT IS IN THE BAND ---------------- */
     try {
-      const at = openNear(HOME.x + 52, HOME.y + 10, 8);
+      /* ---------- WHAT THIS SECTION NEEDS THAT THE SIX ABOVE IT SPEND ----------
+         This claim went red for weeks and none of it was the surgeon. By the time section 7
+         runs, the world is on day 14 and the six sections above have fought through it: the
+         band staged here gets set upon, the DESIGNATED MEDIC IS HERSELF ON THE GROUND, the band
+         is four of five with standing 0.50 against a grit of 0.49, and there is not one bandage
+         charge left anywhere in the world. `medicOf` was right to return nobody and
+         `fieldSurgeon` was right to do nothing — there was no surgeon standing and nothing to
+         bandage with.
+         So the section stocks what it is about to measure the spending of, and stages clear of
+         anything that wants a fight. Neither is a thaw of the claim: it still drives the real
+         `fieldSurgeon` through the real command tick and still fails if the surgeon will not
+         work. It just stops measuring a massacre instead. */
+      addItem('bandage', 20);
+      const at = (() => {
+        for (let r = 40; r < 140; r += 6) {
+          const q = openNear(HOME.x + r, HOME.y + 10, 8);
+          if (!q) continue;
+          const foe = chars.some(o => o.state === 'ok' && o.faction !== 'player' &&
+                                      !o.neutral && dist(o.x, o.y, q.x, q.y) < 40);
+          if (!foe) return q;
+        }
+        return openNear(HOME.x + 52, HOME.y + 10, 8);
+      })();
 
       /* a surgeon lets the captain press further, and patches people up in the field */
       const band = mk5(at);
@@ -316,6 +338,25 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         'band ' + bandOf(cdr).length,
       ].join(', ');
       R.fieldSurgery = treated ? 'she goes to work in the field' : 'NOBODY EVER TREATED ANYBODY (' + why + ')';
+      /* ---------- AND THE ONE MOMENT A BAND MOST NEEDS ITS SURGEON ----------
+         The `down` phase — captain on the floor, band holding over him — returned before
+         `fieldSurgeon` was ever asked, so four people stood round a bleeding captain with a
+         trained medic among them and nobody moved. Found while diagnosing the claim above and
+         fixed on its own merits rather than to turn anything green: it is the same hole
+         whatever this section measures. */
+      {
+        const cap = band[0];
+        cap.parts['r.arm'].hp = 30; cap.parts['r.arm'].bleed = 1.4;
+        cap.blood = 30; updateState(cap, false);
+        let onCap = false;
+        for (let i = 0; i < 30 && !onCap; i++) { step(2); if (band[1].healTarget === cap) onCap = true; }
+        R.aFallenCaptainIsWorkedOn = (cap.state === 'down' && cap.cmd.phase === 'down' && onCap)
+          ? 'a captain on the ground is the surgeon\'s first patient, and the band holds while she works'
+          : `!! NOBODY WORKS ON A DOWNED CAPTAIN (state ${cap.state}, phase ${cap.cmd ? cap.cmd.phase : 'none'}, target ${band[1].healTarget ? band[1].healTarget.name : 'none'})`;
+        /* put him back on his feet so the bleed measurement below is about the arm it wounded */
+        cap.blood = 90; for (const k of PARTS) cap.parts[k].bleed = 0;
+        updateState(cap, false);
+      }
       const before = band[2].parts['l.arm'].bleed;
       for (let i = 0; i < 40; i++) step(3);
       R.woundCloses = band[2].parts['l.arm'].bleed < before ? 'the bleed is stopped out there' :
