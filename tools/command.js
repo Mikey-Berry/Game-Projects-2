@@ -338,6 +338,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         'band ' + bandOf(cdr).length,
       ].join(', ');
       R.fieldSurgery = treated ? 'she goes to work in the field' : 'NOBODY EVER TREATED ANYBODY (' + why + ')';
+      const before = band[2].parts['l.arm'].bleed;
+      for (let i = 0; i < 40; i++) step(3);
+      R.woundCloses = band[2].parts['l.arm'].bleed < before ? 'the bleed is stopped out there' :
+        'THE WOUND NEVER CLOSED';
+
+      /* ---------- AND ONLY NOW, BECAUSE THIS ONE SPENDS THE WOUND ABOVE ----------
+         The captain claim below was first written between `fieldSurgery` and `before`, and it
+         cost `woundCloses` two reds before the reason was clear. It steps sixty seconds of sim
+         while the captain is down — in which the surgeon finishes the arm this claim is about
+         and the rest of it clots — so `before` was read as zero and `bleed < before` could
+         never be true. The wound was closed. It was closed by the claim that was supposed to
+         be watching it close.
+         Teardown was not the answer and did not help: no amount of putting the captain back
+         fixes a measurement whose subject has already been spent. ORDER is the answer. */
       /* ---------- AND THE ONE MOMENT A BAND MOST NEEDS ITS SURGEON ----------
          The `down` phase — captain on the floor, band holding over him — returned before
          `fieldSurgeon` was ever asked, so four people stood round a bleeding captain with a
@@ -366,10 +380,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         band[1].healTarget = null; band[1].healProg = 0;
         cap.cmd.docSaid = 0;
       }
-      const before = band[2].parts['l.arm'].bleed;
-      for (let i = 0; i < 40; i++) step(3);
-      R.woundCloses = band[2].parts['l.arm'].bleed < before ? 'the bleed is stopped out there' :
-        'THE WOUND NEVER CLOSED';
+
       disband(band);
 
       /* a mule means the sweep can go on longer before it has to come in */
