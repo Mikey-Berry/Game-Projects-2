@@ -353,9 +353,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         R.aFallenCaptainIsWorkedOn = (cap.state === 'down' && cap.cmd.phase === 'down' && onCap)
           ? 'a captain on the ground is the surgeon\'s first patient, and the band holds while she works'
           : `!! NOBODY WORKS ON A DOWNED CAPTAIN (state ${cap.state}, phase ${cap.cmd ? cap.cmd.phase : 'none'}, target ${band[1].healTarget ? band[1].healTarget.name : 'none'})`;
-        /* put him back on his feet so the bleed measurement below is about the arm it wounded */
-        cap.blood = 90; for (const k of PARTS) cap.parts[k].bleed = 0;
+        /* ---------- AND HAND THE SECTION BACK THE WORLD IT WAS GIVEN ----------
+           Putting the captain back on his feet is not enough. `fieldSurgeon` opens with
+           `if(doc.healTarget) return true` — already at it — so a surgeon left latched onto the
+           captain never re-picks, and the claim below measured a wound nobody was coming for.
+           It cost that claim a red on the first run of this block. Heal the arm as well as the
+           blood so he is not still the worst man in the band, let the surgeon go, and clear the
+           one-shot line so the next call speaks again. */
+        cap.blood = 90;
+        for (const k of PARTS) { cap.parts[k].bleed = 0; cap.parts[k].hp = cap.parts[k].max; }
         updateState(cap, false);
+        band[1].healTarget = null; band[1].healProg = 0;
+        cap.cmd.docSaid = 0;
       }
       const before = band[2].parts['l.arm'].bleed;
       for (let i = 0; i < 40; i++) step(3);
