@@ -291,7 +291,23 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       band[2].parts['l.arm'].hp = 40; band[2].parts['l.arm'].bleed = 1.2; band[2].blood = 62;
       let treated = false;
       for (let i = 0; i < 30 && !treated; i++) { step(2); if (band[1].healTarget === band[2]) treated = true; }
-      R.fieldSurgery = treated ? 'she goes to work in the field' : 'NOBODY EVER TREATED ANYBODY';
+      /* AND WHY, IF NOT. `healTarget` is gated on `treatable(pat) && bandageChargesTotal() > 0`
+         and on the medic having nothing more urgent in front of her, and a bare "NOBODY EVER
+         TREATED ANYBODY" cannot tell those apart — which cost a bisect and a separate probe
+         the first time this went red. The same setup passes in a fresh world, so whatever
+         stops it is something the six sections above leave behind. */
+      const why = [
+        'bandages ' + bandageChargesTotal(),
+        'treatable ' + treatable(band[2]),
+        'medic ' + (medicOf(cdr) === band[1]),
+        'stance ' + band[1].stance,
+        'state ' + band[1].state + '/' + band[2].state,
+        'gap ' + dist(band[1].x, band[1].y, band[2].x, band[2].y).toFixed(1),
+        'foe ' + (() => { const f = nearestEnemy(band[1], 14); return f ? f.faction : 'none'; })(),
+        'healTarget ' + (band[1].healTarget ? band[1].healTarget.name : 'none'),
+        'day ' + day + ' hour ' + Math.round(hour),
+      ].join(', ');
+      R.fieldSurgery = treated ? 'she goes to work in the field' : 'NOBODY EVER TREATED ANYBODY (' + why + ')';
       const before = band[2].parts['l.arm'].bleed;
       for (let i = 0; i < 40; i++) step(3);
       R.woundCloses = band[2].parts['l.arm'].bleed < before ? 'the bleed is stopped out there' :
