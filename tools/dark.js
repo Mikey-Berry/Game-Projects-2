@@ -59,12 +59,44 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const hostile = chars.filter(c => (c.floor || 0) < 0 && c.state === 'ok' && c.faction !== 'player');
       const by = {};
       for (const c of hostile) by[c.faction] = (by[c.faction] || 0) + 1;
+      /* ---------- AND A BAND OF PEOPLE IS THE ONE EXCEPTION, BY DESIGN ----------
+         The bandits sheltering in the shallow warrens are the ONLY hostile thing under the
+         world that does not see in the dark — that is the whole of why one in three of them
+         carries a torch instead of a weapon. So the invariant is not "nobody is blind" for
+         them; it is "nobody is blind ALONE". A blind bandit has to be within reach of one of
+         its own that is holding a light, or the chamber is a room of men groping at each other
+         and the torch mechanic is decoration.
+         This distinction did not exist when the claim was written because the shallow band did
+         not run: there was not one bandit under the world, so "nothing gropes about" was true
+         of the bandits in the way that a statement about an empty set is true. */
+      const blind = hostile.filter(c => inTheDark(c));
+      const banditBlind = blind.filter(c => c.faction === 'bandit');
+      const litKin = hostile.filter(c => c.faction === 'bandit' && c.weapon === 'w_torch' && c.state === 'ok');
+      /* ---------- ASKED PER CHAMBER, NOT PER RADIUS ----------
+         The first cut of this asked whether each blind bandit had a torchbearer within fourteen
+         tiles, which is a made-up number: a torch reaches 5.5, so fourteen was already lenient,
+         and it still reported two men stranded in a vault chamber big enough that its own torch
+         was across the room. Neither number is the promise. The promise the design makes is
+         that a BAND has a fire — the roll is described as "lights the room for the rest of the
+         band" — so the room is the unit, and a room either has one or it does not. */
+      const roomsWithBandits = new Map();
+      for(const c of hostile){
+        if(c.faction !== 'bandit' || c.roomId === undefined || !c.caveId) continue;
+        const k = c.caveId + ':' + c.roomId;
+        const r = roomsWithBandits.get(k) || {n: 0, torches: 0};
+        r.n++; if(c.weapon === 'w_torch') r.torches++;
+        roomsWithBandits.set(k, r);
+      }
+      const darkRooms = [...roomsWithBandits.values()].filter(r => !r.torches);
+      const stranded = darkRooms.reduce((n, r) => n + r.n, 0);
       return {
         hostile: hostile.length, by,
-        /* the invariant: nothing that lives down there is left groping about */
-        blind: hostile.filter(c => inTheDark(c)).length,
-        blindKinds: [...new Set(hostile.filter(c => inTheDark(c)).map(c => c.faction))],
+        /* the invariant, minus the one kind the design says may be blind */
+        blind: blind.filter(c => c.faction !== 'bandit').length,
+        blindKinds: [...new Set(blind.filter(c => c.faction !== 'bandit').map(c => c.faction))],
         bandits: hostile.filter(c => c.faction === 'bandit').length,
+        banditBlind: banditBlind.length, torchbearers: litKin.length,
+        banditRooms: roomsWithBandits.size, darkRooms: darkRooms.length, stranded,
       };
     })();
     /* ---- and a way to empty the hall of anything that would rather fight than be measured.
@@ -129,8 +161,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        a warren carries `caveDweller` like everything else worldgen stocks a room with, and
        reading that flag here made every hostile thing underground exempt — leaving the dark as
        a tax paid only by your own hires. A man is a man wherever he is standing.
-       BUILT RATHER THAN FOUND, because there is not one bandit under the world to find (see
-       `noteTheBandsAreDead` below). The rule is what is under test, not worldgen's ability to
+       BUILT RATHER THAN FOUND — it was written when there was not one bandit under the world to
+       find, and it stays built now that there are three hundred, because the rule is what is
+       under test rather than worldgen's ability to
        produce a subject for it — and building one means this claim keeps working whichever way
        that separate bug is eventually settled. */
     const brigand = makeChar('Brigand', 'bandit', window.__hall.x + 2, window.__hall.y + 2,
@@ -167,15 +200,27 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const shallows = await p.evaluate(() => window.__shallows || null);
   R.andTheDarkIsNeverOneSided = !shallows ? NOTHING
     : (shallows.hostile > 100 && shallows.blind === 0)
-    ? `${shallows.hostile} bodies under the world — ${Object.entries(shallows.by).map(([k, n]) => k + ' ' + n).join(', ')} — and not one of them is in the dark`
+    ? `${shallows.hostile} bodies under the world — ${Object.entries(shallows.by).map(([k, n]) => k + ' ' + n).join(', ')} — and not one of them that needs a light is without one`
     : `!! SOMETHING DOWN THERE IS GROPING ABOUT (${shallows.blind} of ${shallows.hostile} blind: ${JSON.stringify(shallows.blindKinds)})`;
-  /* AND A STANDING FINDING, printed rather than asserted, because it is not this feature's bug:
-     there is not one bandit under the world. `cv.menace` is assigned by `seedWarrens` AFTER
-     `placeCave` runs the stocking, so `d01` falls to its 0.5 default and every room in every
-     warren draws the middle table — the shallow and deep bands have never once been used. See
-     the note in `stockRoom`. */
-  R.noteTheBandsAreDead = !shallows ? NOTHING
-    : `NOTE (not this feature's): ${shallows.bandits} bandits under the world. \`cave.menace\` is set after the rooms are stocked, so all three warren bands collapse to the middle one`;
+  /* and the half of it that IS allowed to be blind, held to the promise the design makes about
+     them instead: a bandit in the dark is a bandit standing with somebody who brought a fire */
+  R.andNobodyIsBlindAlone = !shallows ? NOTHING
+    : !shallows.bandits ? '!! THERE IS NOT ONE BANDIT UNDER THE WORLD — the shallow band is dead again'
+    : (shallows.stranded === 0 && shallows.torchbearers > 0)
+    ? `and the ${shallows.banditBlind} blind men down there are not blind ALONE — ${shallows.torchbearers} torches among ${shallows.bandits} bandits, and all ${shallows.banditRooms} chambers holding one have a fire in them`
+    : `!! ${shallows.darkRooms} CHAMBERS HOLD ${shallows.stranded} BANDITS AND NO LIGHT (${shallows.torchbearers} torches among ${shallows.bandits})`;
+  /* THE STANDING FINDING THIS FILE CARRIED FOR A YEAR IS CLOSED. It read: "not one bandit under
+     the world — `cv.menace` is assigned AFTER `placeCave` runs the stocking, so every room in
+     every warren draws the middle table and the shallow and deep bands have never once been
+     used." Three faults, all fixed in the three-depths change and all measured in `depths.js`.
+     What is left here is the CONSEQUENCE for this feature, kept as an assertion rather than a
+     note, because the shallow band is the only reason anything under the world is blind at all:
+     if it ever dies again, the two claims above go quietly vacuous — "nothing gropes about" is
+     trivially true of a world with nobody in it who can. */
+  R.andTheShallowBandIsStillAlive = !shallows ? NOTHING
+    : (shallows.bandits > 50 && shallows.banditRooms > 20)
+    ? `${shallows.bandits} bandits in ${shallows.banditRooms} chambers — the shallow band is running, which is what gives the two claims above anything to be about`
+    : `!! THE SHALLOW BAND IS DEAD AGAIN (${shallows.bandits} bandits in ${shallows.banditRooms} chambers) — the blindness claims above are now vacuous`;
 
   /* ---- 3. A TORCH IS A LIGHT, AND IT LIGHTS THE ROOM ----
      Including for people who are not carrying it — a fire lights the room for whoever is

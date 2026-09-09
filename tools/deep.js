@@ -44,7 +44,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     for (const c of deepFolk) if (c.deepKin) by[c.deepKin] = (by[c.deepKin] || 0) + 1;
     return {
       folk: deepFolk.length, by, altars: deepAltars.length,
-      allBelow: deepFolk.every(c => (c.floor || 0) === -1),
+      /* BELOW, ON WHICHEVER STOREY. This asked for -1 exactly, which was the whole underworld
+         while there was one of it. The Kept keep their vigil on all three depths now — the
+         halls they were seeded from are spread across the lattices — and a claim that names
+         one floor reports a faction spread correctly across the world as a fault. What it is
+         actually asserting is that not one of them is standing on the grass. */
+      allBelow: deepFolk.every(c => (c.floor || 0) < 0),
+      byFloor: deepFolk.reduce((a, c) => { a[c.floor] = (a[c.floor] || 0) + 1; return a; }, {}),
       armed: deepFolk.filter(c => c.weapon === 'w_leaf' || c.weapon === 'w_socket').length,
       /* an altar with nobody keeping it is scenery */
       manned: deepAltars.filter(a => deepFolk.some(c => c.hallId === a.hall && c.deepKin)).length,

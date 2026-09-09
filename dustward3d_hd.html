@@ -477,6 +477,10 @@ body.touch #hint{display:none}
   <div class="chip" id="ui-rep" data-tip="rep"></div>
   <div class="chip" id="ui-notice" data-tip="notice"></div>
   <div class="chip" id="ui-fracture" data-tip="fracture"></div>
+  <!-- WHICH STOREY YOU ARE ON. Hidden on the surface, because on the surface there is only one
+       and a chip that always says SURFACE is a chip nobody reads. Three storeys of dark rock
+       look identical from inside and there was no way whatever to tell them apart. -->
+  <div class="chip" id="ui-depth" data-tip="depth" style="display:none"></div>
   <button id="btn-pause">PAUSE</button>
   <button id="btn-sp1" class="on">1x</button>
   <button id="btn-sp3">3x</button>
@@ -696,7 +700,56 @@ function bkey(x, y, f = 0){ return (f + 4) * FLOOR_SPAN + y * W + x; }   /* +4 s
    space out from there normally. Nothing about the floor NUMBERS changes, so every `bkey`,
    every `decks` lookup and every stair still works exactly as it did; only the height does. */
 const UNDER_DROP = 22;
-function floorY(f){ const n = f || 0; return n >= 0 ? n * FLOOR_H : -UNDER_DROP + (n + 1) * FLOOR_H; }
+/* ---------- AND THERE ARE THREE OF THEM ----------
+   "Three depths of progressively challenging terrain."
+   The storeys below the world are `DEPTHS`, top to bottom, and everything that used to say
+   `UNDER` and mean "the underground" now means "the first one". They are not three copies of
+   the same map: each is a smaller network than the one above it — see `DEPTH_SPAN` — so going
+   down is going somewhere thinner, lonelier and harder to cross, and the way back up is a
+   thing you have to find again.
+   THE SPACING IS ITS OWN CONSTANT AND NOT `FLOOR_H`. The whole argument for `UNDER_DROP` was
+   that a storey down should not read as a cellar; stacking the second and third at 3.4 units
+   under the first would have rebuilt exactly the crawlspace that constant exists to prevent.
+   Fourteen units apart is four storeys of rock between one depth and the next, and floor -1
+   does not move by so much as an inch — `(-1 + 1)` is zero either way, so every camera height,
+   every click ray and every screenshot of the Undercroft is what it was. */
+const DEPTHS = [-1, -2, -3];
+const UNDER_DEEP = DEPTHS[DEPTHS.length - 1];
+const UNDER_STEP = 14;
+/* how much of the world each depth's lattice actually spans, as a multiplier on the node
+   spacing: bigger spacing, fewer halls, more rock between them. 1.0 is the full net under the
+   whole map that -1 has always been. */
+const DEPTH_SPAN = {'-1': 1, '-2': 1.55, '-3': 2.35};
+/* what each one is called, and the colour it is called it in. Names rather than numbers because
+   "the Sump" is a place a player can mean when they say where they died and "-3" is not. */
+const DEPTH_NAME = {'-1': 'THE UNDERCROFT', '-2': 'THE DEEPWORKS', '-3': 'THE SUMP'};
+const DEPTH_TINT = {'-1': '#9aa3ad', '-2': '#a3894f', '-3': '#b0553f'};
+/* 0 at the top of the underworld, 1 at the bottom of it — the band index everything that
+   scales with depth reads. `stockRoom` was written against this number years before there was
+   one. */
+function depth01(f){
+  const n = f || 0;
+  if(n >= 0) return 0;
+  return DEPTHS.length < 2 ? 1 : clamp((-n - 1) / (DEPTHS.length - 1), 0, 1);
+}
+function floorY(f){ const n = f || 0; return n >= 0 ? n * FLOOR_H : -UNDER_DROP + (n + 1) * UNDER_STEP; }
+/* ---------- WHAT WANDERS THE HALLS, BY DEPTH ----------
+   The hall population, as distinct from the warrens' — a hall is open road and what stands in
+   it is what happens to live on that storey. The Undercroft keeps the mixed bag it has always
+   had; the Deepworks drop the softest of them and the Sump is Larder-Kin, shrikes and Choir.
+   NAMED UP HERE AND NOT BESIDE THE LOOP. `digUndercroft` is an IIFE fifteen thousand lines
+   below this, and a `const` it reads has to be initialised before it runs or the whole seeder
+   dies on a temporal-dead-zone throw and takes the rest of worldgen quietly with it. That is
+   how the Aldercott house shipped without its stairs; it is not happening to the underworld. */
+const HALL_KINDS = {
+  '-1': ['stalker', 'maw', 'gaunt', 'shrike'],
+  '-2': ['gaunt', 'maw', 'shrike', 'choir'],
+  '-3': ['larder', 'shrike', 'choir', 'maw'],
+};
+/* and what a warren chamber holds at each depth — the three bands `stockRoom` was written for
+   and has never once been able to reach. Shallow is PEOPLE: bandits and exiles sheltering out
+   of the wind, who are the only hostile thing down there that needs a light of its own. */
+const WARREN_BAND = {'-1': 'bandit', '-2': ['stalker', 'maw', 'gaunt'], '-3': ['larder', 'maw', 'shrike']};
 function charY(c){ return groundY(c.x, c.y) + floorY(c.floor); }
 const decks = new Set();        /* tiles that have solid ground on an upper floor */
 /* Every mutation of `decks` bumps an epoch, so anything that CACHES a question about upper-floor
@@ -5638,10 +5691,27 @@ const caves = [];
 function placeCave(h){
   if(!h) return null;
   const hallR = h.r || 8;
+  /* ---------- ON ITS HALL'S OWN STOREY ----------
+     `UNDER_F` was right for as long as there was one storey under the world. A warren cut at
+     -1 around a hall whose coordinates came off the Sump's lattice is chambers in the middle of
+     Undercroft rock — walkable, drawn as stone, and connected to nothing: the exact leak this
+     generator already spent a year closing, reintroduced from the other side. The hall carries
+     the floor it was dug on and everything below reads `CF`. */
+  const CF = h.f === undefined ? UNDER_F : h.f;
   /* the hall IS the mouth: the reference point the renderer lights the warren from */
   const mouth = {x: Math.round(h.x), y: Math.round(h.y)};
   const depth = 1;                     /* one storey. There is no down from here any more. */
-  const cave = {id: caves.length + 1, x: mouth.x, y: mouth.y, mouth, depth, deep: true,
+  /* ---------- AND THE BAND IS KNOWN BEFORE A SINGLE ROOM IS STOCKED ----------
+     THIS IS THE ORDERING FAULT, and it is worth being exact about because fixing the NUMBER
+     without fixing the order changes nothing at all — measured, on the commit before this line
+     existed: warrens correctly spread 24/15/6 across the three storeys, and still not one
+     bandit in the world. `seedWarrens` assigned `cv.menace` to the value `placeCave` RETURNED,
+     and `placeCave` is what runs `stockRoom`. By the time the assignment landed every chamber
+     in that warren had already been filled off a menace of `undefined`.
+     The hall knows its own storey, so the cave can answer the question itself at the moment it
+     is born, before anything reads it. Nothing downstream sets it any more. */
+  const cave = {id: caves.length + 1, x: mouth.x, y: mouth.y, mouth, depth, deep: true, f: CF,
+                menace: depth01(CF),
                 walls: [], rooms: [], doors: [], links: [], floors: 1, mtnId: 0};
 
   /* ---------- AND THE ROCK HAS TO BE IN `baseBlocked` ----------
@@ -5714,17 +5784,32 @@ function placeCave(h){
     return rm;
   };
 
-  /* the layered population: shallow = bandits, mid = monsters, deep = the worst, and the
-     final floor is the sealed bunker. `d01` is 0 at the mouth, 1 at the bottom. */
-  /* ---------- HOW BAD IT IS, NOW THAT THERE IS NO DEPTH ----------
-     `d01` used to be how far down you were, which is meaningless in a warren one storey thick —
-     it computed to 1 for every room, so every chamber in the world would have drawn from the
-     deepest table. REMOTENESS replaces it: how far this warren is from the nearest way out.
-     Same curve, same three bands, and it reads the same way in play — the ones near a shaft are
-     bandits sheltering, and the ones you had to walk for are not. */
+  /* ---------- THE THREE BANDS, ON THE THIRD ATTEMPT, AND THIS TIME THEY RUN ----------
+     "Three depths of progressively challenging terrain."
+     The comment that used to sit here said "shallow = bandits, mid = monsters, deep = the
+     worst", and it had been true of the code and false of the world for the whole life of the
+     file. `d01` was the storey when there were storeys; then the warrens moved up to a single
+     floor and it became REMOTENESS — distance to the nearest way out — which was the right
+     instinct and the wrong number, and on top of that was assigned after the stocking had
+     already run. Between them: 447 gaunts under the world, no bandits, and both outer tables
+     dead code. There are storeys again, `cv.menace` is `depth01(h.f)` and is set before this
+     runs, so `d01` is 0 on the Undercroft, 0.5 on the Deepworks and 1 on the Sump — and the
+     thirds below finally land one per depth instead of all three in the middle.
+     THE DEFAULT STAYS 0.5. A warren whose cave never got a menace is a bug, and the middle
+     table is the one that fails least badly. */
   const stockRoom = (rm, fl) => {
     const d01 = cave.menace === undefined ? 0.5 : cave.menace;
     const n = ri(2, 4);
+    /* ---------- AND EVERY BAND HAS A FIRE, NOT ONE BAND IN THREE ----------
+       The torch roll below is per BODY and off the body's own tile, which averages the one in
+       three the design asks for and says nothing whatever about any particular room. Measured
+       once the shallow band actually ran: 90 torches among 276 bandits — the right average —
+       and 83 of those men standing in chambers where the roll had come up empty every time, in
+       the pitch dark, missing 20% of their swings at each other's noise. A room of blind men is
+       not a fight, it is a chore, which is the sentence the roll exists to prevent.
+       The average is not the promise. THE ROOM is the promise, so the room is what is
+       guaranteed: if nobody in this chamber drew the light, the last one in gets it. */
+    let lit = null, lastPerson = null;
     for(let k = 0; k < n; k++){
       const q = findOpenNear(ri(rm.x0+1, rm.x1-1), ri(rm.y0+1, rm.y1-1), 2);
       let c;
@@ -5732,6 +5817,16 @@ function placeCave(h){
         /* the shallows: bandits and exiles sheltering out of the wind */
         c = makeChar(pickName(true), 'bandit', q.x, q.y,
           {atk:ri(10,16), def:ri(8,14), tough:ri(10,16), ath:6, weapon: rnd()<0.5?'w_club':'w_kat', armor:'a_lea'});
+        /* ---------- AND `makeChar` DOES NOT PUT ANYTHING IN THE WORLD ----------
+           THE THIRD FAULT IN THESE SIX LINES, found only once the first two were fixed and the
+           band could finally be watched running. `spawnGaunt` ends with `chars.push(c)`; this
+           branch calls the constructor directly and never did. So on the day the ordering and
+           the scalar were both put right, twenty-four shallow warrens stocked a hundred and one
+           chambers with bandits that were built, named, armed, given a torch — and never added
+           to the roster. Empty rooms, no error, and every count in the game unchanged.
+           A DEAD BRANCH ROTS. It was written correct against an interface that later grew a
+           step, and nothing could tell because nothing ran it. */
+        chars.push(c);
         /* ---------- AND THEY BROUGHT A FIRE, BECAUSE THEY ARE PEOPLE ----------
            These are the one hostile thing underground that does not see in the dark, and a room
            of blind men is not a fight, it is a chore. So about one in three is holding the
@@ -5748,30 +5843,25 @@ function placeCave(h){
            `Cannot access before initialization` and swallow the rest of the seeder in silence —
            which is precisely how the Aldercott house shipped with no stairs. `torchHours` reads
            an unset torch as a full one, so there is nothing to write.
-           ---------- AND NOTHING REACHES THIS BRANCH TODAY ----------
-           Measured while writing the line above: there is not one bandit under the world. The
-           three bands are dead, twice over, and neither fault is this feature's.
-             · `cv.menace` is assigned by `seedWarrens` AFTER `placeCave` returns — and
-               `placeCave` is what runs this function. So `cave.menace` is `undefined` at stock
-               time, `d01` falls to its 0.5 default, and EVERY room in EVERY warren draws from
-               the middle table. 447 gaunts under the world and no bandits at all.
-             · and if that were fixed it would still be wrong: `near / 190` came out between
-               0.01 and 0.05 for all 28 caves in the sampled world, because there are enough
-               shafts that the nearest one is always close. Every warren would then be shallow.
-           This line is left in place deliberately, correct and unreached, because it is where
-           the answer belongs the day the bands are put back — see the ledger. */
-        if(hash2(q.x * 13 + 7, q.y * 29) < 0.34) c.weapon = 'w_torch';
+           WRITTEN CORRECT AND UNREACHED FOR A YEAR, and this is the commit it starts running
+           in. Keep the line when a band is dead; it is where the answer belongs the day the
+           band comes back. */
+        if(hash2(q.x * 13 + 7, q.y * 29) < 0.34){ c.weapon = 'w_torch'; lit = c; }
+        lastPerson = c;
       } else if(d01 < 0.72){
         /* the middle dark: things that live down here */
-        c = spawnGaunt(pick(['stalker','maw','gaunt']), q.x, q.y);
+        c = spawnGaunt(pick(WARREN_BAND['-2']), q.x, q.y);
       } else {
         /* the deep: the worst of them, the Larder-Kin among them */
-        c = spawnGaunt(pick(['larder','maw','shrike']), q.x, q.y);
+        c = spawnGaunt(pick(WARREN_BAND['-3']), q.x, q.y);
       }
       c.floor = fl; c.roomId = rm.id; c.caveId = cave.id;
       c.guard = {x: rm.cx, y: rm.cy}; c.homeRoom = rm; c.caveDweller = true;
       if(c.gauntKind === 'larder' && !c.midden){ const md = makeMidden(mouth.x, mouth.y); c.midden = md.id; }
     }
+    /* nobody in this chamber drew the light, so the last one in is carrying it. Costs no dice:
+       the weapon it overwrites was already rolled and already spent. */
+    if(!lit && lastPerson) lastPerson.weapon = 'w_torch';
   };
 
   /* ---------- ONE FLOOR, A RING OF CHAMBERS AROUND A HALL ----------
@@ -5779,8 +5869,8 @@ function placeCave(h){
      rest of the network; the chambers are cut into the rock around its edge, so walking into a
      warren is something that happens to you while you are going somewhere else. */
   let sx = mouth.x, sy = mouth.y;
-  carve(mouth.x, mouth.y, UNDER_F);
-  for(let fl = UNDER_F; fl >= UNDER_F; fl--){
+  carve(mouth.x, mouth.y, CF);
+  for(let fl = CF; fl >= CF; fl--){
     /* the chambers sit AROUND the hall rather than on top of it — the hall stays open floor
        so the network still runs through, and the rooms are things you find off it */
     const ring = ri(3, 5);
@@ -5815,8 +5905,25 @@ function placeCave(h){
          promoted into one afterwards: seventeen by fifteen at the small end, which is the
          difference between fighting the Deep Warden and being in a cupboard with it. */
       const isVault = (s2 === ring - 1);
-      const rm = chamber(scx, scy, isVault ? ri(8,10) : ri(5,7), isVault ? ri(7,9) : ri(4,6),
-                         fl, {x: sx, y: sy}, (r2) => stockRoom(r2, fl));
+      /* ---------- AND A CHAMBER MAY NOT BE BUILT AROUND A WAY DOWN ----------
+         The lattice lays its descents before the warrens are cut, so a shaft can be standing on
+         ground a chamber is about to enclose — and a shaft inside a sealed room is a way to
+         arrive on the wrong side of a door that took four and a half seconds of noise to force.
+         Two of them landed in chambers on the first world with three storeys in it, and one of
+         those chambers was a VAULT: the whole barred-door mechanic, walked around by falling
+         into it from above.
+         The room gives way, not the shaft. There are ninety-odd candidate tiles for a chamber
+         around a hall and perhaps six ways down to the Sump in the entire world.
+         THE HALF-WIDTHS ARE ROLLED FIRST AND HELD. They were arguments to `chamber` and are
+         hoisted only so the box can be tested before it is cut; argument evaluation is
+         left-to-right, so the dice come off the stream in exactly the order they always did. */
+      const hw = isVault ? ri(8,10) : ri(5,7), hh = isVault ? ri(7,9) : ri(4,6);
+      let swallows = false;
+      for(const st of stairs){
+        if(st.x >= scx - hw && st.x <= scx + hw && st.y >= scy - hh && st.y <= scy + hh){ swallows = true; break; }
+      }
+      if(swallows) continue;
+      const rm = chamber(scx, scy, hw, hh, fl, {x: sx, y: sy}, (r2) => stockRoom(r2, fl));
       rm.vault = isVault;
       rooms.push(rm);
       /* and a way to it, because a chamber the tunnels never reached is a sealed box */
@@ -15652,7 +15759,7 @@ const deepFolk = [];
 const stonewakes = [];
 const BORE_CD = 2.4;               /* seconds between cuts */
 const BORE_BUDGET = 900;           /* tiles one of them will ever open */
-function spawnStonewake(x, y){
+function spawnStonewake(x, y, f){
   const c = makeChar('Stonewake', 'deep', x, y,
     {atk:52, def:18, tough:120, ath:3, magic:0, labor:0, armr:30});
   c.beast = true; c.construct = true;   /* no blood to spill, no mind to break, no gear to loot */
@@ -15661,7 +15768,7 @@ function spawnStonewake(x, y){
   c.big = 2.3;
   c.blood = 520; c.maxBlood = 520;
   c.clawDmg = 30;
-  c.floor = UNDER;
+  c.floor = (f === undefined ? UNDER : f);
   c.caveDweller = true;
   c.speedMult = 0.42;                   /* it has never once been in a hurry */
   c.boreCd = 0; c.boreLeft = BORE_BUDGET;
@@ -15688,11 +15795,18 @@ function stonewakeTick(dt){
       if(i*i + j*j > 5) continue;
       const wx = ax + i, wy = ay + j;
       if(wx < 3 || wy < 3 || wx >= W - 3 || wy >= H - 3) continue;
-      const k = bkey(wx, wy, UNDER);
+      /* THE STOREY IT IS STANDING ON, not the top one. A borer walked down to the Sump and
+         kept cutting `bkey(..., -1)`: it opened rock four storeys above its own head, drew
+         nothing where it actually was, and left a tunnel on the Undercroft that no creature
+         had ever been in. Its own floor, and the bucket index keyed the same way `put` keys
+         it — depth folded in above the bucket row, or the renderer looks it up on the wrong
+         storey and the tunnel is invisible from inside it. */
+      const cf = c.floor || UNDER;
+      const k = bkey(wx, wy, cf);
       if(decks.has(k) && !blocked.has(k)) continue;      /* already open */
       decks.add(k); blocked.delete(k); baseBlocked.delete(k);
       const B2 = undercroft.bucket;
-      const bk = (Math.floor(wy / B2) * 4096) + Math.floor(wx / B2);
+      const bk = ((-cf - 1) * 16777216) + (Math.floor(wy / B2) * 4096) + Math.floor(wx / B2);
       let arr = undercroft.grid.get(bk); if(!arr){ arr = []; undercroft.grid.set(bk, arr); }
       arr.push(wy * W + wx);
       undercroft.tiles++; cut++;
@@ -15715,7 +15829,7 @@ function stonewakeTick(dt){
    `bodyTick`s whatever they are doing. Five to a shoal and a thinner scatter holds the read —
    you still meet a shoal, and it is still a shoal — for less than half the bodies. */
 const SHOAL_N = 5;
-function spawnShoal(x, y){
+function spawnShoal(x, y, f){
   const id = ++shoalSeq;
   const made = [];
   for(let i = 0; i < SHOAL_N; i++){
@@ -15727,14 +15841,14 @@ function spawnShoal(x, y){
     c.clawDmg = 5;
     c.blood = 18; c.maxBlood = 18;
     for(const k of VITAL){ c.parts[k].hp = 14; c.parts[k].max = 14; }
-    c.floor = UNDER; c.caveDweller = true;
+    c.floor = (f === undefined ? UNDER : f); c.caveDweller = true;
     c.autoFight = true;               /* they do not wait to be told about a gaunt */
     c.corpseWorth = 0.2;
     c.wisp = true;                    /* it floats, and the rig already knows what that is */
     c.speedMult = 1.25;
     chars.push(c); deepFolk.push(c); made.push(c);
   }
-  shoals.push({id, x, y, floor: UNDER});
+  shoals.push({id, x, y, floor: (f === undefined ? UNDER : f)});
   return made;
 }
 const shoals = [];
@@ -15928,7 +16042,7 @@ function altarNear(x, y, fl, r){
   }
   return null;
 }
-function spawnDeep(kind, x, y){
+function spawnDeep(kind, x, y, f){
   const K = DEEP_KIN[kind];
   const p = findOpenNear(x, y, 6);
   const c = makeChar(K.name, 'deep', p.x, p.y,
@@ -15940,7 +16054,7 @@ function spawnDeep(kind, x, y){
   c.clawDmg = K.claw;
   c.race = 'human';                /* they are, and that is the whole horror of them */
   c.pureblood = true;
-  c.floor = UNDER;
+  c.floor = (f === undefined ? UNDER : f);
   c.caveDweller = true;
   /* THE LIGHT IS NOT A WEAPON AGAINST THEM AND IT IS NOT NOTHING. Everything but the
      Unblinded gives ground to it — see `deepTick`. */
@@ -22736,8 +22850,19 @@ function update(dt){
     }
   }
   const _pl = chars.filter(u => u.faction === 'player' && u.state !== 'dead');
+  /* ---------- AND NEAR MEANS NEAR, NOT DIRECTLY UNDERNEATH ----------
+     This compared x and y and never asked about the storey — so anything standing under the
+     camp was "near the squad" and thought at full speed forever, four storeys down, where the
+     player can neither see it nor reach it nor be reached by it. It was already wrong with one
+     floor under the world; with three it is wrong three times as often, and the underworld is
+     where the bodies are. Measured on the build that added the depths: 26.7ms a step against
+     17.2 before, and this is most of the gap — not the extra bodies themselves but the extra
+     bodies being counted as ON SCREEN.
+     `c.floor` is the whole fix. A body still drops to 4Hz on its own storey the moment nobody
+     is within forty tiles of it, exactly as before. */
   const _nearSquad = (c) => {
-    for(const u of _pl) if(Math.abs(u.x - c.x) < 40 && Math.abs(u.y - c.y) < 40) return true;
+    const cf = c.floor || 0;
+    for(const u of _pl) if((u.floor || 0) === cf && Math.abs(u.x - c.x) < 40 && Math.abs(u.y - c.y) < 40) return true;
     return false;
   };
   for(const c of chars){
@@ -24017,31 +24142,40 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
    caves, and the carve opens rock, so a tunnel that runs into a warren's wall breaks into it.
    The tunnels were here first. */
 const UNDER = -1;
-const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0, bucket: 24, ms: 0};
+const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0, deep: [], bucket: 24, ms: 0};
 (function digUndercroft(){
   const _t0 = (typeof performance !== 'undefined' ? performance.now() : 0);
   const U = undercroft, B = U.bucket;
   /* the spatial index. 55,000 floor tiles is nothing to hold and everything to DRAW, and the
      renderer must never walk the whole network to find the corner of it you are standing in.
      Bucketed once, here, at the only moment the shape is known. */
-  const put = (x, y) => {
+  /* ---------- ONE INDEX, THREE STOREYS ----------
+     The bucket key folds the depth in above the bucket coordinates rather than the map holding
+     three of itself: `dIdx` is 0/1/2 and the row stride is 4096 buckets, so a key can never
+     collide across depths and the renderer still gets its twenty-five buckets by arithmetic.
+     `f` is not optional. Every caller passes it, because a tile opened on the wrong storey is
+     a hole in the rock that nothing will ever notice — it is walkable, drawn as stone, and
+     reads exactly like the warren leak this file already spent a year on. */
+  const dIdx = (f) => -(f || -1) - 1;
+  const put = (x, y, f) => {
     if(x < 2 || y < 2 || x >= W-2 || y >= H-2) return;
-    const k = bkey(x, y, UNDER);
+    const k = bkey(x, y, f);
     if(decks.has(k) && !blocked.has(k)) return;              /* already open */
     decks.add(k);
     /* the tunnels are older than anything dug into them, so they cut. `baseBlocked` is taken
        long before this runs and `restore` rebuilds `blocked` from it — patch both or the
        stone grows back on the first reload. */
     blocked.delete(k); baseBlocked.delete(k);
-    const bk = (Math.floor(y/B) * 4096) + Math.floor(x/B);
+    const bk = (dIdx(f) * 16777216) + (Math.floor(y/B) * 4096) + Math.floor(x/B);
     let a = U.grid.get(bk); if(!a){ a = []; U.grid.set(bk, a); }
     a.push(y * W + x);
     U.tiles++;
+    U.deep[dIdx(f)] = (U.deep[dIdx(f)] || 0) + 1;
   };
-  const disc = (cx, cy, r) => {
+  const disc = (cx, cy, r, f) => {
     const ri2 = Math.ceil(r);
     for(let j = -ri2; j <= ri2; j++) for(let i = -ri2; i <= ri2; i++)
-      if(i*i + j*j <= r*r) put(cx + i, cy + j);
+      if(i*i + j*j <= r*r) put(cx + i, cy + j, f);
   };
   /* ---------- A TUNNEL YOU CAN MARCH A HOST DOWN ----------
      "The paths and each room are honestly quite narrow. It's hard to navigate and hard to
@@ -24059,7 +24193,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
      rather than an accident.)
      And it still WANDERS. A straight line between two halls is a corridor in a building; the
      wobble is the whole difference between a tunnel and a hallway. */
-  const bore = (ax, ay, bx, by) => {
+  const bore = (ax, ay, bx, by, f) => {
     const dx = bx - ax, dy = by - ay;
     const n = Math.max(Math.abs(dx), Math.abs(dy));
     if(!n) return;
@@ -24069,7 +24203,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
       const t = s2 / n;
       const off = Math.sin(ph + t * Math.PI * 2 * per) * amp * Math.sin(t * Math.PI);
       const px = Math.round(ax + dx * t + nx * off), py = Math.round(ay + dy * t + ny * off);
-      disc(px, py, 2.7);
+      disc(px, py, 2.7, f);
     }
   };
 
@@ -24081,38 +24215,53 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
      the margin now and the spacing is whatever divides the rest, so the network reaches the
      corners by construction rather than by luck. */
   const MARGIN = 58, S = 168;
-  const NX = Math.max(2, Math.round((W - MARGIN*2) / S) + 1), NY = Math.max(2, Math.round((H - MARGIN*2) / S) + 1);
-  const SX = (W - MARGIN*2) / (NX - 1), SY = (H - MARGIN*2) / (NY - 1);
-  const node = [];
-  for(let j = 0; j < NY; j++){
-    node[j] = [];
-    for(let i = 0; i < NX; i++){
-      const hx = clamp(Math.round(MARGIN + i*SX + ri(-34, 34)), 12, W-13);
-      const hy = clamp(Math.round(MARGIN + j*SY + ri(-34, 34)), 12, H-13);
-      node[j][i] = {x: hx, y: hy, i, j};
+  /* ---------- THREE NETWORKS, AND THE DEEPER ONES ARE THINNER ----------
+     The spacing is what makes a depth what it is. At `DEPTH_SPAN` 1 the nodes are 168 apart and
+     the net reaches every corner of the map — that is the Undercroft, and it is a road system.
+     At 1.55 the same margins hold about two fifths of the halls, and at 2.35 about a fifth: the
+     same construction, so every hall still reaches every other hall on its own storey, but with
+     four times the rock between them. THE POINT IS NOT THAT THERE IS LESS TO SEE. It is that a
+     wrong turn on the Sump costs a hundred and eighty tiles of walking in the dark, on torches
+     you brought down four storeys, and the Undercroft's habit of a junction every two minutes
+     does not survive the trip.
+     The jitter, the bud roll and the radius are all still drawn per node, so the deeper floors
+     cost the random stream what they are worth and no more. */
+  for(const F of DEPTHS){
+    const SP = S * (DEPTH_SPAN[String(F)] || 1);
+    const NX = Math.max(2, Math.round((W - MARGIN*2) / SP) + 1), NY = Math.max(2, Math.round((H - MARGIN*2) / SP) + 1);
+    const SX = (W - MARGIN*2) / (NX - 1), SY = (H - MARGIN*2) / (NY - 1);
+    const node = [];
+    for(let j = 0; j < NY; j++){
+      node[j] = [];
+      for(let i = 0; i < NX; i++){
+        const hx = clamp(Math.round(MARGIN + i*SX + ri(-34, 34)), 12, W-13);
+        const hy = clamp(Math.round(MARGIN + j*SY + ri(-34, 34)), 12, H-13);
+        node[j][i] = {x: hx, y: hy, i, j, f: F};
+      }
     }
-  }
-  /* halls first, so a tunnel arriving late cannot wall one off */
-  for(let j = 0; j < NY; j++) for(let i = 0; i < NX; i++){
-    const nd = node[j][i];
-    const r = 5 + rnd() * 5;
-    disc(nd.x, nd.y, r);
-    /* most halls have a smaller one budded off them, which is what stops every junction in
-       the world being one circle */
-    if(rnd() < 0.62){
-      const a = rnd() * Math.PI * 2, d2 = r + 3 + rnd() * 7;
-      const ox = Math.round(nd.x + Math.cos(a) * d2), oy = Math.round(nd.y + Math.sin(a) * d2);
-      disc(ox, oy, 4.5 + rnd() * 3);          /* a side chamber, not an alcove */
-      bore(nd.x, nd.y, ox, oy);
+    /* halls first, so a tunnel arriving late cannot wall one off */
+    for(let j = 0; j < NY; j++) for(let i = 0; i < NX; i++){
+      const nd = node[j][i];
+      const r = 5 + rnd() * 5;
+      disc(nd.x, nd.y, r, F);
+      /* most halls have a smaller one budded off them, which is what stops every junction in
+         the world being one circle */
+      if(rnd() < 0.62){
+        const a = rnd() * Math.PI * 2, d2 = r + 3 + rnd() * 7;
+        const ox = Math.round(nd.x + Math.cos(a) * d2), oy = Math.round(nd.y + Math.sin(a) * d2);
+        disc(ox, oy, 4.5 + rnd() * 3, F);          /* a side chamber, not an alcove */
+        bore(nd.x, nd.y, ox, oy, F);
+      }
+      nd.r = r;
+      U.halls.push(nd);
     }
-    nd.r = r;
-    U.halls.push(nd);
-  }
-  /* then the joins: right and down. Every hall reaches every other hall. */
-  for(let j = 0; j < NY; j++) for(let i = 0; i < NX; i++){
-    const nd = node[j][i];
-    if(i + 1 < NX) bore(nd.x, nd.y, node[j][i+1].x, node[j][i+1].y);
-    if(j + 1 < NY) bore(nd.x, nd.y, node[j+1][i].x, node[j+1][i].y);
+    /* then the joins: right and down. Every hall reaches every other hall ON ITS OWN STOREY —
+       which is the whole reason a descent has to be found rather than assumed. */
+    for(let j = 0; j < NY; j++) for(let i = 0; i < NX; i++){
+      const nd = node[j][i];
+      if(i + 1 < NX) bore(nd.x, nd.y, node[j][i+1].x, node[j][i+1].y, F);
+      if(j + 1 < NY) bore(nd.x, nd.y, node[j+1][i].x, node[j+1][i].y, F);
+    }
   }
   /* THE WARRENS ARE NOT JOINED TO THE LATTICE ANY MORE — they are cut INTO it, after this
      runs, by `seedWarrens`. This loop used to bore a tunnel from each mountain mouth to its
@@ -24127,6 +24276,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
      which is the other half of "under the entire map": a place you cannot get into from where
      you are standing is not under you in any sense that matters. */
   for(const h of U.halls){
+    if(h.f !== UNDER) continue;                 /* the sky only reaches the first storey */
     let sp = null;
     for(let tries = 0; tries < 30 && !sp; tries++){
       const q = findOpenNear(clamp(h.x + ri(-5, 5), 4, W-5), clamp(h.y + ri(-5, 5), 4, H-5), 6);
@@ -24136,7 +24286,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
     const sx = Math.floor(sp.x), sy = Math.floor(sp.y);
     if(stairAt(sx, sy)) continue;
     stairs.push({x: sx, y: sy, from: 0, to: UNDER, shaft: true});
-    U.shafts.push({x: sx, y: sy, hall: h});
+    U.shafts.push({x: sx, y: sy, hall: h, f: UNDER, from: 0});
   }
   /* ---------- AND COPPERHOLD'S HOLE GOES SOMEWHERE ----------
      Every other shaft in the world is a crack in the waste that somebody fell down. This one is
@@ -24166,6 +24316,59 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
       put = true;
     }
   }
+  /* ---------- AND THE WAY FURTHER DOWN ----------
+     A descent belongs to the storey it ARRIVES on, not the one it leaves — it is placed at a
+     hall of the lower depth, at a tile that happens to be open on both — because the deeper
+     lattices are the sparse ones and a shaft with no hall under it is a hole into rock.
+     TWO IN FIVE HALLS, NOT ALL OF THEM. The surface has a shaft on nearly every hall, and that
+     is right for a way IN: a world you cannot get under is not under you. Below the first
+     storey the argument inverts. There are already far fewer halls down there, and the walk to
+     the one that has a way further down is most of what makes the Sump feel like the bottom of
+     something rather than another corridor. Fifteen or so ways off the Undercroft, a handful
+     off the Deepworks, and the last of them is a long way from the first.
+     `useStairs` needed nothing for this. It has walked multi-storey descents since the tower —
+     `stairToward(c, c.floor, c.floor + (wantUp ? 1 : -1), ...)` already hunts the next stair on
+     the piece of floor you just stepped onto — so ordering a squad to the bottom is one order
+     and three shafts, and none of that code knows the underworld got deeper. */
+  /* ---------- AND WHERE THE TWO NETWORKS HAPPEN TO CROSS ----------
+     THE FIRST CUT LOOKED FOR A LANDING WITHIN FIVE TILES OF THE HALL AND FOUND ALMOST NONE.
+     Measured: two ways down to the Deepworks in the whole world and not one to the Sump — a
+     storey nothing could reach, which is the same as a storey that does not exist. The two
+     lattices are laid out independently at different spacings and the upper one covers about
+     seven per cent of the map, so the odds that a particular tile beside a lower hall is also
+     open four storeys up are about one in fourteen. Twenty-four darts at that is a coin that
+     comes up heads twice in thirty-six throws, which is exactly what it did.
+     Scan OUTWARD instead, in rings, for the first tile open on both — up to sixty tiles, which
+     is inside the reach of the lower hall's own tunnels and crosses several of the upper one's.
+     The shaft then stands where a Deepworks working happens to run beneath an Undercroft one,
+     which is a better reason for a hole in the floor than "somebody dug here": these are not
+     one excavation, they are three, and the ways between them are where they blundered into
+     each other.
+     THE RINGS DRAW NO DICE. One `rnd()` per candidate hall, for the roll, and the search after
+     it is pure arithmetic — so the world's random stream cannot tell how hard a shaft was to
+     place, and a change to the search radius does not move the towns. */
+  for(let di = 1; di < DEPTHS.length; di++){
+    const up = DEPTHS[di - 1], dn = DEPTHS[di];
+    for(const h of U.halls){
+      if(h.f !== dn) continue;
+      if(rnd() > 0.40) continue;
+      const openOn = (x, y, f) => { const k = bkey(x, y, f); return decks.has(k) && !blocked.has(k); };
+      let sp = null;
+      for(let rad = 0; rad <= 60 && !sp; rad++){
+        for(let dy = -rad; dy <= rad && !sp; dy++) for(let dx = -rad; dx <= rad && !sp; dx++){
+          if(Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;      /* the ring, not the disc */
+          const qx = h.x + dx, qy = h.y + dy;
+          if(qx < 4 || qy < 4 || qx >= W-4 || qy >= H-4) continue;
+          if(!openOn(qx, qy, dn) || !openOn(qx, qy, up)) continue;
+          if(stairAt(qx, qy)) continue;
+          sp = {x: qx, y: qy};
+        }
+      }
+      if(!sp) continue;
+      stairs.push({x: sp.x, y: sp.y, from: up, to: dn, shaft: true});
+      U.shafts.push({x: sp.x, y: sp.y, hall: h, f: dn, from: up});
+    }
+  }
   /* ---------- AND SOMETHING LIVES DOWN THERE ----------
      Not in every hall. A network you can cross is worth having on its own, and a monster in
      every room turns a place into a corridor of encounters — which is what the warrens
@@ -24175,18 +24378,26 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
     const n = ri(2, 4);
     for(let k = 0; k < n; k++){
       const q = findOpenNear(h.x + ri(-3, 3), h.y + ri(-3, 3), 3);
-      const c = spawnGaunt(pick(['stalker', 'maw', 'gaunt', 'shrike']), q.x, q.y);
+      const c = spawnGaunt(pick(HALL_KINDS[String(h.f)] || HALL_KINDS['-1']), q.x, q.y);
       if(!c) continue;
-      c.floor = UNDER; c.guard = {x: h.x, y: h.y}; c.caveDweller = true; c.undercroft = true;
+      c.floor = h.f; c.guard = {x: h.x, y: h.y}; c.caveDweller = true; c.undercroft = true;
     }
   }
   /* and a reason to be here that is not a monster: the halls are OLD, and people left things
      in them. Modest — the vaults at the bottom of the warrens are still the prize. */
   for(const h of U.halls){
     if(rnd() > 0.30) continue;
-    chests.push({x: h.x + ri(-2, 2), y: h.y + ri(-2, 2), opened: false, floor: UNDER,
-      loot: {cats: ri(60, 260), items: {remains: ri(1, 3), ...(rnd() < 0.34 ? {c_ingot: ri(2, 5)} : {}),
-             ...(rnd() < 0.18 ? {tome: 1} : {})}}});
+    /* ---------- AND IT PAYS BY DEPTH ----------
+       `dp` is 0 on the Undercroft and 1 on the Sump. A hall chest four storeys down is worth
+       roughly three times one at the top and is the only place outside a vault that hands over
+       iron — which is the answer to "why would anybody go down there", asked of a chest rather
+       than of a monster. */
+    const dp = depth01(h.f);
+    chests.push({x: h.x + ri(-2, 2), y: h.y + ri(-2, 2), opened: false, floor: h.f,
+      loot: {cats: Math.round(ri(60, 260) * (1 + dp * 2.1)), items: {remains: ri(1, 3) + Math.round(dp * 3),
+             ...(rnd() < 0.34 + dp * 0.4 ? {c_ingot: ri(2, 5) + Math.round(dp * 5)} : {}),
+             ...(dp > 0.4 && rnd() < 0.30 + dp * 0.3 ? {iron: ri(1, 2) + Math.round(dp * 3)} : {}),
+             ...(rnd() < 0.18 + dp * 0.3 ? {tome: 1} : {})}}});
   }
   /* ---------- AND SOMETHING GROWS DOWN HERE ----------
      "Maybe some glowing fauna or something down there for effect? Let's experiment."
@@ -24206,8 +24417,8 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
       const ha = hash2(h.x + k * 13, h.y * 7 + k), hb = hash2(k * 41 + h.x, h.y + k * 3);
       const a = ha * Math.PI * 2, rr = (h.r || 8) * (0.45 + hb * 0.5);
       const fx = Math.round(h.x + Math.cos(a) * rr), fy = Math.round(h.y + Math.sin(a) * rr);
-      if(!decks.has(bkey(fx, fy, UNDER)) || blocked.has(bkey(fx, fy, UNDER))) continue;
-      U.flora.push({x: fx + 0.5, y: fy + 0.5, h: 0.5 + hb * 0.9, n: 3 + Math.floor(ha * 4),
+      if(!decks.has(bkey(fx, fy, h.f)) || blocked.has(bkey(fx, fy, h.f))) continue;
+      U.flora.push({x: fx + 0.5, y: fy + 0.5, f: h.f, h: 0.5 + hb * 0.9, n: 3 + Math.floor(ha * 4),
                     hue: hash2(fx, fy)});
     }
   }
@@ -24227,7 +24438,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
         if(hash2(h.x * 11, h.y * 5) > 0.55) continue;          /* not every hall is inhabited */
         const altar = (hi % 3) === 0;
         if(altar){
-          const a = {x: h.x + 0.5, y: h.y + 0.5, floor: UNDER, hall: hi, given: [], regard: 0};
+          const a = {x: h.x + 0.5, y: h.y + 0.5, floor: h.f, hall: hi, given: [], regard: 0};
           deepAltars.push(a);
         }
         /* the congregation. A warrior or two on the floor, the Kept standing back from them,
@@ -24239,7 +24450,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
           const kind = hk < 0.34 ? 'warrior' : 'kept';
           const a2 = (k / n) * Math.PI * 2 + hash2(k, hi) * 0.7;
           const rr = (h.r || 8) * (0.35 + hash2(k * 13, hi) * 0.5);
-          const c = spawnDeep(kind, Math.round(h.x + Math.cos(a2) * rr), Math.round(h.y + Math.sin(a2) * rr));
+          const c = spawnDeep(kind, Math.round(h.x + Math.cos(a2) * rr), Math.round(h.y + Math.sin(a2) * rr), h.f);
           /* ---------- `post`, NOT `guard` ----------
              A `guard` post is a standing order that `physics` enforces on its own whenever a
              body has nothing else to do — and "nothing else to do" is exactly the state a Kept
@@ -24250,18 +24461,18 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
           if(c){ c.post = {x: h.x, y: h.y}; c.hallId = hi; }
         }
         if(altar){
-          const pr = spawnDeep('priest', h.x + 1, h.y + 1);
+          const pr = spawnDeep('priest', h.x + 1, h.y + 1, h.f);
           if(pr){ pr.post = {x: h.x, y: h.y}; pr.hallId = hi; pr.altar = deepAltars[deepAltars.length - 1]; }
         }
         if(hash2(h.x * 3 + 1, h.y * 19) > 0.86){
-          const z = spawnDeep('unblind', h.x - 2, h.y + 2);
+          const z = spawnDeep('unblind', h.x - 2, h.y + 2, h.f);
           if(z){ z.post = {x: h.x, y: h.y}; z.hallId = hi; }
         }
         /* a shoal in a third of the inhabited halls, and a Stonewake in a tenth — it is one
            creature per several hundred tiles of tunnel and it should stay that way */
-        if(hash2(h.y * 23, h.x * 31) > 0.80) spawnShoal(h.x + 3, h.y - 3);
+        if(hash2(h.y * 23, h.x * 31) > 0.80) spawnShoal(h.x + 3, h.y - 3, h.f);
         if(hash2(h.x * 41 + 3, h.y * 13) > 0.90){
-          const sw = spawnStonewake(h.x - 4, h.y - 4);
+          const sw = spawnStonewake(h.x - 4, h.y - 4, h.f);
           if(sw){ sw.guard = {x: h.x, y: h.y}; sw.hallId = hi; }
         }
       }
@@ -24285,13 +24496,23 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
   const caves = [];
   for(const h of pool){
     if(caves.length >= want) break;
-    /* how far this hall is from the nearest way out of the ground, 0..1 — the warren's menace,
-       which replaces the old "how many floors down are you" now that there is only one floor */
-    let near = 1e9;
-    for(const sh of U.shafts) near = Math.min(near, dist(sh.x, sh.y, h.x, h.y));
+    /* ---------- AND `menace` IS DEPTH AGAIN, WHICH IS WHAT IT ALWAYS WANTED TO BE ----------
+       `stockRoom` has drawn from three tables since the warrens were written and has never once
+       reached the first or the third. Two faults, both recorded, both dying here:
+         · `cv.menace` was assigned AFTER `placeCave` returned — and `placeCave` is what runs the
+           stocking. It read `undefined` at stock time, fell to its 0.5 default, and every
+           chamber in the world drew from the middle table. 447 gaunts under the world and not
+           one bandit, ever.
+         · and the number itself was `near / 190` — the distance to the nearest way out — which
+           came out between 0.01 and 0.05 for all twenty-eight warrens in the sampled world,
+           because there are eighty-two shafts and one of them is always close. Fixing the
+           ordering alone would have made every warren shallow instead of every warren middling.
+       Both go. The band is the STOREY, which is the thing the original comment said it was
+       ("shallow = bandits, mid = monsters, deep = the worst") back when there were floors to
+       mean it, and `depth01` hands it over as 0, 0.5, 1 for the three depths. Set BEFORE the
+       cave is placed, because the hall carries it and `placeCave` reads the hall. */
     const cv = placeCave(h);
     if(!cv) continue;
-    cv.menace = clamp(near / 190, 0, 1);
     caves.push(cv);
   }
   /* ---------- ONE RING DOES NOT KNOW WHAT ANOTHER ONE WAS BUILT ACROSS ----------
@@ -24327,11 +24548,11 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
      walkable until you reload and `setDoor` puts it back — which `under.js` reads as twelve
      MORE rock tiles after a save than before, on a warren that looked fine. A route may end
      at nothing but hall floor. */
-  const walled = (x, y) => { const k = bkey(x, y, UNDER); return ringK.has(k) || doorK.has(k); };
+  const walled = (x, y, f) => { const k = bkey(x, y, f); return ringK.has(k) || doorK.has(k); };
   /* a four-connected route from the doorstep to the hall that never opens somebody else's wall.
      Bounded to a box around the two ends, because this runs once per chamber and the floor is
      ninety thousand tiles. Rock is passable to a ROUTE — we are carving, not walking. */
-  const route = (sx, sy, tx, ty) => {
+  const route = (sx, sy, tx, ty, f) => {
     const pad = 30;
     const x0 = Math.max(2, Math.min(sx, tx) - pad), x1 = Math.min(W - 3, Math.max(sx, tx) + pad);
     const y0 = Math.max(2, Math.min(sy, ty) - pad), y1 = Math.min(H - 3, Math.max(sy, ty) + pad);
@@ -24345,7 +24566,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
         if(nx < x0 || nx > x1 || ny < y0 || ny > y1) continue;
         const id = ny * W + nx;
         if(seen.has(id)) continue;
-        if(walled(nx, ny) && !(nx === tx && ny === ty)) continue;   /* never through a ring */
+        if(walled(nx, ny, f) && !(nx === tx && ny === ty)) continue;   /* never through a ring */
         seen.set(id, [x, y]);
         q.push([nx, ny]);
       }
@@ -24357,26 +24578,27 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
   };
   let routed = 0, straight = 0;
   for(const cv of caves){
+    const CF = cv.f === undefined ? UNDER : cv.f;
     for(const [ax, ay, bx, by, ux, uy] of (cv.links || [])){
       /* the door and its doorstep, out along the door's own axis. These are outside the room by
          construction; the only thing that can be in the way is a NEIGHBOUR's ring, so it stops
          short rather than punching through one. */
       let sx = bx, sy = by, t = 0;
-      U.put(bx, by);
+      U.put(bx, by, CF);
       for(t = 1; t <= 4; t++){
         const nx = bx + ux * t, ny = by + uy * t;
-        if(walled(nx, ny)) break;
-        U.put(nx, ny); sx = nx; sy = ny;
+        if(walled(nx, ny, CF)) break;
+        U.put(nx, ny, CF); sx = nx; sy = ny;
       }
-      const path = route(sx, sy, ax, ay);
-      if(path){ for(const [px, py] of path) U.put(px, py); routed++; }
+      const path = route(sx, sy, ax, ay, CF);
+      if(path){ for(const [px, py] of path) U.put(px, py, CF); routed++; }
       else {
         /* nothing legal reaches the hall — carve it straight and let the wall win at the end.
            `warrens.js` then reports it as a chamber you cannot get INTO, loudly, which is the
            failure worth having: an unreachable room is visible and a leaking one is not. */
         let px = sx, py = sy;
-        while(px !== ax){ px += Math.sign(ax - px); U.put(px, py); }
-        while(py !== ay){ py += Math.sign(ay - py); U.put(px, py); }
+        while(px !== ax){ px += Math.sign(ax - px); U.put(px, py, CF); }
+        while(py !== ay){ py += Math.sign(ay - py); U.put(px, py, CF); }
         straight++;
       }
     }
@@ -24385,11 +24607,6 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
   for(const k of ringK){ blocked.add(k); baseBlocked.add(k); }
   for(const cv of caves) for(const d of cv.doors) setDoor(d, false);
   U.warrenRouted = routed; U.warrenStraight = straight;
-  for(const cv of caves){
-    /* AND THE DRAWN LIST HAS TO MATCH THE COLLISION, which is the same bookkeeping as before —
-       a door is drawn as a door and everything else is drawn only where it is actually solid. */
-    cv.walls = cv.walls.filter(w => blocked.has(bkey(w.x, w.y, w.f)) || doorK.has(bkey(w.x, w.y, w.f)));
-  }
   /* ---------- AND THE NETWORK IS STILL ONE PLACE AFTERWARDS ----------
      A chamber's wall ring does not know what it was built across. Cutting warrens into the halls
      walled one hall in eighty-one off from the rest of the lattice — `under.js` says "and you can
@@ -24398,42 +24615,71 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
      Flood the network, and thread any hall that got cut off back to the nearest one that did not.
      Carved last, four-connected, same as the approaches. Cheap: one flood over ninety thousand
      tiles at worldgen, and normally it finds nothing to do. */
-  {
+  /* ---------- AND EACH STOREY IS STILL ONE PLACE AFTERWARDS ----------
+     ONCE PER DEPTH, not once. This flood used to start at `U.shafts[0]` and walk `isBlocked`
+     at `UNDER`, which was the whole underworld for as long as there was one of it. Run over
+     three storeys unchanged it would have flooded the Undercroft, declared every hall on the
+     Deepworks and the Sump unreachable, and then "repaired" the lot by threading tunnels
+     between halls that were never joined in the first place — a hundred and eighty tiles of
+     corridor, on the wrong floor, in a place the player is meant to have to find a shaft to
+     get to. The seed for each flood is a shaft that ARRIVES on that depth. */
+  for(const F of DEPTHS){
     const reach = () => {
-      const s0 = U.shafts[0]; if(!s0) return new Set();
+      const s0 = U.shafts.find(sh => (sh.f === undefined ? UNDER : sh.f) === F);
+      if(!s0) return null;
       const seen = new Set(); const q = [[Math.round(s0.x), Math.round(s0.y)]];
       seen.add(Math.round(s0.y) * W + Math.round(s0.x));
       while(q.length){
         const [x, y] = q.pop();
         for(const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
           const nx = x + dx, ny = y + dy, id = ny * W + nx;
-          if(seen.has(id) || isBlocked(nx, ny, UNDER)) continue;
+          if(seen.has(id) || isBlocked(nx, ny, F)) continue;
           seen.add(id); q.push([nx, ny]);
         }
         if(seen.size > 400000) break;
       }
       return seen;
     };
+    const mine = U.halls.filter(h => h.f === F);
     for(let pass = 0; pass < 3; pass++){
       const seen = reach();
-      const off = U.halls.filter(h => !seen.has(Math.round(h.y) * W + Math.round(h.x)));
+      if(!seen) break;                       /* no way onto this storey at all — nothing to thread */
+      const off = mine.filter(h => !seen.has(Math.round(h.y) * W + Math.round(h.x)));
       if(!off.length) break;
       for(const h of off){
         let best = null, bd = 1e9;
-        for(const o of U.halls){
+        for(const o of mine){
           if(!seen.has(Math.round(o.y) * W + Math.round(o.x))) continue;
           const d2 = dist(o.x, o.y, h.x, h.y);
           if(d2 < bd){ bd = d2; best = o; }
         }
         if(!best) continue;
-        /* AND THE REPAIR MUST NOT OPEN A RING EITHER. This runs after the rings are up, so a
-           thread walked straight from hall to hall would punch the same hole the approaches
-           used to — the leak, reintroduced by the thing that exists to fix a different one.
-           It steps around, and gives up rather than cutting through. */
-        let px = Math.round(h.x), py = Math.round(h.y);
+        /* ---------- AND THE REPAIR MUST NOT OPEN A RING EITHER ----------
+           This runs after the rings are up, so a thread walked straight from hall to hall would
+           punch the same hole the approaches used to — the leak, reintroduced by the thing that
+           exists to fix a different one.
+           IT ROUTES, IT DOES NOT STEER. What was here was a hand-rolled walk that stepped
+           toward the target, sidestepped once when a ring was in the way, and gave up when both
+           ways forward were wall. That is a greedy stepper, and a greedy stepper cannot get out
+           of a pocket — it needs to move AWAY from the target for a while, which is the one
+           thing it will not do. With one storey the repair almost never ran and it never showed;
+           with three it runs on each, and it left one warren at the bottom-left corner of the
+           Deepworks sealed off with all four of its chambers inside — 175 of 179 reachable, and
+           the four were one place rather than four accidents.
+           `route` is the same bounded BFS the approaches use and it already knows how to go
+           around every ring in the world, so the repair asks it instead. The greedy walk stays
+           as the fallback for the case `route`'s box cannot express. */
         const tx = Math.round(best.x), ty = Math.round(best.y);
-        const wall2 = (x, y) => { const k = bkey(x, y, UNDER); return ringK.has(k) || doorK.has(k); };
-        U.put(px, py);
+        const hx = Math.round(h.x), hy = Math.round(h.y);
+        const wall2 = (x, y) => { const k = bkey(x, y, F); return ringK.has(k) || doorK.has(k); };
+        const thread = route(hx, hy, tx, ty, F);
+        if(thread){ for(const [qx, qy] of thread) U.put(qx, qy, F); continue; }
+        /* AND THE FIRST TILE IS A TILE LIKE ANY OTHER. Every step of the walk below is checked
+           against `wall2` and this one never was — so a thread that began on a hall centre
+           which happened to be inside somebody's chamber ring punched it, and `U.put` clears
+           `baseBlocked` as well as `blocked`, which makes the hole permanent. */
+        let px = hx, py = hy;
+        if(!wall2(px, py)) U.put(px, py, F);
         let guard2 = 0;
         while((px !== tx || py !== ty) && guard2++ < 4000){
           const dx = Math.sign(tx - px), dy = Math.sign(ty - py);
@@ -24444,11 +24690,25 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
             ny = py + (dy || 1); nx = px;
             if(wall2(nx, ny)){ nx = px + (dx || 1); ny = py; if(wall2(nx, ny)) break; }
           }
-          px = nx; py = ny; U.put(px, py);
+          px = nx; py = ny; U.put(px, py, F);
         }
       }
     }
   }
+  /* ---------- AND THE DRAWN LIST IS FILTERED LAST, AFTER EVERY CARVE ----------
+     This used to run before the connectivity repair, which is fine right up until the repair
+     opens something — and `U.put` deletes from `baseBlocked` as well as `blocked`, so the tile
+     is floor forever while the renderer goes on drawing rock over it until you reload. Nothing
+     may cut the world after this line. */
+  /* ---------- ONE DERIVATION, NOT TWO THAT HAPPEN TO AGREE ----------
+     This filtered the list the ring-builder had pushed; `restore` calls `rebuildCaveWalls`,
+     which derives the list fresh from the rooms. Two different answers to one question, kept
+     in step only by nothing having disturbed either — and on a world with forty-five warrens
+     they stopped agreeing in both directions at once: the filter kept a door tile the rebuild
+     dropped, and the rebuild found a hundred and ninety-one ring tiles blocked by a neighbour's
+     rock that the filter had never pushed. Chasing equality between two derivations is not a
+     fix; having one is. Worldgen now ends by asking the same function the load path asks. */
+  for(const cv of caves) rebuildCaveWalls(cv);
 })();
 /* ============================================================ WHERE THE LEGENDARIES ARE ====
    The doc set one rule for these and it is the only rule that matters: A LEGENDARY MUST BE
@@ -24477,15 +24737,19 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
     const t0 = towns[0] || {x: W/2, y: H/2};
 
     /* ---------- THE WARREN VAULTS ----------
-       Twenty-eight of them, each behind a barred door that takes four and a half seconds of
-       noise to force and a Deep Warden standing over the chest. Sorted by how far they are
-       from the town you start beside, furthest first, so the best of them is the one you had
-       to cross a map and a storey to reach. Ties broken on `id`, which is stable. */
+       Forty-five of them now, each behind a barred door that takes four and a half seconds of
+       noise to force and a Deep Warden standing over the chest.
+       DEPTH FIRST, THEN DISTANCE. Sorting on distance alone was the whole of it while every
+       warren was on one storey — the furthest vault was the longest walk, and the longest walk
+       was the hardest thing to do. With three storeys a vault four hundred tiles away on the
+       Undercroft is a stroll next to one directly beneath your feet on the Sump, and a sort
+       that cannot see that hands the best item in the world to whichever is further from a
+       town. The walk that counts is the one through two shafts. Ties broken on `id`, stable. */
     const vaults = caves.filter(cv => cv.vault)
       .map(cv => ({cv, ch: chests.find(x => x.vault && x.x === cv.vault.x && x.y === cv.vault.y),
-                   d: dist(cv.vault.x, cv.vault.y, t0.x, t0.y)}))
+                   dp: depth01(cv.f), d: dist(cv.vault.x, cv.vault.y, t0.x, t0.y)}))
       .filter(v => v.ch)
-      .sort((a, b) => b.d - a.d || a.cv.id - b.cv.id);
+      .sort((a, b) => b.dp - a.dp || b.d - a.d || a.cv.id - b.cv.id);
     /* the four that live in the dark, in the order the walk gets longer */
     const inVaults = ['h_circlet', 'w_stave', 'a_widow', 'k_twelfth'];
     inVaults.forEach((k, i) => { if(vaults[i]) put(vaults[i].ch, k); });
@@ -24518,9 +24782,16 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
        it the Tooth makes the one enemy in the game that can inflict the wound the same one
        you have to walk up to in the dark. It is HELD as well as dropped, so the thing that
        cuts you with it is visibly the thing you came for. */
+    /* AND ON THE DEEPEST FLOOR IT CAN BE FOUND ON. Same argument as the vaults: "a boss
+       underground" meant one thing when underground was one storey. The Tooth is the item the
+       doc gave a whole mechanic to and it should sit at the bottom of the world, so the sort
+       is depth first and distance only to break the tie between the ones down there. It falls
+       back gracefully — if nothing blind is standing on the Sump the deepest one anywhere gets
+       it, which is what the sort says without needing a branch to say it. */
     const blind = (typeof deepFolk !== 'undefined' ? deepFolk : [])
       .filter(c => c.deepKin === 'unblind' && c.state !== 'dead')
-      .sort((a, b) => dist(b.x, b.y, t0.x, t0.y) - dist(a.x, a.y, t0.x, t0.y));
+      .sort((a, b) => depth01(b.floor) - depth01(a.floor) ||
+                      dist(b.x, b.y, t0.x, t0.y) - dist(a.x, a.y, t0.x, t0.y));
     if(blind[0]){
       const u = blind[0];
       u.name = 'The Unblinded — Mother\'s Own';
@@ -26508,7 +26779,7 @@ function syncRoofs(){
 const syncUndercroft = makeDynGroup(
   () => {
     const B = undercroft.bucket;
-    const anyDown = chars.some(c => c.faction === 'player' && c.state !== 'dead' && (c.floor || 0) === UNDER);
+    const anyDown = chars.some(c => c.faction === 'player' && c.state !== 'dead' && (c.floor || 0) === activeFloor);
     /* `camSX/camSY`, NOT `camX/camY`. The pair the game aims at and the pair the camera is
        actually AT are different numbers — the second chases the first and can be eighty tiles
        behind it while the view is still moving. Keying the group on the target drew the
@@ -26542,7 +26813,13 @@ const syncUndercroft = makeDynGroup(
       box(g, 0.06, 2.2, 0.06, '#7a6a52', cxs, gy + 1.5, czs);                           /* and the rope down it */
     }
     /* ---------- AND THE FLOOR YOU ARE STANDING ON ---------- */
-    if(activeFloor !== UNDER) return;
+    /* ---------- WHICHEVER STOREY YOU ARE LOOKING AT ----------
+       This said `!== UNDER` and meant "the underground", which was the same sentence for as
+       long as there was one of them. Now it is the storey the camera is on: the floor plate,
+       the rim, the fronds and the altars are all drawn for `activeFloor`, and standing on the
+       Sump draws the Sump rather than nothing at all. */
+    if(activeFloor >= 0) return;
+    const UF = activeFloor;
     /* ---------- PALEFROND ----------
        The one thing down here that is not rock, bone or something trying to eat you. A stand of
        pale fronds on a short stalk, lit from inside, growing where water gets into the seam.
@@ -26551,8 +26828,9 @@ const syncUndercroft = makeDynGroup(
        player wants — "there is something alive down here and it is not me" — is entirely
        carried by the colour. Camera-local like everything else in this group. */
     {
-      const fy0 = floorY(UNDER), FR = undercroft.bucket * 2.6;
+      const fy0 = floorY(UF), FR = undercroft.bucket * 2.6;
       for(const F of undercroft.flora){
+        if((F.f || UNDER) !== UF) continue;       /* a frond four storeys down is not in this room */
         if(Math.abs(F.x - camSX) > FR || Math.abs(F.y - camSY) > FR) continue;
         const gy2 = groundY(F.x, F.y) + fy0;
         box(g, 0.16, F.h * 0.35, 0.16, '#4d5a48', F.x, gy2 + F.h * 0.175, F.y, false);   /* the stool */
@@ -26581,8 +26859,9 @@ const syncUndercroft = makeDynGroup(
        four standing posts round it, and a bowl on top with something in it that has not gone
        out. Camera-local like the fronds. */
     {
-      const fyA = floorY(UNDER), AR = undercroft.bucket * 2.6;
+      const fyA = floorY(UF), AR = undercroft.bucket * 2.6;
       for(const a of deepAltars){
+        if((a.floor || UNDER) !== UF) continue;
         if(Math.abs(a.x - camSX) > AR || Math.abs(a.y - camSY) > AR) continue;
         const gy2 = groundY(a.x, a.y) + fyA;
         box(g, 2.6, 0.14, 2.6, '#4b4a44', a.x, gy2 + 0.07, a.y, false, {receive: true});   /* the plinth */
@@ -26603,8 +26882,9 @@ const syncUndercroft = makeDynGroup(
     const B = undercroft.bucket, R = 2;
     const bx0 = Math.floor(camSX / B), by0 = Math.floor(camSY / B);
     const lit = new Set();
+    const dOff = (-UF - 1) * 16777216;          /* the depth this camera is on, folded into the key */
     for(let j = -R; j <= R; j++) for(let i = -R; i <= R; i++){
-      const a = undercroft.grid.get((by0 + j) * 4096 + (bx0 + i));
+      const a = undercroft.grid.get(dOff + (by0 + j) * 4096 + (bx0 + i));
       if(a) for(const t of a) lit.add(t);
     }
     /* ---------- AND IT IS EMITTED IN RUNS, NOT IN TILES ----------
@@ -26618,7 +26898,7 @@ const syncUndercroft = makeDynGroup(
        `charY` puts bodies on — so a plate that ignored the terrain would have people standing
        in it on a hillside. Flat ground gets long plates, a slope gets short ones, and the
        floor is under their feet either way. */
-    const fy = floorY(UNDER);
+    const fy = floorY(UF);
     let mnX = 1e9, mxX = -1e9, mnY = 1e9, mxY = -1e9;
     for(const t of lit){
       const x = t % W, y = (t - x) / W;
@@ -26633,7 +26913,7 @@ const syncUndercroft = makeDynGroup(
       for(const [dx, dz] of [[1,0],[-1,0],[0,1],[0,-1]]){
         const nx = x + dx, ny = y + dz, nt = ny * W + nx;
         if(lit.has(nt)) continue;
-        if(decks.has(bkey(nx, ny, UNDER)) && !blocked.has(bkey(nx, ny, UNDER))) continue;
+        if(decks.has(bkey(nx, ny, UF)) && !blocked.has(bkey(nx, ny, UF))) continue;
         rock.add(nt);
       }
     }
@@ -32181,6 +32461,25 @@ function refreshTop(){
         : FRACTURE_STAGES[fractureStage].name;
       el.style.color = col;
       el.style.borderColor = fractureStage >= 3 ? col : 'var(--edge)';
+    }
+  }
+  /* ---------- AND HOW FAR DOWN YOU ARE ----------
+     The one piece of interface three storeys made necessary. A player standing in a tunnel on
+     the Sump sees exactly what a player standing in a tunnel on the Undercroft sees — the same
+     grey rock, the same fog radius, the same fronds — and the difference between them is which
+     things are about to walk out of it. It reads the CAMERA's storey, not the squad's, because
+     the question it answers is "what am I looking at". */
+  {
+    const dl = $('ui-depth');
+    if(dl){
+      if(activeFloor >= 0) dl.style.display = 'none';
+      else {
+        dl.style.display = '';
+        const nm = DEPTH_NAME[String(activeFloor)] || 'THE DEEP';
+        dl.textContent = `${nm} · ${-activeFloor * UNDER_STEP + (UNDER_DROP - UNDER_STEP)}m`;
+        dl.style.color = DEPTH_TINT[String(activeFloor)] || '#8a9098';
+        dl.style.borderColor = 'var(--edge)';
+      }
     }
   }
 }
@@ -38171,7 +38470,12 @@ function snapshot(){
     /* pins are notes the player wrote; losing them on a reload would be the whole feature */
     marks: marks.map(m => ({x: m.x, y: m.y})),
     caves: caves.map(cv => ({id:cv.id, x:cv.x, y:cv.y, mouth:cv.mouth, depth:cv.depth,
-      rooms:cv.rooms, doors:cv.doors, vault:cv.vault})),
+      /* `f` IS THE STOREY THE WARREN IS ON and it has to travel. It costs one number a warren
+         and everything that asks a warren how deep it is — the band it stocked, the vault sort,
+         the renderer's floor — reads `undefined` without it, which `depth01` quietly turns into
+         "the top one". A world reloaded would have had forty-five warrens all claiming to be on
+         the Undercroft. */
+      f:cv.f, rooms:cv.rooms, doors:cv.doors, vault:cv.vault})),
     chronicle: chronicle.slice(-500),
     reps: towns.map(t=>t.rep),
     leaders: towns.map(t=>t.leader),
@@ -38342,10 +38646,10 @@ function restore(d){
   if(Array.isArray(d.caves)){
     caves.length = 0;
     for(const cv of d.caves) caves.push({id:cv.id, x:cv.x, y:cv.y, mouth:cv.mouth, depth:cv.depth,
+      f:(cv.f === undefined ? UNDER_F : cv.f),
       rooms:cv.rooms||[], doors:cv.doors||[], vault:cv.vault, walls:[]});
     /* `walls: []` was not a placeholder, it was the bug: the renderer draws this list and
        nothing refilled it, so every warren came back off a save with its rock invisible. */
-    for(const cv of caves) rebuildCaveWalls(cv);
     /* ---------- AND THE DOORS, WHICH ARE NOW A MECHANIC RATHER THAN A DECORATION ----------
        `cv.doors` was already saved, back when nothing read it but the renderer. It is the world's
        collision now, so the global list has to be rebuilt from it AND every door's state pushed
@@ -38357,6 +38661,17 @@ function restore(d){
       doors.push(dr);
       setDoor(dr, !!dr.open);
     }
+    /* ---------- AND THE WALLS ARE DERIVED AFTER THE DOORS, NOT BEFORE ----------
+       `rebuildCaveWalls` keeps a ring tile only where `blocked` says there is rock, and it used
+       to run up here, before `setDoor` had put a single door back. `setDoor` deliberately does
+       NOT write `baseBlocked` — a door's state is the player's business — so at that moment a
+       shut door's tile is not blocked and the rebuild drops it, and the renderer has a doorway
+       with nothing drawn in it for the rest of the session.
+       It survived a year because with twenty-eight warrens the lost tiles happened to coincide
+       with ring tiles counted elsewhere; `under.js` counts UNIQUE tiles, and at forty-five
+       warrens and ninety-one doors on the deep storeys one of them finally stopped coinciding.
+       DRAWN 9331 → 9330, which is one tile, and one tile is the whole bug. */
+    for(const cv of caves) rebuildCaveWalls(cv);
   }
   squadGroups.length = 0;
   if(Array.isArray(d.squadGroups)) for(const g of d.squadGroups) squadGroups.push({name:g.name, open:g.open !== false});
