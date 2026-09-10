@@ -38,11 +38,19 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       try { fn(); } catch (e) { for (const k of keys) if (R[k] === undefined) R[k] = '!! ' + String(e.message).slice(0, 130).toUpperCase(); }
     };
     const UF = -1;
-    /* a 4-connected flood of the whole storey from the first shaft. Four-connected on purpose:
-       a body walks orthogonally, and two tiles that touch at a corner are not a passage — which
-       is a fault this rework hit twice, once at a door and once in an approach tunnel. */
-    const flood = () => {
-      const s0 = (typeof undercroft !== 'undefined' && undercroft.shafts[0]);
+    /* ---------- ONE FLOOD PER STOREY, KEYED BY FLOOR ----------
+       This flooded storey -1 from `shafts[0]` and asked every chamber in the world about the
+       result, which was the whole truth while the world had one storey under it. With three it
+       reports two thirds of the warrens unreachable and is describing the DESCENT, not a fault:
+       a chamber on the Sump is not supposed to be reachable from a flood of the Undercroft.
+       Each storey is flooded from a shaft that ARRIVES on it, and a chamber is asked about the
+       flood of its own floor. Four-connected on purpose: a body walks orthogonally, and two
+       tiles that touch at a corner are not a passage — a fault this rework hit twice, once at a
+       door and once in an approach tunnel. */
+    const DEEPS = (typeof DEPTHS !== 'undefined') ? DEPTHS.slice() : [UF];
+    const floodAt = (f) => {
+      const U = (typeof undercroft !== 'undefined') ? undercroft : null;
+      const s0 = U && (U.shafts.find(sh => (sh.f === undefined ? UF : sh.f) === f) || (f === UF ? U.shafts[0] : null));
       if (!s0) return new Set();
       const seen = new Set(); const q = [[Math.round(s0.x), Math.round(s0.y)]];
       seen.add(Math.round(s0.y) * W + Math.round(s0.x));
@@ -50,41 +58,66 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const [x, y] = q.pop();
         for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
           const nx = x + dx, ny = y + dy, id = ny * W + nx;
-          if (seen.has(id) || isBlocked(nx, ny, UF)) continue;
+          if (seen.has(id) || isBlocked(nx, ny, f)) continue;
           seen.add(id); q.push([nx, ny]);
         }
         if (seen.size > 400000) break;
       }
       return seen;
     };
+    /* how many chamber centres are reachable, each on the flood of its own storey */
+    const reachable = () => {
+      const per = new Map(DEEPS.map(f => [f, floodAt(f)]));
+      let n = 0;
+      for (const cv of caves) for (const rm of cv.rooms) {
+        const seen = per.get(rm.f); if (seen && seen.has(rm.cy * W + rm.cx)) n++;
+      }
+      return n;
+    };
     const allRooms = () => caves.reduce((n, c) => n + c.rooms.length, 0);
 
     /* ---------- 1. THE ROOMS ARE ON THE FLOOR YOU WALK ONTO ---------- */
     guard(['theRoomsAreWhereYouWalk', 'andThereIsNoMouthLeftToBeBrokenBy'], () => {
-      const floors = [...new Set(caves.flatMap(c => c.rooms.map(r => r.f)))];
-      R._where = `${caves.length} warrens, ${allRooms()} chambers, all on storey ${JSON.stringify(floors)}`;
-      R.theRoomsAreWhereYouWalk = (floors.length === 1 && floors[0] === UF && allRooms() > 40)
-        ? `every chamber in the world is on storey -1 — the floor the shafts drop you onto — and there are ${allRooms()} of them, where the lattice had none at all`
-        : `!! CHAMBERS ARE ON ${JSON.stringify(floors)}`;
-      /* the mouths are gone: no stair goes anywhere but from the surface to the undercroft */
+      /* ---------- ON A STOREY THE PLAYER WALKS ONTO, WHICHEVER ONE ----------
+         This asked for exactly one floor and named it. That was the claim worth making when the
+         complaint was "every room in the game is on floors -2 to -4 behind a mountain mouth I
+         cannot use" — the fix was to put them where the player walks. The fix is not undone by
+         there being three floors the player walks on; it is undone by a chamber on a floor with
+         no lattice under it. So: every chamber's storey must be one of `DEPTHS`, and every one
+         must be a storey that has halls on it. */
+      const floors = [...new Set(caves.flatMap(c => c.rooms.map(r => r.f)))].sort((a,b)=>b-a);
+      const withHalls = new Set(undercroft.halls.map(h => h.f === undefined ? UF : h.f));
+      const stray = floors.filter(f => !DEEPS.includes(f) || !withHalls.has(f));
+      R._where = `${caves.length} warrens, ${allRooms()} chambers, on storeys ${JSON.stringify(floors)}`;
+      R.theRoomsAreWhereYouWalk = (!stray.length && allRooms() > 40)
+        ? `every chamber in the world is on a storey the shafts drop you onto — ${allRooms()} of them across ${floors.join(', ')}, where the lattice had none at all`
+        : `!! CHAMBERS ARE ON A STOREY WITH NO NETWORK UNDER THEM: ${JSON.stringify(stray)} (of ${JSON.stringify(floors)})`;
+      /* ---------- AND NO WARREN HAS A WAY DOWN OF ITS OWN ----------
+         The original claim was "no stair goes anywhere but 0→-1", which said two things at once
+         and only one of them was the point. The point is that a WARREN is not a multi-floor
+         dungeon behind a mouth any more — you walk into one off a hall, and the only way out is
+         the way in. The underworld having storeys is the other thing, and it is now deliberate:
+         the descents belong to the LATTICE, and every one of them must be a step of exactly one
+         storey between two adjacent depths, never a chute from the surface to the bottom. */
       const kinds = stairs.filter(s => s.to < 0).map(s => s.from + '→' + s.to);
-      const odd = kinds.filter(k => k !== '0→-1');
+      const legal = new Set(['0→' + DEEPS[0]].concat(DEEPS.slice(1).map((f, i) => DEEPS[i] + '→' + f)));
+      const odd = kinds.filter(k => !legal.has(k));
+      const inWarren = stairs.filter(s => s.to < 0 && caves.some(cv =>
+        cv.rooms.some(rm => s.x >= rm.x0 && s.x <= rm.x1 && s.y >= rm.y0 && s.y <= rm.y1)));
       R._stairs = `${kinds.length} ways below ground, of kinds ${JSON.stringify([...new Set(kinds)])}`;
-      R.andThereIsNoMouthLeftToBeBrokenBy = odd.length === 0
-        ? 'and there is no descent below -1 left anywhere — the mountain mouths and the floors under them are gone, which is the half of the report that said "I cannot use them and I think I should not"'
-        : `!! ${odd.length} STAIRS STILL GO DEEPER: ${JSON.stringify([...new Set(odd)])}`;
+      R.andThereIsNoMouthLeftToBeBrokenBy = (!odd.length && !inWarren.length)
+        ? `every descent is one storey between two adjacent depths (${[...new Set(kinds)].join(', ')}) and not one of them is inside a chamber — a warren is still somewhere you walk into off a hall, not a dungeon behind a mouth`
+        : `!! ${odd.length} STAIRS SKIP A STOREY ${JSON.stringify([...new Set(odd)])} AND ${inWarren.length} ARE INSIDE A CHAMBER`;
     });
 
     /* ---------- 2. AND YOU CAN GET TO THEM ---------- */
     guard(['andEveryChamberCanBeReached'], () => {
       for (const d of doors) setDoor(d, true);
-      const seen = flood();
-      let ok = 0;
-      for (const cv of caves) for (const rm of cv.rooms) if (seen.has(rm.cy * W + rm.cx)) ok++;
+      const ok = reachable();
       for (const d of doors) setDoor(d, !!d.wasOpen);
-      R._reach = `${ok} of ${allRooms()} chamber centres reachable on foot from ONE shaft, doors open`;
+      R._reach = `${ok} of ${allRooms()} chamber centres reachable on foot from a shaft onto their own storey, doors open`;
       R.andEveryChamberCanBeReached = ok >= allRooms() - 2
-        ? `and with the doors open you can walk to ${ok} of ${allRooms()} of them from a single shaft — the rooms are not merely on the right floor, they are joined to it`
+        ? `and with the doors open you can walk to ${ok} of ${allRooms()} of them from a shaft onto their own storey — the rooms are not merely on a real floor, they are joined to it`
         : `!! ONLY ${ok} OF ${allRooms()} CHAMBERS CAN BE WALKED TO`;
     });
 
@@ -92,13 +125,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        The whole experiment. A door used to be a hole in a wall with two posts drawn beside it. */
     guard(['aShutDoorSeals', 'andOpeningOneLetsYouIn', 'andTheVaultsAreBarred'], () => {
       for (const d of doors) setDoor(d, false);
-      const closed = flood();
-      let inClosed = 0;
-      for (const cv of caves) for (const rm of cv.rooms) if (closed.has(rm.cy * W + rm.cx)) inClosed++;
+      const inClosed = reachable();
       for (const d of doors) setDoor(d, true);
-      const open = flood();
-      let inOpen = 0;
-      for (const cv of caves) for (const rm of cv.rooms) if (open.has(rm.cy * W + rm.cx)) inOpen++;
+      const inOpen = reachable();
       for (const d of doors) setDoor(d, false);
       R._seal = `chamber centres reachable with every door SHUT: ${inClosed} · with every door OPEN: ${inOpen} (of ${allRooms()})`;
       R.aShutDoorSeals = inClosed === 0

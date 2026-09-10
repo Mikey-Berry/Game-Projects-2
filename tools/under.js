@@ -128,10 +128,19 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! IT IS IN PIECES — ONE FLOOD REACHES ${(frac * 100).toFixed(1)}% OF THE WALKABLE NETWORK`;
       /* and the halls are IN it, which the flood above cannot say on its own: a network that
          is connected to itself but leaves half the halls walled off is still broken */
-      const orphan = U.halls.filter(h => !seen.has(Math.round(h.y) * W + Math.round(h.x)));
+      /* ---------- ON THIS STOREY. THIS FILE MEASURES ONE ----------
+         `U.halls` used to be the halls, full stop. There are three storeys under the world now
+         and it holds all of them, so an unscoped count asks a flood of the Undercroft to
+         account for fifty-two halls on the Deepworks and the Sump and reports 45 of 133 walled
+         off about a world that is perfectly connected. This file is the harness for "one
+         underground layer under the whole map" and it stays that: it asks its questions about
+         `F`, and `depths.js` owns the claim that the other two storeys are reachable at all
+         and that you can walk from the sky to the bottom. */
+      const mine = U.halls.filter(h => (h.f ?? F) === F);
+      const orphan = mine.filter(h => !seen.has(Math.round(h.y) * W + Math.round(h.x)));
       R.andEveryHallIsOnIt = orphan.length === 0
-        ? `and all ${U.halls.length} halls are on it`
-        : `!! ${orphan.length}/${U.halls.length} HALLS ARE WALLED OFF FROM THE REST`;
+        ? `and all ${mine.length} halls on storey ${F} are on it`
+        : `!! ${orphan.length}/${mine.length} HALLS ARE WALLED OFF FROM THE REST`;
     });
 
     /* ---------- 3. AND YOU CAN GET DOWN TO IT FROM WHEREVER YOU ARE ----------
@@ -192,7 +201,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          build with seven sealed pockets and proved nothing. The claim is that you can WALK
          from the network to the mouth, so it is asked as a walk: flood from a hall and see
          which mouths the flood arrives at. */
-      const start = U.halls[0];
+      const start = U.halls.find(h => (h.f ?? F) === F) || U.halls[0];
       const s0 = Math.round(start.y) * W + Math.round(start.x);
       const seen = new Set([s0]), q = [s0];
       for (let i = 0; i < q.length; i++) {
@@ -204,10 +213,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           seen.add(nt); q.push(nt);
         }
       }
-      const joined = caves.filter(cv => seen.has(cv.mouth.y * W + cv.mouth.x)).length;
-      R.andTheOldWarrensHangOffIt = joined === caves.length
-        ? `and you can walk from a hall to the mouth of all ${caves.length} of the old warrens — they are the deep ends of one place now, not seven pockets`
-        : `!! ONLY ${joined}/${caves.length} WARRENS CAN BE WALKED TO FROM THE NETWORK`;
+      /* scoped to this storey for the same reason the halls are — a warren on the Sump is not
+         supposed to be reachable from a flood of the Undercroft, and counting it as a failure
+         would be asserting that the descent does not work */
+      const here = caves.filter(cv => (cv.f ?? F) === F);
+      const joined = here.filter(cv => seen.has(cv.mouth.y * W + cv.mouth.x)).length;
+      R.andTheOldWarrensHangOffIt = joined === here.length
+        ? `and you can walk from a hall to the mouth of all ${here.length} of the warrens on storey ${F} — they are the deep ends of one place, not seven pockets`
+        : `!! ONLY ${joined}/${here.length} WARRENS ON STOREY ${F} CAN BE WALKED TO FROM THE NETWORK`;
     });
 
     /* ---------- 6. AND IT IS NOT AN EMPTY BASEMENT ---------- */
