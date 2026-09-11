@@ -9965,7 +9965,12 @@ function treatOnePart(medic, target){
     }
     return false;
   }
-  if(!useBandageCharge()){ log('Out of bandage charges.', 'bad'); return false; }
+  /* ---------- AND A STRANGER'S SURGEON DOES NOT REACH INTO YOUR PACK ----------
+     `useBandageCharge` draws on `stash.bandage`, and this is the one healing path in the file,
+     so every priest and every caravan medic in the world was spending YOUR cloth and then
+     announcing in your feed that it had run out. Measured at four of those lines a day with
+     nobody of yours doing anything. They tend their own wounded on their own account now. */
+  if(mineToKnow(medic) && !useBandageCharge()){ log('Out of bandage charges.', 'bad'); return false; }
   worst.bleed = 0; worst.bandaged = true;
   addFloat(target.x, target.y-1, wk+' ✚', '#a3c47a');
   xpGain(medic, 'medic', 0.5);
@@ -13541,7 +13546,8 @@ function physics(c, dt){
         c.healProg = 0;
         const did = mending ? mendOnePart(c, t) : treatOnePart(c, t);
         if(!did || !(mending ? mendable(t) : treatable(t))){
-          log(mending ? `${c.name} finished mending ${t.name}.` : `${c.name} finished treating ${c===t?'themself':t.name}.`, 'good');
+          if(worthTelling(c) || worthTelling(t))
+            log(mending ? `${c.name} finished mending ${t.name}.` : `${c.name} finished treating ${c===t?'themself':t.name}.`, 'good');
           c.healTarget = null;
         }
       }
@@ -18977,7 +18983,8 @@ function startConcentration(c, key, lock, exclusive, mobile){
   if(key === 'warding' && c.state === 'ok' && !warders.includes(c)) warders.push(c);   /* seen this tick, not the next — see rebuildCharGrid */
   if(c.mana > maxMana(c)) c.mana = maxMana(c);   /* the reserve is taken from what you have */
   const sp = SPELLS[key];
-  log(`${c.name} begins to concentrate — ${sp ? sp.label : key}.`, '');
+  /* a stranger's working is news only where you can watch them do it — see `worthTelling` */
+  if(worthTelling(c)) log(`${c.name} begins to concentrate — ${sp ? sp.label : key}.`, '');
 }
 /* stop holding it — by choice, by death, by breaking the caster's focus */
 function endConcentration(c, quiet){
@@ -19438,7 +19445,18 @@ function spendCast(c, key){
   attGain(c, SPELLS[key].gift, 2);   /* the art is learned in the hands */
   /* they never cared about us until we reached up and touched something */
   const breadth = BRANCHES.filter(b => attOf(c, b) >= 1).length;
-  bumpNotice((isNight() ? 0.34 : 0.13) + Math.max(0, breadth - 1) * 0.06);   /* a wide channel glows in the dark */
+  /* ---------- AND IT IS *YOUR* HAND THEY ARE WATCHING FOR ----------
+   "attention increases at an exponential rate. Within the first few days of the game I'm
+    already noticed and attended."
+   MEASURED over one game day with the player standing still and casting nothing: `noticed`
+   went 4.6 to 37.3 and the dial went UNNOTICED → ATTENDED. Every point of it came from
+   somebody else — 27.8 from the `deep` faction and 7.5 from townsfolk, across 143 casts and 5
+   raisings, and 0.00 from the player. The Attention is the Old Ones noticing YOU; it was
+   counting every working by every caster in a world of seventeen hundred bodies, and the three
+   new storeys underneath it added a great many casters.
+   The gate already existed two lines below the raise that has the same fault — `mood.raise` is
+   set only `if(c.faction === 'player')`. Same test, same reason. */
+  if(mineToKnow(c)) bumpNotice((isNight() ? 0.34 : 0.13) + Math.max(0, breadth - 1) * 0.06);   /* a wide channel glows in the dark */
   refreshCharPanel();
 }
 function castFirebolt(c, foe){
@@ -19694,6 +19712,25 @@ function saltBody(c){
    merchant topping up his shelves, which the restock loop already knows and says so.
    The float and the sound stay for everyone, because those are where you are LOOKING. */
 function mineToKnow(c){ return !!c && c.faction === 'player'; }
+/* ---------- AND WHOSE BUSINESS IS IT, ANYWAY ----------
+   "I really don't care that a random caravan guard cast Ainzopha'ar's Light halfway across the
+    world. Nor do I care that these underground faction dudes are casting stuff and healing each
+    other... Overall we need a much quieter log so that it's open for more important stuff.
+    These kind of announcements could MAYBE be useful if they pop up within an area I can
+    actually see."
+   So that is the rule, exactly: yours always, and anybody else's only when one of yours is
+   standing there watching it happen.
+   `visAt` ALONE IS NOT ENOUGH AND IT IS THE TRAP HERE. The fog is a flat W x H grid with no
+   notion of storeys, so a priest four floors down under a lit square reads as being in plain
+   sight. The floor test comes first and the grid second, which is the same mistake and the same
+   fix as `gatherKindAt` and the undead-under-a-town rule already in this file. */
+function worthTelling(c){
+  if(mineToKnow(c)) return true;
+  if(!c) return false;
+  const f = c.floor || 0;
+  if(!player().some(u => (u.floor || 0) === f && u.state !== 'dead')) return false;
+  return visAt(c.x, c.y) === 2;
+}
 function castRaise(c, body, o){
   o = o || {};
   /* the player's feed hears about the player's work. `log` for anybody else is noise with a
@@ -19910,9 +19947,14 @@ function castRaise(c, body, o){
     log(`${c.name} raised ${dk.k === 'fresh' ? 'the dead' : 'a ' + dk.label + ' body'}${kitNote}. ` +
         `${dk.k === 'fresh' ? '' : `It comes up at ${Math.round(rot*100)}% of what it was.`}`, 'good');
   }
-  bumpNotice(isUnique ? 2.8 : 1.15);   /* undeath is a parlour trick of the Old Ones. They hear it performed. */
-  deed('raise', isUnique ? 1.6 : 1);
-  if(c.faction === 'player') mood.raise = nowH();   /* the living have views about this */
+  /* YOURS, like the mood line below it — a keeper working his own yard is not your Attention
+     and is not your deed. See the note in `spendCast`: this was 5 of the 143 workings a day
+     that were climbing the dial on your behalf. */
+  if(mineToKnow(c)){
+    bumpNotice(isUnique ? 2.8 : 1.15);   /* undeath is a parlour trick of the Old Ones. They hear it performed. */
+    deed('raise', isUnique ? 1.6 : 1);
+    mood.raise = nowH();   /* the living have views about this */
+  }
   /* what the world took, it does not give back just because you asked it to stand up */
   for(const k of PARTS){
     const bp = body.parts && body.parts[k];
@@ -20404,7 +20446,7 @@ function castWarding(c){
   spendCast(c, 'warding');
   startConcentration(c, 'warding', 1, true, true);   /* exclusive, but mobile — a lantern for the squad */
   addSpecks(c.x, c.y - 0.4, '#fff2c0', 30);
-  log(`${c.name} raises Ainzopha'ar's Light. The lesser things born of the tear will not come near it — the great ones do not care, ${c.name} can raise no hand while it burns, and every risen thing standing in it, yours included, is easier to break.`, 'good');
+  if(worthTelling(c)) log(`${c.name} raises Ainzopha'ar's Light. The lesser things born of the tear will not come near it — the great ones do not care, ${c.name} can raise no hand while it burns, and every risen thing standing in it, yours included, is easier to break.`, 'good');
 }
 /* ---------- AND THE LIGHT DOES NOT ASK WHOSE DEAD THEY ARE ----------
    "For the Ainzopha'ar's Light weakness, let's go with searing undead. Perhaps rather than
