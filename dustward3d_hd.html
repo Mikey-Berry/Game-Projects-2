@@ -2624,12 +2624,32 @@ const chars = [], corpses = [];
    So the protagonist is a FLAG now rather than a position, and it is put back in front here —
    one findIndex over a squad-sized array, against a filter over eight hundred bodies that this
    function was already paying for. */
+/* ---------- AND IT IS BUILT ONCE A STEP, NOT TWENTY-TWO TIMES ----------
+   MEASURED, on the build that prompted it: `player()` is called 22.17 times per sim step and
+   each call was a full `chars.filter` over 1,756 bodies — 38,925 element visits and twenty-two
+   throwaway arrays a step, for a list that is almost always the same six people. It was the
+   single largest of sixty-three full scans of the roster per step.
+   NOTHING MUTATES WHAT IT RETURNS — checked across all eighty-three call sites before sharing
+   the array; not one sorts, pushes or splices it — so the same array can be handed to everybody
+   until something could have changed it.
+   THREE THINGS INVALIDATE IT, and between them they cover every way the list can move:
+     · the step boundary (`rebuildCharGrid` bumps the epoch), which catches anything slow;
+     · a DEATH (`kill` bumps it), which is the dangerous one — a corpse left in this list for the
+       rest of a step is a body that orders would still be given to;
+     · and the roster LENGTH, one integer compare, which catches every push and splice for free.
+   What is left is a body whose FACTION changes mid-step without dying — recruiting somebody, or
+   a charm wearing off. That resolves on the next step, a thirtieth of a second later, and it
+   happens on a menu click rather than in the hot loop. */
+let _plCache = null, _plEpoch = -1, _plLen = -1;
+let charEpoch = 0;
 function player(){
+  if(_plCache && _plEpoch === charEpoch && _plLen === chars.length) return _plCache;
   const a = chars.filter(c => c.faction==='player' && c.state!=='dead' && !c.phantom);
   if(a.length > 1 && !a[0].protagonist){
     const i = a.findIndex(c => c.protagonist);
     if(i > 0) a.unshift(a.splice(i, 1)[0]);
   }
+  _plCache = a; _plEpoch = charEpoch; _plLen = chars.length;
   return a;
 }
 /* and the order the squad bar shows them in: you, then the order they turned up in */
@@ -9637,6 +9657,7 @@ function returnKit(c){
 }
 function freeCell(t){ return cells.find(cl => cl.town === t && !cl.holds); }
 function kill(c, by){
+  charEpoch++;                    /* a corpse must not stay in `player()`'s cached list */
   if(c.state==='dead') return;
   /* the ledger is written here, not inferred from a body that will be gone in two days */
   if(c.bossKey && !bossSlain[c.bossKey]) bossSlain[c.bossKey] = day;
@@ -11189,6 +11210,7 @@ const charmed = [];
 const torchers = [];
 const litPosts = [];
 function rebuildCharGrid(){
+  charEpoch++;                    /* a new step: whatever `player()` cached is a step old now */
   charGrid.clear();
   charById.clear();
   warders.length = 0;
