@@ -7110,3 +7110,56 @@ inside 1.45. Worth keeping, not worth the theory it was based on.
   THE RULE: A STAGED FIGHT MUST ASSERT THAT THE TWO SIDES ARE ENEMIES. `foe` is now checked
   first and separately, because a melee between two sides that will not fight reads exactly like
   a working build with a quiet floor — which is how it went unread for two sessions.
+
+[106] AN ERRAND YOU CANNOT FINISH HAS TO END — and `command.js` was green for the wrong reason.
+  `command.js` had been failing for two sessions with `MISSED A CHEST (0/0) — closest approach
+  14.9 and 3.0 tiles, order CLOSED OUT`, and it bisected cleanly: green on 902efd0, red on
+  3de5863. The diagnosis took four steps and every one of them mattered.
+  · THE PROBE HAD TO BE FAITHFUL FIRST. `tools/_forage.js` reproduced the forage block in
+    isolation and it passed on BOTH builds. Two things were missing: the harness PAUSES the
+    world and steps at dt = 0.25 rather than 1/30, and block 1 (the patrol) runs four minutes
+    of game time ahead of it. With both restored the probe matched the harness exactly — 8
+    sweeps green, 152 sweeps red.
+  · THEN ASK THE BODY, NOT THE CLAIM. The captain held a `chestTarget` 2.46 tiles from the
+    chest and did not move a ten-thousandth of a tile for 116 sweeps, then starved. `pathFail`
+    true — A* had no route at all; `moved: {rv:false, dd:0}` — one call to the movement
+    primitive displaced it by exactly nothing.
+  · WHY: the captain was at (1053.12, 565.72) and the chest at (1050.66, 565.72) — IDENTICAL Y,
+    with a wall due west. `stepToward`'s two wall-slide branches try each axis alone, and when
+    the target is exactly axis-aligned one of the two "axis only" points IS THE BODY'S OWN
+    POSITION, which `isBlocked3` naturally reports as clear. The branch fires, assigns `c.y`
+    the value it already held, records that the body moved, and breaks. Zero displacement
+    reported as progress, every step, forever. PRE-EXISTING — unchanged from before the step
+    was bounded. `travelStuck` refuses to detour inside four tiles (deliberately: its own note
+    names the three harnesses that broke when it tried), and `commandTick` waits on an errand
+    with no notion that one might never finish. Nobody was watching for "cannot get there".
+  · AND THE CLAIM HAD BEEN PASSING BECAUSE THE BAND WALKED THROUGH THE WALL. `findOpenNear`
+    returns an OPEN tile, and an open tile inside a sealed pocket is open and unreachable — A*
+    said no path on EVERY build, the passing one included. The old build reached it anyway,
+    because before `stepToward` bounded a long step it sampled the destination and nothing
+    between, and at dt = 0.25 the stride clears a one-tile wall. Confirmed directly:
+    `cold.js`'s `noStepWalksThroughRock` is RED on 902efd0 at dt = 1 and dt = 3. The claim was
+    measuring the leak the bounding was added to close.
+  THREE FIXES:
+  · `stepToward` no longer claims a slide that displaces nothing. Each axis slide must actually
+    move the body; when neither can, it falls through to the stuck branch the callers read.
+  · ERRANDS GIVE UP. `errandGivesUp` measures patience in GROUND GAINED, not time spent — any
+    quarter-tile of progress resets the clock, so a body squeezing through a door or a crowd is
+    never abandoned, and ten seconds without a quarter-tile is stuck rather than slow. A body in
+    a fight returns from `physics` before the errand blocks, so the clock does not run while it
+    is swinging. The ORDER remembers (`cmd.cantReach`) or `forageFind` hands back the same
+    unreachable thing on the next tick. Applied to chests and to corpses alike.
+  · `command.js` PLACES CHESTS ON REACHABLE GROUND, asking A* rather than `isBlocked`. Its own
+    header already recorded the previous iteration of this mistake — chests landing inside a
+    boulder — and this is the next one along.
+  AND A NEW CLAIM FOR THE THING THE FIX EXISTS FOR: `givesUpOnTheUnreachable` hides a chest in a
+  sealed pocket and requires the band to give up and come home. Red on the pre-fix build with
+  the symptom spelled out — "120 sweeps, 1.5 tiles off, order down, CAPTAIN DOWN" — and green
+  after. A claim that passes on both builds proves nothing, so it was checked against both.
+
+[NOTE] AND THE RULE THIS IS THE THIRD INSTANCE OF: A GREEN CLAIM CAN BE GREEN FOR THE WRONG
+  REASON, and closing a real hole is what exposes it. `cold.js`'s fight claim was staging two
+  sides that would not fight; `walk.js`'s haul claim compared an empty list against an empty
+  set; this one was walking through a wall. In all three the harness said what it was built to
+  say and none of them was measuring the thing named on the tin. When a change that is provably
+  correct turns a claim red, SUSPECT THE CLAIM BEFORE REVERTING THE CHANGE.

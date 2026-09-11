@@ -12337,6 +12337,7 @@ function forageFind(cdr){
   let best = null, bd = 1e9;
   for(const ch of chests){
     if(ch.opened || (ch.floor || 0) !== 0) continue;
+    if(m.cantReach && m.cantReach.indexOf(ch) >= 0) continue;   /* the band already tried */
     const d = dist(ch.x, ch.y, m.ax, m.ay);
     if(d > m.r) continue;
     const w = dist(cdr.x, cdr.y, ch.x, ch.y) * 0.6;      /* a vault is worth a detour */
@@ -12344,6 +12345,7 @@ function forageFind(cdr){
   }
   for(const b of corpses){
     if(b.looted || (b.floor || 0) !== 0) continue;
+    if(m.cantReach && m.cantReach.indexOf(b) >= 0) continue;
     if(dist(b.x, b.y, m.ax, m.ay) > m.r) continue;
     const w = dist(cdr.x, cdr.y, b.x, b.y);
     if(w < bd){ bd = w; best = {kind: 'corpse', at: b}; }
@@ -12750,9 +12752,26 @@ function stepToward(c, tx, ty, dt){
     const ux = (tx-c.x), uy = (ty-c.y), ud = Math.hypot(ux, uy);
     if(ud < 1e-6) break;
     const nx = c.x + ux/ud * seg, ny = c.y + uy/ud * seg;
+    /* ---------- AND A SLIDE THAT MOVES NOBODY IS NOT A SLIDE ----------
+       The two wall-slide branches try each axis on its own, which is right except in the one
+       case where the target is EXACTLY axis-aligned with the body. Then one of the two "axis
+       only" points is the blocked direction and the other is the body's OWN POSITION — and
+       `isBlocked3` cheerfully reports that the tile a body is standing on is not blocked. The
+       branch fires, assigns a coordinate to the value it already held, records that the body
+       moved, and breaks. Zero displacement, reported as progress, every step forever.
+       MEASURED: a forage captain at (1053.12, 565.72) with a chest at (1050.66, 565.72) —
+       identical y, a wall due west — stood motionless 2.46 tiles from it for a hundred and
+       sixteen sweeps and then starved, while `commandTick` waited for an errand that could not
+       finish. `travelStuck` will not rescue inside four tiles and deliberately so (its own note
+       records the three harnesses that broke when it tried). Nothing else was watching.
+       So each slide must actually displace. When neither can, this is the stuck case and falls
+       through to the branch that says so, which is what the callers are built to read.
+       PRE-EXISTING — this shape is unchanged from before the step was bounded; the bounding
+       only turned one test into a loop. It went unseen because it needs an exact axis
+       alignment, and a chest dropped on an open tile inside a sealed pocket to hold it there. */
     if(!isBlocked3(c, nx, ny)){ c.x = nx; c.y = ny; movedAny = true; }
-    else if(!isBlocked3(c, nx, c.y)){ c.x = nx; movedAny = true; break; }
-    else if(!isBlocked3(c, c.x, ny)){ c.y = ny; movedAny = true; break; }
+    else if(Math.abs(nx - c.x) > 1e-9 && !isBlocked3(c, nx, c.y)){ c.x = nx; movedAny = true; break; }
+    else if(Math.abs(ny - c.y) > 1e-9 && !isBlocked3(c, c.x, ny)){ c.y = ny; movedAny = true; break; }
     else { if(!movedAny) return true; break; }   /* stuck: give up */
   }
   if(c.faction==='player') xpGain(c, 'ath', dt*0.008);
@@ -12959,6 +12978,44 @@ function travel(c, x, y, dt, arrive=0.15){
     stepToward(c, tx, ty, dt);
   }
   return dist(c.x,c.y,x,y) <= arrive;
+}
+
+/* ---------- AND AN ERRAND YOU CANNOT FINISH HAS TO END ----------
+   "MISSED A CHEST (0/0) — closest approach 14.9 and 3.0 tiles, order CLOSED OUT."
+   A forage captain held a `chestTarget` two and a half tiles from a chest and stood there for
+   a hundred and sixteen sweeps — some nine hundred seconds of world time — and then starved.
+   Three things had to be true at once and all three are ordinary: `findOpenNear` put the chest
+   on an OPEN tile inside a pocket with no way in, so A* returned no path at all; the body was
+   inside `travelStuck`'s four-tile exemption, which deliberately refuses to detour a body that
+   close to its goal (its own note names the three harnesses that broke when it tried); and
+   `commandTick` waits on an errand — `if(cdr.chestTarget && !cdr.chestTarget.opened) continue`
+   — with no notion that one might never finish.
+   Nobody was watching for the case where a body simply cannot get there. So somebody is now.
+   PATIENCE IS MEASURED IN GROUND GAINED, NOT IN TIME SPENT. Any quarter-tile of progress
+   resets the clock, so a body squeezing through a doorway or shouldering through a crowd is
+   never given up on; ten seconds without gaining a quarter of a tile is not slow, it is stuck.
+   A body in a fight returns from `physics` before the errand blocks, so the clock does not run
+   while it is swinging. */
+const ERRAND_PATIENCE = 10;
+function errandGivesUp(c, t, dt){
+  const d = dist(c.x, c.y, t.x, t.y);
+  if(c._errOn !== t || d < (c._errD === undefined ? 1e9 : c._errD) - 0.25){
+    c._errOn = t; c._errD = d; c._errT = 0;
+    return false;
+  }
+  c._errT = (c._errT || 0) + dt;
+  if(c._errT < ERRAND_PATIENCE) return false;
+  c._errOn = null; c._errD = undefined; c._errT = 0;
+  return true;
+}
+/* and the order has to REMEMBER, or `forageFind` hands back the same unreachable thing on the
+   very next tick and the band spends its whole sweep walking at a wall in ten-second bouts */
+function errandUnreachable(c, t){
+  if(c.cmd){ (c.cmd.cantReach || (c.cmd.cantReach = [])).push(t); }
+  /* and a body you sent yourself says so, because you are the one standing there watching it
+     not happen. A band on a standing order says nothing — the captain already speaks when the
+     ground is clear, and this file has learned once what an NPC chore in the feed costs. */
+  else if(c.faction === 'player') log(`${c.name} cannot find a way to it.`, '');
 }
 
 /* ---------- WHICH SIDE OF HIM TO STAND ON ----------
@@ -13612,6 +13669,7 @@ function physics(c, dt){
   if(c.lootTarget){
     const t = c.lootTarget;
     if(travel(c, t.x, t.y, dt, 1.15)){ lootCorpse(t, false, c, c.lootRender); c.lootTarget = null; c.lootRender = false; }
+    else if(errandGivesUp(c, t, dt)){ c.lootTarget = null; c.lootRender = false; errandUnreachable(c, t); }
     else return;
   }
   if(c.phylTarget){
@@ -13646,6 +13704,7 @@ function physics(c, dt){
        took a staircase mid-errand would otherwise loot through the ceiling. */
     if(t.opened || (t.floor || 0) !== (c.floor || 0)){ c.chestTarget = null; }
     else if(travel(c, t.x, t.y, dt, 1.1)){ lootChest(t); c.chestTarget = null; }
+    else if(errandGivesUp(c, t, dt)){ c.chestTarget = null; errandUnreachable(c, t); }
     else return;
   }
   /* GOING OVER TO TALK. Same shape as the trade order below it, and for the same reason: the
