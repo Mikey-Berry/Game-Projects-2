@@ -6893,3 +6893,94 @@ and both had to be scoped rather than loosened.
     design actually makes — every chamber holding a band has a fire in it — and the year-old
     standing NOTE about the dead bands is closed and replaced with an assertion that the shallow
     band is still alive, because if it dies again the blindness claims go quietly vacuous.
+
+[DONE] "How do games like Kenshi manage a world of that size and yet keep the FPS and overall
+impact so low? Any tricks we can pull out to ensure gameplay remains smooth?" … "Yeah build out
+one and two please. As it is, the FPS drop is pretty killer especially on the laptop."
+    KENSHI IS NOT SMOOTH, and the premise is worth correcting before borrowing from it: it is
+known for late-game slowdown, city stutter and framerate collapse in large battles, and the
+sequel moved engine partly for it. What it IS good at is making an enormous world feel
+continuous and persistent while simulating almost none of it — and the technique under that is
+the one worth taking: do not simulate what nobody can observe, and ABSTRACT what you stop
+simulating rather than freezing it.
+
+[NOTE] AND THE MEASUREMENT CAME FIRST, WHICH IS THE WHOLE REASON THE TIER IS THE SHAPE IT IS.
+Of 1,748 bodies alive: 1,133 were on a storey with no player unit anywhere on it — and only 166
+of those were IDLE. Twelve hundred bodies were walking and fighting each other four storeys
+under a player who could not see, reach or be reached by any of it. The existing `_far` tier
+could not touch them: it drops a body to 4Hz only when it has no quarry, and a gaunt chasing a
+bandit on the Sump has one. So the gate is the STOREY rather than the body's mood, which is the
+strictly stronger claim — nothing on a floor with none of yours on it is observable at all.
+
+[NOTE] AND ONE BODY OF YOURS WARMS A WHOLE STOREY, deliberately. The alternative is a radius,
+and a radius means the far end of the floor you are standing on runs on a different clock from
+the near end — which is exactly the sort of seam a player finds by walking along it.
+
+[NOTE] AND `stepToward` TESTED COLLISION AT THE DESTINATION AND NOWHERE BETWEEN. Exact for as
+long as every step was a sixth of a tile, which it had always been. A cold body woken with a
+third of a second in hand covers a tile and a half, and would have walked straight through
+chamber rings — the leak this repo has spent a year closing, arriving through the front door.
+The move is bounded into segments under the wall thickness now, each one tested, and the loop
+runs ONCE at full rate so nothing changed for the other two tiers. Speed is preserved exactly:
+the distance is walked rather than jumped.
+
+[NOTE] `_lod` IS NOT THE SAME QUESTION AS `_cold`, AND CONFLATING THEM BROKE EVERY FIGHT
+UNDERGROUND. The first cut set `c._lod = _far || _cold`, which reads as obviously right — a cold
+body is certainly not being watched. But `_lod`'s ONLY reader is `separate`, where
+`a._lod && b._lod` skips the pair, and `separate` is where `_contacts`, `_holders` and `_pinNow`
+are written. Two bodies on a cold storey therefore never registered contact: they acquired
+targets, they wound up, they swung, and not one blow in five thousand steps took a point off the
+other. Blood 100 against 100 after a hundred and sixty-six seconds. A FLAG NAMED FOR ONE
+QUESTION SHOULD NOT BE MADE TO ANSWER A SECOND ONE.
+
+[NOTE] AND A FIGHT IS NOT PUT ON THE SLOWEST CLOCK. Measured both ways on the same staged melee
+at the same spot on the Sump — twelve bodies, forty-five seconds, nothing changed but whether
+one of yours stood forty tiles off: at the slow clock the cold fight took ONE point of blood
+against the warm fight's ten; at the half-rate clock, thirty-two against fourteen. The carve-out
+costs 0.4ms a step and buys back the fidelity of every fight underground.
+
+[NOTE] AND TWO OF THE THREE RED CLAIMS ON THE FIRST RUN WERE MY OWN FIXTURES, AGAIN.
+  · `aColdBodyStillArrives` shoved a `moveTarget` into a gaunt and watched it fail to arrive.
+    `moveTarget` is a field the body's OWN ai owns and it cleared it within the second — at any
+    clock rate. `physics` was being called at exactly the right rate with exactly the right
+    `dt` the whole time. A probe that commands an NPC through a field its ai overwrites is
+    measuring the ai. It measures GROUND COVERED by the same bodies, cold against warm, now.
+  · `andAColdFightStillEnds` staged one raider against one quarry and asked whether either
+    died. Far too noisy to answer anything: the same pair on a WARM floor came back at 72, 85
+    and 86 blood on three consecutive runs and never killed anybody either, so the red line
+    about the cold floor was describing variance. Twelve bodies and a total now.
+  · and the wall-tunnelling claim reported NOTHING TO MEASURE because it searched one room's
+    north ring, which is where the approach tunnel usually arrives.
+
+[NOTE] AND `hostile` WAS THE MOST-CALLED FUNCTION IN THE GAME: 8,761 times a step, five per body
+per step, through ninety-six lines of faction law. Nearly all of them come from `nearestEnemy`
+walking its candidates. A faction-pair cache would have been wrong in the worst possible way —
+silently, and in the direction of things NOT fighting that should — so the key carries every
+per-body field the rule reads directly or through `guildOath`, `pierceNeutral`, `walksAsDead`
+and `revealedUndead`. TWENTY-NINE DISTINCT KEYS for 1,745 bodies, which is why it works at all.
+Interned to integers in the same pass and answered from a flat `Int8Array` at `ka * n + kb`.
+8,761 trips through the rule became 42.
+
+[NOTE] AND THE MEMO HAD THREE TRAPS, ALL OF THEM CLOSED IN CODE RATHER THAN ARGUED AWAY.
+  · IT IS REENTRANT: `revealedUndead` → `underShroud` → `hostile`. The key pass sets `_hkBusy`
+    and those calls go to the raw rule, because during the pass the keys are stale by definition.
+  · THE KEYS MUST BE BUILT IN A SECOND PASS, after `rebuildCharGrid`'s loop has finished —
+    `underShroud` reads `shrouders`, and a key built mid-loop would read a half-built list and
+    give every risen seeded before the shroud-bearer a different answer from every risen after.
+  · AND AN ID IS ONLY GOOD FOR THE STEP IT WAS BUILT IN. Ids are handed out in `chars` order, so
+    the id meaning "a provoked Kept" this step can mean something else the next. A stamp, one
+    integer compare, and anything unstamped falls through to the rule.
+The globals (`arena.bout`, `menaceFlag`, `purgeWrath`, every town's rep) need no place in the key
+because the whole table is dropped once a step and none of them can move inside one.
+
+[NOTE] AND THE SEPARATE REORDER WAS EXACT AND ALMOST FREE. `separate` asked `hostile` for every
+pair the grid handed back and then threw most of the answers away four lines later — it is needed
+only inside `PIN_REACH` (1.45), and beyond that `R` is at most 0.8 so the pair is skipped
+regardless. Moving the question after the cheap test is exactly equivalent. It bought 5%, which
+is less than it looked like it would: the pairs `charsNear(x, y, 1)` returns are mostly already
+inside 1.45. Worth keeping, not worth the theory it was based on.
+
+[NOTE] AND THE COST, MEASURED THE SAME WAY THROUGHOUT: 28.14 → 18.3 ms a step direct, for the
+same 1,755 bodies. physics 1,102 → 618 calls a step, ai 629 → 227, the enmity rule 8,761 → 42.
+That is below the 18.98 the game cost BEFORE the two new storeys were added, with two thirds
+more world under it.

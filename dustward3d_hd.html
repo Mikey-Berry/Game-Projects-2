@@ -11225,6 +11225,12 @@ function rebuildCharGrid(){
     const a = charGrid.get(k);
     if(a) a.push(c); else charGrid.set(k, [c]);
   }
+  /* ---------- AND THE ENMITY TABLE IS DROPPED AND REBUILT HERE ----------
+     A SECOND pass, deliberately: `hKey` reads `revealedUndead`, which reads `underShroud`,
+     which reads `shrouders` — and `shrouders` is only complete when the loop above has ended.
+     Computing the keys inside it would have read a half-built list and given every risen seeded
+     before the shroud-bearer a different answer from every risen seeded after it. */
+  refreshHostileKeys();
 }
 /* One buffer, refilled per query, so proximity checks never allocate. The catch: a second
    charsNear() (or nearestEnemy(), which calls it) issued while you are still iterating the
@@ -11419,7 +11425,92 @@ function pierceNeutral(n, o){
 
   return false;
 }
+/* ---------- THE MOST-CALLED FUNCTION IN THE GAME, ASKED ONCE PER KIND OF PAIR ----------
+   Measured: 8,761 calls a step — five per body per step, through ninety-six lines of faction
+   law — which made it the single most-executed thing in the sim. Nearly all of them come from
+   `nearestEnemy` walking its candidates, and nearly all of them are the same question: a gaunt
+   and a bandit are a gaunt and a bandit whichever two of them you hold up.
+   SO THE KEY IS EVERY INPUT, NOT THE FACTION. A faction-pair cache would be wrong and wrong in
+   the worst way — silently, in the direction of things not fighting that should. `hKey` carries
+   every per-body field the rule below reads, directly or through `guildOath`, `pierceNeutral`,
+   `walksAsDead` and `revealedUndead`: faction, vt, demilich, immortal/friendly, neutral,
+   provoked, gauntKind, holdsFire, rebelOf, warF/warT, home town, undead-and-whether-it-shows,
+   the cairn bossKey, and the oath. Two bodies sharing a key are interchangeable to this
+   function by construction, which is what makes the cache exact rather than approximate.
+   THE GLOBALS DO NOT NEED TO BE IN THE KEY because the whole table is dropped once a step, in
+   `rebuildCharGrid`: `arena.bout`, `menaceFlag`, `purgeWrath` and every town's rep cannot move
+   between two calls inside one step. The keys are rebuilt in the same place and in a SECOND
+   pass, after `shrouders` is populated, because `revealedUndead` reads it.
+   AND IT IS REENTRANT, which is the trap: `revealedUndead` → `underShroud` → `hostile`. During
+   the key pass the keys are stale by definition, so `_hkBusy` sends those calls to the raw
+   function. A body created mid-step has no key yet and goes raw too.
+   `tools/cold.js` holds the claim that matters: memo and raw agree on every pair in a live
+   world, thousands of them, including every pair that is hostile. */
+/* ---------- AND THE TABLE IS INTEGERS, NOT STRINGS ----------
+   Measured once the key was working: 1,745 bodies in a live world collapse to TWENTY-NINE
+   distinct keys. That is the whole reason this works — but a `Map` keyed on `ka + '\u0001' + kb`
+   still builds a string and hashes it seven thousand times a step, which is most of what is
+   left of the cost. The key strings are interned to small integers in the same pass that
+   builds them, and the answer lives in a flat array at `ka * n + kb`: one multiply, one add,
+   one array read. `_hkN` is the stride, fixed for the step, so the index cannot collide. */
+const _hostileIds = new Map();
+let _hostileTab = new Int8Array(0);
+let _hkN = 0;
+let _hkBusy = false;
+/* AND A KEY IS ONLY GOOD FOR THE STEP IT WAS BUILT IN. Ids are handed out in `chars` order, so
+   the id that meant "a provoked Kept" this step can mean something else the next one. A body
+   spliced out of the roster and back in during a step would otherwise carry an id that now
+   points at a different rule. The stamp costs one integer compare and makes that impossible;
+   anything unstamped falls through to the rule itself. */
+let _hkStamp = 0;
+function hKey(c){
+  let k = c.faction;
+  if(c.vt) k += '~v';
+  if(c.demilich) k += '~d';
+  if(c.immortal) k += c.friendly ? '~If' : '~I';
+  else if(c.friendly) k += '~f';
+  if(c.neutral) k += '~n';
+  if(c.provoked) k += '~p';
+  if(c.gauntKind) k += '~g';
+  if(c.holdsFire) k += '~h';
+  if(c.rebelOf >= 0) k += '~r' + c.rebelOf;
+  if(c.warF !== undefined && c.warF !== null) k += '~F' + c.warF;
+  if(c.warT !== undefined && c.warT !== null) k += '~T' + c.warT;
+  if(c.homeTown) k += '~t' + towns.indexOf(c.homeTown);
+  if(c.undead) k += revealedUndead(c) ? '~U1' : '~U0';
+  if(c.bossKey === 'cairn') k += '~c';
+  if(guildOath(c)) k += '~o';
+  return k;
+}
+/* rebuilt once a step, after the candidate lists are gathered — see `rebuildCharGrid` */
+function refreshHostileKeys(){
+  _hostileIds.clear();
+  _hkStamp++;
+  _hkBusy = true;
+  try {
+    for(const c of chars){
+      const k = hKey(c);
+      let id = _hostileIds.get(k);
+      if(id === undefined){ id = _hostileIds.size; _hostileIds.set(k, id); }
+      c._hk = k; c._hki = id; c._hks = _hkStamp;
+    }
+  } finally { _hkBusy = false; }
+  _hkN = _hostileIds.size;
+  const need = _hkN * _hkN;
+  if(_hostileTab.length < need) _hostileTab = new Int8Array(need);
+  else _hostileTab.fill(0, 0, need);     /* 0 unknown, 1 hostile, -1 not */
+}
 function hostile(a, b){
+  if(_hkBusy || a._hks !== _hkStamp || b._hks !== _hkStamp) return hostileRaw(a, b);
+  const ka = a._hki, kb = b._hki;
+  const i = ka * _hkN + kb;
+  const m = _hostileTab[i];
+  if(m) return m === 1;
+  const r = hostileRaw(a, b);
+  _hostileTab[i] = r ? 1 : -1;
+  return r;
+}
+function hostileRaw(a, b){
   if(a.faction === b.faction) return false;
   if(a.vt || b.vt) return false;
   /* ---------- A GUILD OATH NEVER FIGHTS A GUILD OATH ----------
@@ -12666,12 +12757,32 @@ function stepToward(c, tx, ty, dt){
     const pd = Math.hypot(px, py);
     if(pd > 0.01 && ((tx - c.x) * px + (ty - c.y) * py) / (d * pd) < -0.2) sp *= c._pinK;
   }
-  const nx = c.x + (tx-c.x)/d * Math.min(sp, d);
-  const ny = c.y + (ty-c.y)/d * Math.min(sp, d);
-  if(!isBlocked3(c, nx, ny)){ c.x = nx; c.y = ny; }
-  else if(!isBlocked3(c, nx, c.y)){ c.x = nx; }
-  else if(!isBlocked3(c, c.x, ny)){ c.y = ny; }
-  else return true; /* stuck: give up */
+  /* ---------- AND A LONG STEP IS WALKED, NOT TELEPORTED ----------
+     The collision test below samples the DESTINATION and nothing between, which is exact for
+     as long as a step is shorter than the thinnest wall — at full rate a body covers a sixth
+     of a tile and that has always been true. The cold tier below breaks it: a body woken once
+     every third of a second covers a tile and a half in one call and would walk through a
+     chamber ring without ever sampling it, which is the leak this file has spent a year
+     closing, arriving through the front door.
+     So the move is bounded. `MAX_STEP` is comfortably under the one-tile wall thickness, and a
+     step longer than that is taken in as many bounded segments as it needs, each one tested.
+     It costs a loop ONLY when `dt` is large — at full rate `sp` is 0.16 and the while runs
+     once, which is what it did before. Speed is preserved exactly: nothing is dropped, the
+     same distance is walked, it is simply walked rather than jumped. */
+  const MAX_STEP = 0.85;
+  let left = Math.min(sp, d);
+  let movedAny = false;
+  while(left > 1e-4){
+    const seg = Math.min(left, MAX_STEP);
+    left -= seg;
+    const ux = (tx-c.x), uy = (ty-c.y), ud = Math.hypot(ux, uy);
+    if(ud < 1e-6) break;
+    const nx = c.x + ux/ud * seg, ny = c.y + uy/ud * seg;
+    if(!isBlocked3(c, nx, ny)){ c.x = nx; c.y = ny; movedAny = true; }
+    else if(!isBlocked3(c, nx, c.y)){ c.x = nx; movedAny = true; break; }
+    else if(!isBlocked3(c, c.x, ny)){ c.y = ny; movedAny = true; break; }
+    else { if(!movedAny) return true; break; }   /* stuck: give up */
+  }
   if(c.faction==='player') xpGain(c, 'ath', dt*0.008);
   /* FOOTFALL. A stride is about a tile. The cheap camera test comes first so a hundred
      bodies walking somewhere off-screen cost nothing; the audio layer throttles what
@@ -22865,14 +22976,80 @@ function update(dt){
     for(const u of _pl) if((u.floor || 0) === cf && Math.abs(u.x - c.x) < 40 && Math.abs(u.y - c.y) < 40) return true;
     return false;
   };
+  /* ---------- AND A STOREY NOBODY IS ON IS A STOREY NOBODY IS WATCHING ----------
+     "How do games like Kenshi manage a world of that size and keep the impact so low?"
+     The answer is that they do not simulate most of it, and they ABSTRACT what they stop
+     simulating rather than freezing it — a distant squad is a token with a position, not
+     forty bodies, and it materialises when you come close.
+     Measured here before anything was written, which is the only reason the tier below is the
+     shape it is: of 1,748 bodies alive, 1,133 were on a storey with no player unit anywhere on
+     it — and only 166 of those were IDLE. Twelve hundred bodies were walking and fighting each
+     other four storeys under a player who could not see, reach, or be reached by any of it. The
+     existing `_far` tier could not help: it drops a body to 4Hz only when it has no quarry, and
+     a gaunt chasing a bandit on the Sump has one.
+     So the gate is the STOREY rather than the body's mood. Nothing on a floor with none of
+     yours on it can be observed by you at all — not its fight, not its walk, not its death — so
+     it runs on a slow clock and keeps every rate it had, because the accumulated `dt` goes in
+     whole. Bleeding still bleeds, fires still burn, hunger still bites, the fight still
+     resolves; it is all just resolved in fewer, larger pieces.
+     THE SQUAD'S OWN FLOOR IS NEVER COLD, and one body of yours anywhere on a storey warms the
+     whole of it. That is deliberately generous: the alternative is a radius, and a radius means
+     the far end of the floor you are standing on runs on a different clock from the near end,
+     which is exactly the sort of seam a player finds by walking along it. */
+  const COLD_PH = 0.30;                /* a cold body's physics wakes about three times a second */
+  const COLD_AI = 1.00;                /* and thinks about once */
+  /* ---------- AND A FIGHT KEEPS THE HALF-RATE CLOCK ----------
+     Measured both ways on the same staged melee at the same spot on the Sump, twelve bodies,
+     forty-five seconds, with nothing changed but whether one of yours stood forty tiles off:
+     at the slow clock the cold fight took ONE point of blood against the warm fight's ten; at
+     the half-rate clock it took thirty-two against fourteen. The carve-out costs 0.4ms a step
+     and buys back the entire fidelity of every fight underground, which is not a trade that
+     needs thinking about. */
+  const COLD_PH_BUSY = 1 / 15;
+  const COLD_AI_BUSY = 0.25;
+  const _warmFloors = new Set();
+  for(const u of _pl) _warmFloors.add(u.floor || 0);
   for(const c of chars){
     if(c.state==='dead') continue;
     if(wtick) bodyTick(c, wdh);   /* per-hour body sim needs 4Hz, not 20 — the hours accumulate the same */
     /* LOD: an idle body far from the squad thinks at 4Hz with the time it saved up.
        A body with a quarry, or near the squad, thinks at full speed. Rates are preserved. */
     const _far = c.faction !== 'player' && !c.target && !c.windup && !_nearSquad(c);
+    /* and COLD is the stronger claim: not "nobody is close" but "nobody is on this floor" */
+    const _cold = c.faction !== 'player' && !_warmFloors.has(c.floor || 0);
+    /* ---------- AND `_lod` IS NOT THE SAME QUESTION AS `_cold` ----------
+       The first cut set `c._lod = _far || _cold`, which looked obviously right — a cold body is
+       certainly not being watched — and quietly broke every fight underground. `_lod`'s ONLY
+       reader is `separate`, where `a._lod && b._lod` skips the pair, and `separate` is where
+       `_contacts`, `_holders` and `_pinNow` are written. Two bodies on a cold storey therefore
+       never registered contact with each other: they acquired targets, they wound up, they
+       swung, and not one blow in five thousand steps took a point off the other. Measured at
+       blood 100 against 100 after a hundred and sixty-six seconds, with the same pair on a warm
+       floor down to 85.
+       `_far` is the "nobody is watching them overlap" question and it keeps `_lod` to itself.
+       A cold body separates like anything else; it merely thinks and moves on a slower clock. */
     c._lod = _far;
-    if(_far){
+    c._cold = _cold;
+    if(_cold){
+      /* ---------- AND A FIGHT IS NOT PUT ON THE SLOWEST CLOCK ----------
+         The first cut ran everything cold at a third of a second and it cost fight fidelity
+         badly: the same pair that took each other from 100 blood to 72 in fifty seconds on a
+         warm floor managed two points in forty on a cold one — not stalled, but eighteen times
+         slower, which over a night of world time is the difference between a warren that
+         settled its own quarrel and one you walk into still arguing. Blows land on timers and a
+         third of a second is a clumsy bucket to resolve a windup in.
+         So a cold body WITH A QUARRY keeps the half-rate clock the `_far` tier already uses —
+         fifteen swings a second against thirty, which the fight does not notice — and only the
+         ones with nothing to do drop to the slow one. That is still three quarters of what is
+         down there, and it is the three quarters that was purely wasted.
+         Both accumulate and hand the time over whole, so nothing is lost either way. */
+      const busy = !!(c.target || c.windup);
+      c._aiAcc = (c._aiAcc || 0) + dt;
+      if(c._aiAcc >= (busy ? COLD_AI_BUSY : COLD_AI)){ ai(c, c._aiAcc); c._aiAcc = 0; }
+      c._phAcc = (c._phAcc || 0) + dt;
+      if(c._phAcc >= (busy ? COLD_PH_BUSY : COLD_PH)){ physics(c, c._phAcc); c._phAcc = 0; }
+      c._phSkip = false;
+    } else if(_far){
       c._aiAcc = (c._aiAcc || 0) + dt;
       if(wtick){ ai(c, c._aiAcc); c._aiAcc = 0; }
       /* physics at half rate: same distance walked, half the arithmetic, steps too small to tunnel */
@@ -23252,6 +23429,19 @@ function separate(){
         if(a._lod && b._lod) continue;                   /* nobody is watching them overlap */
         if((a.floor||0) !== (b.floor||0)) continue;      /* a storey apart is a world apart */
         const dx = b.x-a.x, dy = b.y-a.y, d2 = dx*dx+dy*dy;
+        /* ---------- AND THE ENMITY IS NOT ASKED ABOUT UNTIL IT MATTERS ----------
+           `hostile` is ninety-six lines of faction law and it was the most-called function in
+           the game — 8,761 times a step, five per body — because this loop asked it for every
+           pair the grid handed back and then, four lines later, threw most of the answers away.
+           It is needed in exactly two places below: the pin test at `PIN_REACH` (1.45) and the
+           push radius, which is at most 0.8. Both are inside 1.45, so beyond that the answer
+           cannot change what this loop does — whether they are foes or not, `R` is at most 0.8,
+           `d2 >= R*R`, and the pair is skipped.
+           EXACTLY EQUIVALENT, not an approximation: no threshold moved and no rule changed,
+           the question is simply asked after the cheap test instead of before it. The comment
+           below about counting contact BEFORE the separation cull still holds — PIN_REACH is
+           the wider of the two and it is the one being tested here. */
+        if(d2 >= PIN_REACH*PIN_REACH) continue;
         const foes = hostile(a, b);
         /* CONTACT IS WIDER THAN OVERLAP, so this is counted before the separation cull below:
            bodies are pushed apart to 0.8 and a blade reaches further than that, so culling
