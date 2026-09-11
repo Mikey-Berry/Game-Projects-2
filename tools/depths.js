@@ -388,6 +388,47 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     ? `a whole game day passes with nobody underground and every storey is still peopled — ${Object.entries(dawn.kept).map(([f, v]) => f + ' kept ' + Math.round(v * 100) + '%').join(', ')}, against 32% and 26% before the dawn exemption`
     : `!! A STOREY EMPTIED OVERNIGHT (${JSON.stringify(dawn)})`;
 
+  /* ---- AND WHAT YOU RAISE DOWN HERE STAYS DOWN HERE ----
+     "Raising an undead underground sends them to the surface instead of raising them on the
+      same level that they were on."
+     `castRaise` took the risen body's x and y off the corpse and never mentioned its FLOOR, and
+     `makeChar` defaults that to 0 — so a body raised on the Sump stood up on the surface, at
+     the right map coordinates and four storeys from the necromancer who called it. Driven on
+     each depth in turn, because a fix that works on -1 and not on -3 is the shape this file
+     has caught twice before. */
+  const raised = await p.evaluate(() => {
+    if (typeof DEPTHS === 'undefined' || typeof castRaise !== 'function') return null;
+    const me = player().find(c => c.state === 'ok');
+    if (!me) return null;
+    const home = { x: me.x, y: me.y, f: me.floor || 0 };
+    me.stats.magic = 60; me.att = me.att || {}; me.att.dark = 3;
+    const out = [];
+    for (const F of DEPTHS) {
+      const h = undercroft.halls.find(H => H.f === F);
+      if (!h) { out.push({ F, skip: 'no hall' }); continue; }
+      me.x = h.x; me.y = h.y; me.floor = F; me.mana = 999; me.castCd = 0;
+      /* a corpse of our own making, lying on that storey */
+      const body = makeChar('Late ' + (-F), 'bandit', h.x + 1, h.y, { atk: 5, def: 5, tough: 5 });
+      body.floor = F; chars.push(body);
+      body.state = 'dead'; body.deadAt = day; corpses.push(body);
+      const before = chars.length;
+      castRaise(me, body);
+      const r = chars.slice(before).find(c => c.undead) ||
+                chars.filter(c => c.undead && c.master === me).slice(-1)[0];
+      out.push({ F, raisedOn: r ? (r.floor || 0) : null, ok: !!r && (r.floor || 0) === F });
+      /* put the world back */
+      for (const c of [r, body]) { if (!c) continue; const i = chars.indexOf(c); if (i >= 0) chars.splice(i, 1); }
+      const ci = corpses.indexOf(body); if (ci >= 0) corpses.splice(ci, 1);
+    }
+    me.x = home.x; me.y = home.y; me.floor = home.f;
+    return out;
+  });
+  R.andWhatYouRaiseDownHereStaysDownHere = !raised ? NOTHING
+    : raised.some(o => o.skip) ? '!! NOTHING TO MEASURE — a storey had no hall to stand in'
+    : raised.every(o => o.ok)
+    ? `a body raised on each storey stands up on the storey it died on — ${raised.map(o => o.F + '→' + o.raisedOn).join(', ')}`
+    : `!! THE RISEN CAME UP ON THE WRONG FLOOR (${JSON.stringify(raised)})`;
+
   console.log('=== THREE DEPTHS ===\n');
   for (const [k, v] of Object.entries(R)) console.log('  ' + k.padEnd(30) + v);
   const bad = Object.values(R).map(String).filter(v => v.startsWith('!!'));
