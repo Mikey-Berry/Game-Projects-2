@@ -6952,53 +6952,65 @@ costs 0.4ms a step and buys back the fidelity of every fight underground.
   · and the wall-tunnelling claim reported NOTHING TO MEASURE because it searched one room's
     north ring, which is where the approach tunnel usually arrives.
 
-[NOTE] AND `hostile` WAS THE MOST-CALLED FUNCTION IN THE GAME: 8,761 times a step, five per body
-per step, through ninety-six lines of faction law. Nearly all of them come from `nearestEnemy`
-walking its candidates. A faction-pair cache would have been wrong in the worst possible way —
-silently, and in the direction of things NOT fighting that should — so the key carries every
-per-body field the rule reads directly or through `guildOath`, `pierceNeutral`, `walksAsDead`
-and `revealedUndead`. TWENTY-NINE DISTINCT KEYS for 1,745 bodies, which is why it works at all.
-Interned to integers in the same pass and answered from a flat `Int8Array` at `ka * n + kb`.
-8,761 trips through the rule became 42.
+[NOTE] AND THE ENMITY MEMO WAS BUILT, PROVED EXACT, AND THROWN AWAY — the most useful thing in
+this entry. `hostile` was the most-called function in the game: 8,761 times a step through
+ninety-six lines of faction law. It was memoised on a key carrying every field the rule reads
+(1,745 bodies collapse to 29 distinct keys), interned to integers, answered from a flat
+`Int8Array`, guarded against staleness, and VERIFIED EXACT against the rule on fifteen thousand
+real pairs, both orders round, 8,324 of them hostile. It took 8,761 evaluations down to 44.
+IT WAS FOUR TIMES SLOWER — a sampling profile of real frames put the memo's machinery at 11.4ms
+a frame against 2.8ms for the plain rule.
+THE REASON IS THE RULE'S FIRST LINE: `if(a.faction === b.faction) return false;`. Most calls are
+two bodies of the same faction and die on one string comparison. A memo cannot reduce the number
+of CALLS, only what each one does, and the guard that made the table safe was twenty times the
+work of the early-out it stood in front of.
+A CACHE IN FRONT OF A CHEAP FUNCTION IS A TAX. A CALL COUNT IS NOT A COST.
 
-[NOTE] AND THE MEMO HAD THREE TRAPS, ALL OF THEM CLOSED IN CODE RATHER THAN ARGUED AWAY.
-  · IT IS REENTRANT: `revealedUndead` → `underShroud` → `hostile`. The key pass sets `_hkBusy`
-    and those calls go to the raw rule, because during the pass the keys are stale by definition.
-  · THE KEYS MUST BE BUILT IN A SECOND PASS, after `rebuildCharGrid`'s loop has finished —
-    `underShroud` reads `shrouders`, and a key built mid-loop would read a half-built list and
-    give every risen seeded before the shroud-bearer a different answer from every risen after.
-  · AND AN ID IS ONLY GOOD FOR THE STEP IT WAS BUILT IN. Ids are handed out in `chars` order, so
-    the id meaning "a provoked Kept" this step can mean something else the next. A stamp, one
-    integer compare, and anything unstamped falls through to the rule.
-The globals (`arena.bout`, `menaceFlag`, `purgeWrath`, every town's rep) need no place in the key
-because the whole table is dropped once a step and none of them can move inside one.
+[NOTE] AND WHILE IT EXISTED IT TAUGHT ONE MORE THING: A MEMO MAKES A PURE FUNCTION IMPURE, AND
+THE CALLERS OUTSIDE THE LOOP ARE THE ONES WHO NOTICE. `deep.js` caught it — a Kept provoked and
+`hostile` asked in the same breath, still answering "calm". Inside `update` that is one frame of
+lag; but dialogue, the interface and every harness ask without running a step first. Nineteen
+places flip one of those flags at runtime, so patching each to re-key would have put the bug back
+the day somebody added a twentieth, silently. The machinery is gone; the lesson is not.
 
-[NOTE] AND A MEMO MAKES A PURE FUNCTION IMPURE, WHICH IS A BIGGER CHANGE THAN IT LOOKS.
-Caught by `deep.js` the first time the suite ran over the finished work — `andYouOnlyIfYouStart`
-went red: a Kept is provoked and `hostile` is asked in the same breath, and the table answered
-from a key that still said "calm". INSIDE THE SIM LOOP that is one frame of lag and unobservable,
-because `rebuildCharGrid` re-keys at the top of every `update`. But `hostile` is also asked by
-dialogue, by the interface and by every harness in the repo, none of which run a step first —
-and for all of them the memo had quietly stopped being a function of the world's state.
-NINETEEN PLACES FLIP ONE OF THESE FLAGS AT RUNTIME. Patching each to re-key would have been
-fragile in the worst way a cache can be: the twentieth, added a year from now, puts the bug back
-SILENTLY and in the direction of things not fighting that should. So the table VERIFIES rather
-than trusts — `hVol` packs every volatile mark into one integer with no allocation, the faction,
-home town, rebellion and war fields are compared as they are, and anything that does not match
-what it was keyed as falls straight through to the rule. A body is only ever answered for as the
-body it actually is, whatever any future edit does to it. AND A SHROUD IN THE WORLD TAKES THE
-DEAD OUT OF THE TABLE ENTIRELY, because `revealedUndead` reads `underShroud`, which is a question
-about POSITION and a position changes every frame; there is at most one shroud in the world and
-usually none, so `shrouders.length` is the whole cost of being exact about it.
+[NOTE] AND THE INSTRUMENT WAS THE WHOLE PROBLEM. Every sim measurement in this repo has hand-timed
+`update()` in a tight loop, which has two faults that between them sent a day at the wrong thing:
+  · IT EXCLUDES THE RENDER. The real loop runs at most four sim steps per frame and then calls
+    `render()`; halving the sim buys nothing if the draw is the ceiling.
+  · AND A PER-CALL WRAPPER DISTORTS EXACTLY WHAT YOU ARE HUNTING. The wrapper costs a fraction of
+    a microsecond — nothing, until it is multiplied by the call count, which is the thing you are
+    looking for. `physics` at 1,102 calls a step came back as 40% of the frame and much of that
+    was the wrapper. THE THING THAT LOOKS HOTTEST UNDER A WRAPPER IS THE THING CALLED MOST.
+`tools/frame.js` is the answer: the real rAF loop, renderer running, a CPU sampling profile off
+the DevTools protocol, SELF time per function, no wrapper in the path of anything hot. It caught
+the memo being backwards. WRAPPING IS STILL EXACT for something called once a frame, which is how
+`syncChars` and the `sync*` rebuilds are measured.
 
+[NOTE] AND A SPEEDUP WAS REPORTED THAT DID NOT EXIST. 28.14 → 18.3 ms a step went into a PR body
+before it was checked, and came from comparing two numbers taken at different times with different
+scripts — not a comparison. A controlled interleaved A/B on an idle machine put the two builds at
+26.04/24.22 against 25.58/26.95: the same. THE REPO'S OWN RULE SAYS COUNTS HOLD UNDER LOAD AND A
+TIMING IS A COIN, and a timing was quoted as the headline anyway.
+
+[NOTE] AND THE SIM IS THE CEILING, WHICH IS WHERE THIS ENDS UP. Measured with per-frame wrappers
+on the once-a-frame functions, where wrapping is exact: `update` 42.45ms a frame over 1.5 calls
+(~28ms a sim step), `render` 30.13ms, and `syncChars` 1.74ms. The guess that the render-side JS
+was the fixed cost was WRONG — the scene-graph work is under two milliseconds. On a machine with
+a real GPU the render mostly goes away and the sim does not, and at up to four steps a frame it
+is the whole budget. "Always, even standing still" fits exactly: 1,756 bodies are ticked whatever
+is on screen.
+
+[NOTE] AND THE NEXT TARGET IS THE NUMBER OF FULL PASSES OVER `chars`, NOT ANY ONE FUNCTION.
+`(anonymous) @game.html` is the second-largest item in the sampling profile at 11.6ms a frame,
+which is the `.filter`/`.some`/`.find` callbacks — every one of them a closure over a 1,756-entry
+array, several of them allocating a fresh array per step (`chars.filter(u => u.faction ===
+'player' ...)` runs every step to build `_pl`). The repo already has the right pattern for this
+and uses it for `warders`, `lamps`, `torchers` and `belowFolk`: gather the lists ONCE in
+`rebuildCharGrid`, which already walks every body, and have the tick functions read them. Not
+attempted yet.
 [NOTE] AND THE SEPARATE REORDER WAS EXACT AND ALMOST FREE. `separate` asked `hostile` for every
 pair the grid handed back and then threw most of the answers away four lines later — it is needed
 only inside `PIN_REACH` (1.45), and beyond that `R` is at most 0.8 so the pair is skipped
 regardless. Moving the question after the cheap test is exactly equivalent. It bought 5%, which
 is less than it looked like it would: the pairs `charsNear(x, y, 1)` returns are mostly already
 inside 1.45. Worth keeping, not worth the theory it was based on.
-
-[NOTE] AND THE COST, MEASURED THE SAME WAY THROUGHOUT: 28.14 → 18.3 ms a step direct, for the
-same 1,755 bodies. physics 1,102 → 618 calls a step, ai 629 → 227, the enmity rule 8,761 → 42.
-That is below the 18.98 the game cost BEFORE the two new storeys were added, with two thirds
-more world under it.
