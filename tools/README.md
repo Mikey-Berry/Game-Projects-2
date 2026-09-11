@@ -1658,6 +1658,16 @@ the truth was 45%.
   safe is fifteen thousand real pairs checked against the unmemoised rule — and the count of
   HOSTILE pairs asserted alongside, because a comparison where every answer is `false` agrees
   perfectly and proves nothing.
+- **A memo makes a pure function impure, and the callers outside the loop are the ones who
+  notice.** Memoising the enmity rule on a key rebuilt once per step is exactly correct inside
+  `update` — the keys are refreshed at the top of every one. It is wrong for everything else:
+  dialogue, the interface and every harness ask `hostile` without running a step first, and they
+  got answers about the body as it was when the step began. `deep.js` caught it as a Kept
+  provoked and asked in the same breath, still answering "calm". Nineteen places flip one of
+  those flags at runtime; patching each to re-key would put the bug back the day somebody adds a
+  twentieth, silently. **Make the cache verify rather than trust** — pack the volatile marks into
+  one integer, compare it to what the key was built from, and fall through to the truth on any
+  mismatch. It costs a dozen comparisons and it cannot rot.
 - **A probe that commands an NPC through a field its own AI owns is measuring the AI.**
   `moveTarget` was set on a gaunt and the claim watched it fail to arrive, reporting 2.2 tiles of
   486 — while `physics` was being called at exactly the right rate with exactly the right `dt`

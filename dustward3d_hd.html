@@ -11493,6 +11493,9 @@ function refreshHostileKeys(){
       let id = _hostileIds.get(k);
       if(id === undefined){ id = _hostileIds.size; _hostileIds.set(k, id); }
       c._hk = k; c._hki = id; c._hks = _hkStamp;
+      /* what the key was built FROM, so the lookup can tell when it has stopped being true */
+      c._hkv = hVol(c); c._hkf = c.faction; c._hkt = c.homeTown;
+      c._hkr = c.rebelOf; c._hkw = c.warF; c._hkx = c.warT;
     }
   } finally { _hkBusy = false; }
   _hkN = _hostileIds.size;
@@ -11500,8 +11503,37 @@ function refreshHostileKeys(){
   if(_hostileTab.length < need) _hostileTab = new Int8Array(need);
   else _hostileTab.fill(0, 0, need);     /* 0 unknown, 1 hostile, -1 not */
 }
+/* ---------- AND THE TABLE CHECKS THAT THE BODY IS STILL THE BODY IT WAS KEYED AS ----------
+   THE FAILURE THIS EXISTS TO STOP, caught by `deep.js` the first time the suite ran over it:
+   a Kept is provoked mid-step, `hostile` is asked in the same breath, and the table answers
+   from a key that still says "calm". Inside the sim loop that is one frame of lag and nobody
+   could ever see it — `rebuildCharGrid` re-keys at the top of every `update`. But `hostile` is
+   also asked by dialogue, by the interface and by every harness, none of which run a step
+   first, and for them the memo had quietly stopped being a function of the world's state.
+   NINETEEN PLACES FLIP ONE OF THESE FLAGS AT RUNTIME and patching each to re-key would be
+   fragile in the worst way a cache can be: the twentieth, added a year from now, would put the
+   bug back silently. So the table VERIFIES rather than trusts. `hVol` packs every volatile mark
+   into one integer — no allocation, no string — and the faction, home town, rebellion and war
+   fields are compared as they are. Anything that does not match what it was keyed as falls
+   through to the rule itself, so a body is only ever answered for as the body it actually is.
+   AND A SHROUD IN THE WORLD TAKES THE DEAD OUT OF THE TABLE ENTIRELY. `revealedUndead` reads
+   `underShroud`, which is a question about POSITION, and a position changes every frame. There
+   is at most one shroud in the world and usually none, so `shrouders.length` is the whole cost
+   of being exact about it. */
+function hVol(c){
+  return (c.provoked?1:0)|(c.neutral?2:0)|(c.vt?4:0)|(c.friendly?8:0)|(c.holdsFire?16:0)
+       |(c.shrouded?32:0)|(c.undead?64:0)|(c.immortal?128:0)|(c.demilich?256:0)
+       |((c.veilT>0)?512:0)|(c.gauntKind?1024:0)|((c.bossKey==='cairn')?2048:0)
+       |(c.guildHire?4096:0)|(c.guildLicensed?8192:0);
+}
 function hostile(a, b){
   if(_hkBusy || a._hks !== _hkStamp || b._hks !== _hkStamp) return hostileRaw(a, b);
+  if(a._hkv !== hVol(a) || b._hkv !== hVol(b)) return hostileRaw(a, b);
+  if(a._hkf !== a.faction || b._hkf !== b.faction) return hostileRaw(a, b);
+  if(a._hkt !== a.homeTown || b._hkt !== b.homeTown) return hostileRaw(a, b);
+  if(a._hkr !== a.rebelOf || b._hkr !== b.rebelOf) return hostileRaw(a, b);
+  if(a._hkw !== a.warF || b._hkw !== b.warF || a._hkx !== a.warT || b._hkx !== b.warT) return hostileRaw(a, b);
+  if(shrouders.length && (a.undead || b.undead)) return hostileRaw(a, b);
   const ka = a._hki, kb = b._hki;
   const i = ka * _hkN + kb;
   const m = _hostileTab[i];
