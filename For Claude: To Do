@@ -7014,3 +7014,54 @@ only inside `PIN_REACH` (1.45), and beyond that `R` is at most 0.8 so the pair i
 regardless. Moving the question after the cheap test is exactly equivalent. It bought 5%, which
 is less than it looked like it would: the pairs `charsNear(x, y, 1)` returns are mostly already
 inside 1.45. Worth keeping, not worth the theory it was based on.
+
+[105] NOT WALKING SEVENTEEN HUNDRED BODIES TO ASK ABOUT THREE.
+  "the FPS drop is pretty killer especially on the laptop" … "Always, even standing still."
+  "Even standing still" is the diagnosis. A cost paid whether or not anything is happening does
+  not scale with the fight, it scales with the ROSTER. Measured: 13.6ms a sim step of a 33.3ms
+  budget at 30Hz, with 1,757 bodies and nothing on screen.
+  FOUND WITH A NEW INSTRUMENT, `tools/_lines.js`, which reads the `positionTicks` the CPU sampler
+  records per LINE and so attributes inside one function's own frame without a wrapper on
+  anything. `update`'s own body was 19.9% of all samples, and the sampler named the lines:
+    · `_nearSquad(c)` at 6.1% — the single largest line in it, asked once per body per step.
+    · the HAUL LOOP at 6.7% — a full walk of the roster to move a corpse along with the two or
+      three people holding one.
+    · the PASSING-JAB loop at ~21% — see the open note at the bottom.
+    · and the BODYGUARD block, whose two `chars.find`s with `hostile()` and `dist()` predicates
+      sampled separately at 1.1ms a step, plus most of `hostile`'s own 1.2ms.
+  FOUR CHANGES, none of them a rate change or a fidelity trade — each is the same question asked
+  of a structure that already holds the answer:
+    · `player()` IS BUILT ONCE A STEP. It was called 22.17 times a step, each a full filter, for
+      a list of the same six people. Invalidated by the step boundary, by a death, and by a
+      change in roster length; nothing mutates what it returns, checked across 83 call sites.
+    · THE BODYGUARD ASKS THE GRID. One `charsNear(w.x, w.y, 9)` sweep replaces two roster scans,
+      and the `chars.includes(w)` that checked the ward was still in the world became the
+      `charById.get(w.id) !== w` check that map is there for, falling back to the walk only when
+      the map disagrees.
+    · A COLD BODY IS NOT ASKED ABOUT THE SQUAD. `_cold` means no player unit is on this body's
+      floor; `_nearSquad`'s FIRST test is the floor. The coarse condition implies the fine one,
+      so `_cold ||` short-circuits it for 1,132 of 1,757 bodies. Exact, not an approximation —
+      and `tools/walk.js` re-derives the implication on the live world rather than asserting it.
+    · CARRIERS ARE GATHERED IN `rebuildCharGrid`, the pattern the previous note said to use and
+      the one already used for `warders`, `lamps`, `torchers` and `belowFolk`. Gathered before
+      the `state` gate, because a carrier who goes down still has to put the thing down.
+  MEASURED, interleaved A/B on an idle machine, three rounds each: 13.610 / 13.383 / 13.990 ms a
+  step before, 10.728 / 11.738 / 10.843 after. Every round agrees and the ranges do not overlap.
+  The counts are the claim and the milliseconds are colour — see the note above about the
+  speedup that wasn't there.
+
+[NOTE] AND THE LINE PROFILER IS THE THIRD INSTRUMENT, AND THE FIRST ONE THAT NAMED A LINE.
+  `tools/_simprof.js` samples a pure `update()` loop and attributes SELF time per function, which
+  said "update is 16.8% of the step" and stopped there — a dispatcher fourteen hundred lines long
+  is not an answer. `tools/_lines.js` reads `positionTicks` off the same profile and names the
+  line. Neither puts an instrument in the path. Between them and `tools/frame.js` (real frames,
+  renderer running) the rule is: frame.js for "is it sim or draw", _simprof.js for "which
+  function", _lines.js for "which line of it".
+
+[OPEN] AND THE PASSING-JAB LOOP IS THE LARGEST THING LEFT IN `update`'s OWN FRAME, ~21% of it.
+  `for(const c of chars)` every step, testing `c.state`, `c._ox` and the distance moved for all
+  1,757 bodies, to find the handful that moved past somebody's blade. The obvious fix — collect
+  the candidates in the main per-body loop, which is already walking the same array — is NOT
+  exact: the jab pass currently runs after every body's physics, so it reads final positions,
+  and collecting mid-loop would read some bodies before a later body's `attack()` had staggered
+  them. Small, real, and not worth taking on a guess. Left alone deliberately.

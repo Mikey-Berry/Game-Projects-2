@@ -2704,13 +2704,21 @@ function wornItems(c){
    is wired only into the handful of functions that are ALREADY the single read for the thing
    they compute: `chaOf` for the tongue, `rawMaxMana` for the pool, `invCap` for the load,
    `risenCap` for the binding. One line each, which is the shape the doc argued for. */
+/* ---------- AND NEITHER OF THESE BUILDS A LIST TO THROW IT AWAY ----------
+   `wornItems` allocates a fresh array on every call, which is the right shape for the handful
+   of places that want the list itself and pure waste for the two that only want a sum or a
+   yes. `gearHas(c, 'shroudAll')` alone is asked of every able body every step by
+   `rebuildCharGrid` — fifteen hundred throwaway arrays a step for a question about four slots.
+   Walking the slots directly is the same read in the same order, minus the array. */
 function gearSum(c, key){
+  if(!c) return 0;
   let n = 0;
-  for(const it of wornItems(c)) n += (it[key] || 0);
+  for(const sl of EQ_SLOTS){ const id = c[sl]; if(!id) continue; const it = ITEMS[id]; if(it) n += (it[key] || 0); }
   return n;
 }
 function gearHas(c, key){
-  for(const it of wornItems(c)) if(it[key]) return true;
+  if(!c) return false;
+  for(const sl of EQ_SLOTS){ const id = c[sl]; if(!id) continue; const it = ITEMS[id]; if(it && it[key]) return true; }
   return false;
 }
 /* What a helm and a cloak are worth, TOGETHER and capped. They land after the body armour in
@@ -11209,6 +11217,7 @@ const charmed = [];
    worldgen seeder to naming one from above its declaration. */
 const torchers = [];
 const litPosts = [];
+const carriers = [];   /* everyone with a corpse in hand — see the haul loop at the foot of update */
 function rebuildCharGrid(){
   charEpoch++;                    /* a new step: whatever `player()` cached is a step old now */
   charGrid.clear();
@@ -11229,10 +11238,19 @@ function rebuildCharGrid(){
   torchers.length = 0;
   litPosts.length = 0;
   shrouders.length = 0;
+  carriers.length = 0;
   for(const b of pBuilds) if(b.type === 'torchpost' && (b.fuel || 0) > 0 &&
                              (b.progress === undefined || b.progress >= 1)) litPosts.push(b);
   for(const c of chars){
     charById.set(c.id, c);
+    /* ---------- AND WHOEVER HAS A BODY OVER THEIR SHOULDER ----------
+       Gathered here for the same reason the warders and the charm-bearers above are. The haul
+       loop at the bottom of `update` walked all seventeen hundred bodies every step asking
+       `c.carryList` and `c.carry` of each, to move a corpse along with the two or three people
+       who are actually carrying one — 6.7% of `update`'s own frame for a question about three
+       bodies. Gathered BEFORE the `state` gate, because a carrier who goes down still has to
+       put the thing down, and the haul loop never checked state either. */
+    if(c.carry || (c.carryList && c.carryList.length)) carriers.push(c);
     if(c.state !== 'ok') continue;
     if(c.concentrating && c.concentrating.key === 'warding') warders.push(c);
     if(c.faction === 'player' && (c.floor || 0) < 0) belowFolk.push(c);
@@ -14269,10 +14287,32 @@ function physics(c, dt){
      closes only once the threat is within a stride of the person they are keeping alive. */
   if(c.guardTarget){
     const w = c.guardTarget;
-    if(w.state==='dead' || !chars.includes(w)){ c.guardTarget = null; }
+    /* ---------- AND IT ASKS THE GRID, NOT THE ROSTER ----------
+       MEASURED: this block was three full walks of `chars` per guard per step — an
+       `includes` to see the ward was still in the world, and two `find`s that ran `hostile()`
+       and `dist()` against all seventeen hundred bodies to find a threat standing within nine
+       tiles. The two `find`s alone sampled at 1.1ms of a 13.9ms step, and most of `hostile`'s
+       own 1.2ms was called from here. It is a question about a handful of bodies around one
+       person and the spatial grid answers it directly.
+       The `includes` becomes the same check `charById` is there for — is this body still the
+       body that id was keyed as — and falls back to the walk only when the map disagrees,
+       which is a body pushed since the grid was built.
+       ONE SWEEP, NOT TWO: the near list is a shared buffer, so both threats are picked up in
+       a single pass. The engaged threat still wins over the merely close one; what changes is
+       that ties are broken by grid order rather than by roster order, and between two bodies
+       that both qualify either was always an arbitrary pick. */
+    if(w.state==='dead' || (charById.get(w.id) !== w && !chars.includes(w))){ c.guardTarget = null; }
     else if(!c.targetManual){
-      const threat = chars.find(o => o.state==='ok' && o.target === w && hostile(c, o) && dist(o.x,o.y,w.x,w.y) < 9)
-                  || chars.find(o => o.state==='ok' && hostile(c, o) && dist(o.x,o.y,w.x,w.y) < 5);
+      let onWard = null, justNear = null;
+      for(const o of charsNear(w.x, w.y, 9)){
+        if(o.state !== 'ok') continue;
+        const dw2 = dist(o.x, o.y, w.x, w.y);
+        if(dw2 >= 9) continue;
+        if(!hostile(c, o)) continue;
+        if(o.target === w){ onWard = o; break; }        /* someone actually on them ends it */
+        if(!justNear && dw2 < 5) justNear = o;
+      }
+      const threat = onWard || justNear;
       const dw = dist(c.x, c.y, w.x, w.y);
       if(threat && dw < 12){
         const dtw = dist(threat.x, threat.y, w.x, w.y) || 0.01;
@@ -22958,9 +22998,17 @@ function update(dt){
     if(wtick) bodyTick(c, wdh);   /* per-hour body sim needs 4Hz, not 20 — the hours accumulate the same */
     /* LOD: an idle body far from the squad thinks at 4Hz with the time it saved up.
        A body with a quarry, or near the squad, thinks at full speed. Rates are preserved. */
-    const _far = c.faction !== 'player' && !c.target && !c.windup && !_nearSquad(c);
     /* and COLD is the stronger claim: not "nobody is close" but "nobody is on this floor" */
     const _cold = c.faction !== 'player' && !_warmFloors.has(c.floor || 0);
+    /* ---------- AND A COLD BODY CANNOT BE NEAR THE SQUAD, SO DON'T ASK ----------
+       `_nearSquad` walks the squad testing floor and then two axis distances, and it was asked
+       once per body per step for all seventeen hundred — 6.1% of `update`'s own frame, the
+       largest single line in it. But its FIRST test is `(u.floor||0) === cf`, and `_cold` means
+       precisely that no player unit is on this body's floor. So for a cold body the answer is
+       already known to be false and the call is pure cost. Asked second, and short-circuited.
+       This is an exact rewrite, not an approximation: the two conditions are the same question
+       asked at different resolutions, and the coarse one implies the fine one here. */
+    const _far = c.faction !== 'player' && !c.target && !c.windup && (_cold || !_nearSquad(c));
     /* ---------- AND `_lod` IS NOT THE SAME QUESTION AS `_cold` ----------
        The first cut set `c._lod = _far || _cold`, which looked obviously right — a cold body is
        certainly not being watched — and quietly broke every fight underground. `_lod`'s ONLY
@@ -23296,7 +23344,10 @@ function update(dt){
     }
   }
   /* carried corpses ride along */
-  for(const c of chars){
+  /* THE SHORT LIST, NOT THE ROSTER — `rebuildCharGrid` gathered it at the top of the step.
+     A body that picks something up mid-step carries it visibly from the next step, a thirtieth
+     of a second later, which is below the threshold of anything anyone can see. */
+  for(const c of carriers){
     if(c.carryList && c.carryList.length){
       c.carryList = c.carryList.filter(b => corpses.includes(b));
       c.carryList.forEach((b, i) => { b.x = c.x - 0.5 + i * 0.34; b.y = c.y + 0.4; b.floor = c.floor || 0; });
