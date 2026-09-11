@@ -232,10 +232,25 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const [w] = wed('town', gx, gy, 'Town');
       w.civ = true; w.pregnant = 1;
       const was = seenIds();
-      let d = 0, born = [];
-      for (; d < 10 && !born.length; d++) { midnight(); born = bornNear(w, was); }
-      R.theWorldIsNotFrozen = born.length && !w.pregnant
-        ? `a townswoman at her term on the same empty waste still delivers where she stands — ${born[0].name}, ${d} night${d > 1 ? 's' : ''}. The roof is asked of your people only.`
+      /* ---------- AND A FIVE PER CENT LOSS IS NOT A FROZEN WORLD ----------
+         `BIRTH_LOSS` is 0.05 and the risk rises with `overdue`, so a birth deliberately does
+         not always produce a child — that is the feature, one line and no scene. This claim
+         staged ONE pregnancy and called the world frozen if that single roll went against it,
+         which is a one-in-twenty red for a working build. It duly came up on a world seventeen
+         bodies different from the one it was written against, and reported the exact signature
+         of a loss — born 0, pregnant 0, overdue 0 — which reads identically to the subsystem
+         being dead.
+         The question is whether the world can still deliver AT ALL without a roof, so she is
+         put back at her term whenever a night takes the child, and it is asked several times.
+         Six attempts puts a false red at three in ten million. */
+      let d = 0, born = [], losses = 0;
+      for (; d < 40 && !born.length && losses < 6; d++) {
+        midnight();
+        born = bornNear(w, was);
+        if (!born.length && !w.pregnant) { losses++; w.pregnant = 1; w.overdue = 0; }
+      }
+      R.theWorldIsNotFrozen = born.length
+        ? `a townswoman at her term on the same empty waste still delivers where she stands — ${born[0].name}, ${d} night${d > 1 ? 's' : ''}${losses ? `, after ${losses} that did not live (BIRTH_LOSS is real and is not a frozen world)` : ''}. The roof is asked of your people only.`
         : `!! THE WHOLE WORLD NOW NEEDS AN INN (born ${born.length}, pregnant ${w.pregnant}, overdue ${w.overdue})`;
       wipe();
     }

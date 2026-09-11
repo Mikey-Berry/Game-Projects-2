@@ -199,6 +199,22 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     if (typeof liveCairns !== 'function') {
       R.cairnAnswersTheDead = '!! THIS BUILD HAS ONE CAIRN BEAST PER WORLD AND NO WAY TO GROW MORE';
     } else {
+      /* ---------- AND THE CAP HAS TO BE OFF THE BOARD BEFORE YOU ASK ABOUT GROWTH ----------
+         This asserted `grown > before` and the claim two lines down asserts the cap is 4 — so
+         the moment a world arrives at this block already holding four beasts, growth is
+         unmeasurable BY CONSTRUCTION and the claim reports "200 bodies and still only 4", which
+         reads as the feature being dead when it is the ceiling doing its job. It went red on a
+         world with seventeen more bodies in it than the one it was written against, because
+         more bodies means more dead means the ground had already answered before the test
+         asked. The precondition was never the feature's; it was the harness's, and unstated.
+         The comment above promises "and that killing them lets it start over" and the code
+         never killed one. It does now, which both removes the precondition and makes the
+         sentence true. */
+      for(const c of liveCairns().slice()) kill(c, null);
+      /* AND NOT A TICK MORE. The first cut let it settle for twenty `cairnTick`s first, and the
+         ground put all four back inside twenty-four seconds of world time — which is the
+         feature working perfectly and the measurement erased. `kill` marks the body on the spot
+         and `liveCairns` filters on that, so the count is already zero here. */
       const before = liveCairns().length;
       const nec0 = player()[0];
       /* a real field of the unclaimed, well away from anybody, made of bodies a beast eats */
@@ -217,8 +233,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       for (let i = 0; i < 400; i++) cairnTick(1.2);
       const grown = liveCairns().length;
       R.cairnAnswersTheDead = grown > before
-        ? `a field of 200 unclaimed dead raised the count from ${before} to ${grown}`
-        : `!! 200 BODIES ON THE GROUND AND STILL ONLY ${grown} BEAST(S)`;
+        ? `a field of 200 unclaimed dead raised the count from ${before} to ${grown}, the ground answering again after every beast on it was put down`
+        : `!! 200 BODIES ON THE GROUND AND STILL ONLY ${grown} BEAST(S), FROM A CLEARED START OF ${before}`;
       R.cairnCap = grown <= 4
         ? `and it stops at ${grown}, not a plague of them`
         : `!! ${grown} CAIRN BEASTS — THE CAP IS NOT HOLDING`;
