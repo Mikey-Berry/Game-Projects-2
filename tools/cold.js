@@ -273,6 +273,92 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     ? `twelve bodies left to it on the Sump take ${resolves.cold.lost} blood off each other in forty-five seconds with nobody watching, and ${resolves.cold.down} of them go down — against ${resolves.warm.lost} for the same fight watched, ${resolves.ratio}x, so the slow clock costs the fight nothing`
     : `!! A FIGHT ON A COLD STOREY IS NOT A FIGHT (${JSON.stringify(resolves)})`;
 
+  /* ---- 5b. AND WINDING THE WORLD ON MUST NOT COST MORE PER SECOND OF REAL TIME ----
+     "5x goes as high as 50-60 sim... The higher speeds are where the FPS tanks."
+     `simAcc += dt * speed` asks for five times the steps at 5x and every tier below was spent
+     in SIM seconds, so everything out of sight cost five times as much per REAL second — while
+     the player is fast-forwarding precisely because they are not watching it.
+     THIS IS THE ONLY PATH IN THE SIM NO HARNESS REACHES BY DEFAULT: the harnesses drive
+     `update(1/30)` themselves and never touch `speed`, which is read in the frame loop, so
+     every claim in this repo has been a 1x claim. Set deliberately here, and put back. */
+  const ff = await p.evaluate(() => {
+    if (typeof DEPTHS === 'undefined') return null;
+    const census = (sp) => {
+      speed = sp;
+      for (let i = 0; i < 60; i++) update(1 / 30);          /* let the accumulators settle */
+      let ai = 0, ph = 0;
+      const rAi = window.ai, rPh = window.physics;
+      window.ai = function (x) { if (x._cold) ai++; return rAi.apply(this, arguments); };
+      window.physics = function (x) { if (x._cold) ph++; return rPh.apply(this, arguments); };
+      const N = 120;
+      for (let i = 0; i < N; i++) update(1 / 30);
+      window.ai = rAi; window.physics = rPh;
+      /* per REAL second: at speed s the frame loop runs 30*s steps in a second */
+      return { perStep: +((ai + ph) / N).toFixed(1), perSecond: Math.round((ai + ph) / N * 30 * sp) };
+    };
+    const one = census(1), five = census(5);
+    speed = 1;
+    for (let i = 0; i < 30; i++) update(1 / 30);
+    return { one, five, ratioStep: +(five.perStep / one.perStep).toFixed(2),
+             ratioSecond: +(five.perSecond / one.perSecond).toFixed(2) };
+  });
+  R.fastForwardCostsNoMorePerSecond = !ff ? NO_COLD
+    : (ff.ratioSecond < 1.35 && ff.ratioStep < 0.45)
+    ? `the storeys nobody is on cost ${ff.one.perSecond} calls a real second at 1x and ${ff.five.perSecond} at 5x (${ff.ratioSecond}x) — five times the steps for the same work, because the step itself went from ${ff.one.perStep} to ${ff.five.perStep} calls (${ff.ratioStep}x)`
+    : `!! FAST-FORWARD STILL PAYS FULL PRICE PER STEP (${JSON.stringify(ff)})`;
+
+  /* ---- 5c. AND THE WORLD STILL HAPPENS WHILE YOU WIND IT ON ----
+     The coarser bucket is the trade, and it is only acceptable if the same amount of WORLD
+     still occurs per sim-second. The accumulators hand the time over whole, so it should.
+     [FAULT] THE FIRST CUT MEASURED GROUND COVERED BY WHATEVER HAPPENED TO BE ON THE SUMP, and
+     by the time this claim runs the blocks above it have walked the player up and down and left
+     33 bodies there covering THREE TILES in twenty seconds. Dividing by three tiles is not a
+     measurement, and this file already carries a note saying exactly that about a ratio with a
+     denominator near zero — written four claims further up, about this same trade. So it stages
+     its own signal, with the pair that is actually hostile, and refuses to divide unless there
+     is something to divide. */
+  const ffWorld = await p.evaluate(() => {
+    if (typeof DEPTHS === 'undefined') return null;
+    const F = DEPTHS[2];
+    const h = undercroft.halls.find(H => H.f === F);
+    const me = player().find(o => o.state === 'ok');
+    if (!h || !me) return null;
+    const home = { x: me.x, y: me.y, f: me.floor || 0 };
+    me.x = home.x; me.y = home.y; me.floor = home.f; me.noFight = true;
+    const bout = (sp, simSecs) => {
+      speed = sp;
+      const all = [];
+      for (let k = 0; k < 6; k++) {
+        const a2 = makeChar('R' + k, 'bandit', h.x + k * 0.1, h.y, { atk: 34, def: 10, tough: 24, ath: 12, weapon: 'w_kat' });
+        const g = makeChar('G' + k, 'gaunt', h.x + k * 0.1 + 1.0, h.y, { atk: 30, def: 10, tough: 24, ath: 12, weapon: 'w_club' });
+        for (const o of [a2, g]) { o.floor = F; o.caveDweller = true; chars.push(o); all.push(o); }
+      }
+      rebuildCharGrid();
+      const foe = hostile(all[0], all[1]);
+      const b0 = all.reduce((s2, o) => s2 + o.blood, 0);
+      for (let i = 0; i < simSecs * 30; i++) update(1 / 30);
+      const alive = all.filter(o => o.state !== 'dead');
+      const out = { foe, lost: Math.round(b0 - alive.reduce((s2, o) => s2 + o.blood, 0)),
+                    cold: all.filter(o => o._cold).length };
+      for (const o of all) { const i = chars.indexOf(o); if (i >= 0) chars.splice(i, 1); }
+      return out;
+    };
+    /* the SAME forty-five sim-seconds either side — what changes is only how many buckets
+       the tier resolves them in */
+    const one = bout(1, 45), five = bout(5, 45);
+    speed = 1;
+    me.x = home.x; me.y = home.y; me.floor = home.f;
+    return { one, five, ratio: one.lost ? +(five.lost / one.lost).toFixed(2) : 0 };
+  });
+  R.andTheWorldStillHappensWhileYouWindItOn = !ffWorld ? NO_COLD
+    : !(ffWorld.one.foe && ffWorld.five.foe)
+    ? `!! THE TWO STAGED SIDES ARE NOT ENEMIES — this measures nothing (${JSON.stringify(ffWorld)})`
+    : ffWorld.one.lost < 300
+    ? `!! NOTHING TO DIVIDE BY — the 1x control only moved ${ffWorld.one.lost} blood (${JSON.stringify(ffWorld)})`
+    : (ffWorld.one.cold === 12 && ffWorld.five.cold === 12 && ffWorld.ratio > 0.6 && ffWorld.ratio < 1.6)
+    ? `the same forty-five sim-seconds of a fight nobody is watching costs ${ffWorld.five.lost} blood with the world wound on to 5x against ${ffWorld.one.lost} at 1x (${ffWorld.ratio}x) — a coarser bucket, not a slower world`
+    : `!! WINDING THE WORLD ON LOSES THE FIGHT (${JSON.stringify(ffWorld)})`;
+
   /* ---- 6. AND IT IS ACTUALLY CHEAPER ----
      Reported with the call counts beside it, because the counts hold under suite load and a
      timing does not. The threshold is on the COUNTS. */

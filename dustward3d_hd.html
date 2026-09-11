@@ -23050,8 +23050,30 @@ function update(dt){
      whole of it. That is deliberately generous: the alternative is a radius, and a radius means
      the far end of the floor you are standing on runs on a different clock from the near end,
      which is exactly the sort of seam a player finds by walking along it. */
-  const COLD_PH = 0.30;                /* a cold body's physics wakes about three times a second */
-  const COLD_AI = 1.00;                /* and thinks about once */
+  /* ---------- AND FAST-FORWARD MUST NOT COST MORE PER SECOND OF REAL TIME ----------
+     "5x goes as high as 50-60 sim and as low as 30. Draw stays the same. The higher speeds are
+      where the FPS tanks."
+     MEASURED, and the measurement is the whole argument: the per-STEP composition of the sim is
+     IDENTICAL at 1x and 5x — 25.6 against 26.1 cold ai calls a step, 352.1 against 349.5 warm
+     physics calls. Nothing in here knew what speed the game was running at, so `simAcc += dt *
+     speed` simply asked for five times as many steps and every one of them cost full price.
+     Thirty steps a second became a hundred and fifty against a cap of four a frame, the cap
+     bound, and the world was quietly running at about 2.4x for a 5x button while the frame rate
+     paid for the full five.
+     THE TIERS ARE SPENT IN SIM SECONDS AND THE BUDGET IS IN REAL ONES. A cold body thinking
+     once a sim-second thinks five times a real second at 5x — for a body on a storey nobody is
+     on, while the player is fast-forwarding precisely BECAUSE they are not watching. Scaling
+     the thresholds by `speed` holds the cost of everything-out-of-sight constant per second of
+     real time, which is what the tier was always for. The accumulators hand the time over whole,
+     so a cold body still walks the same ground and a cold fight still ends; both simply resolve
+     in coarser buckets the faster you wind the world on.
+     WHAT IS DELIBERATELY NOT SCALED is anything warm — a body on your own storey keeps its
+     clock at every speed, so what you are looking at is what it always was. At 1x `LOD_FF` is
+     exactly 1 and every number below is unchanged, which is the only reason this can go in
+     without re-litigating the tier. */
+  const LOD_FF = Math.max(1, speed);
+  const COLD_PH = 0.30 * LOD_FF;       /* a cold body's physics wakes about three times a second */
+  const COLD_AI = 1.00 * LOD_FF;       /* and thinks about once */
   /* ---------- AND A FIGHT KEEPS THE HALF-RATE CLOCK ----------
      Measured both ways on the same staged melee at the same spot on the Sump, twelve bodies,
      forty-five seconds, with nothing changed but whether one of yours stood forty tiles off:
@@ -23059,8 +23081,15 @@ function update(dt){
      the half-rate clock it took thirty-two against fourteen. The carve-out costs 0.4ms a step
      and buys back the entire fidelity of every fight underground, which is not a trade that
      needs thinking about. */
-  const COLD_PH_BUSY = 1 / 15;
-  const COLD_AI_BUSY = 0.25;
+  const COLD_PH_BUSY = (1 / 15) * LOD_FF;
+  const COLD_AI_BUSY = 0.25 * LOD_FF;
+  /* the `_far` tier is the same bargain one tier up: idle, and nobody near it. Its ai rode on
+     `wtick`, which is a quarter of a SIM second and so fired five times a real second at 5x;
+     its physics alternated on a flag, which is a half rate in STEPS and so doubled with them.
+     Both become accumulators against a scaled threshold — at 1x, 0.25s is exactly `wtick` and
+     1/15s is exactly every other step, so this is the same tier it was. */
+  const FAR_AI = 0.25 * LOD_FF;
+  const FAR_PH = (1 / 15) * LOD_FF;
   const _warmFloors = new Set();
   for(const u of _pl) _warmFloors.add(u.floor || 0);
   for(const c of chars){
@@ -23113,11 +23142,11 @@ function update(dt){
       c._phSkip = false;
     } else if(_far){
       c._aiAcc = (c._aiAcc || 0) + dt;
-      if(wtick){ ai(c, c._aiAcc); c._aiAcc = 0; }
+      if(c._aiAcc >= FAR_AI){ ai(c, c._aiAcc); c._aiAcc = 0; }
       /* physics at half rate: same distance walked, half the arithmetic, steps too small to tunnel */
       c._phAcc = (c._phAcc || 0) + dt;
-      if(c._phSkip){ c._phSkip = false; }
-      else { physics(c, c._phAcc); c._phAcc = 0; c._phSkip = true; }
+      if(c._phAcc >= FAR_PH){ physics(c, c._phAcc); c._phAcc = 0; }
+      c._phSkip = false;
     } else {
       if(c._aiAcc){ ai(c, dt + c._aiAcc); c._aiAcc = 0; }
       else ai(c, dt);
