@@ -345,6 +345,49 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     ? `the bucket index hands back its own storey's ground at a hall on each — ${Object.entries(index).map(([f,o]) => f+': '+o.mine).join(', ')} tiles, none of them another floor's`
     : `!! THE DEPTH-FOLDED BUCKET KEY IS WRONG (${JSON.stringify(index)})`;
 
+  /* ---- AND THE DEPTHS ARE STILL THERE WHEN YOU ARRIVE ----
+     "all the underground fights resolve well before I ever go there. So I usually just find
+      bloody aftermaths and that's it."
+     It was not a fight. `spawnGaunt` stamps `nightborn` — "the dark made it; the dawn unmakes
+     it" — and `gauntDawn` deletes every nightborn gaunt each morning. Seven other places in
+     the file clear that flag for gaunts that are meant to STAY; the depths forgot, so the two
+     floors stocked entirely with gaunt-kin evaporated before the first noon.
+     MEASURED, one game day with nobody underground: 17 bodies died in the whole world and 412
+     were DELETED — 88 off the Undercroft, 216 off the Deepworks, 108 off the Sump. The
+     aftermath was never a battlefield; it was an empty room and the violet motes `gauntDawn`
+     leaves behind.
+     TWO CLAIMS, because the flag and the outcome are different failures. A resident that
+     carries the flag is the bug; a floor that empties is the symptom, and it could arrive
+     again by some other route. */
+  const dawn = await p.evaluate(() => {
+    if (typeof DEPTHS === 'undefined') return null;
+    const resident = chars.filter(c => c.state !== 'dead' && (c.floor || 0) < 0 &&
+                                       (c.caveDweller || c.undercroft) && c.faction === 'gaunt');
+    const flagged = resident.filter(c => c.nightborn);
+    const before = {};
+    for (const c of chars) { if (c.state === 'dead' || c.faction === 'player') continue;
+      const f = c.floor || 0; if (f < 0) before[f] = (before[f] || 0) + 1; }
+    /* a whole game day, with nobody of yours below ground */
+    const startDay = day;
+    for (let i = 0, n = Math.round(24 * HOUR_SEC * 30); i < n; i++) update(1 / 30);
+    const after = {};
+    for (const c of chars) { if (c.state === 'dead' || c.faction === 'player') continue;
+      const f = c.floor || 0; if (f < 0) after[f] = (after[f] || 0) + 1; }
+    const kept = {};
+    for (const f of Object.keys(before)) kept[f] = +(((after[f] || 0) / before[f])).toFixed(2);
+    return { residents: resident.length, flagged: flagged.length, before, after, kept,
+             days: day - startDay, worst: Math.min(...Object.values(kept)) };
+  });
+  R.theDeepIsNotCollectedAtDawn = !dawn ? NOTHING
+    : dawn.residents < 50 ? '!! NOTHING TO MEASURE — barely anything lives down there to collect'
+    : dawn.flagged === 0
+    ? `all ${dawn.residents} gaunt-kin living in the warrens and halls are exempt from the dawn — 0 still carry the flag that deletes them`
+    : `!! ${dawn.flagged} OF ${dawn.residents} DEPTH RESIDENTS WILL BE DELETED AT DAWN (${JSON.stringify(dawn.kept)})`;
+  R.andTheFloorsAreStillPeopledTomorrow = !dawn ? NOTHING
+    : (dawn.worst > 0.8)
+    ? `a whole game day passes with nobody underground and every storey is still peopled — ${Object.entries(dawn.kept).map(([f, v]) => f + ' kept ' + Math.round(v * 100) + '%').join(', ')}, against 32% and 26% before the dawn exemption`
+    : `!! A STOREY EMPTIED OVERNIGHT (${JSON.stringify(dawn)})`;
+
   console.log('=== THREE DEPTHS ===\n');
   for (const [k, v] of Object.entries(R)) console.log('  ' + k.padEnd(30) + v);
   const bad = Object.values(R).map(String).filter(v => v.startsWith('!!'));
