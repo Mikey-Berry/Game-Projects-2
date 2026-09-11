@@ -2637,19 +2637,29 @@ const chars = [], corpses = [];
      · a DEATH (`kill` bumps it), which is the dangerous one — a corpse left in this list for the
        rest of a step is a body that orders would still be given to;
      · and the roster LENGTH, one integer compare, which catches every push and splice for free.
-   What is left is a body whose FACTION changes mid-step without dying — recruiting somebody, or
-   a charm wearing off. That resolves on the next step, a thirtieth of a second later, and it
-   happens on a menu click rather than in the hot loop. */
+   AND THE FOURTH IS THE ONE THAT MATTERED, LEARNED THE HARD WAY. The first cut let the cache
+   stand between steps and `board.js` went red: something had become player-faction without
+   dying and without the roster changing length, the cache did not know, and a probe that moved
+   "everyone" left that body standing in the plaza keeping it lit. There are a hundred and
+   ninety-two writes to `.faction` in this file and no honest way to catch them all.
+   SO THE CACHE IS ARMED ONLY INSIDE A SIM STEP. `_inStep` goes up on `update`'s first line and
+   down on its last, and `player()` will neither read nor WRITE the cache while it is down — the
+   write matters as much as the read, which the second cut got wrong: dropping the cache at the
+   end of `update` does nothing when `update` is not running, because the next call from a
+   paused menu simply stores a fresh one that then stands forever. `update` has no early return,
+   so the flag is balanced on every path.
+   That keeps the whole of the win, which was twenty-two calls INSIDE one step, and gives up
+   only the handful that happen between them — a menu, a click, a render, a paused harness. */
 let _plCache = null, _plEpoch = -1, _plLen = -1;
-let charEpoch = 0;
+let charEpoch = 0, _inStep = false;
 function player(){
-  if(_plCache && _plEpoch === charEpoch && _plLen === chars.length) return _plCache;
+  if(_inStep && _plCache && _plEpoch === charEpoch && _plLen === chars.length) return _plCache;
   const a = chars.filter(c => c.faction==='player' && c.state!=='dead' && !c.phantom);
   if(a.length > 1 && !a[0].protagonist){
     const i = a.findIndex(c => c.protagonist);
     if(i > 0) a.unshift(a.splice(i, 1)[0]);
   }
-  _plCache = a; _plEpoch = charEpoch; _plLen = chars.length;
+  if(_inStep){ _plCache = a; _plEpoch = charEpoch; _plLen = chars.length; }
   return a;
 }
 /* and the order the squad bar shows them in: you, then the order they turned up in */
@@ -21984,6 +21994,7 @@ function applyOpts(){
 }
 let fpsEMA = 60, simMs = 0, renderMs = 0;
 function update(dt){
+  _inStep = true;          /* the squad list may be cached from here to the last line, and nowhere else */
   rebuildCharGrid();
   paceBands();                /* and a party marches at the pace of whoever is slowest in it */
   reapPhylacteries();
@@ -23397,6 +23408,7 @@ function update(dt){
     document.getElementById('deadoverlay').style.display = 'flex';
     paused = true;
   }
+  _inStep = false; _plCache = null;   /* the squad list does not outlive the step — see `player()` */
 }
 
 /* soft collision: nudge overlapping bodies apart (gives way under pathing pressure) */

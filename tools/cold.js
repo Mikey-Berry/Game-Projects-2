@@ -212,11 +212,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* ---------- TWELVE BODIES AND A TOTAL, NOT TWO BODIES AND A DEATH ----------
        The first cut staged one raider against one quarry and asked whether either died. It is
        far too noisy a question to answer anything with: the same pair on a WARM floor came back
-       at 72, 85 and 86 blood on three consecutive runs and never killed anybody either, so the
-       red line it printed about the cold floor was describing variance. A melee of twelve,
-       scored on total blood lost, and run at the SAME SPOT on the same storey with nothing
-       changed but whether one of yours is standing forty tiles away — which is the only
-       variable this claim is about. */
+       at 72, 85 and 86 blood on three consecutive runs and never killed anybody either. A melee
+       of twelve, scored on total blood lost, and run at the SAME SPOT on the same storey with
+       nothing changed but whether one of yours is standing forty tiles away.
+       ---------- AND THE TWO SIDES HAVE TO BE ENEMIES, WHICH IS NOT FREE ----------
+       The second cut staged six BANDITS against six CANNIBALS and spent two sessions reading
+       its output as noise. `hostile('bandit', 'cannibal')` IS FALSE — bandits, cannibals and
+       slavers are all outlaws and outlaws do not fight each other. Twelve bodies stood in a
+       hall for forty-five seconds and the only blood on the board came from a shrike that
+       wandered in: 2 cold, 0 warm, on every build it was ever run against, including the ones
+       from before the cold tier existed. The header note blamed the warm control's variance and
+       the warm control was not the problem.
+       So: BANDIT against GAUNT, which is a real enmity and also the fight the depths actually
+       hold — the Warren bands raid down into halls full of gaunt kin. And `foe` is asserted
+       below, so a staged fight between two sides that will not fight can never again be read as
+       a result. With a real pair it is 810 and 795 blood cold against 754 and 799 warm. */
     const F = DEPTHS[2];
     const h = undercroft.halls.find(H => H.f === F);
     const me = player().find(o => o.state === 'ok');
@@ -229,14 +239,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const all = [];
       for (let k = 0; k < 6; k++) {
         const a = makeChar('R' + k, 'bandit', h.x + k * 0.1, h.y, { atk: 34, def: 10, tough: 24, ath: 12, weapon: 'w_kat' });
-        const c = makeChar('Q' + k, 'cannibal', h.x + k * 0.1 + 1.0, h.y, { atk: 30, def: 10, tough: 24, ath: 12, weapon: 'w_club' });
+        const c = makeChar('G' + k, 'gaunt', h.x + k * 0.1 + 1.0, h.y, { atk: 30, def: 10, tough: 24, ath: 12, weapon: 'w_club' });
         for (const o of [a, c]) { o.floor = F; o.caveDweller = true; chars.push(o); all.push(o); }
       }
       rebuildCharGrid();
+      const foe = hostile(all[0], all[1]);   /* the staging's own precondition, carried out */
       const b0 = all.reduce((s2, o) => s2 + o.blood, 0);
       for (let i = 0; i < secs * 30; i++) update(1 / 30);
       const alive = all.filter(o => o.state !== 'dead');
-      const out = { lost: Math.round(b0 - alive.reduce((s2, o) => s2 + o.blood, 0)),
+      const out = { foe, lost: Math.round(b0 - alive.reduce((s2, o) => s2 + o.blood, 0)),
                     down: all.length - alive.filter(o => o.state === 'ok').length,
                     cold: all.filter(o => o._cold).length };
       for (const o of all) { const i = chars.indexOf(o); if (i >= 0) chars.splice(i, 1); }
@@ -247,18 +258,19 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     me.x = home.x; me.y = home.y; me.floor = home.f;
     return { cold, warm, ratio: warm.lost ? +(cold.lost / warm.lost).toFixed(2) : 0 };
   });
-  /* ---------- AND THE CLAIM IS ABOUT THE COLD SIDE, NOT THE RATIO ----------
-     The warm control was meant to be the comparison and it will not behave: standing a body of
-     yours forty tiles away on the same storey changes who those twelve are looking at, and it
-     has come back at 0, 10 and 14 blood on successive runs. A ratio against a denominator that
-     is sometimes zero is not a test — it passed once at "16x" and once at "0x" describing the
-     same working build. So the assertion is the COLD side on its own, with a floor low enough
-     to be about the thing (blood is being taken by bodies nobody is watching) rather than about
-     the variance, and the warm figure is printed beside it as colour. An earlier cut asserted
-     `> 8` and passed at 9, which is a one-point margin and would have flaked within the week. */
+  /* ---------- AND THE RATIO IS A REAL COMPARISON AGAIN ----------
+     It was abandoned as unusable when the warm control was coming back at 0, 10 and 14 blood on
+     successive runs — which was not variance, it was two sides that were not enemies. With a
+     pair that is, both sides settle around eight hundred and the ratio is the claim it was
+     always meant to be: a fight nobody is watching resolves at the same rate as one that is.
+     `foe` is asserted first and separately, because a staged fight between two sides that will
+     not fight reads exactly like a working build with a quiet floor — which is how it went
+     unread for two sessions. */
   R.andAColdFightIsAFight = !resolves ? NO_COLD
-    : (resolves.cold.cold === 12 && resolves.warm.cold === 0 && resolves.cold.lost >= 3)
-    ? `twelve bodies left to it on the Sump take ${resolves.cold.lost} blood off each other in forty-five seconds with nobody watching (the same fight watched took ${resolves.warm.lost}, which is colour — that control is noisy)`
+    : !(resolves.cold.foe && resolves.warm.foe)
+    ? `!! THE TWO STAGED SIDES ARE NOT ENEMIES — this measures nothing (${JSON.stringify(resolves)})`
+    : (resolves.cold.cold === 12 && resolves.warm.cold === 0 && resolves.cold.lost > 400 && resolves.ratio > 0.6)
+    ? `twelve bodies left to it on the Sump take ${resolves.cold.lost} blood off each other in forty-five seconds with nobody watching, and ${resolves.cold.down} of them go down — against ${resolves.warm.lost} for the same fight watched, ${resolves.ratio}x, so the slow clock costs the fight nothing`
     : `!! A FIGHT ON A COLD STOREY IS NOT A FIGHT (${JSON.stringify(resolves)})`;
 
   /* ---- 6. AND IT IS ACTUALLY CHEAPER ----

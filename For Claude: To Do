@@ -7045,10 +7045,39 @@ inside 1.45. Worth keeping, not worth the theory it was based on.
     · CARRIERS ARE GATHERED IN `rebuildCharGrid`, the pattern the previous note said to use and
       the one already used for `warders`, `lamps`, `torchers` and `belowFolk`. Gathered before
       the `state` gate, because a carrier who goes down still has to put the thing down.
-  MEASURED, interleaved A/B on an idle machine, three rounds each: 13.610 / 13.383 / 13.990 ms a
-  step before, 10.728 / 11.738 / 10.843 after. Every round agrees and the ranges do not overlap.
-  The counts are the claim and the milliseconds are colour — see the note above about the
-  speedup that wasn't there.
+  AND A FIFTH: `gearHas` and `gearSum` walk the equipment slots instead of building a list to
+  throw away. `gearHas(c, 'shroudAll')` is asked of every able body every step.
+  MEASURED, interleaved A/B on an idle machine, three rounds each: 14.507 / 14.032 / 13.372 ms a
+  step before, 11.490 / 10.881 / 10.108 after — about 22%. Every round agrees. The counts are the
+  claim and the milliseconds are colour — see the note above about the speedup that wasn't there.
+
+  [FAULT] AND THE FIRST CUT OF THE `player()` CACHE WAS UNSOUND, WHICH `board.js` CAUGHT.
+  It invalidated on the step boundary, on a death, and on a change in roster length — and none
+  of those is a faction change. Something became player-faction without dying and without the
+  roster moving, the cache did not know, and a probe that moved "everyone" left that body
+  standing in the plaza keeping it lit. There are 192 writes to `.faction` in this file.
+  THE SECOND CUT WAS ALSO WRONG AND IS THE MORE USEFUL MISTAKE: dropping the cache on the last
+  line of `update` does nothing at all when `update` is not running. A paused menu calls
+  `player()`, misses, STORES a fresh list, and that list then stands forever. The write matters
+  as much as the read. `_inStep` now goes up on update's first line and down on its last, and
+  `player()` will neither read nor write the cache while it is down. `update` has no early
+  return, so the flag is balanced on every path.
+
+  [FAULT] AND TWO OF `walk.js`'s OWN CLAIMS WERE OVER-SPECIFIED, BOTH RED ON THE BASE BUILD TOO.
+  · It compared each cold body's `_lod` against the old expression and found twelve
+    disagreements. `_lod` is written in the MIDDLE of a step and the body's `ai` runs
+    immediately afterwards and can hand it a quarry — so a flag that said `!target` was being
+    read against a body that now has one. It was measuring whether the ai fired on the last
+    step; the count moved between 0 and 12 depending only on how many updates the claim above
+    it had run. THE SAME MISTAKE `cold.js` ALREADY HAS WRITTEN INTO IT TWICE. The content of the
+    short-circuit is the implication, and the implication is now what is checked.
+  · It spliced a guard's ward out of the world while the guard still had a threat, and the guard
+    kept its ward on BOTH builds. That is not the check failing: `ai` returns at
+    `if(c.target) return` some 2,500 lines above the bodyguard block, so a guard with a quarry
+    does not re-read its ward at all — exactly as true of the `chars.includes` this replaced.
+  · and the haul-list claim passed "0 missing, 0 extra" on a world where nobody was carrying
+    anything, which is equally true of a gather that never runs. Two bodies are now given
+    something to hold before the sets are compared.
 
 [NOTE] AND THE LINE PROFILER IS THE THIRD INSTRUMENT, AND THE FIRST ONE THAT NAMED A LINE.
   `tools/_simprof.js` samples a pure `update()` loop and attributes SELF time per function, which
@@ -7065,3 +7094,19 @@ inside 1.45. Worth keeping, not worth the theory it was based on.
   exact: the jab pass currently runs after every body's physics, so it reads final positions,
   and collecting mid-loop would read some bodies before a later body's `attack()` had staggered
   them. Small, real, and not worth taking on a guess. Left alone deliberately.
+
+[FAULT] AND `cold.js`'s FIGHT CLAIM WAS STAGING TWO SIDES THAT WILL NOT FIGHT EACH OTHER.
+  `hostile('bandit', 'cannibal')` IS FALSE. Bandits, cannibals and slavers are all outlaws and
+  outlaws do not quarrel, so six of each stood in a hall on the Sump for forty-five seconds and
+  the only blood on the board came from a shrike that wandered in: 2 cold, 0 warm — identical
+  numbers on the current build, on the pre-depths build, and on every build in between. The
+  claim had been red for two sessions and its own header note blamed the warm control's
+  variance. The warm control was not the problem; it was correctly reporting zero.
+  BANDIT AGAINST GAUNT is a real enmity and also the fight the depths actually hold — the Warren
+  bands raid down into halls full of gaunt kin. With a real pair it is 795 blood cold against
+  645 warm, twelve of twelve down, and the RATIO becomes usable again: a fight nobody is
+  watching resolves at the same rate as one that is, which is a far stronger claim than the one
+  it replaced.
+  THE RULE: A STAGED FIGHT MUST ASSERT THAT THE TWO SIDES ARE ENEMIES. `foe` is now checked
+  first and separately, because a melee between two sides that will not fight reads exactly like
+  a working build with a quiet floor — which is how it went unread for two sessions.

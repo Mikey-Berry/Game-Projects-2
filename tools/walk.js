@@ -62,17 +62,31 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const haul = await p.evaluate(() => {
     if (typeof carriers === 'undefined') return null;
     for (let i = 0; i < 30; i++) update(1 / 30);
+    /* ---------- AND SOMEBODY HAS TO BE CARRYING, OR THE COMPARISON IS VACUOUS ----------
+       The first cut compared the list against the filter and passed with "0 missing, 0 extra"
+       on a world where nobody was holding anything: an empty list matching an empty set is
+       every bit as true of a gather that never runs. So two bodies are given something to
+       carry first, and the set compared is a set with things in it. */
+    const hands = chars.filter(c => c.state === 'ok').slice(0, 2);
+    const spare = corpses.filter(x => x && x.name).slice(0, 2);
+    if (spare.length < 2 || hands.length < 2) return 'nocorpse';
+    hands[0].carry = spare[0];
+    hands[1].carryList = [spare[1]];
+    update(1 / 30);                       /* the gather runs at the top of this one */
     const want = chars.filter(c => c.carry || (c.carryList && c.carryList.length));
     const got = carriers.slice();
-    return {
+    const out = {
       roster: chars.length, list: got.length, want: want.length,
       missing: want.filter(c => !got.includes(c)).length,
       extra: got.filter(c => !want.includes(c)).length,
     };
+    hands[0].carry = null; hands[1].carryList = [];
+    return out;
   });
   R.theHaulListIsShortNotTheRoster = !haul ? '!! NOTHING TO MEASURE — this build still walks the roster to find carriers'
-    : (haul.missing === 0 && haul.extra === 0 && haul.list < haul.roster * 0.05)
-    ? `the haul loop reads ${haul.list} bodies instead of ${haul.roster}, and it is exactly the set the walk found — 0 missing, 0 extra`
+    : haul === 'nocorpse' ? '!! NOTHING TO MEASURE — no corpses in the world to put in anybody\'s hands'
+    : (haul.want >= 2 && haul.missing === 0 && haul.extra === 0 && haul.list < haul.roster * 0.05)
+    ? `the haul loop reads ${haul.list} bodies instead of ${haul.roster}, and with two people deliberately given something to carry it is exactly the set the walk found — 0 missing, 0 extra of ${haul.want}`
     : `!! THE GATHERED LIST IS NOT THE SET THE WALK FOUND (${JSON.stringify(haul)})`;
 
   /* ---- 2. AND A CARRIER STILL CARRIES ----
@@ -111,22 +125,31 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const pl = chars.filter(u => u.faction === 'player' && u.state !== 'dead');
     const cold = chars.filter(c => c._cold && c.state !== 'dead');
     if (!cold.length) return { cold: 0 };
-    /* the old expression, recomputed by hand: would `_nearSquad` have found anyone? */
-    let nearAnyway = 0, lodWrong = 0;
+    /* ---------- THE CLAIM IS THE IMPLICATION, NOT THE FLAG ----------
+       The first cut also compared each body's `_lod` against the old expression and came back
+       with twelve disagreements out of 1,133 — which is not a divergence, it is the same
+       mistake this repo has already written down twice. `_lod` is written in the MIDDLE of a
+       step and `ai` runs for that body immediately afterwards and can give it a quarry; read
+       at the end of the step, a flag that said `!target` is compared against a body that now
+       has one. It measures whether the body's own ai happened to fire on the last step —
+       which is why the count moved between 0 and 12 depending only on how many updates the
+       claim above it had run. The content of the short-circuit is the implication, and the
+       implication is what is checked: no cold body is within reach of the squad, so the call
+       that was skipped could only ever have returned false. */
+    let nearAnyway = 0, onAWarmFloor = 0;
+    const warm = new Set(pl.map(u => u.floor || 0));
     for (const c of cold) {
       const cf = c.floor || 0;
-      const near = pl.some(u => (u.floor || 0) === cf && Math.abs(u.x - c.x) < 40 && Math.abs(u.y - c.y) < 40);
-      if (near) nearAnyway++;
-      const wouldBe = c.faction !== 'player' && !c.target && !c.windup && !near;
-      if (!!c._lod !== !!wouldBe) lodWrong++;
+      if (pl.some(u => (u.floor || 0) === cf && Math.abs(u.x - c.x) < 40 && Math.abs(u.y - c.y) < 40)) nearAnyway++;
+      if (warm.has(cf)) onAWarmFloor++;
     }
-    return { cold: cold.length, squad: pl.length, nearAnyway, lodWrong };
+    return { cold: cold.length, squad: pl.length, nearAnyway, onAWarmFloor, floors: [...warm] };
   });
   R.aColdBodyIsNeverNearTheSquad = !imply ? '!! NOTHING TO MEASURE — no cold tier in this build'
     : !imply.cold ? '!! NOTHING TO MEASURE — nothing was cold'
-    : (imply.nearAnyway === 0 && imply.lodWrong === 0)
-    ? `all ${imply.cold} cold bodies re-checked against the ${imply.squad}-strong squad by hand: 0 were near it, so the skipped call could only have returned false, and 0 came out with a different _lod than the old expression gives`
-    : `!! THE SHORT-CIRCUIT CHANGED AN ANSWER (${JSON.stringify(imply)})`;
+    : (imply.nearAnyway === 0 && imply.onAWarmFloor === 0)
+    ? `all ${imply.cold} cold bodies re-checked by hand against the ${imply.squad}-strong squad standing on ${JSON.stringify(imply.floors)}: 0 were on a floor the squad is on and 0 were within reach of it, so the call the short-circuit skips could only ever have returned false`
+    : `!! THE SHORT-CIRCUIT SKIPPED A CALL THAT WOULD HAVE SAID YES (${JSON.stringify(imply)})`;
 
   /* ---- 4. AND THE GRID SWEEP FINDS WHAT THE ROSTER SCAN FOUND ----
      The bodyguard's threat search moved from two `chars.find`s to one `charsNear` sweep. Run
@@ -190,12 +213,19 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     chars.push(foe);
     let took = false;
     for (let i = 0; i < 20 && !took; i++) { update(1 / 30); if (g.target === foe) took = true; }
-    /* and now take the ward out of the world entirely — not killed, REMOVED */
+    /* ---------- AND THE GUARD HAS TO BE PUT DOWN BEFORE IT WILL LOOK UP ----------
+       The first cut spliced the ward out while the guard still had the threat, and the guard
+       kept its ward — on the rewritten build AND on the build before it, identically. That is
+       not the check failing, it is `ai` returning at `if(c.target) return` some two and a half
+       thousand lines above the bodyguard block: a guard with a quarry does not re-read its
+       ward at all, which was exactly as true of the `chars.includes` this replaced. So the
+       quarry is taken away first, and what is then measured is the thing that changed. */
     const wi = chars.indexOf(ward); if (wi >= 0) chars.splice(wi, 1);
+    const fi0 = chars.indexOf(foe); if (fi0 >= 0) chars.splice(fi0, 1);
+    g.target = null; g.windup = null; g.moveTarget = null;
     update(1 / 30); update(1 / 30);
     const letGo = !g.guardTarget;
     chars.push(ward);
-    const fi = chars.indexOf(foe); if (fi >= 0) chars.splice(fi, 1);
     g.guardTarget = null; g.target = null;
     return { took, letGo };
   });
