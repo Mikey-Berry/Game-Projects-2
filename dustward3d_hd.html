@@ -22051,7 +22051,7 @@ function applyOpts(){
   if(!!opts.seeAll !== debugSeeAll) toggleSeeAll();
   AU.setVolume();
 }
-let fpsEMA = 60, simMs = 0, renderMs = 0;
+let fpsEMA = 60, simMs = 0, renderMs = 0, simStepsEMA = 1;
 function update(dt){
   _inStep = true;          /* the squad list may be cached from here to the last line, and nowhere else */
   rebuildCharGrid();
@@ -40644,6 +40644,16 @@ function frame(now){
     while(simAcc >= SIM_DT && simSteps < 4){ update(SIM_DT); simAcc -= SIM_DT; simSteps++; }
     if(simSteps === 4) simAcc = 0;
     simMs = simMs * 0.9 + (performance.now() - _t0) * 0.1;
+    simStepsEMA = simStepsEMA * 0.9 + simSteps * 0.1;
+  } else {
+    /* ---------- AND A PAUSED GAME MUST READ ZERO, NOT THE LAST THING IT SAW ----------
+       Both of these are exponential averages updated only inside the branch above, so pausing
+       FROZE them: the overlay went on claiming 54ms of sim and 3.6 steps a frame while the sim
+       was not running at all. That is wrong in precisely the case somebody reads it for —
+       pausing is how you separate the draw from the sim by hand, and the first cut of this
+       line would have contradicted the experiment. Decayed on the same curve they rise on. */
+    simMs *= 0.9;
+    simStepsEMA *= 0.9;
   }
   AU.tick();                    /* wind, night, and whatever the moon is doing */
   const _r0 = performance.now();
@@ -40656,6 +40666,20 @@ function frame(now){
     cx.fillText(Math.round(fpsEMA) + ' fps', viewW() - 10, 46);
     cx.fillStyle = '#9a927e';
     cx.fillText('sim ' + simMs.toFixed(1) + 'ms  draw ' + renderMs.toFixed(1) + 'ms', viewW() - 10, 60);
+    /* ---------- AND `sim 20ms` ON ITS OWN CANNOT BE ACTED ON ----------
+       That figure times the whole catch-up loop, which runs between one and four steps — so it
+       is four steps of five milliseconds or one of twenty and the line does not say which, and
+       those want opposite fixes. What is comparable to a bench, and to itself between builds,
+       is the cost of ONE STEP.
+       THE STEP RATE IS NOT THE FRAME RATE. The sim is a fixed 30Hz, so it wants thirty steps a
+       second whatever the screen is doing — and `simAcc += dt * speed` means 3x wants ninety
+       and 5x wants a hundred and fifty, against a cap of four steps a frame. When `steps` sits
+       at 4.0 the cap is binding: the backlog is being DISCARDED and the world is quietly
+       running slower than the speed on the button, which is worth being able to see.
+       The body count is here because it is what the step cost scales with. */
+    cx.fillText((simMs / Math.max(0.05, simStepsEMA)).toFixed(1) + 'ms/step · ' +
+                simStepsEMA.toFixed(1) + ' steps/frame' + (simStepsEMA > 3.6 ? ' (CAPPED)' : '') +
+                ' · ' + chars.length + ' bodies · ' + speed + 'x', viewW() - 10, 74);
     cx.textAlign = 'start';
   }
   uiT -= dt;
