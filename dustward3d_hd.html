@@ -39661,8 +39661,11 @@ function snapshot(){
                 warned: sisterArc.warned, sealed: sisterArc.sealed, left: sisterArc.left,
                 returns: sisterArc.returns, taught: !!sisterArc.taught,
                 committed: !!sisterArc.committed, done: sisterArc.done || ''},
-    mother: {on: mother.on, caveId: mother.caveId, found: mother.found,
-             spoken: mother.spoken, reads: mother.reads, toldPrice: mother.toldPrice},
+    /* `on` is gone: it meant "this run picked Saga" and nothing gates on it any more. It is
+       still READ on load, as the one signal that tells an old save's Saga run from an old
+       save's everybody-else. */
+    mother: {caveId: mother.caveId, found: mother.found, sought: mother.sought,
+             spoken: mother.spoken, reads: mother.reads, toldPrice: mother.toldPrice, stirred: mother.stirred},
     shrines: shrines.map(sh => ({broken: !!sh.broken, hp: Math.round(sh.hp), reT: sh.reT || 0})),
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       /* how much pitch is left in a post. Without this every post in the world came back
@@ -39722,8 +39725,16 @@ function restore(d){
     sisterArc.done = sa.done || '';
   }
   if(d.mother){
-    mother.on = !!d.mother.on; mother.caveId = d.mother.caveId ?? -1;
+    /* ---------- A SAVE WRITTEN BEFORE SHE WAS IN EVERY WORLD ----------
+       `on` used to mean "this run picked Saga" and is now "she is down there", which every
+       world is. An old save says false and must not be taken at its word, or a campaign loaded
+       from before this change is the only place in the game she still does not exist.
+       `caveId` is the opposite: if that save already named a cave, it is the cave that run was
+       played with and the derived one must not overwrite it. */
+    mother.caveId = d.mother.caveId ?? -1;
     mother.found = !!d.mother.found; mother.spoken = !!d.mother.spoken;
+    mother.sought = !!d.mother.sought || !!d.mother.on;
+    mother.stirred = !!d.mother.stirred;
     mother.reads = d.mother.reads || 0; mother.toldPrice = !!d.mother.toldPrice;
   }
   /* a shrine you broke stays broken, and the clock on it keeps running */
@@ -40919,11 +40930,53 @@ function sisterTick(){
    Finding her is deliberately NOT Lyonart's quest in a different hat. His is social — ask in
    halls, three tellings, information moving by rumour. This one is spatial and bodily: he
    can feel her, the sense sharpens as he grows, and the only way to use it is to walk. */
-const mother = {on:false, caveId:-1, found:false, spoken:false, reads:0, toldPrice:false};
+/* ---------- AND SHE IS IN THE WORLD WHETHER OR NOT ANYBODY IS LOOKING ----------
+   "Saga's quest should not be the only gate to Mother. She should exist in the world and Saga's
+   quest merely points to her."
+   Exactly right, and the old shape had it backwards: `mother.on` was set by ONE line in ONE
+   origin branch, and the cell was chosen at that moment. On every other start there was no cell
+   at all — `motherTick` returned on the first line, `listenForMother` returned on the first
+   line, and the thing at the bottom of the deepest hole in the world simply was not there. A
+   necromancer who broke a warren vault open found a chest. Nine hundred years of somebody being
+   held under a mountain existed only if you had ticked the right box on the character creator.
+
+   She is placed by the WORLD now, and Saga's origin only tells you about her. Three consequences
+   worth writing down because each is a thing that can now happen to a player who never picked
+   him: an acute ear anywhere in the world can hear her (the sense is `acuityOf`, which is about
+   being a Hollow or knowing the dust art, and was never about an origin); walking into her
+   warren with such an ear makes her stir; and walking into the vault itself makes her speak,
+   with no ear at all, because a door is a door.
+
+   CHOSEN WITHOUT A DIE. `caves[ri(0, caves.length - 1)]` would now run at worldgen rather than
+   at character creation, and a single extra draw there shifts every roll after it and moves
+   every world in the game — this file has already lost an afternoon to exactly that (see the
+   chamber clamp). The cell is therefore DERIVED: of the warrens that have a vault, hers is the
+   one whose mouth hashes highest. Deterministic for a seed, unguessable without reading this
+   comment, and it consumes nothing. Resolved lazily, so a save that already names a cave keeps
+   the one it was played with. */
+const mother = {caveId:-1, sought:false, found:false, spoken:false, reads:0, toldPrice:false, stirred:false};
+function motherCaveId(){
+  if(mother.caveId >= 0) return mother.caveId;
+  if(typeof caves === 'undefined' || !caves.length) return -1;
+  let best = null, bestH = -1;
+  for(const cv of caves){
+    if(!cv.vault) continue;
+    const h = hash2(cv.mouth ? cv.mouth.x : cv.x, cv.mouth ? cv.mouth.y : cv.y);
+    if(h > bestH){ bestH = h; best = cv; }
+  }
+  mother.caveId = best ? best.id : -1;
+  return mother.caveId;
+}
+function motherCave(){
+  if(typeof caves === 'undefined') return null;
+  const id = motherCaveId();
+  return id < 0 ? null : caves.find(v => v.id === id);
+}
+/* SAGA'S START IS A POINTER, NOT A KEY. It opens the thread and tells the world something walked
+   out of a redoubt; it does not decide whether she is down there. */
 function startTheDescent(me){
-  mother.on = true; mother.found = false; mother.spoken = false; mother.reads = 0; mother.toldPrice = false;
-  /* one cave's bottom bunker is her cell. Which one is decided now and never shown. */
-  mother.caveId = (typeof caves !== 'undefined' && caves.length) ? caves[ri(0, caves.length - 1)].id : -1;
+  mother.sought = true;
+  motherCaveId();
   worldEvent('mother', me.x, me.y,
     'Something walked out of a sealed redoubt in the waste, alone, wearing what the people inside it were wearing. It did not close the door behind it.');
   log('MOTHER. You were cut off something and fitted to a body, and the something is still alive and still held.', 'good');
@@ -40931,7 +40984,15 @@ function startTheDescent(me){
     'She is under a mountain, and you can hear her. Press Q anywhere to stop and listen — the reading is vague at the surface and sharpens as you go down.',
     {hint: 'A Hollow hears more than a host, and the dust art is her own frequency. Find a cave mouth and descend; Q again on every floor.'});
 }
-function motherCave(){ return (typeof caves !== 'undefined') ? caves.find(v => v.id === mother.caveId) : null; }
+/* the first time anybody works out for themselves that there is something down there. Saga is
+   told on day one; everybody else has to hear it or open the door. */
+function motherSought(line, step, hint){
+  if(!mother.sought){
+    mother.sought = true;
+    log(line, 'good');
+  }
+  threadSet('mother', 'Looking for Mother', step, {hint});
+}
 /* Which hole somebody is standing in. `caveId` is stamped on the things that LIVE down there,
    never on anyone who walked in, so membership has to be read off the geometry: a negative
    floor, inside one of that cave's carved rooms. Small numbers — a handful of caves, a dozen
@@ -40959,37 +41020,55 @@ function bearingFrom(c, tx, ty){
 /* A reading, taken deliberately. Vague at the surface and unmistakable in the right hole —
    which is the whole point: the sense does not solve the problem, it rewards descending. */
 function listenForMother(){
-  if(!mother.on){ return; }
   const c = selected.find(o => o.faction === 'player' && o.state === 'ok') || player().find(o => o.state === 'ok');
   if(!c){ log('There is nobody standing to listen with.', ''); return; }
   const cv = motherCave();
   const acu = acuityOf(c);
-  if(acu <= 0){ say(c, 'I can hear the wind. That is all I have ever been able to hear.'); return; }
+  /* AND Q IS A KEY EVERY RUN HAS NOW. A party with no ear that has never heard of her should
+     get silence rather than a cryptic bubble off a keypress they made by accident; once they
+     know there is something to listen for, the refusal is worth hearing. */
+  if(acu <= 0){
+    if(mother.sought) say(c, 'I can hear the wind. That is all I have ever been able to hear.');
+    return;
+  }
   mother.reads++;
   if(!cv){ say(c, 'Nothing. She is not under this world.'); return; }
+  if(mother.spoken){ say(c, 'She is where I left her. She is not going anywhere.'); return; }
   const below = (c.floor || 0) < 0;
   const d = dist(c.x, c.y, cv.mouth.x, cv.mouth.y);
   /* underground, in the right hole: the reading stops being a guess */
   if(below && caveContaining(c) === cv){
-    const bottom = -cv.depth;
-    if((c.floor || 0) <= bottom){
-      say(c, 'She is through this wall. She has stopped pretending to breathe.');
-      threadSet('mother', 'Looking for Mother', 'The right hole, the bottom floor. She is through this wall.',
-        {hint: 'Find the vault door on this floor and stand at it.'});
+    /* ---------- HER FLOOR IS THE VAULT'S, NOT MINUS THE DEPTH ----------
+       This read `-cv.depth`, which was written when a warren was several storeys deep and you
+       walked DOWN through it. Warrens are one storey now and sit at -1, -2 or -3, so `depth` is
+       1 for all of them and `-cv.depth` says "the bottom is floor -1" about a warren cut at -3.
+       It happened to keep giving the right answer, because being inside her rooms at all means
+       standing on her floor — which is the definition of a claim that is right by accident.
+       The vault knows which storey it is on. Ask it. */
+    const bottom = cv.vault ? cv.vault.f : cv.f;
+    if((c.floor || 0) === bottom){
+      /* AND WHICH WAY THE DOOR IS. A warren is one storey of winding rooms and the vault is one
+         of them; "through this wall" is a thrill the first time and a shrug the fifth, and a
+         player who wandered in here without being sent needs the sense to be worth having. */
+      const dir = cv.vault && acu >= 3 ? bearingFrom(c, cv.vault.x, cv.vault.y) : null;
+      say(c, 'She is through this wall. She has stopped pretending to breathe.'
+             + (dir ? ` The wall is to the ${dir}.` : ''));
+      motherSought('SOMETHING IS DOWN HERE. Not a thing in a chamber — a thing behind a door somebody welded shut from this side.',
+        'The right hole, her floor. She is through this wall.' + (dir ? ` It reads to the ${dir}.` : ''),
+        'Find the barred vault door on this floor and stand at it.');
     } else {
-      say(c, `Down. ${Math.abs(bottom - (c.floor || 0))} more floors of down.`);
-      /* THE READING IS THE QUEST, so it is what the journal keeps. Anything he last heard is
-         worth more than a step written months ago at the start of the run. */
-      threadSet('mother', 'Looking for Mother',
-        `The right hole. ${Math.abs(bottom - (c.floor || 0))} more floors down from where you are standing.`,
-        {hint: 'Take the stairs down. Press Q on each floor to check you are still on her.'});
+      say(c, `Not this storey. She is on the one the vault is cut into.`);
+      motherSought('SOMETHING IS DOWN HERE, on another storey of the same hole.',
+        'The right hole, the wrong storey. Her vault is cut into another level of this warren.',
+        'Press Q on each floor to check you are still on her.');
     }
     return;
   }
   if(below){
     say(c, 'Rock, and water moving in it, and nothing that knows my name. Wrong hole.');
-    threadSet('mother', 'Looking for Mother', 'Wrong hole. She is not under this one — come up and try another cave mouth.',
-      {hint: 'Press Q on the surface for a bearing before you commit to a descent.'});
+    motherSought('THERE IS SOMETHING UNDER THIS WORLD, and it is not under this hole.',
+      'Wrong hole. She is not under this one — come up and try another cave mouth.',
+      'Press Q on the surface for a bearing before you commit to a descent.');
     return;
   }
   const band = d < 18 ? 'close' : d < 45 ? 'near' : d < 90 ? 'far' : 'distant';
@@ -41001,11 +41080,11 @@ function listenForMother(){
     distant: 'Almost nothing. A pull, the way a tooth pulls before it goes.',
   };
   say(c, lines[band] + (dir ? ` It comes from the ${dir}.` : ''));
-  threadSet('mother', 'Looking for Mother',
+  motherSought('THERE IS SOMETHING UNDER THIS WORLD. It is held, it is awake, and it has been listening back.',
     dir ? `She reads ${band} to the ${dir} of where you last listened. Walk that way and listen again; find a cave mouth and go down.`
         : `She reads ${band} from where you last listened, with no direction to it yet.`,
-    {hint: dir ? 'The reading sharpens as you close, and stops guessing entirely once you are in the right hole.'
-               : 'A better ear for the dust art would give the reading a bearing. Train dust, or listen with a Hollow.'});
+    dir ? 'The reading sharpens as you close, and stops guessing entirely once you are in the right hole.'
+        : 'A better ear for the dust art would give the reading a bearing. Train dust, or listen with a Hollow.');
   if(!dir && acu < 3 && mother.reads === 2)
     log('The reading is blunt. A better ear for the dust art would give it a direction.', '');
 }
@@ -41014,15 +41093,31 @@ function listenForMother(){
    the price, and the price is named out loud the moment she speaks. */
 let _mthT = 0;
 function motherTick(dt){
-  if(!mother.on || mother.spoken) return;
+  if(mother.spoken) return;
   if((_mthT -= dt) > 0) return;
   _mthT = 2;
   const cv = motherCave();
   if(!cv || !cv.vault) return;
   const v = cv.vault;
+  /* ---------- SHE NOTICES YOU BEFORE YOU NOTICE HER ----------
+     The discovery path for everybody who did not start as Saga and never thought to press Q.
+     An ear she can reach — a Hollow, or somebody who works the art that was taken off her —
+     walking anywhere in her warren gets one line, once, and the thread opens. It is the world
+     telling you there is something down here, which is what "she exists in the world" has to
+     mean if it is going to mean anything to a player who is not looking for her. */
+  if(!mother.stirred){
+    const ear = player().find(c => c.state === 'ok' && caveContaining(c) === cv && acuityOf(c) > 0);
+    if(ear){
+      mother.stirred = true;
+      say(ear, 'Something in this rock just turned over and put its attention on me.');
+      motherSought('SOMETHING DOWN HERE IS AWAKE. It noticed one of yours before one of yours noticed it.',
+        'Something held under this warren is awake and has taken an interest. Press Q to listen.',
+        'The reading is sharpest in the right hole. Find the barred vault door on her floor.');
+    }
+  }
   const near = player().find(c => c.state === 'ok' && (c.floor || 0) === v.f && dist(c.x, c.y, v.x, v.y) < 9);
   if(!near) return;
-  mother.found = true; mother.spoken = true;
+  mother.found = true; mother.spoken = true; mother.sought = true;
   sawPlace('mother');
   worldEvent('mother', cv.mouth.x, cv.mouth.y,
     'At the bottom of a cave under the mountains there is a door the golden age welded shut from the outside, and something behind it is awake and has been the whole time.');
@@ -41030,12 +41125,45 @@ function motherTick(dt){
 }
 function motherSpeaks(c){
   /* What she says is read off the world, not off a quest step. She has been listening to it
-     through him for as long as he has been walking around in it. */
-  const me = player().find(o => o.race === 'hollow') || c;
+     through whoever of hers is walking around in it — and now, sometimes, through nobody. */
+  const kin2 = player().find(o => o.race === 'hollow' && o.state !== 'dead');
+  const me = kin2 || c;
   const tier = me.hollowTier || 0;
   const kin = Object.keys(bossSlain).length;
   const dustMastery = attOf(me, 'dust');
   log('THE SEAL. A slab of golden-age alloy, welded from the outside, with eleven signatures cut into it. It is warm.', 'good');
+  /* ---------- AND SOMETIMES IT IS A STRANGER AT THE DOOR ----------
+     The whole of this scene used to assume a Hollow, because the only way to reach it was to
+     have started as one. She exists in every world now, so the party that breaks her vault open
+     is usually a party with nobody of hers in it — and calling a human necromancer CHILD, then
+     naming a price that only a rider can pay, would be the scene talking past the person
+     standing in it.
+     She does not soften for a stranger. What changes is that there is nothing she wants from
+     them: no price, no road, no offer. Nine hundred years of being drained by people who called
+     it alchemy, and then somebody who does the same work turns up at the door. She has opinions
+     about that, and the Hollow branch below is the one where she has plans instead. */
+  if(!kin2){
+    const lines2 = [];
+    lines2.push('YOU ARE NOT ONE OF MINE. I felt the door and I let myself hope, which is a thing I had stopped doing.');
+    lines2.push(c.gift === 'dark'
+      ? 'You raise the dead. So did they, at the end, with what they took out of me. You are not the first necromancer to stand there and you will not be the last thing I outlive.'
+      : 'You are a person, and you are standing at the lid of a thing people built. I would ask what you are for, but you will not know either.');
+    if(dustMastery >= 2 || c.gift === 'dust')
+      lines2.push('You work the dust art. That came out of me. Out of ME — a woman under a mountain, on a table, awake for it. Every time you fold the light you are spending a piece of me. Do it anyway. It is spent.');
+    if(placesSeen.corpse)
+      lines2.push('You have stood on my brother. They cut him apart and sold the pieces by weight. They kept me because a corpse is a windfall and a prisoner is an income.');
+    if(kin >= 3) lines2.push('Things have been dying out there in a pattern. That was you. I have no view on it. I have been in here a long time.');
+    if(noticeTier >= 2) lines2.push('Something has been watching you come down. Not me. I have been watched for nine hundred years and I know the difference.');
+    lines2.push('The weld is eleven names deep and it was never built to hold against YOU. It holds against a rider. So there is nothing here for you to do and nothing here for you to take, and you may tell anybody you like that I am down here. Nobody has ever come.');
+    for(const l of lines2) log('SHE SAYS: "' + l + '"', '');
+    log('THE SEAL DOES NOT ANSWER. It was welded against something you are not. Bring one of hers — a Hollow, awake — and it is a different door.', '');
+    threadSet('mother', 'Looking for Mother',
+      'Found. She is behind a golden-age seal at the bottom of a warren, and it does not answer to anybody who is not one of hers.',
+      {hint: 'The weld holds against a rider, not against you. A Hollow taken through the Nascent Rite at your circle is what the door weighs.',
+       mark: {x: c.x, y: c.y}});
+    deed('found_mother', 1);
+    return;
+  }
   const open = tier >= 2 ?
     'You came back finished. Then put your hand on it — the weld only ever held against a rider.' :
     'You came back as a piece. A piece cannot lift the lid it was cut through.';
@@ -41263,6 +41391,13 @@ function applyCreation(race, gift, origin, sub){
   /* clear the default squad and build the chosen life */
   for(const c of [...chars]) if(c.faction==='player') chars.splice(chars.indexOf(c), 1);
   selected = [];
+  /* AND A NEW LIFE HAS NOT MET HER YET. `startTheDescent` used to clear these, which was safe
+     only while it was the one thing that ever set them; now that she is in every world, a second
+     start in the same page — the creator is reachable again without a reload — would inherit
+     "already spoken to" from the run before it. The cell itself is NOT cleared: it is derived
+     from the world, and the world has not changed. */
+  mother.sought = false; mother.found = false; mother.spoken = false;
+  mother.reads = 0; mother.toldPrice = false; mother.stirred = false;
   stash.mats = 0; stash.w_rkat = 0;
   /* the chosen line rides along with the race on every body this start makes, unless the
      origin names one of its own (Saga is a Hollow whatever the picker said) */
