@@ -53,9 +53,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       for(const [k, a] of charGrid) for(const c of a) m.set(c, (m.get(c) || 0) + 1);
       return m;
     };
+    /* WHAT BELONGS IN THE GRID, and the law moved under this claim once already: it used to be
+       every `ok` body, and a frozen storey now keeps its bodies out of the grid entirely (see
+       A FROZEN STOREY). This read 620 against 1765 the first time the freeze landed, which is
+       the claim doing its job — the membership rule is the thing it exists to pin, so it tracks
+       the rule rather than a number somebody wrote down. */
+    const belongs = c => c.state === 'ok' && !(typeof bodyFrozen === 'function' && bodyFrozen(c));
     const wantCensus = () => {
       const m = new Map();
-      for(const c of chars) if(c.state === 'ok') m.set(c, 1);
+      for(const c of chars) if(belongs(c)) m.set(c, 1);
       return m;
     };
     const sameMembership = () => {
@@ -130,7 +136,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     /* ---- 3. A BODY THAT GOES DOWN COMES OUT ---- */
     {
-      const v = chars.find(c => c.state === 'ok' && c.faction !== 'player');
+      const v = chars.find(c => belongs(c) && c.faction !== 'player');
       v.state = 'down';
       rebuildCharGrid();
       const inGrid = [...charGrid.values()].some(a => a.includes(v));
@@ -145,7 +151,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        The one way a filed grid goes wrong: `chars.splice` is called from twenty-odd places and
        none of them unfiles. The guard has to notice without being told. */
     {
-      const v = chars.find(c => c.state === 'ok' && c.faction !== 'player' && !c.protagonist);
+      const v = chars.find(c => belongs(c) && c.faction !== 'player' && !c.protagonist);
       const i = chars.indexOf(v);
       chars.splice(i, 1);                       /* exactly what the game does, from everywhere */
       rebuildCharGrid();

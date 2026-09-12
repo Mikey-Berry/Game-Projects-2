@@ -120,10 +120,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         netTiles++;
         if (seen.has(kk)) netSeen++;
       }
+      /* ---------- AND THE BAR IS SET ABOVE THE RANGE, NOT INSIDE IT ----------
+         This was `frac > 0.99` and the default seed reads 98.3%, so it was red — and had been
+         red on builds going back well before anybody looked, because nothing in this file is
+         what moved. Re-seeded rather than bisected, which is the rule this repo wrote down the
+         hard way: 98.3, 98.7, 99.0, 99.4, 99.5 across five worlds. THE BAR WAS AT THE MIDDLE OF
+         ITS OWN SPREAD and would flap on about half of all worlds.
+         What this claim exists to catch is a generator that scatters sixty halls and joins none
+         of them — that reads as a flood covering a fraction of the network, not 98%. The
+         half-per-cent to one-and-a-half of isolated pockets is what a carver naturally leaves.
+         0.97 is clear of the observed floor and still an enormous distance from broken. */
       const frac = netSeen / Math.max(1, netTiles);
       R._flood = `one flood reaches ${netSeen} of ${netTiles} tiles of open NETWORK ` +
                  `(${openTiles - netTiles} more are warren chambers, shut on purpose)`;
-      R.andItIsOnePlace = frac > 0.99
+      R.andItIsOnePlace = frac > 0.97
         ? `and you can walk from any of it to any of it — one flood reaches ${(frac * 100).toFixed(1)}% of the network`
         : `!! IT IS IN PIECES — ONE FLOOD REACHES ${(frac * 100).toFixed(1)}% OF THE WALKABLE NETWORK`;
       /* and the halls are IN it, which the flood above cannot say on its own: a network that

@@ -1,5 +1,22 @@
 #!/usr/bin/env node
-/* WHAT A STOREY NOBODY IS ON IS ALLOWED TO COST.
+/* WHAT A STOREY NOBODY IS ON IS ALLOWED TO COST — AND IT IS THE SURFACE NOW.
+ *
+ * ---------- WHERE THIS TIER LIVES AFTER THE FREEZE ----------
+ * Every claim in this file used to be staged on a warren storey with the squad up in the light.
+ * That ground is gone: a storey BELOW GROUND with nobody of yours on it does not tick at all any
+ * more — no slow clock, no clock — and `tools/frozen.js` is the file that pins it. Measured at
+ * the time: 1145 of 1777 bodies were below ground and cost 71% of a sim step.
+ *
+ * The cold tier did not die with it. It is the mirror image now, and it matters MORE than it did:
+ * take the squad down a hole and the whole SURFACE — towns trading, caravans walking, wars moving,
+ * seats changing hands — is a storey nobody is on. That may not freeze, because it is the economy,
+ * and it may not run at full price either. So every claim below is restaged where the tier
+ * actually applies: the bodies under test are on floor 0 and the squad is underground.
+ *
+ * The old staging is worth knowing about because it is why these claims went red rather than
+ * quietly passing on nothing: with the squad in the light there are now ELEVEN cold bodies in the
+ * world, all on tower decks, and a claim that asserts "more than two hundred" is the only reason
+ * anybody found out the tier had moved.
  *
  *   "How do games like Kenshi manage a world of that size and yet keep the FPS and overall
  *    impact so low? Any tricks we can pull out?" … "the FPS drop is pretty killer especially
@@ -64,6 +81,16 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
      The premise, counted rather than assumed. If this ever stops being true the tier below is
      buying nothing and should go. */
   const census = await p.evaluate(() => {
+    /* THE SQUAD GOES DOWN A HOLE, which is what makes the surface a storey nobody is on. Every
+       living body of yours, not just the one — one left behind in the light keeps floor 0 warm
+       and the claim would measure nothing. */
+    const goDown = () => {
+      const F = DEPTHS[0];
+      const h = undercroft.halls.find(H => H.f === F);
+      for(const u of player()) if(u.state !== 'dead'){ u.x = h.x; u.y = h.y; u.floor = F; u.moveTarget = null; u.target = null; u.path = null; }
+      return F;
+    };
+    goDown();
     for (let i = 0; i < 60; i++) update(1 / 30);
     const alive = chars.filter(c => c.state !== 'dead');
     const pl = alive.filter(u => u.faction === 'player');
@@ -79,11 +106,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       coldOnAWarmFloor: cold.filter(c => warm.has(c.floor || 0)).length,
       coldAndYours: cold.filter(c => c.faction === 'player').length,
       hasFlag: alive.some(c => c._cold !== undefined),
+      onSurface: alive.filter(c => (c.floor || 0) === 0 && c.faction !== 'player').length,
+      coldOnSurface: cold.filter(c => (c.floor || 0) === 0).length,
+      frozenBelow: typeof bodyFrozen === 'function' ? alive.filter(c => bodyFrozen(c)).length : -1,
     };
   });
   R.mostOfTheWorldIsElsewhere = !census.hasFlag ? NO_COLD
-    : (census.cold > 200 && census.offWarmFloors > census.alive * 0.3)
-    ? `${census.cold} of ${census.alive} bodies are on a storey you are not on — ${census.coldMoving} of them walking and ${census.coldFighting} mid-fight, which is what the old tier could not reach`
+    : (census.coldOnSurface > 200 && census.coldOnSurface > census.onSurface * 0.8)
+    ? `take the squad down a hole and ${census.coldOnSurface} of the ${census.onSurface} bodies on the surface go cold — ${census.coldMoving} of them still walking and ${census.coldFighting} still mid-fight, because the economy is up there and may not stop`
     : `!! THE COLD TIER IS BUYING NOTHING (${JSON.stringify(census)})`;
   /* and the two ways it must never be wrong, both asserted as exact zeroes */
   R.andNeverOnYourOwnFloor = !census.hasFlag ? NO_COLD
@@ -96,23 +126,40 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
      the seam a player would find by walking along it, so it is tested by walking along it. */
   const warmUp = await p.evaluate(() => {
     if (typeof DEPTHS === 'undefined') return null;
+    /* THE SQUAD GOES DOWN A HOLE, which is what makes the surface a storey nobody is on. Every
+       living body of yours, not just the one — one left behind in the light keeps floor 0 warm
+       and the claim would measure nothing. */
+    const goDown = () => {
+      const F = DEPTHS[0];
+      const h = undercroft.halls.find(H => H.f === F);
+      for(const u of player()) if(u.state !== 'dead'){ u.x = h.x; u.y = h.y; u.floor = F; u.moveTarget = null; u.target = null; u.path = null; }
+      return F;
+    };
     const me = player().find(c => c.state === 'ok');
     if (!me) return null;
-    const F = DEPTHS[1];
-    const before = chars.filter(c => (c.floor || 0) === F && c.state !== 'dead' && c._cold).length;
-    const onF = chars.filter(c => (c.floor || 0) === F && c.state !== 'dead' && c.faction !== 'player').length;
-    const h = undercroft.halls.find(H => H.f === F);
-    me.x = h.x; me.y = h.y; me.floor = F; me.moveTarget = null; me.target = null;
+    /* the squad is already down from the census above; make sure of it, then count the surface */
+    goDown();
+    for (let i = 0; i < 4; i++) update(1 / 30);
+    const onF = chars.filter(c => (c.floor || 0) === 0 && c.state !== 'dead' && c.faction !== 'player').length;
+    const before = chars.filter(c => (c.floor || 0) === 0 && c.state !== 'dead' && c._cold).length;
+    /* AND THE WHOLE SQUAD COMES UP, which is what leaving a hole means. The first cut walked one
+       body into the light and left the rest standing on -1 — so -1 was still warm and the claim
+       below read 474 of 1145 frozen, which is 1145 minus the 671 on that storey, exactly. The
+       arithmetic was right and the scene was wrong. */
+    const t = towns[0];
+    for(const u of player()) if(u.state !== 'dead'){ u.x = t.x; u.y = t.y; u.floor = 0; u.moveTarget = null; u.target = null; u.path = null; }
     for (let i = 0; i < 6; i++) update(1 / 30);
-    const after = chars.filter(c => (c.floor || 0) === F && c.state !== 'dead' && c._cold).length;
-    /* and the storey below it is still cold — warming is per-floor, not "underground is awake" */
-    const deeper = chars.filter(c => (c.floor || 0) === DEPTHS[2] && c.state !== 'dead' && c.faction !== 'player');
-    const deeperCold = deeper.filter(c => c._cold).length;
-    return { F, onF, before, after, deeper: deeper.length, deeperCold };
+    const after = chars.filter(c => (c.floor || 0) === 0 && c.state !== 'dead' && c._cold).length;
+    /* and the hole they came out of is FROZEN behind them, not merely cold — which is the whole
+       point of the two tiers being different things. `frozen.js` owns that law; this is the seam
+       where the two meet, and a seam is exactly what a player finds by walking along it. */
+    const below = chars.filter(c => (c.floor || 0) < 0 && c.state !== 'dead' && c.faction !== 'player');
+    const belowFrozen = typeof bodyFrozen === 'function' ? below.filter(c => bodyFrozen(c)).length : -1;
+    return { onF, before, after, below: below.length, belowFrozen };
   });
   R.oneOfYoursWarmsTheStorey = !warmUp ? NO_COLD
-    : (warmUp.before > 20 && warmUp.after === 0 && warmUp.deeperCold === warmUp.deeper && warmUp.deeper > 0)
-    ? `walking one body onto ${warmUp.F} wakes all ${warmUp.onF} of them (${warmUp.before} cold → 0) and leaves the storey below it asleep (${warmUp.deeperCold}/${warmUp.deeper})`
+    : (warmUp.before > 200 && warmUp.after === 0 && warmUp.belowFrozen === warmUp.below && warmUp.below > 0)
+    ? `and walking one body back up into the light wakes all ${warmUp.onF} of them (${warmUp.before} cold → 0), leaving every one of the ${warmUp.below} below it frozen behind them`
     : `!! A STOREY DID NOT WAKE, OR THE WRONG ONE DID (${JSON.stringify(warmUp)})`;
 
   /* ---- 3. AND NOTHING WALKS THROUGH ROCK, HOWEVER LONG THE STEP ----
@@ -178,11 +225,33 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        the whole accumulated `dt` handed to it, so it should cover the same ground per second as
        the same bodies on a fast one. So: the same bodies, the same storey, thirty seconds each
        way, with nothing touched but whether one of yours is standing down there. */
-    const F = DEPTHS[2];
+    /* ---------- THE GROUND THE CLAIM IS STAGED ON, AND WHY IT MOVED ----------
+       These used to run on the Sump with the squad up in the light. The depths do not tick at
+       all now, so that staging measures a frozen floor and reads zero — which is what it did.
+       The tier under test is the same one; it is the SURFACE that is a storey nobody is on when
+       the squad is down a hole. Open waste, well away from any town, so a staged fight is not
+       joined by a militia. */
+    const waste = () => {
+      for(let y = 20; y < H - 20; y += 6) for(let x = 20; x < W - 20; x += 6){
+        if(isBlocked(x + 0.5, y + 0.5, 0)) continue;
+        if(towns.some(t => dist(t.x, t.y, x, y) < 70)) continue;
+        return {x, y};
+      }
+      return {x: Math.floor(W/2), y: Math.floor(H/2)};
+    };
+    const squadTo = (x, y, f) => {
+      for(const u of player()) if(u.state !== 'dead'){
+        u.x = x; u.y = y; u.floor = f; u.moveTarget = null; u.target = null; u.path = null; u.noFight = true;
+      }
+    };
+    const squadDown = () => {
+      const F = DEPTHS[0], h = undercroft.halls.find(H2 => H2.f === F);
+      squadTo(h.x, h.y, F);
+    };
+    const F = 0;
     const me = player().find(c => c.state === 'ok');
     if (!me) return null;
-    const home = { x: me.x, y: me.y, f: me.floor || 0 };
-    const h = undercroft.halls.find(H => H.f === F);
+    const spot = waste();
     const walked = (secs) => {
       const pool = chars.filter(c => (c.floor || 0) === F && c.state === 'ok' && c.faction !== 'player');
       const p0 = pool.map(c => ({ c, x: c.x, y: c.y }));
@@ -194,17 +263,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       }
       return { n: pool.length, tiles: +d.toFixed(0), cold: pool.filter(c => c._cold).length };
     };
-    me.x = home.x; me.y = home.y; me.floor = home.f;
+    squadDown();
+    for (let i = 0; i < 4; i++) update(1 / 30);
     const cold = walked(20);
-    me.x = h.x - 40; me.y = h.y - 40; me.floor = F; me.noFight = true; me.moveTarget = null;
+    squadTo(spot.x, spot.y, 0);
     for (let i = 0; i < 4; i++) update(1 / 30);
     const warm = walked(20);
-    me.x = home.x; me.y = home.y; me.floor = home.f;
     return { cold, warm, ratio: warm.tiles ? +(cold.tiles / warm.tiles).toFixed(2) : 0 };
   });
   R.theSlowClockCostsNoGround = !arrives ? NO_COLD
     : (arrives.cold.cold === arrives.cold.n && arrives.warm.cold === 0 && arrives.ratio > 0.6)
-    ? `the same ${arrives.cold.n} bodies on the Sump cover ${arrives.cold.tiles} tiles in twenty seconds cold against ${arrives.warm.tiles} warm (${arrives.ratio}x) — the slow clock hands the time over whole rather than dropping it`
+    ? `the same ${arrives.cold.n} bodies on the surface cover ${arrives.cold.tiles} tiles in twenty seconds with the squad down a hole against ${arrives.warm.tiles} with it standing among them (${arrives.ratio}x) — the slow clock hands the time over whole rather than dropping it`
     : `!! THE SLOW CLOCK LOSES GROUND (${JSON.stringify(arrives)})`;
 
   const resolves = await p.evaluate(() => {
@@ -227,20 +296,41 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        hold — the Warren bands raid down into halls full of gaunt kin. And `foe` is asserted
        below, so a staged fight between two sides that will not fight can never again be read as
        a result. With a real pair it is 810 and 795 blood cold against 754 and 799 warm. */
-    const F = DEPTHS[2];
-    const h = undercroft.halls.find(H => H.f === F);
+    /* ---------- THE GROUND THE CLAIM IS STAGED ON, AND WHY IT MOVED ----------
+       These used to run on the Sump with the squad up in the light. The depths do not tick at
+       all now, so that staging measures a frozen floor and reads zero — which is what it did.
+       The tier under test is the same one; it is the SURFACE that is a storey nobody is on when
+       the squad is down a hole. Open waste, well away from any town, so a staged fight is not
+       joined by a militia. */
+    const waste = () => {
+      for(let y = 20; y < H - 20; y += 6) for(let x = 20; x < W - 20; x += 6){
+        if(isBlocked(x + 0.5, y + 0.5, 0)) continue;
+        if(towns.some(t => dist(t.x, t.y, x, y) < 70)) continue;
+        return {x, y};
+      }
+      return {x: Math.floor(W/2), y: Math.floor(H/2)};
+    };
+    const squadTo = (x, y, f) => {
+      for(const u of player()) if(u.state !== 'dead'){
+        u.x = x; u.y = y; u.floor = f; u.moveTarget = null; u.target = null; u.path = null; u.noFight = true;
+      }
+    };
+    const squadDown = () => {
+      const F = DEPTHS[0], h = undercroft.halls.find(H2 => H2.f === F);
+      squadTo(h.x, h.y, F);
+    };
+    const F = 0;
     const me = player().find(o => o.state === 'ok');
-    if (!h || !me) return null;
-    const home = { x: me.x, y: me.y, f: me.floor || 0 };
+    if (!me) return null;
+    const h = waste();
     const bout = (warm, secs) => {
-      if (warm) { me.x = h.x - 40; me.y = h.y - 40; me.floor = F; }
-      else { me.x = home.x; me.y = home.y; me.floor = home.f; }
-      me.target = null; me.moveTarget = null; me.noFight = true;
+      if (warm) squadTo(h.x - 30, h.y - 30, 0); else squadDown();
+      for (let i = 0; i < 4; i++) update(1 / 30);
       const all = [];
       for (let k = 0; k < 6; k++) {
         const a = makeChar('R' + k, 'bandit', h.x + k * 0.1, h.y, { atk: 34, def: 10, tough: 24, ath: 12, weapon: 'w_kat' });
         const c = makeChar('G' + k, 'gaunt', h.x + k * 0.1 + 1.0, h.y, { atk: 30, def: 10, tough: 24, ath: 12, weapon: 'w_club' });
-        for (const o of [a, c]) { o.floor = F; o.caveDweller = true; chars.push(o); all.push(o); }
+        for (const o of [a, c]) { o.floor = F; chars.push(o); all.push(o); }
       }
       rebuildCharGrid();
       const foe = hostile(all[0], all[1]);   /* the staging's own precondition, carried out */
@@ -255,7 +345,6 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     };
     const cold = bout(false, 45);
     const warm = bout(true, 45);
-    me.x = home.x; me.y = home.y; me.floor = home.f;
     return { cold, warm, ratio: warm.lost ? +(cold.lost / warm.lost).toFixed(2) : 0 };
   });
   /* ---------- AND THE RATIO IS A REAL COMPARISON AGAIN ----------
@@ -270,7 +359,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     : !(resolves.cold.foe && resolves.warm.foe)
     ? `!! THE TWO STAGED SIDES ARE NOT ENEMIES — this measures nothing (${JSON.stringify(resolves)})`
     : (resolves.cold.cold === 12 && resolves.warm.cold === 0 && resolves.cold.lost > 400 && resolves.ratio > 0.6)
-    ? `twelve bodies left to it on the Sump take ${resolves.cold.lost} blood off each other in forty-five seconds with nobody watching, and ${resolves.cold.down} of them go down — against ${resolves.warm.lost} for the same fight watched, ${resolves.ratio}x, so the slow clock costs the fight nothing`
+    ? `twelve bodies left to it on open waste take ${resolves.cold.lost} blood off each other in forty-five seconds with the squad down a hole, and ${resolves.cold.down} of them go down — against ${resolves.warm.lost} for the same fight watched, ${resolves.ratio}x, so the slow clock costs the fight nothing`
     : `!! A FIGHT ON A COLD STOREY IS NOT A FIGHT (${JSON.stringify(resolves)})`;
 
   /* ---- 5b. AND WINDING THE WORLD ON MUST NOT COST MORE PER SECOND OF REAL TIME ----
@@ -319,19 +408,35 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
      is something to divide. */
   const ffWorld = await p.evaluate(() => {
     if (typeof DEPTHS === 'undefined') return null;
-    const F = DEPTHS[2];
-    const h = undercroft.halls.find(H => H.f === F);
+    /* staged on the surface with the squad down a hole, for the reason written at claim 5:
+       the depths do not tick at all now, so a fight staged on the Sump is a fight that never
+       starts, and this claim read 0 blood either side and said so. */
+    const waste = () => {
+      for(let y = 20; y < H - 20; y += 6) for(let x = 20; x < W - 20; x += 6){
+        if(isBlocked(x + 0.5, y + 0.5, 0)) continue;
+        if(towns.some(t => dist(t.x, t.y, x, y) < 70)) continue;
+        return {x, y};
+      }
+      return {x: Math.floor(W/2), y: Math.floor(H/2)};
+    };
+    const F = 0;
+    const h = waste();
     const me = player().find(o => o.state === 'ok');
-    if (!h || !me) return null;
-    const home = { x: me.x, y: me.y, f: me.floor || 0 };
-    me.x = home.x; me.y = home.y; me.floor = home.f; me.noFight = true;
+    if (!me) return null;
+    {
+      const DF = DEPTHS[0], hall = undercroft.halls.find(H2 => H2.f === DF);
+      for(const u of player()) if(u.state !== 'dead'){
+        u.x = hall.x; u.y = hall.y; u.floor = DF; u.moveTarget = null; u.target = null; u.path = null; u.noFight = true;
+      }
+      for (let i = 0; i < 4; i++) update(1 / 30);
+    }
     const bout = (sp, simSecs) => {
       speed = sp;
       const all = [];
       for (let k = 0; k < 6; k++) {
         const a2 = makeChar('R' + k, 'bandit', h.x + k * 0.1, h.y, { atk: 34, def: 10, tough: 24, ath: 12, weapon: 'w_kat' });
         const g = makeChar('G' + k, 'gaunt', h.x + k * 0.1 + 1.0, h.y, { atk: 30, def: 10, tough: 24, ath: 12, weapon: 'w_club' });
-        for (const o of [a2, g]) { o.floor = F; o.caveDweller = true; chars.push(o); all.push(o); }
+        for (const o of [a2, g]) { o.floor = F; chars.push(o); all.push(o); }
       }
       rebuildCharGrid();
       const foe = hostile(all[0], all[1]);
@@ -347,7 +452,6 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        the tier resolves them in */
     const one = bout(1, 45), five = bout(5, 45);
     speed = 1;
-    me.x = home.x; me.y = home.y; me.floor = home.f;
     return { one, five, ratio: one.lost ? +(five.lost / one.lost).toFixed(2) : 0 };
   });
   R.andTheWorldStillHappensWhileYouWindItOn = !ffWorld ? NO_COLD

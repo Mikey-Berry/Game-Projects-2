@@ -11582,20 +11582,39 @@ function gridUnfile(c){
   c._gk = -1; _gridFiled--;
 }
 function gridCellOf(c){ return ((c.y / CELL) | 0) * GW + ((c.x / CELL) | 0); }
+/* which storeys are awake. Its own function because BOTH rebuilders need it and one of them is
+   reachable from `restore`, where `warmFloors` still describes the run that was open a moment
+   ago — see A FROZEN STOREY. */
+function refreshWarmFloors(){
+  warmFloors.clear();
+  for(const u of chars) if(u.faction === 'player' && u.state !== 'dead') warmFloors.add(u.floor || 0);
+}
 function regridAll(){
   charGrid.clear();
   charById.clear();
   _gridFiled = 0;
+  /* ---------- AND A FULL REBUILD OBEYS THE FREEZE TOO ----------
+     The first cut of this filed every `ok` body and left the frozen storeys in the grid until the
+     next pass swept them out — one step of a load holding eleven hundred bodies nobody can reach.
+     `grid.js` read 1765 against 620 and said so. A rebuild from nothing has to produce what the
+     incremental path produces, or the claim that compares the two is comparing two laws. */
+  refreshWarmFloors();
   for(const c of chars){
     charById.set(c.id, c);
     c._gk = -1;
-    if(c.state === 'ok') gridFile(c, gridCellOf(c));
+    if(c.state === 'ok' && !bodyFrozen(c)) gridFile(c, gridCellOf(c));
   }
 }
 function rebuildCharGrid(){
   charEpoch++;                    /* a new step: whatever `player()` cached is a step old now */
   /* somebody left the roster since the last pass — see the note above */
   if(charById.size !== chars.length) regridAll();
+  /* ---------- WHICH STOREYS ARE AWAKE, DECIDED ONCE ----------
+     Read HERE rather than in the main loop, because this pass is the first thing `update` does
+     and it now has to know the answer too — a storey that woke up between steps must not wait a
+     step to be filed. The tier arithmetic later in the step reads the same set. */
+  refreshWarmFloors();
+  liveChars.length = 0;
   warders.length = 0;
   charmed.length = 0;
   /* ---------- AND THE TWO LISTS THE VIGIL ASKS ABOUT ----------
@@ -11627,7 +11646,22 @@ function rebuildCharGrid(){
     if(c.carry || (c.carryList && c.carryList.length)) carriers.push(c);
     /* AND A BODY THAT STOPS BEING `ok` COMES OUT OF THE GRID. The old pass simply never put it
        back in, which a full rebuild makes automatic and a filed one does not. */
+    const _frz = bodyFrozen(c);
+    /* the roster the tick actually works on: everything not frozen and not already a corpse. A
+       body that DIES mid-step is still in here for the rest of it, so the readers keep their own
+       `state==='dead'` guard — this list says who was worth visiting, not who is still alive. */
+    if(!_frz && c.state !== 'dead') liveChars.push(c);
     if(c.state !== 'ok'){ if(c._gk >= 0) gridUnfile(c); continue; }
+    /* ---------- AND A FROZEN BODY IS NOT IN THE GRID AT ALL ----------
+       Skipping `ai` and `physics` for the depths took 8.66ms a step to 4.96. The probe said
+       another 44% was still there, and this is it: eleven hundred bodies that do not move were
+       still being walked by `separate`'s cell sweep and handed back by every `charsNear` the
+       surface asked, and still paying the seven rare-list predicates above — two of which are
+       function calls — to answer questions about a storey with nobody on it.
+       SAFE BECAUSE NOBODY CAN ASK. `charsNear` is floor-blind and every caller filters by floor
+       itself, so a query from the surface could never have used one of these anyway. The moment
+       somebody of yours stands on that storey it is warm, and the next pass files it. */
+    if(_frz){ if(c._gk >= 0) gridUnfile(c); continue; }
     if(c.concentrating && c.concentrating.key === 'warding') warders.push(c);
     if(c.faction === 'player' && (c.floor || 0) < 0) belowFolk.push(c);
     if(c.lamp && (c.floor || 0) < 0) lamps.push(c);
@@ -11650,6 +11684,51 @@ function rebuildCharGrid(){
     }
   }
 }
+/* ============================================================ A FROZEN STOREY
+   "I wonder if we could completely freeze the lower levels until a squad member actually
+   explores them? ... it seems pointless since the underground won't ever really contribute to
+   the world's economy and exists purely as a combat and exploration layer."
+
+   MEASURED BEFORE IT WAS BUILT, because the `_cold` tier already throttles everything down
+   there and the question was whether throttling had left anything worth taking:
+       bodies by floor   0: 621   -1: 671   -2: 331   -3: 143
+       1145 of 1777 bodies are below ground                    64%
+       physics calls going below ground                        41%
+       ai calls going below ground                             30%   (the throttle IS working)
+       a step as it stands                                   8.66 ms
+       the same step with the depths lifted clean out        2.50 ms
+   SEVENTY-ONE PER CENT OF THE SIM. The cold tier cut how often those bodies THINK and left
+   everything else: they are still visited every step, still separated, still moved at 3-15Hz,
+   and there are two of them for every one on the surface.
+
+   A storey below ground with nobody of yours standing on it does not tick at all now. Not a
+   slower clock — no clock. It is the one part of this world that can take that: the surface is
+   the economy, with towns trading, caravans walking, wars moving and seats changing hands, and
+   freezing any of that would be freezing the game. The depths trade with nobody.
+
+   AND IT ANSWERS A REPORT RATHER THAN ONLY A PROFILE: "all the underground fights resolve well
+   before I ever go there, so I usually just find bloody aftermaths and that's it." They resolved
+   because they were being fought at a quarter rate for three hundred days while nobody watched.
+   A frozen warren is still standing when you walk into it, and the fight is yours to see.
+
+   THE CLOCK STOPS, it does not accumulate. A body that is skipped before its accumulators are
+   touched carries no debt, so thawing a storey after two hundred days does not hand `ai` two
+   hundred days of `dt` — it simply carries on. The same reasoning takes frozen bodies out of the
+   nightly ageing roll: left in, a warren of living bandits would quietly die of old age over a
+   campaign and you would walk down into an empty one, which is EXACTLY the fault [109] was —
+   the depths emptying themselves off-screen while nobody could see it happen. */
+const warmFloors = new Set();          /* storeys with somebody of yours standing on them */
+/* ---------- AND THE HOT LOOP STOPS WALKING PAST THEM ----------
+   Skipping the work took 8.66ms a step to 4.47. What is left is the WALK: three separate
+   `for(const c of chars)` passes that visit eleven hundred frozen bodies to look at them and
+   `continue`. `rebuildCharGrid` already walks the whole roster and already knows which is which,
+   so it writes the list down while it is there, and the passes that only ever wanted the
+   standing ones read that instead. */
+const liveChars = [];
+function floorFrozen(f){ return f < 0 && !warmFloors.has(f); }
+/* your own people are never frozen: a garrison left on a storey keeps its own clock, which is
+   what a garrison is for, and there are a handful of them against eleven hundred of the others */
+function bodyFrozen(c){ return c.faction !== 'player' && floorFrozen(c.floor || 0); }
 /* One buffer, refilled per query, so proximity checks never allocate. The catch: a second
    charsNear() (or nearestEnemy(), which calls it) issued while you are still iterating the
    first one's result will empty it under you. Copy the result if the loop body can reach
@@ -22774,7 +22853,10 @@ function update(dt){
     }).catch(() => {});
     /* ---- time takes its toll on everything that still breathes ---- */
     for(const c of [...chars]){
-      if(c.undead || c.beast || c.bossKey || c.state==='dead' || c.mobileVendor || c.isLeader >= 0 || c.immortal || c.storied) continue;
+      /* AND A FROZEN STOREY DOES NOT AGE. Left in, a warren of living bandits dies of old age
+         over a campaign and you walk down into an empty one — which is the whole of [109], the
+         depths emptying themselves off-screen, arrived at from a different direction. */
+      if(c.undead || c.beast || c.bossKey || c.state==='dead' || c.mobileVendor || c.isLeader >= 0 || c.immortal || c.storied || bodyFrozen(c)) continue;
       c.age += 1/AGE_YEAR_DAYS;
       /* the body remembers every year past fifty */
       if(c.age > 50 && rnd() < 0.5){
@@ -23526,9 +23608,11 @@ function update(dt){
      1/15s is exactly every other step, so this is the same tier it was. */
   const FAR_AI = 0.25 * LOD_FF;
   const FAR_PH = (1 / 15) * LOD_FF;
-  const _warmFloors = new Set();
-  for(const u of _pl) _warmFloors.add(u.floor || 0);
-  for(const c of chars){
+  /* filled by `rebuildCharGrid` at the top of this same step — one law, one place */
+  const _warmFloors = warmFloors;
+  /* `liveChars`, not `chars`: the frozen storeys are not walked past, let alone worked on — see
+     A FROZEN STOREY. The `dead` guard stays because a body can die inside this very loop. */
+  for(const c of liveChars){
     if(c.state==='dead') continue;
     if(wtick) bodyTick(c, wdh);   /* per-hour body sim needs 4Hz, not 20 — the hours accumulate the same */
     /* LOD: an idle body far from the squad thinks at 4Hz with the time it saved up.
@@ -23950,11 +24034,20 @@ function update(dt){
    it is a grapple, not a trigger. */
 const PIN_REACH = 1.45;          /* the same reach a passing blade has */
 function separate(){
-  for(const c of chars){ c._contacts = 0; c._holders = 0; c._pinNow = null; }
+  /* only the bodies that can be in a contact this step — a frozen one is not in the grid, so
+     nothing below can reach it and its counters cannot go stale from anything but this reset */
+  for(const c of liveChars){ c._contacts = 0; c._holders = 0; c._pinNow = null; }
   for(const [, cell] of charGrid){
     for(let i=0;i<cell.length;i++){
       const a = cell[i];
       if(a.resting) continue;
+      /* AND NOTHING ON A FROZEN STOREY IS PUSHED ABOUT. Asked on the OUTER body so the inner
+         loop and its `charsNear` are never reached for it — and asked explicitly rather than
+         leaning on `_lod`, which a frozen body no longer updates: it keeps whatever value it
+         held on the step it froze, and a body that froze while warm kept `false`. See A FROZEN
+         STOREY. This is also the second of the three whole-world per-step passes, so it is the
+         second one the depths stop paying for. */
+      if(bodyFrozen(a)) continue;
       /* same cell pairs + a thin band from neighbors caught by the 0.6 radius check below */
       const near = charsNear(a.x, a.y, 1);
       for(let j=0;j<near.length;j++){
