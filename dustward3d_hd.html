@@ -959,6 +959,10 @@ const ITEMS = {
   fabric:  {name:'Fabric',        base:48,  type:'trade'},
   rum:     {name:'Rum',           base:75,  type:'trade', drink:'rum'},
   rum_black:{name:'Harbourblack',  base:145, type:'trade', drink:'black'},
+  /* THE MIDDLE OF THE THREE. What a camp makes once it has oak and the patience to leave it
+     alone: longer in the body than raw rum and a steadier hand on it, which is the whole
+     point of ageing the stuff. Priced between the two it sits between. */
+  rum_cask:{name:'Cask Rum',       base:110, type:'trade', drink:'cask'},
   hide:    {name:'Hound Hide',    base:28,  type:'trade'},
   w_plank: {name:'Plank',         base:80,  type:'weapon', dmg:9,  wt:'blunt'},
   w_club:  {name:'Iron Club',     base:220, type:'weapon', dmg:14, wt:'blunt'},
@@ -1574,29 +1578,86 @@ function bandageChargesTotal(){ return kitOpen + (stash.bandage||0)*8; }
    AND IT COSTS SOMETHING, or it is a free buff and not a decision. A body running on drink
    swings wide and is easier to hit, for as long as it lasts. */
 const DRINKS = {
-  rum:   {blood: 16, grit: 75,  wob: 0.09, name: 'rum'},
-  black: {blood: 34, grit: 170, wob: 0.17, name: 'Harbourblack'},
+  rum:   {blood: 16, grit: 36, wob: 0.07, name: 'rum'},
+  cask:  {blood: 22, grit: 52, wob: 0.05, name: 'cask rum'},
+  black: {blood: 34, grit: 84, wob: 0.12, name: 'Harbourblack'},
 };
 const GRIT_DOWN = 12;      /* how much further past the drop line a drinker keeps going */
 const GRIT_RISE = 12;      /* and how much sooner they get back up */
+/* ---------- AND YOU CANNOT DRINK FOREVER ----------
+   "Right now you can down shots forever in a bar — there's gotta be a cooldown and again a
+   downside to the advantages of alcohol. (Along with a clear indicator for how long it lasts.)"
+   Exactly right, and the reason was one word: `Math.max`. A second measure did not stack, it
+   REFRESHED — same wobble, same clock, more blood back in the body. So the optimal play was to
+   click the cup until the bottle was gone, and the only thing the drink cost was gold.
+   Three numbers answer it, and all three are on the body rather than on the bar, so the pack,
+   the taproom and a hand poured into somebody in the dirt all obey the same law:
+     `drunk`    — MEASURES currently in them. Three is the ceiling; a fourth is refused.
+     `drinkCd`  — the gap between measures. You cannot pour the ceiling into somebody in
+                  one click-storm; each one has to go down first.
+     `hangT`    — and past two measures there is a morning after, during which they are slow,
+                  they swing wide, and they will not take another drop.
+   The wobble ACCUMULATES now, so the third measure is a real decision rather than a free one:
+   at the ceiling a body is twenty-one points of hit chance worse off in both directions. */
+const DRINK_LIMIT = 3;     /* measures a body will take before it refuses */
+const DRINK_GAP   = 20;    /* seconds between measures — two and a half hours of world time */
+const GRIT_CAP    = 200;   /* however much goes in, the clock does not run past this */
+const GRIT_WOB_CAP= 0.21;  /* and neither does the wobble */
+const HANG_PER    = 26;    /* hangover seconds per measure, once there were two or more */
+const HANG_WOB    = 0.06;  /* the morning after is its own small penalty in a fight */
+const DRUNK_BANDS = [null, 'TIGHT', 'DRUNK', 'SOTTED'];
 function gritted(c){ return !!c && (c.gritT || 0) > 0; }
-function gritWobble(c){ return gritted(c) ? (c.gritWob || 0) : 0; }
+function measuresIn(c){ return (c && c.drunk) || 0; }
+function hungover(c){ return !!c && (c.hangT || 0) > 0; }
+function drunkBand(c){ return DRUNK_BANDS[Math.min(3, measuresIn(c))] || (gritted(c) ? 'TIGHT' : ''); }
+/* ONE READER for what drink does to a blow, both halves of it. A body with a skinful swings
+   wide and is easy to hit; a body with a head swings wide too, and gets nothing for it. */
+function boozeWobble(c){
+  if(gritted(c)) return Math.min(GRIT_WOB_CAP, c.gritWob || 0);
+  return hungover(c) ? HANG_WOB : 0;
+}
+/* what drink does to a pair of legs — read by `moveSpeedRaw` */
+function boozeDrag(c){
+  const n = measuresIn(c);
+  if(gritted(c) && n >= 3) return 0.74;
+  if(gritted(c) && n >= 2) return 0.88;
+  return hungover(c) ? 0.88 : 1;
+}
+/* WHY A BODY WILL NOT TAKE ONE, in the words the player gets. Returns a refusal or null, so
+   every door into the drink — the pack, a round, a sit-down, a hand in the dirt — refuses for
+   the same reasons and says the same thing. */
+function drinkRefusal(c, key){
+  const d = DRINKS[(ITEMS[key] || {}).drink];
+  if(!d) return 'That is not a drink.';
+  if(!c || c.state === 'dead') return 'There is no one in there to drink it.';
+  if(c.undead && !c.lich) return `${c.name} has no throat to put it down.`;
+  if(c.construct) return `${c.name} is not built to take that.`;
+  if(hungover(c)) return `${c.name} had a skinful last night and cannot look at it — ${(c.hangT / HOUR_SEC).toFixed(1)}h yet.`;
+  if(measuresIn(c) >= DRINK_LIMIT) return `${c.name} has had enough. Three measures is where a body stops being any use.`;
+  if((c.drinkCd || 0) > 0) return `${c.name} is still working on the last one — ${(c.drinkCd / HOUR_SEC).toFixed(1)}h.`;
+  return null;
+}
+function canDrink(c, key){ return !drinkRefusal(c, key || 'rum'); }
 /* one measure into one body. Returns false with a reason logged, so every caller — the pack,
    the bar's round, a hand poured into somebody on the ground — refuses the same way. */
 function drinkFrom(c, key){
   const d = DRINKS[(ITEMS[key] || {}).drink];
   if(!d) return false;
-  if(c.state === 'dead'){ log('There is no one in there to drink it.', 'bad'); return false; }
-  if(c.undead && !c.lich){ log(`${c.name} has no throat to put it down.`, 'bad'); return false; }
-  if(c.construct){ log(`${c.name} is not built to take that.`, 'bad'); return false; }
+  const no = drinkRefusal(c, key);
+  if(no){ log(no, 'bad'); return false; }
   const was = c.state;
   c.blood = Math.min(c.maxBlood, (c.blood || 0) + d.blood);
-  c.gritT = Math.max(c.gritT || 0, d.grit);
-  c.gritWob = Math.max(c.gritWob || 0, d.wob);
+  /* STACKED, NOT REFRESHED — the whole of the fix is on these three lines */
+  c.gritT = Math.min(GRIT_CAP, (c.gritT || 0) + d.grit);
+  c.gritWob = Math.min(GRIT_WOB_CAP, (c.gritWob || 0) + d.wob);
+  c.drunk = Math.min(DRINK_LIMIT, measuresIn(c) + 1);
+  c.drinkCd = DRINK_GAP;
   updateState(c);
   addFloat(c.x, c.y - 1.1, 'A MEASURE', '#c4884a');
   if(was === 'down' && c.state === 'ok')
     log(`${c.name} takes a measure of ${d.name} and gets up out of the dirt.`, 'good');
+  else if(c.drunk >= DRINK_LIMIT)
+    log(`${c.name} drinks a measure of ${d.name}. That is the third, and it shows — they are no use to anybody for a while.`, 'bad');
   else log(`${c.name} drinks a measure of ${d.name}.`, '');
   return true;
 }
@@ -3063,6 +3124,8 @@ function moveSpeedRaw(c){
      See tools/kiting.js. */
   if(c.reloadT > 0) s *= (c.reloadK || RELOAD_DRAG);
   if(c.drag) s *= 0.7;
+  /* a skinful in the legs, and the morning after it — see boozeDrag */
+  if(c.gritT > 0 || c.hangT > 0) s *= boozeDrag(c);
   if(c.bearing) s *= 0.72;   /* a body over your shoulder — see bearTarget */
   if(c.carry) s *= 0.8;
   if(c.carryList && c.carryList.length) s *= Math.pow(0.93, c.carryList.length);   /* a laden mule is a slow mule */
@@ -9304,7 +9367,7 @@ function hitChance(a, d){
      the 0.15 floor and turn a fight into a stalemate rather than a bad idea. */
   const blind = inTheDark(a) ? ((wepOf(a) || {}).range ? DARK_RANGED : DARK_MELEE) : 0;
   return clamp(0.55 + (a.stats.atk - d.stats.def)*0.02 + skillEdge + love - wild - blind
-               - gritWobble(a) + gritWobble(d), 0.15, 0.94);
+               - boozeWobble(a) + boozeWobble(d), 0.15, 0.94);
 }
 /* combat feedback: floating text + particle specks */
 const particles = [], projectiles = [];
@@ -10424,6 +10487,20 @@ const BUILD_TYPES = {
      off a beast, and inventing a fibre crop would mean a new node, a new job and a new tick
      to close a gap that a bench closes. This is the same trade the towns do, done by you. */
   loom:    {name:'Weaver\'s Shed',  cost:{wood:14, mats:6},   w:2, h:2, desc:'Hide into cloth — the only way to make fabric yourself'},
+  /* ---------- THE POT, AND THE ROOM YOU DRINK IT IN ----------
+     "There should be a craftable building, an enterable building like one of those in the
+     towns, that can serve as a sort of 'bar' for the squad... It should be a way to get
+     squadmates at least to the 'warm' level of affection for you, or buy them back from the
+     brink of leaving if something happened. The equivalent of sitting down and having a drink
+     and talking it over with them."
+     The still is the ordinary half: another bench, another recipe list, worked on BREWING,
+     which is a stat every body in this game has carried since the beginning and which nothing
+     has ever read. The taproom is the other half and it is not a bench at all — it is the one
+     building in the camp whose output is what your people think of you. */
+  still:   {name:'Still',           cost:{stone:14, mats:10, copper:6}, w:2, h:2,
+    desc:'A copper pot, a worm and a low fire. Greenfruit into rum, worked on BREWING (needs Distilling)'},
+  taproom: {name:'Taproom',         cost:{wood:22, mats:18, fabric:6}, w:5, h:4,
+    desc:'A plank across two barrels and somewhere to sit down. Stand a round for whoever is in it, or sit one of your people down and talk it over — the only thing in camp that mends what they make of you (needs Distilling)'},
   vat:     {name:'Flesh Vat',     cost:{stone:16, mats:12, fabric:6}, w:2, h:2,
     desc:'Grows Quickened Flesh from greenfruit and cloth. A dark-gifted hand must tend it (needs The Quickening)'},
   charnel: {name:'Charnel House', cost:{stone:20, mats:15, vflesh:6}, w:3, h:3,
@@ -10668,8 +10745,23 @@ function placeStructure(type, tx, ty, fl){
   }
   if(type==='wall' || BIN_CAP[type] != null) blocked.add(bkey(tx, ty));
   if(BIN_CAP[type] != null) b.store = {};
-  if(type==='r_bench' || type==='script' || type==='workbench' || type==='forge' || type==='crypt' || type==='kiln' || type==='smelter' || type==='vat'){
+  if(type==='r_bench' || type==='script' || type==='workbench' || type==='forge' || type==='crypt' || type==='kiln' || type==='smelter' || type==='vat' || type==='still'){
     for(let j=ty;j<ty+2;j++) for(let i=tx;i<tx+2;i++) blocked.add(bkey(i,j));
+  }
+  /* ---------- A ROOM YOU GO INSIDE ----------
+     "an enterable building like one of those in the towns". So it is built the way a town
+     building is built and not the way a bench is: `placeBuilding` walls the EDGE and leaves two
+     tiles open at the bottom for a doorway, and that is copied here rather than reinvented,
+     because the whole point of the request is that this reads as the same kind of thing. The
+     walls are what make standing a round mean something — the takers are the ones IN the room. */
+  if(type==='taproom'){
+    const dx = tx + Math.floor(bt.w / 2) - 1;
+    b.door = {x: dx, y: ty + bt.h - 1};
+    for(let j=ty; j<ty+bt.h; j++) for(let i=tx; i<tx+bt.w; i++){
+      if(i!==tx && i!==tx+bt.w-1 && j!==ty && j!==ty+bt.h-1) continue;
+      if(j===ty+bt.h-1 && (i===dx || i===dx+1)) continue;
+      blocked.add(bkey(i, j));
+    }
   }
   if(type==='tower'){
     /* ground floor: walls with a doorway. Upper deck: a floor where there was only air. */
@@ -10856,6 +10948,21 @@ const TECHS = {
     desc:'Verity\'s road, refined. A divine caster stops aging — and stops being entirely a person. Toughness halved, forever'},
   sigil_rite:   {name:'The Sigil Rite',    cost:3000,hours:144, req:'transmutation',rp:80, needsQuest:'sigil',
     desc:'The Sigil-Bound\'s road, corrected. Pour a destruction caster into etched metal without losing the gift. The body will want ore, not bread'},
+  /* ---------- AND A ROAD FOR THE DRINK ----------
+     "Rum should have its own research tree and path to crafting. (Maybe even a special recipe
+     like Dustport's that's findable after a quest of some kind.)"
+     Three rungs, and only the first two can be bought. DISTILLING is the root — a Still and,
+     just as importantly, a TAPROOM, because a camp that can make the stuff and has nowhere to
+     sit down with it has only made a trade good again. CASK AGEING is the ordinary second step
+     any brewer would take. And the third is not a project at all: the receipt for Harbourblack
+     is kept by one woman in one harbour and she does not sell it, which is what `found` means
+     here — a tech nobody can queue, that arrives when somebody hands it over. */
+  distilling:   {name:'Distilling',        cost:450, hours:56, req:'construction', mats:{wood:10, stone:6},
+    desc:'A Still and a Taproom. Greenfruit and fire into rum — and somewhere of your own to drink it, which is the half that mends what your people think of you'},
+  cask_ageing:  {name:'Cask Ageing',       cost:900, hours:72, req:'distilling', needs:'still', mats:{wood:16, mats:8},
+    desc:'Oak, dark and time. Cask Rum: more measure out of the same fruit, longer in the body, and a steadier hand on it'},
+  black_receipt:{name:'The Harbour Receipt', cost:0, hours:0, req:'cask_ageing', found:true,
+    desc:'How Harbourblack is actually made. Sella Vane knows, and she is not going to write it down for a stranger'},
   sleight:      {name:'Sleight',           cost:500, hours:56, req:'construction', rp:10,
     desc:'Dust fundamentals. A duster in the squad thins the Attention your workings draw, and buys your dead more grace in town'},
   dust_veil:    {name:'The Veil',          cost:900, hours:72, req:'sleight',      rp:25,
@@ -10993,6 +11100,10 @@ function witnessTick(){
   /* Paladin ground. They do not suffer necromancers here, which is the point of going. */
   if(bastion && player().some(c => c.state !== 'dead' && dist(c.x, c.y, bastion.x, bastion.y) < BASTION_R - 6))
     sawPlace('bastion');
+  /* THE BOTTOM OF IT. Three storeys down is the one place in this world that is hard to reach
+     rather than dangerous to reach, and nothing recorded having been there — so no errand could
+     ever ask for it. The Sump is the floor the harbour receipt is about. */
+  if(player().some(c => c.state !== 'dead' && (c.floor || 0) <= -3)) sawPlace('sump');
   /* THE POLES AT THE GATE, AND THE NAMES ON THEM. Standing close enough to read one is the
      thing Albedo asks for, so it is a thing the world has to record. */
   for(const py of pyres){
@@ -11034,6 +11145,14 @@ const RECIPES = {
   ],
   kiln: [
     {out:'coal',    n:2, cost:{wood:3},               tech:'smelting'},
+  ],
+  /* THE THIRD ONE IS NOT BOUGHT. `black_receipt` is a `found` tech — there is no START button
+     anywhere that can light it, so a still that can make Harbourblack is a still whose owner
+     went to Dustport and got Sella Vane to say how. The salt is the whole trick of it. */
+  still: [
+    {out:'rum',      n:2, cost:{fruit:6, wood:2},            tech:'distilling'},
+    {out:'rum_cask', n:2, cost:{rum:3, wood:4},              tech:'cask_ageing'},
+    {out:'rum_black',n:1, cost:{rum_cask:2, salt:6},         tech:'black_receipt'},
   ],
   /* two cloth off a hide, which is the rate the town crafters have always worked at */
   loom: [
@@ -13580,7 +13699,21 @@ function physics(c, dt){
   c.atkCd -= dt;
   if(c.oppCd > 0) c.oppCd -= dt; c.castCd -= dt;
   /* the drink wears off, and the hand steadies with it */
-  if(c.gritT > 0 && (c.gritT -= dt) <= 0){ c.gritT = 0; c.gritWob = 0; }
+  /* ---------- AND THE MORNING AFTER ----------
+     The drink runs out here, and what it leaves behind depends on how much went in. One
+     measure and you simply sober up. Two or three and there is a price on the far side of it,
+     which is the half of "a downside to the advantages" that a wobble during the drinking
+     cannot deliver — during the drinking you are also getting the grit you paid for. */
+  if(c.gritT > 0 && (c.gritT -= dt) <= 0){
+    const had = measuresIn(c);
+    c.gritT = 0; c.gritWob = 0; c.drunk = 0; c.drinkCd = 0;
+    if(had >= 2){
+      c.hangT = HANG_PER * had;
+      if(mineToKnow(c)) log(`${c.name} comes down off it, and wishes they had not had the ${had === 3 ? 'third' : 'second'}.`, 'bad');
+    }
+  }
+  if(c.hangT > 0 && (c.hangT -= dt) <= 0){ c.hangT = 0; }
+  if(c.drinkCd > 0 && (c.drinkCd -= dt) < 0) c.drinkCd = 0;
   if(c.hitT > 0) c.hitT -= dt;
   /* the threat mark fades on its own, and the bar is told ONCE when it does — see markThreat */
   if(c.threatT > 0 && (c.threatT -= dt) <= 0){ c.threatT = 0; queueSquadRefresh(); }
@@ -27080,6 +27213,19 @@ function drawStation(g, b, cx0, cz0, y){
         box(g, 0.1, 0.16, 0.1, i % 2 ? PB.gold : PB.iron,
             cx0 - W2*0.24 + (i%3)*W2*0.24, y + 0.83, cz0 - D2*0.18 + Math.floor(i/3)*D2*0.3, false);
       break;
+    case 'still':
+      /* A POT, A WORM AND A FIRE. The copper belly is the read — nothing else in a camp is
+         that colour — with the coil climbing off its shoulder and a cask under the spout. */
+      box(g, W2*0.44, 0.30, D2*0.44, PB.stoneDk, cx0 - W2*0.14, y + 0.15, cz0);        /* the hearth */
+      box(g, 0.30, 0.22, 0.18, live ? PB.ember : PB.emberDim, cx0 - W2*0.14, y + 0.13, cz0 + D2*0.26, false);
+      box(g, W2*0.40, 0.52, D2*0.40, '#a06a2a', cx0 - W2*0.14, y + 0.56, cz0);         /* the pot */
+      box(g, W2*0.24, 0.22, D2*0.24, '#b8803a', cx0 - W2*0.14, y + 0.92, cz0, false);  /* its shoulder */
+      for(let i = 0; i < 4; i++)                                                        /* the worm */
+        box(g, 0.13, 0.13, 0.13, i % 2 ? '#a06a2a' : '#8a5a24',
+            cx0 - W2*0.14 + (i + 1) * W2*0.13, y + 1.02 - i * 0.14, cz0 + (i % 2 ? 0.12 : -0.12), false);
+      box(g, W2*0.30, 0.40, D2*0.30, PB.timberDk, cx0 + W2*0.30, y + 0.20, cz0);       /* the cask */
+      box(g, W2*0.32, 0.06, D2*0.32, '#5a3a1c', cx0 + W2*0.30, y + 0.42, cz0, false);
+      break;
     case 'forge':
       box(g, W2*0.8, 0.8, D2*0.8, '#4a3028', cx0, y + 0.4, cz0);
       box(g, W2*0.26, 1.3, D2*0.26, PB.stoneDk, cx0 - W2*0.24, y + 0.9, cz0 - D2*0.24);
@@ -27169,6 +27315,34 @@ const syncPBuilds = makeDynGroup(
            and anything bolted up there — floated a clear unit above the stonework. */
         box(g, 0.95, FLOOR_H, 0.95, '#6a5a44', b.x+0.5, y + FLOOR_H/2, b.y+0.5);
         box(g, 1.04, 0.22, 1.04, '#54462f', b.x+0.5, y + FLOOR_H + 0.11, b.y+0.5, false);  /* the parapet cap */
+      }
+      else if(b.type==='taproom'){
+        /* ---------- FOUR WALLS AND A DOORWAY ----------
+           Built off the same rule the footprint is blocked with — edge tiles are wall, the two
+           at the bottom middle are the way in — so what is drawn and what is walkable cannot
+           disagree. Deliberately ROOFLESS, like the watchtower's ground storey: the camera
+           looks down on this game and a room whose whole point is who is standing in it must
+           not be a lid. */
+        const dx4 = b.x + Math.floor(b.w / 2) - 1;
+        for(let j=b.y; j<b.y+b.h; j++) for(let i=b.x; i<b.x+b.w; i++){
+          if(i!==b.x && i!==b.x+b.w-1 && j!==b.y && j!==b.y+b.h-1) continue;
+          if(j===b.y+b.h-1 && (i===dx4 || i===dx4+1)) continue;
+          box(g, 0.95, 1.9, 0.95, '#6a5238', i+0.5, y + 0.95, j+0.5);
+          box(g, 1.04, 0.16, 1.04, '#54432e', i+0.5, y + 1.98, j+0.5, false);   /* the eaves course */
+        }
+        /* the floor, so it reads as a room and not as a pen */
+        box(g, b.w - 2.05, 0.06, b.h - 2.05, '#52422e', cxp, y + 0.03, czp, false);
+        /* THE PLANK ACROSS TWO BARRELS, which is the whole building in one prop */
+        const bz = b.y + 1.1;
+        for(const sx of [-1, 1]) box(g, 0.6, 0.62, 0.6, '#5a3a1c', cxp + sx * (b.w/2 - 1.4), y + 0.31, bz);
+        box(g, b.w - 2.4, 0.12, 0.55, '#7a6242', cxp, y + 0.68, bz, false);
+        /* casks along the back wall, and a lamp over the counter */
+        for(let i = 0; i < 3; i++)
+          box(g, 0.5, 0.5, 0.5, i % 2 ? '#6a4622' : '#5a3a1c',
+              b.x + 1.4 + i * 0.85, y + 0.25, b.y + 0.9, false);
+        box(g, 0.16, 0.26, 0.16, '#c4884a', cxp, y + 1.55, bz, false);
+        /* two stools, because somebody sits down in here */
+        for(const sx of [-1, 1]) box(g, 0.34, 0.36, 0.34, '#4a3b2c', cxp + sx * 0.9, y + 0.18, bz + 1.1, false);
       }
       else if(b.type==='shack'){
         box(g, 3, 1.6, 3, '#5f4a33', cxp, y+0.8, czp);
@@ -32983,6 +33157,7 @@ const $ = id => document.getElementById(id);
    One delegated listener over the whole HUD. Anything with data-tip gets a panel; the
    text may carry a <b>title</b> and <i>aside</i>. Nothing else has to know about it. */
 const TIPS = {
+  drink:'<b>THE DRINK</b>Measures in them, and how long until it is out of them. A drinking body keeps going past where it would have dropped and comes round sooner — and swings wide, guards badly and walks slow while it lasts, worse with every measure. Three is the ceiling, there is a gap between them, and past the second there is a morning after during which they will not touch another drop.',
   torch:'<b>TORCH</b>Hours of pitch left in it. A torch only burns below ground, and when it goes out the next one in the pack is lit without asking. Run the pack dry and this hand is in the dark: it will miss, it will crawl, and it will not build.',
   atk:  '<b>ATK</b>How hard and how often this one lands a blow. Raises with use.',
   def:  '<b>DEF</b>Chance to turn a blow aside entirely. Skill, not armour.',
@@ -33155,8 +33330,14 @@ function refreshSquadBar(){
     d.className = 'port' + (mini?' mini':'') + (selected.includes(c)?' sel':'') + (c.state==='down'?' down':'')
       + (c.threatT > 0 && c.state === 'ok' ? ' threat' : '');
     const worst = Math.min(...PARTS.map(k=>c.parts[k].severed?0:Math.max(0,c.parts[k].hp)));
+    /* AND A MARK FOR WHAT THEY HAVE HAD. The panel says how long it lasts; the bar has to say
+       WHICH of them is on it, because the whole point of a three-measure ceiling is knowing who
+       is already at it before you stand another round. Amber while it is in them, dull while
+       they are paying for it. */
     const status = (c.state==='dead'?' †':c.state==='down'?' ▼':c.captured?' ⛓':c.resting?' z':'')
-      + (c.sick>0?' <span style="color:var(--warn)" title="ill">☣</span>':'');
+      + (c.sick>0?' <span style="color:var(--warn)" title="ill">☣</span>':'')
+      + (gritted(c) ? ` <span style="color:${measuresIn(c) >= 3 ? 'var(--rust)' : '#c4884a'}" title="${drunkBand(c).toLowerCase()} — ${(c.gritT / HOUR_SEC).toFixed(1)}h">●</span>`
+         : hungover(c) ? ` <span style="color:var(--dust)" title="hungover — ${(c.hangT / HOUR_SEC).toFixed(1)}h">●</span>` : '');
     if(mini){
       d.innerHTML = `<div class="nm">☠ ${c.shortTag || c.name}${status}</div>
         <div class="bar"><i style="background:var(--rust);width:${worst}%"></i></div>`;
@@ -33413,7 +33594,21 @@ function refreshCharPanel(){
     torchTxt = ` · <span style="color:${col}" data-tip="torch">TORCH ${left.toFixed(1)}h` +
       ((stash.w_torch || 0) ? ` <span style="color:var(--dust)">(+${stash.w_torch} packed)</span>` : '') + '</span>';
   }
-  $('equip').innerHTML = `<b>${ageTxt}</b>${c.goal ? ' · goal: '+c.goal : ''} · WPN <b>${(wepOf(c)||{}).name || 'Fists'}</b>${torchTxt} · ARM <b>${(c.armor&&ITEMS[c.armor]?ITEMS[c.armor].name:'None')}</b>` +
+  /* ---------- AND HOW LONG THE DRINK LASTS ----------
+     "There's gotta be a cooldown and again a downside to the advantages of alcohol. (Along with
+     a clear indicator for how long it lasts.)" There was no indicator at all: `gritT` ticked
+     down in physics and NOTHING anywhere in the file read it out. A player could not tell a
+     sober squadmate from one on their third, which is the whole reason the drink felt free.
+     Measures and hours, in game hours, because hours are what the rest of this panel speaks. */
+  let cupTxt = '';
+  if(gritted(c)){
+    const n = Math.max(1, measuresIn(c));
+    const col = n >= 3 ? 'var(--rust)' : n >= 2 ? 'var(--warn)' : '#c4884a';
+    cupTxt = ` · <span style="color:${col}" data-tip="drink">${drunkBand(c)} ${n}/${DRINK_LIMIT} — ${(c.gritT / HOUR_SEC).toFixed(1)}h</span>`;
+  } else if(hungover(c)){
+    cupTxt = ` · <span style="color:var(--warn)" data-tip="drink">HUNGOVER — ${(c.hangT / HOUR_SEC).toFixed(1)}h</span>`;
+  }
+  $('equip').innerHTML = `<b>${ageTxt}</b>${c.goal ? ' · goal: '+c.goal : ''} · WPN <b>${(wepOf(c)||{}).name || 'Fists'}</b>${torchTxt}${cupTxt} · ARM <b>${(c.armor&&ITEMS[c.armor]?ITEMS[c.armor].name:'None')}</b>` +
     wornTxt +
     (c.pack ? ` · PACK <b>${ITEMS[c.pack].name}</b>` : '') +
     `${giftTxt}${bindTxt}${convTxt}<br><span style="color:${+ldNow > +ldCap ? 'var(--rust)' : 'var(--dust)'}">LOAD ${ldNow}/${ldCap}kg${invTxt}</span>`;
@@ -33636,7 +33831,8 @@ function baseScore(){
   let s = 0;
   for(const b of pBuilds){
     s += b.type==='wall' ? 1 : b.type==='shack' ? 6 : b.type==='tower' ? 4
-       : b.type==='farm' ? 3 : b.type==='forge' || b.type==='workbench' || b.type==='r_bench' || b.type==='armoury' ? 3
+       : b.type==='taproom' ? 5 : b.type==='farm' ? 3
+       : b.type==='forge' || b.type==='workbench' || b.type==='r_bench' || b.type==='armoury' || b.type==='still' ? 3
        : b.type==='bin' || b.type==='larder' || b.type==='shed' ? 2 : b.type==='wartable' ? 3 : 1;
   }
   return s;
@@ -34031,6 +34227,9 @@ function openResearch(){
     }
     for(const key of Object.keys(TECHS)){
       const t = TECHS[key];
+      /* A THING THAT IS FOUND IS NOT A PROJECT. It has no cost, no hours and no START button
+         that could ever light — listing it here would only be a row that says no forever. */
+      if(t.found) continue;
       const row = document.createElement('div'); row.className = 'trow';
       let status;
       const mats = t.mats || {};
@@ -34083,11 +34282,15 @@ function openResearch(){
   };
   rndr();
 }
-function craftSkillFor(kind){ return (kind==='forge' || kind==='smelter') ? 'smithing' : 'crafting'; }
+/* AND A STILL IS WORKED BY A BREWER. `brewing` has been rolled on every body in this game from
+   the beginning, has a racial learn rate on four lines and a GOAL somebody can train toward,
+   and until the still there was nothing anywhere in the file that read it. */
+function craftSkillFor(kind){ return (kind==='forge' || kind==='smelter') ? 'smithing' : kind==='still' ? 'brewing' : 'crafting'; }
 function bestCrafter(kind, near){
+  const sk = craftSkillFor(kind);
   return player().filter(c => c.state==='ok' && (!c.undead || c.lich) &&
       (!near || dist(c.x, c.y, near.x+1, near.y+1) < 4))
-    .sort((a,b) => b.stats[craftSkillFor(kind)] - a.stats[craftSkillFor(kind)])[0];
+    .sort((a,b) => (b.stats[sk] || 0) - (a.stats[sk] || 0))[0];
 }
 /* ============================================================ THE WORK ORDER BOOK
    "Perhaps the 'crafting' menu could be similar to research in that it is universal. It can list
@@ -34149,7 +34352,7 @@ function takeOrder(c){
    and whether you have it, and takes orders you do not have to be standing anywhere to place.
    Modelled on the research panel rather than on the old per-bench window, which is what the
    note asks for — "similar to research in that it is universal". */
-const SHOP_NAMES = {workbench:'WORKBENCH', forge:'FORGE', kiln:'CHARCOAL KILN', smelter:'SMELTER', loom:"WEAVER'S SHED"};
+const SHOP_NAMES = {workbench:'WORKBENCH', forge:'FORGE', kiln:'CHARCOAL KILN', smelter:'SMELTER', loom:"WEAVER'S SHED", still:'STILL'};
 function craftHands(){
   return chars.filter(c => c.faction === 'player' && c.state === 'ok' && c.job === 'craft' && mindedDead(c));
 }
@@ -34228,7 +34431,7 @@ let craftingBench = null;
 function openCrafting(kind, bench){
   craftingBench = bench || null;
   const crafter = bestCrafter(kind, craftingBench);
-  const TITLES = {forge:'FORGE', workbench:'WORKBENCH', kiln:'CHARCOAL KILN', smelter:'SMELTER', loom:"WEAVER'S SHED"};
+  const TITLES = {forge:'FORGE', workbench:'WORKBENCH', kiln:'CHARCOAL KILN', smelter:'SMELTER', loom:"WEAVER'S SHED", still:'STILL'};
   openModal(TITLES[kind] || kind.toUpperCase(),
     crafter ? `${crafter.name} works it — ${craftSkillFor(kind).toUpperCase()} ${Math.floor(crafter.stats[craftSkillFor(kind)])}. Skill decides the grade; fortune has a say. Shift-click to craft ten.`
             : 'Nobody close enough to work it.');
@@ -35350,9 +35553,302 @@ function openCaravanTrade(tr){
    own price for the drink, so a round in Dustport — where the stuff is made — is what a round in
    Dustport ought to be, and one at Copperhold is what the mine charges for it. */
 function roundCost(town, key, n){ return Math.max(1, Math.round(priceBuy(town, key) * n * 0.8)); }
+/* AND A ROUND IS ONLY POURED FOR BODIES THAT CAN TAKE ONE. This filtered on the dead and the
+   built and nothing else, which is the other half of "you can down shots forever in a bar" —
+   the round charged for everybody in the room and poured into whoever happened to be under the
+   limit, silently. `canDrink` is the same gate the pack and the taproom use. */
 function roundTakers(v){
   return chars.filter(c => c.faction === 'player' && c.state !== 'dead' && !c.undead && !c.construct &&
+    dist(c.x, c.y, v.x, v.y) < 12 && canDrink(c, 'rum'));
+}
+/* everybody of yours standing near the bar, whether or not they can take another — so the
+   window can say "they have all had enough" rather than silently dropping the row */
+function roundPresent(v){
+  return chars.filter(c => c.faction === 'player' && c.state !== 'dead' && !c.undead && !c.construct &&
     dist(c.x, c.y, v.x, v.y) < 12);
+}
+/* ============================================================ THE HARBOUR RECEIPT
+   "Maybe even a special recipe like Dustport's that's findable after a quest of some kind."
+
+   Harbourblack has been buyable in exactly one town since the day it was written and makeable
+   by nobody. The receipt is the end of the rum road and it is the one rung that cannot be
+   bought: `black_receipt` carries `found`, so there is no START button for it anywhere in the
+   research bench — the only way it ever lands in `research.done` is Sella Vane saying how.
+
+   Three stages, kept deliberately short, because this is a recipe and not an ascension. What
+   she asks for is what a woman who keeps a bar in a dying harbour would actually want: stock
+   she cannot get since the road went bad, proof you can make the ordinary stuff before she
+   trusts you with hers, and the one thing she will not go and fetch herself. */
+const blackReceipt = {stage: 0};
+const RECEIPT_STAGES = [
+  { need: {fruit: 30, salt: 20},
+    ask: '"The receipt." She does not look up. "Everybody asks. Here is the thing nobody asks: '
+       + 'I have not had fruit off the Greenrest road in two seasons and the salt men want paying in iron. '
+       + 'Thirty greenfruit and twenty measures of salt, and I will at least be talking to you."',
+    hint: 'Sella Vane wants 30 Greenfruit and 20 Salt.',
+    done: '"Well," she says, and puts it behind the counter without counting it. "That is two months. '
+        + 'Ask me again when you have made something."' },
+  { need: {rum_cask: 4},
+    ask: '"Anybody can distil. The question is whether you can leave a thing alone long enough for it '
+       + 'to become something." She taps the plank. "Four measures of your own, off the wood. '
+       + 'Not the raw stuff. I will know."',
+    hint: 'Sella Vane wants 4 measures of your own Cask Rum — which means a Still and Cask Ageing.',
+    done: '"Hm." She drinks it, which is more than she does for most people. "That is not good. '
+        + 'It is drinkable, which is a different word, and it is a word I can work with."' },
+  { need: {}, place: 'sump',
+    ask: '"Last thing, and it is the whole of it. What makes it black is not the oak — it is what the '
+       + 'water down there does to the oak, and the water that does it is three storeys under the world. '
+       + 'I am sixty-one and I am not going down a hole. Go and stand in the Sump. Come back and tell me '
+       + 'what the air tastes like, and if you get the answer right I will tell you the rest."',
+    hint: 'Go down to the Sump — the third depth — and come back to Sella Vane.',
+    done: '"Salt," she says. "Everybody says rot. It is salt, and it is the same salt, and that is why '
+        + 'it works." She writes it out on the back of a bill of lading. It takes her a long time; '
+        + 'she is not a writing woman. THE HARBOUR RECEIPT IS YOURS.' },
+];
+function receiptStage(){ return RECEIPT_STAGES[blackReceipt.stage] || null; }
+function receiptMet(st){
+  if(!st) return false;
+  if(st.place && !placesSeen[st.place]) return false;
+  return canAfford(st.need || {});
+}
+function receiptProgress(st){
+  const parts = Object.keys(st.need || {}).map(k => `${ITEMS[k].name} ${campHas(k)}/${st.need[k]}`);
+  if(st.place) parts.push(placesSeen[st.place] ? 'you have stood down there' : 'you have not been down there');
+  return parts.join(' · ') || 'nothing to bring';
+}
+function receiptAdvance(){
+  const st = receiptStage();
+  if(!st || !receiptMet(st)) return false;
+  if(Object.keys(st.need || {}).length) campSpend(st.need);
+  blackReceipt.stage++;
+  log(st.done, 'good');
+  if(blackReceipt.stage >= RECEIPT_STAGES.length && !research.done.black_receipt){
+    research.done.black_receipt = true;
+    log(`THE HARBOUR RECEIPT. Harbourblack can be put up at your own Still now — two measures off the wood and six of salt.`, 'good');
+  }
+  refreshInv();
+  return true;
+}
+/* ============================================================ THE TAPROOM
+   "There should be a craftable building, an enterable building like one of those in the towns,
+   that can serve as a sort of 'bar' for the squad. Serving rum to those inside or something like
+   that. It should be a way to get squadmates at least to the 'warm' level of affection for you,
+   or buy them back from the brink of leaving if something happened. The equivalent of sitting
+   down and having a drink and talking it over with them."
+
+   Regard has been a one-way street since the day it was written. `deed` moves it, `regardTick`
+   acts on it, and every single thing that moves it is something you did somewhere else — a sack,
+   a rite, a retreat, a door closed. There was NOTHING anywhere in the file a player could do
+   deliberately, at a place, to mend it. A body that slid to SEETHING was a body you watched
+   leave, and the only lever was to go and do more of whatever their conviction happens to like.
+
+   So the taproom is a lever, and it is deliberately a short one:
+
+     THE ROUND  — everybody in the room gets a measure and the ledger hears about it. Cheap,
+                  broad, and it moves everyone a little the way the bar's round always has.
+     THE SIT-DOWN — one person, one evening. This is the thing the note is actually about, and
+                  it stops dead at WARM. You can pull somebody back from the edge and you can
+                  get them glad to be here; you cannot drink a stranger into a zealot. Devotion
+                  is earned out in the world, which is where it always was.
+
+   AND IT COSTS THE HOST. Both of them drink, so the necromancer doing the mending is going down
+   the same three-measure road as everybody else — which is the natural limit on how many people
+   can be talked round in one night, and it wanted no rule of its own to say so. */
+const TAP_WARM = 25;        /* the WARM line in REGARD — a drink reaches it and stops */
+const TAP_ROUND_LIFT = 0.4; /* what a round is worth through the deed ledger */
+/* AND A LITTLE OF IT DIRECTLY. `deed('gold')` is what the town bar's round has always used, and
+   only two of the seven convictions weight `gold` at all — so a round poured for a squad of
+   Haunted and Scholars moved precisely nothing and the row was decoration. Three points each,
+   under the same WARM ceiling as the sit-down, is the BROAD and SHALLOW half of the pair: a
+   sit-down is twenty points to one person for two measures, a round is three points to everybody
+   for one measure each, and the sit-down is the better trade per measure by a long way. */
+const TAP_ROUND_REGARD = 3;
+function tapBest(){
+  /* the best thing in the wagon, because you pour your good stuff when you mean it */
+  return ['rum_black', 'rum_cask', 'rum'].find(k => campHas(k) > 0) || null;
+}
+/* WHO IS IN THE ROOM. The walls are real — `placeStructure` blocks the edge and leaves a
+   doorway — so this is the footprint with one tile of apron, which lets somebody standing in
+   the door count. Floor zero: there are no taprooms underground. */
+function inTaproom(b, c){
+  return (c.floor || 0) === 0 &&
+    c.x >= b.x - 1 && c.x <= b.x + b.w + 1 && c.y >= b.y - 1 && c.y <= b.y + b.h + 1;
+}
+function tapPresent(b){
+  return chars.filter(c => c.faction === 'player' && c.state !== 'dead' && inTaproom(b, c));
+}
+/* who could actually take a measure — the same gate the bar and the pack use */
+function tapTakers(b){ return tapPresent(b).filter(c => canDrink(c, 'rum')); }
+/* WHO POURS. The protagonist if they are in the room, otherwise whoever of yours in here is
+   best at talking — a sit-down is a conversation and `charisma` is what this game calls that. */
+function tapHost(b, notThis){
+  const here = tapPresent(b).filter(c => c !== notThis && hasMind(c) && !c.undead && !c.construct);
+  const prot = here.find(c => c.protagonist);
+  if(prot) return prot;
+  return here.sort((a, b2) => (b2.stats.charisma || 0) - (a.stats.charisma || 0))[0] || null;
+}
+/* how far one evening moves somebody. Charisma is the whole of the variance, because it is the
+   stat this game already uses for "can you talk to people". */
+function sitDownLift(host){ return 16 + (host && host.stats ? (host.stats.charisma || 0) * 0.5 : 0); }
+/* THE SIT-DOWN ITSELF, apart from its window, so a harness can ask about it without clicking.
+   Returns a line on success and null on refusal, having logged the reason. */
+function sitDownWith(b, c, host){
+  if(!host){ log('There is nobody of yours in here to sit down with them.', 'bad'); return null; }
+  if(c === host){ log('Drinking alone is not what the room is for.', 'bad'); return null; }
+  if(!hasMind(c)){ log(`${c.name} has nothing to talk over.`, 'bad'); return null; }
+  if(c.satDay === day){ log(`${host.name} has already had that conversation with ${c.name} today.`, 'bad'); return null; }
+  const key = tapBest();
+  if(!key){ log('There is not a drop of anything in the wagon.', 'bad'); return null; }
+  if(campHas(key) < 2){ log(`One measure of ${ITEMS[key].name} left. A sit-down takes two.`, 'bad'); return null; }
+  for(const m of [c, host]){
+    const no = drinkRefusal(m, key);
+    if(no){ log(no, 'bad'); return null; }
+  }
+  campTake(key, 2);
+  drinkFrom(c, key); drinkFrom(host, key);
+  c.satDay = day;
+  bondAdd(host, c, 12);
+  const was = c.regard || 0;
+  let line;
+  if(was >= TAP_WARM){
+    line = `${host.name} and ${c.name} sit and drink. Nothing needed saying, and neither of them says it.`;
+    log(line, '');
+  } else {
+    const before = regardBand(was);
+    c.regard = Math.min(TAP_WARM, was + sitDownLift(host));
+    const after = regardBand(c.regard);
+    line = `${host.name} sits ${c.name} down and they talk it over. ${Math.round(c.regard - was)} points of it mended`
+         + (after.key !== before.key ? ` — ${after.label || 'they have stopped seething'}.` : '.');
+    log(line, 'good');
+    /* AND IF THEY WERE GOING, SAY SO NOW. `regardTick` clears `leaving` on its own schedule,
+       which is the right place for it to live — but a player who just spent two measures and
+       an evening on somebody needs to hear the answer in the same breath as the question. */
+    if(c.leaving && c.regard > -35){
+      c.leaving = null;
+      log(`${c.name} has thought better of leaving.`, 'good');
+      say(c, 'All right. All right.');
+    } else if(c.leaving){
+      /* ---------- AND ONE DRINK BUYS ONE MORE NIGHT ----------
+         "or buy them back from the brink of leaving if something happened." A body at SEETHING
+         is given ONE day by `regardTick` before it walks, and one evening is worth about twenty
+         points — so without this a squadmate who went past -55 could not be saved at all, no
+         matter how many measures were poured, and the feature would have read as broken on the
+         only body it is most obviously for. It is not a pardon: it moves the day by one, which
+         means the repair has to be kept up until the regard itself is above the line. */
+      c.leaving = day + 1;
+      log(`${c.name} is still going. It is a start, and it is not enough — but they will give it another night.`, 'bad');
+    }
+  }
+  refreshInv(); refreshSquadBar(); refreshCharPanel();
+  return line;
+}
+function openTaproom(b){
+  openModal('THE TAPROOM',
+    tapPresent(b).length ? 'A plank across two barrels, and whoever walked in. What is poured here is not a buff — it is what they make of you.'
+                         : 'Nobody has come in. Send somebody through the door and try again.');
+  const body = $('modalbody');
+  const render = () => {
+    body.innerHTML = '';
+    /* WHO IS IN HERE is re-asked on every redraw, not closed over: the world keeps running
+       behind an open window and somebody walking out between two clicks must not still be
+       standing at the plank in the list. */
+    const present = tapPresent(b);
+    /* WHAT IS IN THE WAGON, first, because every row below is spending it */
+    {
+      const held = ['rum', 'rum_cask', 'rum_black'].filter(k => campHas(k) > 0);
+      const d = document.createElement('div');
+      d.style.cssText = 'color:var(--dust);margin-bottom:8px';
+      d.textContent = held.length
+        ? 'BEHIND THE PLANK: ' + held.map(k => `${campHas(k)} ${ITEMS[k].name}`).join(' · ')
+        : 'BEHIND THE PLANK: nothing. Build a Still, or buy it in a town.';
+      body.appendChild(d);
+    }
+    /* ---- THE ROUND ---- */
+    {
+      const takers = tapTakers(b);
+      const h = document.createElement('div');
+      h.style.cssText = 'margin:10px 0 4px;color:var(--warn);letter-spacing:2px';
+      h.textContent = 'STAND A ROUND'; body.appendChild(h);
+      const rn = document.createElement('div');
+      rn.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:6px';
+      rn.textContent = `One measure each, and ${TAP_ROUND_REGARD} points of regard each — under the same WARM ceiling. Broad and shallow; the sit-down below is the other way round.`;
+      body.appendChild(rn);
+      if(!takers.length){
+        const d = document.createElement('div'); d.style.color = 'var(--dust)';
+        d.textContent = present.length ? 'Everybody in here has had enough for now.' : 'There is nobody in the room.';
+        body.appendChild(d);
+      }
+      for(const key of ['rum', 'rum_cask', 'rum_black']){
+        if(!takers.length) break;
+        if(campHas(key) < takers.length) continue;
+        const row = document.createElement('div'); row.className = 'trow';
+        row.innerHTML = `<span class="tn">A round of ${ITEMS[key].name} <span style="color:var(--dust)">${takers.length} of yours in the room</span></span>`;
+        const btn = document.createElement('button');
+        btn.textContent = `POUR ${takers.length}`;
+        btn.onclick = () => {
+          const who = tapTakers(b);
+          if(!who.length){ log('There is nobody in here to drink it.', 'bad'); return; }
+          if(campHas(key) < who.length){ log('Not enough behind the plank.', 'bad'); return; }
+          campTake(key, who.length);
+          for(const m of who){
+            drinkFrom(m, key);
+            if(hasMind(m) && (m.regard || 0) < TAP_WARM)
+              m.regard = Math.min(TAP_WARM, (m.regard || 0) + TAP_ROUND_REGARD);
+          }
+          deed('gold', TAP_ROUND_LIFT);
+          log(`${who.length} measure${who.length === 1 ? '' : 's'} of ${ITEMS[key].name} go round the room.`, 'good');
+          refreshInv(); refreshSquadBar(); render();
+        };
+        row.appendChild(btn);
+        body.appendChild(row);
+      }
+    }
+    /* ---- AND SITTING ONE OF THEM DOWN ---- */
+    {
+      const h = document.createElement('div');
+      h.style.cssText = 'margin:14px 0 4px;color:var(--warn);letter-spacing:2px';
+      h.textContent = 'SIT DOWN WITH SOMEBODY'; body.appendChild(h);
+      const key = tapBest();
+      const note = document.createElement('div');
+      note.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:6px';
+      note.textContent = key
+        ? `Two measures of ${ITEMS[key].name} and an evening. One conversation per person per day, and it stops at WARM — past that they have to be earned out in the world.`
+        : 'Nothing to pour, so there is nothing to sit down over.';
+      body.appendChild(note);
+      const mindful = present.filter(c => hasMind(c) && !c.construct);
+      if(!mindful.length){
+        const d = document.createElement('div'); d.style.color = 'var(--dust)';
+        d.textContent = 'Nobody in here has anything to talk over. The bound do not drink and they do not sit down.';
+        body.appendChild(d);
+      }
+      for(const c of mindful){
+        const host = tapHost(b, c);
+        const bd = regardBand(c.regard || 0);
+        const col = (c.regard || 0) <= -30 ? '#c4543a' : (c.regard || 0) >= TAP_WARM ? '#8aa04a' : 'var(--dust)';
+        const row = document.createElement('div'); row.className = 'trow';
+        row.innerHTML = `<span class="tn">${c.name} <span style="color:${col}">${bd.label || 'no strong view'}` +
+          `${c.leaving ? ' · LEAVING' : ''}</span> <span style="color:var(--dust)">${Math.round(c.regard || 0)}</span></span>`;
+        const why = !key ? 'nothing to pour'
+          : c.satDay === day ? 'already talked today'
+          : !host ? 'nobody to sit with them'
+          : campHas(key) < 2 ? 'needs two measures'
+          : drinkRefusal(c, key) ? 'they have had enough'
+          : drinkRefusal(host, key) ? `${host.name} has had enough` : null;
+        if(why){
+          const sp = document.createElement('span');
+          sp.style.color = 'var(--dust)'; sp.textContent = why;
+          row.appendChild(sp);
+        } else {
+          const btn = document.createElement('button');
+          btn.textContent = (c.regard || 0) >= TAP_WARM ? 'HAVE A DRINK' : `SIT DOWN — ${host.name}`;
+          btn.onclick = () => { if(sitDownWith(b, c, tapHost(b, c))) render(); };
+          row.appendChild(btn);
+        }
+        body.appendChild(row);
+      }
+    }
+  };
+  render();
 }
 function openBar(v){
   const town = v.town;
@@ -35381,12 +35877,41 @@ function openBar(v){
       row.innerHTML = `<span class="tn">${it.name}</span><span class="tc">own ${stash[k]||0}</span><button data-buy="${k}">BUY ${bp}</button>`;
       body.appendChild(row);
     }
+    /* ---------- AND THE ONE THING SHE WILL NOT SELL ----------
+       Shown only in the house that HAS a brew, and only while it is still hers to give. It sits
+       above the round on purpose: it is the reason a player walks into this particular bar. */
+    if(brew && v.house && !research.done.black_receipt){
+      const st = receiptStage();
+      const rh = document.createElement('div');
+      rh.style.cssText = 'margin:12px 0 4px;color:var(--warn);letter-spacing:2px';
+      rh.textContent = `THE RECEIPT — ${blackReceipt.stage + 1} OF ${RECEIPT_STAGES.length}`;
+      body.appendChild(rh);
+      const sy = document.createElement('div');
+      sy.style.cssText = 'color:var(--bone);font-style:italic;line-height:1.5;margin-bottom:8px';
+      sy.textContent = st.ask;
+      body.appendChild(sy);
+      const row = document.createElement('div'); row.className = 'trow';
+      row.innerHTML = `<span class="tn">${receiptProgress(st)}</span>`;
+      const btn = document.createElement('button');
+      btn.textContent = st.place && !Object.keys(st.need || {}).length ? 'TELL HER' : 'HAND IT OVER';
+      btn.disabled = !receiptMet(st);
+      btn.onclick = () => { if(receiptAdvance()){ refreshTop(); render(); } };
+      row.appendChild(btn);
+      body.appendChild(row);
+    }
     /* ---------- STANDING A ROUND ----------
        The one thing a bar is FOR that a shop is not: you buy it for other people. Everyone of
        yours in the room gets the measure — which is a real effect on a real body, not a morale
        number — and they remember that you did it. */
     {
       const takers = roundTakers(v);
+      /* AND WHY THERE IS NO ROUND, when there is nobody left who can take one */
+      if(!takers.length && roundPresent(v).length){
+        const d2 = document.createElement('div');
+        d2.style.cssText = 'color:var(--dust);margin:6px 0';
+        d2.textContent = 'Everybody of yours in here has had enough for now.';
+        body.appendChild(d2);
+      }
       const brew2 = v.house && BAR_PLAN[town.def.key] && BAR_PLAN[town.def.key].brew;
       for(const key of (brew2 && stockOf(town, brew2) >= takers.length ? [brew2, 'rum'] : ['rum'])){
         if(!takers.length) break;
@@ -35560,7 +36085,10 @@ const BUILD_CATS = [
      tools/kin2.js asks the BAR for it now, not the table. */
   ['STRUCTURE',  ['wall', 'rampart', 'shack', 'home', 'tower', 'cell', 'wartable']],
   ['DEFENCE',    ['turret', 'lance', 'torchpost']],
-  ['LABOUR',     ['farm', 'workbench', 'armoury', 'loom', 'forge', 'kiln', 'smelter']],
+  ['LABOUR',     ['farm', 'workbench', 'armoury', 'loom', 'forge', 'kiln', 'smelter', 'still']],
+  /* A CATEGORY OF ITS OWN, because it is not labour and it is not study. What a taproom makes
+     is morale, and it is the only building in here that does. */
+  ['THE ROOM',   ['taproom']],
   ['STUDY',      ['r_bench', 'script']],
   ['THE CRAFT',  ['circle', 'crypt', 'boneyard', 'vat', 'charnel', 'ossuary']],
   ['STORAGE',    ['bin', 'rick', 'spile', 'orebin', 'larder', 'shed', 'relic']],
@@ -35569,6 +36097,7 @@ const BUILD_CATS = [
 function buildLock(key){
   if((key==='circle' || key==='crypt') && !research.done.rites_binding) return 'Rites of Binding';
   if((key==='kiln' || key==='smelter') && !research.done.smelting) return 'Smelting';
+  if((key==='still' || key==='taproom') && !research.done.distilling) return 'Distilling';
   if(key==='vat' && !research.done.quickening) return 'The Quickening';
   if(key==='boneyard' && !research.done.rites_binding) return 'Rites of Binding';
   if(key==='charnel' && !research.done.carrion_rites) return 'Carrion Rites';
@@ -37080,7 +37609,7 @@ cv.addEventListener('mousedown', e => {
         return;
       }
     }
-    const ws = pBuilds.find(b => ['r_bench','script','workbench','forge','circle','crypt','kiln','smelter','loom','wartable','armoury'].includes(b.type) &&
+    const ws = pBuilds.find(b => ['r_bench','script','workbench','forge','circle','crypt','kiln','smelter','loom','wartable','armoury','still','taproom'].includes(b.type) &&
       wx >= b.x-0.3 && wx <= b.x+b.w+0.3 && wy >= b.y-0.3 && wy <= b.y+b.h+0.3);
     if(ws){
       const near = movers.some(m => dist(m.x,m.y,ws.x+1,ws.y+1) < 5) ||
@@ -37092,6 +37621,9 @@ cv.addEventListener('mousedown', e => {
       else if(ws.type==='circle') openBinding(ws);
       else if(ws.type==='crypt') openCrypt(ws);
       else if(ws.type==='armoury') openArmoury(ws);
+      /* THE ROOM YOU WALKED INTO, not the first one built — the whole point of a taproom is who
+         is standing in THIS one, so it has to be the building under the cursor */
+      else if(ws.type==='taproom') openTaproom(ws);
       /* EVERY WORKSHOP OPENS THE SAME BOOK. You still have to HAVE the building — the order
          refuses without it — but you no longer have to walk anybody to it to place the order. */
       else openWorkshops();
@@ -38998,6 +39530,10 @@ function snapshot(){
     clawDmg:c.clawDmg, clawWt:c.clawWt||null, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead, storied:!!c.storied,
     servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, lamp:!!c.lamp, eater:!!c.eater, harvestBonus:c.harvestBonus??null, corpseWorth:c.corpseWorth??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, sweep:c.sweep?{...c.sweep}:null, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, boundTold:!!c.boundTold,
+    /* WHAT THEY HAVE HAD. Saved because it is a LIMIT, and a limit you can wash off by
+       reloading the game is not one — the taproom's whole cost is the three-measure ceiling
+       and the morning after it. */
+    gritT:c.gritT||0, gritWob:c.gritWob||0, drunk:c.drunk||0, drinkCd:c.drinkCd||0, hangT:c.hangT||0, satDay:c.satDay||0,
     protagonist:!!c.protagonist, squadNo:c.squadNo||0, wasOrder:!!c.wasOrder,
     salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null, lieuWear:c.lieuWear||0,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
@@ -39049,6 +39585,7 @@ function snapshot(){
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen}, hiresPaid: {...hiresPaid},
+    blackReceipt: blackReceipt.stage,
     legendsGiven: {...legendsGiven},
     /* ---------- THE TWO HOUSES, WHICH WERE NOT BEING KEPT ----------
        Neither the pit's ledger nor the estate's was in the save. The arena's is an old gap and
@@ -39322,6 +39859,7 @@ function restore(d){
   Object.assign(bossSlain, d.bossSlain || {});
   Object.assign(legendsGiven, d.legendsGiven || {});
   Object.assign(placesSeen, d.placesSeen || {});
+  blackReceipt.stage = d.blackReceipt || 0;
   if(arena && d.arenaS){ arena.wins = d.arenaS.wins || 0; arena.losses = d.arenaS.losses || 0; arena.best = d.arenaS.best ?? -1; }
   if(d.altarS) d.altarS.forEach((a2, i) => { const a = deepAltars[i]; if(!a) return;
     a.regard = a2.regard || 0; a.kin = !!a2.kin; a.given = (a2.given || []).slice(); });
@@ -39483,6 +40021,8 @@ function restore(d){
     c.noMind = !!s.noMind;
     if(c.shape && c.shape.mind === undefined && c.shape.will !== undefined) c.shape.mind = c.shape.will;
     c.conviction = s.conviction || c.conviction || rollConviction(c.gift); c.regard = s.regard || 0;
+    c.gritT = s.gritT || 0; c.gritWob = s.gritWob || 0; c.drunk = s.drunk || 0;
+    c.drinkCd = s.drinkCd || 0; c.hangT = s.hangT || 0; c.satDay = s.satDay || 0;
     /* WHO YOU ARE HAS TO SURVIVE A RELOAD. Without this the flag is lost, `player()` falls
        back to array order, and the recruit who happened to be placed at worldgen is the main
        character again the moment you load. `squadSeq` is carried past the highest number in
@@ -40895,7 +41435,7 @@ function applyCreation(race, gift, origin, sub){
       ['kiln',     6,  4], ['smelter',   9,  4], ['vat',      12, 4],
       ['circle',   6,  8], ['crypt',     9,  8], ['charnel',  12, 8],
       ['ossuary', 16,  8], ['farm',      0,  4], ['shack',    0,  0],
-      ['tower',   16,  0],
+      ['tower',   16,  0], ['still',   19,  4], ['taproom', 19,  8],
       ['shed',    4, 12], ['rick',  6, 12], ['spile', 8, 12],
       ['orebin',  10,12], ['larder',12, 12], ['relic', 14, 12], ['bin', 16, 12],
     ];
