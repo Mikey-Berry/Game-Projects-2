@@ -7643,3 +7643,62 @@ inside 1.45. Worth keeping, not worth the theory it was based on.
   checking the other harnesses that verdict by pattern rather than by a `!!` prefix: the `!!`
   convention exists precisely because a literal prefix cannot be spelled wrong by accident, and
   this file uses a regex over prose instead.
+
+[116] THE GRID WAS REBUILT SEVENTEEN HUNDRED TIMES A STEP TO MOVE FIFTY-FIVE BODIES.
+  "Still fighting performance issues on the laptop."
+
+  Measured first, and the profile said something the earlier work had missed. Three passes in
+  `update` are WHOLE-WORLD and run ONCE PER SIM STEP, so every one of them multiplies by the
+  speed button — which is the mechanism behind "the higher speeds are where the FPS tanks":
+      update's own dispatch loop   17.8%
+      rebuildCharGrid               7.4%
+      separate                      6.2%
+  Thirty-one per cent of the sim that the LOD tiers do not touch at all, because LOD only decides
+  how often `ai` and `physics` fire — every body is still VISITED every step to decide that.
+
+  · `rebuildCharGrid` cleared a Map of seventeen hundred entries and refilled it, every step.
+    `CELL` IS EIGHT TILES and a body walks about 3.4 tiles a second, so it crosses a cell line
+    roughly once every two and a half seconds. Counted, not guessed: 55 OF 1777 BODIES CHANGE
+    BUCKET IN AN AVERAGE STEP. The pass re-filed all 1777 to relocate fifty-five, and then did it
+    again a thirtieth of a second later.
+  · A body is FILED now and stays in its bucket until its cell actually changes, so the cost
+    tracks how far things have walked — a real-time quantity that does not care what the speed
+    button says.
+  · AND `_phSkip` WAS DEAD. Written three times per body per step — 1766 bodies were carrying it
+    — and read by NOTHING, in the game or in the suite. A flag left behind when the `_far` tier
+    stopped alternating on a boolean and started accumulating. `_cold` beside it looks equally
+    dead from inside the game and is NOT: four harnesses read it, which is how the tier is
+    asserted at all. Checking the suite as well as the source is what separated them.
+
+[FAULT] AND THE FIRST CUT HANDED THE WHOLE SAVING BACK. The filing was written with a
+  `gridCellOf(c)` helper called in the loop — one extra call per body per step, seventeen hundred
+  of them, in the hottest loop in the game. Measured across three interleaved pairs: 10.50 ms a
+  step before the change and 10.62 after. NOTHING, and slightly worse. Inlining the two lines of
+  arithmetic back into the loop (the helper stays for the cold paths) turned it into a win on
+  every round. THE CALL WAS WORTH MORE THAN THE ALGORITHM: at this loop's frequency, a function
+  call is not free and no amount of asymptotic improvement upstream survives paying one.
+
+[NOTE] AND A SHARED CONTAINER CANNOT MEASURE AN EIGHT PER CENT CHANGE, which is why this entry
+  leads with a COUNT and not a millisecond. Three paired rounds said the change was a clear win;
+  three more said it was flat; the honest answer needed eight interleaved pairs to produce:
+      before median 10.325 ms   after median 9.297 ms
+      after wins 6 of 8 rounds, median delta -0.83 ms (-8.0%)
+  Two rounds went the other way. That is the box, not the code — and it is the same lesson [114]
+  arrived at from the other direction: when the instrument's noise is the same size as the
+  effect, assert the thing that is exact. `tools/grid.js` counts Map operations and bucket
+  membership, both of which are matters of fact. COUNTS ARE THE CLAIM, A MILLISECOND IS COLOUR.
+
+[FAULT] AND THE HARNESS'S OWN FIRST RUN WENT RED FOR THE WRONG REASON, TWICE.
+  · `stillExact` censused the grid straight after the last `update()` returned and read 1665
+    filed against 1663 wanted. That is not a leak in the filing: `rebuildCharGrid` is the FIRST
+    thing in `update`, and bodies die, get reaped and are born LATER in the same step, so between
+    the end of one step and the top of the next the grid is stale by whoever left after it ran.
+    The full rebuild this replaces had exactly the same property — it is where the pass sits, not
+    how it works — and it is harmless because every reader inside a step runs after the pass. The
+    claim asks at the top of a step now, and asserts that the drift HEALS rather than that it
+    never happens.
+  · And against the OLD build the control ran no steps at all, so `stillExact` went red because a
+    paused world straight off `btn-start` is mid-step stale, and `noDeadFlag` went GREEN because
+    nothing had run yet to write the flag it was hunting for. A control that does not exercise
+    the build is not a control. Both builds get the same forty steps before anything is asked,
+    and the old one now reports the flag honestly: 1766 bodies carrying it.

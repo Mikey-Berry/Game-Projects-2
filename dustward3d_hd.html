@@ -11545,10 +11545,57 @@ const charmed = [];
 const torchers = [];
 const litPosts = [];
 const carriers = [];   /* everyone with a corpse in hand — see the haul loop at the foot of update */
-function rebuildCharGrid(){
-  charEpoch++;                    /* a new step: whatever `player()` cached is a step old now */
+/* ---------- THE GRID IS FILED, NOT REBUILT ----------
+   "The higher speeds are where the FPS tanks."
+   This function was 7.4% of the sim on its own, and it is one of THREE whole-world passes that
+   ran once per SIM STEP — so at 5x the world did it a hundred and fifty times a second. Every
+   one of those rebuilds cleared a Map of seventeen hundred entries and refilled it.
+   And almost nothing had moved. `CELL` is EIGHT TILES and a body walks about 3.4 tiles a second,
+   so it crosses a cell line roughly every two and a half seconds — one body in seventy, per
+   step. The old pass re-filed 1777 bodies to relocate about twenty-five of them, and then did it
+   again 1/30th of a second later.
+   So a body is FILED in a bucket and stays there until its cell actually changes. The cost now
+   tracks how far things have walked, which is a REAL-TIME quantity — it does not care what the
+   speed button says, which is the whole point.
+
+   THE ONE THING THAT CAN GO WRONG is a body that leaves without being unfiled: `chars.splice`
+   is called from twenty-odd places and none of them is going to remember. So the invariant is
+   CHECKED rather than trusted, and the check has to be an EXACT one — a stale grid hands
+   `charsNear` a corpse that is not there any more, which is the kind of fault that surfaces as
+   a phantom attacker three days later.
+   `charById` is that check, and it is exact because it holds EVERY body, not only the standing
+   ones: it gains an entry per new body and loses none, so `size !== chars.length` the moment
+   anybody leaves the roster — including the case where one leaves and another arrives in the
+   same step, which a bare length comparison would miss. `_gridFiled` deliberately is NOT the
+   guard: it counts only `ok` bodies, so a world with a hundred down would hide five departures
+   inside the gap. It is kept because the two of them together are what a harness can assert on. */
+let _gridFiled = 0;
+function gridFile(c, k){
+  const a = charGrid.get(k);
+  if(a) a.push(c); else charGrid.set(k, [c]);
+  c._gk = k; _gridFiled++;
+}
+function gridUnfile(c){
+  const a = charGrid.get(c._gk);
+  /* swap-pop: order inside a bucket means nothing to any reader */
+  if(a){ const i = a.indexOf(c); if(i >= 0){ a[i] = a[a.length - 1]; a.pop(); } }
+  c._gk = -1; _gridFiled--;
+}
+function gridCellOf(c){ return ((c.y / CELL) | 0) * GW + ((c.x / CELL) | 0); }
+function regridAll(){
   charGrid.clear();
   charById.clear();
+  _gridFiled = 0;
+  for(const c of chars){
+    charById.set(c.id, c);
+    c._gk = -1;
+    if(c.state === 'ok') gridFile(c, gridCellOf(c));
+  }
+}
+function rebuildCharGrid(){
+  charEpoch++;                    /* a new step: whatever `player()` cached is a step old now */
+  /* somebody left the roster since the last pass — see the note above */
+  if(charById.size !== chars.length) regridAll();
   warders.length = 0;
   charmed.length = 0;
   /* ---------- AND THE TWO LISTS THE VIGIL ASKS ABOUT ----------
@@ -11578,7 +11625,9 @@ function rebuildCharGrid(){
        bodies. Gathered BEFORE the `state` gate, because a carrier who goes down still has to
        put the thing down, and the haul loop never checked state either. */
     if(c.carry || (c.carryList && c.carryList.length)) carriers.push(c);
-    if(c.state !== 'ok') continue;
+    /* AND A BODY THAT STOPS BEING `ok` COMES OUT OF THE GRID. The old pass simply never put it
+       back in, which a full rebuild makes automatic and a filed one does not. */
+    if(c.state !== 'ok'){ if(c._gk >= 0) gridUnfile(c); continue; }
     if(c.concentrating && c.concentrating.key === 'warding') warders.push(c);
     if(c.faction === 'player' && (c.floor || 0) < 0) belowFolk.push(c);
     if(c.lamp && (c.floor || 0) < 0) lamps.push(c);
@@ -11588,9 +11637,17 @@ function rebuildCharGrid(){
        the gaunt AI asks "is there violet light near me" for every gaunt every tick, and the note
        twenty lines up records what happens when a question like that walks all of `chars`. */
     if(c.trinket === 't_kept') charmed.push(c);
-    const k = ((c.y/CELL)|0)*GW + ((c.x/CELL)|0);
-    const a = charGrid.get(k);
-    if(a) a.push(c); else charGrid.set(k, [c]);
+    /* INLINE, and it is not a style choice. The first cut of this called `gridCellOf(c)` here —
+       one extra call per body per step, seventeen hundred of them, in the hottest loop in the
+       game — and handed back the whole of what the filing saved: measured at 10.50 ms/step
+       before the change and 10.62 after, which is to say nothing at all. The helper is kept for
+       the cold paths, where one call does not matter and a second copy of the arithmetic would
+       be a thing to keep in step by hand. */
+    const k = ((c.y / CELL) | 0) * GW + ((c.x / CELL) | 0);
+    if(c._gk !== k){
+      if(c._gk >= 0) gridUnfile(c);
+      gridFile(c, k);
+    }
   }
 }
 /* One buffer, refilled per query, so proximity checks never allocate. The catch: a second
@@ -23499,6 +23556,12 @@ function update(dt){
        `_far` is the "nobody is watching them overlap" question and it keeps `_lod` to itself.
        A cold body separates like anything else; it merely thinks and moves on a slower clock. */
     c._lod = _far;
+    /* AND `_cold` IS A READOUT, not a switch. Nothing in the game reads it — `cold.js`,
+       `_rings.js`, `_speed.js` and `_step.js` do, which is how the tier is asserted at all, so
+       it stays. `_phSkip` sat beside it and was read by NOTHING, in the game or the suite: three
+       writes per body per step, seventeen hundred bodies, thirty steps a second, multiplied
+       again by the speed button — a dead flag left behind when the `_far` tier stopped
+       alternating on a boolean and started accumulating. Deleted. */
     c._cold = _cold;
     if(_cold){
       /* ---------- AND A FIGHT IS NOT PUT ON THE SLOWEST CLOCK ----------
@@ -23518,20 +23581,17 @@ function update(dt){
       if(c._aiAcc >= (busy ? COLD_AI_BUSY : COLD_AI)){ ai(c, c._aiAcc); c._aiAcc = 0; }
       c._phAcc = (c._phAcc || 0) + dt;
       if(c._phAcc >= (busy ? COLD_PH_BUSY : COLD_PH)){ physics(c, c._phAcc); c._phAcc = 0; }
-      c._phSkip = false;
     } else if(_far){
       c._aiAcc = (c._aiAcc || 0) + dt;
       if(c._aiAcc >= FAR_AI){ ai(c, c._aiAcc); c._aiAcc = 0; }
       /* physics at half rate: same distance walked, half the arithmetic, steps too small to tunnel */
       c._phAcc = (c._phAcc || 0) + dt;
       if(c._phAcc >= FAR_PH){ physics(c, c._phAcc); c._phAcc = 0; }
-      c._phSkip = false;
     } else {
       if(c._aiAcc){ ai(c, dt + c._aiAcc); c._aiAcc = 0; }
       else ai(c, dt);
       if(c._phAcc){ physics(c, dt + c._phAcc); c._phAcc = 0; }
       else physics(c, dt);
-      c._phSkip = false;
     }
   }
   /* opportunity strikes: slip out of a blade's reach and it follows you */
@@ -40275,6 +40335,12 @@ function restore(d){
       + 'set down as Scaleborn and Vat-born instead.', 'bad');
     subCutSeen = 0;
   }
+  /* ---------- AND THE GRID BELONGS TO THE ROSTER THAT WAS JUST THROWN AWAY ----------
+     `restore` replaces `chars` wholesale. The filed grid would still be holding every body from
+     the run that was open a moment ago, and `rebuildCharGrid` does not run until the next sim
+     step — so anything that asks `charsNear` in between (a render, a panel, a click) reads a
+     world that no longer exists. Cheap, once, at the one moment the whole roster changes. */
+  regridAll();
 }
 /* ============================================================ PACKING A SAVE
    A save of a grown world is about 1.9 MB of JSON, against a browser-storage budget of
