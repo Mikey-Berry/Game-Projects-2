@@ -1929,6 +1929,56 @@ function placeTownAt(def, cx0, cy0){
       else                             e[1] = dy + (my >= 0 ? gap : -gap);
     }
   }
+
+  /* ---------- AND A BUILDING PUSHED OUT MAY NOT LAND ON ANOTHER ONE ----------
+     "some of the buildings are overlapping on one another and making them inaccessible, such as
+      the bar and main trade shop. There is no way to shop at it since another building is
+      completely overtaking it."
+     The CENTREPIECE shove above opens the plaza and takes no interest in where anything lands.
+     The plan is hand-authored and the shove is deterministic, so the same buildings collide in
+     every world ever generated: MEASURED at 9 overlapping pairs of 24 buildings in all seven
+     seeds tested, and the pairs named in the report — TRADE GOODS on a HOUSE, TRADE GOODS on the
+     ORCHARD HOUSE, the BAR on the STABLE — were three of them. A shop with a house on top of it
+     has a door you cannot reach and a vendor you cannot talk to.
+     THE SEPARATION IS NOT THE PLAZA'S ALONE, which the first cut got wrong by nesting this
+     inside `if(keep)`: a town with nothing reserved never ran it, and one overlapping pair
+     survived in a town that has no centrepiece at all. The plans can collide on their own.
+     Whichever of a colliding pair sits further from the centre gives way, one tile at a time
+     along the axis it already leans on, and never back inside a reservation. It converges in a
+     handful of passes because every move is outward and the plan is small. A one-tile lane is
+     kept between them: two walls flush against each other are not overlapping and are still not
+     a street. */
+  {
+    const LANE = 1;
+    const need2 = keep ? keep + 3 : 0;
+    const hits = (a, b2) =>
+      a[0] < b2[0] + b2[2] + LANE && b2[0] < a[0] + a[2] + LANE &&
+      a[1] < b2[1] + b2[3] + LANE && b2[1] < a[1] + a[3] + LANE;
+    const outside = (e) => {
+      if(!keep) return true;
+      const nx2 = e[0] >= 0 ? e[0] : Math.max(0, -(e[0] + e[2] - 1));
+      const ny2 = e[1] >= 0 ? e[1] : Math.max(0, -(e[1] + e[3] - 1));
+      return Math.max(nx2, ny2) >= need2;
+    };
+    for(let pass = 0; pass < 60; pass++){
+      let moved = false;
+      for(let i = 0; i < plan.length; i++) for(let j = i + 1; j < plan.length; j++){
+        const a = plan[i], b2 = plan[j];
+        if(!hits(a, b2)) continue;
+        const da = Math.max(Math.abs(a[0] + a[2]/2), Math.abs(a[1] + a[3]/2));
+        const db = Math.max(Math.abs(b2[0] + b2[2]/2), Math.abs(b2[1] + b2[3]/2));
+        const e = da >= db ? a : b2;
+        const mx2 = e[0] + e[2]/2, my2 = e[1] + e[3]/2;
+        const k = Math.abs(mx2) >= Math.abs(my2) ? 0 : 1;
+        const step = (k ? my2 : mx2) >= 0 ? 1 : -1;
+        const was = e[k];
+        e[k] += step;
+        if(!outside(e)){ e[k] = was; e[k === 0 ? 1 : 0] += ((k ? mx2 : my2) >= 0 ? 1 : -1); }
+        moved = true;
+      }
+      if(!moved) break;
+    }
+  }
   /* the well: on the plaza normally, and out of the way where the plaza is spoken for */
   t.wellX = cx0 + 2.5; t.wellY = cy0 + 2.5;
   /* ---------- INTO THE LANE, NOT ONTO THE RING ----------
@@ -3737,7 +3787,25 @@ for(const t of towns){
   /* townsfolk with somewhere to be — and trades that feed the town's shelves */
   const TRADE_SET = townTrades(t);
   for(let i=0; i<(t.def.civs||4); i++){
-    const p = findOpenNear(t.x + ri(-5,5), t.y + ri(-5,5), 4);
+    /* ---------- AND NOBODY LIVES IN THE RESERVED SQUARE ----------
+       "a lot of the population spawn inside the supposedly exclusive and gated mansion."
+       Townsfolk were scattered within five tiles of the TOWN CENTRE, and at Greenrest the town
+       centre IS the Aldercott yard — half-extents of seven by six, so a five-tile scatter lands
+       inside the walls every single time, by construction. MEASURED: 26 to 36 strangers standing
+       in the private yard at boot, in every world tested, against two actual Aldercott kin.
+       Ironscar has the same reservation and the same fault: its people were being seeded inside
+       the fighting pit.
+       `keepR` is already the radius of the thing in the middle, so the scatter is pushed out to
+       the streets beyond it — same two dice off the stream, direction preserved, magnitude
+       taken out to the lane. A town with nothing reserved is untouched. */
+    const RR = t.keepR ? t.keepR + 10 : 5;
+    let ox = ri(-RR, RR), oy = ri(-RR, RR);
+    if(t.keepR){
+      const need2 = t.keepR + 3;
+      const m = Math.max(Math.abs(ox), Math.abs(oy), 1);
+      if(m < need2){ const k2 = need2 / m; ox = Math.round(ox * k2); oy = Math.round(oy * k2); }
+    }
+    const p = findOpenNear(t.x + ox, t.y + oy, 4);
     /* and a few of the neighbours are not neighbours — see `mimicAt`. Decided BEFORE the body
        is built, unlike the two lines below it, because a mimic's line fixes its sex and half
        its nature and cannot be stapled on afterwards. */
@@ -3767,7 +3835,17 @@ for(const t of towns){
   }
   /* and the young, watching, learning */
   for(let i=0; i<4; i++){
-    const p = findOpenNear(t.x + ri(-4,4), t.y + ri(-4,4), 4);
+    /* the young get the same treatment as their parents — see the note above. They were being
+       seeded in the same four-tile box around the centre, which at Greenrest is the private
+       yard and at Ironscar is the floor of the pit. */
+    const KR = t.keepR ? t.keepR + 8 : 4;
+    let kx = ri(-KR, KR), ky = ri(-KR, KR);
+    if(t.keepR){
+      const need3 = t.keepR + 3;
+      const m2 = Math.max(Math.abs(kx), Math.abs(ky), 1);
+      if(m2 < need3){ const k3 = need3 / m2; kx = Math.round(kx * k3); ky = Math.round(ky * k3); }
+    }
+    const p = findOpenNear(t.x + kx, t.y + ky, 4);
     const kid = makeChar(pickName(), 'town', p.x, p.y, {atk:1, def:2, tough:2, ath:5, age: ri(7, 14)});
     kid.civ = true; kid.homeTown = t; kid.civT = rnd()*10;
     kid.wasChild = true;
@@ -6930,6 +7008,31 @@ let estate = null;
     blocked.add(bkey(wx, wy));
     estate.walls.push({x: wx, y: wy});
   }
+  /* ---------- AND THE GATE IS SHUT ----------
+     "literally anyone can walk right in to the mansion. (Need to get the gates/doors up and
+      running.)"
+     The gate was a HOLE: the loop above skipped it so that no wall was written there, and
+     nothing was ever written in its place. The house door behind it has been properly barred
+     since it was built — `doorTiles`, cleared only by `estateAdmit` — so the one thing in the
+     way of a stranger was a servant with a line of dialogue and no authority over the geometry.
+     A shut door in this file is a DECKED TILE THAT IS ALSO BLOCKED (see DOORS THAT ARE ACTUALLY
+     SHUT), so the gate becomes exactly that, and `estateAdmit` — still the only thing that opens
+     anything here — lifts the gate and the house door together. Bellowes now stands in front of
+     something that is actually closed. */
+  estate.gateKeys = [];
+  for(const q of gate){
+    /* [FAULT] THE FIRST CUT CALLED `deck(...)` HERE AND KILLED THE WHOLE HOUSEHOLD. `deck` is a
+       LOCAL helper inside the warren seeder and the redoubt builder; there is no such thing in
+       this scope, so the reference threw, `seedOrchard` aborted where it stood, and the Dame,
+       Bellowes, the kin and the house itself never got made — 23 buildings instead of 24 and a
+       silent estate. Precisely the failure this file already records twice about naming a thing
+       from the wrong scope, including the one that shipped the Aldercott house with no stairs.
+       AND IT WAS NOT NEEDED ANYWAY: `decks` only governs storeys above ground. On floor 0
+       `isBlocked` reads `blocked0`, which `blocked.add` mirrors into for free. */
+    const k = bkey(q.x, q.y);
+    blocked.add(k);
+    estate.gateKeys.push(k);
+  }
   /* ---------- THE HOUSE, AND IT HAS AN UPSTAIRS ----------
      "Make it a multi-story building with an NPC guard/servant out front who doesn't let you
      into the building until you have met a certain reputation or requirement."
@@ -7001,12 +7104,26 @@ let estate = null;
   const serv = makeChar('Bellowes', 'town', sp.x, sp.y,
     {atk: 8, def: 10, tough: 10, ath: 4, armor: 'a_lea', homeTown: t, guard: {x: sp.x, y: sp.y}, age: 61, sex: 'm'});
   serv.civ = true; serv.orchardServant = true;
+  serv.storied = true;   /* sixty-one today, and the scene needs him at the gate in ten years too */
   chars.push(serv);
   estate.servant = serv;
   const mp = findOpenNear(cx, cy + 1, 2);
   const dame = makeChar('Dame Hessa Aldercott', 'town', mp.x, mp.y,
     {atk: 6, def: 10, tough: 10, ath: 3, armor: 'a_lea', homeTown: t, guard: {x: mp.x, y: mp.y}, age: 74, sex: 'f'});
   dame.civ = true; dame.orchardDame = true;
+  /* ---------- AND SHE HAS TO BE ALIVE WHEN YOU GET THERE ----------
+     "Dame Hessa Aldercott spawns into the world dead as a corpse."
+     Not at worldgen — she is alive in every world tested. She is seeded at SEVENTY-FOUR and a
+     human's `deathAge` is SIXTY-TWO, and the nightly rule is
+     `rnd() < (age - deathAge) * 0.004`, which is 4.8% a day at her age and rising. MEASURED:
+     77% dead by day thirty, 95% by day sixty. A player who reaches Greenrest at any ordinary
+     point in a campaign finds a corpse, which is exactly the report. She was the only named
+     body in the entire world standing past its death age.
+     The exemption list already carries `bossKey` and `isLeader >= 0` for precisely this reason
+     — the world hangs scenes on those people — and it simply had no entry for a quest-giver who
+     is neither. `storied` is that entry, and it says what it is for. It exempts her from the
+     CALENDAR only: she can still be killed, and a cannibal house is not a safe place to be old. */
+  dame.storied = true;
   chars.push(dame);
   estate.dame = dame;
   for(let i = 0; i < 2; i++){
@@ -7016,6 +7133,21 @@ let estate = null;
        homeTown: t, guard: {x: q.x, y: q.y}, age: ri(28, 46)});
     k.civ = true; k.orchardKin = true;
     chars.push(k);
+  }
+  /* ---------- AND WHOEVER ELSE IS STANDING IN IT WHEN THE GATE SHUTS ----------
+     Spawning townsfolk out of the reserved square fixes the cause; this fixes the case. The
+     yard is now SEALED, so anybody left inside it is not merely trespassing, they are walled in
+     for the rest of the game — and the world has more than one way of putting a body somewhere
+     (a drifter was found in there, and the children were being seeded from a box of their own).
+     Rather than chase every spawner, the household is defined and everyone else is shown out,
+     once, at the moment the wall goes up. It costs no dice: `findOpenNear` is a search. */
+  const household = new Set([serv, dame, ...chars.filter(c => c.orchardKin)]);
+  for(const c of chars){
+    if(household.has(c) || c.state === 'dead') continue;
+    if(Math.abs(c.x - cx) > HW || Math.abs(c.y - cy) > HH) continue;
+    const out = findOpenNear(cx + ri(-4, 4), cy + HH + 3 + ri(0, 3), 6);
+    c.x = out.x; c.y = out.y;
+    if(c.guard){ c.guard.x = out.x; c.guard.y = out.y; }
   }
 })();
 /* ============================================================ FALLOWEND, AND THE VIOLET LIGHT
@@ -7255,6 +7387,7 @@ function estateAdmits(){ return !!estate && (estate.admitted || (estate.town.rep
 function estateAdmit(why){
   if(!estate || estate.doorOpen) return false;
   for(const dx2 of estate.doorTiles) blocked.delete(bkey(dx2, estate.doorY, 0));
+  for(const k of (estate.gateKeys || [])) blocked.delete(k);   /* the yard gate, not just the house */
   estate.doorOpen = true; estate.admitted = true;
   if(why) log(why, 'good');
   return true;
@@ -7309,8 +7442,33 @@ function inviteCandidates(){
     (c.age || 20) >= 16 && !c.orchardKin && !c.orchardDame && !c.orchardServant &&
     c.isLeader < 0 && !c.bossKey);
 }
+/* ---------- AND A SEALED YARD STAYS EMPTY ----------
+   The one-shot sweep at worldgen shows out whoever the town seeder left standing in the yard,
+   and it cannot help with anything placed AFTERWARDS — a guard sent to a post, a drifter, a
+   child born in the town. The yard is walled with one shut gate, so a body that arrives inside
+   it is not trespassing, it is bricked in for the rest of the game. This is the same sweep on
+   the estate's own daily clock: cheap (a hundred and ninety-five tiles, checked by two
+   subtractions per body), self-healing, and it stops the moment the gate is opened, because
+   from then on a body in the yard is a guest and the player is entitled to be one. */
+function estateEvict(){
+  if(!estate || estate.doorOpen) return 0;
+  const cx = estate.x, cy = estate.y;
+  let n = 0;
+  for(const c of chars){
+    if(c.state === 'dead' || c.faction === 'player') continue;
+    if(c.orchardKin || c.orchardDame || c.orchardServant) continue;
+    if(Math.abs(c.x - cx) > estate.hw || Math.abs(c.y - cy) > estate.hh) continue;
+    const out = findOpenNear(cx + ri(-4, 4), cy + estate.hh + 3 + ri(0, 3), 6);
+    c.x = out.x; c.y = out.y;
+    if(c.guard){ c.guard.x = out.x; c.guard.y = out.y; }
+    c.moveTarget = null; c.path = null;
+    n++;
+  }
+  return n;
+}
 function estateInviteTick(){
   if(!estate || estate.town.sacked) return;
+  estateEvict();
   /* SAYING IT OUT LOUD BUYS EXACTLY ONE THING. Nobody arrests them and nothing is proved — but
    the house is not going to hand out invitations with somebody standing in the square telling
    people what they are for. It is the smallest possible victory and it is a real one. */
@@ -22426,7 +22584,7 @@ function update(dt){
     }).catch(() => {});
     /* ---- time takes its toll on everything that still breathes ---- */
     for(const c of [...chars]){
-      if(c.undead || c.beast || c.bossKey || c.state==='dead' || c.mobileVendor || c.isLeader >= 0 || c.immortal) continue;
+      if(c.undead || c.beast || c.bossKey || c.state==='dead' || c.mobileVendor || c.isLeader >= 0 || c.immortal || c.storied) continue;
       c.age += 1/AGE_YEAR_DAYS;
       /* the body remembers every year past fifty */
       if(c.age > 50 && rnd() < 0.5){
@@ -38837,7 +38995,7 @@ function snapshot(){
        burnt mantle and its ember, the Bone Knight came back thin, the archer came back
        thick. Saving one string fixes the whole roster. */
     kin:c.kin||null,
-    clawDmg:c.clawDmg, clawWt:c.clawWt||null, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead,
+    clawDmg:c.clawDmg, clawWt:c.clawWt||null, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead, storied:!!c.storied,
     servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, lamp:!!c.lamp, eater:!!c.eater, harvestBonus:c.harvestBonus??null, corpseWorth:c.corpseWorth??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, sweep:c.sweep?{...c.sweep}:null, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, boundTold:!!c.boundTold,
     protagonist:!!c.protagonist, squadNo:c.squadNo||0, wasOrder:!!c.wasOrder,
@@ -39180,7 +39338,14 @@ function restore(d){
        `blocked` was rebuilt from `baseBlocked` above and the doorway is sealed again by
        default, which is the right starting point for both cases */
     if(E.doorOpen){ estate.doorOpen = false; estateAdmit(null); }
-    else { estate.doorOpen = false; for(const dx2 of estate.doorTiles) blocked.add(bkey(dx2, estate.doorY, 0)); }
+    else {
+      estate.doorOpen = false;
+      for(const dx2 of estate.doorTiles) blocked.add(bkey(dx2, estate.doorY, 0));
+      /* AND THE YARD GATE WITH IT. Neither the house door nor the gate is in `baseBlocked` —
+         they are a decision, not terrain — so the rebuild above leaves both standing open and
+         each has to be shut again by hand. Missing this is how a save becomes a way in. */
+      for(const k of (estate.gateKeys || [])) blocked.add(k);
+    }
   }
   Object.assign(hiresPaid, {n: 0, last: 0}, d.hiresPaid || {});
   bloodMoon = d.bloodMoon || 0;
@@ -39277,7 +39442,7 @@ function restore(d){
       const cv = caves.find(x => x.id === c.caveId);
       if(cv && cv.rooms) c.homeRoom = cv.rooms.find(rm => rm.id === s.roomId) || c.homeRoom;
     } c.floor = s.floor || 0; c.captured = !!s.captured;
-    c.clawDmg = s.clawDmg || 0; c.clawWt = s.clawWt || null; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.eatsDead = !!s.eatsDead;
+    c.clawDmg = s.clawDmg || 0; c.clawWt = s.clawWt || null; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.eatsDead = !!s.eatsDead; c.storied = !!s.storied;
     c.structMult = s.structMult || 1; c.shortTag = s.shortTag || '';
     /* `|| 1` IS WRONG FOR A PROPPED BODY. Old Bones and Mass Reanimation both set
        `bindWeight = 0` — nothing about them is carried in anybody's head — and `0 || 1` puts
