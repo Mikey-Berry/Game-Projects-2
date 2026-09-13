@@ -44,7 +44,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
      living body in it. Everything below stands somebody here rather than at the origin, because
      the whole mechanism is gated on `floor < 0` and a probe at (0,0) would measure nothing. */
   await p.evaluate(() => {
-    window.__hall = undercroft.halls[0];
+    /* ---------- A HALL WITH SKY OVER IT ----------
+       This took `halls[0]` and several claims below stake or walk on the SURFACE above it. That
+       was safe while the map was land to all four borders; now the world has a coast and the
+       undercroft still runs the full width of it, so the first hall in the list can perfectly
+       well be under the ocean — and it is, on the default seed. The claims then read as the
+       game refusing to build anything, which it was right to do.
+       The first hall with open ground over it, and `halls[0]` only if there is no such thing. */
+    window.__hall = undercroft.halls.find(h => {
+      for (let r = 0; r < 18; r++) for (let a = 0; a < 12; a++) {
+        const x = Math.round(h.x + Math.cos(a / 12 * Math.PI * 2) * r);
+        const y = Math.round(h.y + Math.sin(a / 12 * Math.PI * 2) * r);
+        if (tileAt(x, y) !== 3 && !isBlocked(x + 0.5, y + 0.5, 0) && !isBlocked(x + 1.5, y + 1.5, 0)) return true;
+      }
+      return false;
+    }) || undercroft.halls[0];
     window.__probe = (opts) => {
       const h = window.__hall;
       const c = makeChar('Probe', 'player', h.x, h.y, Object.assign({ atk: 20, def: 10, tough: 20, ath: 10 }, opts || {}));
@@ -497,13 +511,31 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const h = window.__hall;
     const wasFloor = activeFloor;
     const n0 = blueprints.length;
+    /* ---------- STAKE ON GROUND THAT WILL TAKE A STAKE ----------
+       This used `hall + 5` below and `hall + 7` above without looking at either, and it worked
+       for as long as the map was walkable land to all four borders and the hall happened to be
+       roomy. The day the world grew a coast it reported the floor stamp broken with every value
+       null — the post refused because five tiles off the hall centre is rock, and the SURFACE
+       bin refused because the surface above that hall is now sea. `tryBuild` was right both
+       times. A claim about which storey a blueprint is stamped with has to be staked somewhere
+       a blueprint can go, or it is a claim about the terrain. */
+    const openOn = (fl, r0) => {
+      for (let r = r0; r < 26; r++) for (let a = 0; a < 24; a++) {
+        const x = Math.round(h.x + Math.cos(a / 24 * Math.PI * 2) * r);
+        const y = Math.round(h.y + Math.sin(a / 24 * Math.PI * 2) * r);
+        if (!isBlocked(x + 0.5, y + 0.5, fl) && !isBlocked(x + 1.5, y + 1.5, fl)) return {x, y};
+      }
+      return null;
+    };
+    const below = openOn(-1, 3), above = openOn(0, 3);
+    if (!below || !above) return { noGround: true, below: !!below, above: !!above };
     activeFloor = -1;
-    const bin = tryBuild('bin', Math.round(h.x) + 5, Math.round(h.y) + 5, true);
-    const post = tryBuild('torchpost', Math.round(h.x) + 5, Math.round(h.y) + 5, true);
+    const bin = tryBuild('bin', below.x, below.y, true);
+    const post = tryBuild('torchpost', below.x, below.y, true);
     const bp = blueprints[blueprints.length - 1];
     const bpFloor = bp ? (bp.floor || 0) : null;
     activeFloor = 0;
-    const binUp = tryBuild('bin', Math.round(h.x) + 7, Math.round(h.y) + 7, true);
+    const binUp = tryBuild('bin', above.x, above.y, true);
     const bpUp = blueprints[blueprints.length - 1];
     const upFloor = bpUp ? (bpUp.floor || 0) : null;
     blueprints.length = n0;

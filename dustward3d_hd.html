@@ -25587,6 +25587,30 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
       const q = findOpenNear(clamp(h.x + ri(-5, 5), 4, W-5), clamp(h.y + ri(-5, 5), 4, H-5), 6);
       if(q && !isBlocked(q.x, q.y, 0) && tileAt(q.x, q.y) !== 3 && decks.has(bkey(Math.floor(q.x), Math.floor(q.y), UNDER))) sp = q;
     }
+    /* ---------- AND A HALL UNDER THE SEA STILL WANTS A WAY IN ----------
+       The thirty tries above look within five tiles of the hall and require dry land. That was
+       fine while the map was land to all four borders; the day the world grew a coast, every
+       hall under the new ocean failed all thirty and was simply skipped — and the ways down
+       went from 82 to 67, with the shafts between the depths thinning behind them. Measured
+       end to end: a squad ordered to the bottom walked 712 tiles and never got past -1, because
+       the nearest onward shaft from where it landed was 435 tiles away.
+       A DETERMINISTIC SPIRAL, and deliberately so: it spends no dice, so a hall that already
+       found a spot in the tries above draws exactly what it drew before. Forty tiles is a
+       cliff-path away from the mouth, not a different cave — and a hall further under the water
+       than that has no dry way in, which is a true thing about it and is left alone. */
+    if(!sp){
+      for(let r = 6; r <= 40 && !sp; r++){
+        for(let a = 0; a < r * 6 && !sp; a++){
+          const th = a / (r * 6) * Math.PI * 2;
+          const qx = clamp(Math.round(h.x + Math.cos(th) * r), 4, W-5);
+          const qy = clamp(Math.round(h.y + Math.sin(th) * r), 4, H-5);
+          if(tileAt(qx, qy) === 3) continue;
+          if(isBlocked(qx + 0.5, qy + 0.5, 0)) continue;
+          if(!decks.has(bkey(qx, qy, UNDER))) continue;
+          sp = {x: qx, y: qy};
+        }
+      }
+    }
     if(!sp) continue;
     const sx = Math.floor(sp.x), sy = Math.floor(sp.y);
     if(stairAt(sx, sy)) continue;
@@ -26100,6 +26124,32 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
       .filter(c => c.deepKin === 'unblind' && c.state !== 'dead')
       .sort((a, b) => depth01(b.floor) - depth01(a.floor) ||
                       dist(b.x, b.y, t0.x, t0.y) - dist(a.x, a.y, t0.x, t0.y));
+    /* ---------- AND "FALLS BACK GRACEFULLY" WAS NOT GOOD ENOUGH ----------
+       The sort above puts the Tooth on the deepest Unblinded there happens to BE, and an
+       Unblinded is seeded into 14% of inhabited halls — so on a world where that roll misses
+       every hall on the Sump, the item the whole depth mechanic is built around sits on -1 or
+       -2 and the bottom of the world holds nothing anybody would go down for. Measured across
+       seeds, on builds going back well before the coast: -3, -3, -2, -1. A one-in-four chance
+       that the deepest floor is pointless.
+       So the deepest one is MOVED rather than merely preferred. No new spawn, no extra die —
+       the body that was going to hold it walks down to a hall on the bottom floor, which is
+       where the design said it was all along. */
+    if(blind[0] && typeof undercroft !== 'undefined' && undercroft.halls){
+      const floors = undercroft.halls.map(h => (h.f ?? -1));
+      const bottom = floors.length ? Math.min(...floors) : (blind[0].floor || -1);
+      if((blind[0].floor || 0) > bottom){
+        const halls = undercroft.halls.filter(h => (h.f ?? -1) === bottom);
+        /* the hall furthest from the first town, so the bottom of the world is still a walk */
+        let pick = null, far = -1;
+        for(const h of halls){ const d = dist(h.x, h.y, t0.x, t0.y); if(d > far){ far = d; pick = h; } }
+        if(pick){
+          const u0 = blind[0];
+          u0.x = pick.x - 2; u0.y = pick.y + 2; u0.floor = bottom;
+          u0.post = {x: pick.x, y: pick.y};
+          u0.path = null; u0.pathGoal = null; u0.moveTarget = null; u0.target = null;
+        }
+      }
+    }
     if(blind[0]){
       const u = blind[0];
       u.name = 'The Unblinded — Mother\'s Own';

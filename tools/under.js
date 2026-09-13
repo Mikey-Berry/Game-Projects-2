@@ -158,14 +158,25 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        that matters." The measure is the WORST case, not the average — a mean distance to a
        shaft is flattered by the ones clustered together. */
     guard(['andThereIsAWayDownNearby'], () => {
+      /* ---------- SAMPLE GROUND SOMEBODY CAN STAND ON ----------
+         This walked a grid over the whole rectangle and took the worst cell, which was the
+         right measure for as long as the map was walkable land to all four borders. It is not
+         any more: the corners of the world are open ocean, and the run that caught this
+         reported "worst corner 278 tiles out" about a corner nobody can reach, drown, or want a
+         staircase in. "A place you cannot get into from where you are standing" is a claim
+         about where you can STAND. Water cells are skipped, and the count of them is printed so
+         the next person can see how much of the grid the sea is taking. */
       const ways = stairs.filter(st => st.to <= F && st.from === 0);
-      let worst = 0, wx = 0, wy = 0;
+      let worst = 0, wx = 0, wy = 0, dry = 0, wet = 0;
       for (let y = 40; y < H; y += 40) for (let x = 40; x < W; x += 40) {
+        if (tileAt(x, y) === 3) { wet++; continue; }
+        dry++;
         let d = 1e9;
         for (const st of ways) d = Math.min(d, dist(st.x, st.y, x, y));
         if (d > worst) { worst = d; wx = x; wy = y; }
       }
-      R._ways = `${ways.length} ways down from the surface; worst corner is ${Math.round(worst)} tiles from one`;
+      R._ways = `${ways.length} ways down from the surface; of ${dry} dry sample points (${wet} skipped as sea) `
+              + `the worst is ${wx},${wy} at ${Math.round(worst)} tiles from one`;
       R.andThereIsAWayDownNearby = (ways.length >= 20 && worst < 200)
         ? `and the furthest anywhere on the map gets from a way down is ${Math.round(worst)} tiles, across ${ways.length} of them`
         : `!! ${ways.length} WAYS DOWN, WORST CORNER ${Math.round(worst)} TILES OUT`;

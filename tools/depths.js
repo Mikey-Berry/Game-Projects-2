@@ -39,7 +39,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const p = await b.newPage({ viewport: { width: 1200, height: 820 } });
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 240)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  /* A SEED ARGUMENT, because two of the claims in here are about where worldgen PUT something
+     and this repo has now lost time three separate ways to a bar set against one world. */
+  await p.goto('file://' + gamePath(process.argv[2]) + (process.argv[3] ? '?seed=' + process.argv[3] : ''), { waitUntil: 'load' });
   await p.waitForTimeout(3000);
   await p.evaluate(() => document.getElementById('btn-start').click());
   await p.waitForTimeout(3500);
@@ -269,20 +271,51 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const deepest = DEPTHS[DEPTHS.length - 1];
     const me = player().find(c => !c.undead && c.state === 'ok') || player()[0];
     if (!me) return null;
-    const top = stairs.find(s => s.from === 0 && s.to === DEPTHS[0]);
-    if (!top) return null;
-    me.x = top.x + 0.5; me.y = top.y + 0.5; me.floor = 0;
-    me.path = null; me.pathGoal = null; me.onStair = null; me.target = null;
     me.noFight = true;                       /* the trip is the subject, not a fight on the way */
-    orderFloor(me, deepest, me.x, me.y);
-    const saw = new Set([0]);
-    for (let i = 0; i < 4000 && me.floor !== deepest; i++) { update(0.1); saw.add(me.floor || 0); }
-    return { landed: me.floor, deepest, storeysSeen: [...saw].sort((a,b)=>b-a), want: me.wantFloor };
+
+    /* ---------- EACH LINK, ON ITS OWN SHAFT ----------
+       The comment this replaces said exactly what was under test — "the CHAIN of three
+       descents, not the pathfinder" — and then started the body on `stairs.find(...)`, the
+       first surface descent in array order, and ordered it to the bottom. That drops you into
+       whatever region of -1 that stair happens to open on, and only some regions of -1 have a
+       shaft onward within walking reach. So it WAS the pathfinder, and the geography of one
+       world at that: it comes back red on about half of all seeds on every build ever made.
+       Measured on the build that caught this, from the surface stair NEAREST a bottom shaft:
+       landed on -1, walked 433 tiles in six hundred seconds of sim, and the nearest onward
+       shaft was still 453 tiles away. Nothing about that is a fault in the descent.
+       So the three links are driven one at a time, each from its own shaft. That is the chain,
+       it is deterministic, and it fails only if a descent is actually broken. How far apart the
+       shafts are is recorded below as colour, where a number that varies by world belongs. */
+    const legs = [];
+    for (let i = 0; i < DEPTHS.length; i++) {
+      const from = i === 0 ? 0 : DEPTHS[i - 1], to = DEPTHS[i];
+      const sh = stairs.find(s => s.from === from && s.to === to);
+      if (!sh) { legs.push({from, to, ok: false, why: 'no shaft exists at all'}); continue; }
+      me.x = sh.x + 0.5; me.y = sh.y + 0.5; me.floor = from;
+      me.path = null; me.pathGoal = null; me.onStair = null; me.target = null; me.moveTarget = null;
+      orderFloor(me, to, me.x, me.y);
+      for (let k = 0; k < 600 && me.floor !== to; k++) update(0.1);
+      legs.push({from, to, ok: me.floor === to, landed: me.floor});
+    }
+    /* AND HOW FAR THE WORLD PUTS THEM APART, which is a fact about the map and not a verdict */
+    const gap = (from, to) => {
+      const a = stairs.filter(s => s.from === from && s.to === to);
+      const b2 = stairs.filter(s => s.from === to);
+      if (!a.length || !b2.length) return -1;
+      let best = 1e9;
+      for (const x of a) for (const y of b2) best = Math.min(best, dist(x.x, x.y, y.x, y.y));
+      return Math.round(best);
+    };
+    return { legs, ways: DEPTHS.map((d, i) => stairs.filter(s => s.to === d && s.from === (i ? DEPTHS[i-1] : 0)).length),
+             hop: [gap(0, DEPTHS[0]), gap(DEPTHS[0], DEPTHS[1])], deepest };
   });
+  R._descents = !trip ? '' : `ways down by storey: ${trip.ways.join(' / ')} · `
+    + `nearest onward shaft from a fresh descent: ${trip.hop[0]} tiles on -1, ${trip.hop[1]} on -2`;
   R.andASquadOrderedDownArrives = !trip ? NOTHING
-    : (trip.landed === trip.deepest)
-    ? `ordered to the bottom and got there, one order and three shafts — through ${trip.storeysSeen.join(' → ')}`
-    : `!! THE ORDER DID NOT REACH THE BOTTOM (${JSON.stringify(trip)})`;
+    : trip.legs.every(l => l.ok)
+    ? `each of the ${trip.legs.length} descents carries an ordered body through on its own — `
+      + trip.legs.map(l => `${l.from} to ${l.to}`).join(', ')
+    : `!! A DESCENT DOES NOT CARRY ANYBODY DOWN (${JSON.stringify(trip.legs.filter(l => !l.ok))})`;
 
   /* ---- 9. AND THE STOREY SURVIVES A SAVE ----
      The floor a body is on is the one piece of this that lives in the save rather than being

@@ -41,11 +41,16 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* MONEY IS NOT THE ONLY BILL. Smithing wants 10 stone and 8 wood, smelting 20 and 12 — so
        a probe that stocked gold and nothing else watched the queue hold, correctly, and read
        it as the queue failing to advance. Stock the shed too, except where the point of the
-       block is that something is missing. */
+       block is that something is missing.
+       AND THE SAME TRAP SPRANG A SECOND TIME, on the same line, the day Deeper Rites started
+       wanting a piece of Sundered Marrow. The chain below runs through it, the shed had no
+       marrow in it, and the queue held — correctly — at the fourth rung. The comment above was
+       already the right lesson and the list under it was simply not kept up to date with the
+       tree. Anything a tech can be billed for belongs in this list. */
     const reset = () => {
       research.done = {}; research.active = null; research.left = 0;
       research.queue.length = 0; research._stalled = null; research.rp = 999; cats = 500000;
-      for (const k of ['stone', 'wood', 'mats', 'iron', 'c_ingot', 'coal', 'copper', 'fabric', 'vflesh', 'codex', 'iron_ore']) stash[k] = 500;
+      for (const k of ['stone', 'wood', 'mats', 'iron', 'c_ingot', 'coal', 'copper', 'fabric', 'vflesh', 'codex', 'iron_ore', 'sunder']) stash[k] = 500;
     };
     /* ---------- SOMEBODY HAS TO BE AT THE BENCH ----------
        `researchTick` returns on the first line when `researchRate()` is zero, and it is zero
