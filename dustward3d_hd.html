@@ -655,12 +655,44 @@ function clamp(v,a,b){ return v<a?a:v>b?b:v; }
 /* ============================================================ TERRAIN
    0 grass 1 sand 2 rock 3 water 4 dry grass */
 const terr = new Uint8Array(W*H);
+/* ---------- THE BRIM: WHAT KIND OF NOTHING THIS IS ----------
+   "I hate that the map suddenly and sharply ends, and in such an obvious square shape. We
+   should cull it inwards a bit so the end of the world is more gradual." And: "the ocean is
+   one of salt — even MORE impossible to traverse."
+
+   TWO FAULTS, AND THE FIRST ONE IS THE SQUARE. The old coast was driven by
+   `Math.min(x, y, W-1-x, H-1-y)`, which is a square by construction: whatever you do with
+   it you get a frame. It is a superellipse radius from the middle of the world now, so the
+   corners — which are furthest from the centre — are pulled in hardest, and the coastline is
+   a closed curve with its own noise on it rather than four straight lines.
+
+   THE SECOND IS THAT THERE WAS NEVER ANY SEA. Measured on the old rule: the outer forty tiles
+   were 15-18% water. Scattered puddles. You could walk to x=0 on dry ground. The reason is
+   subtle and worth the line — out at the rim the old formula stopped ADDING dryness rather
+   than subtracting it, so a tile still had to draw `e < 0.34` on its own to be wet, which is
+   17% of the time, everywhere. It never made solid water anywhere. The comment above it said
+   "the far water is why nobody leaves" and the numbers never delivered a drop of it.
+
+   THREE BANDS, AND THEY ARE CARRIED SEPARATELY. `brim` is a parallel array — 0 inland,
+   1 brine, 2 crust, 3 the dead salt — and every tile in all three bands is written into `terr`
+   as WATER. That is deliberate and it is the whole safety of this change: there are about
+   thirty places in this file that ask `=== 3` to mean impassable, unbuildable, no spawn, no
+   rift, not part of a landmass. Adding two new terrain values would have meant finding all
+   thirty and being right about every one, which is exactly the shape of mistake this file has
+   recorded four times under other names. The bands are a RENDERING fact; the blocking is the
+   value that was already there. */
+const brim = new Uint8Array(W*H);
+const BRIM_BRINE = 1, BRIM_CRUST = 2, BRIM_DEAD = 3;
 for(let y=0;y<H;y++) for(let x=0;x<W;x++){
   const e = fbm(x*.035, y*.035, 4), m = fbm(x*.05+100, y*.05+100, 3);
-  /* the sea holds only the rim of the world: inland, every basin baked dry an age ago.
-     What was a lake is a depression full of dust. The far water is why nobody leaves. */
-  const edge = Math.min(x, y, W-1-x, H-1-y);
-  const eAdj = e + clamp((edge - 42) / 34, 0, 1) * 0.34;
+  /* a superellipse rather than a circle: p=4 keeps the inland shape roughly rectangular — the
+     playable world should not become a disc — while still pulling the four corners in hard */
+  const nx0 = (x - W/2) / (W/2), ny0 = (y - H/2) / (H/2);
+  const rad = Math.pow(Math.pow(Math.abs(nx0), 4) + Math.pow(Math.abs(ny0), 4), 0.25);
+  /* the shoreline wanders: headlands and bays, at a frequency long enough to read as coast */
+  const shore = 0.905 + (fbm(x*.010 + 500, y*.010 + 500, 3) - 0.5) * 0.10;
+  const wet = clamp((rad - shore) / 0.045, 0, 1);
+  const eAdj = e + 0.34 - wet * 0.95;
   let t;
   if(eAdj < .34) t = 3;
   else if(e > .68) t = 2;
@@ -669,7 +701,51 @@ for(let y=0;y<H;y++) for(let x=0;x<W;x++){
   else t = 0;
   terr[y*W+x] = t;
 }
+/* ---------- AND WHAT KIND OF WATER IT IS, MEASURED IN TILES FROM THE SHORE ----------
+   Brine while the shore is still in reach; then the pans, where it has dried and crusted; then
+   the dead white, which is what the crust becomes when there has been nobody to walk on it for
+   an age. The two outer bands are drawn as ground standing proud of the water plane, so the sea
+   does not simply widen — it CHANGES, twice, on the way out, which is the "more gradual" the
+   note asks for.
+
+   THE FIRST CUT SIZED THE BANDS IN SUPERELLIPSE UNITS AND THE HARNESS CAUGHT IT. `rad` runs to
+   1.0 at an edge midpoint and 1.19 at a corner, so a band measured in `rad` is a band that is
+   four times wider at the corners — and the dead salt, the outermost of the three, did not
+   exist AT ALL along the middle of any edge. All four rays inward read crust, brine, land.
+   Distance to the nearest land in actual tiles is the only measure that gives three bands of
+   the same width everywhere, which is what "gradual" has to mean.
+
+   A two-pass chamfer, 3-4 weighted, which is a near-Euclidean distance in two sweeps of the
+   grid rather than the dozens a flood would take at these ranges. Once, at load. */
+{
+  const INF = 1e9, dl = new Float32Array(W*H);
+  for(let i = 0; i < W*H; i++) dl[i] = terr[i] === 3 ? INF : 0;
+  const at = (x, y) => (x < 0 || y < 0 || x >= W || y >= H) ? INF : dl[y*W+x];
+  for(let y = 0; y < H; y++) for(let x = 0; x < W; x++){
+    const i = y*W+x; if(!dl[i]) continue;
+    dl[i] = Math.min(dl[i], at(x-1,y)+3, at(x,y-1)+3, at(x-1,y-1)+4, at(x+1,y-1)+4);
+  }
+  for(let y = H-1; y >= 0; y--) for(let x = W-1; x >= 0; x--){
+    const i = y*W+x; if(!dl[i]) continue;
+    dl[i] = Math.min(dl[i], at(x+1,y)+3, at(x,y+1)+3, at(x+1,y+1)+4, at(x-1,y+1)+4);
+  }
+  /* 14 AND 32 TILES, AND THE NUMBERS ARE SET BY THE NARROWEST RIM RATHER THAN THE WIDEST.
+     The first pair was 22 and 55, which is a handsome brine belt and a pan you could get lost
+     on — and the coastline is not the same distance out on all four sides. Measured: the land
+     reaches to within 43 tiles of the map edge on the east and 66 on the north, so a crust that
+     runs to 55 tiles leaves no room whatever for the dead salt on the narrow sides, and two of
+     the four rays inward read crust, brine, land with the third band simply missing. All three
+     bands have to fit in the narrowest rim the coast ever leaves. */
+  for(let i = 0; i < W*H; i++){
+    if(terr[i] !== 3) continue;
+    const d = dl[i] / 3;
+    brim[i] = d < 14 ? BRIM_BRINE : d < 32 ? BRIM_CRUST : BRIM_DEAD;
+  }
+}
+function brimAt(x, y){ x|=0; y|=0; if(x<0||y<0||x>=W||y>=H) return BRIM_DEAD; return brim[y*W+x]; }
 const TILE_COLS = ['#414d33','#8f7d58','#565049','#26364a','#6b6b45'];
+/* indexed by `brim`: 0 unused, 1 brine, 2 crust, 3 the dead salt */
+const BRIM_COLS = ['', '#2f4a52', '#c9c5b6', '#93938d'];
 function tileAt(x,y){ x|=0; y|=0; if(x<0||y<0||x>=W||y>=H) return 3; return terr[y*W+x]; }
 
 /* which landmass a tile belongs to. Water is forever; walls are not — so only water
@@ -2128,12 +2204,29 @@ function placeTownAt(def, cx0, cy0){
     if(spots.some(s => dist(s.x,s.y,x,y) < 95)) continue;   /* wider spacing = more wild between towns */
     spots.push({x,y});
   }
-  /* fallback grid if unlucky — scales to any town count and map size */
+  /* ---------- FALLBACK GRID, AND IT HAS TO KNOW WHERE THE SEA IS ----------
+     The grid was terrain-blind: it laid its spots on a plain fraction of W and H and pushed
+     them whatever was there. That was survivable while the map was land to all four borders
+     and it is not survivable now — the first world built on the new coast put a town at
+     660,6, which is in the dead salt, because the random loop ran out of tries on a smaller
+     landmass and the fallback happily sited a seat in the sea.
+     Each grid point now walks outward in a square spiral until it finds ground the whole town
+     plan fits on. Bounded, and it keeps the raw point if nothing is found, so the fallback can
+     still never fail to produce N spots — which is the one thing it exists to guarantee. */
   if(spots.length < N){
     const cols = Math.ceil(Math.sqrt(N)), rows = Math.ceil(N/cols);
     for(let i = spots.length; i < N; i++){
       const gx = ((i % cols) + 0.5) / cols, gy = (Math.floor(i / cols) + 0.5) / rows;
-      spots.push({x: Math.round(30 + gx*(W-60)), y: Math.round(30 + gy*(H-60))});
+      const bx = Math.round(30 + gx*(W-60)), by = Math.round(30 + gy*(H-60));
+      let put = null;
+      for(let r = 0; r <= 240 && !put; r += 12){
+        for(let a = 0; a < 16 && !put; a++){
+          const px = Math.round(clamp(bx + Math.cos(a/16*Math.PI*2) * r, 20, W-20));
+          const py = Math.round(clamp(by + Math.sin(a/16*Math.PI*2) * r, 20, H-20));
+          if(areaClear(px-19, py-18, 38, 36) && !spots.some(sp => dist(sp.x, sp.y, px, py) < 60)) put = {x: px, y: py};
+        }
+      }
+      spots.push(put || {x: bx, y: by});
     }
   }
   /* ---------- ONE SEAT NEEDS ROOM AROUND IT, AND IT IS NOT AN ORDINARY ONE ----------
@@ -10541,6 +10634,8 @@ const BUILD_TYPES = {
     desc:'Racks, hooks and a drain. A body rendered down in here gives up nearly twice what one does in a field — and the great dead can only be worked here at all (needs Rites of Binding)'},
   circle:  {name:'Binding Circle', mats:30, w:2, h:2, desc:'Craft greater undead (needs Rites of Binding)'},
   crypt:   {name:'Crypt', mats:25, w:2, h:2, desc:'Stasis for undead — interred units free their binding slots'},
+  way:     {name:'Wayline Circle', cost:{stone:60, mats:40, c_ingot:10, sunder:1}, w:2, h:2,
+    desc:'A cut-stone ring that answers another like it. Right-click it, with somebody trained standing in it, to cross (needs The Waylines)'},
   bin:     {name:'Storage Bin', mats:6,  w:1, h:1, desc:'Takes anything. Gatherers unload here; camp stores feed building and research'},
   rick:    {name:'Lumber Rick',  mats:8,  w:1, h:1, desc:'Wood only — but holds a great deal of it'},
   spile:   {name:'Stone Pile',   mats:8,  w:1, h:1, desc:'Stone only — heavy goods, deep stack'},
@@ -10928,6 +11023,7 @@ function tryBuild(type, tx, ty, quiet){
   /* not inside towns you don't own; your own city is yours to build in */
   if(towns.some(t => !t.playerRuled && dist(t.x,t.y,tx,ty) < 16)){ log('The town does not allow squatters.', 'bad'); return false; }
   if((type==='circle' || type==='crypt') && !research.done.rites_binding){ log('Requires research: Rites of Binding.', 'bad'); return false; }
+  if(type==='way' && !research.done.waylines){ log('Requires research: The Waylines.', 'bad'); return false; }
   if((type==='kiln' || type==='smelter') && !research.done.smelting){ log('Requires research: Smelting.', 'bad'); return false; }
   if(type==='vat' && !research.done.quickening){ log('Requires research: The Quickening.', 'bad'); return false; }
   if(type==='charnel' && !research.done.carrion_rites){ log('Requires research: Carrion Rites.', 'bad'); return false; }
@@ -10958,22 +11054,52 @@ const TECHS = {
      weight and range changed. A tech's description is the only place a player can find out
      what a 1200-gold project buys BEFORE paying for it, so it cannot be a memory. */
   rites_binding:{name:'Rites of Binding',  cost:700, hours:72, req:'necromancy',  desc:''},
-  rites_deep:   {name:'Deeper Rites',      cost:1200,hours:96, req:'rites_binding',desc:''},
+  /* ---------- AND THE RITES WANT THE BONES OF A DEAD GOD ----------
+     "Sundered Marrow should have some research use outside of just selling it to scholars.
+     Only makes sense that some necromancy rites would require the bones of a dead god."
+     It had exactly three uses and all of them were somebody else's: a price at the occultist's
+     counter, twenty-two regard with the Vigil, and two pieces for a scholar's favour. Nothing
+     you could do with it yourself.
+     Seven pieces across the whole necromantic road now, weighted to the deep end. The supply is
+     the thing that sets those numbers: a gaunt gives one up about half the time, a site cache
+     two to four, the Sixfold six — so one or two a rung is a reason to keep what you find, and
+     five would be a wall. DEEPER RITES carries one deliberately, because that is the rung a
+     player reaches while gaunts are still the thing they fight, and a material you cannot spend
+     until the endgame may as well not exist until then. */
+  rites_deep:   {name:'Deeper Rites',      cost:1200,hours:96, req:'rites_binding', mats:{sunder:1}, desc:''},
   /* ---------- THE ANCHOR ----------
      "I like the idea of binding circles eventually operating as a sort of 'anchor' for undead.
       Maybe with the right tech upgrade, it can take the mana and binding cap burden off of the
       caster within a certain range. That way, garrisons and 'bases' do not contribute to the
       caster's total binding." */
-  rites_anchor: {name:'The Anchored Dead',  cost:1500,hours:110,req:'rites_deep', mats:{stone:20, c_ingot:6},
-    desc:'A binding circle holds its own. Risen standing near one stop drawing on their master entirely — no slot, no strain — so a garrison is not a tax on the man who raised it'},
+  rites_anchor: {name:'The Anchored Dead',  cost:1500,hours:110,req:'rites_deep', mats:{stone:20, c_ingot:6, sunder:2},
+    desc:'A binding circle holds its own. Risen standing near one stop drawing on their master entirely — no slot, no strain — so a garrison is not a tax on the man who raised it. Two pieces of Sundered Marrow go into the stone'},
   quickening:   {name:'The Quickening',    cost:700, hours:72, req:'rites_binding', needs:'circle', mats:{fabric:10, copper:8},
     desc:'Flesh Vat: the homunculus-makers\' art — grow meat that was never alive'},
   carrion_rites:{name:'Carrion Rites',     cost:900, hours:80, req:'quickening', needs:'vat', mats:{vflesh:8, fabric:8},
     desc:'Charnel House: shape vat-flesh into whole bodies — one a day'},
-  ossuary_rites:{name:'Ossuary Rites',     cost:1600,hours:104, req:'carrion_rites', needs:'charnel', mats:{iron:5, vflesh:20},
+  ossuary_rites:{name:'Ossuary Rites',     cost:1600,hours:104, req:'carrion_rites', needs:'charnel', mats:{iron:5, vflesh:20, sunder:1},
     desc:'Ossuary: a deeper harvest, and stronger flesh to raise'},
   transmutation:{name:'Transmutation',     cost:1800,hours:104, req:'ironworking', needs:'smelter', mats:{codex:1, iron:10},
     desc:'The golden age\'s true art, read off a dead scholar\'s codex. Base metal into precious. Requires a Codex.'},
+  /* ---------- AND A ROAD THAT IS NOT WALKED ----------
+     "The map is big enough that it would warrant some means to transport from one place to
+     another. Maybe a teleportation circle that you can draw up at high expense. And maybe
+     tiers for it, solo vs group transportation."
+     Two rungs, off TRANSMUTATION rather than off the rites, and that is a deliberate reading of
+     what a wayline is: golden-age engineering, not necromancy. It follows that the person who
+     works one does not have to be a necromancer — anyone with the art in them can — which is
+     the rule `waylineWorker` enforces and the thing that makes this useful to a divine or a
+     dust squad rather than a perk of one gift.
+     THE PRICE IS THE STONE, NOT THE CROSSING. A circle costs a fortune to lay and nothing to
+     use; what it always wants is somebody trained standing in it, so a wayline is a piece of
+     infrastructure you have to staff rather than a button on a cooldown. */
+  waylines:     {name:'The Waylines',      cost:2200,hours:120, req:'transmutation', needs:'r_bench', rp:40,
+    mats:{sunder:2, c_ingot:8, stone:30},
+    desc:'Wayline Circle: cut the old road-sign into stone and it still answers. One body crosses at a time, between circles of your own, and somebody with the art has to work it'},
+  wayline_host: {name:'The Host Road',     cost:2600,hours:132, req:'waylines', needs:'way', rp:30,
+    mats:{sunder:2, iron:10},
+    desc:'A wayline wide enough for a company. Everyone you have selected crosses at once, with whatever they are carrying'},
   unclouding:   {name:'The Unclouding',    cost:3000,hours:144, req:'benediction',  rp:80, needsQuest:'radiant',
     desc:'Verity\'s road, refined. A divine caster stops aging — and stops being entirely a person. Toughness halved, forever'},
   sigil_rite:   {name:'The Sigil Rite',    cost:3000,hours:144, req:'transmutation',rp:80, needsQuest:'sigil',
@@ -11003,8 +11129,8 @@ const TECHS = {
      stages and a person at the end; this had a shopping list and a line of italic text, which
      is why the door that ends the game did not read as a door. The gate already existed —
      `last_rite` simply did not use it. See IMMORTAL_LINES.dark. */
-  last_rite:    {name:'The Last Rite',     cost:2500,hours:120, req:'rites_deep',   rp:60, needsQuest:'dark',
-    desc:'Ascension to lichdom — at a price. The demilich has been through the door and will not let you walk it unwarned'},
+  last_rite:    {name:'The Last Rite',     cost:2500,hours:120, req:'rites_deep',   rp:60, needsQuest:'dark', mats:{sunder:3},
+    desc:'Ascension to lichdom — at a price, and three pieces of a dead god. The demilich has been through the door and will not let you walk it unwarned'},
 };
 /* ---------- THE TWO ROSTER LINES, WRITTEN OFF THE ROSTER ----------
    Reported: the Marrow Archer's line in the circle is stale. It was — Deeper Rites still sold
@@ -22285,6 +22411,145 @@ function promote(u, caster){
   refreshSquadBar(); refreshCharPanel();
   return true;
 }
+/* ============================================================ THE WAYLINES
+   "The map is big enough that it would warrant some means to transport from one place to
+   another. Maybe a teleportation circle that you can draw up at high expense."
+
+   THE PRIMITIVE ALREADY EXISTED AND HAS SINCE THE UNDERCROFT: `useStairs` moves a body between
+   storeys by writing x, y and floor and dropping the path. A wayline is that, sideways, and
+   almost none of the work here is the crossing — it is deciding who may work one, what may not
+   be crossed, and saying both out loud when a crossing is refused.
+
+   WHO MAY WORK ONE. Not a necromancer. The waylines are golden-age engineering read off the
+   same codex Transmutation comes from, and the note asking for them said it plainly: "anyone
+   with alchemical training should be able to work it." So the test is `hasArts` — a gift, an
+   omni, or an innate art — plus `mindedDead`, because a mindless risen standing on a stone is
+   not staffing anything. A divine or a dust squad gets waylines on the same terms as a dark
+   one, which is the whole reason this sits off Transmutation rather than off the rites. */
+const WAY_R = 4;               /* how close the worker has to stand, matching the binding circle */
+function waylines(){ return pBuilds.filter(b => b.type === 'way' && (b.progress === undefined || b.progress >= 1)); }
+/* the body working this stone, or nothing */
+function waylineWorker(b){
+  return player().filter(c => hasArts(c) && mindedDead(c) && c.state === 'ok'
+                           && (c.floor || 0) === (b.floor || 0)
+                           && dist(c.x, c.y, b.x + 1, b.y + 1) < WAY_R)
+    .sort((a, b2) => (b2.stats.magic || 0) - (a.stats.magic || 0))[0] || null;
+}
+/* ---------- A CIRCLE HAS TO BE CALLED SOMETHING ----------
+   Derived rather than stored: a name in the save is a name that goes stale when the town it
+   was named for burns, and a destination list is only useful if it says WHERE. Nearest holding
+   plus a bearing, or the bare coordinates out in the waste. */
+function waylineName(b){
+  let near = null, nd = 1e9;
+  for(const t of towns){ const d = dist(t.x, t.y, b.x, b.y); if(d < nd){ nd = d; near = t; } }
+  if(!near || nd > 70) return `the waste at ${Math.round(b.x)},${Math.round(b.y)}`;
+  const a = Math.atan2(b.y - near.y, b.x - near.x);
+  const oct = ['E','SE','S','SW','W','NW','N','NE'][((Math.round(a / (Math.PI/4)) % 8) + 8) % 8];
+  return nd < 20 ? `${near.name}` : `${Math.round(nd)} tiles ${oct} of ${near.name}`;
+}
+/* who is crossing: the selection if it is yours, else whoever is standing on the stone */
+function waylineParty(from){
+  const host = !!research.done.wayline_host;
+  const sel = selected.filter(c => c.faction === 'player' && c.state === 'ok'
+                                && (c.floor || 0) === (from.floor || 0)
+                                && dist(c.x, c.y, from.x + 1, from.y + 1) < WAY_R);
+  const pool = sel.length ? sel
+    : player().filter(c => c.state === 'ok' && (c.floor || 0) === (from.floor || 0)
+                        && dist(c.x, c.y, from.x + 1, from.y + 1) < 1.8);
+  return host ? pool : pool.slice(0, 1);
+}
+/* ---------- WHAT A WAYLINE WILL NOT DO ----------
+   The crossing is free, which was the call — the stone is the price. Free is not the same as
+   unconditional, and the one condition worth having is that it is NOT AN ESCAPE HATCH: a road
+   you can step onto mid-fight turns every losing battle into a button. Said out loud, by name,
+   so a refusal is never a mystery. */
+function waylineRefusal(from, to, party){
+  if(!research.done.waylines) return 'nobody here knows how to read the stone';
+  if(!to) return 'there is nowhere to cross to — a wayline answers another wayline';
+  if(to === from) return 'that is the stone you are standing on';
+  if(!waylineWorker(from)) return 'somebody with the art has to stand at the circle and work it';
+  if(!party.length) return 'nobody is standing close enough to the stone to cross';
+  const fighting = party.find(c => c.target || (c.threatT > 0));
+  if(fighting) return `${fighting.name} is in a fight — the road will not take anyone off one`;
+  const held = party.find(c => c.drag || c.prisoner || c.jailedAt);
+  if(held) return `${held.name} cannot be crossed while under guard`;
+  return null;
+}
+function waylineCross(from, to){
+  const party = waylineParty(from);
+  const no = waylineRefusal(from, to, party);
+  if(no){ log(`The wayline does not answer — ${no}.`, 'bad'); return false; }
+  const worker = waylineWorker(from);
+  /* land them around the far stone rather than all on one tile */
+  let n = 0;
+  for(const c of party){
+    const spot = findOpenNear(to.x + 1 + ri(-2, 2), to.y + 1 + ri(-2, 2), 5) || {x: to.x + 1, y: to.y + 1};
+    c.x = spot.x; c.y = spot.y; c.floor = to.floor || 0;
+    /* everything that remembers where this body was going is now wrong */
+    c.path = null; c.pathGoal = null; c.moveTarget = null; c.attackMove = null;
+    c.target = null; c.gather = null; c.onStair = null; c.patrolSpot = null;
+    /* and anything they are hauling comes with them, which is the half of this that solves a
+       real chore: a great body takes four hands and a morning to walk anywhere */
+    if(c.carry){ c.carry.x = c.x; c.carry.y = c.y; c.carry.floor = c.floor; }
+    if(c.carryList) for(const o of c.carryList){ o.x = c.x; o.y = c.y; o.floor = c.floor; }
+    if(c.phyl && c.phyl.carried){ c.phyl.x = c.x; c.phyl.y = c.y; }
+    n++;
+  }
+  rebuildCharGrid();
+  camX = to.x + 1; camY = to.y + 1; camFollow = false;
+  activeFloor = to.floor || 0;      /* look at the storey you arrived on, not the one you left */
+  log(`${worker.name} works the stone. ${n === 1 ? party[0].name + ' steps' : n + ' step'} through to ${waylineName(to)}.`, 'good');
+  AU.open();
+  return true;
+}
+function openWayline(b){
+  const worker = waylineWorker(b);
+  const party = waylineParty(b);
+  openModal('WAYLINE — ' + waylineName(b).toUpperCase(),
+    worker ? `${worker.name} has the stone. ${party.length} ready to cross.`
+           : 'Nobody here can read it. Stand somebody with the art in the circle.');
+  const body = $('modalbody');
+  const rndr = () => {
+    body.innerHTML = '';
+    if(!research.done.wayline_host){
+      const n2 = document.createElement('div');
+      n2.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:8px';
+      n2.textContent = 'One body at a time. THE HOST ROAD widens it to everyone you have selected.';
+      body.appendChild(n2);
+    }
+    const others = waylines().filter(o => o !== b);
+    if(!others.length){
+      const e = document.createElement('div');
+      e.style.cssText = 'color:var(--dust)';
+      e.textContent = 'This is the only wayline you have. A road wants two ends — lay another one somewhere worth being.';
+      body.appendChild(e);
+      return;
+    }
+    for(const o of others){
+      const row = document.createElement('div'); row.className = 'trow';
+      row.innerHTML = `<span class="tn">${waylineName(o)}`
+        + `<span style="color:var(--dust)"> · ${Math.round(dist(o.x, o.y, b.x, b.y))} tiles`
+        + `${(o.floor || 0) !== (b.floor || 0) ? ' · ' + ((o.floor || 0) < 0 ? 'below' : 'above') : ''}</span></span>`;
+      const go = document.createElement('button');
+      const no = waylineRefusal(b, o, party);
+      go.textContent = 'CROSS';
+      go.disabled = !!no; if(no) go.title = no;
+      go.onclick = () => {
+        if(waylineCross(b, o)){ $('modal').style.display = 'none'; modalOpen = false; }
+        else rndr();
+      };
+      row.appendChild(go); body.appendChild(row);
+    }
+    const why = waylineRefusal(b, others[0], party);
+    if(why){
+      const w2 = document.createElement('div');
+      w2.style.cssText = 'color:var(--blood);font-size:11px;margin-top:8px';
+      w2.textContent = 'It will not answer: ' + why + '.';
+      body.appendChild(w2);
+    }
+  };
+  rndr();
+}
 let ctxCircle = null;      /* the circle whose hold is being shown, while its window is open */
 function openBinding(circle){
   /* `mindedDead`, not "is it alive" — see the same fix at the circle's build button. A raised
@@ -24854,7 +25119,16 @@ const HV = new Float32Array((W+1)*(H+1));
    slab that the cursor ray has to search */
 let _terrMaxY = 0;
 {
-  const baseOf = t => t===3 ? -0.55 : t===2 ? 0.8 : 0;
+  /* ---------- AND THE PANS STAND PROUD OF THE WATER ----------
+     The water plane sits at -0.22 and paints everything under it. Brine belongs under it; the
+     crust and the dead salt are GROUND — dry, walkable-looking, and the wrong colour for sea —
+     so they are lifted clear of it and read as a white shelf beyond the shallows rather than
+     as more ocean. They are still `terr === 3` and so still impassable, which is the point:
+     "even MORE impossible to traverse" is a thing you can see rather than a thing you learn by
+     walking into it. */
+  const CRUST_H = -0.15, DEAD_H = -0.17;   /* the plane bobs at -0.22: keep real clearance or they z-fight at distance */
+  const baseOf = (t, br) => t===3 ? (br===BRIM_CRUST ? CRUST_H : br===BRIM_DEAD ? DEAD_H : -0.55)
+                          : t===2 ? 0.8 : 0;
   /* The sea is meant to hold the rim of the world and nothing else, and the terrain
      generator already obeys that — there is not one water TILE inland. The splotches of
      water out in the waste were the global water plane showing through: ground height is
@@ -24862,16 +25136,21 @@ let _terrMaxY = 0;
      dipped under it. Land that touches no water keeps its head above the waterline. */
   const WATERLINE = -0.14;          /* clear of the plane even at the top of its bob */
   for(let vy=0; vy<=H; vy++) for(let vx=0; vx<=W; vx++){
-    let sum = 0, n = 0, wet = false;
+    let sum = 0, n = 0, wet = false, pan = false;
     for(let dy=-1; dy<=0; dy++) for(let dx=-1; dx<=0; dx++){
       const tx = clamp(vx+dx, 0, W-1), ty = clamp(vy+dy, 0, H-1);
-      const t = terr[ty*W+tx];
-      if(t === 3) wet = true;
-      sum += baseOf(t); n++;
+      const t = terr[ty*W+tx], br = brim[ty*W+tx];
+      if(t === 3 && br !== BRIM_CRUST && br !== BRIM_DEAD) wet = true;
+      if(t === 3 && (br === BRIM_CRUST || br === BRIM_DEAD)) pan = true;
+      sum += baseOf(t, br); n++;
     }
     let h = sum/n;
-    if(h > -0.2) h += (fbm(vx*0.11, vy*0.11, 3) - 0.5) * 0.7;
-    if(!wet && h < WATERLINE) h = WATERLINE;    /* a dry basin is a depression, not a lake */
+    /* the pans are FLAT. They are the floor of a sea that dried, and putting the ordinary
+       0.7-of-a-tile hill noise on them makes a lumpy white field that reads as terrain you
+       ought to be able to cross. A little grain, and nothing more. */
+    if(pan) h += (fbm(vx*0.11, vy*0.11, 3) - 0.5) * 0.05;
+    else if(h > -0.2) h += (fbm(vx*0.11, vy*0.11, 3) - 0.5) * 0.7;
+    if(!wet && !pan && h < WATERLINE) h = WATERLINE;    /* a dry basin is a depression, not a lake */
     HV[vy*(W+1)+vx] = h;
   }
 }
@@ -25911,6 +26190,11 @@ for(let i=0; i<HV.length; i++) if(HV[i] > _terrMaxY) _terrMaxY = HV[i];
     }
   const C = {
     dust:   [178,154,116], iron: [166,124,92],  salt: [214,206,186],
+    /* the rim, outward: brine goes green before it goes deep; the pans are a hard bright
+       white with a grey bloom on them; the dead salt past that has had the colour walked
+       out of it and is very nearly flat grey. */
+    brine:  [58,92,96],    crust:[226,222,208], crust2:[198,196,186],
+    dead:   [176,176,170], dead2:[158,160,158],
     scrub:  [124,122,78],  rock: [126,118,106], peak: [154,148,138],
     sandDry:[196,176,138], sandWet:[124,102,78], bed:  [96,82,64],
   };
@@ -25943,8 +26227,19 @@ for(let i=0; i<HV.length; i++) if(HV[i] > _terrMaxY) _terrMaxY = HV[i];
       const nFine = hash2(px, py);
       let col;
       const dw = distW[ty*W+tx];
-      if(t===3){
+      const br = brim[ty*W+tx];
+      if(br === BRIM_CRUST){
+        /* SALT PANS. The grain is what says "crust" rather than "snow": a hard bright field
+           broken by the polygon seams that brine leaves when it dries, drawn off the mid
+           lattice so the shapes are tiles-wide rather than pixel noise. */
+        col = mix(C.crust, C.crust2, clamp((nMid - 0.40) * 2.6, 0, 1));
+        if(nFine > 0.86) col = mix(col, C.crust2, 0.55);
+      } else if(br === BRIM_DEAD){
+        col = mix(C.dead, C.dead2, clamp((nBig - 0.35) * 1.8, 0, 1));
+      } else if(t===3){
+        /* and the shallows are green before they are deep */
         col = mix(C.bed, C.sandWet, clamp(h+0.6, 0, 1));
+        if(br === BRIM_BRINE) col = mix(col, C.brine, 0.55);
       } else if(dw < 1.4){
         col = mix(C.sandWet, C.sandDry, clamp(dw/1.4, 0, 1));
       } else if(t===2 || slope > 0.5){
@@ -26177,6 +26472,32 @@ const water = new THREE.Mesh(
 water.rotation.x = -Math.PI/2;
 water.position.set(W/2, -0.22, H/2);
 scene.add(water);
+/* ---------- AND WHAT IS PAST THE LAST TILE ----------
+   The water plane is 1.4x the world, so it runs 288 tiles beyond the map on every side — which
+   is the "infinite blue dropoff" in the report, and it is the ONE thing a wider sea would not
+   have fixed on its own. The ground mesh stops dead at x=0 and x=W, and past that there was a
+   flat blue sheet going to the horizon with a hard straight line where the land quit.
+
+   FOUR QUADS, NOT A BIGGER PLANE. A rectangle covering the whole thing would also cover the
+   brine inside the map and there is no cutting a hole in one, so the skirt is a FRAME: four
+   strips laid outside the map bounds and nowhere inside them. They are the same dead salt the
+   outermost band is, at the same height, so the last tile of the world and the first tile of
+   the nothing beyond it are the same surface — there is no edge left to see. */
+{
+  const SK = W * 0.55;                       /* comfortably past the far plane of any camera */
+  const skirtMat = new THREE.MeshLambertMaterial({color: 0xb0b0aa});
+  const strip = (x0, z0, w, d) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), skirtMat);
+    m.rotation.x = -Math.PI/2;
+    m.position.set(x0 + w/2, -0.17, z0 + d/2);   /* DEAD_H, so it meets the last band flush */
+    m.receiveShadow = false;
+    scene.add(m);
+  };
+  strip(-SK,   -SK,     W + SK*2, SK);          /* north */
+  strip(-SK,    H,      W + SK*2, SK);          /* south */
+  strip(-SK,    0,      SK,       H );          /* west  */
+  strip( W,     0,      SK,       H );          /* east  */
+}
 
 /* ---------- shared geometry / materials ---------- */
 const BOXG = new THREE.BoxGeometry(1,1,1);
@@ -27806,6 +28127,25 @@ const syncPBuilds = makeDynGroup(
         ring.rotation.x = -Math.PI/2; ring.position.set(cxp, y+0.06, czp); g.add(ring);
         const ring2 = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.4, 20), new THREE.MeshBasicMaterial({color:0x5a4478, side:THREE.DoubleSide}));
         ring2.rotation.x = -Math.PI/2; ring2.position.set(cxp, y+0.07, czp); g.add(ring2);
+      }
+      /* ---------- AND IT MUST NOT READ AS A BINDING CIRCLE ----------
+         The binding circle is chalk and violet light: two flat rings painted on the dirt. A
+         wayline is masonry — four standing stones at the corners, a cut kerb between them, and
+         a cold blue-white line across the middle that is the thing the road is named for. At
+         playing distance the two never get confused, which matters because one of them raises
+         the dead and the other one moves your company across the world. */
+      else if(b.type==='way'){
+        const kerb = new THREE.Mesh(new THREE.RingGeometry(0.72, 1.02, 4),
+          new THREE.MeshBasicMaterial({color:0x6e7c86, side:THREE.DoubleSide}));
+        kerb.rotation.x = -Math.PI/2; kerb.rotation.z = Math.PI/4;
+        kerb.position.set(cxp, y+0.05, czp); g.add(kerb);
+        const line = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.10),
+          new THREE.MeshBasicMaterial({color:0xbfe4ff, side:THREE.DoubleSide}));
+        line.rotation.x = -Math.PI/2; line.position.set(cxp, y+0.07, czp); g.add(line);
+        for(const [ox, oz] of [[-0.82,-0.82],[0.82,-0.82],[-0.82,0.82],[0.82,0.82]]){
+          box(g, 0.22, 0.86, 0.22, '#6a6660', cxp+ox, y+0.43, czp+oz);
+          box(g, 0.15, 0.10, 0.15, '#9fb6c4', cxp+ox, y+0.91, czp+oz, false);
+        }
       }
       else if(b.type==='crypt'){
         box(g, 1.8, 1.3, 1.8, '#3a3630', cxp, y+0.65, czp);
@@ -33311,7 +33651,13 @@ const mmBase = document.createElement('canvas'); mmBase.width=128; mmBase.height
 {
   const g = mmBase.getContext('2d');
   for(let y=0;y<128;y++) for(let x=0;x<128;x++){
-    g.fillStyle = TILE_COLS[terr[Math.floor(y*H/128)*W + Math.floor(x*W/128)]];
+    /* THE RIM READS ON THE MAP TOO. Three bands of nothing all drawn in one blue is a map that
+       says "sea" where the world says brine, then pans, then dead salt — and the pans are the
+       half a player can stand and look at. `BRIM_COLS` is indexed by the band, not the tile. */
+    {
+      const _k = Math.floor(y*H/128)*W + Math.floor(x*W/128);
+      g.fillStyle = brim[_k] ? BRIM_COLS[brim[_k]] : TILE_COLS[terr[_k]];
+    }
     g.fillRect(x,y,1,1);
   }
 }
@@ -36543,11 +36889,15 @@ const BUILD_CATS = [
   ['THE ROOM',   ['taproom']],
   ['STUDY',      ['r_bench', 'script']],
   ['THE CRAFT',  ['circle', 'crypt', 'boneyard', 'vat', 'charnel', 'ossuary']],
+  /* ITS OWN ROW, because it is not the craft and it is not labour — it is the only thing you
+     can build that changes the shape of the map rather than what stands on it. */
+  ['THE WAYLINES',['way']],
   ['STORAGE',    ['bin', 'rick', 'spile', 'orebin', 'larder', 'shed', 'relic']],
 ];
 /* what the world will not let you build yet, and why */
 function buildLock(key){
   if((key==='circle' || key==='crypt') && !research.done.rites_binding) return 'Rites of Binding';
+  if(key==='way' && !research.done.waylines) return 'The Waylines';
   if((key==='kiln' || key==='smelter') && !research.done.smelting) return 'Smelting';
   if((key==='still' || key==='taproom') && !research.done.distilling) return 'Distilling';
   if(key==='vat' && !research.done.quickening) return 'The Quickening';
@@ -38084,6 +38434,7 @@ cv.addEventListener('mousedown', e => {
       else if(ws.type==='r_bench') openResearch();
       else if(ws.type==='script') openScriptorium(ws);   /* the desk you walked up to, not the first one built */
       else if(ws.type==='circle') openBinding(ws);
+      else if(ws.type==='way') openWayline(ws);
       else if(ws.type==='crypt') openCrypt(ws);
       else if(ws.type==='armoury') openArmoury(ws);
       /* THE ROOM YOU WALKED INTO, not the first one built — the whole point of a taproom is who
