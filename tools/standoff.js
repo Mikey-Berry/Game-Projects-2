@@ -74,19 +74,42 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        the ordinary-sized case as its own control — if the small one also lands nothing then
        the staging is what is broken, not the reach. */
     guard(['aManCanHitAMan', 'andAManCanHitAMonster', '_bySize'], () => {
+      /* ---------- ONE THIRTY-SECOND FIGHT IS ONE SAMPLE ----------
+         This swept the sizes once apiece and compared two single numbers: is what size 1.3
+         took at least half of what size 1 took. Hit chance and damage are rolls, so both
+         halves of that ratio are draws — and it went red in a full suite reading 60 against
+         127, which looked exactly like a reach dip at one size.
+         MEASURED, EIGHT REPEATS A SIZE: size 1 lands 89 to 159 (median 123) and size 1.3 lands
+         67 to 155 (median 125). There is no dip. The denominator alone swings by 1.8x, so the
+         ratio can fall under a half on a perfectly healthy build any time the numerator draws
+         low and the denominator draws high — 67/159 is 0.42, and both of those are ordinary.
+         Medians of five now, and the bar is 0.6 of the ordinary-sized control at EVERY size
+         rather than at 1.3 alone. The observed medians relative to size 1 are 1.00, 1.04,
+         1.02, 0.97 and 0.78 — the last being a wyrm, which is honestly harder to stay inside
+         reach of — so 0.6 is clear of the floor and still catches the fault this file was
+         written for, which measured EIGHT blood off a wyrm against 104 off a man. */
+      const REPS = 5;
+      const med = (a) => { const q = [...a].sort((x, y) => x - y); return q[q.length >> 1]; };
       const rows = [], landed = {};
       for (const big of [1, 1.15, 1.3, 1.6, 2.2]) {
-        wipe();
-        const foe = putAt('wild', gx + 2, gy, { name: 'Big' + big, tough: 60, def: 6, weapon: null });
-        foe.big = big; foe.blood = foe.maxBlood = 4000; foe.noFight = true;   /* a post, not a fight */
-        const me = putAt('player', gx, gy, { name: 'Me', weapon: 'w_kat', armor: 'a_lea' });
-        me.blood = me.maxBlood = 4000;
-        me.target = foe; me.targetManual = true;
-        const b0 = foe.blood;
-        step(30);
-        const hit = b0 - foe.blood;
-        landed[big] = hit;
-        rows.push(`big ${big}: slot ${slotRadius(foe).toFixed(2)}, settled ${dist(me.x, me.y, foe.x, foe.y).toFixed(2)}, ${hit > 0 ? hit.toFixed(0) + ' blood off it' : 'NOT ONE BLOW'}`);
+        const hits = [];
+        let lastSlot = 0, lastSettled = 0;
+        for (let r = 0; r < REPS; r++) {
+          wipe();
+          const foe = putAt('wild', gx + 2, gy, { name: 'Big' + big, tough: 60, def: 6, weapon: null });
+          foe.big = big; foe.blood = foe.maxBlood = 4000; foe.noFight = true;   /* a post, not a fight */
+          const me = putAt('player', gx, gy, { name: 'Me', weapon: 'w_kat', armor: 'a_lea' });
+          me.blood = me.maxBlood = 4000;
+          me.target = foe; me.targetManual = true;
+          const b0 = foe.blood;
+          step(30);
+          hits.push(b0 - foe.blood);
+          lastSlot = slotRadius(foe); lastSettled = dist(me.x, me.y, foe.x, foe.y);
+        }
+        landed[big] = med(hits);
+        rows.push(`big ${big}: slot ${lastSlot.toFixed(2)}, settled ${lastSettled.toFixed(2)}, `
+          + (landed[big] > 0 ? `${landed[big].toFixed(0)} blood off it (median of ${REPS}: ${hits.map(h => h.toFixed(0)).join('/')})`
+                             : `NOT ONE BLOW in ${REPS} fights`));
       }
       R._bySize = rows.join(' | ');
       R.aManCanHitAMan = landed[1] > 0
@@ -96,10 +119,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          off an ordinary body and EIGHT off a wyrm over the same thirty seconds, the eight
          being the frames a shove happened to push him inside 1.0. "Did any blow land" is green
          for that; "is this a fight" is not. Half the ordinary rate is the bar. */
-      const thin = [1.15, 1.3, 1.6, 2.2].filter(k => landed[k] < landed[1] * 0.5);
+      const thin = [1.15, 1.3, 1.6, 2.2].filter(k => landed[k] < landed[1] * 0.6);
       R.andAManCanHitAMonster = thin.length === 0
-        ? `and so does every size up to a wyrm, at a comparable rate — ${[1, 1.15, 1.3, 1.6, 2.2].map(k => landed[k].toFixed(0)).join('/')} blood`
-        : `!! SIZE ${thin.join(', ')} TAKES UNDER HALF WHAT A MAN DOES (${[1, 1.15, 1.3, 1.6, 2.2].map(k => landed[k].toFixed(0)).join('/')}) — they stand where they can barely swing`;
+        ? `and so does every size up to a wyrm, at a comparable rate — medians ${[1, 1.15, 1.3, 1.6, 2.2].map(k => landed[k].toFixed(0)).join('/')} blood`
+        : `!! SIZE ${thin.join(', ')} TAKES UNDER 0.6 OF WHAT A MAN DOES (medians ${[1, 1.15, 1.3, 1.6, 2.2].map(k => landed[k].toFixed(0)).join('/')}) — they stand where they can barely swing`;
     });
 
     /* AND THE TWO NUMBERS AGREE BY CONSTRUCTION. The slide is what happens when the place a

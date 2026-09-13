@@ -69,8 +69,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          one material this file exists for was excluded from the general check by the general
          check's own filter, and `noMaterialIsADeadEnd` read green on the build where fabric
          could not be made. */
-      const orphans = [...spent].filter(k => !made.has(k) && ITEMS[k]);
-      R.orphans = orphans.length ? `spent but unmakeable: ${orphans.join(', ')}` : 'every material with a sink has a source';
+      /* ---------- AND ONE MATERIAL IS BOUGHT ON PURPOSE ----------
+         SALT. It is spent by Harbourblack (6), by curing a body, and by one contract, and
+         nothing makes it — which is this line doing its job and then reaching the wrong
+         verdict, because salt is not an oversight. It is Saltmere's entire reason to exist:
+         every town stocks 3-9 of it on day one and Saltmere stocks 40-70, and the town's own
+         bark is "the flats give salt, the salt gives everything else". A recipe that lets you
+         make salt at a bench takes that away.
+         SO IT IS A NAMED EXCEPTION AND NOT A WIDENED RULE, and the difference matters: the
+         obvious fix — count anything the towns stock as a source — would have read GREEN on
+         the build this whole file was written for, because `fabric` is in the same opening
+         stock list. The general check has to stay blind to the shop counter. */
+      const BOUGHT_ON_PURPOSE = new Set(['salt']);
+      const orphans = [...spent].filter(k => !made.has(k) && ITEMS[k] && !BOUGHT_ON_PURPOSE.has(k));
+      R.orphans = orphans.length ? `spent but unmakeable: ${orphans.join(', ')}`
+        : `every material with a sink has a source (${[...BOUGHT_ON_PURPOSE].join(', ')} excepted, bought on purpose)`;
       R.noMaterialIsADeadEnd = orphans.length === 0
         ? 'and nothing else in the economy is spent without being makeable — the next dead end fails this line'
         : `!! ${orphans.length} MATERIAL(S) ARE SPENT AND CANNOT BE MADE: ${orphans.join(', ')}`;
