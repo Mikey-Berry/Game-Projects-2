@@ -78,7 +78,17 @@
   /* inventory */
   #invpanel{right:290px;bottom:10px;width:230px;background:var(--panel);
     border:1px solid var(--edge);padding:10px;font-size:11px;max-height:270px;overflow-y:auto}
-  #invpanel h3{font-size:12px;letter-spacing:2px;color:var(--dust);margin-bottom:6px}
+  #invpanel h3{font-size:12px;letter-spacing:2px;color:var(--dust);margin-bottom:6px;
+    cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center}
+  #invpanel h3:hover{color:var(--warn)}
+  #invchev{font-size:10px;color:var(--edge)}
+  /* FOLDED IS A TITLE BAR, NOT A DISAPPEARANCE. "The squad stash screen is just always there.
+     Perhaps it can be a toggle so we can reduce noise when it's not needed." A panel that
+     vanishes entirely is a feature nobody finds again, so what is left behind is the one line
+     you click to bring it back. */
+  #invpanel.folded{max-height:none;overflow:visible}
+  #invpanel.folded h3{margin-bottom:0}
+  #invpanel.folded #invbody{display:none}
   .invrow{display:flex;justify-content:space-between;align-items:center;padding:2px 0;
     border-bottom:1px solid #ffffff10}
   .invrow button{padding:1px 6px;font-size:10px}
@@ -98,6 +108,12 @@
      screen exists — a list of six rows would have been a third of the work and would not
      answer "what is this person actually wearing" at a glance. */
   .doll{display:grid;grid-template-columns:1fr 148px 1fr;gap:8px;align-items:stretch;margin-bottom:8px}
+  /* THE FIGURE DOES NOT SCROLL AWAY. "The character model should always be visible in that
+     screen, even if it means reducing the space for the list of items below it." A body with
+     forty stacks in its pack pushed the paperdoll off the top of the panel, so the screen
+     whose whole point is the figure spent most of its life not showing one. Pinned to the top
+     of the scroller with an opaque ground, so the pack runs under it. */
+  #modalbody .doll{position:sticky;top:0;z-index:2;background:#1a1512;padding-bottom:6px}
   .dollcol{display:flex;flex-direction:column;gap:6px}
   .dslot{background:#ffffff08;border:1px solid var(--edge);padding:5px 7px;cursor:pointer;
     display:flex;flex-direction:column;gap:1px;text-align:left;color:var(--ink);font:inherit;width:100%}
@@ -488,6 +504,7 @@ body.touch #hint{display:none}
   <button id="btn-build" data-tip="build">BUILD [B]</button>
   <button id="btn-all" data-tip="squad">SQUAD [S]</button>
   <button id="btn-work" data-tip="work">WORK [K]</button>
+  <button id="btn-study" data-tip="study">RESEARCH [Y]</button>
   <button id="btn-chron" data-tip="chron">CHRONICLES [L]</button>
   <button id="btn-save" data-tip="save">SAVE</button>
   <button id="btn-load">LOAD</button>
@@ -508,7 +525,7 @@ body.touch #hint{display:none}
 <div class="hud" id="squadbar"></div>
 
 <div class="hud" id="invpanel">
-  <h3>SQUAD STASH</h3><div id="invbody"></div>
+  <h3 id="invtitle" title="Fold the wagon away — [T]">SQUAD STASH<span id="invchev">▾</span></h3><div id="invbody"></div>
 </div>
 
 <div class="hud" id="charpanel">
@@ -4816,11 +4833,24 @@ function siegeClear(){ return day >= siegeQuietUntil; }
 function siegeSent(kind){ siegeQuietUntil = day + (SIEGE_QUIET[kind] || 4); }
 let noticed = 0;      /* every formula worked is a hand raised in a dark room */
 let noticeTier = 0;   /* 0 unnoticed · 1 watched · 2 attended · 3 SEEN */
+/* ---------- AND THE LADDER IS A CURVE, NOT A STAIRCASE ----------
+   "Going from attended to seen usually happens very quickly. There should be a bit more of a
+   curve — it's easy to get noticed, but harder to become attended or seen without a significant
+   operation. (This happened to me at around 13 risen.)"
+   The rungs were 16 / 34 / 52 — gaps of 16, 18 and 18, which is a straight line wearing three
+   names. Thirteen risen is about fifteen points of heat off the raisings alone before anything
+   else is counted, so the first two rungs went by in a fortnight and the third was in sight.
+   Now 12 / 40 / 88 against a ceiling of 100: gaps of 12, 28 and 48, each step about double the
+   last. Getting NOTICED is easier than it was — that is the half the note asks for, and the
+   half that makes the meter interesting, because something turning its head at a modest working
+   is good — and being SEEN costs 88 where it used to cost 52, which is not reachable by keeping
+   a host standing about. It wants a significant operation, which is what was asked for. */
+const NOTICE_MAX = 100;
 const NOTICE_TIERS = [
   {at: 0,  name:'UNNOTICED', tell:null},
-  {at: 16, name:'WATCHED',   tell:'Something out past the fences has stopped moving. It is facing this way.'},
-  {at: 34, name:'ATTENDED',  tell:'The dark has taken an interest in you. It comes closer each night now.'},
-  {at: 52, name:'SEEN',      tell:'You are SEEN. Whatever is out there knows your name, and it is no longer waiting.'},
+  {at: 12, name:'WATCHED',   tell:'Something out past the fences has stopped moving. It is facing this way.'},
+  {at: 40, name:'ATTENDED',  tell:'The dark has taken an interest in you. It comes closer each night now.'},
+  {at: 88, name:'SEEN',      tell:'You are SEEN. Whatever is out there knows your name, and it is no longer waiting.'},
 ];
 function noticeTierOf(n){
   let t = 0;
@@ -4833,7 +4863,7 @@ function dusterInSquad(){
 function bumpNotice(amt){
   /* Sleight: a duster's hands keep the working quiet */
   if(amt > 0 && research.done.sleight && dusterInSquad()) amt *= 0.75;
-  noticed = clamp(noticed + amt, 0, 60);
+  noticed = clamp(noticed + amt, 0, NOTICE_MAX);
   const t = noticeTierOf(noticed);
   if(t > noticeTier){
     noticeTier = t;
@@ -9728,7 +9758,7 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
      bolts, spells and the turret all arrive through this function. Friendly fire and the
      Ember Rot do not — `a` is null for a burn ticking down, and a stray arrow from your own
      line is not the alarm this is for. */
-  if(a && a !== d && d.faction === 'player' && hostile(a, d)) markThreat(d);
+  if(a && a !== d && d.faction === 'player' && hostile(a, d)){ markThreat(d); cryForHelp(d, a); }
   /* AND IF YOU SWUNG AT THE VIGIL, THE WHOLE HALL HEARD IT. Here rather than in the melee
      resolver for the same reason the line above is: every source of damage arrives through
      this function, and a congregation should not care whether it was a blade or an arrow. */
@@ -10988,7 +11018,13 @@ for(const tk of ['rites_binding', 'rites_deep']){
   const list = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : (names[0] || '');
   TECHS[tk].desc = (tk === 'rites_binding' ? 'Binding Circle: ' : '') + list;
 }
-const research = { done:{}, active:null, left:0, rp:0, study:null, queue:[], readFirst:false };
+/* `focus` is which of the desk and the tree the seated scholars are put on: 'split' halves
+   them, 'desk' is every mind on the formulae, 'tree' is every mind on the project. It replaces
+   the old two-state `readFirst`, which could say "all of them on the desk" and had no way at
+   all to say the thing that was actually asked for — "sometimes I JUST want to focus on
+   research, not formula". `readFirst` is still written to the save so an older one loads. */
+const research = { done:{}, active:null, left:0, rp:0, study:null, queue:[], readFirst:false, focus:'split' };
+const FOCUS_LABEL = {split:'SPLIT', desk:'THE DESK', tree:'THE TREE'};
 /* ---------- LINING THE WORK UP ----------
    "The ability to queue up research would be nice."
 
@@ -11245,7 +11281,11 @@ function benchSides(){
      for an idle bench turns a capacity question into a work-in-progress one — which read, in
      the harness, as a lone scholar suddenly working at 0.00x. */
   if(!reading) return {read: [], tree: all};
-  if(!tree || research.readFirst) return {read: all, tree: []};
+  if(!tree) return {read: all, tree: []};
+  /* the player's standing answer to "who is on which", defaulting to the old halving */
+  const f = research.focus || (research.readFirst ? 'desk' : 'split');
+  if(f === 'desk') return {read: all, tree: []};
+  if(f === 'tree') return {read: [], tree: all};
   const nRead = Math.floor(all.length / 2);
   return {read: all.slice(all.length - nRead), tree: all.slice(0, all.length - nRead)};
 }
@@ -12175,7 +12215,23 @@ function ai(c, dt){
     if(c.caravan.waitT > 0){ c.caravan.waitT -= dt; return; }
     /* nobody hauls freight after dark. Not twice, anyway. */
     if(isNight()){
-      const shelter = towns.sort((a,b2) => dist(a.x,a.y,c.x,c.y) - dist(b2.x,b2.y,c.x,c.y))[0];
+      /* ---------- AND `sort` REORDERS THE ARRAY IT IS CALLED ON ----------
+         Reported as "the leader of Hollowmere's name fluctuates between High Warden and Elder,
+         then randomly decides on one", which is the visible tip of something much worse.
+         `Array.prototype.sort` SORTS IN PLACE. This line ran in the caravan tick — every
+         caravan, every night — and permanently reordered the global `towns` array to whatever
+         was nearest that one wagon. And a town is stored as an INDEX in three places: `isLeader`
+         on every leader's body, and `warF`/`warT` on every soldier in every war. Measured: one
+         call, and SEVEN OF SEVEN LEADERS point at a different town — Cressa Sedge of Dustport
+         became Cressa Sedge of Ironscar. So the titles shuffled every night a caravan sheltered
+         and settled when they stopped, exactly as described, and warbands were marching on
+         whoever happened to be at that index by then.
+         The nearest town is a `reduce`, which asks the same question and moves nothing. */
+      let shelter = null, shelterD = 1e9;
+      for(const t2 of towns){
+        const d2 = dist(t2.x, t2.y, c.x, c.y);
+        if(d2 < shelterD){ shelterD = d2; shelter = t2; }
+      }
       if(shelter && dist(c.x, c.y, shelter.x, shelter.y + 9) > 5){
         c.moveTarget = {x: shelter.x, y: shelter.y + 9};
         return;
@@ -12986,10 +13042,108 @@ function commandTick(dt){
     }
   }
 }
+/* ---------- A CRY FROM THE FAR END OF THE YARD ----------
+   "Someone on the far end gets attacked and no one runs to help, despite there being plenty
+   of combat units available in the base. I don't want to increase the aggro range per se, as
+   I also don't want my units wandering off to pick fights. But I DO want them to run to the
+   aid of someone in or near my base."
+
+   Those are two different questions and the old code only had one answer to both: sight.
+   `raiseAlarm` fired when a WATCHMAN saw a foe inside thirteen tiles, so a labourer being cut
+   down at the other end of a forty-tile holding summoned nobody — nobody had seen anything.
+   Widening the sight range would answer it and would also send the watch off across the waste
+   after everything it can see, which is the thing that was explicitly not wanted.
+
+   So the trigger is not sight, it is BEING HIT. A player body taking a hostile blow leaves a
+   cry at the spot; a watchman answers a cry that landed inside their own holding, and ignores
+   one that did not. Aggro range is untouched — they walk to the noise and then see the fight
+   with exactly the eyes they always had.
+
+   Fixed slots, mutated rather than allocated, because this is stamped from `applyDamage` and
+   that is as hot a path as this game has. A second blow inside nine tiles of a live cry
+   refreshes it instead of taking a slot, so one running fight is one call for help. */
+const CRY_HOLD = 12, CRY_MERGE = 9, CRY_SLOTS = 6, RALLY_EDGE = 14;
+const cries = [];
+for(let i = 0; i < CRY_SLOTS; i++) cries.push({t: 0, x: 0, y: 0, f: 0, foe: null});
+let _cryNext = 0;
+function cryForHelp(victim, foe){
+  const f = victim.floor || 0;
+  for(const q of cries){
+    if(q.t > 0 && q.f === f && dist(q.x, q.y, victim.x, victim.y) < CRY_MERGE){
+      q.t = CRY_HOLD; q.x = victim.x; q.y = victim.y; q.foe = foe; return;
+    }
+  }
+  const q = cries[_cryNext = (_cryNext + 1) % CRY_SLOTS];
+  q.t = CRY_HOLD; q.x = victim.x; q.y = victim.y; q.f = f; q.foe = foe;
+}
+function cryTick(dt){ for(const q of cries) if(q.t > 0) q.t -= dt; }
+/* the nearest live cry this watchman's holding is responsible for, or nothing */
+function cryFor(c, ctr){
+  const f = c.floor || 0;
+  let best = null, bd = 1e9;
+  for(const q of cries){
+    if(q.t <= 0) continue;
+    /* the man who swung is down: the fight is over, and the watch does not need to see it */
+    if(q.foe && q.foe.state !== 'ok'){ q.t = 0; continue; }
+    if(q.f !== f) continue;
+    if(dist(q.x, q.y, ctr.x, ctr.y) > ctr.r + RALLY_EDGE) continue;   /* not in or near your base */
+    const d = dist(c.x, c.y, q.x, q.y);
+    if(d < 2.5) continue;                                             /* already standing on it */
+    if(d < bd){ bd = d; best = q; }
+  }
+  return best;
+}
+/* ---------- WHAT COUNTS AS ONE BASE ----------
+   `patrolCentreFor` used to grow its arc from the buildings within 22 tiles of the nearest
+   one and then cap the radius at 20, which is why a watch set in a big base "only sort of
+   awkwardly walks in the same area": the holding it was given was the corner of the base the
+   body happened to be standing in, not the base. Cluster the whole thing instead — anything
+   within LINK of anything already in the cluster joins it, so a base that sprawls is one
+   holding however long it is — and let the ring reach 40.
+
+   Rebuilt only when the building count changes, because this is O(n squared) in your own
+   buildings and `patrolCentreFor` is asked once per watchman per tick. */
+let _holds = null, _holdN = -1;
+function baseHolds(){
+  if(_holds && _holdN === pBuilds.length) return _holds;
+  _holdN = pBuilds.length; _holds = [];
+  const LINK = 26;
+  const seen = new Uint8Array(pBuilds.length);
+  for(let i = 0; i < pBuilds.length; i++){
+    if(seen[i]) continue;
+    seen[i] = 1;
+    const grp = [pBuilds[i]];
+    for(let k = 0; k < grp.length; k++){
+      const a = grp[k];
+      for(let j = 0; j < pBuilds.length; j++){
+        if(seen[j]) continue;
+        if(dist(a.x, a.y, pBuilds[j].x, pBuilds[j].y) < LINK){ seen[j] = 1; grp.push(pBuilds[j]); }
+      }
+    }
+    let sx = 0, sy = 0;
+    for(const b of grp){ sx += b.x; sy += b.y; }
+    const cx = sx / grp.length, cy = sy / grp.length;
+    let far = 0;
+    for(const b of grp) far = Math.max(far, dist(b.x, b.y, cx, cy));
+    _holds.push({x: cx, y: cy, r: clamp(far + 5, 9, 40)});
+  }
+  return _holds;
+}
 /* two on watch means one north and one south — not both in the same corner */
 function assignPatrolPosts(){
   const w = player().filter(c => c.job === 'patrol' && c.state !== 'dead');
-  w.forEach((c, i) => { c.patrolIx = i; c.patrolN = w.length; c.patrolPost = null; });
+  /* THE INDICES WERE WRITTEN AND NEVER READ. `patrolIx`/`patrolN` have been assigned here
+     since the first version and nothing has ever looked at them, so every watchman picked an
+     independent random bearing and an independent direction of travel — which is why a watch
+     of six bunches instead of ringing anything. Hand each body its own arc of the circle and
+     send them all the same way round, so the spacing they start with is the spacing they
+     keep. */
+  w.forEach((c, i) => {
+    c.patrolIx = i; c.patrolN = w.length; c.patrolPost = null;
+    c.patrolAng = (i / Math.max(1, w.length)) * Math.PI * 2;
+    c.patrolDir = 1;
+    c.patrolSpot = null; c.patrolT = 0; c.patrolHold = 0; c.path = null;
+  });
 }
 function patrolCentreFor(c){
   /* whichever of your holdings this hand is standing in (or nearest to) — a watch set in
@@ -13002,18 +13156,12 @@ function patrolCentreFor(c){
     if(d < r + 8 && d < bestD){ bestD = d; best = {x: t.x, y: t.y, r}; }
   }
   if(best) return best;
-  /* else the nearest cluster of your own buildings */
-  if(pBuilds.length){
-    let nb = null, nd = 1e9;
-    for(const b of pBuilds){ const d = dist(c.x, c.y, b.x, b.y); if(d < nd){ nd = d; nb = b; } }
-    if(nb){
-      /* grow the arc to cover the buildings clustered with the nearest one */
-      let sx = 0, sy = 0, k = 0, far = 6;
-      for(const b of pBuilds) if(dist(b.x, b.y, nb.x, nb.y) < 22){ sx += b.x; sy += b.y; k++; }
-      const cx2 = sx / k, cy2 = sy / k;
-      for(const b of pBuilds) if(dist(b.x, b.y, nb.x, nb.y) < 22) far = Math.max(far, dist(b.x, b.y, cx2, cy2) + 3);
-      return {x: cx2, y: cy2, r: Math.min(far, 20)};
-    }
+  /* else the whole of whichever of your bases this hand is standing in — see baseHolds */
+  const hs = baseHolds();
+  if(hs.length){
+    let nh = null, nd = 1e9;
+    for(const h of hs){ const d = dist(c.x, c.y, h.x, h.y); if(d < nd){ nd = d; nh = h; } }
+    if(nh) return nh;
   }
   return patrolCentre();   /* last resort: the old global centre */
 }
@@ -13023,10 +13171,23 @@ function patrolTick(c, dt){
   const foe = nearestEnemy(c, 13);
   if(foe){
     if(!c.alarmed){ c.alarmed = true; raiseAlarm(c, foe); }
+    c.rallying = false;
     c.target = foe;
     return false;   /* fall through to the fight */
   }
   c.alarmed = false;
+  /* SOMEBODY IN THE YARD IS BEING HIT. Not seen — heard. The cry has already been filtered
+     to this holding, so answering it is never a walk off the map; and the fight itself is
+     still picked up by the same thirteen tiles of sight as everything else, once they are
+     close enough to have any business seeing it. */
+  const cry = cryFor(c, ctr);
+  if(cry){
+    if(!c.rallying){ c.rallying = true; sayAs(c, 'alarm'); }
+    c.patrolSpot = null; c.patrolHold = 0;
+    travel(c, cry.x, cry.y, dt, 2.0);
+    return true;
+  }
+  if(c.rallying){ c.rallying = false; c.path = null; }
   /* ---------- A WATCH WALKS ITS HOLDING ----------
      Reported: "everyone moves super twitchy and fast. There's no methodical calmness to it.
      I do appreciate it over the weird circle it used to do, but this is a bit too chaotic for
@@ -13070,7 +13231,8 @@ function patrolTick(c, dt){
     else if((c.patrolStuck = (c.patrolStuck || 0) + dt) > 3.5) c.patrolT = 0;
   }
   if(!c.patrolSpot || c.patrolT <= 0){
-    if(c.patrolAng === undefined){ c.patrolAng = rnd() * Math.PI * 2; c.patrolDir = rnd() < 0.5 ? 1 : -1; }
+    /* assignPatrolPosts hands out the bearings; this is only for a body that never went through it */
+    if(c.patrolAng === undefined){ c.patrolAng = rnd() * Math.PI * 2; c.patrolDir = 1; }
     let spot = null;
     for(let tries = 0; tries < 10 && !spot; tries++){
       const a = c.patrolAng + c.patrolDir * (0.5 + rnd() * 0.45 + tries * 0.4);
@@ -15010,6 +15172,15 @@ function physics(c, dt){
         let body = null, bd = 1e9;
         for(const b of corpses){
           if(!carrionFodder(b) || b._harvSkip > now) continue;
+          /* ---------- AND `dist` HAS NEVER HAD A STOREY IN IT ----------
+             "With the harvest job active, it appears I can harvest dead things from underground
+             layers too." It is the flat-map trap this file has now been caught by four times —
+             `gatherKindAt` read surface decor from underground, movement orders went to the
+             wrong storey, `visAt` has no notion of floors — and it is the same shape every
+             time: two dimensions of geometry answering a question about three. A hand standing
+             in the camp would pick a corpse twenty tiles away and three storeys down, then walk
+             to the spot above it and stand there. */
+          if((b.floor || 0) !== (c.floor || 0)) continue;
           const d2 = dist(b.x, b.y, c.x, c.y);
           if(d2 < 34 && d2 < bd){ bd = d2; body = b; }
         }
@@ -21497,7 +21668,16 @@ function openBoneMarket(necro){
       body.innerHTML = '<div style="color:var(--dust)">He has nothing left to sell.</div>';
       return;
     }
-    const lead = player().find(c => c.gift === 'dark' && (!c.undead || c.lich) && c.state === 'ok');
+    /* ---------- AND THE RISEN KEEP THE ART THEY DIED WITH ----------
+       "After raising a dark-gifted squad member as an undead, they keep their alchemy, right?
+       Except they can't use binding circles."
+       Right, and this line is why. `(!c.undead || c.lich)` is the old law — only the living and
+       the self-made hold a leash — and it was written before a raised caster kept its gift at
+       all. A lieutenant or a minded servitor that came back with `dark` on it is exactly the
+       body this game spent a batch making possible, and the circle was still refusing it for
+       being dead. `mindedDead` is the question the rest of the file asks about a risen thing
+       that can still be given work; it is the right one here too. */
+    const lead = player().find(c => c.gift === 'dark' && mindedDead(c) && c.state === 'ok');
     for(const u of live){
       const price = deadPrice(u);
       const row = document.createElement('div'); row.className = 'trow';
@@ -22107,7 +22287,11 @@ function promote(u, caster){
 }
 let ctxCircle = null;      /* the circle whose hold is being shown, while its window is open */
 function openBinding(circle){
-  const ritualist = player().filter(c => c.gift==='dark' && !c.undead && c.state==='ok' && dist(c.x,c.y,circle.x+1,circle.y+1) < 4)
+  /* `mindedDead`, not "is it alive" — see the same fix at the circle's build button. A raised
+     caster keeps the art it died with, and the second clause below (a lich) was the old way of
+     admitting exactly one kind of dead ritualist. It is subsumed now and kept only because a
+     lich standing further back than the living should still be found. */
+  const ritualist = player().filter(c => c.gift==='dark' && mindedDead(c) && c.state==='ok' && dist(c.x,c.y,circle.x+1,circle.y+1) < 4)
     .sort((a,b)=>b.stats.magic-a.stats.magic)[0]
     || player().filter(c => c.lich && c.state==='ok' && dist(c.x,c.y,circle.x+1,circle.y+1) < 4)[0];
   if(!ritualist){ log('A dark-gifted squad member must stand at the circle.', 'bad'); return; }
@@ -22506,6 +22690,7 @@ let simAcc = 0;
 const SIM_DT = 1 / 30;
 /* options: small dials, kept outside the save so they survive new worlds */
 const opts = {fps: false, seeAll: false, dpr: 'auto', shadows: 'high', sound: true, vol: 0.6, amb: 1.0,
+  stash: true,      /* is the wagon panel unfolded — a dial, so it survives a new world */
   /* 'auto' asks the device, 'touch'/'mouse' overrule it. Detection is right most of the time
      and wrong often enough to need an escape hatch: a touchscreen laptop, a tablet with a
      keyboard, a phone asking for the desktop site. */
@@ -22536,6 +22721,7 @@ function applyInputMode(){
   TOUCH = opts.input === 'touch' ? true : opts.input === 'mouse' ? false : coarsePointer();
   document.body.classList.toggle('touch', TOUCH);
   stripKeyHints();
+  if(typeof applyStashFold === 'function'){ applyStashFold(); if(started) refreshInv(); }
   if(TOUCH !== was && typeof log === 'function' && started)
     log(TOUCH ? 'Touch controls on. Tap to select, tap again to order, hold for the menu.'
               : 'Mouse and keyboard controls on.', '');
@@ -22581,6 +22767,7 @@ function update(dt){
   motherTick(dt);             /* and whether anyone has gone far enough DOWN to find her */
   closingTick(dt);            /* and whether anybody has read the codex sitting in the stores */
   commandTick(dt);            /* and what the bands you sent out are doing about it */
+  cryTick(dt);                /* and whether anyone in one of your yards is shouting for help */
   contractTick(dt);           /* and whoever is on a road because you said you would see them across it */
   riftTick(dt / HOUR_SEC);    /* the world keeps coming apart */
   if(fractureOpen()){ if(!theDoor && !ruin) openTheDoor(); doorTick(dt / HOUR_SEC); }
@@ -22654,7 +22841,11 @@ function update(dt){
     /* It forgets a quiet camp quickly — but once it has actually turned its head, it does
        NOT lose interest fast. The old curve punished you harder the more it watched, which
        made the upper tiers unreachable. Inverted: the deeper you are, the stickier it is. */
-    bumpNotice(-(3.6 - noticeTier * 0.95));
+    /* ON THE SAME SCALE AS THE LADDER. The rungs moved from 52 to 88 for SEEN, so a cooling
+       rate left at the old numbers would not be gentler, it would be a meter that never came
+       down — the ceiling nearly doubled and the drain did not. Scaled with it, and the shape is
+       untouched: quick to forget a quiet camp, slow once it has actually turned its head. */
+    bumpNotice(-(6.0 - noticeTier * 1.6));
     settlerTick();   /* the base draws hands; the ledger pays them */
     /* tribute: a ruled town pays daily, scaled by its people and its mood. War halves it. */
     {
@@ -24918,13 +25109,29 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
       }
     }
   }
-  /* and make sure the route itself is open, whatever else was decided */
+  /* ---------- AND THE ROUTE DOES NOT GO THROUGH ANYBODY'S WALL ----------
+     "The walls of Copperhold don't always do their job — you can walk right through them at
+     certain points." Traced by hooking `blocked.delete`: `placeTownAt` built the ring and then
+     THIS loop took four tiles of it out again, at 440,1041-1044. It is the only walled town in
+     the world with a hole in it, because it is the only one with mountains placed around it on
+     purpose — the four cirque massifs sit at radius 50 and a trail STARTS at its massif's rim,
+     up to 1.7r out, which lands inside a wall ring of 27. The three-by-three brush did the rest.
+     "Whatever else was decided" was written about the cliff rule above, which refuses to wall a
+     town and so can leave a summit sealed; it was never meant to include masonry. The cliff pass
+     twenty lines up already knows this — `never wall a town` — and this one did not.
+     A town's own wall list is the exact answer to "is this masonry", so it is asked directly
+     rather than by distance: a trail may run right up to the gate, it simply may not go through
+     the stonework. */
+  const townWallKeys = new Set();
+  for(const t of towns) for(const w of (t.walls || [])) townWallKeys.add(bkey(w.x, w.y, 0));
   for(const m of mountains) for(const [x, y] of (m.trail || [])){
     for(let dy=-1; dy<=1; dy++) for(let dx=-1; dx<=1; dx++){
       const tx = x+dx, ty = y+dy;
       if(tx<1||ty<1||tx>=W-1||ty>=H-1) continue;
-      blocked.delete(bkey(tx, ty, 0));
-      baseBlocked.delete(bkey(tx, ty, 0));
+      const k = bkey(tx, ty, 0);
+      if(townWallKeys.has(k)) continue;
+      blocked.delete(k);
+      baseBlocked.delete(k);
     }
   }
 })();
@@ -28417,7 +28624,7 @@ function colorKeyOf(c){
      whichever got built first in a session handed its rig to the other through the mesh
      cache — which is why the mage's mantle appeared some runs and not others. The beast
      rigs had the same collision: elk, grazer and gravehound are all just `|b`. */
-  return factionColor(c) + '|' + (c.kin||'') + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.head||'') + '|' + (c.cloak||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.wisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.eater?'|E':'') + (c.soulbound?'|B':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.face||'') + (c.skinShift ? '|F' + c.skinShift : '');
+  return factionColor(c) + '|' + (c.kin||'') + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.head||'') + '|' + (c.cloak||'') + '|' + (c.house||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.wisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.eater?'|E':'') + (c.soulbound?'|B':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.face||'') + (c.skinShift ? '|F' + c.skinShift : '');
 }
 const SKINS = ['#8a5c34', '#6e4426', '#a06c40', '#5a3820', '#96683a'];
 const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0'];
@@ -31326,7 +31533,14 @@ function buildCharMesh(c){
          for this slot was that a drape is the thing that reads before the face does — so the
          one that HIDES THE DEAD, of all of them, cannot be a recolour of a travelling coat. */
       const ck = c.cloak;
-      const col = ck === 'k_pelt' ? '#7a6242' : ck === 'k_grave' ? '#8a8478' : '#4a3b2c';
+      /* ---------- AND ONE HOUSE DOES NOT WEAR ROAD BROWN ----------
+         "It would be nice if the d'Alagadda family's road cloaks were always black to match
+         their clothes/outfit." A Road Cloak is a travelling coat and brown is right for one;
+         it is not right on a prince whose whole silhouette is black and gone-grey gold. The
+         house is marked on the body rather than sniffed out of the surname, because `Sworn
+         Dorn` is family too and shares no name with him. */
+      const col = c.house === 'alagadda' ? '#1c1a1e'
+        : ck === 'k_pelt' ? '#7a6242' : ck === 'k_grave' ? '#8a8478' : '#4a3b2c';
       obox(0.60*SH, 0.10, 0.24, col, 0, 0.50, -0.06, e.spine);        /* the mantle over the shoulders */
       if(ck === 'k_grave'){
         /* HOODED AND LONG, and cut ragged at the hem. It is a shroud somebody is wearing. */
@@ -33337,6 +33551,7 @@ const TIPS = {
   build:'<b>BUILD [B]</b>Place structures. Blueprints need materials hauled to them before anyone can raise them.',
   work: '<b>WORK ORDERS [K]</b>Everything your camp can make, in one book. Order what you want and how many; anybody set to CRAFT takes the next order they can do and walks to whichever building it wants.<i>You still have to have built the workshop. You no longer have to stand anybody in it \u2014 and nothing gets made that you did not ask for.</i>',
   squad:'<b>SQUAD [S]</b>Select everyone you have. Shift+1-5 stores a group, 1-5 recalls it.',
+  study:'<b>RESEARCH [Y]</b>The desk, from anywhere. What is being read, what is being researched, what is queued behind it, and which half of your scholars is on which.<i>The number on the tab is the project in hand plus everything queued behind it. You still have to have built a bench, and somebody still has to be sitting at it.</i>',
   save: '<b>SAVE</b>Writes to browser storage and downloads a file. The world autosaves once a day.<i>Browser storage never leaves this device. The file is the copy that travels.</i>',
   move: '<b>MOVE</b>Carry this world to another device. There is no server behind this game, so a save crosses by hand — as a code you paste, or as a file.<i>Copy the code on the desktop, paste it into a note or an email to yourself, and paste it back on the phone.</i>',
   stance:'<b>STANCE</b>How this one picks fights on their own: melee closes, ranged holds off, medic hangs back and patches, tank draws blows, hold stands still.',
@@ -33377,6 +33592,7 @@ const TIPS = {
   addEventListener('mousedown', hide);
 }
 function refreshTop(){
+  refreshStudyBtn();
   $('ui-cats').textContent = cats;
   $('ui-day').textContent = day;
   const h = Math.floor(hour), m = Math.floor((hour-h)*60);
@@ -34279,22 +34495,54 @@ function openResearch(){
           + (rr > 0 ? ` <span style="color:var(--dust)">(~${Math.ceil(st.left / rr)}h at this pace; each one pays as it is finished)</span>`
                     : ` <span style="color:var(--blood)">(nobody is on the reading — see the split below)</span>`);
         body.appendChild(rd);
-        /* ---------- AND WHO IS ON WHICH ----------
-           The split is invisible otherwise, and an invisible split reads as the bench being
-           slow. It is also the one place the player can overrule it. */
+      }
+      /* ---------- AND WHO IS ON WHICH ----------
+         "The split between researching formula and continuing research is a bit vague as to
+          how it works — could we make it clearer which one is being prioritized, or if it is
+          indeed split? Sometimes I JUST want to focus on research, not formula."
+
+         Three things were wrong with the old row. It only appeared while something was ON the
+         desk, so the rule governing your scholars was invisible exactly when you were deciding
+         whether to put something there. It was a two-state button whose label said what the
+         state WAS, which reads to about half of everyone as what the button will DO. And the
+         one state it could not express is the one that was asked for.
+
+         Now: three buttons, the live one lit, always on screen, with a plain sentence
+         underneath saying who is actually on what right now — including the case where the
+         answer is nobody, because there is no one sitting at a bench. */
+      if(research.active || research.study || benchSeated().length){
         const sides = benchSides();
-        const sp = document.createElement('div'); sp.className = 'trow';
-        sp.innerHTML = `<span class="tn" style="font-size:11px;color:var(--dust)">`
-          + `${sides.tree.length} on the tree · ${sides.read.length} on the desk`
-          + (research.active && !sides.read.length ? ' — the formulae are waiting for a second mind at the bench' : '')
-          + `</span>`;
-        if(research.active){
-          const tb = document.createElement('button');
-          tb.textContent = research.readFirst ? 'READING FIRST — EVERY MIND ON THE DESK' : 'SPLIT BETWEEN THE DESK AND THE TREE';
-          tb.onclick = () => { research.readFirst = !research.readFirst; rndr(); };
-          sp.appendChild(tb);
-        }
-        body.appendChild(sp);
+        const fnow = research.focus || (research.readFirst ? 'desk' : 'split');
+        const fh = document.createElement('div');
+        fh.style.cssText = 'color:var(--warn);font-size:11px;letter-spacing:1px;margin:10px 0 4px';
+        fh.textContent = 'WHO IS ON WHICH';
+        body.appendChild(fh);
+        const fr = document.createElement('div');
+        fr.style.cssText = 'display:flex;gap:4px;margin-bottom:4px;flex-wrap:wrap';
+        const mkf = (key, label, tip) => {
+          const b = document.createElement('button');
+          b.textContent = label; b.title = tip;
+          if(key === fnow){ b.style.borderColor = 'var(--warn)'; b.style.color = 'var(--warn)'; }
+          b.onclick = () => { research.focus = key; research.readFirst = (key === 'desk'); rndr(); };
+          fr.appendChild(b);
+        };
+        mkf('split', 'SPLIT', 'Half the seated scholars on the formulae, half on the project. The reading takes the smaller half.');
+        mkf('desk',  'FORMULAE ONLY', 'Every seated scholar on the desk. The project waits.');
+        mkf('tree',  'RESEARCH ONLY', 'Every seated scholar on the project. The formulae wait, and keep whatever insight is still in them.');
+        body.appendChild(fr);
+        const fs = document.createElement('div');
+        fs.style.cssText = 'color:var(--dust);font-size:11px;margin-bottom:6px';
+        const seated = benchSeated().length;
+        let line;
+        if(!seated) line = 'Nobody is sitting at a bench, so neither is moving. Set someone to STUDY and stand them at one.';
+        else if(!research.active && !research.study) line = `${seated} at the bench, with nothing to work on.`;
+        else if(!research.study) line = `${seated} on the project. Nothing is on the desk.`;
+        else if(!research.active) line = `${seated} on the desk. No project is running.`;
+        else line = `${sides.tree.length} on the project (${researchRate().toFixed(1)}x) · ${sides.read.length} on the desk (${studyRate().toFixed(1)}x)`
+          + (sides.read.length ? '' : ' — the formulae are waiting')
+          + (sides.tree.length ? '' : ' — the project is waiting');
+        fs.textContent = line;
+        body.appendChild(fs);
       }
       if(held.length){
         const row = document.createElement('div'); row.className = 'trow';
@@ -34397,9 +34645,22 @@ function openResearch(){
          up rather than one you have finished. Everything after this is checked again on the
          day the project actually begins — see `researchBlocker`. */
       else if(t.req && !willHaveTech(t.req)) status = `<span style="color:var(--dust)">needs ${TECHS[t.req].name}</span>`;
+      /* ---------- A ROAD SOMEBODY ELSE WALKED FIRST IS NOT QUEUEABLE ----------
+         "You can still research lichdom the old way (tons of insight/gold) as long as you don't
+         talk to the demilich. We need to fix that so the demilich is the ONLY path."
+         The rite itself was never actually reachable — `researchBlocker` checks `needsQuest` and
+         `researchBegin` refuses, measured — so nothing was ever ACQUIRED this way. What was
+         broken is this list, and it is the half a player can see: the quest gate sat BELOW the
+         queue branch, so the moment anything else was active or lined up, The Last Rite grew a
+         QUEUE button with a full price on it. You could put it in the queue, watch it sit at the
+         head, and never be told why it would not start. A gate that reads as affordable is a
+         gate that reads as the intended path.
+         Hoisted above the queue, so a quest-gated project says what it wants in every state the
+         bench can be in. Deliberately above `hasSite` too — the favor is the deeper condition,
+         and "build a bench" is not the useful sentence when the real answer is a person. */
+      else if(t.needsQuest && !immortalFavor(t.needsQuest)) status = `<span style="color:var(--dust)">win the favor of the one who walked this road first</span>`;
       else if(research.active || research.queue.length) status = `<button data-q="${key}">QUEUE · ${t.cost}g${matTxt}${rpTxt} · ${t.hours}h</button>`;
       else if(!hasSite) status = `<span style="color:var(--dust)">build a ${BUILD_TYPES[t.needs].name}</span>`;
-      else if(t.needsQuest && !immortalFavor(t.needsQuest)) status = `<span style="color:var(--dust)">win the favor of the one who walked this road first</span>`;
       else if(t.rp && research.rp < t.rp) status = `<span style="color:var(--dust)">needs ${t.rp} insight (have ${research.rp})</span>`;
       else {
         const afford = cats >= t.cost && canAfford(mats);
@@ -35142,7 +35403,23 @@ function equipFromStash(c, k){
   refreshInv(); refreshCharPanel();
   return true;
 }
+/* A PHONE HAS ITS OWN ANSWER TO THIS. On touch the wagon is already a sheet behind a button
+   and is not on screen unless it was asked for, so folding it there would only mean tapping
+   the sheet open to find it empty. The dial is a desktop dial. */
+function stashFolded(){ return !opts.stash && !document.body.classList.contains('touch'); }
+function applyStashFold(){
+  const p = $('invpanel'); if(!p) return;
+  const f = stashFolded();
+  p.classList.toggle('folded', f);
+  const ch = $('invchev'); if(ch) ch.textContent = f ? '\u25b8' : '\u25be';
+  p.title = f ? 'The wagon, folded away. Click or [T].' : '';
+}
+function toggleStash(){ opts.stash = !opts.stash; saveOpts(); applyStashFold(); if(opts.stash) refreshInv(); }
+{ const t = $('invtitle'); if(t) t.onclick = toggleStash; }
+applyStashFold();
 function refreshInv(){
+  /* nothing to draw into a panel nobody can see, and the wagon can be forty rows long */
+  if(stashFolded()) return;
   const b = $('invbody'); b.innerHTML = '';
   const hdr = document.createElement('div');
   hdr.style.cssText = 'color:var(--dust);margin-bottom:4px';
@@ -35261,6 +35538,11 @@ function openModal(title, sub){
   ctxCircle = null;
   $('modaltitle').textContent = title; $('modalsub').textContent = sub;
   $('modal').style.display = 'flex'; modalOpen = true; paused = true; syncPauseBtn();
+  /* AND IT OPENS AT THE TOP. `#modalbody` is one element reused by every window in the game,
+     so it keeps the scroll offset the last one left behind — open the shop, scroll to the
+     bottom of the wares, close it, hit [I], and the kit screen opens halfway down somebody's
+     backpack with the figure off-screen. */
+  { const mb = $('modalbody'); if(mb) mb.scrollTop = 0; }
   AU.open();
 }
 $('modalclose').onclick = () => {
@@ -35278,6 +35560,23 @@ document.addEventListener('click', e => {
 }, true);
 const _chb = document.getElementById('btn-chron'); if(_chb) _chb.onclick = () => openChronicles();
 const _wkb = document.getElementById('btn-work'); if(_wkb) _wkb.onclick = () => openWorkshops();
+/* ---------- THE DESK, FROM ANYWHERE ----------
+   "Maybe as with craft orders, the research desk can have a separate tab along the top of the
+    screen to quickly access and see what's in the queue."
+   It was reachable by walking to the bench and clicking the building, which is a long way to
+   go to answer "what am I researching". The count on the tab is the project in hand plus
+   everything queued behind it, so the second half of the ask — SEE what is in the queue — is
+   answered without opening anything. */
+const _rsb = document.getElementById('btn-study'); if(_rsb) _rsb.onclick = () => openResearch();
+function refreshStudyBtn(){
+  const b = document.getElementById('btn-study'); if(!b) return;
+  const n = (research.active ? 1 : 0) + research.queue.length;
+  b.textContent = 'RESEARCH' + (n ? ' \u00b7' + n : '') + (TOUCH ? '' : ' [Y]');
+  /* a bench you have not built is a window with nothing in it */
+  const has = pBuilds.some(x => x.type === 'r_bench');
+  b.disabled = !has;
+  b.title = has ? '' : 'No research bench built.';
+}
 function openInventory(c){
   gearFor = c;
   openModal('KIT — ' + c.name, 'Click a slot, then something from the wagon. Below: what they are carrying — eat it, hand it over, stash it or drop it. [I] reopens.');
@@ -36459,6 +36758,17 @@ let altHeld = false;
 const panKeys = {ArrowUp:false, ArrowDown:false, ArrowLeft:false, ArrowRight:false, KeyQ:false, KeyE:false};
 addEventListener('keydown', e => {
   if(!started) return;
+  /* ---------- AND NOT WHILE SOMEBODY IS TYPING ----------
+     Every letter in this handler is a bare letter, so pasting a save code into the MOVE box
+     used to open the build menu, the chronicles and the workshops on its way through. Noticed
+     while adding two more letters to the list ([T] and [Y]) rather than caused by them — a
+     handler that steals keys from a focused field has been wrong since the first one was
+     bound. Modifier chords are let through: ctrl+V is not typing. */
+  {
+    const el = document.activeElement;
+    if(el && !e.ctrlKey && !e.metaKey &&
+       (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+  }
   if(e.key === 'F9'){ e.preventDefault(); toggleSeeAll(); opts.seeAll = debugSeeAll; saveOpts(); return; }
   if(e.key === 'F10'){ e.preventDefault(); opts.fps = !opts.fps; saveOpts(); return; }
   if(e.key==='Alt'){ altHeld = true; e.preventDefault(); }
@@ -36499,6 +36809,8 @@ addEventListener('keydown', e => {
   if(e.key==='b' || e.key==='B') toggleBuild();
   if(e.key==='l' || e.key==='L'){ if(modalOpen){ $('modal').style.display='none'; modalOpen=false; } else openChronicles(); }
   if(e.key==='i' || e.key==='I'){ const c = selected[0]; if(c && c.faction==='player') openInventory(c); }
+  if(e.key==='t' || e.key==='T') toggleStash();
+  if(e.key==='y' || e.key==='Y'){ if(pBuilds.some(x => x.type === 'r_bench')) openResearch(); else log('You have no research bench.', 'bad'); }
   if(e.key==='c' || e.key==='C'){ const c = selected[0]; if(hasArts(c)){ const sp = spellsFor(c)[0]; if(sp) beginCast(c, sp[0]); } }
   if(e.key==='v' || e.key==='V'){ const c = selected[0]; if(hasArts(c)){ const sp = spellsFor(c)[1]; if(sp) beginCast(c, sp[0]); } }
   if(e.key==='x' || e.key==='X'){ toggleConcentrationOff(); }
@@ -39661,7 +39973,7 @@ function snapshot(){
     id:c.id, name:c.name, faction:c.faction, x:c.x, y:c.y,
     stats:c.stats, gift:c.gift, mana:c.mana, stance:c.stance, parts:c.parts,
     blood:c.blood, maxBlood:c.maxBlood, hunger:c.hunger,
-    weapon:c.weapon, armor:c.armor, head:c.head||null, cloak:c.cloak||null, trinket:c.trinket||null, state:c.state, undead:c.undead,
+    weapon:c.weapon, armor:c.armor, head:c.head||null, cloak:c.cloak||null, trinket:c.trinket||null, house:c.house||null, state:c.state, undead:c.undead,
     torchH: c.torchH,   /* how much of the torch is left — a fresh one on every reload is not a resource */
     /* A sentence that does not survive a save is a sentence you serve by reloading, and
        kit held at the gaol would simply vanish. The cell is stored by index. */
@@ -39829,7 +40141,7 @@ function snapshot(){
       tuition: b.tuition ? {...b.tuition} : undefined,
       stored: b.stored ? b.stored.map(sChar) : undefined})),
     recruits: towns.map(t=>t.recruits),
-    research: {done:{...research.done}, active:research.active, left:research.left, rp:research.rp, study:research.study?{docs:[...(research.study.docs || [])], left:research.study.left}:null, readFirst:!!research.readFirst, queue:[...research.queue]},
+    research: {done:{...research.done}, active:research.active, left:research.left, rp:research.rp, study:research.study?{docs:[...(research.study.docs || [])], left:research.study.left}:null, readFirst:!!research.readFirst, focus:research.focus || 'split', queue:[...research.queue]},
   };
 }
 function restore(d){
@@ -40083,6 +40395,8 @@ function restore(d){
   if(Array.isArray(d.drops)) for(const dr of d.drops) drops.push({x:dr.x, y:dr.y, items:{...dr.items}});
   kitOpen = d.kitOpen||0; day = d.day; hour = d.hour; uid = d.uid;
   research.done = d.research.done||{}; research.active = d.research.active; research.left = d.research.left||0; research.rp = d.research.rp||0; research.readFirst = !!d.research.readFirst;
+  /* an older save has only the two-state flag; read it as the focus it stood for */
+  research.focus = d.research.focus || (research.readFirst ? 'desk' : 'split');
   /* A SAVE FROM BEFORE THE STACK carries `{rp, left}` and no `docs`. Restoring that shape puts
      a reading on the desk that `researchTick` cannot advance — `docs[0]` is undefined — so the
      bench silently stops reading forever. Old readings are paid out where they stand. */
@@ -40122,6 +40436,7 @@ function restore(d){
     if(s.torchH !== undefined) c.torchH = s.torchH;
     for(const sl of ['head', 'cloak', 'trinket']) c[sl] = (s[sl] && ITEMS[s[sl]]) ? s[sl] : null;
     c.armor  = (s.armor  && ITEMS[s.armor])  ? s.armor  : null;
+    c.house  = s.house || null;   /* livery, not gear: it survives a load or the cloak goes brown */
     if(s.weapon && !ITEMS[s.weapon]) console.warn('dropped unknown weapon from save:', s.weapon);
     if(s.armor && !ITEMS[s.armor]) console.warn('dropped unknown armor from save:', s.armor); c.state = s.state; c.undead = !!s.undead;
     c.beast = s.beast; c.loot = s.loot; c.deadAt = s.deadAt; c.looted = s.looted; c.robbed = s.robbed; c.rendered = s.rendered || 0; c.fieldDone = !!s.fieldDone; c.swag = s.swag ? {gold: s.swag.gold, items: {...s.swag.items}} : null;
@@ -40853,6 +41168,7 @@ function lyreTick(dt){
     {atk:22, def:26, tough:20, ath:8, medic:40, magic:52, gift:'divine', armr:20,
      weapon:'w_kat', armor:'a_lea'});
   her.neutral = true; her.bossKey = 'lyre'; her.questGive = 'lyre';
+  her.house = 'alagadda';
   her.face = 'lyre';        /* a sculpted head; there is no FACES entry, so the body keeps its own */
   her.holdsFire = true;   /* she does not shoot her brother's household on sight — see pierceNeutral */
   her.blood = 150; her.maxBlood = 150;
@@ -41606,6 +41922,7 @@ function applyCreation(race, gift, origin, sub){
     me = mk(p, {atk:14, def:13, tough:11, ath:6, medic:5, magic:19, gift:'dark', race,
                 weapon:'w_kat', armor:'a_lea', blades:22, labor:2, crafting:6});
     me.name = "Lyonart d'Alagadda";
+    me.house = 'alagadda';
     me.face = 'lyonart';        /* long white hair, black eyes, black-and-gold gone grey */
     me.conviction = 'ambitious';
     /* a prince's hands have not done a day's work, and it shows in everything but the Art */
@@ -41624,6 +41941,7 @@ function applyCreation(race, gift, origin, sub){
          weapon: i < 4 ? 'w_rkat' : 'w_bow', armor: 'a_rag'});
       u.undead = true; u.master = me; u.guardTarget = me;
       u.hunger = 100; u.bindWeight = 1; u.shortTag = 'H' + (i + 1);
+      u.house = 'alagadda';
       u.blood = 75; u.maxBlood = 75;
       chars.push(u);
     }
@@ -41642,6 +41960,7 @@ function applyCreation(race, gift, origin, sub){
       att.conviction = 'loyal';
       att.regard = 45;              /* he already decided about the boy a long time ago */
       att.shortTag = 'OR';
+      att.house = 'alagadda';
       att.job = 'guard';
       att.guardTarget = me;
       att.attendant = true;
