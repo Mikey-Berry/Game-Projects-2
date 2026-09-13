@@ -5139,12 +5139,45 @@ function licenseCompany(town, against, marching){
 }
 const BASTION_R = 32;     /* territory radius: intruding necromancers get hunted */
 (function placeBastion(){
-  let tries = 0;
-  while(!bastion && tries++ < 8000){
-    const x = ri(20, W-20), y = ri(20, H-20);
+  /* ---------- THE ORDER KEEPS ITS HOUSE WITHIN SIGHT OF THE SALT ----------
+     "Let's incorporate the Paladin Bastion closer to Saltmere. That should be where they are
+     located since Saltmere already has some paladins in town."
+     It was sited at random anywhere at least seventy tiles from every town, which put the
+     second power in the world somewhere out in the waste with no relationship to anything. And
+     Saltmere is already theirs in everything but the map: salt as holy, salted saints, a
+     standing pyre in the square, and paladins walking its streets. A fortress an hour's walk
+     up the road from the town whose faith it enforces is the version of this that explains
+     itself without a line of text.
+     A RING, NOT A POINT: 42 to 66 tiles out, which is far enough that the two are separate
+     places and near enough that the Bastion is Saltmere's. The other towns keep their seventy.
+     Falls through to the old rule if the salt flats will not take it, because "near Saltmere"
+     is a preference and "the Order exists" is not. */
+  const salt = towns.find(t => t.def.key === 'saltmere');
+  /* THE SPOT IS CHOSEN FIRST AND THE FORTRESS IS RAISED ONCE. The whole of the construction
+     below — the ring, the gaol, the chapel, the men in it — sits inside the search loop and
+     runs on the iteration that finds ground. A second search loop in front of it would
+     therefore find the Saltmere spot and then never build anything on it, so the two searches
+     agree on a `spot` and the loop that raises the place runs exactly once either way. */
+  let spot = null, tries = 0;
+  while(!spot && salt && tries++ < 6000){
+    const a = rnd() * Math.PI * 2, r = 42 + rnd() * 24;
+    const x = Math.round(clamp(salt.x + Math.cos(a) * r, 20, W-20));
+    const y = Math.round(clamp(salt.y + Math.sin(a) * r, 20, H-20));
     if(!areaClear(x-13, y-13, 26, 26)) continue;   /* the ring is 25 across — see below */
+    if(towns.some(t => t !== salt && dist(t.x,t.y,x,y) < 70)) continue;
+    if(dist(salt.x, salt.y, x, y) < 40) continue;
+    spot = {x, y};
+  }
+  tries = 0;
+  while(!spot && tries++ < 8000){
+    const x = ri(20, W-20), y = ri(20, H-20);
+    if(!areaClear(x-13, y-13, 26, 26)) continue;
     if(towns.some(t => dist(t.x,t.y,x,y) < 70)) continue;
     if(dist(startTown.x, startTown.y, x, y) < 100) continue;
+    spot = {x, y};
+  }
+  while(!bastion && spot){
+    const x = spot.x, y = spot.y;
     bastion = {x, y, walls:[]};
     /* ---------- A FORTRESS THE SIZE OF WHAT IT DOES ----------
        Reported: "neutral faction bases should be bigger. The Paladin Bastion needs to be
@@ -5555,7 +5588,7 @@ function burnHeretic(c){
   if(c.jailedAt){ c.jailedAt.holds = 0; c.jailedAt = null; }
   c.heretic = false; c.burnDay = 0;
   c.x = p2.x; c.y = p2.y;
-  addSpecks(p2.x, p2.y - 0.4, '#ff8a3a', 26);
+  addFlame(p2.x, p2.y - 0.4, 34, 1.7);        /* a pyre, and it should look like one */
   kill(c, null);
   /* AND SAY WHICH GROUND, because "at the Bastion" was true when there was only one and is a
      wrong direction the moment there are two. */
@@ -7556,7 +7589,7 @@ function saltmereBurning(){
     n++;
   }
   if(n){
-    addSpecks(saltmere.pyre.x, saltmere.pyre.y - 0.4, '#ff8a3a', 18);
+    addFlame(saltmere.pyre.x, saltmere.pyre.y - 0.4, 26, 1.5);
     log(`Saltmere's fire is fed at dawn. ${n} ${n === 1 ? 'body goes' : 'bodies go'} on it, and the flats are clean again.`, '');
   }
   return n;
@@ -9500,6 +9533,102 @@ function addFloat(x, y, text, color){
 function addSpecks(x, y, color, n=4){
   for(let i=0;i<n;i++) particles.push({x, y, vx:(rnd()-0.5)*2.5, vy:(rnd()-0.5)*2.5, h:1.0, vh:rnd()*2.5, t:0, life:0.5, color, size:3});
 }
+/* ============================================================ FIRE, AND WHAT MAGIC LOOKS LIKE
+   "Fire and magic in general is lacklustre right now. There needs to be more flair to it, more
+   eye candy. Fire should not just be a sprinkling of red pixels, but evoke the feel of actual
+   flame."
+
+   And that is what it was, exactly: `addSpecks` is the whole visual language of every effect in
+   this game — four to twenty 3-pixel SQUARES of ONE flat colour, thrown out on random vectors,
+   fading linearly over half a second. A firebolt landing and a bandage being tied were the same
+   event with a different hex code.
+
+   THREE THINGS MAKE A FLAME READ AS A FLAME, and none of them is the colour:
+     · IT COOLS. A flame is not orange; it is white at the root, yellow, orange, red, and then
+       smoke, and a particle that does not travel that ramp reads as confetti however red it is.
+     · IT RISES AND SWELLS AND THINS. Buoyant, not ballistic: no gravity, a widening tongue that
+       necks out at the top. `addSpecks` gives its motes DOWNWARD acceleration, which is the
+       opposite of what fire does and is most of why it reads as sparks.
+     · IT IS BRIGHTER THAN THE THING BEHIND IT. Drawn additively with a soft radial falloff, so
+       overlapping tongues build a hot core instead of tiling into a grid of squares.
+   Embers are the fourth thing, and they ARE ballistic — a few of them, thrown out and falling,
+   which is the contrast that makes the rest read as flame rather than as more embers. */
+/* AND THEY DRAW FROM `vrnd`, NOT `rnd`. Both are called from the render loop as well as from
+   the sim — a fire that only flickers on the frames something takes damage is not a fire — and
+   `rnd()` is the seeded stream the whole simulation rides on. This file has already lost an
+   afternoon to exactly that: `updateDust` spawned motes from inside `render()`, six `rnd()`
+   calls apiece, at whatever rate the machine happened to paint, and the frame rate perturbed
+   the world. Anything that only affects pixels draws from `vrnd`. */
+/* THE RAMP IS WEIGHTED TO THE ORANGE, and the first cut was not: it gave a quarter of every
+   particle's life to near-white, and under additive blending a dozen overlapping white cores
+   saturate to a flat white blob — which is what the first render came back as. The white is a
+   sliver at the very root now, the middle of the life is the orange a fire actually is, and the
+   alpha is low enough per mote that it takes several of them to build a hot centre. */
+const FLAME_RAMP = [
+  [1.00, 0.96, 0.82],   /* the root, and it is gone almost at once */
+  [1.00, 0.78, 0.30],   /* yellow */
+  [0.99, 0.48, 0.10],   /* orange — most of the tongue */
+  [0.86, 0.26, 0.05],
+  [0.52, 0.13, 0.04],   /* deep red */
+  [0.20, 0.17, 0.16],   /* and out into smoke */
+];
+/* u is 0 at the root and 1 at the top of the tongue */
+function flameRGB(u){
+  const t = clamp(u, 0, 1) * (FLAME_RAMP.length - 1);
+  const i = Math.min(FLAME_RAMP.length - 2, t | 0), f = t - i;
+  const a = FLAME_RAMP[i], b = FLAME_RAMP[i + 1];
+  return [a[0] + (b[0]-a[0])*f, a[1] + (b[1]-a[1])*f, a[2] + (b[2]-a[2])*f];
+}
+/* ---------- A FIRE SOMEWHERE ----------
+   `scale` is how big the fire is, not how many particles it has: one number moves the tongue
+   height, the spread and the ember count together, so a torch and a pyre are the same call. */
+function addFlame(x, y, n, scale){
+  const S = scale || 1;
+  n = Math.round(n * 2.2);          /* more tongues, each a fraction of the old weight */
+  for(let i = 0; i < n; i++){
+    const a = vrnd() * Math.PI * 2, r = vrnd() * 0.20 * S;
+    particles.push({
+      kind: 'flame',
+      x: x + Math.cos(a) * r, y: y + Math.sin(a) * r,
+      /* barely any lateral drift: a tongue that flies sideways is a spark */
+      vx: (vrnd()-0.5) * 0.42 * S, vy: (vrnd()-0.5) * 0.42 * S,
+      h: 0.12 + vrnd() * 0.12 * S,
+      vh: (1.5 + vrnd() * 1.5) * S,        /* buoyancy, and it is never taken away */
+      curl: (vrnd()-0.5) * 2.4,            /* the lick — a slow lateral wander as it climbs */
+      t: 0, life: 0.42 + vrnd() * 0.40,
+      r0: (0.07 + vrnd() * 0.05) * S,      /* it swells out of the root ... */
+      r1: (0.21 + vrnd() * 0.14) * S,      /* ... and thins again at the top */
+      seed: vrnd() * 99,
+    });
+  }
+  /* AND A FEW EMBERS, which are the only part of a fire that behaves like `addSpecks` always
+     did — thrown, and falling. A handful, because a shower of them is a firework. */
+  const em = Math.max(1, Math.round(n * 0.22));
+  for(let i = 0; i < em; i++)
+    particles.push({x, y, vx:(vrnd()-0.5)*2.6*S, vy:(vrnd()-0.5)*2.6*S, h:0.25 + vrnd()*0.3,
+                    vh:(1.2 + vrnd()*2.2)*S, t:0, life:0.5 + vrnd()*0.5,
+                    color:'#ffc85a', size:2, ember:true});
+}
+/* ---------- AND WHAT AN ART LOOKS LIKE ----------
+   The same soft additive mote, without the cooling — magic does not burn out, it disperses. It
+   drifts rather than rises, and it turns while it goes, so a working reads as something being
+   moved rather than something being thrown. One call for every gift; the colour is the gift. */
+function addGlow(x, y, color, n, scale){
+  const S = scale || 1;
+  for(let i = 0; i < n; i++){
+    const a = vrnd() * Math.PI * 2;
+    particles.push({
+      kind: 'glow', color,
+      x: x + Math.cos(a) * 0.18 * S, y: y + Math.sin(a) * 0.18 * S,
+      vx: Math.cos(a) * (0.5 + vrnd()*0.9) * S, vy: Math.sin(a) * (0.5 + vrnd()*0.9) * S,
+      h: 0.5 + vrnd() * 0.7, vh: (vrnd()-0.25) * 0.9 * S,
+      spin: (vrnd() < 0.5 ? -1 : 1) * (1.4 + vrnd() * 2.0),
+      t: 0, life: 0.55 + vrnd() * 0.55,
+      r0: (0.05 + vrnd()*0.04) * S, r1: (0.15 + vrnd()*0.10) * S,
+      seed: vrnd() * 99,
+    });
+  }
+}
 /* ---------- A BODYGUARD IS SOMEBODY WHO TAKES THE BLOW ----------
    The job existed and did almost nothing you could see: it made a unit follow somebody and
    pick fights near them, which is what an idle unit does anyway. Standing in the way is the
@@ -9712,7 +9841,9 @@ function breatheAt(c, tx, ty){
   }
   for(let i = 1; i <= Math.round(b.range); i++){
     const t = i / b.range;
-    addSpecks(c.x + ux*i, c.y + uy*i - 0.2, i < 3 ? '#ffd07a' : '#ff8a3a', 2 + Math.round(t*3));
+    /* THE BREATH, AND IT IS THE ONE EFFECT A WYRM HAS. It widens down the line as a cone
+       does: bigger tongues further out, where the flame has had room to open. */
+    addFlame(c.x + ux*i, c.y + uy*i - 0.2, 3 + Math.round(t*5), 0.85 + t * 0.9);
   }
   AU.cast(c.x, c.y, 'destruction');
   c.breathCd = b.cd;
@@ -12070,6 +12201,57 @@ function revealedUndead(c){
    barn made of other people's bones. The exiles get the same rule, because theirs has always
    been "hunt any dead you can see" and this is the largest example of one in the world. */
 function walksAsDead(c){ return revealedUndead(c) || c.bossKey === 'cairn'; }
+/* ---------- WHAT THE ORDER SEES WHEN IT LOOKS AT ONE OF YOURS ----------
+   "It doesn't make sense that paladins are immediately hostile to you if you just pass them on
+   the road as a normal human. There should be layers to this — they are only hostile if you are
+   a notorious necromancer, or are obviously traveling with a host of undead. An unrelated party
+   member should be able to sneak into Saltmere without instantly attracting attention."
+
+   THE OLD RULE WAS ONE LINE AND IT HAD TWO FAULTS IN IT:
+       if(p.faction === 'player') return menaceFlag || purgeWrath > 0;
+   and `menaceFlag` is set, among other things, by
+       chars.some(c => player && !undead && alive && c.stats.magic >= 15)
+
+   HAVING MAGIC IS NOT A CRIME. A divine healer, a fire mage and a dust-walker all clear MAG 15,
+   and so does every necromancer origin in the game on the first frame — Lyonart starts at 19,
+   Saga at 26. So the flag was true from the opening minute of nearly every run, permanently,
+   and the Order was hostile to a party that had done nothing whatever.
+
+   AND IT WAS GLOBAL. `menaceFlag` is one boolean about the whole roster, and `hostile` asked it
+   about whichever body was standing there — so a plain hired hand with no gift, alone, eight
+   hundred tiles from the necromancer who employs her, read exactly as the necromancer. Which is
+   the half of the report that closes Saltmere and Albedo's questline: there was no such thing
+   as an unrelated party member.
+
+   FOUR LAYERS NOW, and each of them is a thing the Order could actually observe:
+     · it is dead and not hidden, or it is a lich          — the standing quarrel, unchanged
+     · you have killed their people and they know it       — `purgeWrath`, unchanged
+     · you are NOTORIOUS: widely known AND ill spoken of   — the fame ledger, not a stat sheet
+     · this body is walking with the dead, in plain sight  — asked of THIS body, here, now
+   Everything else walks past. A shrouded risen is not "in plain sight" — `revealedUndead`
+   already respects the Shroud and the concealing cloak — so the art that exists for hiding the
+   dead now buys you something from the Order as well as from the town watch. */
+const PURGE_KNOWN = 34, PURGE_REPUTE = -18;   /* "ill spoken of" on the fame bands, and meant it */
+const PURGE_ESCORT_R = 15;                    /* close enough that the two of you are one party */
+function purgeNotorious(){
+  return purgeWrath > 0 || (fame.known >= PURGE_KNOWN && fame.repute <= PURGE_REPUTE);
+}
+/* is this body visibly in company with the walking dead */
+function escortingDead(c){
+  const f = c.floor || 0;
+  for(const o of charsNear(c.x, c.y, PURGE_ESCORT_R)){
+    if(o === c || o.faction !== 'player' || o.state === 'dead') continue;
+    if((o.floor || 0) !== f) continue;
+    if(walksAsDead(o) || o.lich) return true;
+  }
+  return false;
+}
+function purgeReads(c){
+  if(walksAsDead(c) || c.lich) return true;
+  if(c.faction !== 'player') return false;
+  if(purgeNotorious()) return true;
+  return escortingDead(c);
+}
 /* fixed enmities that pierce a neutral creature's calm */
 function pierceNeutral(n, o){
   /* Some people are exempt from the standing quarrel because they are somebody's family.
@@ -12181,7 +12363,7 @@ function hostile(a, b){
   if(a.faction==='purge' || b.faction==='purge'){
     const p = a.faction==='purge' ? b : a;
     if(walksAsDead(p)) return true;
-    if(p.faction==='player') return menaceFlag || purgeWrath > 0;
+    if(p.faction==='player') return purgeReads(p);      /* see WHAT THE ORDER SEES, above */
     if(p.faction==='town' && p.homeTown && p.homeTown.def.undeadFriendly) return true;
     return false;
   }
@@ -19779,7 +19961,7 @@ function applyDot(c, dt){
     const src = c.dot.src;
     /* a fire already burning on the skin is past the plate — raw */
     applyDamage(src && chars.includes(src) ? src : c, c, pickPart(), c.dot.dps, 'burn', c.faction==='player' || (src && src.faction==='player'), true, true);
-    addSpecks(c.x, c.y - 0.4, '#ff8a3a', 4);
+    addFlame(c.x, c.y - 0.4, 3, 0.55);         /* a fire on the skin, ticking */
   }
   if(c.dot.t <= 0) c.dot = null;
 }
@@ -21083,7 +21265,7 @@ function castEmberRot(c, foe){
   spendCast(c, 'emberrot');
   const dps = 4 + c.stats.magic * 0.35;
   foe.dot = {t: 5, tick: 0.4, dps, src: c};
-  addSpecks(foe.x, foe.y - 0.4, '#ff7a3a', 14);
+  addFlame(foe.x, foe.y - 0.4, 16, 1.05);
   log(`${c.name} sets a rot-fire in ${foe.name}.`, c.faction==='player' ? 'good' : 'bad');
 }
 /* ---- BURNING EDGE: sustained fire on the weapon ---- */
@@ -21092,7 +21274,7 @@ function castFirebrand(c){
   spendCast(c, 'firebrand');
   startConcentration(c, 'firebrand', 0.5, false);
   c.weaponFlame = true;
-  addSpecks(c.x, c.y - 0.2, '#ff8a3a', 16);
+  addFlame(c.x, c.y - 0.2, 18, 0.95);         /* the weapon takes fire */
   log(`${c.name}'s weapon takes fire.`, '');
 }
 /* ---- HALLOWED EDGE: sustained sanctity on the weapon ---- */
@@ -22911,7 +23093,9 @@ function updateProjectiles(dt){
           }
         }
         if(p.bolt){
-          addSpecks(p.target.x, p.target.y-0.5, '#ff8a3a', 7);
+          /* AND IT LANDS AS A FIRE, not as seven orange pixels */
+          if(p.dark) addGlow(p.target.x, p.target.y-0.5, '#a970e8', 16, 1.25);
+          else addFlame(p.target.x, p.target.y-0.5, 18, 1.35);
           if(research.done.pyromancy){
             for(const o of chars){
               if(o !== p.target && o.state!=='dead' && hostile(p.caster, o) && dist(o.x,o.y,p.target.x,p.target.y) < 1.6){
@@ -22926,7 +23110,13 @@ function updateProjectiles(dt){
     }
     p.x += (p.target.x-p.x)/d * p.speed * dt;
     p.y += (p.target.y-p.y)/d * p.speed * dt;
-    if(p.bolt && rnd()<0.6) particles.push({x:p.x, y:p.y, vx:(rnd()-0.5), vy:(rnd()-0.5), h:1.0, vh:0, t:0, life:0.25, color: p.dark ? '#a970e8' : '#ffb03a', size:2});
+    /* THE TRAIL IS THE BOLT. One 2px square every other frame is a dotted line; a firebolt
+       leaves fire behind it and a darkbolt leaves the other thing. Both at every step rather
+       than six times in ten, because a gap in a trail reads as a stutter. */
+    if(p.bolt){
+      if(p.dark) addGlow(p.x, p.y, '#a970e8', 2, 0.7);
+      else addFlame(p.x, p.y, 2, 0.62);
+    }
   }
 }
 function updateParticles(dt){
@@ -22934,6 +23124,29 @@ function updateParticles(dt){
     const p = particles[i];
     p.t += dt;
     if(p.t >= p.life){ particles.splice(i,1); continue; }
+    /* ---------- FLAME AND GLOW RISE; EVERYTHING ELSE FALLS ----------
+       `p.size` is what the old loop used to mean "this is a speck, give it gravity", and fire
+       is the one thing in the world that must not have any: a buoyant tongue that gets pulled
+       back down is a spark, which is precisely what the report was about. The two new kinds
+       carry no `size`, so they skip the gravity line by construction — the `curl` is the lick,
+       a slow lateral wander that makes a tongue bend instead of climbing like a rocket. */
+    if(p.kind === 'flame'){
+      const u = p.t / p.life;
+      p.h += p.vh * dt;
+      p.vh *= (1 - dt * 0.6);                       /* it slows as it cools, it never falls */
+      const lick = Math.sin(p.seed + p.t * 7.5) * p.curl * dt;
+      p.x += (p.vx * dt + lick * 0.5) * (1 - u * 0.5);
+      p.y += (p.vy * dt - lick * 0.5) * (1 - u * 0.5);
+      continue;
+    }
+    if(p.kind === 'glow'){
+      const th = p.spin * dt;
+      const cs = Math.cos(th), sn = Math.sin(th);
+      const vx = p.vx * cs - p.vy * sn, vy = p.vx * sn + p.vy * cs;   /* it turns as it drifts */
+      p.vx = vx * (1 - dt * 0.7); p.vy = vy * (1 - dt * 0.7);
+      p.x += p.vx * dt; p.y += p.vy * dt; p.h += p.vh * dt;
+      continue;
+    }
     p.x += p.vx*dt; p.y += p.vy*dt;
     if(p.h !== undefined){
       p.h += (p.vh||0)*dt;
@@ -23921,9 +24134,16 @@ function update(dt){
        Excluded by `propped`, which is the question actually being asked. */
     hostSize = chars.filter(c => c.faction==='player' && c.undead && !c.propped && c.state!=='dead')
                     .reduce((n,c) => n + (c.bindWeight || 1), 0);
-    menaceFlag = chars.some(c => c.faction==='player' && !c.undead && c.state!=='dead' && c.stats.magic >= 15) ||
+    /* ---------- AND THE MENACE FLAG IS ABOUT YOUR HOST, NOT YOUR STAT SHEET ----------
+       It is still what the world uses to decide how hard to look at you — how many paladins
+       ride, whether the Bastion warns you off its ground, what the rumour mill is saying — and
+       for that purpose it should mean "this party is a problem", which it did not. `magic >= 15`
+       on any living body made it true on the first frame of nearly every run, for a party that
+       had done nothing: a divine healer clears that bar, and so does every necromancer origin
+       before it has raised anything. Three things the Order could actually observe, instead. */
+    menaceFlag = hostSize >= 4 ||
                  chars.some(c => c.faction==='player' && c.lich && c.state!=='dead') ||
-                 hostSize >= 4;
+                 purgeNotorious();
     /* a host that size cannot be walked quietly past anything */
     if(hostSize > 6) bumpNotice((hostSize - 6) * 0.012);
     /* territory warning */
@@ -26556,6 +26776,18 @@ const BOXG = new THREE.BoxGeometry(1,1,1);
    anywhere else in the function — reaching for it from the lich body threw during the mesh
    build, and a throw in there does not reach the console; the body simply never appears. */
 function shadeHex(hex, k){ return '#' + new THREE.Color(hex).multiplyScalar(k).getHexString(); }
+/* '#rrggbb' with an alpha on it, for the 2D overlay — `new THREE.Color` per particle per frame
+   is a parse and an allocation in the hottest draw loop there is, so this is arithmetic. */
+const _hexACache = new Map();
+function hexA(hex, a){
+  let v = _hexACache.get(hex);
+  if(v === undefined){
+    const n = parseInt(String(hex).replace('#',''), 16);
+    v = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    _hexACache.set(hex, v);
+  }
+  return `rgba(${v[0]},${v[1]},${v[2]},${a})`;
+}
 const CONEG = new THREE.ConeGeometry(0.5, 1, 6);            // tapered points: spikes, horns, robe
 const CYLG  = new THREE.CylinderGeometry(0.5, 0.5, 1, 10);  // bands, rings
 const SPHG  = new THREE.SphereGeometry(0.5, 8, 6);          // low-poly cranium/domes
@@ -32201,6 +32433,76 @@ function syncChars(dt){
         const sw = moving ? Math.sin(e.phase) * 0.55 : 0;
         e.legL.rotation.x = sw; e.legR.rotation.x = -sw;
         if(e.legL2){ e.legL2.rotation.x = sw; e.legR2.rotation.x = -sw; }
+        /* ---------- AND A BEAST IN A FIGHT DOES SOMETHING ABOUT IT ----------
+           "The Wyrms have zero animations while fighting. So it just kind of looks like they
+           walk around and everything dies around them. They're a good enemy, just aesthetically
+           lacking."
+           Exactly so, and it was every quadruped, not only the wyrm: this branch animated a leg
+           swing while MOVING and nothing else in it ever moved. No windup, no strike, no head.
+           A grazer and a war-wyrm fought identically, which is to say neither of them did.
+
+           Driven off `c.windup`, the same field the humanoid rig reads — one clock, so a bite
+           lands on the frame the blow lands rather than on a timer of its own that drifts out
+           of step with the damage. `k` runs 0 to 1 across the wind and then `strikeT` carries
+           the follow-through, because the interesting half of a lunge is what happens AFTER
+           the jaws close. */
+        const HEAD_Y = e.head ? e.head.position.y : 0;
+        const HEAD_Z = e.head ? e.head.position.z : 0;
+        if(e._headY0 === undefined){ e._headY0 = HEAD_Y; e._headZ0 = HEAD_Z; }
+        const wu = c.windup;
+        const winding = !!(wu && wu.kind === 'melee');
+        /* the moment the wind ends, start the follow-through */
+        if(e._wasWind && !winding) e.strikeT = 0.30;
+        e._wasWind = winding;
+        e.strikeT = Math.max(0, (e.strikeT || 0) - dt);
+        const k = winding ? clamp(1 - wu.t / Math.max(0.01, wu.dur), 0, 1) : 0;
+        const st = e.strikeT > 0 ? e.strikeT / 0.30 : 0;      /* 1 -> 0 across the snap */
+        /* REAR, then SNAP. Coiling back is the tell — the thing the player reads to know a
+           blow is coming — so it is slow and big, and the strike that pays it off is fast. */
+        const rear = Math.sin(k * Math.PI * 0.5) * 0.9;        /* eased, so it loads rather than jerks */
+        const snap = st * st;                                  /* sharp out, quick settle */
+        const lunge = rear * 0.22 - snap * 0.40;               /* body back, then thrown forward */
+        const pitch = rear * 0.30 - snap * 0.34;
+        e.g.position.z = (e.g.position.z || 0) * 0 + 0;        /* the group carries the world pos; lean on the torso */
+        if(e.torso){
+          e.torso.rotation.x = -pitch;
+          e.torso.position.y = (e.torso.position.y || 0);
+        }
+        if(e.head){
+          /* up and back on the wind, then driven down and forward through the target */
+          e.head.position.y = e._headY0 + rear * 0.42 - snap * 0.30;
+          e.head.position.z = e._headZ0 - rear * 0.20 + snap * 0.55 + lunge * 0.1;
+          e.head.rotation.x = -rear * 0.55 + snap * 0.95;
+          /* and it weaves while it is squared up to something, so a wyrm standing over a
+             corpse is not furniture */
+          if(!winding && !st && c.target){
+            e.head.rotation.y = Math.sin(Date.now() * 0.0022) * 0.22;
+            e.head.position.y += Math.sin(Date.now() * 0.0016) * 0.05;
+          } else e.head.rotation.y = 0;
+        }
+        /* the front pair come off the ground as it rears; the back pair plant and drive */
+        if(e.legL2){
+          e.legL.rotation.x = sw - rear * 0.75 + snap * 0.5;
+          e.legR.rotation.x = -sw - rear * 0.75 + snap * 0.5;
+          e.legL2.rotation.x = sw + rear * 0.30;
+          e.legR2.rotation.x = -sw + rear * 0.30;
+        }
+        /* NOTE: `Date.now()` rather than `now` — the `const now` a few branches up is declared
+           INSIDE the choir-kin block and is not in scope here, which would have been a throw on
+           the first frame a beast squared up to anything, inside the render loop, where a throw
+           does not reach the console and the body simply stops being drawn.
+           the tail is the counterweight — it lashes the other way, and it keeps lashing while
+           the thing is in a fight at all, which is most of what sells a beast as dangerous */
+        if(e.tail && e.tail.length){
+          const fight = !!c.target;
+          for(let i = 0; i < e.tail.length; i++){
+            const seg = e.tail[i];
+            const base = i === 0 ? (e.tailLift !== undefined ? 0.26 : 0) : 0;
+            const lash = fight ? Math.sin(Date.now() * 0.005 - i * 0.8) * (0.10 + i * 0.045) : 0;
+            seg.rotation.y = lash;
+            seg.rotation.x = base + rear * (0.16 + i * 0.05) - snap * (0.10 + i * 0.04);
+          }
+        }
       }
     } else {
       e.g.rotation.set(0, e.rotY, 0);
@@ -33405,6 +33707,19 @@ function renderOverlay(){
   for(const c of chars){
     if(c.faction!=='player' && visAt(c.x, c.y) !== 2 && !(c.vip && c.escortId)) continue;
     if(!onShownFloor(c)) continue;                 /* it is under a mountain; leave it there */
+    /* ---------- A THING THAT IS ON FIRE IS ON FIRE EVERY FRAME ----------
+       The old effects fired once per damage TICK — a puff of orange squares every 0.4 seconds
+       — so a body burning to death flickered like a fault rather than burning. A fire is
+       continuous or it is not a fire. Emitted here, in the draw, off `vrnd`, so the rate
+       follows the frame and owes the simulation nothing.
+       Rationed hard: two tongues a frame on a burning body and one on a lit blade. At sixty
+       frames that is a steady fire from a handful of live particles, which is the whole trick
+       — a fire is a small number of things replaced constantly, not a large number thrown. */
+    if(c.state !== 'dead'){
+      if(c.dot && c.dot.t > 0 && vrnd() < 0.75) addFlame(c.x, c.y - 0.35, 2, 0.5);
+      if(c.weaponFlame && vrnd() < 0.55) addFlame(c.x + 0.35, c.y - 0.55, 1, 0.38);
+      if(c.clawWt === 'burn' && vrnd() < 0.4) addFlame(c.x, c.y - 0.5, 1, 0.45);
+    }
     const hh = (groundY(c.x,c.y) + floorY(c.floor) + 1.9*(c.big||1));
     const top = w2s(c.x, c.y, hh);
     if(!top) continue;
@@ -33512,6 +33827,15 @@ function renderOverlay(){
   drawDust();
   /* particles & floaters */
   setFont('bold 12px monospace');
+  /* ---------- HOW BIG A TILE IS ON SCREEN, ONCE ----------
+     The soft motes are drawn in world units and have to become pixels, and the projection is
+     the only thing that knows the zoom. Measured once a frame off the camera's own target
+     rather than per particle: two `w2s` calls instead of two hundred. */
+  let _pxPerTile = 18;
+  {
+    const a0 = w2s(camX, camY, 0), a1 = w2s(camX + 1, camY, 0);
+    if(a0 && a1) _pxPerTile = Math.max(3, Math.min(140, Math.hypot(a1.x - a0.x, a1.y - a0.y)));
+  }
   for(const p of particles){
     if(visAt(p.x, p.y) !== 2) continue;
     const a = 1 - p.t/p.life;
@@ -33519,6 +33843,47 @@ function renderOverlay(){
     if(!s) continue;
     cx.globalAlpha = a;
     if(p.text){ cx.fillStyle = p.color; cx.fillText(p.text, s.x, s.y); }
+    else if(p.kind === 'flame' || p.kind === 'glow'){
+      /* ---------- A SOFT ADDITIVE MOTE, WHICH IS THE WHOLE DIFFERENCE ----------
+         A 3px `fillRect` of one flat colour cannot make a flame however many of them you throw:
+         overlapping squares tile into a grid, and a hard edge reads as a pixel rather than as
+         light. Drawn as a radial falloff under `lighter`, overlapping tongues SUM — which is
+         what gives a fire a hot core and a dim fringe without anybody computing either. */
+      const u = p.t / p.life;
+      const rad = (p.r0 + (p.r1 - p.r0) * Math.sin(Math.min(1, u * 1.15) * Math.PI * 0.85));
+      const px = Math.max(2, rad * _pxPerTile);
+      let col, glow;
+      if(p.kind === 'flame'){
+        const rgb = flameRGB(u);
+        col = `rgba(${rgb[0]*255|0},${rgb[1]*255|0},${rgb[2]*255|0},`;
+        glow = (1 - u) * (1 - u);            /* the root is bright and the smoke is not */
+      } else {
+        col = p.color; glow = (1 - u) * 0.85;
+      }
+      cx.globalAlpha = 1;
+      cx.globalCompositeOperation = 'lighter';
+      const g2 = cx.createRadialGradient(s.x, s.y, 0, s.x, s.y, px);
+      if(p.kind === 'flame'){
+        /* LOW PER MOTE, ON PURPOSE. Additive means the brightness is the SUM, so the alpha
+           here is the contribution of one tongue among many and not what a fire looks like.
+           TUNED TWICE, AND THE FIRST SWING WAS AT THE WRONG TARGET: the render that came back
+           a flat white blob was PAUSED, so `updateParticles` never ran and four hundred motes
+           sat stacked at their spawn point at full alpha, never aging. Dropping the alpha to
+           0.30 "fixed" that and left a real fire nearly invisible. The blob was the probe.
+           0.55 is the middle: a single tongue is clearly a flame, and a dozen of them build a
+           core that saturates white, which is what the middle of a fire does. */
+        g2.addColorStop(0, col + (0.55 * glow + 0.08) + ')');
+        g2.addColorStop(0.40, col + (0.26 * glow) + ')');
+        g2.addColorStop(1, col + '0)');
+      } else {
+        g2.addColorStop(0, hexA(col, 0.50 * glow + 0.07));
+        g2.addColorStop(0.5, hexA(col, 0.22 * glow));
+        g2.addColorStop(1, hexA(col, 0));
+      }
+      cx.fillStyle = g2;
+      cx.beginPath(); cx.arc(s.x, s.y, px, 0, Math.PI*2); cx.fill();
+      cx.globalCompositeOperation = 'source-over';
+    }
     else { cx.fillStyle = p.color; cx.fillRect(s.x-(p.size||3)/2, s.y-(p.size||3)/2, p.size||3, p.size||3); }
     cx.globalAlpha = 1;
   }

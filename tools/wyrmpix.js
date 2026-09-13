@@ -44,14 +44,22 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       .forEach(el => el.style.setProperty('display', 'none', 'important'));
     const me = player()[0];
     let spot = null;
-    for (const pad of [10, 8, 6]) {
+    /* THE PAD LADDER, MEASURED RATHER THAN GUESSED (`_openground.js`).
+       A wyrm wants room, so this asked for a 21x21 clear square and fell back to 17x17 and
+       13x13 — and on the world it actually runs on, ALL THREE FIND NOTHING: of the 1200 ring
+       positions it tries, 0 are clear at pad 10, 0 at 8, 0 at 6. The rejecting filter is decor
+       (754 of 1200), not water and not blocking, because a tree anywhere in a 13x13 box
+       disqualifies the whole box. The bench could therefore never take a picture at all.
+       The ladder now runs down to pad 4, where there are 16 clear positions — still a 9x9 of
+       open ground, which is room enough for the body this is photographing. */
+    for (const pad of [10, 8, 6, 5, 4]) {
       for (let r = 40; r < 240 && !spot; r += 4) for (let a = 0; a < 24 && !spot; a++) {
         const x = me.x + Math.cos(a / 24 * 6.283) * r, y = me.y + Math.sin(a / 24 * 6.283) * r;
-        if (x < pad + 2 || y < pad + 2 || x >= self.W - pad - 2 || y >= self.H - pad - 2) continue;
+        if (x < pad + 2 || y < pad + 2 || x >= W - pad - 2 || y >= H - pad - 2) continue;
         let ok = true;
         for (let dy = -pad; dy <= pad && ok; dy++) for (let dx = -pad; dx <= pad && ok; dx++) {
           const ix = Math.floor(x) + dx, iy = Math.floor(y) + dy;
-          if (isBlocked(ix + 0.5, iy + 0.5, 0) || terr[iy * self.W + ix] === 3 || decorAt(ix, iy)) ok = false;
+          if (isBlocked(ix + 0.5, iy + 0.5, 0) || terr[iy * W + ix] === 3 || decorAt(ix, iy)) ok = false;
         }
         if (ok) spot = { x, y };
       }
