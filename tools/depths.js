@@ -345,6 +345,90 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     ? `the bucket index hands back its own storey's ground at a hall on each — ${Object.entries(index).map(([f,o]) => f+': '+o.mine).join(', ')} tiles, none of them another floor's`
     : `!! THE DEPTH-FOLDED BUCKET KEY IS WRONG (${JSON.stringify(index)})`;
 
+  /* ---- AND THE DEPTHS ARE STILL THERE WHEN YOU ARRIVE ----
+     "all the underground fights resolve well before I ever go there. So I usually just find
+      bloody aftermaths and that's it."
+     It was not a fight. `spawnGaunt` stamps `nightborn` — "the dark made it; the dawn unmakes
+     it" — and `gauntDawn` deletes every nightborn gaunt each morning. Seven other places in
+     the file clear that flag for gaunts that are meant to STAY; the depths forgot, so the two
+     floors stocked entirely with gaunt-kin evaporated before the first noon.
+     MEASURED, one game day with nobody underground: 17 bodies died in the whole world and 412
+     were DELETED — 88 off the Undercroft, 216 off the Deepworks, 108 off the Sump. The
+     aftermath was never a battlefield; it was an empty room and the violet motes `gauntDawn`
+     leaves behind.
+     TWO CLAIMS, because the flag and the outcome are different failures. A resident that
+     carries the flag is the bug; a floor that empties is the symptom, and it could arrive
+     again by some other route. */
+  const dawn = await p.evaluate(() => {
+    if (typeof DEPTHS === 'undefined') return null;
+    const resident = chars.filter(c => c.state !== 'dead' && (c.floor || 0) < 0 &&
+                                       (c.caveDweller || c.undercroft) && c.faction === 'gaunt');
+    const flagged = resident.filter(c => c.nightborn);
+    const before = {};
+    for (const c of chars) { if (c.state === 'dead' || c.faction === 'player') continue;
+      const f = c.floor || 0; if (f < 0) before[f] = (before[f] || 0) + 1; }
+    /* a whole game day, with nobody of yours below ground */
+    const startDay = day;
+    for (let i = 0, n = Math.round(24 * HOUR_SEC * 30); i < n; i++) update(1 / 30);
+    const after = {};
+    for (const c of chars) { if (c.state === 'dead' || c.faction === 'player') continue;
+      const f = c.floor || 0; if (f < 0) after[f] = (after[f] || 0) + 1; }
+    const kept = {};
+    for (const f of Object.keys(before)) kept[f] = +(((after[f] || 0) / before[f])).toFixed(2);
+    return { residents: resident.length, flagged: flagged.length, before, after, kept,
+             days: day - startDay, worst: Math.min(...Object.values(kept)) };
+  });
+  R.theDeepIsNotCollectedAtDawn = !dawn ? NOTHING
+    : dawn.residents < 50 ? '!! NOTHING TO MEASURE — barely anything lives down there to collect'
+    : dawn.flagged === 0
+    ? `all ${dawn.residents} gaunt-kin living in the warrens and halls are exempt from the dawn — 0 still carry the flag that deletes them`
+    : `!! ${dawn.flagged} OF ${dawn.residents} DEPTH RESIDENTS WILL BE DELETED AT DAWN (${JSON.stringify(dawn.kept)})`;
+  R.andTheFloorsAreStillPeopledTomorrow = !dawn ? NOTHING
+    : (dawn.worst > 0.8)
+    ? `a whole game day passes with nobody underground and every storey is still peopled — ${Object.entries(dawn.kept).map(([f, v]) => f + ' kept ' + Math.round(v * 100) + '%').join(', ')}, against 32% and 26% before the dawn exemption`
+    : `!! A STOREY EMPTIED OVERNIGHT (${JSON.stringify(dawn)})`;
+
+  /* ---- AND WHAT YOU RAISE DOWN HERE STAYS DOWN HERE ----
+     "Raising an undead underground sends them to the surface instead of raising them on the
+      same level that they were on."
+     `castRaise` took the risen body's x and y off the corpse and never mentioned its FLOOR, and
+     `makeChar` defaults that to 0 — so a body raised on the Sump stood up on the surface, at
+     the right map coordinates and four storeys from the necromancer who called it. Driven on
+     each depth in turn, because a fix that works on -1 and not on -3 is the shape this file
+     has caught twice before. */
+  const raised = await p.evaluate(() => {
+    if (typeof DEPTHS === 'undefined' || typeof castRaise !== 'function') return null;
+    const me = player().find(c => c.state === 'ok');
+    if (!me) return null;
+    const home = { x: me.x, y: me.y, f: me.floor || 0 };
+    me.stats.magic = 60; me.att = me.att || {}; me.att.dark = 3;
+    const out = [];
+    for (const F of DEPTHS) {
+      const h = undercroft.halls.find(H => H.f === F);
+      if (!h) { out.push({ F, skip: 'no hall' }); continue; }
+      me.x = h.x; me.y = h.y; me.floor = F; me.mana = 999; me.castCd = 0;
+      /* a corpse of our own making, lying on that storey */
+      const body = makeChar('Late ' + (-F), 'bandit', h.x + 1, h.y, { atk: 5, def: 5, tough: 5 });
+      body.floor = F; chars.push(body);
+      body.state = 'dead'; body.deadAt = day; corpses.push(body);
+      const before = chars.length;
+      castRaise(me, body);
+      const r = chars.slice(before).find(c => c.undead) ||
+                chars.filter(c => c.undead && c.master === me).slice(-1)[0];
+      out.push({ F, raisedOn: r ? (r.floor || 0) : null, ok: !!r && (r.floor || 0) === F });
+      /* put the world back */
+      for (const c of [r, body]) { if (!c) continue; const i = chars.indexOf(c); if (i >= 0) chars.splice(i, 1); }
+      const ci = corpses.indexOf(body); if (ci >= 0) corpses.splice(ci, 1);
+    }
+    me.x = home.x; me.y = home.y; me.floor = home.f;
+    return out;
+  });
+  R.andWhatYouRaiseDownHereStaysDownHere = !raised ? NOTHING
+    : raised.some(o => o.skip) ? '!! NOTHING TO MEASURE — a storey had no hall to stand in'
+    : raised.every(o => o.ok)
+    ? `a body raised on each storey stands up on the storey it died on — ${raised.map(o => o.F + '→' + o.raisedOn).join(', ')}`
+    : `!! THE RISEN CAME UP ON THE WRONG FLOOR (${JSON.stringify(raised)})`;
+
   console.log('=== THREE DEPTHS ===\n');
   for (const [k, v] of Object.entries(R)) console.log('  ' + k.padEnd(30) + v);
   const bad = Object.values(R).map(String).filter(v => v.startsWith('!!'));

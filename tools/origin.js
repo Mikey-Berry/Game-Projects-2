@@ -116,7 +116,10 @@ const KEY = process.argv[3] || 'lyonart';
         'GODKILLER BONUS NOT REACHING THE MATH (' + hitG.toFixed(1) + ' vs ' + hitP.toFixed(1) + ')';
 
       /* --- the descent --- */
-      R.descentOpen = mother.on ? 'open' : 'NOT STARTED';
+      /* `mother.on` used to mean "this run picked Saga" and is gone: she is in every world now,
+         and what Saga's start does is POINT at her. `sought` is the flag that carries that
+         meaning, and it is the one this claim was always really about. */
+      R.descentOpen = mother.sought ? 'open' : 'DESCENT NOT STARTED';
       const cv = motherCave();
       R.cellChosen = cv ? 'a sealed bunker under a mountain' : 'NO CELL';
       /* the price must not already be payable: the next rung costs him the dust */
@@ -146,7 +149,20 @@ const KEY = process.argv[3] || 'lyonart';
 
         /* --- reaching her --- */
         const v = cv.vault;
-        R.vaultAtBottom = (v && v.f === -cv.depth) ? 'at the bottom, ' + cv.depth + ' floors down' : 'NO VAULT';
+        /* ---------- AND THIS CLAIM HAS BEEN FAILING SILENTLY ----------
+           Two faults in one line. It asked `v.f === -cv.depth`, which was written when a warren
+           was several storeys deep and you walked down through it — warrens have been ONE storey
+           since the three-depths work, sitting at -1, -2 or -3, so `depth` is 1 for all of them
+           and `-cv.depth` asserts "her vault is on floor -1" about a warren cut at -3. It passed
+           only while the cell happened to be drawn in a shallow warren.
+           And when it did fail it said "NO VAULT" — which this file's own bad-detector does not
+           match, because the pattern wants `[A-Z]{3,}\s+[A-Z]{2,}` and "NO" is two letters. So
+           the line printed NO VAULT and the run was called green. A FAILURE STRING THAT THE
+           VERDICT CANNOT SEE IS NOT A CLAIM. Both halves fixed: ask the warren which storey it
+           is on, and fail in words the detector reads. */
+        R.vaultAtBottom = (v && v.f === cv.f)
+          ? 'her seal is on the warren\'s own storey, floor ' + v.f
+          : 'VAULT NOT ON THE WARREN STOREY (vault ' + (v ? v.f : 'none') + ', warren ' + cv.f + ')';
         if (v) {
           him.x = v.x; him.y = v.y; him.floor = v.f; him.bubble = null;
           for (let i = 0; i < 20 && !mother.spoken; i++) motherTick(3);
@@ -164,7 +180,7 @@ const KEY = process.argv[3] || 'lyonart';
       /* --- a nine-hundred-year wait must survive a save --- */
       const cellWas = mother.caveId;
       restore(JSON.parse(JSON.stringify(snapshot())));
-      R.descentKept = (mother.on && mother.caveId === cellWas && mother.found) ?
+      R.descentKept = (mother.sought && mother.caveId === cellWas && mother.found) ?
         'the cell holds through a save' : 'DESCENT RESET BY LOAD';
       return R;
     }
