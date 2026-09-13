@@ -80,10 +80,28 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          obvious fix — count anything the towns stock as a source — would have read GREEN on
          the build this whole file was written for, because `fabric` is in the same opening
          stock list. The general check has to stay blind to the shop counter. */
-      const BOUGHT_ON_PURPOSE = new Set(['salt']);
-      const orphans = [...spent].filter(k => !made.has(k) && ITEMS[k] && !BOUGHT_ON_PURPOSE.has(k));
+      /* ---------- AND ONE MATERIAL IS NOT MADE BECAUSE IT CANNOT BE ----------
+         SUNDERED MARROW. It became a spent material the day the deep rites started asking for
+         it — four of them want a piece, and the bench takes it out of the stores — and nothing
+         makes it, which is this line doing its job and reaching the wrong verdict for the
+         second time and for a different reason than salt's.
+         Salt is not made because making it would cost Saltmere its reason to exist. Marrow is
+         not made because IT IS THE BONES OF A DEAD GOD. There is no bench that produces one,
+         there is no recipe to write, and the whole of its place in the world is that you have
+         to go to a Sundered site and cut it out of the thing lying there. A workshop that
+         manufactures the marrow of the Eldest is not a missing feature.
+         So the set carries its REASON now rather than a name, because the two exceptions in it
+         are exceptions for different reasons and a bare list would flatten that — and because
+         the next thing added to it has to justify itself in a sentence, which is the only thing
+         stopping a named exception from becoming a way of silencing this claim. */
+      const NOT_MADE_ON_PURPOSE = {
+        salt:   'the flats give it, and a bench that made it would cost Saltmere its reason to exist',
+        sunder: 'it is the bones of a dead god — you cut it out of a Sundered site or you do not have any',
+      };
+      const orphans = [...spent].filter(k => !made.has(k) && ITEMS[k] && !NOT_MADE_ON_PURPOSE[k]);
       R.orphans = orphans.length ? `spent but unmakeable: ${orphans.join(', ')}`
-        : `every material with a sink has a source (${[...BOUGHT_ON_PURPOSE].join(', ')} excepted, bought on purpose)`;
+        : `every material with a sink has a source, but for ` +
+          Object.entries(NOT_MADE_ON_PURPOSE).map(([k, why]) => `${k} (${why})`).join('; ');
       R.noMaterialIsADeadEnd = orphans.length === 0
         ? 'and nothing else in the economy is spent without being makeable — the next dead end fails this line'
         : `!! ${orphans.length} MATERIAL(S) ARE SPENT AND CANNOT BE MADE: ${orphans.join(', ')}`;

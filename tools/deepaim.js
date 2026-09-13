@@ -42,8 +42,27 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
   /* ---------- STAGE: a squad standing in an undercroft hall, camera on them ---------- */
   const staged = await p.evaluate(() => {
-    const h = undercroft.halls.find(h2 => decks.has(bkey(Math.floor(h2.x), Math.floor(h2.y), UNDER)));
+    /* ---------- A HALL WITH DRY LAND OVER IT ----------
+       This took `halls.find(...)` — the FIRST hall in array order — and that was fine right up
+       until the world got a coast. The last claim in this file compares what the ground offers
+       a body standing UNDER the hall against what it offers one standing on the grass ABOVE it,
+       and the first hall now sits at 59,92 with 169 of 169 tiles above it under the ocean. So
+       "the surface offers nothing either — gathering may be broken outright" was a true sentence
+       about a stretch of open water, and a false one about the build.
+       This is the `haulers.js` fault a second time (ledger [121]): a harness that picked a spot
+       before there was anywhere wet to pick, and went on picking it afterwards. Anything that
+       compares underground against the surface has to be staged where there IS a surface. */
+    const dryOver = (h2) => {
+      const tx = Math.floor(h2.x), ty = Math.floor(h2.y);
+      if (tx < 8 || ty < 8 || tx >= W - 8 || ty >= H - 8) return false;
+      for (let j = -5; j <= 5; j++) for (let i = -5; i <= 5; i++)
+        if (terr[(ty + j) * W + (tx + i)] === 3) return false;
+      return true;
+    };
+    const halls = undercroft.halls.filter(h2 => decks.has(bkey(Math.floor(h2.x), Math.floor(h2.y), UNDER)));
+    const h = halls.find(dryOver) || halls[0];
     if (!h) return { ok: false };
+    window.__dry = h && dryOver(h);
     const sx = Math.floor(h.x) + 0.5, sy = Math.floor(h.y) + 0.5;
     const mk = (n, dx) => {
       const c = makeChar(n, 'player', sx + dx, sy, { atk: 5, def: 5, tough: 10, ath: 5 });
@@ -56,7 +75,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     camDist = camDistTarget = 22; camPitch = camPitchT = 0.62; camYaw = camYawT = 0.4;
     window.__D = { hx: sx, hy: sy, handId: hand.id, mateId: mate.id, under: UNDER };
     paused = false;
-    return { ok: true, hall: `${sx.toFixed(0)},${sy.toFixed(0)}` };
+    return { ok: true, hall: `${sx.toFixed(0)},${sy.toFixed(0)}` + (window.__dry ? ' with dry land over it' : ' — NO HALL IN THIS WORLD HAS DRY LAND OVER IT') };
   });
   if (!staged.ok) { console.log('  !! NO UNDERCROFT HALL TO STAND IN'); await b.close(); process.exit(1); }
 
