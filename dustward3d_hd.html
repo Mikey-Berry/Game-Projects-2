@@ -539,7 +539,7 @@ body.touch #hint{display:none}
   <div id="stancerow" data-tip="stance" style="display:flex;gap:4px;margin-top:6px"></div>
   <div id="jobrow" data-tip="job" style="display:flex;gap:4px;margin-top:4px;align-items:center"></div>
   <div id="spellrow" style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap"></div>
-  <div id="cpanel-actions"><button id="btn-selfaid">BANDAGE SELF</button><button id="btn-drop" style="display:none">DROP BODY</button><button id="btn-salt" style="display:none" title="Pack what you are carrying in brine. It stops rotting where it is.">CURE</button><button id="btn-goal" title="What are they working toward?">GOAL</button><button id="btn-court" style="display:none">COURT</button><button id="btn-marry" style="display:none">WED</button><button id="btn-rename">✎</button></div>
+  <div id="cpanel-actions"><button id="btn-selfaid">BANDAGE SELF</button><button id="btn-drop" style="display:none">DROP BODY</button><button id="btn-salt" style="display:none" title="Pack what you are carrying in brine. It stops rotting where it is.">CURE</button><button id="btn-squad" title="Put everyone selected into one named squad.">SQUAD</button><button id="btn-court" style="display:none">COURT</button><button id="btn-marry" style="display:none">WED</button><button id="btn-rename">✎</button></div>
 </div>
 
 <div class="hud" id="buildbar"></div>
@@ -6213,6 +6213,26 @@ function placeCave(h){
     /* nobody in this chamber drew the light, so the last one in is carrying it. Costs no dice:
        the weapon it overwrites was already rolled and already spent. */
     if(!lit && lastPerson) lastPerson.weapon = 'w_torch';
+    /* ---------- AND THE ROOM ITSELF HAS A FIRE IN IT ----------
+       A held torch goes wherever its bearer goes and dies when he does. A chamber somebody
+       LIVES in has a fire in the middle of it, and that is what makes a warren read as a camp
+       rather than as a corridor with men in it. Only where somebody lives: the deep bands see
+       in the dark and keep no fires, so this is the shallow warrens' alone — which also makes
+       a lit chamber a thing the player can read from the doorway ("people in there").
+       CENTRED AND COSTLESS. `rm.cx, rm.cy` is the hall the room is already built around and
+       `stockRoom` has just used it for every guard post, so no search and no dice: this hangs
+       off the room object, which `cv.rooms` already carries into the save whole. */
+    /* AND IT IS SIZED TO THE ROOM IT IS IN, which `TORCH_POST_R` is not. A pitch post throws
+       8.5 tiles because that is what a post on your ground is worth; these chambers run as wide
+       as 18 by 14, whose half-diagonal is 11.4, so a centred fire on the post's radius leaves
+       the corners of the biggest rooms dark — a room of blind men again, in miniature, in the
+       corners. Measured before it was set: of 315 warren-dwellers, 39 were standing further
+       from their own chamber's fire than 8.5 tiles. The fire covers its own room now, with a
+       tile of margin, and nothing more than its own room. */
+    if(d01 < 0.34){
+      const hw = (rm.x1 - rm.x0) / 2, hh = (rm.y1 - rm.y0) / 2;
+      rm.fire = {x: Math.floor(rm.cx), y: Math.floor(rm.cy), r: Math.hypot(hw, hh) + 1};
+    }
   };
 
   /* ---------- ONE FLOOR, A RING OF CHAMBERS AROUND A HALL ----------
@@ -8882,6 +8902,38 @@ const CRIMES = {
   walkdead:   {bounty: 300, days: 6, label: 'walking the dead through the gate'},
   raising:    {bounty: 900, days: 20, label: 'raising the dead inside the walls'},
 };
+/* ---------- A PRICE ON YOUR HEAD IS A NUMBER, NOT A TALLY ----------
+   "There should be a hard cap, or a clear distinction when I'm literally invading a town
+    versus simply committing crimes in it."
+   Two separate faults and the second is the interesting one.
+   THE CEILING. `t.bounty` only ever went up, and everything that reads it saturates long
+   before it: the watch's odds cap at `bounty/500`, a search at `/700`, the benefit of the
+   doubt at `/900`. So past about nine hundred the number changes nothing in the world and
+   goes on climbing anyway — and settling costs 1.5x to 2.5x of it, which means an uncapped
+   bounty is an UNPAYABLE one. The cap is set where three murders past the worst single
+   offence sit: still ruinous, still a decision, but a debt with a far side to it.
+   AND THE DIFFERENCE BETWEEN A CRIME AND A WAR. A crime is a thing a town files a complaint
+   about. Walking an army through the gate to take the place is not a complaint — there is
+   nobody left to file it — and it does not want a running receipt. A town is UNDER ASSAULT
+   once its own armed watch has been cut down by your people, and while that holds the ledger
+   still runs (the price is real, and it is there when the smoke clears) but it stops being
+   narrated: one line when the fighting starts, and then silence until it is over. */
+const BOUNTY_CAP = 2400;
+const ASSAULT_HOURS = 6;      /* how long the fighting counts as still going on */
+const ASSAULT_BLOWS = 3;      /* deliberate blows on the armed watch before it is a battle */
+function underAssault(t){ return !!t && (t.assaultH || 0) > nowH(); }
+/* A guard of this town is down at your hands: that is not an offence, it is a battle. Called
+   from `applyDamage`, which is why it does the least possible work. */
+function markAssault(t, who){
+  if(!t || t.playerRuled) return;
+  const was = underAssault(t);
+  t.assaultH = nowH() + ASSAULT_HOURS;
+  if(!was){
+    log(`${t.name} stops counting. Its watch is out, and this is a battle now — what you owe ` +
+        `the place is still being added up, quietly.`, 'bad');
+    worldEvent('war', t.x, t.y, `Fighting in the streets of ${t.name}.`);
+  }
+}
 /* Nobody is wanted for what nobody saw. A crime needs an eye on it — a guard, or a
    townsperson close enough and alive enough to carry the tale. */
 /* ---------- AND A WITNESS ON ANOTHER STOREY IS NOT A WITNESS ----------
@@ -8948,11 +9000,24 @@ function crime(kind, x, y, by, f){
       }
     }
   }
-  t.bounty = (t.bounty || 0) + spec.bounty;
+  const before = t.bounty || 0;
+  t.bounty = Math.min(BOUNTY_CAP, before + spec.bounty);
   t.wanted = true;
   dropRep(t, Math.round(spec.bounty / 12));
+  /* ---------- AND IT ONLY SAYS SO WHEN SAYING SO TELLS YOU ANYTHING ----------
+     Three gates, in order of how much they matter. A town being STORMED does not read out a
+     receipt per body. A bounty already AT THE CEILING has not changed, so announcing it is a
+     line about nothing. And the same offence twice in a minute is one piece of news — a
+     running fight down one street was otherwise a wall of identical lines. */
+  if(underAssault(t)) return t;
   say(saw, pick(['GUARDS!', 'Stop them!', 'You saw that — everyone saw that!']));
-  log(`${saw.name} saw. ${t.name} wants you for ${spec.label} — bounty ${t.bounty}.`, 'bad');
+  const atCap = t.bounty === before && before >= BOUNTY_CAP;
+  const echo = t._cryKind === kind && nowH() - (t._cryH || -99) < 0.5;
+  if(!atCap && !echo){
+    t._cryKind = kind; t._cryH = nowH();
+    log(`${saw.name} saw. ${t.name} wants you for ${spec.label} — bounty ${t.bounty}` +
+        (t.bounty >= BOUNTY_CAP ? ', which is as high as it goes.' : '.'), 'bad');
+  }
   /* the watch turns out */
   for(const g of chars){
     if(g.faction !== 'town' || g.state !== 'ok' || g.civ) continue;
@@ -9489,7 +9554,10 @@ function xpGain(c, stat, amt){
   if(stat === 'study') amt *= 0.5 * clamp(1 - c.stats.study / 112, 0.08, 1);
   if(c.age < 16) amt *= 1.6;
   else if(c.age > traitOf(c, 'deathAge', 62) - 7) amt *= 0.6;
-  if(c.goal === stat) amt *= 1.25;
+  /* the GOAL bonus stood here: a flat 1.25x on one skill forever, for two clicks and nothing
+     else. It is gone with the menu that set it — see `btn-squad`. `c.goal` is deliberately
+     still read and written by the save so an old file loads without complaint; nothing acts
+     on it. */
   if(c.grief > 0) amt *= 0.5;
   const cap = skillCap(c);
   if(c.stats[stat] < cap) c.stats[stat] = Math.min(cap, c.stats[stat] + amt);
@@ -10059,6 +10127,24 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
        is a thing the injured party can go and file. What a town THINKS of you is what its
        people saw. Those are different questions and this is the one about standing. */
     if(!incid && witnessNear(d.x, d.y, d.homeTown, 0, d, d.floor || 0)) dropRep(d.homeTown, 4);
+    /* FIGHTING THE WATCH IS THE DECLARATION. Not a civilian — killing one of those is the worst
+       entry in the crime table and it stays there. This is the armed body whose entire job is to
+       stop you, and you are trading blows with it.
+       IT COUNTS BLOWS RATHER THAN BODIES, for a reason worth writing down: `applyDamage` never
+       assigns `d.state` — the transition to `down` and `dead` happens in functions further along
+       — so "a guard is dead at your hands" cannot be asked HERE at all, and the first draft of
+       this asked it and would have been false on every blow forever. What can be asked here is
+       what is actually happening: somebody of yours is deliberately hitting the watch.
+       Three blows inside the window rather than one, so a single scuffle at an arrest is not a
+       war. That threshold is a design call and not a measurement — one exchange is a scuffle,
+       a sustained one is a battle, and three is where I put the line between them. */
+    if(!d.civ && !incid && d.homeTown && !d.homeTown.playerRuled){
+      const t2 = d.homeTown, h = nowH();
+      if(h - (t2._assaultSeenH || -99) > ASSAULT_HOURS) t2._assaultBlows = 0;
+      t2._assaultSeenH = h;
+      t2._assaultBlows = (t2._assaultBlows || 0) + 1;
+      if(t2._assaultBlows >= ASSAULT_BLOWS) markAssault(t2, a);
+    }
     if(d.civ && !incid){
       deed('civkill', 1, d.homeTown);   /* a stray cleave is not a choice; this was */
       /* A man may be knocked down in a tavern and the town shrugs; the same blow with a
@@ -12303,6 +12389,19 @@ function hostile(a, b){
      is a purge squad wandering past and closing the only door in the game that has a person
      behind it. He does not fight. Nothing fights him. */
   if(a.demilich || b.demilich) return false;
+  /* ---------- A PRISONER IS IN CUSTODY, NOT IN A FIGHT ----------
+     "Squadmates in gaol may get brutally attacked/murdered for simply being within a town
+      where I have a high bounty."
+     They were, and by the very watch holding them. `jailedAt` pins a body at the cell and the
+     step function returns before anything else can happen to it: no orders, no moving, no
+     swinging, no fleeing. Meanwhile the town clause at the bottom of this function says any
+     player body is fair game once `rep < -50` — and one of your people sitting in that town's
+     own cell is a player body standing still inside its walls. So the sentence you were waiting
+     out became an execution, carried out on somebody who could not raise a hand.
+     Asked high, above every quarrel, because it is not about whose side anybody is on. The
+     gaol IS the town's answer to what you did; a cell that gets you killed is not a sentence.
+     Both ways round: a prisoner is neither a target nor a threat. */
+  if(a.jailedAt || b.jailedAt) return false;
   /* an immortal in your debt will not raise a hand to you */
   if((a.immortal && a.friendly && b.faction === 'player') || (b.immortal && b.friendly && a.faction === 'player')) return false;
   /* ---------- THE PIT: THE BOUT IS THE ONLY QUARREL, AND IT ENDS WHEN THE BOUT DOES ----------
@@ -13008,10 +13107,30 @@ const CMD = {
      home, rests, and goes out again tomorrow without being asked, which is the difference
      between a garrison and a fetch quest. A forage is an errand — it finishes. Either can be
      switched over from the order menu once they are out. */
-  patrol: {label:'PATROL',  standing:true,  blurb:'Walk a circuit of the ground around a point, day after day.'},
-  forage: {label:'FORAGE',  standing:false, blurb:'Sweep the ground for chests and bodies, take what is there, bring it home.'},
-  escort: {label:'ESCORT',  standing:false, blurb:'Keep station on somebody and put down what comes at them.'},
-  hold:   {label:'HOLD',    standing:true,  blurb:'Stand on a spot and refuse to be moved off it.'},
+  /* ---------- AND HOW BIG THE ORDER IS BELONGS TO THE ORDER ----------
+     `r` was decided at the one call site in the character panel — `k === 'hold' ? 10 : 26` —
+     which is a property of a menu, not of a duty. Two things were wrong with that and the
+     second only showed up when a harness went looking. A patrol and a loot sweep are not the
+     same SIZE of job and never were: a patrol screens the country around a holding and a sweep
+     covers the ground you can carry something home from. And anything that gives an order
+     without going through that button — a harness, a quest, a future order board — silently
+     got 26 tiles whatever it asked for, so the sizes could not be tested through anything but
+     the menu. The number is on the order now and the menu reads it. */
+  patrol: {label:'PATROL',  standing:true,  r: 60,
+           blurb:'Walk a wide perimeter around this spot, day after day — the ground OUTSIDE a holding, not inside it.'},
+  /* AND A SWEEP HAS TO BE BIGGER THAN A PAIR OF EYES. A body's own sight is `17 + dayness*13`
+     — up to thirty tiles in full daylight — so the old 26-tile forage was a circle the band had
+     already seen the whole of before it took a step. That is not a sweep of the ground, it is a
+     look around, and it is most of why the order read as fizzling: there was nothing to walk to
+     because standing at the anchor had already mapped everything inside it. Forty-eight is
+     comfortably outside what anybody can see from the middle of it, which is what makes walking
+     the circle mean something. */
+  forage: {label:'FORAGE',  standing:false, r: 48,
+           blurb:'Sweep the ground: take what is lying on it, and walk what nobody has seen. Ends when all of it is known.'},
+  escort: {label:'ESCORT',  standing:false, r: 26,
+           blurb:'Keep station on somebody and put down what comes at them.'},
+  hold:   {label:'HOLD',    standing:true,  r: 10,
+           blurb:'Stand on a spot and refuse to be moved off it.'},
 };
 const CMD_REST_H = 3;          /* game-hours at home between tours */
 const CMD_HAUL_BASE = 3;       /* how much a band carries before it has to come in */
@@ -13105,7 +13224,7 @@ function giveCommand(cdr, band, order, at, r){
   standDown(cdr, true);
   cmdN++;
   cdr.cmd = {
-    order, ax: at.x, ay: at.y, r: clamp(r || 26, 8, CMD_R_MAX),
+    order, ax: at.x, ay: at.y, r: clamp(r || CMD[order].r || 26, 8, CMD_R_MAX),
     phase: 'out', leg: 0, t: 0, took: 0, fights: 0, id: cmdN,
     standing: !!CMD[order].standing, tours: 0, restUntil: 0, nightIn: true,
     wardId: (order === 'escort' && at.ward) ? at.ward.id : null,
@@ -13140,11 +13259,34 @@ function standDown(cdr, quiet){
 }
 /* the ring of ground an order covers, walked as a circuit rather than orbited: a marching
    band that follows a perfect circle reads as a clock hand and walks through walls */
-const CMD_LEGS = 5;            /* waypoints in one circuit — a tour is all of them */
+/* ---------- AND A PATROL IS A PERIMETER, NOT A LAP OF THE YARD ----------
+   "The patrol command sends the group in a very tiny circle, and then proudly reports that
+    they completed a tour. It's literally just walking around in a circle. It should be a
+    genuine patrol of a large perimeter around their original point of origin."
+   It was, and the arithmetic says how small: the order was handed `r = 26` and the legs rode
+   `0.55` to `0.91` of that, so the circuit was a ring somewhere between fourteen and
+   twenty-four tiles out — walkable end to end in well under a minute, and inside the sight
+   range of the base it was supposedly screening. Five waypoints on that ring is a circle
+   drawn with a compass.
+   THIS IS THE OTHER PATROL. The patrol JOB holds a base: it stands a watch on your buildings
+   and answers cries inside them, and it is right to be tight. This one is the order you give
+   a band standing in the field, and its job is the ground AROUND the base — which means it
+   has to go far enough out that meeting something is news rather than an emergency.
+   So: the ring rides near the FULL radius rather than half of it, the radius the order is
+   given is wide, and there are more legs on it — eight rather than five, because a five-point
+   circuit at forty-five tiles is a pentagon, and a pentagon at that scale cuts the corners
+   off the very ground you sent them to look at. The jitter stays, and is now what stops the
+   circuit being a perfect ring rather than what shrinks it. */
+const CMD_LEGS = 5;            /* waypoints in one circuit for the close orders */
+const CMD_PATROL_LEGS = 8;     /* and a perimeter gets more, because it is a bigger shape */
+function cmdLegCount(cdr){ return cdr.cmd && cdr.cmd.order === 'patrol' ? CMD_PATROL_LEGS : CMD_LEGS; }
 function cmdLeg(cdr){
-  const m = cdr.cmd, legs = CMD_LEGS;
+  const m = cdr.cmd, legs = cmdLegCount(cdr);
   const a = ((m.leg % legs) / legs) * Math.PI * 2 + m.id * 0.7;
-  const rr = m.r * (0.55 + ((m.leg * 7 + m.id) % 5) * 0.09);
+  /* a perimeter walks the edge of its ground; everything else still sweeps the inside of it */
+  const rr = m.order === 'patrol'
+    ? m.r * (0.86 + ((m.leg * 7 + m.id) % 5) * 0.028)
+    : m.r * (0.55 + ((m.leg * 7 + m.id) % 5) * 0.09);
   return {x: clamp(m.ax + Math.cos(a) * rr, 3, W - 4), y: clamp(m.ay + Math.sin(a) * rr, 3, H - 4)};
 }
 /* the nearest thing worth walking to, inside the order's ground. Chests first — a sealed
@@ -13166,6 +13308,43 @@ function forageFind(cdr){
     if(dist(b.x, b.y, m.ax, m.ay) > m.r) continue;
     const w = dist(cdr.x, cdr.y, b.x, b.y);
     if(w < bd){ bd = w; best = {kind: 'corpse', at: b}; }
+  }
+  return best;
+}
+/* ---------- AND A SWEEP IS A SWEEP OF THE GROUND, NOT AN INVENTORY OF IT ----------
+   "The forage command right now basically just fizzles out by saying there's nothing of value
+    nearby. The point of that command is to have them go out and explore/map out new territory,
+    not JUST go looting."
+   Exactly so, and `forageFind` above is the whole reason: it asks two questions, both of them
+   about objects that already exist — is there an unopened chest in the circle, is there an
+   unlooted body in the circle — and the instant both answers are no it returns null and the
+   order ends. On ground you have already walked, both answers are no on the FIRST tick, which
+   is why the command reads as fizzling: it was never looking at the ground at all.
+   THE GROUND IS THE THIRD ANSWER. A band with nothing left to pick up walks to the nearest
+   piece of the circle nobody has seen, and walking there is what maps it — the fog is stamped
+   off their own eyes by `stampVision`, so no reveal is granted here and nothing is learned that
+   was not looked at. The errand now ends on a condition that means something and can be
+   reported honestly: every chest taken, every body stripped, AND every tile inside the order
+   walked. Until then there is always something to do.
+   SAMPLED ON A COARSE LATTICE rather than scanned tile by tile. At `CMD_R_MAX` the circle is
+   eleven thousand tiles and this is asked once per commander per tick; on a four-tile lattice
+   it is under seven hundred comparisons, and four tiles is far below the radius a body sees,
+   so nothing can hide between the samples. */
+const FORAGE_STEP = 4;        /* the lattice, in tiles */
+const FORAGE_TOURS = 6;       /* trips before a sweep gives up on ground it cannot reach */
+function unseenIn(cdr){
+  const m = cdr.cmd;
+  let best = null, bd = 1e9;
+  const x0 = Math.max(2, Math.floor(m.ax - m.r)), x1 = Math.min(W - 3, Math.ceil(m.ax + m.r));
+  const y0 = Math.max(2, Math.floor(m.ay - m.r)), y1 = Math.min(H - 3, Math.ceil(m.ay + m.r));
+  for(let y = y0; y <= y1; y += FORAGE_STEP) for(let x = x0; x <= x1; x += FORAGE_STEP){
+    if(vis[y * W + x] !== 0) continue;                       /* already known */
+    if(dist(x, y, m.ax, m.ay) > m.r) continue;
+    /* somewhere a person could actually stand — an unwalkable tile is not unexplored ground,
+       it is a wall, and sending the band at one is how a sweep gets stuck against a cliff */
+    if(isBlocked(x + 0.5, y + 0.5, 0) || terr[y * W + x] === 3) continue;
+    const d = dist(cdr.x, cdr.y, x, y);
+    if(d < bd){ bd = d; best = {x: x + 0.5, y: y + 0.5}; }
   }
   return best;
 }
@@ -13265,8 +13444,23 @@ function commandTick(dt){
           m.phase = 'rest'; m.restUntil = day * 24 + hour + CMD_REST_H;
           m.took = 0; m.fights = 0; m.leg = 0;
           cmdSay(cdr, `Tour ${m.tours} done, ${tally}. Standing to at ${CMD_REST_H} hours.`, 'good');
+        } else if(m.order === 'forage' && m.tours < FORAGE_TOURS && unseenIn(cdr)){
+          /* ---------- AND THE ERRAND IS NOT DONE WHILE THERE IS GROUND LEFT ----------
+             A band that fills its hands on the third tile of a circle nobody has walked used to
+             come in and stand down, which made a sweep of new country into one trip to a chest.
+             Coming in LOADED is the middle of the errand, not the end of it: they drop what they
+             are carrying and go back out. The end condition has not moved — it is still "all of
+             it is known" — and it is reachable, which is what makes this an errand rather than a
+             duty. The tour cap is the safety on it: a pocket of ground with no way in (an
+             island, a walled yard) would otherwise keep a band walking at it forever, so after
+             FORAGE_TOURS they come in for good and SAY that the rest could not be got to. */
+          m.phase = 'rest'; m.restUntil = day * 24 + hour + CMD_REST_H;
+          m.took = 0; m.fights = 0; m.leg = 0; m.scouting = false;
+          cmdSay(cdr, `Dropping ${tally.replace('with ', '')}. There is ground out there we have not walked.`, 'good');
         } else {
-          cmdSay(cdr, `Back, ${tally}.`, 'good');
+          const left = m.order === 'forage' ? unseenIn(cdr) : null;
+          cmdSay(cdr, left ? `Back, ${tally}. There is ground out there we cannot get to.`
+                           : `Back, ${tally}.`, 'good');
           standDown(cdr, true);
         }
       } else if(!cdr.moveTarget){
@@ -13321,10 +13515,25 @@ function commandTick(dt){
       }
       const find = forageFind(cdr);
       if(!find){
+        /* nothing left to pick up: go and look at the parts of it nobody has seen */
+        const blank = unseenIn(cdr);
+        if(blank){
+          if(!m.scouting){
+            m.scouting = true;
+            cmdSay(cdr, m.took ? `Nothing more to lift. Walking the rest of the ground.`
+                                : `Nothing lying about. We will go and see what is out here.`, '');
+          }
+          if(!cdr.attackMove || dist(cdr.x, cdr.y, cdr.attackMove.x, cdr.attackMove.y) < 4)
+            cdr.attackMove = {x: blank.x, y: blank.y};
+          continue;
+        }
         m.phase = 'home';
-        cmdSay(cdr, m.took ? 'Ground is picked clean. Coming in.' : 'Nothing here worth carrying.', '');
+        cdr.attackMove = null;
+        cmdSay(cdr, m.took ? `Walked all of it. ${m.took} to bring in.`
+                           : 'Walked all of it. Nothing out there but ground.', '');
         continue;
       }
+      m.scouting = false;
       const far = dist(cdr.x, cdr.y, find.at.x, find.at.y);
       if(far > 6){ if(!cdr.attackMove) cdr.attackMove = {x: find.at.x, y: find.at.y}; continue; }
       cdr.attackMove = null;
@@ -13339,7 +13548,7 @@ function commandTick(dt){
     if(!cdr.attackMove || dist(cdr.x, cdr.y, leg.x, leg.y) < 3){
       if(dist(cdr.x, cdr.y, leg.x, leg.y) < 3){
         m.leg++;
-        if(m.leg >= CMD_LEGS){
+        if(m.leg >= cmdLegCount(cdr)){
           m.phase = 'home';
           cdr.attackMove = null;
           continue;
@@ -16970,6 +17179,38 @@ let shoalSeq = 0;
 const deepAltars = [];
 /* the two lists `deepWatch` and `glareOn` read, refilled once a tick in `rebuildCharGrid` */
 const belowFolk = [], lamps = [];
+/* ---------- AND THE WARRENS HAVE FIRES IN THEM ----------
+   "Bandits in the underground layer do not use torches at all and thus suffer a horrible
+    penalty to their combat stats. Doesn't make sense for them not to use torches, like at
+    least one per group. Or even to have their little bases equipped with built standing
+    torches."
+   Worldgen already guarantees one torch per chamber, and it had been quietly going out: a
+   torch holds `TORCH_HOURS` and `torchTick` only relights for `faction === 'player'`, so ten
+   game-hours into every world the last bandit fire underground burnt down and nothing ever
+   lit another. From then on every warren in the world was a room of blind men swinging at
+   each other's noise — which is the exact sentence the per-chamber guarantee was written to
+   prevent, defeated by a clock nobody had pointed at it.
+   Two answers, because the report asks for both. The held torch RELIGHTS — they live down
+   there, pitch is what the place is made of, and a man in his own camp does not sit in the
+   dark because his light burnt out. And the chamber gets a STANDING FIRE, which is the part
+   that survives the torchbearer: kill the one holding the light and the room is dimmer, not
+   dark, which is a better fight than either extreme.
+   The fire hangs off the ROOM, so it rides the save for nothing — `cv.rooms` is stored whole.
+   This list is the flat view of them, rebuilt only when the warren count changes, because
+   `litNear` asks for it and `litNear` is asked of every body underground every step. */
+const caveFires = [];
+let _cfN = -1;
+function rebuildCaveFires(){
+  _cfN = caves.length;
+  caveFires.length = 0;
+  for(const cv of caves){
+    for(const rm of (cv.rooms || [])){
+      if(!rm.fire) continue;
+      caveFires.push({x: rm.fire.x, y: rm.fire.y, floor: cv.f, r: rm.fire.r || TORCH_POST_R});
+    }
+  }
+}
+function caveFireList(){ if(_cfN !== caves.length) rebuildCaveFires(); return caveFires; }
 /* ---------- HOW FAR OUT THEY STAND, AND WHAT PUSHES THEM ---------- */
 const WATCH_NEAR = 7;              /* closer than this and they give ground */
 const WATCH_FAR  = 15;             /* further than this and they drift back in to keep you in sight */
@@ -21521,6 +21762,12 @@ function litNear(c){
     if((p.floor || 0) !== f) continue;
     if(dist(p.x + 0.5, p.y + 0.5, c.x, c.y) < TORCH_POST_R) return p;
   }
+  /* the warrens' own fires. They need no fuel from you and they are not yours to put out —
+     what keeps them burning is that somebody lives in the room. */
+  if(f < 0) for(const p of caveFireList()){
+    if(p.floor !== f) continue;
+    if(dist(p.x + 0.5, p.y + 0.5, c.x, c.y) < (p.r || TORCH_POST_R)) return p;
+  }
   for(const o of lamps){
     if(o === c || (o.floor || 0) !== f || o.state !== 'ok') continue;
     if(dist(o.x, o.y, c.x, c.y) < LAMP_R) return o;
@@ -21579,6 +21826,12 @@ function torchTick(dh){
     } else if(c.faction === 'player'){
       log(`${c.name}'s torch is out, and there is not another in the pack.`, 'bad');
       addFloat(c.x, c.y - 1, 'dark', '#6a6258');
+    } else if(c.caveDweller){
+      /* AT HOME, WITH PITCH. The one who lives down here does not stand in the dark because a
+         torch burnt down — and unlike yours, this costs no logistics because it is not a
+         logistics mechanic: it is the reason the room is lit at all. Yours still runs off the
+         pack, which is what makes carrying spares a decision for you and not for them. */
+      c.weapon = 'w_torch'; c.torchH = TORCH_HOURS;
     }
   }
   if(blind && nowH() - darkToldH > 20){
@@ -25179,6 +25432,7 @@ function syncTorchLights(){
   const fires = [];
   for(const o of torchers) if((o.floor || 0) === activeFloor) fires.push({x: o.x, y: o.y, h: 1.5, k: 1});
   for(const b of litPosts) if((b.floor || 0) === activeFloor) fires.push({x: b.x + 0.5, y: b.y + 0.5, h: 1.2, k: 1.5});
+  if(activeFloor < 0) for(const b of caveFireList()) if(b.floor === activeFloor) fires.push({x: b.x + 0.5, y: b.y + 0.5, h: 1.0, k: 1.3});
   fires.sort((a, b) => (Math.abs(a.x-camSX) + Math.abs(a.y-camSY)) - (Math.abs(b.x-camSX) + Math.abs(b.y-camSY)));
   const t = Date.now();
   for(let i = 0; i < TORCH_LIGHTS.length; i++){
@@ -33413,8 +33667,19 @@ function bodyGap(c, wx, wy){
    the ground, which is supported deliberately and is what `elevatedHit` exists for. Below
    ground there are no such half-storeys: the floors are 3.4 apart and the undercroft is
    twenty-two down, and anything on another one of them is behind rock. */
+/* ---------- AND THE CURSOR ONLY REACHES THE STOREY YOU ARE LOOKING AT ----------
+   "I can select/talk with people on an entirely different floor than the one I am on — talk to
+    a kept priest underground if I happen to right click on the right area."
+   The floor test was here all along and it was written `activeFloor < 0 && ...`, so it only ran
+   WHILE YOU WERE UNDERGROUND. Standing on the surface — `activeFloor === 0`, the ordinary case
+   — the guard was skipped entirely and every one of the thirty-six hit tests in this file fell
+   through to a plain 2D distance: a body four hundred metres straight down, at the same x and
+   y, is exactly as close to the cursor as one at your feet. So you could talk to it, target it,
+   heal it, cast on it and select it, through solid rock.
+   It reads the same both ways round now. A body is under the cursor if it is under the cursor
+   AND on the deck you are looking at; that is what the two arguments to a click mean. */
 function bodyHit(c, wx, wy, base){
-  if(activeFloor < 0 && c && (c.floor || 0) !== activeFloor) return false;
+  if(c && (c.floor || 0) !== (activeFloor || 0)) return false;
   return bodyGap(c, wx, wy) < base + Math.max(0, ((c && c.big) || 1) - 1) * 0.85;
 }
 
@@ -34738,7 +35003,7 @@ function refreshCharPanel(){
   } else if(hungover(c)){
     cupTxt = ` · <span style="color:var(--warn)" data-tip="drink">HUNGOVER — ${(c.hangT / HOUR_SEC).toFixed(1)}h</span>`;
   }
-  $('equip').innerHTML = `<b>${ageTxt}</b>${c.goal ? ' · goal: '+c.goal : ''} · WPN <b>${(wepOf(c)||{}).name || 'Fists'}</b>${torchTxt}${cupTxt} · ARM <b>${(c.armor&&ITEMS[c.armor]?ITEMS[c.armor].name:'None')}</b>` +
+  $('equip').innerHTML = `<b>${ageTxt}</b>${c.grp ? ' · <span style="color:var(--warn)">'+c.grp.toUpperCase()+'</span>' : ''} · WPN <b>${(wepOf(c)||{}).name || 'Fists'}</b>${torchTxt}${cupTxt} · ARM <b>${(c.armor&&ITEMS[c.armor]?ITEMS[c.armor].name:'None')}</b>` +
     wornTxt +
     (c.pack ? ` · PACK <b>${ITEMS[c.pack].name}</b>` : '') +
     `${giftTxt}${bindTxt}${convTxt}<br><span style="color:${+ldNow > +ldCap ? 'var(--rust)' : 'var(--dust)'}">LOAD ${ldNow}/${ldCap}kg${invTxt}</span>`;
@@ -34933,7 +35198,8 @@ function refreshCharPanel(){
             if(!ward){ log('Nobody to escort.', 'bad'); return; }
             at.ward = ward;
           }
-          giveCommand(c, band, k, at, k === 'hold' ? 10 : 26);
+          /* the size is the order's own, declared in `CMD` — see the note there */
+          giveCommand(c, band, k, at);
           refreshCharPanel(); refreshSquadBar();
         },
       })));
@@ -35681,19 +35947,57 @@ $('btn-court').onclick = () => {
   court(a, b);
   refreshCharPanel();
 };
-const GOALS = [null,'blades','blunt','ranged','martial','smithing','crafting','farming','brewing','medic','magic','labor','study','gunnery','charisma'];
-$('btn-goal').onclick = () => {
-  const c = selected[0]; if(!c || c.faction!=='player') return;
-  const r = $('btn-goal').getBoundingClientRect();
-  const items = GOALS.map(g => ({
-    label: (c.goal===g ? '● ' : '   ') + (g ? g.toUpperCase() : 'NONE'),
-    fn: () => {
-      c.goal = g;
-      log(g ? `${c.name} sets their mind to ${g}. (+25% learning)` : `${c.name} drifts, goalless.`);
-      refreshCharPanel();
-    }
-  }));
-  showCtxMenu(r.left, Math.max(6, r.top - GOALS.length*30), items);
+/* ---------- ORGANISING A SQUAD, WHERE THE GOAL BUTTON USED TO BE ----------
+   "It would be nice to be able to just select a chunk of troops, label them as a single squad
+    and have them organized as such in the UI... To the point of replacing the goal section, I
+    never use that and it feels a bit OP to give such an XP bonus for nothing but a few clicks."
+   Both halves of that are right, and the second one is why this button is free to take.
+   THE FOLDERS ALREADY EXISTED. `c.grp` and `squadGroups` are a real system: named folders in
+   the squad bar, collapsible, saved, with the whole management menu hung off a right-click.
+   What was missing was the ROAD IN. Every door to it was on the squad bar itself — a portrait's
+   context menu, which moves ONE body, or a folder header's, which needs the folder to exist
+   before you can put anybody in it. So making a squad out of eight people you have just
+   dragged a box around meant finding a header that was not theirs and using its menu, or eight
+   right-clicks. The mechanism was there; the gesture was not.
+   This is the gesture: whatever is selected, in one click, from the panel that is already open
+   because you just selected them. Nothing under here is new machinery — it is `assignToGroup`
+   and `makeSquadGroup`, which is why this is thirty lines rather than a feature.
+   AND THE GOAL IS GONE. It set a single skill and multiplied its learning by 1.25 for the rest
+   of that character's life, for two clicks, with no cost, no cooldown and no way to be wrong
+   about it — a permanent quarter more progress than a player who never opened the menu. That
+   is not a choice, it is a tax on not knowing the button is there. */
+$('btn-squad').onclick = () => {
+  const sel = selected.filter(u => u.faction === 'player' && u.state !== 'dead');
+  if(!sel.length) return;
+  const c = sel[0];
+  const r = $('btn-squad').getBoundingClientRect();
+  const n = sel.length;
+  const who = n === 1 ? c.name : `${n} SELECTED`;
+  const items = [];
+  items.push({label: `── ${who} ──`, fn: () => {}});
+  items.push({label: `NEW SQUAD…`, fn: () => {
+    const nm = prompt(n === 1 ? `Name ${c.name}'s squad:` : `Name the squad for these ${n}:`);
+    if(!nm) return;
+    const g = makeSquadGroup(nm);
+    if(g){ assignToGroup(sel, g.name); log(`${g.name.toUpperCase()} — ${n} under one name.`, 'good'); }
+    refreshSquadBar(); refreshCharPanel();
+  }});
+  /* every folder that is not already all of them */
+  for(const g of squadGroups){
+    if(sel.every(u => u.grp === g.name)) continue;
+    items.push({label: `INTO ${g.name.toUpperCase()}`, fn: () => {
+      assignToGroup(sel, g.name); refreshSquadBar(); refreshCharPanel(); }});
+  }
+  const grouped = sel.filter(u => u.grp);
+  if(grouped.length) items.push({label: `OUT OF ${grouped.length === n && c.grp ? c.grp.toUpperCase() : 'ANY SQUAD'}`,
+    fn: () => { assignToGroup(sel, null); refreshSquadBar(); refreshCharPanel(); }});
+  /* and the other direction: from one body, grab the rest of its squad */
+  if(c.grp) items.push({label: `SELECT ALL OF ${c.grp.toUpperCase()}`, fn: () => {
+    selected = chars.filter(u => u.faction === 'player' && u.grp === c.grp && u.state !== 'dead');
+    camFollow = true; refreshSquadBar(); refreshCharPanel(); }});
+  if(c.grp) items.push({label: `DISBAND ${c.grp.toUpperCase()}`, fn: () => {
+    removeSquadGroup(c.grp); refreshSquadBar(); refreshCharPanel(); }});
+  showCtxMenu(r.left, Math.max(6, r.top - items.length * 30), items);
 };
 $('btn-rename').onclick = () => {
   const c = selected[0]; if(!c) return;
@@ -40847,6 +41151,9 @@ function snapshot(){
       project: t.project ? {...t.project} : null, projectsDone: {...(t.projectsDone||{})}, lastTribute: t.lastTribute||0,
       dread: t.dread||0, dreadWoke: !!t.dreadWoke, shown: {...(t.shown||{})}, witnessCd: t.witnessCd||0,
       bounty: t.bounty||0, wanted: !!t.wanted,   /* what they still want you for */
+      /* and whether the fighting is still going on, so a save taken mid-battle does not
+         come back as a town quietly filing paperwork about it */
+      assaultH: t.assaultH||0,
       compactWilling: !!t.compactWilling,
       /* the ground a bought chart opened rides home inside `explored`, which stores vis>0 —
          this only remembers that the town has no second copy to sell you */
@@ -41077,6 +41384,10 @@ function restore(d){
        warrens and ninety-one doors on the deep storeys one of them finally stopped coinciding.
        DRAWN 9331 → 9330, which is one tile, and one tile is the whole bug. */
     for(const cv of caves) rebuildCaveWalls(cv);
+    /* and the warrens' fires, explicitly rather than by the count guard: two different worlds
+       can hold the same number of warrens, and a cache keyed on a length would hand the second
+       one the first one's fires */
+    rebuildCaveFires();
   }
   squadGroups.length = 0;
   if(Array.isArray(d.squadGroups)) for(const g of d.squadGroups) squadGroups.push({name:g.name, open:g.open !== false});
@@ -41390,7 +41701,7 @@ function restore(d){
     t.playerRuled = !!ts.playerRuled; t.settlerT = ts.settlerT || 0;
     t.order = ts.order ?? 55; t.pacts = {...(ts.pacts||{})}; t.petitions = (ts.petitions||[]).map(p=>({...p}));
     t.dread = ts.dread || 0; t.dreadWoke = !!ts.dreadWoke;
-    t.bounty = ts.bounty || 0; t.wanted = !!ts.wanted;
+    t.bounty = ts.bounty || 0; t.wanted = !!ts.wanted; t.assaultH = ts.assaultH || 0;
     t.shown = {...(ts.shown||{})}; t.witnessCd = ts.witnessCd || 0;
     t.compactWilling = !!ts.compactWilling;
     /* The board comes back as the SAME objects the contract list holds, not copies of them.
