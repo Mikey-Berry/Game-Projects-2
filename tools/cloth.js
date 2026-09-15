@@ -60,9 +60,16 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
       const made = new Set();
       for (const kind in RECIPES) for (const r of RECIPES[kind]) made.add(r.out);
-      /* everything the ground, the water and the dead give up directly */
-      for (const k of ['wood', 'stone', 'iron_ore', 'copper', 'coal', 'fish', 'fruit', 'meat',
-                       'hide', 'hide_lev', 'remains', 'vflesh', 'lead', 'mats', 'bone'])
+      /* ---------- AND WHAT THE GROUND GIVES UP, READ OFF THE GAME'S OWN TABLE ----------
+         This was a hand-kept list, and a hand-kept list of what a gatherer can pick up is a
+         list that goes stale the first time somebody adds a gathering job. It did: `brine` is
+         dipped off the shore by the SALTWORK job and this file called it a dead end, because
+         the parallel list had never heard of it. `NODE_JOB` is the game's own map of node kind
+         to job — if a hand can be sent to fetch it, it is in there — so the harness asks that
+         instead of remembering. What stays hand-written is only what comes off BODIES and out
+         of the ground's own generosity rather than off a node. */
+      for (const k of Object.keys(NODE_JOB)) made.add(k);
+      for (const k of ['fruit', 'meat', 'hide', 'hide_lev', 'remains', 'vflesh', 'lead', 'mats', 'bone'])
         made.add(k);
       /* NOT `type !== 'trade'`. The first version filtered those out believing `trade` meant
          "a thing you buy" — it means "a trade good", and both FABRIC and HIDE carry it. So the
@@ -94,9 +101,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          are exceptions for different reasons and a bare list would flatten that — and because
          the next thing added to it has to justify itself in a sentence, which is the only thing
          stopping a named exception from becoming a way of silencing this claim. */
+      /* SALT IS OFF THIS LIST. It sat here for one release with a reason that was true at the
+         time — a bench that made salt would cost Saltmere its reason to exist — and the answer
+         turned out to be that Saltmere's reason to exist is the BRINE, not the salt. A salt pan
+         boils brine down and brine is dipped off the shore, so the whole chain is now a thing
+         you go and do, and the town that sits on an ocean of it still sells it cheaper than
+         anyone and sells the brine as well. A named exception that can be retired should be. */
       const NOT_MADE_ON_PURPOSE = {
-        salt:   'the flats give it, and a bench that made it would cost Saltmere its reason to exist',
         sunder: 'it is the bones of a dead god — you cut it out of a Sundered site or you do not have any',
+        /* the game says this one itself, in the refusal the dry Lance prints: "Nobody alive
+           makes Aether Cells — they are scavenged". A pre-Fall charge is not a recipe. */
+        aether_cell: 'nobody alive makes one — they are scavenged out of the old world',
       };
       const orphans = [...spent].filter(k => !made.has(k) && ITEMS[k] && !NOT_MADE_ON_PURPOSE[k]);
       R.orphans = orphans.length ? `spent but unmakeable: ${orphans.join(', ')}`
