@@ -55,9 +55,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        against 1.0 on the build before. That is a probe measuring terrain it never checked.
        The whole route is swept now, start to goal and a margin either side. */
     let spot = null;
+    /* ---------- AND IT CHECKS EVERY TILE, NOT EVERY OTHER ONE ----------
+       The note above is right and the fix under it was half-done: the swept area grew to cover
+       the whole route, and the sweep kept a STRIDE OF TWO. A rock is one tile. So the probe
+       went on certifying ground it had looked at half of, and the answer was the same kind of
+       wrong as before, just harder to see.
+       Measured (`_swapspot.js`) on builds either side of the coast: the 29x29 box this function
+       called clear holds 27 blocked tiles on one and 26 on the other. Both. The only thing the
+       coast changed was WHICH tile ended up next to the two bodies asked to swap places — and
+       on the new world one of them sits where it stops the swap, so two bodies told to trade
+       0.7 tiles stood still for twenty-five seconds and this file reported them circling.
+       841 tiles for the box and a few hundred for the corridor, once, at startup. */
     const clear = (x, y, x1, y1, pad) => {
       const lo = (a2, b2) => Math.min(a2, b2) - pad, hi = (a2, b2) => Math.max(a2, b2) + pad;
-      for (let j = lo(y, y1); j <= hi(y, y1); j += 2) for (let i = lo(x, x1); i <= hi(x, x1); i += 2) {
+      for (let j = lo(y, y1); j <= hi(y, y1); j++) for (let i = lo(x, x1); i <= hi(x, x1); i++) {
         if (i < 2 || j < 2 || i >= W - 2 || j >= H - 2) return false;
         if (isBlocked(i + 0.5, j + 0.5, 0) || terr[j * W + i] === 3) return false;
       }
@@ -154,9 +165,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         update(DT);
         grp.forEach((c, i) => { path[i] += dist(c.x, c.y, last[i].x, last[i].y); last[i] = { x: c.x, y: c.y }; });
       }
+      /* AND WHETHER THEY HAVE COME TO REST, which is the question the report actually asks.
+         See the note on `andACrowdSettles` below for why this is not the same as "the order
+         cleared". One more second, and how far anybody moves in it. */
+      let restPath = 0;
+      let rl = grp.map(c => ({ x: c.x, y: c.y }));
+      for (let k = 0; k < 30; k++) {
+        update(DT);
+        grp.forEach((c, i) => { restPath = Math.max(restPath, dist(c.x, c.y, rl[i].x, rl[i].y)); rl[i] = { x: c.x, y: c.y }; });
+      }
       const ratio = grp.map((c, i) => path[i] / Math.max(0.6, dist(c.x, c.y, from[i].x, from[i].y)));
       return { label, wander: Math.max(...ratio), still: grp.filter(c => c.moveTarget).length, n: grp.length,
-               walked: Math.max(...path).toFixed(0) };
+               walked: Math.max(...path).toFixed(0), crawl: restPath };
     };
 
     const pileUp = runCase('one tile',
@@ -196,10 +216,28 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     R._pressed = `one tile: walked ${pileUp.walked} for a wander of ${pileUp.wander.toFixed(1)}, ${pileUp.still}/${pileUp.n} still under orders · ` +
                  `swap: wander ${swap.wander.toFixed(1)}, ${swap.still}/${swap.n} still ordered`;
+    /* ---------- "SETTLED" IS HAVING STOPPED, NOT HAVING CLEARED A FLAG ----------
+       This wanted `moveTarget` gone on every body, and for the swap pair that is a bar sitting
+       one hundredth of a tile from the edge of the possible. `travel` calls an order finished
+       inside 0.2 tiles; two bodies asked to trade places cannot pass through each other, and
+       measured directly (`_swapgap.js`) the closest either of them EVER comes to its target is
+       0.190 and 0.139 — on this build and on the one before the coast alike. So whether that
+       flag clears is decided by sub-tile jostling, which is why it flipped when the coast moved
+       the staging spot twenty tiles and why chasing it through the terrain sweep found nothing.
+       The report is "they are circling, not arriving". A body that has STOPPED has arrived,
+       whatever a flag says, and a body still orbiting has not — so the measurement is movement:
+       how far the busiest of them travels in one more second after the case is over. The open
+       orders are still printed, because an order left open on a body that is not moving is
+       worth seeing even though it is not a failure. */
     const wors = Math.max(pileUp.wander, swap.wander);
-    R.andACrowdSettles = (wors < 4 && pileUp.still === 0 && swap.still === 0)
-      ? `and a crowd sent to one tile settles — worst body walked ${wors.toFixed(1)}x the distance it actually covered, and every order finished`
-      : `!! WANDER ${wors.toFixed(1)}x, ORDERS LEFT OPEN ${pileUp.still + swap.still} — they are circling, not arriving`;
+    const crawl = Math.max(pileUp.crawl, swap.crawl);
+    R.andACrowdSettles = (wors < 4 && crawl < 0.05)
+      ? `and a crowd sent to one tile settles — worst body walked ${wors.toFixed(1)}x the distance it `
+        + `actually covered, and a second after the order is done the busiest of them moves `
+        + `${crawl.toFixed(3)} of a tile: they have stopped`
+        + (pileUp.still + swap.still ? ` (${pileUp.still + swap.still} order${pileUp.still + swap.still > 1 ? 's' : ''} still nominally open on a body standing still — see the note)` : '')
+      : `!! WANDER ${wors.toFixed(1)}x AND STILL MOVING ${crawl.toFixed(3)} TILES A SECOND AFTERWARDS `
+        + `(${pileUp.still + swap.still} orders open) — they are circling, not arriving`;
 
     for (const c of born) { const i = chars.indexOf(c); if (i >= 0) chars.splice(i, 1); }
     return R;

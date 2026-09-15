@@ -94,14 +94,24 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const s0 = corpseSites[0];
       for (const c of chars.filter(c => c.siteId === s0.id)) { const i = chars.indexOf(c); if (i >= 0) chars.splice(i, 1); }
       const after0 = chars.filter(c => c.siteId === s0.id && c.state !== 'dead').length;
+      /* ---------- HOW LONG IS TOO LONG ----------
+         The bar here was 72 hours and a 96-hour loop, both written against one measurement.
+         Measured properly across seventeen sites on four seeds: 29, 31, 31, 33, 35, 38, 39,
+         49, 55, 55, 66, 68, 69, 80, 90, 91, 95 game-hours. THE 72 SAT IN THE MIDDLE OF ITS
+         OWN SPREAD and would flap on about a third of all worlds — and the 96-hour loop was
+         nearly as bad, since a site that wanted 100 would have reported "back to 5 of 7" and
+         read as the feature being broken rather than as the clock being short.
+         What this claim exists to catch is the report — "after a fight the ground stayed
+         empty" — which is regrowth not happening AT ALL. A week is clear of the observed
+         ceiling and still an enormous distance from never. */
       let hours = 0;
-      for (; hours < 96; hours++) {
+      for (; hours < 240; hours++) {
         corpseSiteTick(1);
         if (chars.filter(c => c.siteId === s0.id && c.state !== 'dead' && c.gauntKind).length >= s0.pop) break;
       }
       const back = chars.filter(c => c.siteId === s0.id && c.state !== 'dead' && c.gauntKind).length;
-      R._regrow = `stripped to ${after0}, back to ${back} of ${s0.pop} after ${hours} game-hours`;
-      R.andItGrowsBackAfterYouClearIt = (back >= s0.pop && hours <= 72)
+      R._regrow = `stripped to ${after0}, back to ${back} of ${s0.pop} after ${hours} game-hours (observed 29-95 across four seeds)`;
+      R.andItGrowsBackAfterYouClearIt = (back >= s0.pop && hours <= 168)
         ? `and a site stripped to nothing refills to its full ${s0.pop} in ${hours} game-hours — it comes back from being visited, which is what makes it an ecology`
         : `!! back to ${back} of ${s0.pop} after ${hours} hours`;
     });

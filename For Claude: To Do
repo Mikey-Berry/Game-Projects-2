@@ -6893,3 +6893,1700 @@ and both had to be scoped rather than loosened.
     design actually makes — every chamber holding a band has a fire in it — and the year-old
     standing NOTE about the dead bands is closed and replaced with an assertion that the shallow
     band is still alive, because if it dies again the blindness claims go quietly vacuous.
+
+[DONE] "How do games like Kenshi manage a world of that size and yet keep the FPS and overall
+impact so low? Any tricks we can pull out to ensure gameplay remains smooth?" … "Yeah build out
+one and two please. As it is, the FPS drop is pretty killer especially on the laptop."
+    KENSHI IS NOT SMOOTH, and the premise is worth correcting before borrowing from it: it is
+known for late-game slowdown, city stutter and framerate collapse in large battles, and the
+sequel moved engine partly for it. What it IS good at is making an enormous world feel
+continuous and persistent while simulating almost none of it — and the technique under that is
+the one worth taking: do not simulate what nobody can observe, and ABSTRACT what you stop
+simulating rather than freezing it.
+
+[NOTE] AND THE MEASUREMENT CAME FIRST, WHICH IS THE WHOLE REASON THE TIER IS THE SHAPE IT IS.
+Of 1,748 bodies alive: 1,133 were on a storey with no player unit anywhere on it — and only 166
+of those were IDLE. Twelve hundred bodies were walking and fighting each other four storeys
+under a player who could not see, reach or be reached by any of it. The existing `_far` tier
+could not touch them: it drops a body to 4Hz only when it has no quarry, and a gaunt chasing a
+bandit on the Sump has one. So the gate is the STOREY rather than the body's mood, which is the
+strictly stronger claim — nothing on a floor with none of yours on it is observable at all.
+
+[NOTE] AND ONE BODY OF YOURS WARMS A WHOLE STOREY, deliberately. The alternative is a radius,
+and a radius means the far end of the floor you are standing on runs on a different clock from
+the near end — which is exactly the sort of seam a player finds by walking along it.
+
+[NOTE] AND `stepToward` TESTED COLLISION AT THE DESTINATION AND NOWHERE BETWEEN. Exact for as
+long as every step was a sixth of a tile, which it had always been. A cold body woken with a
+third of a second in hand covers a tile and a half, and would have walked straight through
+chamber rings — the leak this repo has spent a year closing, arriving through the front door.
+The move is bounded into segments under the wall thickness now, each one tested, and the loop
+runs ONCE at full rate so nothing changed for the other two tiers. Speed is preserved exactly:
+the distance is walked rather than jumped.
+
+[NOTE] `_lod` IS NOT THE SAME QUESTION AS `_cold`, AND CONFLATING THEM BROKE EVERY FIGHT
+UNDERGROUND. The first cut set `c._lod = _far || _cold`, which reads as obviously right — a cold
+body is certainly not being watched. But `_lod`'s ONLY reader is `separate`, where
+`a._lod && b._lod` skips the pair, and `separate` is where `_contacts`, `_holders` and `_pinNow`
+are written. Two bodies on a cold storey therefore never registered contact: they acquired
+targets, they wound up, they swung, and not one blow in five thousand steps took a point off the
+other. Blood 100 against 100 after a hundred and sixty-six seconds. A FLAG NAMED FOR ONE
+QUESTION SHOULD NOT BE MADE TO ANSWER A SECOND ONE.
+
+[NOTE] AND A FIGHT IS NOT PUT ON THE SLOWEST CLOCK. Measured both ways on the same staged melee
+at the same spot on the Sump — twelve bodies, forty-five seconds, nothing changed but whether
+one of yours stood forty tiles off: at the slow clock the cold fight took ONE point of blood
+against the warm fight's ten; at the half-rate clock, thirty-two against fourteen. The carve-out
+costs 0.4ms a step and buys back the fidelity of every fight underground.
+
+[NOTE] AND TWO OF THE THREE RED CLAIMS ON THE FIRST RUN WERE MY OWN FIXTURES, AGAIN.
+  · `aColdBodyStillArrives` shoved a `moveTarget` into a gaunt and watched it fail to arrive.
+    `moveTarget` is a field the body's OWN ai owns and it cleared it within the second — at any
+    clock rate. `physics` was being called at exactly the right rate with exactly the right
+    `dt` the whole time. A probe that commands an NPC through a field its ai overwrites is
+    measuring the ai. It measures GROUND COVERED by the same bodies, cold against warm, now.
+  · `andAColdFightStillEnds` staged one raider against one quarry and asked whether either
+    died. Far too noisy to answer anything: the same pair on a WARM floor came back at 72, 85
+    and 86 blood on three consecutive runs and never killed anybody either, so the red line
+    about the cold floor was describing variance. Twelve bodies and a total now.
+  · and the wall-tunnelling claim reported NOTHING TO MEASURE because it searched one room's
+    north ring, which is where the approach tunnel usually arrives.
+
+[NOTE] AND THE ENMITY MEMO WAS BUILT, PROVED EXACT, AND THROWN AWAY — the most useful thing in
+this entry. `hostile` was the most-called function in the game: 8,761 times a step through
+ninety-six lines of faction law. It was memoised on a key carrying every field the rule reads
+(1,745 bodies collapse to 29 distinct keys), interned to integers, answered from a flat
+`Int8Array`, guarded against staleness, and VERIFIED EXACT against the rule on fifteen thousand
+real pairs, both orders round, 8,324 of them hostile. It took 8,761 evaluations down to 44.
+IT WAS FOUR TIMES SLOWER — a sampling profile of real frames put the memo's machinery at 11.4ms
+a frame against 2.8ms for the plain rule.
+THE REASON IS THE RULE'S FIRST LINE: `if(a.faction === b.faction) return false;`. Most calls are
+two bodies of the same faction and die on one string comparison. A memo cannot reduce the number
+of CALLS, only what each one does, and the guard that made the table safe was twenty times the
+work of the early-out it stood in front of.
+A CACHE IN FRONT OF A CHEAP FUNCTION IS A TAX. A CALL COUNT IS NOT A COST.
+
+[NOTE] AND WHILE IT EXISTED IT TAUGHT ONE MORE THING: A MEMO MAKES A PURE FUNCTION IMPURE, AND
+THE CALLERS OUTSIDE THE LOOP ARE THE ONES WHO NOTICE. `deep.js` caught it — a Kept provoked and
+`hostile` asked in the same breath, still answering "calm". Inside `update` that is one frame of
+lag; but dialogue, the interface and every harness ask without running a step first. Nineteen
+places flip one of those flags at runtime, so patching each to re-key would have put the bug back
+the day somebody added a twentieth, silently. The machinery is gone; the lesson is not.
+
+[NOTE] AND THE INSTRUMENT WAS THE WHOLE PROBLEM. Every sim measurement in this repo has hand-timed
+`update()` in a tight loop, which has two faults that between them sent a day at the wrong thing:
+  · IT EXCLUDES THE RENDER. The real loop runs at most four sim steps per frame and then calls
+    `render()`; halving the sim buys nothing if the draw is the ceiling.
+  · AND A PER-CALL WRAPPER DISTORTS EXACTLY WHAT YOU ARE HUNTING. The wrapper costs a fraction of
+    a microsecond — nothing, until it is multiplied by the call count, which is the thing you are
+    looking for. `physics` at 1,102 calls a step came back as 40% of the frame and much of that
+    was the wrapper. THE THING THAT LOOKS HOTTEST UNDER A WRAPPER IS THE THING CALLED MOST.
+`tools/frame.js` is the answer: the real rAF loop, renderer running, a CPU sampling profile off
+the DevTools protocol, SELF time per function, no wrapper in the path of anything hot. It caught
+the memo being backwards. WRAPPING IS STILL EXACT for something called once a frame, which is how
+`syncChars` and the `sync*` rebuilds are measured.
+
+[NOTE] AND A SPEEDUP WAS REPORTED THAT DID NOT EXIST. 28.14 → 18.3 ms a step went into a PR body
+before it was checked, and came from comparing two numbers taken at different times with different
+scripts — not a comparison. A controlled interleaved A/B on an idle machine put the two builds at
+26.04/24.22 against 25.58/26.95: the same. THE REPO'S OWN RULE SAYS COUNTS HOLD UNDER LOAD AND A
+TIMING IS A COIN, and a timing was quoted as the headline anyway.
+
+[NOTE] AND THE SIM IS THE CEILING, WHICH IS WHERE THIS ENDS UP. Measured with per-frame wrappers
+on the once-a-frame functions, where wrapping is exact: `update` 42.45ms a frame over 1.5 calls
+(~28ms a sim step), `render` 30.13ms, and `syncChars` 1.74ms. The guess that the render-side JS
+was the fixed cost was WRONG — the scene-graph work is under two milliseconds. On a machine with
+a real GPU the render mostly goes away and the sim does not, and at up to four steps a frame it
+is the whole budget. "Always, even standing still" fits exactly: 1,756 bodies are ticked whatever
+is on screen.
+
+[NOTE] AND THE NEXT TARGET IS THE NUMBER OF FULL PASSES OVER `chars`, NOT ANY ONE FUNCTION.
+`(anonymous) @game.html` is the second-largest item in the sampling profile at 11.6ms a frame,
+which is the `.filter`/`.some`/`.find` callbacks — every one of them a closure over a 1,756-entry
+array, several of them allocating a fresh array per step (`chars.filter(u => u.faction ===
+'player' ...)` runs every step to build `_pl`). The repo already has the right pattern for this
+and uses it for `warders`, `lamps`, `torchers` and `belowFolk`: gather the lists ONCE in
+`rebuildCharGrid`, which already walks every body, and have the tick functions read them. Not
+attempted yet.
+[NOTE] AND THE SEPARATE REORDER WAS EXACT AND ALMOST FREE. `separate` asked `hostile` for every
+pair the grid handed back and then threw most of the answers away four lines later — it is needed
+only inside `PIN_REACH` (1.45), and beyond that `R` is at most 0.8 so the pair is skipped
+regardless. Moving the question after the cheap test is exactly equivalent. It bought 5%, which
+is less than it looked like it would: the pairs `charsNear(x, y, 1)` returns are mostly already
+inside 1.45. Worth keeping, not worth the theory it was based on.
+
+[105] NOT WALKING SEVENTEEN HUNDRED BODIES TO ASK ABOUT THREE.
+  "the FPS drop is pretty killer especially on the laptop" … "Always, even standing still."
+  "Even standing still" is the diagnosis. A cost paid whether or not anything is happening does
+  not scale with the fight, it scales with the ROSTER. Measured: 13.6ms a sim step of a 33.3ms
+  budget at 30Hz, with 1,757 bodies and nothing on screen.
+  FOUND WITH A NEW INSTRUMENT, `tools/_lines.js`, which reads the `positionTicks` the CPU sampler
+  records per LINE and so attributes inside one function's own frame without a wrapper on
+  anything. `update`'s own body was 19.9% of all samples, and the sampler named the lines:
+    · `_nearSquad(c)` at 6.1% — the single largest line in it, asked once per body per step.
+    · the HAUL LOOP at 6.7% — a full walk of the roster to move a corpse along with the two or
+      three people holding one.
+    · the PASSING-JAB loop at ~21% — see the open note at the bottom.
+    · and the BODYGUARD block, whose two `chars.find`s with `hostile()` and `dist()` predicates
+      sampled separately at 1.1ms a step, plus most of `hostile`'s own 1.2ms.
+  FOUR CHANGES, none of them a rate change or a fidelity trade — each is the same question asked
+  of a structure that already holds the answer:
+    · `player()` IS BUILT ONCE A STEP. It was called 22.17 times a step, each a full filter, for
+      a list of the same six people. Invalidated by the step boundary, by a death, and by a
+      change in roster length; nothing mutates what it returns, checked across 83 call sites.
+    · THE BODYGUARD ASKS THE GRID. One `charsNear(w.x, w.y, 9)` sweep replaces two roster scans,
+      and the `chars.includes(w)` that checked the ward was still in the world became the
+      `charById.get(w.id) !== w` check that map is there for, falling back to the walk only when
+      the map disagrees.
+    · A COLD BODY IS NOT ASKED ABOUT THE SQUAD. `_cold` means no player unit is on this body's
+      floor; `_nearSquad`'s FIRST test is the floor. The coarse condition implies the fine one,
+      so `_cold ||` short-circuits it for 1,132 of 1,757 bodies. Exact, not an approximation —
+      and `tools/walk.js` re-derives the implication on the live world rather than asserting it.
+    · CARRIERS ARE GATHERED IN `rebuildCharGrid`, the pattern the previous note said to use and
+      the one already used for `warders`, `lamps`, `torchers` and `belowFolk`. Gathered before
+      the `state` gate, because a carrier who goes down still has to put the thing down.
+  AND A FIFTH: `gearHas` and `gearSum` walk the equipment slots instead of building a list to
+  throw away. `gearHas(c, 'shroudAll')` is asked of every able body every step.
+  MEASURED, interleaved A/B on an idle machine, three rounds each: 14.507 / 14.032 / 13.372 ms a
+  step before, 11.490 / 10.881 / 10.108 after — about 22%. Every round agrees. The counts are the
+  claim and the milliseconds are colour — see the note above about the speedup that wasn't there.
+
+  [FAULT] AND THE FIRST CUT OF THE `player()` CACHE WAS UNSOUND, WHICH `board.js` CAUGHT.
+  It invalidated on the step boundary, on a death, and on a change in roster length — and none
+  of those is a faction change. Something became player-faction without dying and without the
+  roster moving, the cache did not know, and a probe that moved "everyone" left that body
+  standing in the plaza keeping it lit. There are 192 writes to `.faction` in this file.
+  THE SECOND CUT WAS ALSO WRONG AND IS THE MORE USEFUL MISTAKE: dropping the cache on the last
+  line of `update` does nothing at all when `update` is not running. A paused menu calls
+  `player()`, misses, STORES a fresh list, and that list then stands forever. The write matters
+  as much as the read. `_inStep` now goes up on update's first line and down on its last, and
+  `player()` will neither read nor write the cache while it is down. `update` has no early
+  return, so the flag is balanced on every path.
+
+  [FAULT] AND TWO OF `walk.js`'s OWN CLAIMS WERE OVER-SPECIFIED, BOTH RED ON THE BASE BUILD TOO.
+  · It compared each cold body's `_lod` against the old expression and found twelve
+    disagreements. `_lod` is written in the MIDDLE of a step and the body's `ai` runs
+    immediately afterwards and can hand it a quarry — so a flag that said `!target` was being
+    read against a body that now has one. It was measuring whether the ai fired on the last
+    step; the count moved between 0 and 12 depending only on how many updates the claim above
+    it had run. THE SAME MISTAKE `cold.js` ALREADY HAS WRITTEN INTO IT TWICE. The content of the
+    short-circuit is the implication, and the implication is now what is checked.
+  · It spliced a guard's ward out of the world while the guard still had a threat, and the guard
+    kept its ward on BOTH builds. That is not the check failing: `ai` returns at
+    `if(c.target) return` some 2,500 lines above the bodyguard block, so a guard with a quarry
+    does not re-read its ward at all — exactly as true of the `chars.includes` this replaced.
+  · and the haul-list claim passed "0 missing, 0 extra" on a world where nobody was carrying
+    anything, which is equally true of a gather that never runs. Two bodies are now given
+    something to hold before the sets are compared.
+
+[NOTE] AND THE LINE PROFILER IS THE THIRD INSTRUMENT, AND THE FIRST ONE THAT NAMED A LINE.
+  `tools/_simprof.js` samples a pure `update()` loop and attributes SELF time per function, which
+  said "update is 16.8% of the step" and stopped there — a dispatcher fourteen hundred lines long
+  is not an answer. `tools/_lines.js` reads `positionTicks` off the same profile and names the
+  line. Neither puts an instrument in the path. Between them and `tools/frame.js` (real frames,
+  renderer running) the rule is: frame.js for "is it sim or draw", _simprof.js for "which
+  function", _lines.js for "which line of it".
+
+[OPEN] AND THE PASSING-JAB LOOP IS THE LARGEST THING LEFT IN `update`'s OWN FRAME, ~21% of it.
+  `for(const c of chars)` every step, testing `c.state`, `c._ox` and the distance moved for all
+  1,757 bodies, to find the handful that moved past somebody's blade. The obvious fix — collect
+  the candidates in the main per-body loop, which is already walking the same array — is NOT
+  exact: the jab pass currently runs after every body's physics, so it reads final positions,
+  and collecting mid-loop would read some bodies before a later body's `attack()` had staggered
+  them. Small, real, and not worth taking on a guess. Left alone deliberately.
+
+[FAULT] AND `cold.js`'s FIGHT CLAIM WAS STAGING TWO SIDES THAT WILL NOT FIGHT EACH OTHER.
+  `hostile('bandit', 'cannibal')` IS FALSE. Bandits, cannibals and slavers are all outlaws and
+  outlaws do not quarrel, so six of each stood in a hall on the Sump for forty-five seconds and
+  the only blood on the board came from a shrike that wandered in: 2 cold, 0 warm — identical
+  numbers on the current build, on the pre-depths build, and on every build in between. The
+  claim had been red for two sessions and its own header note blamed the warm control's
+  variance. The warm control was not the problem; it was correctly reporting zero.
+  BANDIT AGAINST GAUNT is a real enmity and also the fight the depths actually hold — the Warren
+  bands raid down into halls full of gaunt kin. With a real pair it is 795 blood cold against
+  645 warm, twelve of twelve down, and the RATIO becomes usable again: a fight nobody is
+  watching resolves at the same rate as one that is, which is a far stronger claim than the one
+  it replaced.
+  THE RULE: A STAGED FIGHT MUST ASSERT THAT THE TWO SIDES ARE ENEMIES. `foe` is now checked
+  first and separately, because a melee between two sides that will not fight reads exactly like
+  a working build with a quiet floor — which is how it went unread for two sessions.
+
+[106] AN ERRAND YOU CANNOT FINISH HAS TO END — and `command.js` was green for the wrong reason.
+  `command.js` had been failing for two sessions with `MISSED A CHEST (0/0) — closest approach
+  14.9 and 3.0 tiles, order CLOSED OUT`, and it bisected cleanly: green on 902efd0, red on
+  3de5863. The diagnosis took four steps and every one of them mattered.
+  · THE PROBE HAD TO BE FAITHFUL FIRST. `tools/_forage.js` reproduced the forage block in
+    isolation and it passed on BOTH builds. Two things were missing: the harness PAUSES the
+    world and steps at dt = 0.25 rather than 1/30, and block 1 (the patrol) runs four minutes
+    of game time ahead of it. With both restored the probe matched the harness exactly — 8
+    sweeps green, 152 sweeps red.
+  · THEN ASK THE BODY, NOT THE CLAIM. The captain held a `chestTarget` 2.46 tiles from the
+    chest and did not move a ten-thousandth of a tile for 116 sweeps, then starved. `pathFail`
+    true — A* had no route at all; `moved: {rv:false, dd:0}` — one call to the movement
+    primitive displaced it by exactly nothing.
+  · WHY: the captain was at (1053.12, 565.72) and the chest at (1050.66, 565.72) — IDENTICAL Y,
+    with a wall due west. `stepToward`'s two wall-slide branches try each axis alone, and when
+    the target is exactly axis-aligned one of the two "axis only" points IS THE BODY'S OWN
+    POSITION, which `isBlocked3` naturally reports as clear. The branch fires, assigns `c.y`
+    the value it already held, records that the body moved, and breaks. Zero displacement
+    reported as progress, every step, forever. PRE-EXISTING — unchanged from before the step
+    was bounded. `travelStuck` refuses to detour inside four tiles (deliberately: its own note
+    names the three harnesses that broke when it tried), and `commandTick` waits on an errand
+    with no notion that one might never finish. Nobody was watching for "cannot get there".
+  · AND THE CLAIM HAD BEEN PASSING BECAUSE THE BAND WALKED THROUGH THE WALL. `findOpenNear`
+    returns an OPEN tile, and an open tile inside a sealed pocket is open and unreachable — A*
+    said no path on EVERY build, the passing one included. The old build reached it anyway,
+    because before `stepToward` bounded a long step it sampled the destination and nothing
+    between, and at dt = 0.25 the stride clears a one-tile wall. Confirmed directly:
+    `cold.js`'s `noStepWalksThroughRock` is RED on 902efd0 at dt = 1 and dt = 3. The claim was
+    measuring the leak the bounding was added to close.
+  THREE FIXES:
+  · `stepToward` no longer claims a slide that displaces nothing. Each axis slide must actually
+    move the body; when neither can, it falls through to the stuck branch the callers read.
+  · ERRANDS GIVE UP. `errandGivesUp` measures patience in GROUND GAINED, not time spent — any
+    quarter-tile of progress resets the clock, so a body squeezing through a door or a crowd is
+    never abandoned, and ten seconds without a quarter-tile is stuck rather than slow. A body in
+    a fight returns from `physics` before the errand blocks, so the clock does not run while it
+    is swinging. The ORDER remembers (`cmd.cantReach`) or `forageFind` hands back the same
+    unreachable thing on the next tick. Applied to chests and to corpses alike.
+  · `command.js` PLACES CHESTS ON REACHABLE GROUND, asking A* rather than `isBlocked`. Its own
+    header already recorded the previous iteration of this mistake — chests landing inside a
+    boulder — and this is the next one along.
+  AND A NEW CLAIM FOR THE THING THE FIX EXISTS FOR: `givesUpOnTheUnreachable` hides a chest in a
+  sealed pocket and requires the band to give up and come home. Red on the pre-fix build with
+  the symptom spelled out — "120 sweeps, 1.5 tiles off, order down, CAPTAIN DOWN" — and green
+  after. A claim that passes on both builds proves nothing, so it was checked against both.
+
+[NOTE] AND THE RULE THIS IS THE THIRD INSTANCE OF: A GREEN CLAIM CAN BE GREEN FOR THE WRONG
+  REASON, and closing a real hole is what exposes it. `cold.js`'s fight claim was staging two
+  sides that would not fight; `walk.js`'s haul claim compared an empty list against an empty
+  set; this one was walking through a wall. In all three the harness said what it was built to
+  say and none of them was measuring the thing named on the tin. When a change that is provably
+  correct turns a claim red, SUSPECT THE CLAIM BEFORE REVERTING THE CHANGE.
+
+[VERIFIED] The movement primitive was the risk in [106], because `travelStuck`'s own note names
+  three harnesses that broke the last time anything near it moved. 14/14 green, `unstuck`,
+  `flank`, `focus` and `press` among them, plus `chores`, `haulers`, `carry`, `cold`, `orders2`,
+  `fight`, `walk`, `board`, `depths` and `command`. And the change is narrow by construction: in
+  the ordinary case — a slide that actually displaces the body — it is bit-identical, and the
+  only behaviour that moves is the degenerate one where the slide displaced nothing, which is
+  the whole fix. The 20-harness run before it came back 19/20, the single red being `command.js`
+  before it was diagnosed.
+
+[107] THE READOUT HAD TO SAY SOMETHING THAT COULD BE ACTED ON.
+  "When I pause the game, the FPS goes to max. It's green. Then, the second I unpause, it drops
+  to 25 or so, even if I do not move any of my squad."
+  That is a clean experiment and it settles what this container cannot: `frame()` runs the sim
+  only inside `if(!paused && started)`, so a paused frame is DRAW ONLY. Paused green means the
+  renderer is not the ceiling on real hardware — which no measurement taken here could have
+  established, because there is no GPU in the box and every render figure it produces is a
+  SwiftShader artefact.
+  THE OVERLAY ALREADY EXISTED (F10, or Options → SHOW FPS & FRAME TIMES) and it could not answer
+  the next question. `sim 20ms` times the whole catch-up loop, which runs between one and four
+  steps — four steps of five milliseconds and one of twenty print the same line and want
+  opposite fixes. So it now reports MS PER STEP, which is comparable to a bench and to itself
+  between builds; STEPS PER FRAME, marked (CAPPED) at 4 because that is the anti-spiral guard
+  binding and the backlog being discarded; the BODY COUNT, which is what the step cost scales
+  with; and the SPEED MULTIPLIER.
+  THE MULTIPLIER IS THE PART THAT WAS INVISIBLE AND MAY BE MOST OF IT. `simAcc += dt * speed`
+  and the buttons are 1x, 3x AND 5x — thirty, ninety and a hundred and fifty steps a second
+  wanted, against a cap of four a frame. A machine at 25fps can deliver a hundred, so at 5x the
+  backlog is thrown away every frame and the world is quietly running slower than the button
+  says. Nothing in the game showed that.
+  VERIFIED ACROSS THE THREE SPEEDS: ms/step reads 19.1, 19.9 and 15.6 at 1x, 3x and 5x while
+  steps/frame goes 1.32 → 2.83 → 3.55. The cost per step holds while the number of steps is
+  what moves, which is what makes it the right metric.
+  [FAULT] AND THE FIRST CUT LIED IN EXACTLY THE CASE IT IS READ FOR. Both figures are
+  exponential averages updated only inside the `!paused` branch, so PAUSING FROZE THEM: the
+  overlay went on claiming 54ms of sim and 3.6 steps a frame with the sim not running at all.
+  Pausing is how you separate the draw from the sim by hand — it is the measurement that
+  prompted this — and the overlay would have contradicted it. They decay on the same curve they
+  rise on now.
+
+[108] FAST-FORWARD MUST NOT COST MORE PER SECOND OF REAL TIME.
+  "On 1x the sim line fluctuates massively... as low as 0 and up to 12 or so. Draw stays steady
+   around 6 to 7ms. 3x sees 30 to 40 sim. 5x goes as high as 50-60... The higher speeds are
+   where the FPS tanks."
+  READ OFF THE NEW OVERLAY ON REAL HARDWARE, and it is a complete profile. "0 or 12" at 1x is
+  not fluctuation: a 30Hz sim on a 60fps screen steps every OTHER frame, so that is ~12ms a step
+  alternating with idle frames — 360ms of sim and 390ms of draw in a second, which holds 60fps.
+  1X WAS ALREADY HEALTHY. 3x is three steps a frame of the same 12ms; 5x is pinned at the
+  four-step cap, so a hundred and fifty steps a second are asked for and seventy-odd delivered —
+  the world runs at about 2.4x for a 5x button while the frame rate pays for the full five.
+  MEASURED, and it is the whole argument: the per-STEP composition of the sim was IDENTICAL at
+  1x and 5x — 25.6 against 26.1 cold ai calls a step, 352.1 against 349.5 warm physics calls.
+  Nothing in the sim knew what speed the game was running at. Every LOD threshold is spent in
+  SIM seconds while the budget that matters is in REAL ones, so a cold body thinking once a
+  sim-second thought five times a real second at 5x — for a body on a storey nobody is on, while
+  the player is winding the world on precisely BECAUSE they are not watching it.
+  THE FIX IS ONE SCALAR. `LOD_FF = Math.max(1, speed)` multiplies the cold and far thresholds.
+  The `_far` tier's ai rode on `wtick` (a quarter of a sim second) and its physics alternated on
+  a flag (a half rate in STEPS); both become accumulators against a scaled threshold, which at
+  1x is exactly a quarter-second and exactly every other step — the same tier it was.
+  NOTHING WARM IS SCALED. A body on your own storey keeps its clock at every speed, so what you
+  are looking at is what it always was. At 1x `LOD_FF` is 1 and every number is unchanged, which
+  is the only reason this could go in without re-litigating the tier: 852.1 calls a step before
+  and after.
+  MEASURED: 852 → 295.6 calls a step at 5x, a 65% cut. ms/step 19.9 → 13.3 at 3x and 15.6 → 9.7
+  at 5x; sim ms/frame down about 37% at both. And the cost of everything out of sight is now
+  flat in real time: 5124 calls a real second at 1x against 5213 at 5x.
+  AND IT COSTS THE WORLD NOTHING: the same forty-five sim-seconds of a cold fight take 746 blood
+  at 5x against 710 at 1x. A coarser bucket, not a slower world.
+
+[NOTE] AND `speed` IS A PATH NO HARNESS REACHED. Every harness drives `update(1/30)` itself and
+  never touches `speed`, which is read only in the frame loop — so every claim in this repo was
+  a 1x claim, and the tier could be five times too expensive at 5x without one of them noticing.
+  `cold.js` now sets it deliberately and puts it back.
+  [FAULT] AND THE FIRST CUT OF THE FIDELITY CLAIM DIVIDED BY THREE TILES. It measured ground
+  covered by whatever happened to be on the Sump, and by the time it runs the blocks above it
+  have walked the player up and down and left 33 bodies covering three tiles in twenty seconds.
+  This file already carries a note saying a ratio with a denominator near zero is not a test —
+  written four claims further up, about this same trade — and the note did not stop it being
+  done again. It stages its own fight now, with the pair that is actually hostile, and refuses
+  to divide unless the control moved at least 300 blood.
+
+[109] THE DEPTHS WERE NOT FIGHTING THEMSELVES TO DEATH. THEY WERE BEING DELETED AT DAWN.
+  "I noticed all the underground fights resolve well before I ever go there. So I usually just
+   find bloody aftermaths and that's it."
+  Offered as a side observation and it was a content-breaking bug in the depths work.
+  THE FIRST MEASUREMENT SAID 'ATTRITION' AND IT WAS WRONG. `tools/_attrition.js` ran whole game
+  days with nobody underground: the Deepworks went 326 → 104 and the Sump 152 → 40 in ONE day,
+  while the surface held flat at ~620. That reads as a world eating itself. But the corpse
+  column did not add up — 414 bodies left the living census and only 26 corpses appeared — so
+  `tools/_fate.js` counted the two mechanisms apart, by wrapping `kill` and diffing the roster
+  by id. IN A WHOLE GAME DAY, ACROSS THE ENTIRE WORLD: 17 BODIES DIED AND 412 WERE DELETED.
+  88 off the Undercroft, 216 off the Deepworks, 108 off the Sump.
+  `spawnGaunt` stamps `nightborn` — "the dark made it; the dawn unmakes it" — and `gauntDawn`
+  removes every nightborn gaunt each morning that is not held by a tear or standing next to you.
+  SEVEN OTHER PLACES IN THE FILE CLEAR THAT FLAG for gaunts that are meant to stay: the bastion
+  guest, the doorborn, the rift-held, the sundered sites (twice), the riteborn, and the one at
+  17653. The depths forgot, at both stocking sites — the warren bands and the hall denizens.
+  WHICH IS WHY -1 SURVIVED AND -2 AND -3 DID NOT: `WARREN_BAND['-1']` is `'bandit'`, and a
+  bandit is not a gaunt. The two floors stocked entirely with gaunt-kin lost 68% and 74% before
+  the first noon. The player's "bloody aftermath" was never a battlefield — it was an empty room
+  and the violet motes `gauntDawn` leaves behind when it collects one.
+  THE FIX IS TWO LINES, one at each stocking site, and it matches the seven precedents.
+  MEASURED, same day, same seed: deleted 412 → 14, died 17 → 14. Over four days the floors now
+  keep 87%, 87% and 89% instead of collapsing, with real fights running and corpses accumulating
+  — so there ARE aftermaths now, and they are the product of something that happened.
+
+[NOTE] AND THE LESSON IS ABOUT THE FIRST MEASUREMENT, NOT THE BUG. The population curve was
+  real, reproducible, and identical on the pre-cold-tier build — a clean, confident measurement
+  of a decline. It supported a completely wrong story ("the underground fights itself out, it
+  needs a restock or damped lethality") and a day's work would have gone into restocking a floor
+  that was not dying, it was being deleted. What caught it was a column that did not add up:
+  414 bodies gone, 26 corpses. COUNT THE MECHANISM, NOT THE OUTCOME — a population that falls
+  and a population that is removed look identical in a census and want opposite fixes.
+
+[110] FIVE REPORTS, AND FOUR OF THEM WERE THE SAME MISTAKE ABOUT WHOSE WORLD IT IS.
+  · THE ATTENTION WAS THE WHOLE WORLD'S, NOT YOURS. "attention increases at an exponential rate.
+    Within the first few days I'm already noticed and attended." MEASURED over one game day with
+    the player standing still and casting nothing: `noticed` 4.6 → 37.3, UNNOTICED → ATTENDED,
+    of which 27.83 came from the `deep` faction and 7.50 from townsfolk across 143 casts and 5
+    raisings — and 0.00 from the player. `spendCast` and `castRaise` bumped the dial for any
+    caster anywhere. The gate already existed two lines below the raise: `mood.raise` is set
+    only `if(c.faction === 'player')`. The depths did not cause this; they added casters to a
+    fault that was already there.
+  · THE FEED WAS THE WHOLE WORLD'S TOO. `worthTelling(c)` is the rule as the report stated it:
+    yours always, anybody else's only where one of yours is standing and watching. `visAt` ALONE
+    IS NOT ENOUGH and it is the trap — the fog is one flat W x H grid, so a priest four storeys
+    down under a lit square reads as being in plain sight. Floor first, grid second, same as
+    `gatherKindAt` and the undead-under-a-town rule.
+  · AND A STRANGER'S SURGEON WAS IN YOUR PACK. `useBandageCharge` draws on `stash.bandage` and
+    the healing tick is the ONE healing path in the file, so every priest and caravan medic in
+    the world spent your cloth and then said so in your feed when it ran out — four such lines
+    a day with nobody of yours doing anything.
+  · WHAT YOU RAISE UNDERGROUND STOOD UP ON THE SURFACE. `castRaise` took the risen body's x and
+    y off the corpse and never mentioned its FLOOR; `makeChar` defaults that to 0. Both creation
+    paths had it, so it is set once where the two branches meet. Every raise in the file goes
+    through `castRaise`, Mass Reanimation included.
+  · AND A BOSS ROOM COULD BE WALKED INTO. "some doors lead to a boss room, which would then seem
+    to lead to another hallway on the other side... but there is no door to open that side."
+    `wall` refuses to write outside `wx>1 && wy>1 && wx<W-1 && wy<H-1` — a sane guard on the map
+    border — and `deck` has no such guard at all, so a chamber whose ring fell on the boundary
+    got its FLOOR laid and its WALL silently dropped. 1 room of 179 and it was a VAULT, nineteen
+    tiles of its top wall missing, at y = 1. The room gives way, not the boundary — the same
+    call the `swallows` test makes about a shaft.
+  AND THE MINIMAP HAS STOREYS. The surface map is 1440 tiles in 128 pixels, where a chamber is
+  two pixels and a corridor is none, so the underground layer is a LOCAL window of 132 tiles
+  around your own people in the storey's own tint — the same colour the depth banner wears,
+  which is what "align it with the banner" means. It needs its own memory (`underSeen`) because
+  the flat fog cannot say which parts of a storey you have walked, and a storey you have never
+  been on gives away nothing: 16307 of 16384 pixels unlit.
+
+[FAULT] AND THE FLAT-FOG TRAP WAS WALKED INTO TWICE IN ONE SITTING. `worthTelling` was written
+  BECAUSE `visAt` has no notion of storeys — and then the new minimap layer gated its bodies on
+  `visAt` an hour later, so a storey nobody had walked drew seventy-two pixels of strangers. The
+  helper written for the trap did not stop the trap. Knowing a rule and reaching for it are
+  different things, and the second is what a harness is for.
+[FAULT] AND THE LAYER PAINTED OPEN GROUND AT ALPHA 210, so it composited with whatever the
+  minimap was holding from the frame before and the storey's colour was never its own colour.
+  An eye would not have caught it until the frame behind it changed; counting pixels did.
+
+[111] THE FULL SUITE: 132/136, AND ALL FOUR REDS WERE DIFFERENT KINDS OF NOT-A-BUG.
+  Two hours, 136 harnesses. Every red took a different diagnosis and only one was a real defect.
+  · `trades.js` — MINE, AND A REAL ONE. See [110]: the chamber `continue` shifted the dice
+    stream. Fixed by moving the chamber instead of skipping it; recovered.
+  · `spiral.js` — LOAD FLAKE, NOT A REGRESSION. It went red inside the two-hour suite and red
+    again in a five-harness run, which looked exactly like a regression and was bisected as one.
+    It passes three times out of three on a quiet machine, at a wander of 1.2x against the 15.9x
+    it reported under load. The harness already carries a note about being real-time sensitive.
+    NOTHING WAS WRONG AND AN HOUR WENT INTO IT.
+  · `world.js` — MINE, BUT THROUGH THE WORLD RATHER THAN THROUGH A BUG. `cairnAnswersTheDead`
+    asserted `grown > before` while the claim two lines down asserts the cap is 4, so a world
+    that arrives at that block already holding four beasts cannot pass — unmeasurable BY
+    CONSTRUCTION. Seventeen more bodies meant more dead meant the ground had already answered.
+    Its own comment promised "and that killing them lets it start over" and the code never killed
+    one; it does now, and measures 0 → 4 from a cleared board.
+  · `lineage.js` — A ONE-IN-TWENTY COIN FLIP. [WRONG — SEE [114]. It is a seeded draw, which is
+    a build constant and not a chance at all. The re-arm below is still the right fix; the
+    reasoning given for it is not.] `theWorldIsNotFrozen` staged ONE pregnancy and
+    called the world frozen if it did not produce a child. `BIRTH_LOSS` is 0.05 and rises with
+    `overdue` — losing a child is a FEATURE, one line and no scene — and a loss leaves exactly
+    `born 0, pregnant 0, overdue 0`, which is indistinguishable from the subsystem being dead.
+    It now puts her back at her term when a night takes the child and asks up to six times,
+    which puts a false red at three in ten million, and SAYS SO in the pass line.
+
+[NOTE] AND THE HARDEST PART WAS TELLING FOUR KINDS OF RED APART. A real regression, a
+  load-dependent flake, an unstated precondition, and a deliberate 5% roll — all four arrived
+  together as "the suite went red after your change", and three of the four bisected cleanly
+  onto this session's commits, which is exactly what a regression looks like. `spiral` was
+  bisected, variant-tested and blamed on the chamber clamp before anybody thought to simply RUN
+  IT AGAIN ON AN IDLE MACHINE. RUN IT TWICE BEFORE BISECTING IT ONCE: it costs 37 seconds and
+  it would have saved an hour.
+[NOTE] AND A WORLDGEN FIX CANNOT ALWAYS BE DICE-NEUTRAL. Sealing a chamber on the map border
+  means MOVING the chamber, and `stockRoom` places by `hash2(x, y)` — so a moved chamber is a
+  differently-stocked chamber, 1756 bodies at boot against 1773. That is intrinsic and not a
+  mistake; what it costs is every claim that leans on emergent world state. `tools/_fingerprint.js`
+  exists to answer "did the world move" in ten seconds instead of a six-minute harness run.
+
+[112] GREENREST: FOUR REPORTS, FOUR SEPARATE CAUSES, NONE WHERE IT LOOKED.
+  · THE POPULATION IN THE GATED YARD. Townsfolk are scattered `findOpenNear(t.x + ri(-5,5),
+    t.y + ri(-5,5), 4)` — within five tiles of the TOWN CENTRE — and at Greenrest the town centre
+    IS the Aldercott yard, half-extents seven by six. A five-tile scatter lands inside the walls
+    BY CONSTRUCTION, every world, every time: MEASURED at 26 to 36 strangers against two actual
+    kin. The children had a box of their own, ±4, with the same fault. IRONSCAR HAS THE SAME
+    RESERVATION and was seeding its people inside the fighting pit. `keepR` already is the
+    radius of the thing in the middle, so the scatter is pushed out past it — same two dice,
+    direction kept, magnitude taken out to the lane.
+  · THE DAME WAS NOT SPAWNING DEAD. She is alive at worldgen in every world tested. She is
+    seeded at SEVENTY-FOUR and a human's `deathAge` is SIXTY-TWO, and the nightly rule is
+    `rnd() < (age - deathAge) * 0.004` — 4.8% a day at her age. 77% DEAD BY DAY THIRTY, 95% BY
+    DAY SIXTY. A player reaching Greenrest at any ordinary point in a campaign finds a corpse,
+    which is precisely the report. She was the ONLY named body in the world standing past its
+    death age. The exemption list already carried `bossKey` and `isLeader >= 0` because the
+    world hangs scenes on those people; it had no entry for a quest-giver who is neither.
+    `storied` is that entry. It exempts from the CALENDAR only — she can still be killed.
+  · THE GATE WAS A HOLE. The wall loop skipped the gate tile so no wall was written there, and
+    nothing was ever written in its place. The house door behind it has been properly barred
+    since it was built, so the only thing between a stranger and the yard was a servant with a
+    line of dialogue and no authority over the geometry. A shut door here is a tile in `blocked`;
+    `estateAdmit` lifts the gate and the house door together, and the restore path shuts both,
+    because neither is in `baseBlocked` — they are a decision, not terrain.
+  · THE BUILDINGS. The CENTREPIECE reservation pushes every building out of the plaza and never
+    asks where it lands. Hand-authored plan, deterministic shove: THE SAME NINE COLLISIONS OF 24
+    BUILDINGS IN EVERY WORLD EVER GENERATED, and the pairs named in the report — TRADE GOODS on
+    a HOUSE, TRADE GOODS on the ORCHARD HOUSE, the BAR on the STABLE — were three of them. A
+    shop with a house on top of it has a door you cannot reach. Fixed with a relaxation after
+    the shove: whichever of a colliding pair is further out gives way, a tile at a time, never
+    back inside the reservation.
+  MEASURED ACROSS FIVE SEEDS: strangers 26-36 → 0, overlaps 9 → 0 at Greenrest and 19 → 0 across
+  all 165 buildings in the world, gate open → shut with no path in, Dame alive and off the roll.
+
+[FAULT] AND THE FIRST CUT OF THE GATE KILLED THE ENTIRE HOUSEHOLD. It called `deck(q.x, q.y, 0)`
+  — and `deck` is a LOCAL helper inside the warren seeder and the redoubt builder. There is no
+  such thing in `seedOrchard`'s scope, so the reference threw, the seeder aborted where it stood,
+  and the Dame, Bellowes, the kin and the house itself were never made: 23 buildings instead of
+  24 and a silent estate. THE THIRD TIME THIS FILE HAS BEEN BITTEN BY NAMING SOMETHING FROM THE
+  WRONG SCOPE, and it is the one that shipped the Aldercott house with no stairs. It was not even
+  needed: `decks` governs storeys above ground, and on floor 0 `isBlocked` reads `blocked0`,
+  which `blocked.add` mirrors into for free.
+[FAULT] AND THE SEPARATION PASS WAS NESTED INSIDE `if(keep)`, so a town with nothing reserved in
+  the middle never ran it — and one overlapping pair survived in a town that has no centrepiece
+  at all. The claim checks EVERY town for exactly that reason, and caught it. Plans can collide
+  on their own; the plaza is not the only thing that makes two buildings touch.
+
+[113] THE RUM ROAD: A STILL, A ROOM, THREE MEASURES AND A RECEIPT NOBODY SELLS.
+  "There should be a craftable building, an enterable building like one of those in the towns,
+   that can serve as a sort of 'bar' for the squad. Serving rum to those inside or something
+   like that. It should be a way to get squadmates at least to the 'warm' level of affection for
+   you, or buy them back from the brink of leaving if something happened. The equivalent of
+   sitting down and having a drink and talking it over with them. Along these lines, rum should
+   have its own research tree and path to crafting. (Maybe even a special recipe like Dustport's
+   that's findable after a quest of some kind.) Also also, drunkenness should have consequences
+   and there should be a limit to how much a party member can drink. Right now you can down
+   shots forever in a bar — there's gotta be a cooldown and again a downside to the advantages
+   of alcohol. (Along with a clear indicator for how long it lasts.)"
+
+  THE THIRD REQUEST HAD A NAME, AND IT WAS `Math.max`. Two lines, written when rum first did
+  anything at all:
+
+      c.gritT   = Math.max(c.gritT   || 0, d.grit);
+      c.gritWob = Math.max(c.gritWob || 0, d.wob);
+
+  A second measure did not STACK, it REFRESHED. Same wobble, same clock, and blood back in the
+  body every time — so the optimal play was to click the cup until the bottle was gone and the
+  only thing a drink ever cost was gold. There was no counter, no gap, no ceiling and no morning
+  after, and — the part that made the whole thing invisible — NOTHING ANYWHERE IN THE FILE READ
+  `gritT` OUT. It ticked down in `physics` and appeared in no panel, no bar, no tooltip. A player
+  could not tell a sober body from one on its third, which is why the drink felt free: it was
+  free AND it was unreadable.
+
+  · THE CEILING, THE GAP AND THE MORNING AFTER all live on the body, so the pack, the town bar,
+    a hand poured into somebody in the dirt and the new taproom obey one law and refuse in one
+    voice — `drinkRefusal` returns the sentence and every door logs it.
+      `drunk`   — measures in them. Three, and the fourth is refused by name.
+      `drinkCd` — DRINK_GAP between measures, so the ceiling cannot be poured in one click-storm.
+      `hangT`   — past two measures it wears off into a hangover: slower, wider swing, and it
+                  will not take another drop until it has passed.
+    The wobble ACCUMULATES and is capped at 0.21, which is the downside the note asks for: at the
+    ceiling a body is twenty-one points of hit chance worse off in BOTH directions — its own
+    swings and the ones coming at it — on top of walking at three-quarters pace.
+  · AND THE TOWN BAR HAD THE SAME HOLE. `roundTakers` filtered on the dead and the built and
+    nothing else, so a round charged for everybody in the room and poured into whoever happened
+    to be under no limit at all. It asks `canDrink` now, and the window says "everybody of yours
+    in here has had enough" rather than dropping the row in silence.
+  · THE INDICATOR is on the character panel beside the torch — band, measures and HOURS, because
+    hours are what the rest of that line speaks — and a coloured mark on the squad-bar portrait,
+    because the ceiling is only a decision if you can see who is already at it before you stand
+    another round.
+
+  THE ROOM. Regard has been a ONE-WAY STREET since the day it was written. `deed` moves it,
+  `regardTick` acts on it, and every single thing that moves it is something you did somewhere
+  else — a sack, a rite, a retreat, a door closed. There was nothing a player could do
+  DELIBERATELY, at a place, to mend it: a body that slid to SEETHING was a body you watched
+  leave, and the only lever was to go and do more of whatever their conviction happens to like.
+  · THE TAPROOM is built the way a TOWN building is built and not the way a bench is —
+    `placeBuilding` walls the edge and leaves two tiles open at the bottom, and `placeStructure`
+    copies that rule rather than inventing one, because "an enterable building like one of those
+    in the towns" is the request. The walls are what make a round mean anything: the takers are
+    the ones IN the room. Drawn roofless, like the watchtower's ground storey, because the camera
+    looks down and a room whose whole point is who is standing in it must not be a lid.
+  · THE SIT-DOWN is the thing the note is actually about, and it is deliberately a SHORT lever.
+    Two measures — one each, so the host is walking the same three-measure road as everybody
+    else, which is the natural limit on how many people can be talked round in one night and
+    wanted no rule of its own. One conversation per person per day. And it STOPS DEAD AT WARM:
+    you can pull somebody off the edge and you can get them glad to be here, and you cannot drink
+    a stranger into a zealot. Devotion is earned out in the world, where it always was.
+  · AND ONE DRINK BUYS ONE MORE NIGHT. `regardTick` gives a seething body ONE day before it
+    walks, and an evening is worth about twenty points — so a squadmate past about -55 could not
+    have been saved at all however much was poured, and the feature would have read as broken on
+    the body it is most obviously for. A sit-down that does not clear the line moves the day by
+    one instead. Not a pardon: the repair has to be kept up until the regard itself is above it.
+
+  THE ROAD. Three rungs, and only two can be bought.
+    DISTILLING (450g) — the Still AND the Taproom, because a camp that can make the stuff with
+      nowhere to sit down with it has only made a trade good again.
+    CASK AGEING (900g, wants a Still to study at) — Cask Rum: longer in the body, steadier hand.
+    THE HARBOUR RECEIPT — `found: true`, which is a new kind of tech and means exactly one thing:
+      there is no START button for it anywhere, at any price, and the research bench does not
+      list it. The only way it lands in `research.done` is Sella Vane saying how.
+  · AND THE STILL IS WORKED ON `brewing`, a stat rolled on every body in this game since the
+    beginning, carrying a racial learn rate on four lines and a GOAL somebody can train toward —
+    and until now read by NOTHING in the entire file.
+  · SELLA VANE'S ERRAND is three stages in her own bar window: stock she cannot get since the
+    road went bad, four measures of your own off the wood (which means the Still and the ageing,
+    so the receipt cannot jump the tree), and standing in the Sump — the third depth, which
+    nothing in this world recorded having visited until `sawPlace('sump')`, so no errand could
+    ever have asked for it.
+
+  tools/taproom.js — 18 claims. The ceiling, the gap, the stacking (asked at `hitChance`, which
+  is where the Math.max bug is actually visible), the hangover and its penalty, the legs, the
+  panel readout, the tree, the BUILD BAR (not the table — the jail.js mistake), the still's three
+  recipes against their three techs, the bench not offering the receipt, the errand handing it
+  over, the room's walls and doorway, the brink, the extra night, the round's lift asked of a
+  HAUNTED body (so it cannot pass on the deed ledger by accident), the WARM cap from both sides
+  of it, and one-per-day.
+
+[FAULT] AND THE FIRST CUT OF THE HARNESS GATED EVERY CLAIM ON `typeof window[name]`. A top-level
+  `const` is NOT a property of `window` — it lives in the global LEXICAL environment, which
+  `typeof` can see and `window.X` cannot. Every gate would have reported the whole feature missing
+  on a build that had all of it, and the run would have been eighteen reds that meant nothing.
+  Caught before it ran, because rum.js beside it already does it the right way: bare `typeof`.
+
+[114] CORRECTION TO [111]: A FIVE PER CENT ROLL ON A SEEDED STREAM IS NOT A COIN FLIP.
+  Entry [111] called `lineage.js` "A ONE-IN-TWENTY COIN FLIP" and re-armed one claim on that
+  reading. THE READING WAS WRONG, and the wrong half is the dangerous half, so it is corrected
+  here rather than edited quietly above.
+
+  The 20-harness town regression after the Greenrest work came back 19/20 with `lineage.js` red
+  on `aHomesteadIsARoof` — born 0, pregnant 0, house kids 0. Ran it again, per the rule written
+  last time. Red. Ran it a third time. RED. Three for three, while `anInnIsARoof` — the claim
+  immediately above it, same shape, same subsystem — passed every single run.
+
+  That is not what a 5% roll looks like, and the reason is `rnd()`. IT IS THE SEEDED WORLDGEN
+  STREAM. A 0.05 roll at a fixed point in a seeded stream is not a one-in-twenty chance; it is a
+  CONSTANT FOR THE BUILD. Once anything upstream shifts the stream far enough to put that
+  particular draw under 0.05, it is under 0.05 forever: re-running never clears it, "run it twice
+  before bisecting it once" returns the same answer twice, and the obvious next move — bisect —
+  points straight at innocent code. This is the WORST of the four kinds of red in [111]: it wears
+  a regression's clothes perfectly.
+
+  PROVED BY SEED, in about four minutes, with `tools/_home.js`:
+    default seed  — the child is lost on night one, every run, `homeAt` returning the homestead
+                    and `birthPlace` returning 'home' the whole time
+    ?seed=7 / 21 / 99 — she delivers on night one and the house takes the tally, kids 1
+    and twenty re-staged terms on the default seed — 20 born, 0 lost
+  The homestead was never broken. One draw moved.
+
+  · THE FIX is the same re-arm [111] gave `theWorldIsNotFrozen`, applied to BOTH roof claims:
+    put her back at her term whenever a night takes the child, ask up to six times, and say so in
+    the pass line. The question those claims own is whether a roof is a roof; `theWorldIsNotFrozen`
+    is the claim that owns the loss. `anInnIsARoof` was re-armed too although it was green — it
+    has exactly the same single-roll exposure and was green only because this build's stream
+    happens to put its draw above the line. Leaving it would have been waiting for the next
+    stream shift to pin it.
+  · AND `?seed=N` IS THE INSTRUMENT FOR THIS WHOLE CLASS. A claim that is red on one seed and
+    green on three others is a claim about the stream, not about the code. It is already the tool
+    this file reaches for to ask "is this fault universal or a coincidence"; it answers "is this
+    red a regression or a draw" just as fast, and it should be the FIRST thing tried on any red
+    whose failure signature involves a probability anywhere in it.
+  · THE RULE FROM [111] STANDS BUT IS NOT ENOUGH. "Run it twice before bisecting it once" catches
+    load flakes, which are genuinely random. It cannot catch this, because this is not random.
+    The addition: IF THE CLAIM CONTAINS A ROLL, RE-SEED IT BEFORE YOU BISECT IT.
+
+  · AND THE SAME CLASS TURNED UP AGAIN AN HOUR LATER, in `rum.js`, which had been red since the
+    Greenrest commit and was in no regression set anybody had run. `notAPrinter` asserts the house
+    brew's spread against ORDINARY RUM's — the right idea, because a speciality should be priced
+    against the staple rather than against a number somebody picked — at `sB <= sR * 1.35`. It
+    read 5.5x against 4.1x and failed by four per cent. Re-seeded before anything else was
+    touched, which took four minutes:
+        rum_black  5.2  5.5  5.5  5.5  5.6      (the thing being measured)
+        rum        4.1  4.6  5.1  5.4  6.0      (the thing it is divided by)
+    THE NUMERATOR BARELY MOVES AND THE DENOMINATOR MOVES BY HALF AGAIN. The claim was sound and
+    its YARDSTICK was noisy, and the bar had been set just above the tightest calibration anybody
+    happened to observe when it was written — so it was always going to pin red the first time the
+    staple landed at the bottom of its own range. It duly did. The bar is now 1.6: the staple's
+    variance plus the speciality's premium, rather than the premium alone, and still a mile inside
+    what the claim exists to catch — the first pricing of the brew was a THIRTEEN times printer.
+    It was red identically on the control build, so it was never this batch's doing; it is written
+    down here because it is the same lesson twice in one sitting. A CLAIM IS ONLY AS STABLE AS
+    THE QUANTITY IT DIVIDES BY, and if that quantity comes out of a seeded world it has a range,
+    not a value — measure the range before setting the bar.
+
+[115] SHE WAS ONLY IN THE WORLD IF YOU HAD TICKED THE RIGHT BOX ON THE CHARACTER CREATOR.
+  "Saga's quest should not be the only gate to Mother. She should exist in the world and Saga's
+   quest merely points to her."
+
+  The old shape had it exactly backwards, and the whole of the fault is one line in one branch:
+
+      startTheDescent(me);          // in applyCreation, under `origin === 'saga'`
+
+  That line set `mother.on` AND chose the cell — `caves[ri(0, caves.length - 1)]` — so on every
+  other start there was no cell at all. `motherTick` returned on its first line. `listenForMother`
+  returned on its first line. Q did nothing. A necromancer who fought a Deep Warden and broke a
+  barred vault open found a chest, and that was the end of it. Nine hundred years of somebody
+  being held under a mountain, the answer to what the golden age was TAKING, the reason the
+  Hollow race exists at all — present in the file, reachable from exactly one of nine origins.
+
+  · SHE IS PLACED BY THE WORLD NOW, and Saga's origin only tells you about her. `startTheDescent`
+    keeps the world event, the log line and the journal thread; it no longer decides anything.
+  · CHOSEN WITHOUT A DIE, and this is the part that needed care rather than thought. Moving
+    `ri(0, caves.length - 1)` to worldgen is one extra draw in the seeded stream, which shifts
+    every roll after it and moves every world in the game — this file has already lost an
+    afternoon to precisely that over a `continue` in the chamber loop, and the lesson was written
+    down. So the cell is DERIVED: of the warrens that have a vault, hers is the one whose mouth
+    hashes highest. Deterministic for a seed, unguessable without reading the comment, consumes
+    nothing. Resolved lazily, so a save that already names a cave keeps the one it was played
+    with. `tools/_fingerprint.js` before and after: 1777 chars, 183 rooms, identical town list,
+    identical first body. The world did not move.
+  · THREE WAYS IN, for a player who never picked him. The ear works for anyone who HAS one —
+    `acuityOf` is about being a Hollow or knowing the dust art and was never about an origin, so
+    a dust adept in any run can press Q and get a bearing. Walking into her warren with such an
+    ear makes her stir, once, and opens the journal: the world telling you rather than the
+    creator having told you. And walking into the vault makes her speak with no ear at all,
+    because a door is a door.
+  · AND IT IS USUALLY A STRANGER AT THE DOOR NOW. The scene assumed a Hollow, because the only
+    way to reach it was to have started as one — so a human necromancer would have been called
+    CHILD and then offered a price only a rider can pay, which is the scene talking past the
+    person standing in it. She does not soften for a stranger; what changes is that there is
+    nothing she wants from them. No price, no road, no offer. The Hollow branch is the one where
+    she has plans instead, and it is unchanged.
+  · Q IS BOUND IN EVERY RUN NOW, so a party with no ear that has never heard of her gets SILENCE
+    rather than a cryptic bubble off a keypress they made by accident. A guard, not a feature.
+
+[FAULT] AND `-cv.depth` WAS RIGHT BY ACCIDENT. `listenForMother` worked out her floor as
+  `-cv.depth`, which was written when a warren was several storeys deep and you walked down
+  through it. Warrens have been ONE storey since the three-depths work, sitting at -1, -2 or -3,
+  so `depth` is 1 for every one of them and `-cv.depth` says "the bottom is floor -1" about a
+  warren cut at -3. It kept giving the right answer anyway, because `caveContaining` only returns
+  her cave when the body is standing in one of her rooms — and all of them are on her floor. A
+  claim that is correct only because a different check upstream made the wrong branch unreachable
+  is one refactor away from being wrong out loud. It reads `cv.vault.f` now.
+
+[FAULT] AND `mother.on` MEANT TWO THINGS AND WAS SAVED. It meant "this run picked Saga" and it
+  now needs to mean "she is down there", which is every world — so an old save says `false` and
+  taking it at its word would make a campaign loaded from before this change the one place in the
+  game she still does not exist. It is gone from the state and from the save, and is still READ
+  on load as the single signal that tells an old save's Saga run from an old save's everybody
+  else. `caveId` is the opposite and needed the opposite handling: if an old save names a cave,
+  that is the cave that run was played with and the derived one must not overwrite it.
+
+  tools/mother.js — 10 claims, asked of a GRAVEKEEPER start, which is the plainest origin in the
+  game and the run the report is actually about. 9 red on the previous commit, and the first of
+  them is the report itself: SHE IS NOT IN THIS WORLD (cave none, vault undefined, hollow in
+  squad false). The tenth — silence for a party with no ear — is green on both builds on purpose,
+  because it is a guard against noise this change could have introduced rather than a feature
+  this change adds, and a guard is supposed to stay green.
+
+[FAULT] AND `origin.js` HAD A CLAIM THAT COULD NOT FAIL. Three of its saga claims went red or
+  stayed wrong on this change and only two of them were about the rename:
+    · `descentOpen` and `descentKept` read `mother.on`, which is retired. They were asking the
+      right question through a field that had stopped carrying the answer; they read `sought`.
+    · `vaultAtBottom` asked `v.f === -cv.depth` — THE SAME STALE ASSUMPTION the game code had,
+      and it passed all this time only because the cell was DRAWN, and the draw happened to land
+      in a shallow warren. Deriving the cell put her under a warren at -3 and the claim failed.
+  And the third one is the finding: when it failed it said "NO VAULT", and this harness's own
+  bad-detector is `/[A-Z]{3,}\s+[A-Z]{2,}|MISSING|NO CROWN|NO SITE|NO LEAD/`. "NO" is TWO
+  letters. The line printed NO VAULT, the detector did not match it, and the run was called
+  green. A FAILURE STRING THE VERDICT CANNOT SEE IS NOT A CLAIM — it is a comment. Worth
+  checking the other harnesses that verdict by pattern rather than by a `!!` prefix: the `!!`
+  convention exists precisely because a literal prefix cannot be spelled wrong by accident, and
+  this file uses a regex over prose instead.
+
+[116] THE GRID WAS REBUILT SEVENTEEN HUNDRED TIMES A STEP TO MOVE FIFTY-FIVE BODIES.
+  "Still fighting performance issues on the laptop."
+
+  Measured first, and the profile said something the earlier work had missed. Three passes in
+  `update` are WHOLE-WORLD and run ONCE PER SIM STEP, so every one of them multiplies by the
+  speed button — which is the mechanism behind "the higher speeds are where the FPS tanks":
+      update's own dispatch loop   17.8%
+      rebuildCharGrid               7.4%
+      separate                      6.2%
+  Thirty-one per cent of the sim that the LOD tiers do not touch at all, because LOD only decides
+  how often `ai` and `physics` fire — every body is still VISITED every step to decide that.
+
+  · `rebuildCharGrid` cleared a Map of seventeen hundred entries and refilled it, every step.
+    `CELL` IS EIGHT TILES and a body walks about 3.4 tiles a second, so it crosses a cell line
+    roughly once every two and a half seconds. Counted, not guessed: 55 OF 1777 BODIES CHANGE
+    BUCKET IN AN AVERAGE STEP. The pass re-filed all 1777 to relocate fifty-five, and then did it
+    again a thirtieth of a second later.
+  · A body is FILED now and stays in its bucket until its cell actually changes, so the cost
+    tracks how far things have walked — a real-time quantity that does not care what the speed
+    button says.
+  · AND `_phSkip` WAS DEAD. Written three times per body per step — 1766 bodies were carrying it
+    — and read by NOTHING, in the game or in the suite. A flag left behind when the `_far` tier
+    stopped alternating on a boolean and started accumulating. `_cold` beside it looks equally
+    dead from inside the game and is NOT: four harnesses read it, which is how the tier is
+    asserted at all. Checking the suite as well as the source is what separated them.
+
+[FAULT] AND THE FIRST CUT HANDED THE WHOLE SAVING BACK. The filing was written with a
+  `gridCellOf(c)` helper called in the loop — one extra call per body per step, seventeen hundred
+  of them, in the hottest loop in the game. Measured across three interleaved pairs: 10.50 ms a
+  step before the change and 10.62 after. NOTHING, and slightly worse. Inlining the two lines of
+  arithmetic back into the loop (the helper stays for the cold paths) turned it into a win on
+  every round. THE CALL WAS WORTH MORE THAN THE ALGORITHM: at this loop's frequency, a function
+  call is not free and no amount of asymptotic improvement upstream survives paying one.
+
+[NOTE] AND A SHARED CONTAINER CANNOT MEASURE AN EIGHT PER CENT CHANGE, which is why this entry
+  leads with a COUNT and not a millisecond. Three paired rounds said the change was a clear win;
+  three more said it was flat; the honest answer needed eight interleaved pairs to produce:
+      before median 10.325 ms   after median 9.297 ms
+      after wins 6 of 8 rounds, median delta -0.83 ms (-8.0%)
+  Two rounds went the other way. That is the box, not the code — and it is the same lesson [114]
+  arrived at from the other direction: when the instrument's noise is the same size as the
+  effect, assert the thing that is exact. `tools/grid.js` counts Map operations and bucket
+  membership, both of which are matters of fact. COUNTS ARE THE CLAIM, A MILLISECOND IS COLOUR.
+
+[FAULT] AND THE HARNESS'S OWN FIRST RUN WENT RED FOR THE WRONG REASON, TWICE.
+  · `stillExact` censused the grid straight after the last `update()` returned and read 1665
+    filed against 1663 wanted. That is not a leak in the filing: `rebuildCharGrid` is the FIRST
+    thing in `update`, and bodies die, get reaped and are born LATER in the same step, so between
+    the end of one step and the top of the next the grid is stale by whoever left after it ran.
+    The full rebuild this replaces had exactly the same property — it is where the pass sits, not
+    how it works — and it is harmless because every reader inside a step runs after the pass. The
+    claim asks at the top of a step now, and asserts that the drift HEALS rather than that it
+    never happens.
+  · And against the OLD build the control ran no steps at all, so `stillExact` went red because a
+    paused world straight off `btn-start` is mid-step stale, and `noDeadFlag` went GREEN because
+    nothing had run yet to write the flag it was hunting for. A control that does not exercise
+    the build is not a control. Both builds get the same forty steps before anything is asked,
+    and the old one now reports the flag honestly: 1766 bodies carrying it.
+
+[117] A STOREY NOBODY IS ON DOES NOT TICK AT ALL — AND IT WAS SEVENTY-ONE PER CENT OF THE SIM.
+  "I wonder if we could completely freeze the lower levels until a squad member actually explores
+   them? I get that they are actively simulated at all times right now for fighting etc but it
+   seems pointless since the underground won't ever really contribute to the world's economy and
+   exists purely as a combat and exploration layer. I really feel all that extra simulating is
+   what's killing the response times..."
+
+  MEASURED BEFORE IT WAS BUILT, because the `_cold` tier already throttled the depths and the
+  question was whether throttling had left anything worth taking. `tools/_deepcost.js`:
+      bodies by floor   0: 621   -1: 671   -2: 331   -3: 143
+      1145 of 1777 bodies are below ground                    64%
+      physics calls going below ground                        41%
+      ai calls going below ground                             30%   (the throttle IS working)
+      a step as it stands                                   8.66 ms
+      the same step with the depths lifted clean out        2.50 ms
+  SEVENTY-ONE PER CENT. The cold tier cut how often those bodies THINK and left everything else:
+  they were still visited every step, still separated, still moved at 3-15Hz, and there are two
+  of them for every one on the surface.
+
+  · A storey BELOW GROUND with nobody of yours on it does not tick. Not a slower clock — no
+    clock. Skipped before `bodyTick`, before the tier arithmetic, before the accumulators are
+    touched, and out of the grid entirely so `separate` and every `charsNear` the surface asks
+    never walk past it either.
+  · IT IS THE ONE PART OF THIS WORLD THAT CAN TAKE THAT, and the restriction to `floor < 0` is
+    the whole of what makes it safe rather than merely cheap. The surface is the economy — towns
+    trading, caravans walking, wars moving, seats changing hands — and freezing any of it would
+    be freezing the game.
+  · THE CLOCK STOPS, IT DOES NOT ACCUMULATE. A body skipped before its accumulators are touched
+    carries no debt, so thawing a storey after two hundred days does not hand `ai` two hundred
+    days of `dt`. Measured: the largest accumulator on a thawed storey is 0.00s.
+  · AND IT ANSWERS A REPORT, not only a profile: "all the underground fights resolve well before
+    I ever go there, so I usually just find bloody aftermaths and that's it." They resolved
+    because they were being fought at a quarter rate for three hundred days while nobody watched.
+    A frozen warren is still standing when you walk into it.
+  · THE NIGHTLY AGEING ROLL had to be told, or a warren of living bandits quietly dies of old age
+    over a campaign and you walk down into an empty one — which is EXACTLY the fault [109] was,
+    arrived at from a different direction. Asserted: 482 two-hundred-year-old bodies on a frozen
+    storey survive three nights.
+
+  RESULT, and each step of it measured rather than assumed:
+      8.66 ms   before
+      4.96 ms   skipping ai/physics/bodyTick on frozen storeys          -43%
+      4.47 ms   and taking them out of the grid                         -10% more
+      4.35 ms   and iterating a live list instead of the whole roster    -3% more
+  HALF THE SIM, and the remaining 1.56ms ceiling is `rebuildCharGrid`'s own walk, which is the
+  pass that BUILDS the live list and so cannot be skipped by it.
+
+[FAULT] AND `regridAll` DID NOT OBEY THE LAW IT WAS REBUILDING TO. The full-rebuild path filed
+  every `ok` body, frozen or not, so a load left eleven hundred unreachable bodies in the grid
+  until the next pass swept them out. `grid.js` read 1765 against 620 and said so on the first
+  run after the freeze landed. A rebuild from nothing has to produce what the incremental path
+  produces, or the claim that compares the two is comparing two different laws.
+
+[NOTE] AND THE COLD TIER DID NOT DIE — IT MOVED, AND `cold.js` WENT COMPREHENSIVELY RED SAYING SO.
+  Every claim in that file was staged on a warren storey with the squad up in the light, which is
+  now a frozen floor and reads zero: 0 blood either side of a staged fight, 0 tiles walked, and a
+  census finding ELEVEN cold bodies in the world, all of them on tower decks. The claims were
+  right and their ground was gone.
+  The tier matters MORE than it did, and it is the mirror image: take the squad down a hole and
+  the whole SURFACE is a storey nobody is on — which may not freeze, because that is where the
+  economy is, and may not run at full price either. All nine claims are restaged there: the
+  bodies under test on floor 0, the squad underground. They read better than they ever did on the
+  Sump, because a surface staged that way has six hundred bodies in it rather than a hall's
+  worth: 607 of 607 go cold, they cover 0.82x the ground of a watched floor, and a staged fight
+  of twelve takes 692 blood against 735 watched.
+  THE ALTERNATIVE WAS DELETING THE CLAIMS, and a tier with no claims on it is a tier that breaks
+  silently. Restaging a red claim onto the ground its law moved to is not the same thing as
+  weakening it to make it pass.
+
+[FAULT] AND `under.js` WAS RED FOR A THIRD TIME IN THE SAME FAMILY. `andItIsOnePlace` asserts one
+  flood reaches more than 99% of the walkable undercroft; the default seed reads 98.3%. It was
+  red identically on a build from before any of today's work, so it was never this batch's doing.
+  Re-seeded rather than bisected — the rule [114] wrote down — and across five worlds it reads
+  98.3, 98.7, 99.0, 99.4, 99.5. THE BAR WAS AT THE MIDDLE OF ITS OWN SPREAD and would flap on
+  about half of all worlds. What the claim exists to catch is a generator that scatters sixty
+  halls and joins none of them, which reads as a fraction of the network and not 98%. Bar is 0.97
+  now: clear of the observed floor, and still an enormous distance from broken.
+  THAT IS THREE CLAIMS IN ONE SESSION — lineage's roof claims, rum's price spread, and this —
+  whose bar was set flush against whatever the author happened to measure once. It is worth
+  treating as a house rule rather than three coincidences: IF A CLAIM COMPARES AGAINST A NUMBER
+  THAT COMES OUT OF A SEEDED WORLD, MEASURE THE RANGE BEFORE SETTING THE BAR.
+
+[118] TWELVE REPORTS IN ONE BREATH, AND THE SMALLEST-SOUNDING ONE WAS THE WORST.
+  "The leader of Hollowmere's name fluctuates between high warden and elder sometimes. Then
+  randomly decides on one."
+  That is a cosmetic complaint about a title, and it is the visible tip of `Array.prototype.sort`
+  SORTING IN PLACE. The caravan's night-shelter line was
+      const shelter = towns.sort((a,b) => dist(a,...) - dist(b,...))[0];
+  which ran in the caravan tick — every caravan, every night — and permanently reordered the
+  global `towns` array to whatever was nearest that one wagon. A town is stored as an INDEX in
+  three places: `isLeader` on every leader's body, and `warF`/`warT` on every soldier in every
+  war. Measured: one call, and seven of seven leaders point at a different town — Cressa Sedge
+  of Dustport became Cressa Sedge of Greenrest. So the titles shuffled every night a caravan
+  sheltered and settled when they stopped, exactly as described, and the warbands were marching
+  on whoever happened to be at that index by then.
+  IT IS A `reduce` NOW. The nearest town is a question, not a rearrangement.
+  RULE, AND IT IS WORTH THE LINE: `sort`, `reverse` and `splice` on a module-level array that
+  anything indexes into are the same bug waiting. Ask before you rearrange.
+
+  THE OTHER ELEVEN, EACH WITH WHAT IT ACTUALLY WAS:
+
+  · COPPERHOLD'S WALLS HAVE HOLES. Traced by hooking `blocked.delete`, because reading the
+    worldgen was ambiguous and two earlier attempts at instrumentation were inert (one never
+    populated its watch set, one armed the hook after worldgen had run). `placeTownAt` builds
+    the ring; `raiseMountains` then carves its trails open and takes four tiles of it back out
+    at 440,1041-1044. It is the only walled town in the world with mountains placed around it
+    on purpose. The trail carve now refuses any tile in a town's own `walls` list — asked
+    directly rather than by distance, so a trail may still run right up to the gate.
+    AND WHETHER IT BITES IS A DRAW: the old build leaks 4 tiles on the default seed, 8 on seed
+    91, and none at all on seeds 7 and 404. See the house rule at the end of [117].
+
+  · THE HARVEST JOB REACHES THROUGH THE FLOOR. `dist` is x/y. That is the FIFTH time this file
+    has been caught by the flat map — `gatherKindAt`, movement orders, `worthTelling`, `visAt`,
+    now the carrion scan. One line.
+
+  · THE INVENTORY SCREEN OPENS HALFWAY DOWN A BACKPACK. `#modalbody` is ONE element reused by
+    every window in the game, so it keeps the offset the last one left. Reset in `openModal`,
+    which is the one place a window opens, rather than in the twelve places one closes. And the
+    paperdoll is `position:sticky` now — "the character model should always be visible, even if
+    it means reducing the space for the list of items below it", which is exactly what it costs:
+    185px of list at 720p.
+
+  · THE SQUAD STASH IS ALWAYS THERE. It folds to its title bar — not to nothing, because a panel
+    that vanishes is a feature nobody finds again. [T], or click the title. Saved in `opts`.
+
+  · THE RESEARCH DESK HAS NO DOOR. A tab on the top bar, like WORK, carrying the count of the
+    project in hand plus the queue behind it. And the split between reading and researching was
+    a two-state button whose label said what the state WAS — which reads to about half of
+    everyone as what the button will DO — and whose two states could not express the thing that
+    was asked for: "sometimes I JUST want to focus on research, not formula." Three buttons now,
+    the live one lit, always on screen, with a plain sentence under them saying who is on what.
+
+  · ATTENDED TO SEEN GOES TOO FAST. The rungs were 16/34/52 — gaps of 16, 18 and 18, which is a
+    straight line wearing three names. Counted in raisings, the unit the report used: 14, 30, 46.
+    Now 12/40/88 against a ceiling of 100: 11, 35, 77 raisings, each step about double the last.
+    Getting NOTICED got cheaper, which is the half the report asked for and the half that makes
+    the meter interesting. The nightly cooling was scaled with the ladder — a drain left at the
+    old numbers against a ceiling that nearly doubled is not gentler, it is a meter that never
+    comes down.
+
+  · THE d'ALAGADDA ROAD CLOAKS. Marked on the BODY (`c.house`), not sniffed out of the surname,
+    because `Sworn Dorn` is household too and shares no name with the prince. Which meant three
+    other places: the mesh cache key (two bodies differing only in house would otherwise share a
+    rig — this file has made that exact mistake twice), the save, and `revive`'s restore path.
+
+  · A RISEN DARK CASTER CANNOT USE A BINDING CIRCLE. `(!c.undead || c.lich)` in two places — the
+    build button and `openBinding` — is the old law, written before a raised caster kept its gift
+    at all. `mindedDead` is the question the rest of the file asks about a risen thing that can
+    still be given work.
+
+  · LICHDOM IS STILL BUYABLE. It never actually was — `researchBlocker` checks `needsQuest` and
+    `researchBegin` refuses, measured — but the quest gate sat BELOW the queue branch in the
+    list, so the moment anything else was active the rite grew a QUEUE button with a full price
+    on it. You could queue it, watch it sit at the head, and never be told why. A gate that reads
+    as affordable is a gate that reads as the intended path. Hoisted above the queue branch and
+    above `hasSite` too: the favor is the deeper condition, and "build a bench" is not the useful
+    sentence when the real answer is a person.
+
+  · NOBODY COMES WHEN SOMEBODY IS ATTACKED AT THE FAR END OF THE BASE. The only thing that could
+    summon a watchman was its own eyes: `raiseAlarm` fires when a patroller sees a foe inside
+    thirteen tiles, so a labourer being cut down forty tiles away summoned nobody, because nobody
+    had seen anything. Widening sight buys it at the price the report explicitly refuses — "I
+    don't want my units wandering off to pick fights."
+    SO THE TRIGGER IS NOT SIGHT, IT IS BEING HIT. `applyDamage` already stamps the defender for
+    the squad bar; it leaves a cry at the spot in the same breath. A watchman answers a cry that
+    landed inside its own holding and ignores one that did not, walks to the noise, and then sees
+    the fight with exactly the eyes it always had. Fixed slots, mutated not allocated, merged
+    within nine tiles — this is `applyDamage`, which is as hot as this file gets.
+
+  · THE PATROL JOB ONLY WALKS THE CORNER IT WAS STANDING IN. Two causes. `patrolIx`/`patrolN`
+    have been assigned in `assignPatrolPosts` since the first version AND READ BY NOTHING, so
+    every watchman drew an independent random bearing and an independent direction of travel.
+    And `patrolCentreFor` grew its arc from the buildings within 22 tiles of the NEAREST one and
+    capped the radius at 20. On a ring of eight sheds at radius 24, a body on the ring links only
+    to its two neighbours and is handed a twelve-tile holding centred on that corner — the middle
+    shed is not even in its cluster. Measured: 4 of 9 buildings inside the holding, and 239
+    degrees of it unwatched by six bodies on average. Now one cluster grown transitively (LINK
+    26), a ring that may reach 40, and bearings dealt out around it all going the same way:
+    9 of 9, and 101 degrees.
+
+[FAULT] AND THE FIRST CUT OF THE AGGRO CLAIM WENT RED ON THE FIX, CORRECTLY. It stood a bandit
+  twenty tiles from a watchman and ran the beat for thirty seconds. The holding is twenty-nine
+  tiles across now, so the watch walked to within sight of it in the ordinary course of its round
+  and saw it with exactly the thirteen tiles it always had. That is the job working — and a claim
+  that reads a wider holding as a wider aggro range is measuring the wrong thing. It is asked
+  twice now and neither is a simulation: `nearestEnemy` at 14.5 tiles and at 11, and a foe parked
+  OUTSIDE the holding for ninety seconds of beat, which is the sentence the report actually
+  contains.
+
+[FAULT] AND THE SAME CLAIM READ "SIGHT RANGE HAS MOVED" ON THE CONTROL, where nothing about sight
+  had changed. `nearestEnemy` scores by `d / aggroWeight`, so a wild body already inside the
+  thirteen answered both halves of the question. A range claim staged in a world with its own
+  bandits in it measures the world. Everything hostile within 22 is hushed to `down` for the two
+  calls and restored after — four bodies, on the run that caught it.
+
+[NOTE] TWO STAGING FAULTS IN `snags.js`, BOTH WORTH THE LINE. The harvest job's key is `carrion`,
+  not `harvest`, so the first cut set a job that does not exist and read "it picked nothing at
+  all" — which looks exactly like the fix working. And the authored box colour is GONE by the
+  time there is a material: `obox` bakes its boxes into merged buckets with one white material
+  and per-vertex colour, so `material.color` reads white and `_bc` off the surviving proxies
+  reads two colours out of fourteen. The third attempt reads the `color` buffer attribute, which
+  is where the colour actually is. A claim about what something LOOKS like has to find the place
+  the look is stored, and in this renderer that is not where it was written.
+
+[NOTE] AND WHILE ADDING TWO LETTERS TO THE HOTKEYS, A BUG OLDER THAN ANY OF THEM. Every binding
+  in the keydown handler is a BARE LETTER and there was no guard for a focused field, so pasting
+  a save code into the MOVE box opened the build menu, the chronicles and the workshops on the
+  way through. Not caused by [T] and [Y] — found by them. One guard at the top of the handler:
+  an `INPUT`, `TEXTAREA` or contenteditable with focus swallows the key, unless a modifier is
+  held, because ctrl+V is not typing.
+
+[119] THE FULL SUITE: 140/144, AND ALL FOUR REDS WERE THE SAME MISTAKE.
+  144 harnesses, 6082 seconds. Four red: standoff.js, sundered.js, cloth.js, wards.js.
+  EVERY ONE OF THEM READ IDENTICALLY RED ON THE CONTROL — the commit before this batch, built
+  with `prep.js f45a3d5~1 prev` — with the same numbers to the decimal: 60 blood at size 1.3,
+  salt, 4.7 -> 5.5 tiles, 90 hours. None of them was this batch's doing, and none of them was
+  new. Three of the four were the house rule from [117] going unheeded before it was written
+  down: A BAR SET FLUSH AGAINST WHATEVER THE AUTHOR HAPPENED TO MEASURE ONCE.
+
+  · standoff.js `andAManCanHitAMonster`. The size sweep staged ONE thirty-second fight per size
+    and compared two single samples: is what size 1.3 took at least half of what size 1 took.
+    60 against 127 looks exactly like a reach dip at one size, and there is no dip. Eight
+    repeats a size: size 1 lands 89-159 (median 123), size 1.3 lands 67-155 (median 125).
+    THE DENOMINATOR ALONE SWINGS 1.8x. 67/159 is 0.42 and both of those are ordinary draws, so
+    the claim could go red on a healthy build whenever the numerator drew low and the
+    denominator drew high. Medians of five now, and the bar is 0.6 of the ordinary-sized
+    control at EVERY size rather than at 1.3 alone. Observed ratios 1.00, 1.04, 1.02, 0.97,
+    0.78 — the last a wyrm, honestly harder to stay inside reach of. It still catches the fault
+    it exists for, which measured eight blood off a wyrm against 104 off a man.
+
+  · sundered.js `andItGrowsBackAfterYouClearIt`. Bar 72 game-hours, read 90. Seventeen sites on
+    four seeds: 29, 31, 31, 33, 35, 38, 39, 49, 55, 55, 66, 68, 69, 80, 90, 91, 95. The bar sat
+    in the MIDDLE of the spread and would flap on about a third of all worlds. Worse, the loop
+    around it capped at 96 — a site wanting 100 hours would have reported "back to 5 of 7" and
+    read as regrowth being broken rather than the clock being short. 240-hour loop, 168-hour
+    bar. The report this claim serves is "after a fight the ground stayed empty", which is
+    regrowth not happening AT ALL.
+
+  · wards.js `andALesserGauntStillTurnsFromIt`. Bar: more than a tile further from the light
+    after ONE second. Read 0.8 — with the other half of the claim, letting go of the quarry,
+    passing. Twelve runs on four seeds: the gain at one second is 0.8 to 3.8 tiles, because a
+    body that has to stop, turn and set off spends most of the first second not yet going
+    anywhere. Two seconds now, observed floor 1.19, bar 0.5.
+    AND THE DISTANCE WAS ALWAYS THE JUNIOR HALF OF THIS CLAIM. One run tops out at 1.2 tiles
+    and stays there for four more seconds — a gaunt that turned away and stopped at the edge of
+    the light, which is exactly right. What must be true is that it LET GO and is further off,
+    not that it ran a particular distance.
+
+  · cloth.js `noMaterialIsADeadEnd` is the odd one out: not a bar, a premise that moved. It
+    walks everything the player is asked to SPEND and asks whether anything the player can do
+    produces it, and it found SALT — spent by Harbourblack, by curing a body and by one
+    contract, made by nothing. Salt is not an oversight. Every town stocks 3-9 of it on day one
+    and Saltmere stocks 40-70, and Saltmere's own civ bark is "the flats give salt, the salt
+    gives everything else." A bench recipe for salt takes the town's reason to exist away.
+    SO IT IS A NAMED EXCEPTION AND NOT A WIDENED RULE, and the difference is the whole thing:
+    the obvious fix — count anything the towns stock as a source — would have read GREEN on the
+    build this entire file was written for, because `fabric` sits in the same opening-stock
+    list. The general check has to stay blind to the shop counter.
+
+[NOTE] AND A PROCESS FAULT OF MY OWN, WHICH COST A SECOND RUN OF FOUR HARNESSES. The suite was
+  launched as `node tools/run.js 2>&1 | tail -80`, so the detail for the first three failures
+  was thrown away and only the last one's output survived in the log. A background run's output
+  file is not a terminal and does not need trimming. Never pipe a suite through `tail`.
+
+[NOTE] TWO BENCHES CAME OUT OF THIS AND ARE WORTH KEEPING: `_reachdip.js` repeats a staged
+  fight and prints every draw with its min/median/max; `_barspread.js` does the same for a
+  regrowth clock and a fleeing body across four seeds. Reach for them before bisecting any red
+  whose failure signature is a number that came out of a rolled or seeded process. That is now
+  the second half of the [117] rule, and it has paid for itself twice in two sessions:
+  MEASURE THE SPREAD BEFORE YOU BISECT, AND BEFORE YOU SET THE BAR.
+
+[120] THE WORLD GETS A COAST, THE MARROW GETS A USE, AND THERE IS A ROAD NOBODY WALKS.
+  Three notes, brainstormed first and built to the answers.
+
+  · THE END OF THE WORLD. "I hate that the map suddenly and sharply ends, and in such an obvious
+    square shape. We should cull it inwards a bit so that the end of the world is a bit more
+    gradual." Two faults, and the measurement found the second one.
+    THE SHAPE was `edge = Math.min(x, y, W-1-x, H-1-y)` — a Chebyshev distance, which draws a
+    SQUARE by construction. Whatever you do with it you get a frame. It is a superellipse radius
+    from the middle of the world now (p=4, so the inland shape stays broadly rectangular rather
+    than becoming a disc) with its own shoreline noise, and the corners — furthest from the
+    centre — drown 4.2x deeper than the edge midpoints. 232 tiles against 55.
+    AND THERE WAS NEVER ANY SEA. Measured on the old build: the outer forty tiles are 15-18%
+    water. Scattered puddles. You could walk to x=0 on dry ground and the terrain stopped on a
+    dead straight line. The reason is subtle and is the whole lesson: out at the rim the old
+    formula stopped ADDING dryness rather than subtracting it, so a tile still had to draw its
+    own noise under 0.34 to be wet — 17% of the time, everywhere along the rim, forever. It
+    never made one tile of solid water anywhere. The comment directly above it said "the far
+    water is why nobody leaves". A design intent written in prose and never once checked against
+    a number survived in this file for the whole life of the project.
+    THREE BANDS: brine, then salt crust, then the dead salt, which is the "banded" reading the
+    note asked for and is more than a wider sea — the ground CHANGES twice on the way out.
+    AND THEY ARE CARRIED IN A PARALLEL ARRAY, which is the safety of the whole change. `brim` is
+    0/1/2/3 and every tile in all three bands is written into `terr` as WATER. About thirty
+    places in this file ask `=== 3` to mean impassable, unbuildable, no spawn, no rift, not part
+    of a landmass. Adding two new terrain VALUES would have meant finding all thirty and being
+    right about every one, which is the exact shape of mistake recorded four times already under
+    other names. The bands are a rendering fact; the blocking is the value that was there.
+    THE INFINITE BLUE DROPOFF IS ITS OWN BUG AND A WIDER SEA DOES NOT FIX IT. The water plane is
+    1.4x the world, so it ran 288 tiles past the map on every side with a hard straight line
+    where the ground quit. Four quads outside the map bounds — a frame, not a bigger plane,
+    because a rectangle would also cover the brine inside the map and there is no cutting a hole
+    in one — in the same dead salt at the same height, so the last tile of the world and the
+    first tile of the nothing beyond it are one surface.
+    COST: dry land 97.8% -> 78.8% of the map. Every world regenerates, which the user accepted.
+    Towns: nearest to an edge was 26 tiles and is 120 now, on five seeds, none in the sea, one
+    landmass each.
+
+  · AND THE FALLBACK TOWN GRID WAS TERRAIN-BLIND. Found while checking the above: if the random
+    siting loop runs out of tries — which is likelier on a smaller landmass — the fallback laid
+    its spots on a plain fraction of W and H and pushed them wherever that was. Survivable while
+    the map was land to all four borders. Not survivable now. It spirals out to clear ground and
+    keeps the raw point only if nothing is found, so it still cannot fail to produce N spots.
+
+  · SUNDERED MARROW. It had three uses and all of them were somebody else's: a price at the
+    occultist's counter, twenty-two regard with the Vigil, two pieces for a scholar's favour.
+    Eleven pieces across the road now — Deeper Rites 1, The Anchored Dead 2, Ossuary Rites 1,
+    The Last Rite 3, and the two wayline rungs 2 apiece. DEEPER RITES carries one deliberately:
+    that is the rung a player reaches while gaunts are still the thing they fight, and a material
+    you cannot spend until the endgame may as well not exist until then.
+
+  · THE WAYLINES. The primitive already existed and has since the undercroft — `useStairs` moves
+    a body between storeys by writing x, y and floor and dropping the path. A wayline is that,
+    sideways, and almost none of the work was the crossing. It was deciding who may work one and
+    what may not be crossed, and saying both out loud when it refuses.
+    EXPENSIVE TO BUILD, FREE TO USE, AND STAFFED. The user's call, and it makes the stone a piece
+    of infrastructure rather than a button on a cooldown. Who may work one is the interesting
+    half: NOT a necromancer. The waylines hang off Transmutation because they are golden-age
+    engineering, and the note said it plainly — "anyone with alchemical training should be able
+    to work it" — so the test is `hasArts` plus `mindedDead`, and a divine or dust squad gets
+    waylines on the same terms as a dark one.
+    THE ONE RULE THAT IS NOT A PRICE: a body that has just been hit cannot be crossed. Free is
+    not the same as unconditional, and a road you can step onto mid-fight turns every losing
+    battle into a button. It refuses by name.
+
+[FAULT] THE BANDS WERE SIZED IN THE WRONG UNITS, TWICE, AND `rim.js` CAUGHT BOTH. First cut
+  measured them in superellipse units: `rad` runs to 1.0 at an edge midpoint and 1.19 at a
+  corner, so a band measured in `rad` is four times wider at the corners — and the dead salt,
+  the outermost of three, DID NOT EXIST at all along the middle of any edge. All four rays
+  inward read crust, brine, land. Distance to the nearest land in actual tiles, by a two-pass
+  3-4 chamfer, is the only measure that gives three bands of one width everywhere.
+  Second cut used 22 and 55 tiles and two of four rays were still short, because the coastline
+  is not the same distance out on all four sides: the land reaches within 43 tiles of the edge
+  on the east and 66 on the north. ALL THREE BANDS HAVE TO FIT IN THE NARROWEST RIM THE COAST
+  EVER LEAVES, not the widest. 14 and 32.
+
+[FAULT] AND THE PAN-HEIGHT CLAIM READ A BEACH AS A FAILURE. It sampled every tile of a band,
+  seams included — and `HV` is per-VERTEX and averages the four tiles around it, so a crust
+  vertex sitting next to brine mixes -0.15 with -0.55 and lands well under the water plane.
+  That is a shoreline doing exactly what a shoreline should. The claim samples band INTERIORS
+  now: tiles whose whole eight-neighbourhood is the same band.
+
+[FAULT] AND A CLAIM ABOUT MATERIALS WAS STAGED ON A QUEST-GATED TECH. `waylines.js` picked the
+  heaviest marrow cost to prove the bench spends it, which is The Last Rite — and that rite is
+  gated on the demilich's favour, so `researchBegin` refused on the QUEST and the claim reported
+  "the marrow is a label, not a cost" about a build where it is nothing of the kind. A claim
+  about materials has to be staged on a tech whose only obstacle is materials.
+
+[NOTE] AND `_mmshot.js` CAME BACK BLACK TWICE BEFORE IT CAME BACK RIGHT. Calling `toggleSeeAll`
+  directly ran before the fog machinery was ready. Pressing F9 — the path a player uses — works.
+  The same lesson as the build bar, in a different costume: reach for the door, not past it.
+
+[121] SIX REDS AFTER THE COAST, AND ONLY TWO OF THEM WERE MINE.
+  The regression across 26 terrain- and worldgen-sensitive harnesses came back 22/26, and
+  under.js and depths.js went red on a second pass. Every one was diagnosed against a control
+  built from the commit before the coast rather than guessed at.
+
+  · queue.js. `reset()` stocks the shed with eleven materials so the chain it runs is blocked
+    only by the chain. Deeper Rites started wanting a piece of Sundered Marrow and marrow was
+    not on the list, so the queue held at the fourth rung — CORRECTLY — and the claim read it as
+    the queue failing to advance. The comment directly above that line already said this in so
+    many words, about gold, from the last time. Anything a tech can be billed for belongs in it.
+
+  · haulers.js. Checked a 17x17 box around the yard and then put the corpse field at `at-30`,
+    thirty tiles outside anything it had looked at. Staged at 314,90: a yard on dry ground with
+    its field in the brine. The box spans the field now.
+
+  · dark.js. Took `undercroft.halls[0]` and several claims stake or walk on the SURFACE above
+    it — and the undercroft still runs the full width of a world that now has an ocean over its
+    rim, so halls[0] was under the sea. Every value came back null and it read as the game
+    refusing to build anything, which it was right to do. It picks the first hall with open
+    ground over it now.
+
+  · under.js. `andThereIsAWayDownNearby` walked a grid over the whole rectangle and took the
+    worst cell — which is now open ocean. "A place you cannot get into from where you are
+    standing" is a claim about where you can STAND. Sea cells are skipped and counted (206 of
+    1225), and the worst dry point is 188 tiles from a way down.
+
+  · deep.js. Three faults in one claim, and only the last was interesting.
+    (1) It rang twelve bodies at eight and ten tiles from an altar WITHOUT LOOKING AT THE ROCK.
+    On a tighter hall half the ring landed inside stone, `physics` pushed them back toward the
+    middle, and the lamp claim read 8 tiles then 5.2 — a congregation apparently walking INTO
+    the light. It picks the roomiest hall on offer now, scored out to fourteen tiles.
+    (2) The A/B I wrote to replace it lit the lamp AFTER `rebuildCharGrid`, and `lamps` is built
+    BY that rebuild off `c.lamp`. Both halves came back reading exactly the staging distance.
+    (3) AND THE ORIGINAL CLAIM COULD NOT TELL THE LIGHT FROM THE BAND. It staged at eight, lit
+    the lamp, and asserted they ended more than two tiles further out — but they drift out to
+    the edge of their own hold band with or without a lamp, so "8 to 11" was never evidence. It
+    is an A/B from one staging now: dark they sit at a mean 8.0, lit at 10.6. And it reads the
+    MEAN, because the closest of twelve is one body and one body with rock behind it cannot give
+    ground however bright the lamp is — that one moves 0.5 tiles and is kept only as a guard
+    that nobody is drawn IN.
+
+[122] AND TWO OF THE SIX WERE REAL, AND ONE OF THEM PREDATES EVERYTHING.
+  · THE TOOTH WAS ON THE DEEPEST FLOOR BY LUCK. The seeder sorts the Unblinded by depth and
+    gives the Tooth to the deepest, and its own comment called that "falling back gracefully".
+    An Unblinded is seeded into 14% of inhabited halls, so on a world where that roll misses
+    every hall on the Sump the item the whole depth mechanic is built around sits on -1 or -2
+    and the bottom of the world holds nothing worth the walk. Measured across seeds on builds
+    predating the coast: -3, -3, -2, -1. A one-in-four chance the deepest floor is pointless.
+    The deepest one is MOVED now rather than merely preferred — no new spawn, no extra die, the
+    body that was going to hold it walks down to the furthest hall on the bottom floor. Green on
+    four seeds where it was a coin flip before.
+
+  · AND THE COAST COST THE WORLD ITS WAYS DOWN. A shaft from the sky wants a dry, unblocked
+    surface tile within five tiles of a hall, tried thirty times. Every hall under the new ocean
+    failed all thirty and was skipped: 82 ways down became 67. A deterministic spiral out to
+    forty tiles — no dice spent, so a hall that already found a spot draws what it drew before —
+    brings it to 69. A hall further under the water than that has no dry way in, which is a true
+    thing about it.
+
+[FAULT] AND `depths.js` HAD BEEN PASSING BY LUCK FOR ITS WHOLE LIFE. `andASquadOrderedDownArrives`
+  starts a body on a surface stair and orders it to the bottom. Its own comment says what is
+  under test — "the CHAIN of three descents, not the pathfinder" — and then it took
+  `stairs.find(...)`, the FIRST surface descent in array order, which drops you into whatever
+  region of -1 that stair opens on. Only some regions of -1 have a shaft onward within reach.
+  So it was the pathfinder, and the geography of one world at that: the CONTROL fails seed 7 and
+  passes 91 and 404. Measured on the build that caught it, starting from the surface stair
+  nearest a bottom shaft: landed on -1, walked 433 tiles in six hundred seconds of sim, nearest
+  onward shaft still 453 tiles away. Nothing about that is a fault in a descent.
+  The three links are driven one at a time now, each from its own shaft. That is the chain, it
+  is deterministic, and it fails only if a descent is actually broken. How far apart the shafts
+  are is printed as colour, where a number that varies by world belongs.
+  THE RULE THIS IS THE THIRD INSTANCE OF: if a claim's own comment says what it does NOT test,
+  check that the staging agrees. Three times now the comment was right and the code under it
+  was doing the opposite.
+
+[NOTE] AND I PIPED A SUITE THROUGH `tail` AGAIN, one entry after writing down that it destroys
+  the detail for every harness but the last. Twice in two sessions. The output file of a
+  background run is not a terminal and does not need trimming.
+
+[123] THE ORDER STOPPED HUNTING PEOPLE FOR SOMEBODY ELSE'S GIFT, AND THE FIRE LEARNED TO BURN.
+  Four notes in one breath. Two are about rules and two are about pixels, and the two about
+  pixels turned out to be the ones with the sharper lessons in them.
+
+  · PALADINS WERE HOSTILE TO EVERYONE, AND THE REASON IS WORTH WRITING DOWN. "It doesn't make
+    sense that paladins are immediately hostile to you if you just pass them on the road as a
+    normal human... Otherwise I will never be able to enter Saltmere or complete Albedo's quest."
+    They were, and not by a near miss. `hostile()` asked ONE question about the player — the
+    global `menaceFlag` — and one of the three things that set that flag nightly was
+    `chars.some(c => c.faction === 'player' && c.stats.magic >= 15)`. So: a single boolean for
+    the whole party, true from the first night of any caster's game, and identical for every
+    body in the squad. A hired swordhand with no gift at all was hunted across the map for the
+    contents of the player's head. There was no layer to add to — there was one bit.
+    Now there are three questions and they are asked of the BODY, not of the save:
+      · is this one itself dead, or a lich — unchanged, and it should be
+      · is the player notorious — `fame.known >= 34` AND `fame.repute <= -18`, which is the
+        ill-spoken-of band and not merely the famous one, plus `purgeWrath` for spilled Order
+        blood
+      · is this one visibly escorting the dead — any risen within fifteen tiles, on the same
+        floor, that `walksAsDead` will own to. Which means SHROUD WORKS ON THE ORDER TOO: the
+        art that hides the dead from a town's eyes now hides them from a paladin's, and that
+        fell out of reusing the existing predicate rather than writing a new one.
+    `menaceFlag` keeps existing and keeps meaning something — it is about your HOST now (four
+    or more raised, or a lich in the party, or notoriety), which is what the name always said.
+
+  · AND THE BASTION MOVED TO SALTMERE. "Saltmere already has some paladins in town." It was
+    sited by a generic rule that only asked for open ground away from any settlement, which put
+    it 178 tiles from Saltmere on the seed I looked at, with Saltmere not even the nearest seat.
+    It now searches a ring 42-66 tiles out from Saltmere first and falls back to the old rule
+    only if six thousand tries find nothing. Five worlds: 51, 52, 43, 54, 61 tiles, nearest seat
+    every time, wall and gaol and twenty-five of the Order intact.
+    ONE FAULT IN THE DOING, AND IT IS A SHAPE TO WATCH FOR: the whole fortress — walls, gaol,
+    garrison — is CONSTRUCTED INSIDE the site-search `while` loop. Adding a second search loop
+    in front of it found a spot and then built nothing at all, because the loop that builds only
+    runs while it is still looking. Split into "choose `spot`, then build at `spot`" and the
+    construction stayed where it was.
+
+  · WYRMS HAD NO FIGHT ANIMATION, so "it just kind of looks like they walk around and everything
+    dies around them". The quadruped branch posed a walk cycle and nothing else. It rears on the
+    wind now — eased, because coiling back is the TELL the player reads to know a blow is coming
+    — front pair off the ground, back pair planted and driving, torso pitched, head up and back;
+    then the strike throws all of it forward and down, sharp, on a `strikeT` set the moment the
+    windup ends so the follow-through lands with the damage rather than on a timer of its own.
+    The tail lashes counter the whole time it is in a fight at all.
+    IT NEARLY WENT IN WITH A THROW IN IT. The branch used `now`, which is declared `const now`
+    inside the choir-kin block several branches up and is not in scope there. That would have
+    thrown on the first frame a beast squared up to anything — inside the render loop, where a
+    throw does not reach the console and the body simply stops being drawn.
+
+  · AND FIRE WAS "a sprinkling of red pixels". It was worse than that: `addSpecks` is the whole
+    visual language of every effect in the game, and it is four to twenty 3-pixel SQUARES of one
+    flat colour thrown on random vectors and faded linearly over half a second. A firebolt
+    landing and a bandage being tied were the same event with a different hex code.
+    Three things make a flame read as a flame and none of them is the colour: it COOLS (white at
+    the root, yellow, orange, red, smoke — a journey, not a hue), it RISES AND SWELLS AND THINS
+    (buoyant, not ballistic; `addSpecks` gives its motes DOWNWARD acceleration, which is the
+    opposite of what fire does and is most of why it read as sparks), and it is BRIGHTER THAN
+    WHAT IS BEHIND IT (drawn additively with a soft radial falloff, so overlapping tongues build
+    a hot core instead of tiling into a grid of squares). All three now, plus a handful of real
+    embers — the one part of a fire that genuinely does behave like `addSpecks` always did.
+    Magic gets the same mote without the cooling: it drifts and turns rather than rising, so a
+    working reads as something being MOVED rather than something being thrown.
+    Emitted from the DRAW, so a burning body burns continuously instead of puffing once per
+    damage tick — WHICH MAKES THE `rnd`/`vrnd` RULE LOAD-BEARING AGAIN. Sixty motes of fire and
+    magic move the seeded stream not one step. This file has already spent an afternoon on that
+    exact fault once, under `updateDust`, and a particle emitter driven by the frame rate is the
+    purest form of it available.
+    AND THE BOLT TRAIL WAS ALREADY SPENDING SIM DICE. `updateProjectiles` drew a trail with
+    `if(p.bolt && rnd() < 0.6)` and then two more `rnd()` calls for the drift — three rolls off
+    the SEEDED stream, every step, per bolt in the air, for a dotted line of 2px squares. It is
+    a continuous flame trail now and costs the stream nothing. That does shift the stream, so
+    worlds and saves from before this commit will diverge; every harness is green on the new
+    build, which is the only thing that was ever load-bearing about the old numbers.
+
+[FAULT] AND THE CLAIM ABOUT FIRE RISING WAS A 47% COIN FLIP. `itRises` proved the buoyant/
+  ballistic contrast by asking that all the tongues climbed AND that "more than half of ten"
+  ordinary specks had fallen BELOW where they were thrown from. The second half is a roll.
+  `addSpecks` opens with `vh: rnd() * 2.5`; gravity is 6 and the window is fourteen updates
+  long, which takes 2.8 off the velocity and puts break-even at a launch speed of 1.4 — 56% of
+  a uniform [0, 2.5). Asking for six of ten out of a binomial(10, 0.56) passes 47% of the time.
+  It went green three runs and red on the fourth, which is exactly what a fair coin looks like.
+  What is NOT a roll: 2.8 exceeds every launch speed the function can produce, so EVERY speck
+  ends the window travelling downward, and a tongue's `vh` only ever decays toward zero and so
+  can never change sign. The claim measures the SIGN OF THE VELOCITY now and the count of who
+  ended up low is printed as colour, where a number that varies by draw belongs.
+  THIS IS [117] AND [119] FOR THE THIRD TIME: if a claim compares against a number that comes
+  out of a seeded or rolled process, MEASURE THE SPREAD BEFORE SETTING THE BAR. Seven lines of
+  arithmetic against the game's own constants would have caught it before it was ever run.
+
+[FAULT] AND `order.js` WENT GREEN ON THE CONTROL FOR A STAGING REASON. The two "walked past"
+  claims passed on the OLD build, which should have been impossible — the old rule attacked
+  everybody. `menaceFlag` is recomputed inside `update`, gated on `necroT > 1`, and the harness
+  pauses the moment it arrives. So the flag was `false` on both builds and both claims were
+  reading an uninitialised world rather than a rule. A harness that pauses on arrival cannot
+  see anything a nightly recompute owns.
+  Fixed by parking a MAG 40 dark caster six hundred tiles from the road and driving forty real
+  sim steps, which lets EACH BUILD SET ITS OWN FLAG ITS OWN WAY. The control now reads
+  `menaceFlag = true` off the stat rule, the new build reads `false` off notoriety, and both
+  claims go red there. Six of ten red on the control.
+
+[FAULT] AND THE IDLE GUARD IN `flare.js` COULD NOT SPEAK AND SAID NOTHING ABOUT IT. Its job is
+  to stop the animation being "added" by simply leaving the rig permanently reared — a pose that
+  looks like a fight in a screenshot and like a statue in play. It measured the idle head
+  against `e._headY0`, the rest position the NEW code records. On the control that field does
+  not exist, so the comparison fell back to comparing the idle pose to itself: vacuously true,
+  and it printed a cheerful green sentence about a build with no animation in it whatsoever.
+  It compares the settled pose to the pre-windup pose now, forty frames after the blow, and if
+  nothing moved between idle and wound it says "-- cannot speak" rather than claiming a pass.
+  A guard that cannot fail is not a guard, and one that reports green while it cannot fail is
+  worse than absent, because it looks like evidence.
+
+[NOTE] AND THE REGRESSION SWEEP TURNED UP FOUR REDS THAT WERE NOT ABOUT ANY OF THIS. I pulled the
+  camera benches into the sweep by grep rather than from the suite list, which is how they got
+  run at all — none of the four is in `ALL`. Three separate things, none of them this batch:
+  · `wyrmpix.js` GENUINELY COULD NOT TAKE A PICTURE, on the new build and the control alike. It
+    wants a clear square to pose a wyrm on and tries pads 10, 8 and 6 — a 21x21, a 17x17 and a
+    13x13 — across 1200 positions on a ring 40 to 240 tiles out. Measured (`_openground.js`):
+    0 clear at pad 10, 0 at 8, 0 at 6. The filter doing the rejecting is DECOR, 754 of 1200 —
+    one tree anywhere in the box disqualifies the box — not water and not blocking. The ladder
+    goes down to pad 4 now, where there are 16, and 9x9 of open ground is room enough.
+  · `faces.js`, `mimicpix.js` AND `gauntpix.js` ALL PASS STANDALONE, exit 0 every one. They went
+    red only under `--jobs=4`, four software-rendered WebGL screenshot benches contending at
+    once. Not a fault in anything; just do not run the cameras in parallel.
+  · AND EIGHT OF THEM SHARE A DEAD WATER CHECK. The copied staging block reads `self.W`. `W` is
+    a top-level `const` (line 596) and A TOP-LEVEL `const` IS NOT A PROPERTY OF `window` — so
+    the width was `undefined`, `iy * self.W + ix` was `NaN`, `terr[NaN]` was `undefined`, and
+    `terr[...] === 3` has never once been true in any of them. The map-edge guard was equally
+    dead for the same reason. Fixed in all eight; it changes no behaviour, because `isBlocked`
+    was catching the water first (0 wet rejections even with the width corrected) — which is
+    exactly why it went eight files without being noticed.
+  This is the `typeof` idiom in its other clothes. The rule in the harness notes is about
+  REACHING a new symbol; this is the same fact biting a symbol that was always there.
+
+[124] SEVEN REPORTS, AND FOUR OF THEM WERE A RULE THAT ONLY RAN HALF THE TIME.
+  A batch with a theme running through it that I did not see until the third one: in four of
+  the seven, the correct behaviour was already written down somewhere and something else was
+  quietly stopping it from happening.
+
+  · THE CURSOR REACHED THROUGH SOLID ROCK. "I can select/talk with people on an entirely
+    different floor than the one I am on — talk to a kept priest underground if I happen to
+    right click on the right area." `bodyHit` is the single predicate every cursor test in this
+    file runs through — thirty-six call sites: talk, select, attack-move, heal, every spell — and
+    the floor guard WAS THERE, written:
+        if(activeFloor < 0 && c && (c.floor || 0) !== activeFloor) return false;
+    which only runs WHILE YOU ARE UNDERGROUND. On the surface, `activeFloor === 0`, the guard was
+    skipped entirely and all thirty-six fell through to a plain 2D distance — and a body four
+    hundred metres straight down, at the same x and y, is exactly as close to the cursor as one
+    at your feet. It reads `(c.floor || 0) !== (activeFloor || 0)` now, both ways round, which is
+    what the two arguments to a click have always meant.
+
+  · A SQUADMATE IN GAOL WAS MURDERED BY HIS OWN GAOLERS. Two correct systems meeting. `jailedAt`
+    pins a body at the cell and RETURNS OUT of the step function before anything else can happen
+    to it — no orders, no moving, no swinging, no fleeing. And the town clause at the bottom of
+    `hostile` makes any player body a target once `rep < -50`. So a sentence you were waiting out
+    became an execution, performed on somebody who could not raise a hand, by the people holding
+    them. `if(a.jailedAt || b.jailedAt) return false`, asked high, above every quarrel: the gaol
+    IS the town's answer to what you did, and a cell that gets you killed is not a sentence. The
+    scheduled burnings still work — `burnHeretic` is called directly and never asks `hostile`.
+
+  · THE WARRENS WENT DARK TEN HOURS INTO EVERY WORLD. "Bandits in the underground layer do not
+    use torches at all and thus suffer a horrible penalty." Worldgen already guarantees one torch
+    per chamber and has a note above it saying why — "a room of blind men is not a fight, it is a
+    chore". The guarantee was real. It was defeated by a clock in a different part of the file:
+    a torch holds `TORCH_HOURS` = 10 and `torchTick` only ever relit for `faction === 'player'`.
+    Measured: 142 lit torches underground, and 0 after one day. 239 of 239 people standing in
+    their own chamber blind, swinging wide at each other's noise, forever.
+    They relight now — they live down there and pitch is what the place is made of — and the
+    chamber gets a STANDING FIRE, which is the half that survives the torchbearer. AND THE FIRE
+    IS SIZED TO ITS ROOM rather than to `TORCH_POST_R`: chambers run to 18 by 14, half-diagonal
+    11.4, and a centred fire throwing the post's 8.5 left 39 of 315 dwellers outside their own
+    light. Measured before it was set, not after.
+
+  · AND A FORAGE WAS NEVER LOOKING AT THE GROUND. "It basically just fizzles out by saying
+    there's nothing of value nearby. The point of that command is to have them go out and
+    explore/map out new territory, not JUST go looting." `forageFind` asks two questions, both
+    about objects that already exist — unopened chest in the circle, unlooted body in the circle
+    — and the order ends the instant both are no. On ground you have walked, both are no on the
+    FIRST TICK. The ground is the third answer now: a band with nothing to lift walks to the
+    nearest piece of the circle nobody has seen, and walking there is what maps it (no reveal is
+    granted — the fog comes off their own eyes). The errand ends on a condition that MEANS
+    something and is reachable: every chest taken, every body stripped, every tile walked.
+    AND THE CIRCLE WAS SMALLER THAN A PAIR OF EYES. A body sees `17 + dayness*13` — up to thirty
+    tiles in daylight — and the forage radius was 26. The band had already seen the whole of it
+    before taking a step, which is most of why there was never anything to walk to. 48 now.
+
+  · THE PATROL WALKED A RING FOURTEEN TO TWENTY-FOUR TILES ACROSS. "It sends the group in a very
+    tiny circle, and then proudly reports that they completed a tour." Five waypoints at
+    `m.r * (0.55 .. 0.91)` with `m.r = 26`: a circuit of 114 tiles, inside the sight range of the
+    base it was supposedly screening. This is the OTHER patrol — the patrol JOB holds a base and
+    is right to be tight; this is the order you give a band in the field and its job is the
+    ground AROUND a holding. 52-58 tiles out now, 335 tiles round, eight legs rather than five
+    because a five-point circuit at that radius is a pentagon and cuts the corners off the very
+    ground you sent them to look at.
+
+  · THE GOAL BUTTON BECAME A SQUAD BUTTON. "It would be nice to just select a chunk of troops,
+    label them as a single squad... To the point of replacing the goal section, I never use that
+    and it feels a bit OP to give such an XP bonus for nothing but a few clicks." Both halves
+    right, and the second is why the button was free to take: `c.goal` set one skill and
+    multiplied its learning by 1.25 for the rest of that character's life, for two clicks, with
+    no cost, no cooldown and no way to be wrong — a permanent quarter more progress than a player
+    who never opened the menu. That is not a choice, it is a tax on not knowing the button is
+    there.
+    THE FOLDERS ALREADY EXISTED and are a real system — `c.grp`, `squadGroups`, collapsible,
+    saved, with a whole management menu on a right-click. What was missing was THE ROAD IN: every
+    door to it was on the squad bar, either a portrait menu that moves ONE body or a header menu
+    that needs the folder to exist first. So naming eight people you had just dragged a box
+    around meant borrowing some other folder's header, or eight right-clicks. This is thirty
+    lines because it is a gesture and not a feature.
+
+  · AND A BOUNTY WAS A TALLY RATHER THAN A NUMBER. "There should be a hard cap, or a clear
+    distinction when I'm literally invading a town versus simply committing crimes in it."
+    Two faults. THE CEILING: `t.bounty` only went up, and everything that reads it saturates long
+    before it — the watch's odds cap at `bounty/500`, a search at `/700`, the benefit of the doubt
+    at `/900` — so past about nine hundred the number changes nothing in the world and climbs
+    anyway. Settling costs 1.5x to 2.5x of it, which makes an uncapped bounty an UNPAYABLE one.
+    Measured on the old build: thirty murders reach 12,000. The cap is 2400.
+    AND THE DIFFERENCE BETWEEN A CRIME AND A WAR. A crime is a thing a town files a complaint
+    about; walking an army through the gate to take the place is not a complaint. A town is under
+    assault once your people have traded blows with its armed watch, and while that holds the
+    ledger still runs — the price is real and it is there when the smoke clears — but it stops
+    being narrated: one line when the fighting starts, silence after.
+
+[FAULT] AND THE ASSAULT TRIGGER I WROTE FIRST COULD NEVER HAVE FIRED. It read
+  `if(!d.civ && !incid && d.state !== 'ok') markAssault(...)` — "a guard of this town is dead at
+  your hands". `applyDamage` NEVER ASSIGNS `d.state`: the transitions to `down` and `dead` happen
+  in functions further along the chain, so at that line the guard is always still `ok` and the
+  branch is dead code. It would have shipped as a feature that does nothing, with no error and
+  nothing to see. What CAN be asked at that point is what is actually happening — somebody of
+  yours is deliberately hitting the watch — so it counts blows, three of them inside the window,
+  because one exchange at an arrest is a scuffle and a sustained one is a battle.
+  THE GENERAL SHAPE: before hanging a trigger on a field, check that the field changes where you
+  are standing. The existing line two lines below it (`d.state === 'dead' ? 'murder' : ...`) had
+  the same assumption baked in and reads as if it works.
+
+[FAULT] AND THE ORDER'S SIZE WAS A PROPERTY OF A MENU. `giveCommand` took `r` from its one
+  caller, in the character panel: `k === 'hold' ? 10 : 26`. So the radius of a duty was decided
+  by a button, and anything that gives an order without going through that button — a harness, a
+  quest, an order board — silently got 26 whatever it asked for. `sweep.js` found it by doing
+  exactly that and reporting a tiny circle about a build where the menu makes a wide one.
+  This is REACH FOR THE DOOR, NOT PAST IT arriving from the other direction: usually the lesson
+  is that the harness must go through the real entry point. Here the harness was right to call
+  the function and the FUNCTION was wrong — it did not own a number that is its own. The size is
+  declared on the order in `CMD` now and the menu reads it.
+
+[FAULT] AND TWO CLAIMS IN `ledger.js` WENT GREEN ON SILENCE THEY HAD CAUSED THEMSELVES.
+  `crime` suppresses two kinds of line: an ECHO (the same offence twice inside half a game-hour)
+  and a bounty that has not MOVED (already at the ceiling). The claim before them had just run
+  thirty murders, which left `_cryKind = 'murder'` stamped at that hour AND the town pinned at
+  the cap. So when the assault claim ran, NOTHING WAS PRINTING BEFORE THE ASSAULT EITHER — and
+  "no lines during the fighting" was read as the fix working.
+  A CLAIM THAT COUNTS ZERO OF SOMETHING MUST COUNT THE PREMISE FIRST. "Nothing was printed" is
+  only evidence if something would have been. The peacetime line count is the claim's own control
+  now, printed beside it, and a zero there makes the claim say "cannot speak" rather than pass.
+  The same reset problem sat under the debt claim: it compared a bounty already at the cap with
+  itself and called it running.
+
+[FAULT] AND I COMPARED TWO ROLLED BODIES AGAIN. `roster.js`'s goal claim built two probes the
+  same way and gave them identical work. `xpGain` opens with `amt *= raceOf(c).xp` and multiplies
+  again by `subOf(c).learn[stat]`, and `makeChar` ROLLS a race and a subrace — so the two differed
+  by 1.3x before the goal was ever consulted, and the claim reported the goal paying NEGATIVE
+  seventeen per cent. One body, run twice, differing only in the field under test. There is no
+  version of "two freshly made characters" that is a controlled comparison in this file.
+
+[FAULT] AND A CLAIM ABOUT THE WARRENS ASSERTED A PROMISE NOTHING HAD MADE. The first cut asked
+  that NOT ONE warren-dweller anywhere was in the dark. Only about one in three carries the light
+  — that is the design, written down, with a reason — so a man who has walked forty tiles up an
+  unlit corridor away from both his room and his torchbearer is in the dark because that is what
+  a corridor is. Measured: 40 blind of 315, and 39 of the 40 were outside the reach of their own
+  room's fire, most of them outside the room. The claim is the one the REPORT makes now — a
+  chamber is a lit place — and the strays are printed beside it as colour.
+  Two different things came out of that one measurement: a claim aimed correctly, and a real
+  fault (the fire was smaller than the room). Neither would have been found by tightening the
+  bar until it passed.
+
+[125] THE FULL SUITE: 143/152, AND FIVE OF THE NINE WERE THE COAST, THREE WEEKS LATE.
+  Two of the nine were not failures at all — `carry.js` and `kit.js` pass standalone and go red
+  only under `--jobs=4`, which is four software-rendered WebGL harnesses contending. Of the
+  seven real ones, FIVE BISECT TO `ccf7acf`, the commit that gave the world a coast, and only
+  one of those is a fault in the game. The rest are harnesses that had quietly been staging
+  themselves on ground that then got drowned, or comparing against numbers that then moved.
+  THE THING TO TAKE FROM THIS IS THE SWEEP THAT MISSED THEM. After the coast I ran a regression
+  across 26 terrain- and worldgen-sensitive harnesses and called it done (ledger [121]). None of
+  these five was in it, and every one of them is about terrain. "Terrain-sensitive" is not a
+  list you can write by looking at names — `cloth.js` is about a weaver's shed and `mere.js` is
+  about a burial yard. A worldgen change is a change to the world every harness stands in.
+
+  · `deepaim.js` — ONE STAGING FAULT, TWO CLAIMS. It took `undercroft.halls.find(...)`, the
+    first hall in array order, and its last claim compares what the ground offers a body UNDER
+    the hall against what it offers one on the grass ABOVE it. The first hall now sits at 59,92
+    with 169 of 169 tiles above it under the ocean. So "the surface offers nothing either —
+    gathering may be broken outright" was a true sentence about a stretch of open water and a
+    false one about the build, and the squadmate-click claim went down with it. It picks a hall
+    with dry land over it now. This is `haulers.js` a second time: a yard on dry ground with its
+    field in the brine.
+
+  · `estate.js` — AND THIS ONE IS A REAL BUG, AND IT IS NOT THE COAST'S. Strangers standing
+    inside the Aldercotts' walled yard, whose gate the very next claim proves is shut and
+    unpathable. Measured across five seeds on builds either side of the coast: 0, 0, 2, 1, 0 of
+    them, every one a DRIFTER, at hour zero of an untouched world. THE COAST CHANGED NOTHING
+    HERE — it moved which seed was clean, and the default one happened to be.
+    `spawnDrifter` puts a pilgrim within four tiles of a town centre and spirals out to the
+    nearest OPEN tile, and Greenrest is centred on the estate, so the nearest open tile to
+    Greenrest's centre is inside the wall. `findOpenNear` asks whether a tile is walkable; the
+    yard's inside is perfectly walkable, and it is the GATE that is shut. The search walks
+    straight past the thing that makes the yard private.
+    `estateEvict` already existed and already did the right thing — and it runs on the DAY
+    ROLL-OVER, so a body placed inside by worldgen stands there for the whole of day one. It is
+    called once at the end of worldgen now, because it does not matter who put them there: at
+    hour zero the yard is what it claims to be.
+
+  · `mere.js` — A DISC DRAWN SLIGHTLY INSIDE THE YARD. It counted raisable bodies within
+    fourteen tiles of Hollowmere's square and wanted six, and the yard holds exactly six, so the
+    bar had no margin against where the seeder lays them out. The coast moved one of the six to
+    fifteen tiles out. "THE YARD HOLDS 5" about a yard holding six. Measured: at fourteen the
+    count reads 5,6,6,6,6 on the new world and 6,6,6,6,6 on the old; at SIXTEEN it is 6 on all
+    ten. And widening the count without widening the DRAIN then broke the refill claim in the
+    same file — one number, used twice, and I changed one of the two.
+
+  · `cloth.js` — THE MARROW, WHICH IS THE BONES OF A DEAD GOD. It became a spent material the
+    day the deep rites started asking for it, and nothing makes it, so `noMaterialIsADeadEnd`
+    called it a dead end. It is the second named exception in that set and it is an exception
+    for a different reason than salt's: salt is not made because making it would cost Saltmere
+    its reason to exist; marrow is not made because there is no bench that produces the marrow
+    of the Eldest and never will be. The set carries its REASON per key now rather than a bare
+    name, so the next thing added to it has to justify itself in a sentence — which is the only
+    thing stopping a named exception from becoming a way of silencing the claim.
+
+  · `spiral.js` — A BAR ONE HUNDREDTH OF A TILE FROM THE EDGE OF THE POSSIBLE. Its swap case
+    puts two bodies 0.5 apart and tells each to walk to a point 0.2 PAST the other, then asks
+    that both orders clear. `travel` calls an order done inside 0.2 tiles and two bodies cannot
+    pass through each other: measured directly (`_swapgap.js`), the closest either of them ever
+    comes to its target is 0.190 and 0.139 — on this build and on the pre-coast build alike.
+    Whether that flag clears is decided by sub-tile jostling, which is why it flipped when the
+    coast moved the staging spot twenty tiles.
+    I CHASED THE WRONG THING FIRST, and found a real fault doing it: the terrain sweep that
+    certifies the staging ground strides TWO TILES and a rock is one, so the 29x29 box it calls
+    clear holds 26 blocked tiles on the new world and 27 on the old. The file already carries a
+    note about measuring terrain it never checked; the fix under that note widened the area and
+    left the stride. Both are fixed, and only the second one was the failure.
+    THE CLAIM ITSELF NOW ASKS WHETHER THEY STOPPED. "They are circling, not arriving" is about
+    movement, and a body that has come to rest has arrived whatever a flag says. It measures how
+    far the busiest of them travels in one more second: 0.000 tiles. The open orders are still
+    printed, because an order left open on a body standing still is worth seeing.
+
+  · `focus.js` — THE ONE THIS BATCH ACTUALLY TIPPED, AND IT WAS ALREADY A COIN FLIP. Its last
+    claim is a fourteen-fight average of a seeded battle against `avg >= 2.5 && kills >= 2`.
+    Neither half had its spread measured. `_mowspread.js`, five seeds per build:
+        today              survivors 5.6-5.9   bows 1.29-1.86, mean 1.64
+        before the fire    survivors 4.9-5.9   bows 0.71-2.29, mean 1.61
+        `base.html`        survivors 4.4-5.0   bows 2.21-3.00, mean 2.63
+    `kills >= 2` cleared on ONE seed of five on the build BEFORE any of this session's changes.
+    Removing three `rnd()` calls per bolt per step from the seeded stream (the bolt trail) did
+    not change the behaviour — the means are 1.64 against 1.61 — it moved which side of a 20%
+    bar the default seed lands on. The survivor half, which is the load-bearing one, is
+    untouched at 2.5 against a measured worst of 4.4.
+    AND THE THREE-WAY COMPARISON SAYS SOMETHING THE BAR WAS HIDING. The fight has got less
+    lethal in BOTH directions across the project's history: your line went from losing about 1.3
+    of six to losing about 0.3, and the bows fall at 1.64 where they used to fall at 2.63.
+    Nothing in the suite was watching that, it is not this session's doing, and it is written
+    down rather than tuned away. `_mowspread.js` is the instrument if it is ever worth chasing.
+
+[NOTE] AND ADDING THE WORLDGEN EVICTION SPENT DICE. `estateEvict` draws `ri()` twice per body it
+  moves, so calling it at the end of worldgen shifts the seeded stream — deterministically, per
+  seed, which is what worldgen changes always do. Worth knowing when a number in a harness moves
+  for no reason anybody can see: this batch moved the stream twice, once here and once by taking
+  the bolt trail off it.
+
+[126] WATER, AND WHAT THE GOLDEN AGE THREW AWAY.
+  Asked as a design question before any of it was built, which is why the shape changed twice
+  before a line was written. The proposal was to remove river fish, put saltwater in its place,
+  and gate desalination behind Golden Age tech. Three things came back from reading the code:
+
+  · THERE IS NO THIRST IN THIS GAME AND THERE MUST NOT BE. Hunger exists, three foods, plus rum
+    and a drunkenness clock. Nothing potable. So "desalination makes fresh water" produces a
+    resource with no sink unless a second hunger loop goes on 1,757 bodies — which is the class
+    of survival mechanic that makes a game more tedious rather than deeper. Settled with the
+    user first: water is a SUPPLY LINE, not a body need. Fields drink it. Nobody does.
+
+  · AND REMOVING FISH WOULD HAVE COST MORE THAN IT LOOKED. It is a food, a gather job, the
+    `fisher` trade with its own barks, two of Dustport's five trades, a larder item, a caravan
+    want, vendor stock — and the only food you can take off a TILE rather than farm or hunt.
+    Kept. The incoherence was never that fish exists; it was that the ocean did not distinguish
+    its own bands.
+
+  · THE INVERSION IS THE FICTION, and it cost nothing. The Golden Age desalinated and threw the
+    salt away. The survivors evaporate and throw the water away. What the plants discarded is
+    what Saltmere now lives on, and the ruins of the plants are why the big cities are where
+    they are. Two eras of one problem, and the player can do the primitive half from day one.
+
+  THE MEASUREMENTS DECIDED THE DESIGN, and the first version was wrong:
+      inland water            0 tiles
+      brine band         69,583 tiles, 19,763 of them within reach of a shore tile
+      crust band         90,795 tiles, ZERO within reach
+      dead white        273,858 tiles
+  The first cut had a hand cutting salt off the crust. The crust begins fourteen tiles from land
+  by construction and NOTHING can stand next to it — so that design was for a place no hand can
+  reach. Salt comes off the PAN and out of the PLANT instead, which is the chain the whole idea
+  was about. The pans being unwalkable is not a fault to fix; it is what makes them the edge of
+  the world.
+  AND `fish` IS NO LONGER CALLED RIVER FISH. Zero tiles of inland water means it has been named
+  after rivers that do not exist since the day the coast was built. Shore Fish.
+
+  WHAT WENT IN. Two materials — `brine` (dipped off the shore, heavy, near worthless) and
+  `water` (what a plant pulls out of it, or a well finds). One job, SALTWORK, which stands where
+  a fisher stands and comes away with the other thing, the way MINE already takes copper or
+  iron. Four buildings: a WELL that draws 5 a day and is refused on the salt bands (sink a shaft
+  in a pan and you get brine, which you can scoop off the top for nothing); a SALT PAN, 3 brine
+  to 1 salt, no tech, which is Saltmere's whole trade; a DESALINATION PLANT, 6 brine to 4 water
+  AND 3 salt; and a CISTERN to hold it. Sinks: a tended field drinks 2 and yields a quarter
+  without it, and rum wants water in the mash.
+  THE PLANT IS FOUND, NOT RESEARCHED. It hangs off the existing `schematic` mechanism — the
+  same one the Aether Lance uses — so `golden_water` has no entry in the tech table and no START
+  button anywhere. One Waterworks Schematic exists in the world, on an occult dealer's shelf.
+  THE CONTRAST IS THE CHARACTERISATION: the Ordnance Schematic is three storeys under a sealed
+  redoubt behind a dead Warden, because a weapon is a secret. A municipal drawing is paperwork,
+  and the age that lost it did not think it was the valuable half.
+
+  AND SALT CAME OFF `cloth.js`'s EXEMPTION LIST. It was excused there one release ago with a
+  reason that was true at the time — a bench that made salt would cost Saltmere its reason to
+  exist — and the answer turned out to be that Saltmere's reason to exist is the BRINE. A named
+  exception that can be retired should be.
+
+[FAULT] AND THE BUG I REPORTED WAS LATENT, NOT LIVE. I told the user "you can currently fish in
+  the dead salt", and the rule did say so — `gatherKindAt` asked `terr===3` and offered a fish,
+  and the coast writes all three bands as 3. But `nothingLivesInTheDeadSalt` WENT GREEN ON THE
+  CONTROL, and the reason is the table above: zero of 90,795 crust tiles has a shore tile within
+  the three it searches. The rule was wrong and the geometry never let anybody ask.
+  The claim forces the situation the world withholds — one tile of dry land beside a pan, the
+  question put, the land put back. Control answers `fish`; this build answers nothing.
+  THE RULE THIS IS AN INSTANCE OF: a claim that walks the world and finds nothing has proved
+  nothing until it has shown that something WOULD have been found. It is the same shape as the
+  `ledger.js` fault one entry up — zero is only evidence when the premise is counted — and this
+  is the second time in two batches.
+
+[FAULT] AND `cloth.js` KEPT ITS OWN LIST OF WHAT THE GROUND GIVES. A hand-written array of
+  gatherable materials, which went stale the moment a gathering job was added: `brine` is dipped
+  off the shore by SALTWORK and the file called it a dead end. It reads `NODE_JOB` now — the
+  game's own map of node kind to job — so anything a hand can be sent to fetch is a source by
+  construction. `aether_cell` joined the named exceptions with the reason the game already
+  prints in its own refusal: nobody alive makes one, they are scavenged.
+
+[NOTE] AND `tryBuild` STAKES A BLUEPRINT, IT DOES NOT RAISE A BUILDING. Two claims read `pBuilds`
+  after a successful `tryBuild` and reported that a well drew no water and that there was no
+  field to water. The refusal half is still asked through `tryBuild`, because that is the door
+  the build bar uses; the production half stages with `placeStructure`, which is what a finished
+  build calls. Both, in one file, for the two different questions.

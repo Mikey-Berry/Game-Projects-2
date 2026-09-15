@@ -77,8 +77,23 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     R.golems = golems.length >= 3 ? `${golems.length} bone golems still at the fences` : `!! ONLY ${golems.length} GOLEMS`;
 
     /* ---- THE YARD ---- */
-    const inYard = () => corpses.filter(c2 => raisableBody(c2) && dist(c2.x, c2.y, hm.x, hm.y) < 14).length;
-    R.yardSeeded = inYard() >= 6 ? `${inYard()} bodies lying in the paupers' field` : `!! THE YARD HOLDS ${inYard()}`;
+    /* ---------- THE DISC HAS TO CONTAIN THE YARD, NOT CLIP IT ----------
+       This counted raisable bodies within FOURTEEN tiles of the square and wanted six, and the
+       yard holds exactly six — so the bar had no margin at all against where the seeder happens
+       to lay them out, and the day the world got a coast one of the six came to rest 15 tiles
+       out instead of 13. "THE YARD HOLDS 5" about a yard holding six.
+       Measured (`_coastwake.js`), five seeds on builds either side of the coast: at 14 tiles the
+       count reads 5,6,6,6,6 on the new world and 6,6,6,6,6 on the old; at SIXTEEN it reads 6 on
+       all ten. The field is six bodies wide either way — fourteen was simply a circle drawn
+       slightly inside it.
+       The claim is about the yard being STOCKED, so the radius is the one that contains the
+       yard, and the count at the old radius is printed beside it so a real change in the
+       seeding still shows up here rather than hiding inside the wider disc. */
+    const YARD_R = 16;
+    const inYard = (r) => corpses.filter(c2 => raisableBody(c2) && dist(c2.x, c2.y, hm.x, hm.y) < (r || YARD_R)).length;
+    R.yardSeeded = inYard() >= 6
+      ? `${inYard()} bodies lying in the paupers' field (${inYard(14)} of them inside 14 tiles, ${inYard(10)} inside 10)`
+      : `!! THE YARD HOLDS ${inYard()} (${inYard(14)} inside 14, ${inYard(22)} inside 22)`;
 
     /* ---- AND THEN THE TOWN IS LEFT TO WORK ----
        Driven through the real `update()`, not by calling castRaise: the whole question is
@@ -134,7 +149,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        So put a body exactly where the leash is worst: just past the post, far enough that
        standing on the flagstone is out of range. If the claim owns the walk, they fetch it.
        Everything else is cleared out of the way first so this is the only body they can want. */
-    for(const c2 of corpses.slice()) if(dist(c2.x, c2.y, hm.x, hm.y) < 14){
+    /* AND IT IS DRAINED AT THE RADIUS IT IS COUNTED AT. These two were both 14 when `inYard`
+       was; widening the count to contain the field without widening the drain left the ring
+       between 14 and 16 full, so "an emptied yard" started at 1 rather than 0 and the refill
+       claim went red about a burial system that was working. One number, used twice. */
+    for(const c2 of corpses.slice()) if(dist(c2.x, c2.y, hm.x, hm.y) < YARD_R){
       const i = corpses.indexOf(c2); if(i >= 0) corpses.splice(i, 1);
       const j = chars.indexOf(c2); if(j >= 0) chars.splice(j, 1);
     }
@@ -179,7 +198,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* DRAIN IT FIRST. By the end of the week above the field is sitting near its cap, and
        "8 became 10" is not evidence that a burial happens — the number has nowhere to go.
        Empty the yard by hand and then ask for three nights, which is the question. */
-    for(const c2 of corpses.slice()) if(dist(c2.x, c2.y, hm.x, hm.y) < 14){
+    /* AND IT IS DRAINED AT THE RADIUS IT IS COUNTED AT. These two were both 14 when `inYard`
+       was; widening the count to contain the field without widening the drain left the ring
+       between 14 and 16 full, so "an emptied yard" started at 1 rather than 0 and the refill
+       claim went red about a burial system that was working. One number, used twice. */
+    for(const c2 of corpses.slice()) if(dist(c2.x, c2.y, hm.x, hm.y) < YARD_R){
       const i = corpses.indexOf(c2); if(i >= 0) corpses.splice(i, 1);
       const j = chars.indexOf(c2); if(j >= 0) chars.splice(j, 1);
     }

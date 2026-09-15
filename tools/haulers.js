@@ -52,10 +52,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        a run to exactly this. */
     let gx = 0, gy = 0;
     outer:
+    /* THE CLEARANCE HAS TO COVER THE GROUND THE TEST ACTUALLY USES. This checked a 17x17 box
+       around the yard and then put the corpse field at `at - 30, at - 30`, thirty tiles outside
+       anything it had looked at. That was survivable while the map was walkable land to all
+       four borders; the day the world grew a coast it staged at 314,90 — a yard on dry ground
+       with its field in the brine — and `boneHaulIsAJob` reported a hauler that never arrived.
+       The game was right and the probe had put the body in the sea. The box now spans the
+       field spot as well as the yard. */
     for (let y = 90; y < H - 90; y += 7) for (let x = 90; x < W - 90; x += 7) {
       if (nearestTownDist(x, y) < 140) continue;
       let ok = true;
-      for (let dy = -8; dy <= 8 && ok; dy++) for (let dx = -8; dx <= 8; dx++) if (isBlocked(x + dx, y + dy)) { ok = false; break; }
+      for (let dy = -40; dy <= 10 && ok; dy += 2) for (let dx = -40; dx <= 10; dx += 2) if (isBlocked(x + dx, y + dy)) { ok = false; break; }
       if (ok) { gx = x; gy = y; break outer; }
     }
     R._where = `staged on open waste at ${gx},${gy}, ${Math.round(nearestTownDist(gx, gy))} tiles from the nearest seat`;
