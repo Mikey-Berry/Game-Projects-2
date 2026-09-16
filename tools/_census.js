@@ -115,6 +115,26 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     say(`  grown-up children ${grownKids.length}, of whom ${withTrade.length} carry a trade`);
     const legacy = alive.filter(c => c.legacyTrade);
     say(`  bodies carrying a legacyTrade: ${legacy.length}`);
+    /* ---- THE TOWN SIDE OF IT, which is the whole reason this instrument exists ----
+       Reported on the first run: zero bodies anywhere had a spouse. These four lines are how you
+       tell whether the towns actually pair off, conceive and record who a child belongs to, as
+       opposed to whether the player's own couples still work (they always did). */
+    const townWed = wed.filter(c => c.civ);
+    const townCourting = alive.filter(c => c.civ && c.partner && !c.spouse);
+    const townPreg = preg.filter(c => c.civ);
+    say(`  of those: ${townWed.length} wed townsfolk, ${townCourting.length} courting, ${townPreg.length} carrying`);
+    const kin = alive.filter(c => c.mother || c.father);
+    const kinBoth = kin.filter(c => c.mother && c.father);
+    say(`  bodies with a recorded parent ${kin.length} (${kinBoth.length} with both)`);
+    /* and per town, because one fertile town would hide six barren ones */
+    for (const t of towns) {
+      const here = civs.filter(c => c.homeTown === t);
+      const grown = here.filter(c => (c.age || 0) >= 16).length;
+      const w = here.filter(c => c.spouse).length;
+      say(`    ${String(t.name).padEnd(11)} ${String(here.length).padStart(3)} civ (${String(grown).padStart(3)} grown, room ${(t.def.civs||4)+4})`
+        + `  ${String(w).padStart(3)} wed  ${String(here.filter(c => c.partner && !c.spouse).length).padStart(2)} courting`
+        + `  ${String(here.filter(c => (c.pregnant||0) > 0).length).padStart(2)} carrying`);
+    }
     /* homes, which the birth rule requires */
     const homes = pBuilds.filter(b2 => b2.type === 'home').length;
     const inns = buildings.filter(b2 => /inn|tavern/i.test(b2.label || '')).length;

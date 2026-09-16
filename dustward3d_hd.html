@@ -1659,10 +1659,44 @@ const VENDOR_STOCK = {
      craft rather than the fight, and the general trader carries the cheap end. */
   weapons: ['w_plank','w_club','w_rkat','w_sw','w_kat','w_nod','w_bow','w_xbow','w_dag','a_rag','a_lea','a_pla',
             'h_cap','h_kettle','h_armet','k_road','k_pelt','w_torch'],
-  robotics:['p_arm','p_leg','bandage'],
-  occult:  ['tome','formula_t','formula_w','sunder','bandage','fabric','rum','mats','meat','remains','a_shroud','aether_cell','sch_desal','k_grave','t_phial','t_lens','h_wreath'],
+  /* ---------- AND WHAT A SHOP DOES NOT SELL IS A DESIGN DECISION ----------
+     An audit walked every list here against every town's opening stock and found THIRTEEN goods
+     that a vendor would quote a price for and no shelf in the world has ever held. The reflex
+     is to seed all thirteen. That is wrong for most of them, and the reason is the tech tree:
+     a world where the interesting things are on a counter is a world where the map is scenery.
+     So the thirteen split three ways, and the two that were listed here come off.
+     SKELETON ARM and SKELETON LEG are necro craft, not hardware. They are already buildable at
+     `rites_deep` and already in the chest table; a prosthetics counter selling them turns a deep
+     rite into a shopping trip.
+     SUNDERED MARROW is a rare reagent and the deep rites are the whole point of it.
+     ASH PHIAL, READING LENS, BONE WREATH and GRAVECLOTH CLOAK are occult curios — and worth
+     being exact about, because they are NOT legendaries whatever their prices suggest. They come
+     off the shelf because they are the kind of thing you find in a tomb, and all four already
+     drop from the chest table, so nothing becomes unreachable by removing them.
+     WORN and TATTERED FORMULA stay, because a formula is paperwork and paperwork gets sold — but
+     they are seeded thin and dear, so the world is still where most of your reading comes from.
+     What is left is the honest gap: a torch and three ordinary weapons, seeded below. */
+  robotics:['bandage','iron','copper','mats','fabric'],
+  occult:  ['tome','formula_t','formula_w','bandage','fabric','rum','mats','meat','remains','a_shroud','aether_cell','sch_desal'],
   bar:     ['meat','fruit','rum'],
 };
+/* ---------- AND WHAT A COUNTER WILL TAKE IS NOT WHAT IT WILL SELL ----------
+   Delisting the necro craft above ran straight into the fact that ONE list was doing two jobs.
+   `VENDOR_STOCK` decided both what stands on the shelf and what the vendor will buy off you, so
+   taking Sundered Marrow off the occultist's shelf also took away the only counter in the world
+   that would give you money for a piece — and "found out in the world, never bought" turned into
+   "found out in the world and worth nothing", which is not the same design at all.
+   So the two jobs come apart. Everything below is bought from you and never stocked: the
+   roboticist will take a limb across the bench and will not have one to sell you, and the
+   occultist deals in curios without being a curio shop. The shelf stays a shelf. */
+const VENDOR_TAKES = {
+  robotics:['g_arm','g_leg','p_arm','p_leg','a_arm','a_leg','c_ingot','iron_ore','coal'],
+  occult:  ['sunder','t_phial','t_lens','k_grave','h_wreath','vflesh','formula_p'],
+};
+function vendorSells(vt, base){ return VENDOR_STOCK[vt].includes(base); }
+function vendorTakes(vt, base){
+  return vendorSells(vt, base) || (VENDOR_TAKES[vt] || []).includes(base);
+}
 /* Which towns deal in pre-Fall oddments at all. Read off the town DEFINITION rather than off
    `vendors`, because the opening stock is laid in while the town is still being planned and its
    vendors do not exist yet — and it has to agree with the plan, which gives an OCCULTIST to the
@@ -2820,6 +2854,10 @@ function makeChar(name, faction, x, y, o={}){
        standing in the same place — which is the confusing half of this hazard. */
     sex: o.sex ? (_sb.sexOnly || o.sex) : sexOf(_sb, rnd() < 0.5 ? 'f' : 'm'),
     spouse: 0, partner: 0, grief: 0, pregnant: 0, omni: !!o.omni,
+    /* whose child this is, by id — 0 for anyone the world simply put here. Declared on the
+       template rather than stamped only at birth so `mother` is a field every body has and a
+       missing one means "no known parent" rather than "this code path forgot". */
+    mother: 0, father: 0,
     /* a golem does not bleed and has no limbs to take; a line that was built big is big */
     construct: !!(RACES[o.race] || {}).construct,
     clawDmg: 0, big: _sb.big || 1, taunt: false, structMult: 1, bindWeight: 1, shortTag: '',
@@ -3924,10 +3962,22 @@ const startTown = towns.find(t=>t.def.key==='greenrest') || towns[0];
   chars.push(c3);
 }
 /* town guards + recruits in bars */
+/* ---------- WHO A TOWN PUTS TO WORK ----------
+   Two towns were named after a trade nobody in them practised.
+   IRONSCAR is an open iron pit whose entire lore is the pit, and it had no miners at all — the
+   default rota below. `workShift`'s miner case opens `const pit = t.def.key === 'ironscar'` and
+   pays a premium iron and coal yield off it, a branch that in twenty-four measured days never
+   ran once because no body in that town was ever a miner. Three of them, because the pit is the
+   town: it is the only rota here where one trade outnumbers the rest.
+   SALTMERE sits on the flats and its lore is salt, brine and curing. Its stock of salt and water
+   was worldgen's opening pile and never moved again, in the one town on the map where those are
+   the local industry. Two salters and the fishers to cure for. */
 function townTrades(t){
   return t.def.key==='copperhold' ? ['smith','smith','miner','brewer','crafter']
     : t.def.key==='greenrest' ? ['farmer','farmer','farmer','crafter','brewer','hunter','smith']
     : t.def.key==='dustport' ? ['fisher','fisher','crafter','brewer','smith']
+    : t.def.key==='ironscar' ? ['miner','miner','miner','smith','brewer','crafter','hunter']
+    : t.def.key==='saltmere' ? ['salter','salter','fisher','crafter','brewer','hunter']
     : ['crafter','brewer','hunter','farmer'];
 }
 function garrisonSize(t){ return Math.round((t.def.guards || 4) * 1.5) + (t.def.mercs ? 2 : 0); }
@@ -4073,7 +4123,18 @@ for(const t of towns){
     seed('iron',     pit ? ri(14, 22) : (t.def.key === 'copperhold' ? ri(6, 11) : ri(1, 4)));
   }
   seed('pack_s', 2); seed('pack_l', 1);
-  for(const k of ['w_plank','w_club','w_rkat','w_kat','w_bow']) seed(tierKey(k, pick(['c','n','n','f'])), ri(1,3));
+  /* ---------- THE RACK, INCLUDING THE THREE THAT WERE ONLY EVER ON THE SIGN ----------
+     `w_sw`, `w_nod` and `w_dag` are listed by every weapons vendor in the world and were not on
+     this line, so an armourer quoted prices for an arming sword, a nodachi and a dagger and had
+     none of any of them — the aether-cell mistake again, three more times. No design intent
+     behind it, just an omission: these are ordinary steel, the plainest things a smith makes.
+     The nodachi is the exception and stays scarcer, because it is the heavy end of the rack and
+     Copperhold already seeds a fine one below as the town that keeps the good steel. */
+  for(const k of ['w_plank','w_club','w_rkat','w_kat','w_bow','w_sw','w_dag']) seed(tierKey(k, pick(['c','n','n','f'])), ri(1,3));
+  if(rnd() < 0.5) seed(tierKey('w_nod', pick(['c','n'])), 1);
+  /* AND A TORCH, which the general list has carried since the dark went into the depths. It is
+     the one consumable you are told to bring and could not buy. */
+  seed('w_torch', ri(3, 7));
   seed(tierKey('a_rag', 'n'), 3); seed(tierKey('a_lea', pick(['c','n','f'])), 2);
   /* ---------- AND A SHELF FOR THE NEW SLOTS, WHICH IS THE AETHER-CELL MISTAKE AGAIN ----------
      The note four blocks down records it: `aether_cell` was on a vendor's LIST and no town
@@ -4106,6 +4167,16 @@ for(const t of towns){
      the occult trade, and Dustport's whole blurb is that everything washes up there. So the
      dealers hold a few, and a few more turn up over time, and that is all there ever is. */
   if(hasOccultDealer(t)) seed('aether_cell', t.def.key === 'dustport' ? ri(3, 6) : ri(2, 4));
+  /* ---------- A FORMULA IS PAPERWORK, AND PAPERWORK GETS SOLD — RARELY ----------
+     `formula_w` and `formula_t` were on the occult list with nothing behind them. They stay
+     listed, because a book market that cannot sell you a book is absurd, and they are seeded
+     THIN: a tattered one more often than not, a worn one on a coin flip, and never a stack.
+     Reading is how the tech tree advances, so the shelf is a top-up and the world is the
+     supply — which is the shape that was asked for. */
+  if(hasOccultDealer(t)){
+    if(rnd() < 0.65) seed('formula_t', 1);
+    if(rnd() < 0.40) seed('formula_w', 1);
+  }
   /* ---------- THE WATERWORKS DRAWING, ON A SHELF, FOR SALE ----------
      The Ordnance Schematic is three storeys under a sealed redoubt behind a dead Warden,
      because a weapon is a secret. This one is in a book market, priced as a curiosity, because
@@ -20463,6 +20534,25 @@ const AGE_YEAR_DAYS = 7;   /* a year passes in a week. Lives here are short and 
 const GESTATION = 6;
 /* and how often one does not arrive, before the nights she spends overdue are added to it */
 const BIRTH_LOSS = 0.05;
+/* ---------- AND THE SAME CALENDAR MISTAKE, ONE LINE FURTHER DOWN ----------
+   The season between children was a hard `90`, sitting under a comment that calls it "a season"
+   and beside a stray note reading "a year of a life passes in fifteen days of dust". The year
+   is SEVEN days. Ninety was thirteen years between one child and the next — the exact same
+   units error that `GESTATION` records above it, made by the same hand at the same time.
+   Thirteen years is not a season, and against a fertile window of eighteen to fifty (thirty-two
+   years, two hundred and twenty-four days) it capped a whole marriage at two children, in a
+   world where forty-five percent of every child leaves for the spear, the road or the camps at
+   sixteen. A population cannot hold at that rate and the census says it does not: townsfolk
+   196 → 191 over twenty-four days, with nothing replacing them.
+   Written in the calendar's own units now, so it cannot drift again if the year changes. */
+const BIRTH_GAP = AGE_YEAR_DAYS * 2;   /* about two years between children */
+/* ---------- WHAT A TOWN EATS IN A DAY, PER HEAD ----------
+   One number, because the daily sink that spends it is meant to be tuned against a measurement
+   rather than argued about. `tools/_census.js` runs the world twenty-four days and prints town
+   stock start → end; this is turned until meat, fish and fruit come out roughly flat instead of
+   compounding. Below the town's own production it is a warehouse again; far above it, every town
+   is permanently hungry and `order` never recovers. */
+const TOWN_FOOD_PER_HEAD = 0.42;
 /* the peoples of the dust */
 /* RACES, SUBRACES and their helpers now live above `makeChar` — worldgen builds bodies
    long before this point and a table in its temporal dead zone takes the script with it. */
@@ -20503,10 +20593,13 @@ function giveGift(a, b){
   say(b, pick(['For me?','You remembered.','...you\'re trouble.']));
   log(`${a.name} shares a bottle with ${b.name}. (+bond)`, 'good');
 }
-function court(a, b){
+/* `quiet` is for the towns. Two hundred townsfolk pairing off across seven towns is a hundred
+   lines a week in a feed that is meant to be about YOUR people — the same rule the gravekeeper
+   raisings already follow. The event happens either way; only the telling is gated. */
+function court(a, b, quiet){
   a.partner = b.id; b.partner = a.id;
   bondAdd(a, b, 120);
-  log(`${a.name} and ${b.name} take up with each other.`, 'good');
+  if(!quiet) log(`${a.name} and ${b.name} take up with each other.`, 'good');
 }
 /* a fighter beside their sweetheart fights a little harder */
 function sweetheart(c){
@@ -20528,10 +20621,14 @@ function squadCouple(){
   for(const a of sq){ if(a.spouse){ const b = sq.find(o => o.id===a.spouse); if(b) return [a, b]; } }
   return null;
 }
-function marry(a, b){
+function marry(a, b, quiet){
   a.spouse = b.id; b.spouse = a.id;
   a.partner = 0; b.partner = 0;
   bondAdd(a, b, 100);
+  /* THE OUTSIDER CLAUSE IS ABOUT YOU, and it always was — the guard below reads "one of them is
+     a player body", which is what keeps a town wedding between two townsfolk from quietly
+     conscripting one of them into your squad. It is load-bearing now that the towns marry on
+     their own, so it is worth saying out loud rather than leaving to be re-derived. */
   const outsider = [a, b].find(c => c.faction !== 'player');
   if(outsider && (a.faction === 'player' || b.faction === 'player')){
     outsider.faction = 'player'; outsider.civ = false; outsider.homeTown = null;
@@ -20540,10 +20637,26 @@ function marry(a, b){
     refreshSquadBar();
   }
   const consort = a.lich || b.lich;
-  log(consort
+  if(!quiet) log(consort
     ? `${a.name} and ${b.name} are wed. One of them will never age. Both of them know it.`
     : `${a.name} and ${b.name} are wed under the dust.`, 'good');
 }   /* a year of a life passes in fifteen days of dust */
+/* ---------- HOW MANY GROWN PEOPLE A TOWN HAS ROOM FOR ----------
+   The old ceiling counted EVERY body with `civ` set, children included, against
+   `def.civs + 4` — and worldgen seeds four children into every town, so every town on the map
+   started at or above its own ceiling and the only thing that ever made a townsperson could
+   never fire. Measured across `base.html`, `pr28.html` and `prebatch.html`: identical, so this
+   is old, not a regression.
+   Counting ADULTS fixes it and says something truer besides: a town is full when its grown
+   people fill it, and the children it is raising are the reason it will still be full in ten
+   years. Used as a brake on conception rather than a shut gate — a couple in a crowded town
+   simply waits, they do not become infertile. */
+function townAdults(t){
+  let n = 0;
+  for(const c of chars) if(c.civ && c.homeTown === t && c.state !== 'dead' && c.age >= 16) n++;
+  return n;
+}
+function townRoom(t){ return t ? (t.def.civs || 4) + 4 : 0; }
 /* can this one actually carry the order right now? */
 function castReady(c, key){
   const sp = SPELLS[key];
@@ -23976,7 +24089,7 @@ function update(dt){
           if(roll < 0.55){
             /* carry the legacy — or take up whatever trade calls */
             c.trade = parentTrade && rnd() < 0.7 ? parentTrade
-              : pick(['farmer','crafter','brewer','hunter','smith','fisher','miner']);
+              : pick(['farmer','crafter','brewer','hunter','smith','fisher','miner','salter']);
             c.tradeSkill = ri(4, 10) + (c.trade === parentTrade ? 8 : 0);
           } else if(roll < 0.75){
             /* take up the spear */
@@ -24068,6 +24181,24 @@ function update(dt){
           kid.sub = c.sub || null;
           kid.homeTown = c.homeTown || null;
           if(c.civ) kid.civ = true;
+          /* ---------- AND WHOSE CHILD IT IS ----------
+             "Are they still properly giving birth and carrying on legacies?" The legacy half was
+             never real. The only place a child ever got a `legacyTrade` was the spontaneous town
+             spawn, which copies a string off a randomly-picked civ who is never linked back to
+             the child in any way — so "carrying on the family line" meant a townsperson you have
+             never met has the same job as a townsperson you have never met.
+             Two ids and a trade, taken off the people who actually made it. `mother` and
+             `father` are what make a line something you can follow; `legacyTrade` is what the
+             coming-of-age branch already reads at 0.7 to decide whether a child takes up the
+             bench their parent stood at. Her trade first because she is the one carrying it and
+             the one whose town it is; his if she has none. */
+          kid.mother = c.id;
+          kid.father = dad ? dad.id : 0;
+          kid.legacyTrade = c.trade || (dad && dad.trade) || null;
+          if(c.civ && !kid.goal){
+            kid.goal = kid.legacyTrade === 'smith' ? 'smithing' : kid.legacyTrade === 'farmer' ? 'farming'
+              : kid.legacyTrade === 'brewer' ? 'brewing' : null;
+          }
           /* ---------- WHAT IT IS BORN WITH ----------
              "possibly it being born with gifts inherited from parents, dual gifts, or possibly
               even with high stats under rare occasions, like being born under a blood moon."
@@ -24147,6 +24278,11 @@ function update(dt){
        THE LIMITS STAY, and one of them had to move. A house is still full at three and still
        wants a season between children — but a couple with no house had no tally to hang that on,
        so the season now rides the MOTHER as well, wherever she lives. */
+    /* how crowded each town is, counted ONCE rather than per couple — see `townAdults`. The
+       conception loop below runs over every married body in the world and this would otherwise
+       be a full sweep of `chars` inside it. */
+    const roomLeft = new Map();
+    for(const t of towns) roomLeft.set(t, townRoom(t) - townAdults(t));
     for(const a of chars){
       if(!a.spouse || a.pregnant || a.state==='dead' || a.undead) continue;
       const b = chars.find(o => o.id === a.spouse && o.state !== 'dead');
@@ -24154,13 +24290,24 @@ function update(dt){
       if(a.id > b.id) continue;   /* roll each pair once */
       if(!pairBreeds(a, b)) continue;   /* a succubus is the exception — see pairBreeds */
       if(a.age < 18 || a.age > 50 || b.age < 18 || b.age > 50) continue;
+      /* ---------- A FULL TOWN IS A BRAKE, NOT A WALL ----------
+         Only the towns have a ceiling, because only a town has a fixed number of roofs. It slows
+         a crowded town down rather than sterilising it — `roomLeft` going negative is what an
+         overfull town looks like, and the couple simply waits for a year in which it is not. */
+      if(a.civ && a.homeTown && (roomLeft.get(a.homeTown) ?? 99) <= 0) continue;
       /* TOGETHER is the one thing that is never optional. A homestead they are both standing in
-         satisfies it by construction, and a pair on opposite sides of the map does not. */
-      if(dist(a.x, a.y, b.x, b.y) > 8) continue;
-      if(day - Math.max(a.lastBorn ?? -999, b.lastBorn ?? -999) < 90) continue;
+         satisfies it by construction, and a pair on opposite sides of the map does not.
+         A MARRIED PAIR WHO SHARE A TOWN ARE TOGETHER by construction too, and that had to be
+         said out loud: townsfolk wander their own streets all day and Ironscar's wall has a
+         radius of thirty-seven, so two people who live in the same house can easily be twenty
+         tiles apart at midnight. Left as a raw distance, every town marriage in the world would
+         have been childless for reasons of municipal planning. */
+      const sameTown = a.civ && b.civ && a.homeTown && a.homeTown === b.homeTown;
+      if(!sameTown && dist(a.x, a.y, b.x, b.y) > 8) continue;
+      if(day - Math.max(a.lastBorn ?? -999, b.lastBorn ?? -999) < BIRTH_GAP) continue;
       let rate = 0.02;
       const h = (a.faction === 'player' || b.faction === 'player') ? homeOf(a, b) : null;
-      if(h && (h.kids || 0) < 3 && day - (h.bornDay || -999) >= 90) rate = 0.12;
+      if(h && (h.kids || 0) < 3 && day - (h.bornDay || -999) >= BIRTH_GAP) rate = 0.12;
       if(rnd() < rate){
         /* SHE CARRIES IT. This used to be a coin toss between the two of them, which put half
            the pregnancies in the game on a husband. Where the pair gives no answer — two wives,
@@ -24169,19 +24316,71 @@ function update(dt){
         mum.pregnant = GESTATION;
       }
     }
-    /* new lives: town couples raise children */
+    /* ---------- AND THE TOWNS COURT THEIR OWN ----------
+       Audited and reported: ZERO bodies anywhere in the world had a spouse, ever. Not a
+       regression — measured identical on `base.html`, `pr28.html` and `prebatch.html` — but a
+       hole with three walls. `courtable` requires BOTH sides be `faction==='player'`;
+       `courtableNpc` requires the initiator be; and the bond tick that feeds `marriageable`'s
+       threshold of 180 filters to player bodies as well. So no two townspeople could accrue a
+       bond, take up with each other, or wed, which meant the conception loop above — which opens
+       `if(!a.spouse) continue` — had never once run for a townsperson in the history of the file.
+       Everything they needed already existed and nothing connected it. This is the wire.
+       IT IS DELIBERATELY NOT ALL-PAIRS. Nineteen hundred bodies and a hundred and ninety civs
+       would be a hundred and eighty thousand distance checks a night for a coin flip. Each
+       unwed adult meets ONE person a day — the one they are already courting if there is one,
+       otherwise somebody else out on the same street — which is O(n) and reads like a town.
+       Everything it calls is machinery that was already here: `bondAdd`, `court`, `marriageable`
+       and `marry`, all of them id-keyed and faction-agnostic in storage. Only the telling is
+       new, and it is silenced — see the `quiet` flag on `court` and `marry`. */
     for(const t of towns){
-      const civsHere = chars.filter(c => c.civ && c.homeTown===t && c.state!=='dead');
-      if(civsHere.length >= 2 && civsHere.length < (t.def.civs||4) + 4 && rnd() < 0.05){
-        const parent = pick(civsHere.filter(c => c.trade)) || pick(civsHere);
+      if(t.sacked > 0) continue;   /* nobody courts in a burnt town */
+      const single = [];
+      for(const c of chars){
+        if(!c.civ || c.homeTown !== t || c.state !== 'ok' || c.spouse) continue;
+        if(c.age < 18 || c.age > 55 || c.captive || c.captured || !hasMind(c)) continue;
+        single.push(c);
+      }
+      if(single.length < 2) continue;
+      const met = new Set();
+      for(const a of single){
+        let b = null;
+        if(a.partner){ b = single.find(o => o.id === a.partner); }
+        else {
+          b = single[ri(0, single.length - 1)];
+          if(b === a || (b && b.partner)) b = null;
+        }
+        if(!b) continue;
+        const key = bondKey(a, b);
+        if(met.has(key)) continue;   /* each pair gets one evening, not two */
+        met.add(key);
+        bondAdd(a, b, ri(6, 20));
+        if(!a.partner && !b.partner && bondOf(a, b) >= 70) court(a, b, true);
+        else if(a.partner === b.id && marriageable(a, b)) marry(a, b, true);
+      }
+    }
+    /* ---------- AND A FOUNDLING, WHEN A TOWN HAS LOST TOO MANY ----------
+       This used to be the ONLY source of new townsfolk, and it could not fire either: the gate
+       counted every `civ` body against `def.civs + 4`, and worldgen seeds four children into
+       every town, so every town in the world began at or above its own ceiling.
+       It is not the main source any more — the couples above are — so it goes back to what it
+       reads like: a town that has been emptied by plague, a sacking or a bad war takes in
+       whoever turns up, and one that is merely full does not. Gated on ADULTS against the
+       town's designed size, at a quarter of the old rate. */
+    for(const t of towns){
+      const grown = townAdults(t);
+      if(grown >= 2 && grown < (t.def.civs || 4) && rnd() < 0.05){
+        const parent = pick(chars.filter(c => c.civ && c.homeTown===t && c.state!=='dead' && c.trade)) || null;
         const p = findOpenNear(t.x + ri(-4,4), t.y + ri(-4,4), 4);
         const kid = makeChar(pickName(), 'town', p.x, p.y,
           {atk:1, def:2, tough:2, ath:5, age: ri(6, 10)});
         kid.civ = true; kid.homeTown = t; kid.civT = rnd()*10;
         kid.wasChild = true;
-        kid.legacyTrade = parent.trade || null;
-        kid.goal = parent.trade === 'smith' ? 'smithing' : parent.trade === 'farmer' ? 'farming'
-          : parent.trade === 'brewer' ? 'brewing' : null;
+        /* NO `mother` OR `father`. A foundling has none, and writing a fake one would make the
+           kin records a liar in the one place the player might go looking. They still get a
+           trade to grow into — somebody in the town takes them on. */
+        kid.legacyTrade = parent ? (parent.trade || null) : null;
+        kid.goal = kid.legacyTrade === 'smith' ? 'smithing' : kid.legacyTrade === 'farmer' ? 'farming'
+          : kid.legacyTrade === 'brewer' ? 'brewing' : null;
         chars.push(kid);
       }
     }
@@ -24215,13 +24414,57 @@ function update(dt){
         for(const bk of ['wood','stone','mats']){
           if((st[bk]||0) < floor && rnd() < (merc ? 0.85 : 0.7)) put(bk, ri(1, merc ? 4 : 3));
         }
-        for(const bk of ['bandage','fabric','copper','meat','fruit']){ if((st[bk]||0) < 5 && rnd() < 0.35) put(bk, 1); }
+        /* HIDE JOINS THE FLOOR. Every other material a crafter reaches for is on this list and
+           hide was not, so it was the one that could sit at absolute zero — and at zero the
+           fabric line cannot fire either, which is how one empty shelf took out two trades. */
+        for(const bk of ['bandage','fabric','copper','meat','fruit','hide']){ if((st[bk]||0) < 5 && rnd() < 0.35) put(bk, 1); }
         /* SALVAGE, NOT PRODUCTION. A scavenger walks in with something nobody can identify and
            the occult dealer can. It is slow on purpose and it stops at a hard ceiling — the
            Aether Lance is meant to be a weapon you ration, so the shelf must never become a
            magazine you can simply buy out. Six cells at Dustport, four elsewhere, and roughly
            one new one a week per dealer. */
         if(hasOccultDealer(t) && (st.aether_cell || 0) < (t.def.key === 'dustport' ? 6 : 4) && rnd() < 0.14) put('aether_cell', 1);
+      }
+    }
+    /* ---------- AND THEN THEY EAT ----------
+       The audit asked what the craft and trade system was actually doing, and the answer for
+       food was: piling up. Every trade in `workShift` PUTS and nothing anywhere TAKES — the
+       brewer draws fruit for rum and that is the only non-player mouth in the world. Twenty-four
+       measured days took town meat from 55 to 662 and rum from 54 to 586, which is not an
+       economy, it is a warehouse.
+       So a town eats, once a day, scaled to the bodies living in it. Note where this sits: OUTSIDE
+       the production loop above, which opens `if(t.plague > 0 || t.sacked > 0) continue`. Work
+       stops under plague and sacking; hunger does not. That is the whole reason a siege is a
+       siege, and it costs nothing extra to say so here.
+       WHAT SHORTFALL COSTS IS ORDER, NOT LIVES. Starving townsfolk to death is a much bigger
+       change than the audit asked for, and a famine that quietly deletes a town is a bug you
+       find forty days later. Unrest is legible and it is already wired to everything — petitions,
+       rebellion, the compact. The bite is floored at 15 so famine alone can never walk a town to
+       the zero that `fallToTheDark` watches for; it takes a war or a sacking on top, which is
+       exactly when a starving town SHOULD be the thing that tips. */
+    for(const t of towns){
+      if(!t.stock) continue;
+      const mouths = chars.reduce((n, c) => n + (c.civ && c.homeTown === t && c.state !== 'dead' && !c.undead ? 1 : 0), 0);
+      if(mouths < 1) continue;
+      /* the fractional part rides a roll rather than rounding away, so a hamlet of six eats six
+         tenths of a crate a day instead of eating nothing at all */
+      const want = TOWN_FOOD_PER_HEAD * mouths;
+      let need = Math.floor(want) + (rnd() < (want % 1) ? 1 : 0);
+      const st2 = t.stock;
+      let short = 0;
+      while(need > 0){
+        /* draw off the FULLEST shelf each time. Eating the list in order would pin one good at
+           zero while the other two mounted, and a shelf at zero is what stops the crafter's
+           fabric line — the audit's other finding. Spreading the draw keeps all three honest. */
+        let best = null, bn = 0;
+        for(const fk of ['meat','fish','fruit']){ const have = st2[fk] || 0; if(have > bn){ bn = have; best = fk; } }
+        if(!best){ short = need; break; }
+        st2[best] = bn - 1;
+        need--;
+      }
+      if(short > 0){
+        const bite = Math.min(2.5, 0.4 + short * 0.12);
+        t.order = Math.max(15, clamp((t.order ?? 55) - bite, 0, 100));
       }
     }
     /* ---- the world turns: camps, wars, misfortunes ---- */
@@ -35118,6 +35361,17 @@ function refreshCharPanel(){
       relTxt = bd >= 250 ? ` · devoted to ${other.name}` : bd >= 100 ? ` · close with ${other.name}` : '';
     }
   }
+  /* ---------- AND THE LINE, WHERE THERE IS ONE ----------
+     A legacy that nothing displays is a field in a save file. Newborns carry real parent ids
+     now, so a body you click on can say whose it is — and after sixteen years of dust, whether
+     either of them is still standing. */
+  if(c.mother || c.father){
+    const kinNames = [c.mother, c.father].filter(Boolean)
+      .map(id => chars.find(o => o.id === id))
+      .filter(Boolean)
+      .map(o => o.name + (o.state === 'dead' ? ' (gone)' : ''));
+    if(kinNames.length) relTxt += ' · child of ' + kinNames.join(' and ');
+  }
   if(c.pregnant) relTxt += c.overdue ? ' · DUE — needs a bed' : ' · expecting';
   if(c.moonborn) relTxt += ' · moonborn';
   if(c.grief) relTxt += ' · grieving';
@@ -37088,7 +37342,8 @@ function openVendor(v){
     log(`${v.town.name} wants nothing to do with you. The barkeep will still take payoff money.`, 'bad');
     return;
   }
-  v.bubble = {text: v.vt==='robotics' ? 'Limbs, fresh off the bench.' : pick(['Welcome.','Cats up front.','Looking to trade?']), t:3};
+  /* he no longer HAS limbs — he fits them, and he will buy yours. The bubble said otherwise. */
+  v.bubble = {text: v.vt==='robotics' ? 'Bring me the limb. I will do the fitting.' : pick(['Welcome.','Cats up front.','Looking to trade?']), t:3};
   const town = v.town;
   openModal(`${v.name.toUpperCase()} — ${town.name}`, 'Buy left, sell right. Prices differ by town. Shift-click trades 10 at once.');
   const body = $('modalbody'); body.innerHTML = '';
@@ -37097,8 +37352,10 @@ function openVendor(v){
     /* the shelves show what the town's people have actually made */
     const cares = k => {
       const base = ITEMS[k].tierOf || k;
-      return VENDOR_STOCK[v.vt].includes(base);
+      return vendorSells(v.vt, base);
     };
+    /* what this counter will buy off you, which is a wider net than what it stocks */
+    const buys = k => vendorTakes(v.vt, ITEMS[k].tierOf || k);
     /* ---------- WHO IS DOING THE TALKING, AND WHAT IT IS WORTH ----------
        This used to be two flags: a scaleborn at the counter put prices UP by a flat 15%, a
        Fallen put them DOWN by a flat 10%, and everybody else in the game paid list. Two races
@@ -37134,7 +37391,7 @@ function openVendor(v){
     /* things you own that this vendor would buy, even if out of stock here — stash + squad packs */
     const ownedKeys = new Set(Object.keys(stash));
     for(const o of chars){ if(o.faction==='player' && o.state!=='dead') for(const ik of Object.keys(o.inv||{})) ownedKeys.add(ik); }
-    for(const k of ownedKeys){ if(ownPool(k) > 0 && cares(k) && !keys.includes(k)) keys.push(k); }
+    for(const k of ownedKeys){ if(ownPool(k) > 0 && buys(k) && !keys.includes(k)) keys.push(k); }
     keys.sort((a,b) => ITEMS[a].name.localeCompare(ITEMS[b].name));
     if(!keys.length){ body.innerHTML = '<div style="color:var(--dust)">Shelves are bare. Someone has to make it before you can buy it.</div>'; }
     for(const k of keys){
@@ -39450,10 +39707,10 @@ function tradePost(c, t){
       if(q){ c._post = {x: q.x, y: q.y, kind: 'seam', near: 4}; return c._post; }
     }
   }
-  if(c.trade === 'hunter' || c.trade === 'farmer' || c.trade === 'fisher'){
+  if(c.trade === 'hunter' || c.trade === 'farmer' || c.trade === 'fisher' || c.trade === 'salter'){
     /* past the fences, on the town's own bearing — a fixed spot per person so the same
        hunter walks out to the same piece of ground every morning, which is what a beat is */
-    const r = (t.clearR || 15) + (c.trade === 'hunter' ? 6 : 2);
+    const r = (t.clearR || 15) + (c.trade === 'hunter' ? 6 : 2);   /* the pans are just past the fence, like the rows and the nets */
     const a = hash2(c.id * 13 + 5, c.id * 7 + 3) * Math.PI * 2;
     const q = findOpenNear(Math.round(t.x + Math.cos(a) * r), Math.round(t.y + Math.sin(a) * r), 6);
     if(q){ c._post = {x: q.x, y: q.y, kind: 'field', near: 4}; return c._post; }
@@ -39485,7 +39742,33 @@ function workShift(t, c){
   switch(c.trade){
     case 'farmer': put('fruit', 1 + Math.floor(sk/12)); break;
     case 'fisher': put('fish', 1 + Math.floor(sk/14)); break;
-    case 'hunter': put('meat', 1 + Math.floor(sk/16)); if(rnd()<0.5) put('hide'); if(rnd()<0.55) put('wood', 1 + Math.floor(sk/22)); break;
+    /* ---------- THE FLATS, WORKED BY HAND ----------
+       Nothing in the world produced salt, water or brine. The player can rake a pan and draw a
+       well since last week's work, and the towns could not — so Saltmere's salt was a worldgen
+       pile that only ever went down, in the town whose whole identity is the stuff.
+       A salter rakes a pan and carries brine up off the shore. Salt is the slower half because
+       a pan takes days of sun; brine is just a yoke and a walk, so it comes in quantity. The
+       water is what drips out of a covered pan overnight and it is meant to be a trickle — the
+       desalination plant is the answer to thirsty crafting at scale, and a man with a rake must
+       not quietly become one. */
+    case 'salter': {
+      put('brine', 1 + Math.floor(sk/14));
+      if(rnd() < 0.55) put('salt', 1 + Math.floor(sk/22));
+      if(rnd() < 0.20) put('water', 1);
+      break;
+    }
+    /* ---------- AND THE HIDE OFF IT, WHICH WAS THE ONE OUTPUT NOBODY GOT BETTER AT ----------
+       `put('hide')` was a flat 1 at p=0.50 and the only yield in this whole switch that never
+       reads `tradeSkill` — a hunter of forty years took the same skin off a beast as one on his
+       first week. Set against the crafter, who consumes ~0.59 a shift (0.18 for a cloak plus
+       0.82x0.5 for cloth) at ONE crafter per hunter in the default rota, the leather trade was
+       structurally negative before any roll: measured, hide went 49 → 4 over 24 days and took
+       fabric down with it, because the only thing that MAKES fabric needs a hide.
+       It scales now, like meat and wood on either side of it, and the base rate rises to cover
+       the gap. THE NUMBERS ARE MEASURED, NOT GUESSED, and it took two passes: 0.80 per shift put
+       hide at +143 over twenty-four days, which is the same warehouse problem seen from the
+       other side, so it came back to 0.65 and the leather trade sits a little above level. */
+    case 'hunter': put('meat', 1 + Math.floor(sk/16)); if(rnd()<0.65) put('hide', 1 + Math.floor(sk/26)); if(rnd()<0.55) put('wood', 1 + Math.floor(sk/22)); break;
     /* ---------- WHAT THE GROUND HAS ----------
        Every miner in the world brought up copper, and every smith spent copper, so no shelf
        anywhere ever held iron ore, coal or bar iron — which made the endgame door, priced in
@@ -39511,7 +39794,22 @@ function workShift(t, c){
     case 'crafter':
       /* a road cloak is four cloth and a hide, and a crafter with a full basket makes one
          rather than another bandage nobody is buying */
-      if(rnd() < 0.18 && (st.fabric||0) >= 4 && take('fabric', 4) && take('hide')){ put(tierKey('k_road', rollQuality(sk) || 'c')); }
+      /* ---------- CHECK BEFORE YOU SPEND ----------
+         This read `take('fabric', 4) && take('hide')`, and `&&` short-circuits LEFT TO RIGHT —
+         so on a shelf with cloth and no hide the four fabric were already gone by the time the
+         hide test failed, and the `if` was false. Execution then fell into the chain below,
+         `take('hide')` failed a second time, and `else if(take('fabric'))` burnt a FIFTH fabric
+         into a bandage. Five cloth for nothing, every time a crafter reached for a cloak the
+         town could not supply.
+         It is most of why fabric fell 58 → 32 over 24 days even after hide hit zero: the only
+         thing that PRODUCES fabric is the next line down, which needs a hide, so once hide is
+         out the shelf can only drain. Measured with `_census.js`.
+         The `brewer` case above already does this correctly — it asks `take('fruit', 3)` as the
+         only spend in its branch. Nothing here is spent until both are known to be there. */
+      if(rnd() < 0.18 && (st.fabric||0) >= 4 && (st.hide||0) >= 1){
+        take('fabric', 4); take('hide');
+        put(tierKey('k_road', rollQuality(sk) || 'c'));
+      }
       else if(rnd()<0.5 && take('hide')){ put('fabric', 2); }
       else if(rnd() < 0.12 && take('wood')){ put('t_charm'); }
       else if(take('fabric')){ put('bandage', 1 + (sk>20?1:0)); }
@@ -39566,6 +39864,7 @@ const TRADE_TALK = {
   fisher:  ['*the net comes up*', 'Nets came up light again.', 'Water gives nothing away for free.'],
   hunter:  ['*very still, watching the treeline*', 'Something big went through here.', 'Track first. Shoot after.'],
   miner:   ['*the pick, into the seam*', 'Vein runs deeper than they told us.', 'Ore or nothing, and mostly nothing.'],
+  salter:  ['*the rake goes down the pan*', 'Three days of sun and it comes up white.', 'Brine keeps what the sun would take.'],
 };
 /* ---------- what the world says, and what it actually knows ----------
    Everyone says 'the Fracture'. Commoners say 'magic'; the lettered say 'alchemy'.
@@ -41306,6 +41605,8 @@ function snapshot(){
     isLeader: c.isLeader ?? -1, captain: !!c.captain, omni: !!c.omni,
     npcNecro: !!c.npcNecro, roamNecro: !!c.roamNecro, rebel: !!c.rebel,
     age: c.age, goal: c.goal, wasChild: !!c.wasChild, legacyTrade: c.legacyTrade||null,
+    /* a line you cannot follow after a reload is not a line */
+    mother: c.mother||0, father: c.father||0,
     race: c.race||'human', sub: c.sub||null, construct: !!c.construct, sex: c.sex||'m', spouse: c.spouse||0, partner: c.partner||0, grief: c.grief||0, pregnant: c.pregnant||0, lastBorn: c.lastBorn ?? null, overdue: c.overdue||0, giftTwo: c.giftTwo||null, moonborn: !!c.moonborn, strongborn: !!c.strongborn,
     pilgrimDestI: c.pilgrimage ? towns.indexOf(c.pilgrimage.dest) : -1,
   });
@@ -41830,6 +42131,7 @@ function restore(d){
     c.npcNecro = !!s.npcNecro; c.roamNecro = !!s.roamNecro; c.rebel = !!s.rebel;
     c.age = s.age ?? ri(18,38); c.goal = s.goal || null;
     c.wasChild = !!s.wasChild; c.legacyTrade = s.legacyTrade || null;
+    c.mother = s.mother || 0; c.father = s.father || 0;
     /* SCALEBORN WAS A RACE. Every save made before the rework has bodies carrying
        `race:'scaleborn'`, and there is no version of this where those load as humans. */
     fixRace(s);
