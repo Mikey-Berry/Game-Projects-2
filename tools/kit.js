@@ -37,7 +37,9 @@ const OVERRIDE = process.argv[4] ? JSON.parse(process.argv[4]) : null;
   const p = await b.newPage({ viewport: { width: 1400, height: 720 }, deviceScaleFactor: 2 });
   const errs = [];
   p.on('pageerror', e => errs.push(e.message.slice(0, 200)));
-  await p.goto('file://' + gamePath(process.argv[3]), { waitUntil: 'load' });
+  /* same reason as the capture below: three megabytes of game over the default thirty seconds
+     is ample idle and not ample beside three other harnesses */
+  await p.goto('file://' + gamePath(process.argv[3]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   /* START AND STOP IN THE SAME BREATH. A click followed by a wait lets the world run for
      however many frames the machine manages, which is not a fixed number and drops when a
@@ -143,7 +145,15 @@ const OVERRIDE = process.argv[4] ? JSON.parse(process.argv[4]) : null;
     /* A helmet is judged at head scale. The camera cannot get closer without losing the row,
        so the SHOT is cropped rather than the camera moved — `clip` is in CSS pixels of the
        viewport, and it keeps every body in the same frame while filling it with heads. */
-    await p.screenshot(cam.clip ? { path: out, clip: cam.clip } : { path: out });
+    /* ---------- AND THE SHOT ITSELF NEEDS ROOM ON A BUSY MACHINE ----------
+       This file already knows the box gets loaded — the note by the START click says so in as
+       many words — but the fix there was to the SIM and the capture was left on Playwright's
+       default thirty seconds. There is no GPU here, so a 1400x720 viewport at deviceScaleFactor
+       2 is composited in software, and in the full suite that exceeded thirty seconds and threw:
+       `page.screenshot: Timeout 30000ms exceeded ... waiting for fonts to load ... fonts loaded`.
+       Nothing was wrong with the geometry it was photographing. Reproduced by running this file
+       against a machine already busy with a four-way suite. */
+    await p.screenshot(Object.assign({ path: out, timeout: 120000 }, cam.clip ? { clip: cam.clip } : {}));
     console.log(`  ${name.padEnd(18)} ${built}/${info} bodies` + (built < info ? '  *** GEOMETRY MISSING ***' : ''));
   };
 
