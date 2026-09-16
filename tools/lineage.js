@@ -207,12 +207,25 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? `and at a homestead she delivers — ${born[0].name} — and the house takes the tally (kids ${home.kids})${losses ? `, after ${losses} that did not live` : ''}`
         : `!! THE HOMESTEAD DID NOT SERVE (born ${born.length}, pregnant ${w.pregnant}, house kids ${home.kids}, losses ${losses})`;
       /* AND THE SEASON RIDES HER NOW, because a couple with no house has no tally to hang it on */
+      /* ---------- AND IT ASKS THE GAME HOW LONG A SEASON IS ----------
+         This counted SIXTY nights, a number chosen because the gap was a hard 90. The gap is
+         `BIRTH_GAP` now — written in the calendar's own units, because a year here is SEVEN days
+         and 90 was thirteen years between one child and the next, the same units error that
+         `GESTATION` records four lines above it in the game file. The literal went red the day
+         the constant moved, which is a claim measuring a number it copied rather than the rule
+         it is about.
+         `BIRTH_GAP` is a top-level `const`, which is NOT a property of `window` — but it does
+         resolve as a bare identifier in here, the same way `larder.js` reads `VENDOR_STOCK`.
+         The blocked span is exact: the conception loop refuses while `day - lastBorn < BIRTH_GAP`,
+         and each midnight advances `day` by one, so nights 1 through BIRTH_GAP-1 are the season
+         and the gate opens on the BIRTH_GAP-th. Asked over exactly that span, no slack either way. */
       const lb = w.lastBorn;
+      const season = (typeof BIRTH_GAP === 'number' ? BIRTH_GAP : 90) - 1;
       let again = 0;
-      for (let i = 0; i < 60; i++) { midnight(); if (w.pregnant) { again++; break; } }
-      R.aSeasonBetweenThem = again ? `!! SHE CONCEIVED AGAIN INSIDE THE SEASON (night ${again} of 60, lastBorn ${lb})`
+      for (let i = 0; i < season; i++) { midnight(); if (w.pregnant) { again = i + 1; break; } }
+      R.aSeasonBetweenThem = again ? `!! SHE CONCEIVED AGAIN INSIDE THE SEASON (night ${again} of ${season}, lastBorn ${lb})`
         : (lb === null || lb === undefined) ? '!! NOTHING WAS WRITTEN ON THE MOTHER — the season is still hung on the house, and a couple with no house has no tally at all'
-        : 'and a season is kept on the mother herself — sixty nights after the birth she is not carrying again';
+        : `and a season is kept on the mother herself — ${season} nights after the birth she is not carrying again`;
       pBuilds.splice(pBuilds.indexOf(home), 1);
       wipe();
     }

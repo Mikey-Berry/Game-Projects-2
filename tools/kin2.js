@@ -209,11 +209,23 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       pBuilds.push(h2);
       /* a mother who has just given birth — THIS is the hard stop now, and it rides her rather
          than the building, because a couple on the road has no building to hang it on */
-      /* SIXTY, BECAUSE THE SEASON IS NINETY. Asked over a hundred nights this window runs out
-         the far side of the cooldown and counts the conceptions that are supposed to happen
-         after it — three of them, which is the rule working and the probe misreading it. */
+      /* ---------- IT ASKS THE GAME HOW LONG A SEASON IS, RATHER THAN REMEMBERING ----------
+         This read SIXTY, and the comment beside it said why: "SIXTY, BECAUSE THE SEASON IS
+         NINETY" — asked over a hundred nights the window runs out the far side of the cooldown
+         and counts the conceptions that are SUPPOSED to happen after it, which is the rule
+         working and the probe misreading it. That reasoning was right and the number was a copy.
+         The gap is `BIRTH_GAP` now, written in the calendar's own units: a year here is SEVEN
+         days, so the old hard 90 was thirteen years between one child and the next — the same
+         units error `GESTATION` records in the game file, made by the same hand. The literal
+         went red the day the constant moved, which is exactly what a copied number does.
+         Read from the game instead. `BIRTH_GAP` is a top-level `const` and so is not a property
+         of `window`, but it resolves as a bare identifier in here the way `larder.js` reads
+         `VENDOR_STOCK`. The span is exact rather than padded: conception is refused while
+         `day - lastBorn < BIRTH_GAP` and each roll-over advances `day` by one, so nights 1
+         through BIRTH_GAP-1 are the season and the gate opens on the BIRTH_GAP-th. */
       h2.kids = 0; h2.bornDay = -999; clear(); w.lastBorn = day;
-      const whenFresh = window40(60);
+      const season = (typeof BIRTH_GAP === 'number' ? BIRTH_GAP : 90) - 1;
+      const whenFresh = window40(season);
       /* and the control: none of it set, so the rule is not simply off */
       h2.kids = 0; h2.bornDay = -999; clear();
       const whenFree = window40();
@@ -221,8 +233,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? `and a full house stops being worth anything — ${whenFull} in a hundred nights against ${whenFree} with room, which is what the same couple manage with no house at all (${whenNone}). A homestead is not a barracks.`
         : `!! A FULL HOUSE IS STILL AS GOOD AS AN EMPTY ONE (full ${whenFull}, none ${whenNone}, free ${whenFree})`;
       R.andASeasonPassesBetween = whenFresh === 0
-        ? 'and a season has to pass after each one — sixty nights of nothing, kept on the mother so it holds on the road too'
-        : `!! ${whenFresh} PREGNANCIES INSIDE THE SEASON`;
+        ? `and a season has to pass after each one — ${season} nights of nothing, kept on the mother so it holds on the road too`
+        : `!! ${whenFresh} PREGNANCIES INSIDE THE SEASON OF ${season} NIGHTS`;
       R.andTheyComeOneAtATime = whenFree > 0
         ? `while a house with room and no recent birth conceives ${whenFree} times in a hundred nights — the limits are limits, not an off switch`
         : '!! AN EMPTY HOUSE OFF COOLDOWN CONCEIVED NOTHING — THE RULE IS JUST OFF';
