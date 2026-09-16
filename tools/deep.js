@@ -311,13 +311,34 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     if (typeof stonewakeTick !== 'function' || !stonewakes.length) return null;
     const c = stonewakes[0];
     c.provoked = false;
-    /* aim it at a patch of solid rock and let it cut */
-    let tx = c.x, ty = c.y, found = false;
-    for (let r = 6; r < 40 && !found; r += 2) for (let k = 0; k < 12 && !found; k++) {
+    const sx0b = Math.round(c.x), sy0b = Math.round(c.y);
+    const laneOf = (tx2, ty2) => {
+      const out = [], L = Math.hypot(tx2 - sx0b, ty2 - sy0b) || 1;
+      for (let t = 0; t <= L; t += 1) for (let o = -3; o <= 3; o++) {
+        out.push([Math.round(sx0b + (tx2 - sx0b) * (t / L) - (ty2 - sy0b) / L * o),
+                  Math.round(sy0b + (ty2 - sy0b) * (t / L) + (tx2 - sx0b) / L * o)]);
+      }
+      return out;
+    };
+    const solidIn = (ln) => ln.filter(([px, py]) => isBlocked(px + 0.5, py + 0.5, -1)).length;
+    /* ---------- AIM IT DOWN THE STONIEST CORRIDOR, NOT AT THE NEAREST STONE ----------
+       This took the FIRST blocked tile the spiral found, which is usually a thin wall with open
+       cavern behind it. The corridor that came back held ten blocked tiles out of forty-two —
+       mostly air — and the claim then asked for a 40% reduction in a denominator of ten. The
+       borer did its job (fourteen tiles of rock opened, fourteen off its budget) and cleared
+       three of the ten in the sampled lane, and the claim called it a large animal.
+       That is the small-denominator fault this suite has been bitten by before: the note on the
+       fast-forward fidelity claim says a ratio with a denominator near zero is not a test.
+       So every candidate is scored by how much rock actually lies in the lane toward it, and
+       the stoniest wins — which is the corridor the question is worth asking about. */
+    let tx = c.x, ty = c.y, found = false, bestN = -1;
+    for (let r = 6; r < 40; r += 2) for (let k = 0; k < 12; k++) {
       const ang = (k / 12) * Math.PI * 2;
       const qx = Math.round(c.x + Math.cos(ang) * r), qy = Math.round(c.y + Math.sin(ang) * r);
       if (qx < 5 || qy < 5 || qx > W - 6 || qy > H - 6) continue;
-      if (isBlocked(qx + 0.5, qy + 0.5, -1)) { tx = qx; ty = qy; found = true; }
+      if (!isBlocked(qx + 0.5, qy + 0.5, -1)) continue;
+      const n2 = solidIn(laneOf(qx, qy));
+      if (n2 > bestN) { bestN = n2; tx = qx; ty = qy; found = true; }
     }
     if (!found) return null;
     /* ---------- A FIXED PATCH, NOT THE GROUND ROUND A MOVING BODY ----------
@@ -325,15 +346,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        borer MOVES, so it reported the rock going UP (48 to 68) while it was busily cutting
        through it. It had simply walked somewhere stonier. Measure the corridor it was aimed
        down, which is the thing the claim is actually about. */
-    const sx0 = Math.round(c.x), sy0 = Math.round(c.y);
-    const lane = [];
-    { const L = Math.hypot(tx - sx0, ty - sy0) || 1;
-      for (let t = 0; t <= L; t += 1) for (let o = -3; o <= 3; o++) {
-        const px = Math.round(sx0 + (tx - sx0) * (t / L) - (ty - sy0) / L * o);
-        const py = Math.round(sy0 + (ty - sy0) * (t / L) + (tx - sx0) / L * o);
-        lane.push([px, py]);
-      } }
-    const solidLane = () => lane.filter(([px, py]) => isBlocked(px + 0.5, py + 0.5, -1)).length;
+    const lane = laneOf(tx, ty);
+    const solidLane = () => solidIn(lane);
     c.moveTarget = { x: tx, y: ty };
     c.target = null; c.boreCd = 0;
     const s0 = solidLane(), t0 = undercroft.tiles;
@@ -346,10 +360,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     return { opened: undercroft.tiles - t0, solidBefore: s0, solidAfter: solidLane(), laneN: lane.length,
              bored: c.bored || 0, budgetLeft: c.boreLeft, blind: !!c.construct };
   });
+  /* TWO STATEMENTS, AND ONLY ONE OF THEM IS ALWAYS ANSWERABLE. That it OPENS ROCK is direct and
+     unconditional — `undercroft.tiles` goes up, and that is the whole difference between a borer
+     and a big animal. That it opens rock in a LANE is a statement about shape, and a lane can
+     only be measured down a corridor that had rock in it to begin with; where the deep offers
+     no such corridor the honest answer is that the question cannot be put, not that the borer
+     failed it. */
   R.theStonewakeMakesItsOwnDoor = !bore ? NOTHING
-    : (bore.opened > 10 && bore.solidAfter < bore.solidBefore * 0.6)
+    : bore.opened <= 10
+    ? `!! IT IS JUST A LARGE ANIMAL (${JSON.stringify(bore)})`
+    : bore.solidBefore < 18
+    ? `it opened ${bore.opened} tiles of solid rock off a ${bore.budgetLeft}-tile budget — but the stoniest corridor `
+      + `within forty tiles held only ${bore.solidBefore} blocked tiles, too few to say anything about the SHAPE of the cut`
+    : bore.solidAfter < bore.solidBefore * 0.6
     ? `it opened ${bore.opened} tiles of solid rock and drove a lane through it — ${bore.solidBefore} blocked tiles in the corridor it was aimed down, ${bore.solidAfter} afterwards`
-    : `!! IT IS JUST A LARGE ANIMAL (${JSON.stringify(bore)})`;
+    : `!! IT CUT A POCKET RATHER THAN A LANE (${JSON.stringify(bore)})`;
   R.andItIsBudgeted = !bore ? NOTHING : (bore.budgetLeft >= 0 && bore.budgetLeft < 900)
     ? `and it will not carve the storey into one room: ${bore.budgetLeft} tiles left of its ${900} lifetime`
     : `!! THE BORE IS UNBOUNDED (${JSON.stringify(bore)})`;
