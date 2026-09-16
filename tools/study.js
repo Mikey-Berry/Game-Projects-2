@@ -255,9 +255,32 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : '!! NO PROGRESS FOR THE BAR TO SHOW';
 
       craftTick(smith, dur * 0.6);
+      /* ---------- A 4% RUIN IS NOT A CLAIM ABOUT WHETHER CRAFTING WORKS ----------
+         This staged ONE item and required it to appear. `craftTick` rolls `rnd() < 0.04` for a
+         spoiled attempt on every non-gear craft, so the claim was a 4% coin flip on the seeded
+         stream — green wherever the stream happened to sit when it was written, and red the
+         moment anything upstream draws a different number of times. It went red exactly that
+         way: a batch that added draws to the day roll-over moved every roll after it.
+         The file already knows this. Twenty lines under that roll, in the game, is a note
+         recording the SAME failure: "Found by `orders2.js` after the worldgen stream moved and
+         the roll landed differently — three ordered, two in the stash, the book empty."
+         So the claim asks the question it is actually about — does finished work produce the
+         thing — and gives the bench up to five attempts to get one past a one-in-twenty-five
+         spoil. Five straight ruins is 1 in 390,000, which is a build constant rather than a
+         coin flip; and the ruins are counted and reported, so a bench that suddenly spoils
+         everything still shows up here rather than hiding behind the retry. */
+      let tries = 1;
+      while (campHas('mats') === mats0 && tries < 5) {
+        tries++;
+        smith.craftJob = { kind: 'workbench', out: 'mats', want: 1, done: 0, ruined: 0, made: {},
+                           t: 0, dur: craftDur(smith, 'workbench'), bx: gx + 1, by: gy + 1 };
+        craftTick(smith, dur * 1.1);
+      }
+      R._craftTries = `${tries} attempt${tries === 1 ? '' : 's'} at one Build Materials (4% of them spoil)`;
       R.theCraftLands = campHas('mats') > mats0 && stash.wood < wood0
         ? `and when the work is done the materials are made (${mats0} -> ${campHas('mats')}) and the wood is spent`
-        : `!! THE WORK FINISHED AND NOTHING WAS MADE (mats ${mats0} -> ${campHas('mats')})`;
+          + (tries > 1 ? `, after ${tries - 1} that spoiled` : '')
+        : `!! THE WORK FINISHED AND NOTHING WAS MADE IN ${tries} ATTEMPTS (mats ${mats0} -> ${campHas('mats')}, wood ${wood0} -> ${stash.wood})`;
       R.aSingleOrderEnds = !smith.craftJob
         ? 'a one-item order clears itself when it is done'
         : '!! THE JOB NEVER ENDS';

@@ -133,9 +133,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         day = due + 2;
         const n0 = pyres.length;
         questionTick();
-        R.andAnEscapeEndsIt = (v.state !== 'dead' && pyres.length === n0 && !v.heretic)
+        /* ---------- ASK ABOUT THIS BODY, NOT ABOUT THE WORLD'S TALLY ----------
+           This read `pyres.length === n0` — the total number of stakes standing anywhere. The
+           Order holds more than one suspect, and jumping the clock to `due + 2` runs the tick
+           for every one of them, so ANOTHER prisoner reaching their own day puts up a pyre and
+           the claim went red while the escapee walked away clean. It said so itself the whole
+           time: the failure printed `state ok`, which is the escapee alive and not burnt.
+           A stake carries the name of whoever was tied to it (`pyres.push({..., name: c.name})`),
+           and that is the thing this claim is about. Counting the world's fires to answer a
+           question about one man is the same mistake as reading a global to answer a local one,
+           and it only stayed green as long as nobody else in the world happened to be due. */
+        const mine = pyres.filter(q => q.name === v.name).length;
+        R.andAnEscapeEndsIt = (v.state !== 'dead' && mine === 0 && !v.heretic)
           ? 'and somebody walked out of the cell before the day is somebody the fire never gets'
-          : `!! THEY BURNED ANYWAY (state ${v.state}, pyres ${n0} → ${pyres.length})`;
+            + (pyres.length > n0 ? ` — the ${pyres.length - n0} that did burn that day were other prisoners, not ${v.name}` : '')
+          : `!! THEY BURNED ANYWAY (state ${v.state}, ${mine} stake${mine === 1 ? '' : 's'} in ${v.name}'s name, pyres ${n0} → ${pyres.length})`;
       }
     });
 

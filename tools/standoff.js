@@ -88,7 +88,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          1.02, 0.97 and 0.78 — the last being a wyrm, which is honestly harder to stay inside
          reach of — so 0.6 is clear of the floor and still catches the fault this file was
          written for, which measured EIGHT blood off a wyrm against 104 off a man. */
-      const REPS = 5;
+      const REPS = 7;   /* see the bar below: a median of five on this spread is not a measurement */
       const med = (a) => { const q = [...a].sort((x, y) => x - y); return q[q.length >> 1]; };
       const rows = [], landed = {};
       for (const big of [1, 1.15, 1.3, 1.6, 2.2]) {
@@ -118,11 +118,25 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       /* A RATE, NOT A YES/NO. The old build was not stalled, it was nearly stalled — 104 blood
          off an ordinary body and EIGHT off a wyrm over the same thirty seconds, the eight
          being the frames a shove happened to push him inside 1.0. "Did any blow land" is green
-         for that; "is this a fight" is not. Half the ordinary rate is the bar. */
-      const thin = [1.15, 1.3, 1.6, 2.2].filter(k => landed[k] < landed[1] * 0.6);
+         for that; "is this a fight" is not.
+         ---------- AND THE BAR WAS SET WITHOUT MEASURING THE SPREAD ----------
+         It was 0.6, and 0.6 turned out to be exactly where the noise lives. Measured on two
+         builds that differ in nothing this claim is about — one had only added draws to the day
+         roll-over, which moves every seeded roll after it:
+             control  size 1 median 115 (130/115/136/107/59),  size 2.2 median 76 (96/62/92/60/76)  ratio 0.661
+             build    size 1 median 120 (132/106/120/120/181), size 2.2 median 72 (27/90/77/43/72)  ratio 0.600
+         The absolute rates are the same to within a few blood. What moved was a median of five
+         samples spanning 59 to 136 — and the ratio stepped over the bar and turned the claim
+         red without a single thing changing about how a big body fights.
+         So the bar comes off the two numbers that matter rather than off a round fraction. The
+         fault it exists to catch measured 8 against 104, a ratio of 0.077. A healthy build
+         measures 0.60 to 0.66. A third sits between them with room on both sides: four and a
+         half times clear of the bug, and well outside the spread of a healthy run. REPS goes to
+         seven besides, which tightens the median without tripling what this file costs. */
+      const thin = [1.15, 1.3, 1.6, 2.2].filter(k => landed[k] < landed[1] * 0.35);
       R.andAManCanHitAMonster = thin.length === 0
         ? `and so does every size up to a wyrm, at a comparable rate — medians ${[1, 1.15, 1.3, 1.6, 2.2].map(k => landed[k].toFixed(0)).join('/')} blood`
-        : `!! SIZE ${thin.join(', ')} TAKES UNDER 0.6 OF WHAT A MAN DOES (medians ${[1, 1.15, 1.3, 1.6, 2.2].map(k => landed[k].toFixed(0)).join('/')}) — they stand where they can barely swing`;
+        : `!! SIZE ${thin.join(', ')} TAKES UNDER 0.35 OF WHAT A MAN DOES (medians ${[1, 1.15, 1.3, 1.6, 2.2].map(k => landed[k].toFixed(0)).join('/')}) — they stand where they can barely swing`;
     });
 
     /* AND THE TWO NUMBERS AGREE BY CONSTRUCTION. The slide is what happens when the place a
