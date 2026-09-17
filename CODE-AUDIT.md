@@ -197,6 +197,22 @@ of. The one behavioural difference is stated in the code: a body that goes down 
 a step is not in `downFolk` until the next one, so a predator notices a thirty-third of a second
 later. `liveChars` beside it carries the same staleness the other way and says so.
 
+**It did cost something, and the full suite is what found it.** `civics.js` was the one red in
+156, and it was a true positive about the change even though the game was never exposed. Making
+`downFolk` a list turns `rebuildCharGrid` into a precondition of `ai` — which it very nearly
+already was, since `ai` reaches for `nearestEnemy` and everything else built on `charsNear`, and
+five of the six harnesses that drive `ai` by hand already call `rebuildCharGrid` in their loop.
+The gaol's pickup was the one path in `ai` that read the raw roster and so did not care, and
+`civics.js` was the one harness relying on that: it drove `ai` with no grid pass at all, so
+`downFolk` was never filled and the report read like a broken arrest.
+
+The harness stages the grid now, and the fix was checked against **both** builds — the fixed
+`civics.js` passes identically on the pre-audit base and on this branch (same sentence, same
+distance to the cell), which is what makes it a staging fix rather than a way of hiding a
+behaviour change. `update` rebuilds the grid first and always did, so nothing a player can reach
+was affected; the risk this leaves is that the next hand-rolled tick loop that forgets the pass
+will fail somewhere that looks nothing like the cause. The comment in `rebuildCharGrid` says so.
+
 ### 2.2 The whole pattern, counted
 
 Not all of these are worth changing, but the size of the habit is worth knowing:
@@ -371,7 +387,9 @@ So the reader knows what was covered, not only what was found:
 - **CSS.** 65 classes and 58 ids in the stylesheet; exactly one class (`.tp`, inside `.trow`)
   is never used outside it. Not worth a commit on its own.
 - **The baked packs.** Three of four fully reached, key by key (§1.6).
-- **The suite.** `check:fast` 6/6 green. Plus, run individually against this branch: `heads`,
+- **The suite.** The full 156-harness run is **155/156** — `civics.js` was the single red, was a
+  true positive about §2.1, and is green on both builds after its staging was fixed. `check:fast`
+  6/6. Plus, run individually against this branch: `heads`,
   `kitdoll`, `craftwork`, `regard`, `pit`, `husk`, `cloth`, `parley`, `maws`, `larder`, `jail`,
   `beasts`, `survive`, `watchers`, `sixfold`, `wyrm`, `press`, `pain`, `sundered`, `save`,
   `roundtrip`, `walls`, `doorsave`. `sundered` covers corpse-site regrowth directly — stripped
