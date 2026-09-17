@@ -168,13 +168,25 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const hide0 = campHas('hide'), cloth0 = campHas('fabric');
       addItem('hide', 6);
 
-      openCrafting('loom', shed);
+      /* ---------- ASKED OF THE SCREEN A PLAYER CAN ACTUALLY OPEN ----------
+         This drove `openCrafting('loom', shed)` and reported the result as "right-clicking
+         the shed offers CRAFT on fabric". Right-clicking the shed stopped opening anything of
+         the kind when the work-order book replaced the per-bench modal: `openCrafting` had no
+         caller left anywhere in the game, so the claim was true of a panel and false of the
+         player. A harness that opens a window by hand is not testing that the window opens.
+         So: the work-order book, which is what [K], the WORK button and the right-click chain
+         all reach, and a hand set to CRAFT, which is how an order gets worked now. */
+      weaver.job = 'craft';
+      openWorkshops();
       const rows = [...document.querySelectorAll('#modalbody .trow')].map(x => x.textContent);
-      R.panel = `the shed offers: ${rows.map(r => r.split(' ')[0]).join(', ') || '(nothing)'}`;
-      const btn = [...document.querySelectorAll('#modalbody [data-cr]')].find(x => x.dataset.cr === 'fabric');
+      R.panel = `the book offers: ${rows.map(r => r.split(' ')[0]).join(', ') || '(nothing)'}`;
+      const btn = [...document.querySelectorAll('#modalbody .trow')]
+        .filter(r => r.textContent.startsWith(ITEMS.fabric.name))
+        .map(r => r.querySelector('button'))
+        .find(x => x && /ORDER/i.test(x.textContent));
       R.theShedOffersCloth = btn
-        ? 'right-clicking the shed offers CRAFT on fabric'
-        : `!! THE SHED'S PANEL HAS NO FABRIC BUTTON — it lists ${JSON.stringify(rows)}`;
+        ? 'the work orders offer fabric once the shed is standing'
+        : `!! THE BOOK HAS NO FABRIC ORDER — it lists ${JSON.stringify(rows)}`;
       if (btn) {
         /* ---------- A BATCH, BECAUSE ONE CRAFT IS A 4% COIN ----------
            This pressed CRAFT once and asserted fabric appeared. `craftTick` ruins a
@@ -187,7 +199,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
            honest way to ask "does the shed weave" — the run stops when the six hide staged
            above run out, so it also walks the materials-ran-out path on the way. */
         btn.dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true }));
-        /* the order is placed; the work happens at the bench, a bit at a time */
+        /* AND THE ORDER HAS TO FIND A PAIR OF HANDS, which is the half of this the old modal
+           did not have: `openCrafting` set `craftJob` on the spot, the book only writes the
+           order down and `takeOrder` hands it out to somebody on the CRAFT job. Both halves
+           are the feature now, so both are driven. */
+        R.andAHandPicksItUp = takeOrder(weaver)
+          ? `${weaver.name} takes the order off the book`
+          : '!! THE ORDER SAT IN THE BOOK WITH A FREE PAIR OF HANDS BESIDE IT';
+        /* the work happens at the bench, a bit at a time */
         for (let i = 0; i < 60 * 120 && weaver.craftJob; i++) { weaver.state = 'ok'; craftTick(weaver, 1 / 30); }
       }
       const gotCloth = campHas('fabric') - cloth0, spentHide = 6 - (campHas('hide') - hide0);

@@ -14,7 +14,7 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
  console.log(JSON.stringify(await p.evaluate(()=>{
    const R={};
    // one of each conviction, side by side, watching the same career
-   const squad = CONVICTION_KEYS.map((k,i)=>{
+   const squad = Object.keys(CONVICTIONS).map((k,i)=>{
      const c = makeChar('T'+i, 'player', 400+i, 400, {magic:2});
      c.conviction = k; c.regard = 0; c.state='ok'; chars.push(c); return c;
    });

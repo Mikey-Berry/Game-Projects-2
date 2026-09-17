@@ -134,11 +134,37 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.andADrifterHasTheBestNewsOfAnybody = (drBad.length === 0 && new Set(drSaid).size > 8)
         ? `and a drifter — who walks the roads between every town on the map — answers with ${new Set(drSaid).size} distinct pieces of news rather than begging for a coin`
         : `!! DRIFTER GAVE ${drBad.length} BARKS / ${new Set(drSaid).size} distinct: ${JSON.stringify(drSaid.slice(0, 3))}`;
-      /* AND THE BARKS MUST STILL EXIST, which is the other half of the note: somebody standing
-         in a square should still collect chatter without opening a conversation. */
-      R.andTheBarksStillFireOnTheirOwn = (typeof makeBark === 'function' && barks.has(makeBark(v)) && barks.has(makeBark(dr)))
-        ? 'and the ambient chatter is still there under its own name — a body in a square still says its piece to the air'
-        : `!! THE BARKS ARE GONE (${typeof makeBark})`;
+      /* AND THE BARKS MUST STILL FIRE, which is the other half of the note: somebody standing
+         in a square should still collect chatter without opening a conversation.
+
+         ASKED OF THE SIM, NOT OF A FUNCTION. This used to read
+         `typeof makeBark === 'function' && barks.has(makeBark(v))`, which proved only that a
+         function existed and returned a line out of the table. Nothing called it: the ambient
+         chatter is picked inline inside `update()`, and `makeBark`'s own comment said it fired
+         from `townTick`, a function that has never existed in this file. So the claim would
+         have stayed green with the barks switched off entirely, and went red when the dead
+         wrapper was deleted — which is the wrong way round for a test of a live feature.
+
+         Two townsfolk standing within the two tiles the gossip check wants, and the real
+         `update()` driven until one of them says something. The roll is one in two per eligible
+         wake, so this is not a coin: it is red only if the barks are gone. */
+      {
+        const t0 = towns[0];
+        const a1 = put('Gossip A', 'town', c => { c.homeTown = t0; c.civ = true; c.civT = 0; c.trade = null; });
+        const a2 = put('Gossip B', 'town', c => { c.homeTown = t0; c.civ = true; c.civT = 0; c.trade = null; });
+        a1.x = t0.x + 0.5; a1.y = t0.y + 0.5;
+        a2.x = t0.x + 1.0; a2.y = t0.y + 0.5;
+        const want = new Set(t0.def.civBarks);
+        let heard = null;
+        for (let i = 0; i < 600 && !heard; i++) {
+          for (const c of [a1, a2]) { c.bubble = null; c.civT = 0; c.moveTarget = null; c.atPost = false; }
+          update(1 / 30);
+          for (const c of [a1, a2]) if (c.bubble && want.has(c.bubble.text)) heard = c.bubble.text;
+        }
+        R.andTheBarksStillFireOnTheirOwn = heard
+          ? `and the chatter still fires out of the sim on its own — a townsman said "${heard}" to the air with nobody talking to him`
+          : '!! NOBODY IN THE SQUARE SAID ANYTHING IN 600 TICKS — the ambient barks have stopped firing';
+      }
       wipe();
     });
 
