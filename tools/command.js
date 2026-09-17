@@ -134,8 +134,39 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          of an identical build reported "missed a chest" twice and "opened both" once, and
          nothing was wrong with the forage order at all. The same mistake put companions
          inside walls at character creation earlier in this project. */
-      const cp = (dx, dy) => { const q = openNear(at.x + dx, at.y + dy, 4); return { x: q.x, y: q.y, opened: false, loot: { cats: 100, items: {} } }; };
+      /* ---------- AND OPEN GROUND IS NOT THE SAME AS GROUND YOU CAN GET TO ----------
+         The note above fixed chests landing INSIDE a boulder. This is the next one along, and
+         it stood green for months while being wrong: `findOpenNear` returns an OPEN tile, and
+         an open tile inside a pocket with no way in is open and unreachable. A* said so — no
+         path, on every build ever tested, passing and failing alike.
+         THE CLAIM WAS PASSING BECAUSE THE BAND WALKED THROUGH THE WALL. This harness steps at
+         dt = 0.25, and before `stepToward` bounded a long step it sampled the DESTINATION and
+         nothing between: at a quarter-second the stride is comfortably past a one-tile wall, so
+         the band stepped over the ring and opened a chest nobody could reach. Bounding the step
+         closed that hole — `cold.js` proves the same build crosses a chamber wall at dt = 1 and
+         dt = 3 and the current one does not — and this claim, which had been leaning on it,
+         went red. It was measuring a leak, not a forage order.
+         So the ground is chosen by asking A* whether the band can actually walk there. */
+      const reachableNear = (x, y, r) => {
+        for (let rad = 0; rad <= r; rad++) {
+          for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
+            if (Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;    /* the ring only */
+            const qx = Math.floor(x + dx) + 0.5, qy = Math.floor(y + dy) + 0.5;
+            if (isBlocked(qx, qy, 0)) continue;
+            if (!findPath(cdr.x, cdr.y, qx, qy, 0)) continue;
+            return { x: qx, y: qy };
+          }
+        }
+        return null;
+      };
+      const cp = (dx, dy) => {
+        const q = reachableNear(at.x + dx, at.y + dy, 9);
+        return q && { x: q.x, y: q.y, opened: false, loot: { cats: 100, items: {} } };
+      };
       const c1 = cp(9, 5), c2 = cp(-7, -9), far = cp(90, 0);
+      if (!c1 || !c2 || !far) {
+        R.foundTheChests = '!! NOTHING TO MEASURE — no reachable ground near the band to stand a chest on';
+      } else {
       chests.push(c1, c2, far);
       giveCommand(cdr, band, 'forage', { x: cdr.x, y: cdr.y }, 22);
       /* GENEROUS, ON PURPOSE. This block was flaky at 60 steps and the flake was not in the
@@ -158,7 +189,53 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       for (let i = 0; i < 200 && cdr.cmd; i++) step(6);
       R.cameHome = !cdr.cmd ? 'ground cleared, order closed out' : 'STILL OUT THERE (' + cdr.cmd.phase + ')';
       [c1, c2, far].forEach(ch => chests.splice(chests.indexOf(ch), 1));
+      }
       disband(band);
+    }
+
+    /* ---------------- 2b. A THING THEY CANNOT GET TO MUST NOT COST THEM THE BAND ----------
+       The fault the block above was hiding. A chest on an open tile inside a sealed pocket is
+       exactly what the harness used to place by accident, and what a world with rocks and
+       ruins in it will place on its own. The captain took it as an errand, walked to two and a
+       half tiles of it, and stopped: A* had no path, so `travel` fell through to walking in a
+       straight line at a wall; the wall was due west and the chest was on the same y, so
+       `stepToward`'s perpendicular slide assigned `c.y` the value it already held and reported
+       that the body had moved; and `commandTick` waits on an errand with no notion that one
+       might never finish. MEASURED: motionless for 116 sweeps — some nine hundred seconds of
+       world time — and then he starved to death standing there.
+       So: give the band something genuinely unreachable and require it to give up and come
+       home. This is the claim the fix exists for. */
+    {
+      const at = openNear(HOME.x - 30, HOME.y + 18, 8);
+      const band = mk5(at);
+      const cdr = band[0];
+      /* an OPEN tile with no path to it — the world makes these, we do not have to build one */
+      let sealed = null;
+      for (let rad = 2; rad <= 16 && !sealed; rad++) {
+        for (let dy = -rad; dy <= rad && !sealed; dy++) for (let dx = -rad; dx <= rad && !sealed; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;
+          const qx = Math.floor(at.x + dx) + 0.5, qy = Math.floor(at.y + dy) + 0.5;
+          if (isBlocked(qx, qy, 0)) continue;
+          if (findPath(cdr.x, cdr.y, qx, qy, 0)) continue;     /* reachable — not what we want */
+          sealed = { x: qx, y: qy };
+        }
+      }
+      if (!sealed) {
+        R.givesUpOnTheUnreachable = 'NOTHING TO MEASURE — no sealed pocket near the band to hide a chest in';
+        disband(band);
+      } else {
+        const ch = { x: sealed.x, y: sealed.y, opened: false, loot: { cats: 100, items: {} } };
+        chests.push(ch);
+        giveCommand(cdr, band, 'forage', { x: cdr.x, y: cdr.y }, 22);
+        let n = 0, held = 0;
+        for (; n < 120 && cdr.cmd; n++) { step(6); if (cdr.chestTarget === ch) held++; }
+        const d = dist(cdr.x, cdr.y, ch.x, ch.y);
+        R.givesUpOnTheUnreachable = (!cdr.cmd && !ch.opened && cdr.state !== 'dead')
+          ? `a chest with no way in is given up on rather than stood in front of forever — the order closed out in ${n} sweeps with the captain alive and the chest still shut, after ${held} sweeps of trying`
+          : `!! THE BAND IS STILL STANDING AT A CHEST IT CANNOT REACH (${n} sweeps, ${d.toFixed(1)} tiles off, order ${cdr.cmd ? cdr.cmd.phase : 'closed'}, captain ${cdr.state}, opened ${ch.opened})`;
+        chests.splice(chests.indexOf(ch), 1);
+        disband(band);
+      }
     }
 
     /* ---------------- 3. THE JUDGEMENT: do they break off, and does the captain matter ---- */

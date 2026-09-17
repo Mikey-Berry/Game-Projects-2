@@ -22,7 +22,7 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
      let ok=true;
      for(let dy=-5;dy<=5&&ok;dy++) for(let dx=-5;dx<=5&&ok;dx++){
        const ix=Math.floor(x)+dx, iy=Math.floor(y)+dy;
-       if(isBlocked(ix+0.5,iy+0.5,0)||terr[iy*self.W+ix]===3||decorAt(ix,iy)) ok=false;
+       if(isBlocked(ix+0.5,iy+0.5,0)||terr[iy*W+ix]===3||decorAt(ix,iy)) ok=false;
      }
      if(ok) spot={x,y};
    }

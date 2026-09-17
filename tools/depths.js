@@ -39,7 +39,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const p = await b.newPage({ viewport: { width: 1200, height: 820 } });
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 240)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  /* A SEED ARGUMENT, because two of the claims in here are about where worldgen PUT something
+     and this repo has now lost time three separate ways to a bar set against one world. */
+  await p.goto('file://' + gamePath(process.argv[2]) + (process.argv[3] ? '?seed=' + process.argv[3] : ''), { waitUntil: 'load' });
   await p.waitForTimeout(3000);
   await p.evaluate(() => document.getElementById('btn-start').click());
   await p.waitForTimeout(3500);
@@ -269,20 +271,51 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const deepest = DEPTHS[DEPTHS.length - 1];
     const me = player().find(c => !c.undead && c.state === 'ok') || player()[0];
     if (!me) return null;
-    const top = stairs.find(s => s.from === 0 && s.to === DEPTHS[0]);
-    if (!top) return null;
-    me.x = top.x + 0.5; me.y = top.y + 0.5; me.floor = 0;
-    me.path = null; me.pathGoal = null; me.onStair = null; me.target = null;
     me.noFight = true;                       /* the trip is the subject, not a fight on the way */
-    orderFloor(me, deepest, me.x, me.y);
-    const saw = new Set([0]);
-    for (let i = 0; i < 4000 && me.floor !== deepest; i++) { update(0.1); saw.add(me.floor || 0); }
-    return { landed: me.floor, deepest, storeysSeen: [...saw].sort((a,b)=>b-a), want: me.wantFloor };
+
+    /* ---------- EACH LINK, ON ITS OWN SHAFT ----------
+       The comment this replaces said exactly what was under test — "the CHAIN of three
+       descents, not the pathfinder" — and then started the body on `stairs.find(...)`, the
+       first surface descent in array order, and ordered it to the bottom. That drops you into
+       whatever region of -1 that stair happens to open on, and only some regions of -1 have a
+       shaft onward within walking reach. So it WAS the pathfinder, and the geography of one
+       world at that: it comes back red on about half of all seeds on every build ever made.
+       Measured on the build that caught this, from the surface stair NEAREST a bottom shaft:
+       landed on -1, walked 433 tiles in six hundred seconds of sim, and the nearest onward
+       shaft was still 453 tiles away. Nothing about that is a fault in the descent.
+       So the three links are driven one at a time, each from its own shaft. That is the chain,
+       it is deterministic, and it fails only if a descent is actually broken. How far apart the
+       shafts are is recorded below as colour, where a number that varies by world belongs. */
+    const legs = [];
+    for (let i = 0; i < DEPTHS.length; i++) {
+      const from = i === 0 ? 0 : DEPTHS[i - 1], to = DEPTHS[i];
+      const sh = stairs.find(s => s.from === from && s.to === to);
+      if (!sh) { legs.push({from, to, ok: false, why: 'no shaft exists at all'}); continue; }
+      me.x = sh.x + 0.5; me.y = sh.y + 0.5; me.floor = from;
+      me.path = null; me.pathGoal = null; me.onStair = null; me.target = null; me.moveTarget = null;
+      orderFloor(me, to, me.x, me.y);
+      for (let k = 0; k < 600 && me.floor !== to; k++) update(0.1);
+      legs.push({from, to, ok: me.floor === to, landed: me.floor});
+    }
+    /* AND HOW FAR THE WORLD PUTS THEM APART, which is a fact about the map and not a verdict */
+    const gap = (from, to) => {
+      const a = stairs.filter(s => s.from === from && s.to === to);
+      const b2 = stairs.filter(s => s.from === to);
+      if (!a.length || !b2.length) return -1;
+      let best = 1e9;
+      for (const x of a) for (const y of b2) best = Math.min(best, dist(x.x, x.y, y.x, y.y));
+      return Math.round(best);
+    };
+    return { legs, ways: DEPTHS.map((d, i) => stairs.filter(s => s.to === d && s.from === (i ? DEPTHS[i-1] : 0)).length),
+             hop: [gap(0, DEPTHS[0]), gap(DEPTHS[0], DEPTHS[1])], deepest };
   });
+  R._descents = !trip ? '' : `ways down by storey: ${trip.ways.join(' / ')} · `
+    + `nearest onward shaft from a fresh descent: ${trip.hop[0]} tiles on -1, ${trip.hop[1]} on -2`;
   R.andASquadOrderedDownArrives = !trip ? NOTHING
-    : (trip.landed === trip.deepest)
-    ? `ordered to the bottom and got there, one order and three shafts — through ${trip.storeysSeen.join(' → ')}`
-    : `!! THE ORDER DID NOT REACH THE BOTTOM (${JSON.stringify(trip)})`;
+    : trip.legs.every(l => l.ok)
+    ? `each of the ${trip.legs.length} descents carries an ordered body through on its own — `
+      + trip.legs.map(l => `${l.from} to ${l.to}`).join(', ')
+    : `!! A DESCENT DOES NOT CARRY ANYBODY DOWN (${JSON.stringify(trip.legs.filter(l => !l.ok))})`;
 
   /* ---- 9. AND THE STOREY SURVIVES A SAVE ----
      The floor a body is on is the one piece of this that lives in the save rather than being
@@ -344,6 +377,90 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     : idxOK
     ? `the bucket index hands back its own storey's ground at a hall on each — ${Object.entries(index).map(([f,o]) => f+': '+o.mine).join(', ')} tiles, none of them another floor's`
     : `!! THE DEPTH-FOLDED BUCKET KEY IS WRONG (${JSON.stringify(index)})`;
+
+  /* ---- AND THE DEPTHS ARE STILL THERE WHEN YOU ARRIVE ----
+     "all the underground fights resolve well before I ever go there. So I usually just find
+      bloody aftermaths and that's it."
+     It was not a fight. `spawnGaunt` stamps `nightborn` — "the dark made it; the dawn unmakes
+     it" — and `gauntDawn` deletes every nightborn gaunt each morning. Seven other places in
+     the file clear that flag for gaunts that are meant to STAY; the depths forgot, so the two
+     floors stocked entirely with gaunt-kin evaporated before the first noon.
+     MEASURED, one game day with nobody underground: 17 bodies died in the whole world and 412
+     were DELETED — 88 off the Undercroft, 216 off the Deepworks, 108 off the Sump. The
+     aftermath was never a battlefield; it was an empty room and the violet motes `gauntDawn`
+     leaves behind.
+     TWO CLAIMS, because the flag and the outcome are different failures. A resident that
+     carries the flag is the bug; a floor that empties is the symptom, and it could arrive
+     again by some other route. */
+  const dawn = await p.evaluate(() => {
+    if (typeof DEPTHS === 'undefined') return null;
+    const resident = chars.filter(c => c.state !== 'dead' && (c.floor || 0) < 0 &&
+                                       (c.caveDweller || c.undercroft) && c.faction === 'gaunt');
+    const flagged = resident.filter(c => c.nightborn);
+    const before = {};
+    for (const c of chars) { if (c.state === 'dead' || c.faction === 'player') continue;
+      const f = c.floor || 0; if (f < 0) before[f] = (before[f] || 0) + 1; }
+    /* a whole game day, with nobody of yours below ground */
+    const startDay = day;
+    for (let i = 0, n = Math.round(24 * HOUR_SEC * 30); i < n; i++) update(1 / 30);
+    const after = {};
+    for (const c of chars) { if (c.state === 'dead' || c.faction === 'player') continue;
+      const f = c.floor || 0; if (f < 0) after[f] = (after[f] || 0) + 1; }
+    const kept = {};
+    for (const f of Object.keys(before)) kept[f] = +(((after[f] || 0) / before[f])).toFixed(2);
+    return { residents: resident.length, flagged: flagged.length, before, after, kept,
+             days: day - startDay, worst: Math.min(...Object.values(kept)) };
+  });
+  R.theDeepIsNotCollectedAtDawn = !dawn ? NOTHING
+    : dawn.residents < 50 ? '!! NOTHING TO MEASURE — barely anything lives down there to collect'
+    : dawn.flagged === 0
+    ? `all ${dawn.residents} gaunt-kin living in the warrens and halls are exempt from the dawn — 0 still carry the flag that deletes them`
+    : `!! ${dawn.flagged} OF ${dawn.residents} DEPTH RESIDENTS WILL BE DELETED AT DAWN (${JSON.stringify(dawn.kept)})`;
+  R.andTheFloorsAreStillPeopledTomorrow = !dawn ? NOTHING
+    : (dawn.worst > 0.8)
+    ? `a whole game day passes with nobody underground and every storey is still peopled — ${Object.entries(dawn.kept).map(([f, v]) => f + ' kept ' + Math.round(v * 100) + '%').join(', ')}, against 32% and 26% before the dawn exemption`
+    : `!! A STOREY EMPTIED OVERNIGHT (${JSON.stringify(dawn)})`;
+
+  /* ---- AND WHAT YOU RAISE DOWN HERE STAYS DOWN HERE ----
+     "Raising an undead underground sends them to the surface instead of raising them on the
+      same level that they were on."
+     `castRaise` took the risen body's x and y off the corpse and never mentioned its FLOOR, and
+     `makeChar` defaults that to 0 — so a body raised on the Sump stood up on the surface, at
+     the right map coordinates and four storeys from the necromancer who called it. Driven on
+     each depth in turn, because a fix that works on -1 and not on -3 is the shape this file
+     has caught twice before. */
+  const raised = await p.evaluate(() => {
+    if (typeof DEPTHS === 'undefined' || typeof castRaise !== 'function') return null;
+    const me = player().find(c => c.state === 'ok');
+    if (!me) return null;
+    const home = { x: me.x, y: me.y, f: me.floor || 0 };
+    me.stats.magic = 60; me.att = me.att || {}; me.att.dark = 3;
+    const out = [];
+    for (const F of DEPTHS) {
+      const h = undercroft.halls.find(H => H.f === F);
+      if (!h) { out.push({ F, skip: 'no hall' }); continue; }
+      me.x = h.x; me.y = h.y; me.floor = F; me.mana = 999; me.castCd = 0;
+      /* a corpse of our own making, lying on that storey */
+      const body = makeChar('Late ' + (-F), 'bandit', h.x + 1, h.y, { atk: 5, def: 5, tough: 5 });
+      body.floor = F; chars.push(body);
+      body.state = 'dead'; body.deadAt = day; corpses.push(body);
+      const before = chars.length;
+      castRaise(me, body);
+      const r = chars.slice(before).find(c => c.undead) ||
+                chars.filter(c => c.undead && c.master === me).slice(-1)[0];
+      out.push({ F, raisedOn: r ? (r.floor || 0) : null, ok: !!r && (r.floor || 0) === F });
+      /* put the world back */
+      for (const c of [r, body]) { if (!c) continue; const i = chars.indexOf(c); if (i >= 0) chars.splice(i, 1); }
+      const ci = corpses.indexOf(body); if (ci >= 0) corpses.splice(ci, 1);
+    }
+    me.x = home.x; me.y = home.y; me.floor = home.f;
+    return out;
+  });
+  R.andWhatYouRaiseDownHereStaysDownHere = !raised ? NOTHING
+    : raised.some(o => o.skip) ? '!! NOTHING TO MEASURE — a storey had no hall to stand in'
+    : raised.every(o => o.ok)
+    ? `a body raised on each storey stands up on the storey it died on — ${raised.map(o => o.F + '→' + o.raisedOn).join(', ')}`
+    : `!! THE RISEN CAME UP ON THE WRONG FLOOR (${JSON.stringify(raised)})`;
 
   console.log('=== THREE DEPTHS ===\n');
   for (const [k, v] of Object.entries(R)) console.log('  ' + k.padEnd(30) + v);

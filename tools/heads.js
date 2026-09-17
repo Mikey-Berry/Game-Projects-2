@@ -53,11 +53,11 @@ const WHO = [
     for (const pad of [6, 4, 3]) {
       for (let r = 40; r < 240; r += 4) for (let a = 0; a < 24; a++) {
         const x = me.x + Math.cos(a / 24 * 6.283) * r, y = me.y + Math.sin(a / 24 * 6.283) * r;
-        if (x < pad + 2 || y < pad + 2 || x >= self.W - pad - 2 || y >= self.H - pad - 2) continue;
+        if (x < pad + 2 || y < pad + 2 || x >= W - pad - 2 || y >= H - pad - 2) continue;
         let ok = true;
         for (let dy = -pad; dy <= pad && ok; dy++) for (let dx = -pad; dx <= pad && ok; dx++) {
           const ix = Math.floor(x) + dx, iy = Math.floor(y) + dy;
-          if (isBlocked(ix + 0.5, iy + 0.5, 0) || terr[iy * self.W + ix] === 3 || decorAt(ix, iy)) ok = false;
+          if (isBlocked(ix + 0.5, iy + 0.5, 0) || terr[iy * W + ix] === 3 || decorAt(ix, iy)) ok = false;
         }
         if (ok) return { x, y };
       }

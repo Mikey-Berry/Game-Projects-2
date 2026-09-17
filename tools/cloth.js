@@ -60,17 +60,63 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
       const made = new Set();
       for (const kind in RECIPES) for (const r of RECIPES[kind]) made.add(r.out);
-      /* everything the ground, the water and the dead give up directly */
-      for (const k of ['wood', 'stone', 'iron_ore', 'copper', 'coal', 'fish', 'fruit', 'meat',
-                       'hide', 'hide_lev', 'remains', 'vflesh', 'lead', 'mats', 'bone'])
+      /* ---------- AND WHAT THE GROUND GIVES UP, READ OFF THE GAME'S OWN TABLE ----------
+         This was a hand-kept list, and a hand-kept list of what a gatherer can pick up is a
+         list that goes stale the first time somebody adds a gathering job. It did: `brine` is
+         dipped off the shore by the SALTWORK job and this file called it a dead end, because
+         the parallel list had never heard of it. `NODE_JOB` is the game's own map of node kind
+         to job — if a hand can be sent to fetch it, it is in there — so the harness asks that
+         instead of remembering. What stays hand-written is only what comes off BODIES and out
+         of the ground's own generosity rather than off a node. */
+      for (const k of Object.keys(NODE_JOB)) made.add(k);
+      for (const k of ['fruit', 'meat', 'hide', 'hide_lev', 'remains', 'vflesh', 'lead', 'mats', 'bone'])
         made.add(k);
       /* NOT `type !== 'trade'`. The first version filtered those out believing `trade` meant
          "a thing you buy" — it means "a trade good", and both FABRIC and HIDE carry it. So the
          one material this file exists for was excluded from the general check by the general
          check's own filter, and `noMaterialIsADeadEnd` read green on the build where fabric
          could not be made. */
-      const orphans = [...spent].filter(k => !made.has(k) && ITEMS[k]);
-      R.orphans = orphans.length ? `spent but unmakeable: ${orphans.join(', ')}` : 'every material with a sink has a source';
+      /* ---------- AND ONE MATERIAL IS BOUGHT ON PURPOSE ----------
+         SALT. It is spent by Harbourblack (6), by curing a body, and by one contract, and
+         nothing makes it — which is this line doing its job and then reaching the wrong
+         verdict, because salt is not an oversight. It is Saltmere's entire reason to exist:
+         every town stocks 3-9 of it on day one and Saltmere stocks 40-70, and the town's own
+         bark is "the flats give salt, the salt gives everything else". A recipe that lets you
+         make salt at a bench takes that away.
+         SO IT IS A NAMED EXCEPTION AND NOT A WIDENED RULE, and the difference matters: the
+         obvious fix — count anything the towns stock as a source — would have read GREEN on
+         the build this whole file was written for, because `fabric` is in the same opening
+         stock list. The general check has to stay blind to the shop counter. */
+      /* ---------- AND ONE MATERIAL IS NOT MADE BECAUSE IT CANNOT BE ----------
+         SUNDERED MARROW. It became a spent material the day the deep rites started asking for
+         it — four of them want a piece, and the bench takes it out of the stores — and nothing
+         makes it, which is this line doing its job and reaching the wrong verdict for the
+         second time and for a different reason than salt's.
+         Salt is not made because making it would cost Saltmere its reason to exist. Marrow is
+         not made because IT IS THE BONES OF A DEAD GOD. There is no bench that produces one,
+         there is no recipe to write, and the whole of its place in the world is that you have
+         to go to a Sundered site and cut it out of the thing lying there. A workshop that
+         manufactures the marrow of the Eldest is not a missing feature.
+         So the set carries its REASON now rather than a name, because the two exceptions in it
+         are exceptions for different reasons and a bare list would flatten that — and because
+         the next thing added to it has to justify itself in a sentence, which is the only thing
+         stopping a named exception from becoming a way of silencing this claim. */
+      /* SALT IS OFF THIS LIST. It sat here for one release with a reason that was true at the
+         time — a bench that made salt would cost Saltmere its reason to exist — and the answer
+         turned out to be that Saltmere's reason to exist is the BRINE, not the salt. A salt pan
+         boils brine down and brine is dipped off the shore, so the whole chain is now a thing
+         you go and do, and the town that sits on an ocean of it still sells it cheaper than
+         anyone and sells the brine as well. A named exception that can be retired should be. */
+      const NOT_MADE_ON_PURPOSE = {
+        sunder: 'it is the bones of a dead god — you cut it out of a Sundered site or you do not have any',
+        /* the game says this one itself, in the refusal the dry Lance prints: "Nobody alive
+           makes Aether Cells — they are scavenged". A pre-Fall charge is not a recipe. */
+        aether_cell: 'nobody alive makes one — they are scavenged out of the old world',
+      };
+      const orphans = [...spent].filter(k => !made.has(k) && ITEMS[k] && !NOT_MADE_ON_PURPOSE[k]);
+      R.orphans = orphans.length ? `spent but unmakeable: ${orphans.join(', ')}`
+        : `every material with a sink has a source, but for ` +
+          Object.entries(NOT_MADE_ON_PURPOSE).map(([k, why]) => `${k} (${why})`).join('; ');
       R.noMaterialIsADeadEnd = orphans.length === 0
         ? 'and nothing else in the economy is spent without being makeable — the next dead end fails this line'
         : `!! ${orphans.length} MATERIAL(S) ARE SPENT AND CANNOT BE MADE: ${orphans.join(', ')}`;

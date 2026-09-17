@@ -157,12 +157,22 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const g = spawnGaunt('gaunt', s.x + 4, s.y); g.__probe = true; born.push(g);
       g.target = c4; g.targetManual = true; g.hunt = null;
       rebuildCharGrid();
+      /* ---------- A SECOND IS NOT LONG ENOUGH TO MEASURE A TURN ----------
+         The bar was "more than a tile further away after one second", and it read 0.8 — with
+         the other half of the claim, letting go of the quarry, passing. Measured across twelve
+         runs on four seeds, the gain at one second is 0.8 to 3.8 tiles: THE BAR WAS SITTING ON
+         THE FLOOR OF ITS OWN SPREAD, because a body that has to stop, turn and set off spends
+         most of the first second not yet going anywhere. At two seconds the floor is 1.19.
+         And the distance is the junior half of this claim in any case. A gaunt that turns away
+         and stops at the edge of the light has done exactly what it should — one run here tops
+         out at 1.2 tiles and stays there for four more seconds — so what must be true is that
+         it LET GO and is further off, not that it ran a particular distance. */
       const d0 = dist(g.x, g.y, c4.x, c4.y);
-      for (let i = 0; i < 30; i++) { update(SIM_DT); c4.x = s.x; c4.y = s.y; }
+      for (let i = 0; i < 60; i++) { update(SIM_DT); c4.x = s.x; c4.y = s.y; }
       const d1 = dist(g.x, g.y, c4.x, c4.y);
       endConcentration(c4, true);
-      R.andALesserGauntStillTurnsFromIt = (d1 > d0 + 1 && g.target !== c4)
-        ? `a gaunt put down beside the light lets go of its quarry and is ${d1.toFixed(1)} tiles off a second later (from ${d0.toFixed(1)})`
+      R.andALesserGauntStillTurnsFromIt = (d1 > d0 + 0.5 && g.target !== c4)
+        ? `a gaunt put down beside the light lets go of its quarry and is ${d1.toFixed(1)} tiles off two seconds later (from ${d0.toFixed(1)}; observed floor 1.19 tiles gained)`
         : `!! THE GAUNT DID NOT TURN: ${d0.toFixed(1)} -> ${d1.toFixed(1)} tiles, target ${g.target === c4 ? 'STILL THE CASTER' : g.target ? 'somebody else' : 'none'}`;
       c4.state = 'gone'; g.state = 'gone';
     });

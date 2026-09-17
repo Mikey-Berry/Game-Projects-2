@@ -68,7 +68,16 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       openWorkshops();
       const txt = document.getElementById('modalbody').textContent;
       const rows = document.querySelectorAll('#modalbody button').length;
-      const shops = Object.keys(RECIPES).filter(k => new RegExp(k === 'loom' ? "WEAVER" : k, 'i').test(txt)).length;
+      /* ---------- ASK FOR THE HEADING THE WINDOW ACTUALLY PRINTS ----------
+         This matched each RECIPES key against the text as a regex, with one hand-written
+         exception because the loom's heading says WEAVER'S SHED. That is one special case per
+         shop whose heading is not its key, and it went stale the moment a shop arrived whose
+         name has a SPACE in it: the salt pan prints SALT PAN and /saltpan/i does not match it,
+         so the book looked as though it were missing a workshop it was listing perfectly well.
+         `SHOP_NAMES` is what the window prints from, so read that. No exceptions to maintain,
+         and a shop added without a name there still fails — which is the other half of the bug
+         this claim just caught, and worth keeping catchable. */
+      const shops = Object.keys(RECIPES).filter(k => txt.includes(SHOP_NAMES[k] || k.toUpperCase())).length;
       R._book = `the book lists ${shops} of ${Object.keys(RECIPES).length} workshops and offers ${rows} buttons, standing nowhere near any of them`;
       R.theBookListsEverything = shops === Object.keys(RECIPES).length
         ? `one window lists every workshop in the game and every recipe in it — opened from the top bar, standing nowhere near a building`

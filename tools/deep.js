@@ -102,7 +102,29 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
      get, not where they finish. */
   const watch = await p.evaluate(async () => {
     if (typeof deepWatch !== 'function') return null;
-    const a = deepAltars.find(al => deepFolk.some(c => c.hallId === al.hall && c.deepKin === 'kept'));
+    /* ---------- A HALL BIG ENOUGH TO GIVE GROUND IN ----------
+       This took the first altar with Kept around it and then rang twelve bodies out at eight
+       and ten tiles WITHOUT LOOKING AT THE ROCK. That was survivable while the worlds it drew
+       happened to be roomy; the day the map grew a coast it drew a tighter hall, half the ring
+       landed inside stone, `physics` pushed those bodies back toward the middle, and the lamp
+       claim read 8 tiles then 5.2 — a congregation apparently walking INTO the light. The
+       measure is the closest any of them gets, so one body wedged in a wall is the whole
+       reading. Pick an altar whose hall can actually hold the ring the test draws. */
+    const roomy = (al) => {
+      const f = (deepFolk.find(c => c.hallId === al.hall) || {}).floor || 0;
+      let open = 0;
+      /* OUT PAST THE RING, NOT JUST ON IT: they have to be able to GIVE GROUND, so the room is
+         scored to fourteen tiles and the roomiest hall on offer is the one used. It is a SCORE
+         and not a threshold, because on some worlds no Deep hall is fourteen tiles clear and a
+         filter that finds nothing silently hands back the cramped hall it was avoiding. */
+      for (const r of [8, 10, 12, 14]) for (let i = 0; i < 12; i++) {
+        const t = i / 12 * Math.PI * 2;
+        if (!isBlocked(al.x + Math.cos(t) * r + 0.5, al.y + Math.sin(t) * r + 0.5, f)) open++;
+      }
+      return open;
+    };
+    const cands = deepAltars.filter(al => deepFolk.some(c => c.hallId === al.hall && c.deepKin === 'kept'));
+    const a = cands.slice().sort((x, y) => roomy(y) - roomy(x))[0];   /* the roomiest hall on offer */
     if (!a) return null;
     const folk = deepFolk.filter(c => c.hallId === a.hall && c.deepKin && c.deepKin !== 'unblind');
     const me = player().find(c => c.state === 'ok');
@@ -133,25 +155,51 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        RE-STAGED FIRST: after ten seconds of holding they have settled at the FAR edge of the
        band, which is outside `DEEP_SHY_R` — a lamp there would correctly do nothing, and the
        claim would be measuring the band rather than the light. */
-    k = 0;
-    for (const c of folk) { const t = (k / folk.length) * Math.PI * 2;
-      c.x = a.x + Math.cos(t) * 8; c.y = a.y + Math.sin(t) * 8; c.moveTarget = null; k++; }
-    const lampD0 = closest();
-    me.lamp = true;                       /* what `glareOn` looks for — a job, not a rig flag */
-    rebuildCharGrid();
-    for (let i = 0; i < 300; i++) for (const c of folk) { ai(c, 1 / 30); physics(c, 1 / 30); }
-    const lampD1 = closest();
-    me.lamp = false;
+    /* ---------- A/B FROM ONE STAGING, BECAUSE THE ROOM IS NOT A CONSTANT ----------
+       This used to ring them at eight tiles, light the lamp, run ten seconds and assert they
+       had ended more than two tiles further out. That measures the HALL as much as the lamp:
+       on a world whose Deep halls are tight they are already against the wall at eight, the
+       lamp pushes them half a tile, and the claim fails on a build where the light works. It
+       also reads the closest of twelve, so one body wedged in stone is the whole verdict.
+       Run the same ten seconds twice from the SAME staging — once dark, once lit — and compare
+       the two. Whatever the room allows, the lit run has to end further out than the dark one,
+       and that is the sentence the claim was always trying to say. */
+    const ring = () => { let j = 0;
+      for (const c of folk) { const t = (j / folk.length) * Math.PI * 2;
+        c.x = a.x + Math.cos(t) * 8; c.y = a.y + Math.sin(t) * 8;
+        c.moveTarget = null; c.target = null; j++; }
+      rebuildCharGrid(); };
+    /* THE LAMP GOES ON BEFORE THE GRID IS REBUILT, and that is not a style point: `lamps` is
+       filled by `rebuildCharGrid`, off `c.lamp`. Light it afterwards and the list never learns
+       about it, `glareOn` finds nothing, and the run comes back reading exactly the staging
+       distance in both halves — which is what the first cut of this A/B did. */
+    const run = (lamp) => {
+      me.lamp = lamp;
+      ring();
+      const d0 = closest();
+      for (let i = 0; i < 300; i++) for (const c of folk) { ai(c, 1 / 30); physics(c, 1 / 30); }
+      me.lamp = false;
+      return {d0: +d0.toFixed(1), d1: +closest().toFixed(1), mean: +(folk.reduce((s2, c) => s2 + dist(c.x, c.y, me.x, me.y), 0) / folk.length).toFixed(1)};
+    };
+    const dark = run(false), lit = run(true);
     return { n: folk.length, nearest: +nearest.toFixed(1), faced, chased,
-             beforeLamp: +lampD0.toFixed(1), afterLamp: +lampD1.toFixed(1) };
+             room: roomy(a), dark, lit };
   });
   R.theyHoldTheirDistance = !watch ? NOTHING
     : (watch.chased === 0 && watch.nearest >= WATCH_MIN && watch.faced >= Math.ceil(watch.n * 0.6))
     ? `ten seconds of the real AI, nothing to chase, and ${watch.n} of them never came closer than ${watch.nearest} tiles — ${watch.faced} turned to face`
     : `!! THEY DO NOT HOLD OFF, OR DO NOT LOOK (${JSON.stringify(watch)})`;
-  R.andALightPushesThem = !watch ? NOTHING : watch.afterLamp > watch.beforeLamp + 2
-    ? `a lamp moves them from ${watch.beforeLamp} tiles out to ${watch.afterLamp} — driven, not burned`
-    : `!! THE LIGHT DOES NOTHING (${watch && watch.beforeLamp} then ${watch && watch.afterLamp})`;
+  /* MEASURED ACROSS THE CONGREGATION, WITH A GUARD ON THE NEAREST. The closest of twelve is one
+     body, and one body with rock behind it cannot give ground however bright the lamp is —
+     measured, the lit run moves the nearest 0.5 tiles and the MEAN 2.6. So the claim is the
+     mean, which is the congregation, and the nearest is a guard that says nobody is drawn IN.
+     And it has a dark control now, which the first version of this claim did not: they drift
+     out to the edge of their own band with or without a lamp, so a lit-only reading of 8 to 11
+     could never tell the light from the band. */
+  R.andALightPushesThem = !watch ? NOTHING
+    : (watch.lit.mean > watch.dark.mean + 1.5 && watch.lit.d1 >= watch.dark.d1)
+    ? `ten seconds from one staging, run twice: dark they sit at a mean ${watch.dark.mean} tiles, lit at ${watch.lit.mean} — driven, not burned, and measured against the same room rather than against their own band`
+    : `!! THE LIGHT DOES NOTHING (dark mean ${watch && watch.dark.mean} nearest ${watch && watch.dark.d1}, lit mean ${watch && watch.lit.mean} nearest ${watch && watch.lit.d1}, hall room ${watch && watch.room}/48)`;
 
   /* ---- 3b. BUT A GAUNT IS WORTH CROSSING A HALL FOR ----
      The other half of the same rule, and the reason the sweep above exists: they hold their
@@ -263,13 +311,34 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     if (typeof stonewakeTick !== 'function' || !stonewakes.length) return null;
     const c = stonewakes[0];
     c.provoked = false;
-    /* aim it at a patch of solid rock and let it cut */
-    let tx = c.x, ty = c.y, found = false;
-    for (let r = 6; r < 40 && !found; r += 2) for (let k = 0; k < 12 && !found; k++) {
+    const sx0b = Math.round(c.x), sy0b = Math.round(c.y);
+    const laneOf = (tx2, ty2) => {
+      const out = [], L = Math.hypot(tx2 - sx0b, ty2 - sy0b) || 1;
+      for (let t = 0; t <= L; t += 1) for (let o = -3; o <= 3; o++) {
+        out.push([Math.round(sx0b + (tx2 - sx0b) * (t / L) - (ty2 - sy0b) / L * o),
+                  Math.round(sy0b + (ty2 - sy0b) * (t / L) + (tx2 - sx0b) / L * o)]);
+      }
+      return out;
+    };
+    const solidIn = (ln) => ln.filter(([px, py]) => isBlocked(px + 0.5, py + 0.5, -1)).length;
+    /* ---------- AIM IT DOWN THE STONIEST CORRIDOR, NOT AT THE NEAREST STONE ----------
+       This took the FIRST blocked tile the spiral found, which is usually a thin wall with open
+       cavern behind it. The corridor that came back held ten blocked tiles out of forty-two —
+       mostly air — and the claim then asked for a 40% reduction in a denominator of ten. The
+       borer did its job (fourteen tiles of rock opened, fourteen off its budget) and cleared
+       three of the ten in the sampled lane, and the claim called it a large animal.
+       That is the small-denominator fault this suite has been bitten by before: the note on the
+       fast-forward fidelity claim says a ratio with a denominator near zero is not a test.
+       So every candidate is scored by how much rock actually lies in the lane toward it, and
+       the stoniest wins — which is the corridor the question is worth asking about. */
+    let tx = c.x, ty = c.y, found = false, bestN = -1;
+    for (let r = 6; r < 40; r += 2) for (let k = 0; k < 12; k++) {
       const ang = (k / 12) * Math.PI * 2;
       const qx = Math.round(c.x + Math.cos(ang) * r), qy = Math.round(c.y + Math.sin(ang) * r);
       if (qx < 5 || qy < 5 || qx > W - 6 || qy > H - 6) continue;
-      if (isBlocked(qx + 0.5, qy + 0.5, -1)) { tx = qx; ty = qy; found = true; }
+      if (!isBlocked(qx + 0.5, qy + 0.5, -1)) continue;
+      const n2 = solidIn(laneOf(qx, qy));
+      if (n2 > bestN) { bestN = n2; tx = qx; ty = qy; found = true; }
     }
     if (!found) return null;
     /* ---------- A FIXED PATCH, NOT THE GROUND ROUND A MOVING BODY ----------
@@ -277,15 +346,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        borer MOVES, so it reported the rock going UP (48 to 68) while it was busily cutting
        through it. It had simply walked somewhere stonier. Measure the corridor it was aimed
        down, which is the thing the claim is actually about. */
-    const sx0 = Math.round(c.x), sy0 = Math.round(c.y);
-    const lane = [];
-    { const L = Math.hypot(tx - sx0, ty - sy0) || 1;
-      for (let t = 0; t <= L; t += 1) for (let o = -3; o <= 3; o++) {
-        const px = Math.round(sx0 + (tx - sx0) * (t / L) - (ty - sy0) / L * o);
-        const py = Math.round(sy0 + (ty - sy0) * (t / L) + (tx - sx0) / L * o);
-        lane.push([px, py]);
-      } }
-    const solidLane = () => lane.filter(([px, py]) => isBlocked(px + 0.5, py + 0.5, -1)).length;
+    const lane = laneOf(tx, ty);
+    const solidLane = () => solidIn(lane);
     c.moveTarget = { x: tx, y: ty };
     c.target = null; c.boreCd = 0;
     const s0 = solidLane(), t0 = undercroft.tiles;
@@ -298,10 +360,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     return { opened: undercroft.tiles - t0, solidBefore: s0, solidAfter: solidLane(), laneN: lane.length,
              bored: c.bored || 0, budgetLeft: c.boreLeft, blind: !!c.construct };
   });
+  /* TWO STATEMENTS, AND ONLY ONE OF THEM IS ALWAYS ANSWERABLE. That it OPENS ROCK is direct and
+     unconditional — `undercroft.tiles` goes up, and that is the whole difference between a borer
+     and a big animal. That it opens rock in a LANE is a statement about shape, and a lane can
+     only be measured down a corridor that had rock in it to begin with; where the deep offers
+     no such corridor the honest answer is that the question cannot be put, not that the borer
+     failed it. */
   R.theStonewakeMakesItsOwnDoor = !bore ? NOTHING
-    : (bore.opened > 10 && bore.solidAfter < bore.solidBefore * 0.6)
+    : bore.opened <= 10
+    ? `!! IT IS JUST A LARGE ANIMAL (${JSON.stringify(bore)})`
+    : bore.solidBefore < 18
+    ? `it opened ${bore.opened} tiles of solid rock off a ${bore.budgetLeft}-tile budget — but the stoniest corridor `
+      + `within forty tiles held only ${bore.solidBefore} blocked tiles, too few to say anything about the SHAPE of the cut`
+    : bore.solidAfter < bore.solidBefore * 0.6
     ? `it opened ${bore.opened} tiles of solid rock and drove a lane through it — ${bore.solidBefore} blocked tiles in the corridor it was aimed down, ${bore.solidAfter} afterwards`
-    : `!! IT IS JUST A LARGE ANIMAL (${JSON.stringify(bore)})`;
+    : `!! IT CUT A POCKET RATHER THAN A LANE (${JSON.stringify(bore)})`;
   R.andItIsBudgeted = !bore ? NOTHING : (bore.budgetLeft >= 0 && bore.budgetLeft < 900)
     ? `and it will not carve the storey into one room: ${bore.budgetLeft} tiles left of its ${900} lifetime`
     : `!! THE BORE IS UNBOUNDED (${JSON.stringify(bore)})`;

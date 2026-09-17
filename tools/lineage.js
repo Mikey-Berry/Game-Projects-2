@@ -163,11 +163,16 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const [w] = wed('player', bed.x, bed.y, 'Inn');
         w.pregnant = 1;
         const was = seenIds();
-        let d = 0, born = [];
-        for (; d < 12 && !born.length; d++) { midnight(); born = bornNear(w, was); }
+        /* re-armed against BIRTH_LOSS the same way `theWorldIsNotFrozen` is — see the note on
+           the homestead claim below, which is where this bit hard */
+        let d = 0, born = [], losses = 0;
+        for (; d < 12 && !born.length && losses < 6; d++) {
+          midnight(); born = bornNear(w, was);
+          if (!born.length && !w.pregnant) { losses++; w.pregnant = 1; w.overdue = 0; }
+        }
         R.anInnIsARoof = born.length && !w.pregnant
-          ? `carried to an inn bed she delivers on the next night she comes to term — ${born[0].name}, ${d} night${d > 1 ? 's' : ''}`
-          : `!! SHE DOES NOT DELIVER AT AN INN EITHER (born ${born.length}, pregnant ${w.pregnant}, overdue ${w.overdue})`;
+          ? `carried to an inn bed she delivers on the next night she comes to term — ${born[0].name}, ${d} night${d > 1 ? 's' : ''}${losses ? `, after ${losses} that did not live` : ''}`
+          : `!! SHE DOES NOT DELIVER AT AN INN EITHER (born ${born.length}, pregnant ${w.pregnant}, overdue ${w.overdue}, losses ${losses})`;
         wipe();
       }
     }
@@ -179,18 +184,48 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const [w] = wed('player', home.x + 2, home.y + 2, 'Home');
       w.pregnant = 1;
       const was = seenIds();
-      let d = 0, born = [];
-      for (; d < 12 && !born.length; d++) { midnight(); born = bornNear(w, was); }
+      /* ---------- A FIVE PER CENT ROLL ON A SEEDED STREAM IS NOT A COIN FLIP ----------
+         This claim staged ONE pregnancy and called the homestead broken if that single roll
+         went against it. It duly went against it — and then went against it again, and again,
+         three runs out of three, which is what sent somebody looking for a regression that was
+         not there. `rnd()` IS THE SEEDED WORLDGEN STREAM. A 5% roll at a fixed point in that
+         stream is not a one-in-twenty chance, it is a CONSTANT for the build: once a change
+         upstream shifts the stream enough to put this roll under 0.05 it is under 0.05 forever,
+         re-running never clears it, and the natural next move — bisect — points straight at
+         innocent code. Proved by seed: on the default seed the child is lost on night one every
+         single run; on `?seed=7`, `?seed=21` and `?seed=99` she delivers and the house takes
+         the tally. The mechanism was never touched.
+         The question here is whether a HOMESTEAD IS A ROOF, not whether every pregnancy
+         survives — `theWorldIsNotFrozen` is the claim that owns the loss. So she is put back at
+         her term whenever a night takes the child, and it is asked several times. */
+      let d = 0, born = [], losses = 0;
+      for (; d < 12 && !born.length && losses < 6; d++) {
+        midnight(); born = bornNear(w, was);
+        if (!born.length && !w.pregnant) { losses++; w.pregnant = 1; w.overdue = 0; }
+      }
       R.aHomesteadIsARoof = born.length && !w.pregnant && home.kids === 1
-        ? `and at a homestead she delivers — ${born[0].name} — and the house takes the tally (kids ${home.kids})`
-        : `!! THE HOMESTEAD DID NOT SERVE (born ${born.length}, pregnant ${w.pregnant}, house kids ${home.kids})`;
+        ? `and at a homestead she delivers — ${born[0].name} — and the house takes the tally (kids ${home.kids})${losses ? `, after ${losses} that did not live` : ''}`
+        : `!! THE HOMESTEAD DID NOT SERVE (born ${born.length}, pregnant ${w.pregnant}, house kids ${home.kids}, losses ${losses})`;
       /* AND THE SEASON RIDES HER NOW, because a couple with no house has no tally to hang it on */
+      /* ---------- AND IT ASKS THE GAME HOW LONG A SEASON IS ----------
+         This counted SIXTY nights, a number chosen because the gap was a hard 90. The gap is
+         `BIRTH_GAP` now — written in the calendar's own units, because a year here is SEVEN days
+         and 90 was thirteen years between one child and the next, the same units error that
+         `GESTATION` records four lines above it in the game file. The literal went red the day
+         the constant moved, which is a claim measuring a number it copied rather than the rule
+         it is about.
+         `BIRTH_GAP` is a top-level `const`, which is NOT a property of `window` — but it does
+         resolve as a bare identifier in here, the same way `larder.js` reads `VENDOR_STOCK`.
+         The blocked span is exact: the conception loop refuses while `day - lastBorn < BIRTH_GAP`,
+         and each midnight advances `day` by one, so nights 1 through BIRTH_GAP-1 are the season
+         and the gate opens on the BIRTH_GAP-th. Asked over exactly that span, no slack either way. */
       const lb = w.lastBorn;
+      const season = (typeof BIRTH_GAP === 'number' ? BIRTH_GAP : 90) - 1;
       let again = 0;
-      for (let i = 0; i < 60; i++) { midnight(); if (w.pregnant) { again++; break; } }
-      R.aSeasonBetweenThem = again ? `!! SHE CONCEIVED AGAIN INSIDE THE SEASON (night ${again} of 60, lastBorn ${lb})`
+      for (let i = 0; i < season; i++) { midnight(); if (w.pregnant) { again = i + 1; break; } }
+      R.aSeasonBetweenThem = again ? `!! SHE CONCEIVED AGAIN INSIDE THE SEASON (night ${again} of ${season}, lastBorn ${lb})`
         : (lb === null || lb === undefined) ? '!! NOTHING WAS WRITTEN ON THE MOTHER — the season is still hung on the house, and a couple with no house has no tally at all'
-        : 'and a season is kept on the mother herself — sixty nights after the birth she is not carrying again';
+        : `and a season is kept on the mother herself — ${season} nights after the birth she is not carrying again`;
       pBuilds.splice(pBuilds.indexOf(home), 1);
       wipe();
     }
@@ -232,10 +267,25 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const [w] = wed('town', gx, gy, 'Town');
       w.civ = true; w.pregnant = 1;
       const was = seenIds();
-      let d = 0, born = [];
-      for (; d < 10 && !born.length; d++) { midnight(); born = bornNear(w, was); }
-      R.theWorldIsNotFrozen = born.length && !w.pregnant
-        ? `a townswoman at her term on the same empty waste still delivers where she stands — ${born[0].name}, ${d} night${d > 1 ? 's' : ''}. The roof is asked of your people only.`
+      /* ---------- AND A FIVE PER CENT LOSS IS NOT A FROZEN WORLD ----------
+         `BIRTH_LOSS` is 0.05 and the risk rises with `overdue`, so a birth deliberately does
+         not always produce a child — that is the feature, one line and no scene. This claim
+         staged ONE pregnancy and called the world frozen if that single roll went against it,
+         which is a one-in-twenty red for a working build. It duly came up on a world seventeen
+         bodies different from the one it was written against, and reported the exact signature
+         of a loss — born 0, pregnant 0, overdue 0 — which reads identically to the subsystem
+         being dead.
+         The question is whether the world can still deliver AT ALL without a roof, so she is
+         put back at her term whenever a night takes the child, and it is asked several times.
+         Six attempts puts a false red at three in ten million. */
+      let d = 0, born = [], losses = 0;
+      for (; d < 40 && !born.length && losses < 6; d++) {
+        midnight();
+        born = bornNear(w, was);
+        if (!born.length && !w.pregnant) { losses++; w.pregnant = 1; w.overdue = 0; }
+      }
+      R.theWorldIsNotFrozen = born.length
+        ? `a townswoman at her term on the same empty waste still delivers where she stands — ${born[0].name}, ${d} night${d > 1 ? 's' : ''}${losses ? `, after ${losses} that did not live (BIRTH_LOSS is real and is not a frozen world)` : ''}. The roof is asked of your people only.`
         : `!! THE WHOLE WORLD NOW NEEDS AN INN (born ${born.length}, pregnant ${w.pregnant}, overdue ${w.overdue})`;
       wipe();
     }

@@ -120,10 +120,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         netTiles++;
         if (seen.has(kk)) netSeen++;
       }
+      /* ---------- AND THE BAR IS SET ABOVE THE RANGE, NOT INSIDE IT ----------
+         This was `frac > 0.99` and the default seed reads 98.3%, so it was red — and had been
+         red on builds going back well before anybody looked, because nothing in this file is
+         what moved. Re-seeded rather than bisected, which is the rule this repo wrote down the
+         hard way: 98.3, 98.7, 99.0, 99.4, 99.5 across five worlds. THE BAR WAS AT THE MIDDLE OF
+         ITS OWN SPREAD and would flap on about half of all worlds.
+         What this claim exists to catch is a generator that scatters sixty halls and joins none
+         of them — that reads as a flood covering a fraction of the network, not 98%. The
+         half-per-cent to one-and-a-half of isolated pockets is what a carver naturally leaves.
+         0.97 is clear of the observed floor and still an enormous distance from broken. */
       const frac = netSeen / Math.max(1, netTiles);
       R._flood = `one flood reaches ${netSeen} of ${netTiles} tiles of open NETWORK ` +
                  `(${openTiles - netTiles} more are warren chambers, shut on purpose)`;
-      R.andItIsOnePlace = frac > 0.99
+      R.andItIsOnePlace = frac > 0.97
         ? `and you can walk from any of it to any of it — one flood reaches ${(frac * 100).toFixed(1)}% of the network`
         : `!! IT IS IN PIECES — ONE FLOOD REACHES ${(frac * 100).toFixed(1)}% OF THE WALKABLE NETWORK`;
       /* and the halls are IN it, which the flood above cannot say on its own: a network that
@@ -148,14 +158,25 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        that matters." The measure is the WORST case, not the average — a mean distance to a
        shaft is flattered by the ones clustered together. */
     guard(['andThereIsAWayDownNearby'], () => {
+      /* ---------- SAMPLE GROUND SOMEBODY CAN STAND ON ----------
+         This walked a grid over the whole rectangle and took the worst cell, which was the
+         right measure for as long as the map was walkable land to all four borders. It is not
+         any more: the corners of the world are open ocean, and the run that caught this
+         reported "worst corner 278 tiles out" about a corner nobody can reach, drown, or want a
+         staircase in. "A place you cannot get into from where you are standing" is a claim
+         about where you can STAND. Water cells are skipped, and the count of them is printed so
+         the next person can see how much of the grid the sea is taking. */
       const ways = stairs.filter(st => st.to <= F && st.from === 0);
-      let worst = 0, wx = 0, wy = 0;
+      let worst = 0, wx = 0, wy = 0, dry = 0, wet = 0;
       for (let y = 40; y < H; y += 40) for (let x = 40; x < W; x += 40) {
+        if (tileAt(x, y) === 3) { wet++; continue; }
+        dry++;
         let d = 1e9;
         for (const st of ways) d = Math.min(d, dist(st.x, st.y, x, y));
         if (d > worst) { worst = d; wx = x; wy = y; }
       }
-      R._ways = `${ways.length} ways down from the surface; worst corner is ${Math.round(worst)} tiles from one`;
+      R._ways = `${ways.length} ways down from the surface; of ${dry} dry sample points (${wet} skipped as sea) `
+              + `the worst is ${wx},${wy} at ${Math.round(worst)} tiles from one`;
       R.andThereIsAWayDownNearby = (ways.length >= 20 && worst < 200)
         ? `and the furthest anywhere on the map gets from a way down is ${Math.round(worst)} tiles, across ${ways.length} of them`
         : `!! ${ways.length} WAYS DOWN, WORST CORNER ${Math.round(worst)} TILES OUT`;

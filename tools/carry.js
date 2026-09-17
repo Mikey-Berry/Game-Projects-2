@@ -32,15 +32,32 @@ const GAME = 'file://' + gamePath(process.argv[2]);
       return a.length === 2 && a[0].value && a[0].value !== 'packing…';
     }, null, { timeout: 30000 });
   };
+  /* ---------- AND THE SAME RULE APPLIES TO BOOTING, WHICH IS WHERE IT WAS LEARNED ----------
+     The note above says a fixed two seconds is a coin toss with two browser profiles open, and
+     it was written about the PANEL — while the two boot waits either side of it stayed fixed
+     sleeps. This file is the only one in the suite that opens a SECOND browser context, and the
+     second of them is an emulated phone at 2x scale, so it pays the cost of loading three
+     megabytes of game twice over, concurrently with three other harnesses. In the full suite it
+     went red twice; run on its own it passes on every build. That is not a finding about the
+     game, it is a probe walking into a page that has not finished standing up.
+     Waiting for the thing itself costs nothing when the machine is quick and does not lie when
+     it is slow. */
+  const booted = (pg) => pg.waitForFunction(() => !!document.getElementById('btn-start'), null, { timeout: 60000 });
+  const running = (pg) => pg.waitForFunction(() => typeof chars !== 'undefined' && chars.length > 0 && typeof towns !== 'undefined' && towns.length > 0, null, { timeout: 60000 });
   const start = async (ctx) => {
     const p = await ctx.newPage({viewport:{width:900,height:700}});
     p.on('pageerror',e=>console.log('ERR '+e.message.slice(0,200)));
-    await p.goto(GAME,{waitUntil:'load'});
-    await p.waitForTimeout(2500);
+    /* AND THE NAVIGATION ITSELF NEEDS THE SAME ROOM. The phone page below already carries a
+       ninety-second timeout and this one was left on Playwright's default thirty — which is
+       ample for three megabytes on an idle machine and not ample at all when the rest of the
+       suite is running beside it. Measured: under concurrent load `goto` alone exceeded thirty
+       seconds, so the probe died before any of the waits below could help it. */
+    await p.goto(GAME,{waitUntil:'load', timeout:90000});
+    await booted(p);
     /* start and stop in the same breath — see the note in tools/README.md. Every frame
        between the click and the staging is a frame the machine chose, not the probe. */
     await p.evaluate(()=>{ document.getElementById('btn-start').click(); paused = true; });
-    await p.waitForTimeout(2500);
+    await running(p);
     return p;
   };
 
@@ -140,14 +157,17 @@ const GAME = 'file://' + gamePath(process.argv[2]);
     const m = await ph.newPage();
     m.on('pageerror',e=>console.log('ERR '+e.message.slice(0,200)));
     await m.goto(GAME,{waitUntil:'load', timeout:90000});
-    await m.waitForTimeout(2500);
+    await booted(m);
     /* start and stop in the same breath — see the note in tools/README.md. Every frame
        between the click and the staging is a frame the machine chose, not the probe. */
     await m.evaluate(()=>{ document.getElementById('btn-start').click(); paused = true; });
-    await m.waitForTimeout(3000);
-    /* reachable the way a phone user reaches it: the gear, not a topbar button that is hidden */
+    await running(m);
+    /* reachable the way a phone user reaches it: the gear, not a topbar button that is hidden.
+       Waited for rather than slept at: a gear that has not been drawn yet reads exactly like a
+       gear that is not offered, which is the failure this whole block is meant to rule out. */
+    await m.waitForFunction(() => !!document.getElementById('tb-menu'), null, { timeout: 60000 });
     await m.evaluate(()=>document.getElementById('tb-menu').click());
-    await m.waitForTimeout(500);
+    await m.waitForFunction(() => document.querySelectorAll('#ctxmenu button').length > 0, null, { timeout: 60000 }).catch(()=>{});
     const found = await m.evaluate(()=>{
       const b2=[...document.querySelectorAll('#ctxmenu button')].find(x=>/MOVE/.test(x.textContent));
       if(b2){ b2.click(); return true; } return false;
