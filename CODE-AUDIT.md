@@ -34,8 +34,9 @@ Ranked by what it buys against what it costs.
    five other lists, and has a note beside each saying why.
 4. ~~**Decide whether the Maw can eat through a floor**~~ (§4.1) — *answered and fixed.* It was
    five things, not one, and none of them should reach through a storey.
-5. **Unify the two arena-containment rules, or write down that they differ** (§4.2). One is
-   inclusive, one is strict, and the harness trusts the one the game does not use.
+5. ~~**Unify the two arena-containment rules**~~ (§4.2) — *withdrawn; the entry was wrong.* They
+   ask different questions and the difference is load-bearing. What is true is narrower: nothing
+   in the game asks whether a body is on the sand, so `pitInside` is test-only scaffolding.
 
 Longer-horizon: split the source (§3.3). Still not urgent, still the right eventual answer,
 and the argument has not changed since the last audit — only the line count has.
@@ -322,7 +323,8 @@ original was left, and nobody could see it — and in §1.1 that cost a shipped 
 ## 4. Findings deliberately not changed
 
 Behaviour questions rather than cleanups, raised for an opinion rather than changed on the spot.
-§4.1 has since been answered and fixed; §4.2 is still open.
+§4.1 has since been answered and fixed. §4.2 turned out to be a misreading and is corrected in
+place rather than quietly dropped.
 
 ### 4.1 Five things could reach through a floor — **fixed**
 
@@ -367,16 +369,41 @@ measured was ambient population. The staging is clear out past every targeting r
 
 maws, larder, jail, civics, beasts and survive are green after.
 
-### 4.2 Two arena-containment rules that disagree at the boundary
+### 4.2 `pitInside` is test-only scaffolding — and the "disagreement" was not one
 
-- `pitInside(c)` — `Math.abs(dx) < ARENA_R && Math.abs(dy) < ARENA_R`, **strict**
-- the pit-master siting — `Math.max(Math.abs(dx), Math.abs(dy)) <= ARENA_R`, **inclusive**
+**This entry was wrong when first written and is corrected here**, because the correction is the
+useful part. It read: two containment rules, one strict and one inclusive, the same Chebyshev box
+written twice, and "unifying them is a behaviour change at the boundary". Looked at properly they
+are not two versions of one rule, and unifying them would be a bug.
 
-The same Chebyshev box, written twice, differing on the ring line itself. Nothing has gone
-wrong: the two are asked at different moments about different bodies. But **nothing in the game
-calls `pitInside` at all** — `tools/pit.js` does, seven times, and every claim in that harness
-is written against a predicate the game does not use. `pitInside` is kept and now carries a
-comment saying all of this. Unifying them is a behaviour change at the boundary.
+The geometry. `ARENA_R` is 8. The wall ring is laid at **exactly** offset 8
+(`Math.max(|i|,|j|) === ARENA_R`), so the sand inside is offsets -7..+7, 15×15, which is what the
+constant's own comment says. The **gate** tiles also sit at exactly offset 8 — and they are
+deliberately left out of `blocked` when the ring is built, and deleted from it again by
+`pitOpen()`.
+
+The two expressions ask different questions:
+
+- **`pitInside(c)`** — `|dx| < 8 && |dy| < 8`. *Is this body standing on the sand?* Strict is
+  correct: offset 8 is the wall, and a body cannot be inside a wall.
+- **the pit-master siting** — `Math.max(|dx|, |dy|) <= 8 → skip`. *Walking out along the gate's
+  own normal, is this candidate tile still the ring?* Inclusive is correct, and it is
+  **load-bearing**: the walk passes straight through the gate tile at offset exactly 8, which is
+  not blocked while the gate is open. With `<` the pit-master would stop there and stand in his
+  own gateway — which is a near miss of the bug the comment above that loop already describes
+  ("the darts started landing him on his own sand, where `hostile` puts him in the bout").
+
+So there is nothing to unify. What survives, and is the real finding:
+
+**Nothing in the game asks whether a body is on the sand at all.** The bout does not use geometry
+— it holds explicit `ours`/`theirs` rosters and ends on `state === 'ok'` counts, and hostility is
+`!!arena.bout`, not position. Containment is physical: the ring is sealed by construction and the
+gate shuts. `pitInside` exists only because `tools/pit.js` needs *some* way to ask "did anybody
+get out", and it is the one predicate in that harness that no game code is bound by. If the way
+the game keeps bodies in the ring ever changes, `pit.js` will keep passing.
+
+That is worth knowing and not worth changing: a test-only predicate is fine as long as it is
+labelled as one. `pitInside` carries a comment saying so. **No code change.**
 
 ---
 
