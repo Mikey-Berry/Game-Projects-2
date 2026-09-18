@@ -32,8 +32,8 @@ Ranked by what it buys against what it costs.
    a step — a third of what is left after this branch — to find one inquisitor, one brood and
    the coil's members. The pass that would gather them already runs, already does this for
    five other lists, and has a note beside each saying why.
-4. **Decide whether the Maw can eat through a floor** (§4.1). The eater's meal search has no
-   storey check. Either answer is defensible; the current one is unexamined.
+4. ~~**Decide whether the Maw can eat through a floor**~~ (§4.1) — *answered and fixed.* It was
+   five things, not one, and none of them should reach through a storey.
 5. **Unify the two arena-containment rules, or write down that they differ** (§4.2). One is
    inclusive, one is strict, and the harness trusts the one the game does not use.
 
@@ -321,22 +321,51 @@ original was left, and nobody could see it — and in §1.1 that cost a shipped 
 
 ## 4. Findings deliberately not changed
 
-Both are behaviour questions, not cleanups. They want their own commits and someone's opinion.
+Behaviour questions rather than cleanups, raised for an opinion rather than changed on the spot.
+§4.1 has since been answered and fixed; §4.2 is still open.
 
-### 4.1 The Maw can eat through a floor
+### 4.1 Five things could reach through a floor — **fixed**
 
-The eater's meal search has no storey check:
+Raised here as "the Maw can eat through a floor", answered by the owner as *"the Maw should
+definitely NOT be able to eat between floors. Cross-floor interactions should rarely happen, and
+most certainly not like this."* Looking properly, the Maw was one of five.
+
+`dist` is planar. `charsNear` is floor-blind by design and its own note says so — *"every caller
+filters by floor itself"* — which nine queries do with the same line:
 
 ```js
-const dp = downFolk.find(o => o.faction !== 'wild' && !o.undead && o.state === 'down' &&
-                              !gearHas(o, 'salmortis') && dist(c.x, c.y, o.x, o.y) < 2.5);
+if((o.floor || 0) !== (c.floor || 0)) continue;   /* a floor is as good as a wall */
 ```
 
-`dist` is planar. An eater on the surface can in principle take a body four storeys down at the
-same x,y. This is exactly the class the `_nearSquad` note calls out and fixes with `c.floor`
-("It was already wrong with one floor under the world; with three it is wrong three times as
-often"). Left alone because adding the check changes what the Maw can do, and a performance
-commit is the wrong place to hide that.
+The five that did not are exactly the five that ask "is there a body on the ground near me", and
+they are the five that read the ROSTER rather than the grid, so they were never near the note:
+
+| what | radius |
+|---|---|
+| the Larder-Kin's snatch | 4.5 |
+| the slaver's grab | 4 |
+| the Maw's meal | 2.5 |
+| a bandit robbing the fallen | 3 |
+| the town guard's arrest | 5 |
+
+A body going down on the surface was at distance **zero** from anything standing on the same
+tile four storeys below, so it could be eaten, enslaved, robbed or arrested from underground.
+
+**Fixed**, all five, with the same idiom the other nine use. `tools/storeys.js` is red five ways
+before and green six after. Every claim is a PAIR — the same predator, the same body, the same
+tile, once on the floor below and once beside it — because a "fix" that simply stopped all five
+features working would pass the cross-floor half of every claim and be worse than the bug. The
+sixth claim is a premise control: `nearestEnemy` already refuses a foe one storey down and takes
+the same one beside, which is the convention this joins.
+
+The harness's own trap is worth recording. The robbery is gated on `!c.target`, and a bandit
+picks a target with `nearestEnemy(c, 9)` — so the first staging put the pair on ground that was
+clear of bodies ON the tile but not within nine tiles. Underground there was nobody to target so
+the robbery fired; on the surface the bandit found a fight and never reached the branch. That
+read as "the same-floor control failed", i.e. as the fix having broken the feature, when what it
+measured was ambient population. The staging is clear out past every targeting radius in play.
+
+maws, larder, jail, civics, beasts and survive are green after.
 
 ### 4.2 Two arena-containment rules that disagree at the boundary
 
