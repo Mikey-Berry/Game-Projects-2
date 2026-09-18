@@ -38,8 +38,14 @@ Ranked by what it buys against what it costs.
    ask different questions and the difference is load-bearing. What is true is narrower: nothing
    in the game asks whether a body is on the sand, so `pitInside` is test-only scaffolding.
 
-Longer-horizon: split the source (§3.3). Still not urgent, still the right eventual answer,
-and the argument has not changed since the last audit — only the line count has.
+6. **Defer the terrain mesh and worldgen off the load path** (§2.5). `domInteractive` is 11.3 s
+   here and **7,958 ms of it is top-level execution** — the whole world is built before the start
+   screen exists. Parsing all 2.9 MB is ~150 ms of that. The biggest single cost in the game, and
+   it is moving code rather than rewriting it.
+
+Longer-horizon: split the source (§3.3). Still the right eventual answer on maintainability
+grounds, and §2.5 now says what it is *not*: parse is 150 ms, so splitting the file is not a
+performance measure. Argue it on the merits it actually has.
 
 ---
 
@@ -255,6 +261,98 @@ predicates on a loop that runs anyway.
 
 `charById.set` at 3.33% is worth a look after that: the Map is rebuilt from scratch every step
 although `regridAll()` exists for the case where membership actually changed.
+
+### 2.5 The eleven seconds before the menu — the largest single cost in the game
+
+Measured after the rest of this audit, prompted by the question "is it worth splitting the file".
+The answer to that question turns out to be a footnote to a much bigger number.
+
+`domInteractive` on this container is **11.3 s**. Where it goes, measured by stamping the script's
+first and last top-level line:
+
+| | |
+|---|---|
+| bytes on hand (`responseEnd`) | 28 ms |
+| the script's **first** line runs | **152 ms** — HTML parse + three.js + compiling all 2.9 MB |
+| the script's **last** line runs | 8,110 ms — so **7,958 ms of top-level execution** |
+| `domInteractive` | 11,313 ms |
+
+**Parsing and compiling the entire 2.9 MB file costs about 150 ms.** Everything else is work the
+script *does* while it evaluates. Cross-checked a second way: a page holding three.js alone is 93
+ms to interactive, and the same page with the whole game script present but wrapped in a function
+that is never called is 177 ms.
+
+**The whole world is generated before the start screen exists.** There are 29 top-level IIFEs —
+`raiseMountains`, `placeTowns`, `seedOre`, `placeBastion`, `digUndercroft`, `seedWarrens`,
+`placeLegends` and the rest — and `btn-start` does not generate anything. It calls
+`applyCreation`, unpauses, and hides the overlay. "START OVER" is `location.reload()`, so it pays
+the entire cost again.
+
+Bracketing each IIFE separately:
+
+| | ms |
+|---|---|
+| the 29 worldgen IIFEs | 1,432 |
+| everything else at top level | 6,396 |
+| — of which **"ground & water"** (lines 27102–27282), the terrain mesh | **3,933** |
+| — of which scene assembly above it (25935–27102) | 1,744 |
+
+So the gameplay worldgen is not the problem: **the terrain mesh is**. `GC = 16` gives 256 chunks
+of `PlaneGeometry(90, 90, 90, 90)`, about 2.1 M vertices and 1,036,800 triangles, and all 256 are
+built eagerly before anything is on screen. The chunking itself was a deliberate and well-reasoned
+culling win (the comment above it records GC 8 → 16 and why); what was never revisited is that the
+whole grid is built up front.
+
+**Read the absolute numbers with care and the ratio without.** This container has no GPU — WebGL
+is SwiftShader — so buffer uploads and anything touching a driver are inflated, and a laptop will
+be far quicker. But 150 ms of parse against 8,000 ms of execution is a structural ratio, not a
+hardware artifact.
+
+**What this means for splitting the file (§3.3).** Splitting addresses the 150 ms. It is a
+maintainability decision and should be argued on maintainability; as a performance measure it is
+noise. The load win is in *deferring work*, not in *dividing source*.
+
+The shape of the fix, in rough order of value against risk:
+
+1. **Put the terrain mesh behind the start click**, ideally chunk-by-chunk with the camera's
+   chunks first. Four seconds of the wait, and the player is looking at a menu during it.
+2. **Put the 29 worldgen IIFEs behind it too** (1.4 s). This has a second payoff: the character
+   creator currently cannot influence worldgen at all, because the world already exists when the
+   creator is shown.
+3. **Make "START OVER" regenerate instead of reloading.** It currently re-parses, re-compiles and
+   re-runs everything.
+
+None of this is a rewrite — it is moving 29 IIFEs and one meshing loop inside a function and
+calling it from `btn-start`. The risk is ordering: several IIFEs read globals the others set, and
+the file's own boot harness exists because a `const` in its temporal dead zone at worldgen time
+has killed the script twice. `tools/boot.js` is the guard for exactly this, and it is cheap.
+
+### 2.6 Draw calls: 840 InstancedMeshes, batched by colour
+
+One frame at 1280×800, 1,667 bodies, from `renderer.info`:
+
+| | |
+|---|---|
+| draw calls | 659 |
+| triangles | 541,748 |
+| InstancedMeshes | **840**, holding 122,445 instances |
+| plain meshes | 491 |
+| geometries / textures / programs | 380 / 5 / 9 |
+
+`box()` batches by colour — *"every distinct shade is another InstancedMesh"*, as the note above
+`palette()` says. That note records the project hitting this once already: ad-hoc `shade()` calls
+took a town from 21 batches to 180, and the fix was to restrict each town to a fixed palette. It
+works, and it is a constraint on the art rather than on the renderer.
+
+The distribution says the constraint is still binding: 579 of the 840 hold 64–511 instances, 207
+hold 8–63, and **49 hold fewer than eight** — an InstancedMesh for one instance is strictly worse
+than a plain mesh. Every one of these is a draw call, and the shadow pass walks them again.
+
+r128 has `InstancedMesh.setColorAt` and `instanceColor` (checked in the vendored copy). Moving
+colour to a per-instance attribute would let the batch key drop to geometry + opacity, collapsing
+most of the 840 and lifting the fixed-palette restriction at the same time. This is a bigger change
+than §2.5 and wants its own measurement on real hardware, because draw-call cost is exactly what
+SwiftShader misrepresents.
 
 ### 2.4 One that was tried and reverted
 
