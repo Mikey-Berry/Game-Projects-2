@@ -3,12 +3,12 @@
  *
  * Two things in this file are baked GLB where everything around them is primitives: the Aether
  * Lance (`WEPP.lance`, 22 KB of base64) and the lich's skull (`HEADP.lyonlich`, 56 KB).
- * `NATIVE_ART` decides which gets drawn. This shoots the same body, the same framing and the
+ * `NATIVE_LANCE` and `NATIVE_LICH` decide which gets drawn. This shoots the same body, the same framing and the
  * same hour both ways, so the question "which of these is better" is answered by looking.
  *
  * IT REBUILDS THE MESHES BETWEEN SHOTS AND THAT IS THE WHOLE TRICK. A character's entity is
  * cached in `charMeshes` by id, and `weaponGeo`'s cache is keyed by the switch — so flipping
- * `NATIVE_ART` changes nothing on screen until the entities are cleared and `syncChars` builds
+ * a switch changes nothing on screen until the entities are cleared and `syncChars` builds
  * again. Without that this reports the same picture twice and calls it a match.
  *
  * Framing is `wepglb.js`'s: a cloned camera put on the SUBJECT'S OWN bounding box and rendered
@@ -78,7 +78,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     for (const mode of ['glb', 'native']) {
       const shots = [];
       await p.evaluate(({ key, mode, rest }) => {
-        NATIVE_ART = (mode === 'native');
+        /* every switch, because a row sets only the one its subject is drawn by and leaving
+           the others alone keeps each row honest about what it is comparing */
+        NATIVE_LANCE = (mode === 'native');
+        NATIVE_LICH = (mode === 'native');
         NATIVE_LYONLICH = (mode === 'native');
         if (rest && WEAPONS.w_lance) WEAPONS.w_lance.rest = rest;
         /* every cached entity goes, or the switch changes nothing that is already built */

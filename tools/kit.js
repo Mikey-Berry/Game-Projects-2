@@ -349,7 +349,7 @@ const OVERRIDE = process.argv[4] ? JSON.parse(process.argv[4]) : null;
       out.keepsHisCoat = (legs && torso)
         ? 'the body under it is the one he always had — legs and torso still standing'
         : `!! THE ASCENSION STRIPPED HIS BODY (legs ${legs}, torso ${torso})`;
-      out.notRobed = !risen.e.lich && !risen.e.authored && !risen.e.hood
+      out.notRobed = !risen.e.lich && !risen.e.authored
         ? 'and he is not wearing the Deathless robe'
         : '!! A NAMED LICH GOT THE STANDARD ROBE ANYWAY';
       /* the rig is cached by colorKeyOf, so if the key does not move, a Lyonart already on
@@ -358,13 +358,22 @@ const OVERRIDE = process.argv[4] ? JSON.parse(process.argv[4]) : null;
         ? 'and the mesh key moves, so a body already on screen is rebuilt'
         : '!! THE MESH KEY IS UNCHANGED — HE WOULD ASCEND AND LOOK IDENTICAL';
     }
-    /* ---- AND A NAMELESS ONE IS STILL THE DEATHLESS ---- */
+    /* ---- AND A NAMELESS ONE IS STILL THE DEATHLESS ----
+       ON `e.authored` AND A HEAD ON THE BONE, NOT ON `e.hood`. `e.hood` is one figure's handle
+       for one part: the robed lich hangs an authored hood mesh there, and THE RELIQUARY — the
+       default now, behind `NATIVE_LICH` — builds its skull as merged boxes on `e.headG` and
+       sets no such field. The claim here is that a lich with no name of its own still arrives
+       as an AUTHORED body with nothing walking under it, which is true of both and is what
+       actually matters to the rest of the game; which field holds the head is the body's own
+       business. Asserting the field instead of the property would have gone red on the day
+       the default figure changed, reporting a broken lich that was working perfectly. */
     {
       const { e } = mk({ set: { lich: true, undead: true } });
       const legs = (e.boxLeg || []).some(m => m.visible);
-      out.robedLichIntact = (e.lich && e.authored && e.hood && !legs)
-        ? 'a lich with no name of its own still arrives in the robe, with no legs under it'
-        : `!! THE ORDINARY LICH BROKE (robe ${!!e.lich}, hood ${!!e.hood}, legs ${legs})`;
+      const head = !!e.hood || !!(e.headG && e.headG.children.length);
+      out.robedLichIntact = (e.lich && e.authored && head && !legs)
+        ? 'a lich with no name of its own still arrives authored, head on, with no legs under it'
+        : `!! THE ORDINARY LICH BROKE (authored ${!!e.authored}, head ${head}, legs ${legs})`;
     }
     return out;
   }, ground);

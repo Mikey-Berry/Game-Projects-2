@@ -71,12 +71,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       .forEach(el => el.style.setProperty('display', 'none', 'important'));
   });
 
-  /* NATIVE_ART decides which lich gets built, and `weaponGeo`'s cache and `charMeshes` are
-     both keyed past it — so the switch changes nothing already on screen until the entities
-     are dropped and the build runs again. Same trick as tools/native.js, same reason. */
+  /* `NATIVE_LICH` decides which lich gets built, and `charMeshes` is keyed past it — so the
+     switch changes nothing already on screen until the entities are dropped and the build
+     runs again. Same trick as tools/native.js, same reason. It is set explicitly rather than
+     left at the default, because this file's whole subject is the figure behind it and a
+     harness that photographs whatever happens to be switched on is photographing the switch. */
   const stage = async (native) => {
     await p.evaluate((nat) => {
-      NATIVE_ART = nat;
+      NATIVE_LICH = nat;
       chars.length = 0;
       charMeshes.forEach(e => { if (e.g && e.g.parent) e.g.parent.remove(e.g); });
       charMeshes.clear();
