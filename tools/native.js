@@ -112,9 +112,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
             const sz = bb.getSize(new THREE.Vector3());
             r = Math.max(sz.x, sz.y, sz.z) * pad;
           } else {
-            ctr = new THREE.Vector3();
-            e.headG.getWorldPosition(ctr);
-            ctr.y += 0.26;
+            /* ON THE HEAD'S OWN CENTRE AND A FIXED RADIUS. The bone's origin plus a constant
+               was close enough while both heads were a single mesh hung at the same offset;
+               a head built as boxes sits where its boxes sit, and the constant cropped it at
+               the brow. So: the CENTRE comes from what is actually on the bone, and the
+               RADIUS stays fixed, because two halves framed at two sizes is not a
+               comparison. */
+            const hb = new THREE.Box3().setFromObject(e.headG);
+            ctr = hb.isEmpty() ? e.headG.getWorldPosition(new THREE.Vector3())
+                               : hb.getCenter(new THREE.Vector3());
             r = 0.46 * pad;
           }
           const cam = camera.clone();
@@ -135,10 +141,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
       const m = await p.evaluate((onPart) => {
         const e = charMeshes.get(window.__id);
-        const t = onPart === 'weapon' ? e.weapon : (e.sculptHead || e.hood);
-        if (!t || !t.geometry) return null;
-        const g = t.geometry;
-        const tris = g.index ? g.index.count / 3 : g.attributes.position.count / 3;
+        /* a built head is not ONE mesh — its boxes are merged into whatever buckets
+           `bakeBoxes` made — so fall back to the bone and add up what hangs off it */
+        const t = onPart === 'weapon' ? e.weapon : (e.sculptHead || e.hood || e.headG);
+        if (!t) return null;
+        let tris = 0;
+        t.traverse(o => {
+          if (!o.isMesh || !o.geometry) return;
+          const g = o.geometry;
+          tris += g.index ? g.index.count / 3 : g.attributes.position.count / 3;
+        });
+        if (!tris) return null;
         const bb = new THREE.Box3().setFromObject(t);
         const sz = bb.getSize(new THREE.Vector3());
         return { tris: Math.round(tris), len: +Math.max(sz.x, sz.y, sz.z).toFixed(3) };

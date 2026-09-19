@@ -33,6 +33,7 @@ const OUT = path.resolve(process.argv[2] || path.join(__dirname, 'lich.png'));
      three runs, and guns.js split three-to-two on an md5 that had not moved. Pausing inside
      the same evaluate leaves no frames at all between the two. Every file below sets
      `paused` for itself anyway; this only removes the window before its first statement. */
+  if (process.env.DUSTWARD_NATIVE) await p.evaluate(() => { window.__native = true; });
   await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(2000);
 
@@ -63,6 +64,10 @@ const OUT = path.resolve(process.argv[2] || path.join(__dirname, 'lich.png'));
     const c = makeChar('The Deathless', 'player', spot.x, spot.y,
       { atk: 20, def: 18, tough: 16, ath: 8, magic: 40, gift: 'dark' });
     c.undead = true; c.lich = true; c.dir = 0; c.state = 'ok';
+    /* DUSTWARD_NATIVE=1 photographs and checks the OTHER figure this switch selects, so the
+       same claims cover both rather than only whichever one happens to be the default. It is
+       set before the body is built, because `charMeshes` caches past it. */
+    if (window.__native) NATIVE_ART = true;
     chars.push(c);
     window.__id = c.id;
     camX = camSX = spot.x; camY = camSY = spot.y;
@@ -162,8 +167,14 @@ const OUT = path.resolve(process.argv[2] || path.join(__dirname, 'lich.png'));
        fixed 1.85 was calibrated to one individual and failed by a centimetre the moment
        anything upstream consumed a different number of random values. */
     {
-      const hb = e.hood ? new THREE.Box3().setFromObject(e.hood) : null;
-      out.headKept = (hb && Math.abs(hb.max.y - hi) < 0.02 && hb.min.y > lo + 0.9)
+      /* AND IT IS THE HEAD BONE, NOT `e.hood`, WHEN THERE IS NO HOOD. `NATIVE_ART` swaps the
+         robed lich for THE RELIQUARY, whose head is merged boxes on `e.headG` rather than one
+         authored part — so a probe that reaches for `e.hood` reports that an original figure
+         built to this same contract has no head. The claim is about what is on top of the
+         body; which handle holds it is the body's business. */
+      const top = e.hood || e.headG;
+      const hb = top ? new THREE.Box3().setFromObject(top) : null;
+      out.headKept = (hb && !hb.isEmpty() && Math.abs(hb.max.y - hi) < 0.02 && hb.min.y > lo + 0.9)
         ? `the authored head is still the top of it (${hb.max.y.toFixed(2)})`
         : '!! THE AUTHORED HEAD IS NOT ON TOP OF THE BODY';
     }
