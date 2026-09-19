@@ -1,14 +1,19 @@
-# Dustward code audit
+# Dustward code audit — 2026-09-17
 
-A read of the game as it stands on `main` at 2597fb6 (2026-09-04), with numbers taken from
-the file and from the running game rather than recalled. Every claim below says how it was
-measured; the method is in the appendix so the next session can re-run it instead of
-trusting it.
+A read of the game as it stands on `claude/game-audit-cleanup-e7pink`, branched from `main`
+at 456e6cc. Numbers are taken from the file and from the running game, never recalled; every
+claim says how it was measured and the appendix says how to re-run it.
 
-Scope: `dustward3d_hd.html` (36,036 lines, 2.47 MB), the `tools/` harness suite (160 files,
-32,084 lines), and the repository around them. Nothing here is built. The one bug found is
-described in §1.1 and fixed in a later commit on this branch, with a harness beside it;
-the Maw search in §2.1 likewise. Everything else is a finding, not a change.
+This replaces the audit of 2026-09-04 (in git at `2597fb6:CODE-AUDIT.md`). That one described
+a 36,036-line, 2.47 MB file and a 160-harness suite. Scope now: `dustward3d_hd.html` (43,716
+lines, 2.90 MB) and `tools/` (238 files, 45,792 lines) — the game grew 7,800 lines and the
+suite 78 files in thirteen days, across the revamps this audit was asked to look behind.
+
+**What the last audit got right and what survived it** is in §7, because it is the most useful
+single measure of whether an audit is worth writing.
+
+Findings marked **fixed** are commits on this branch, each with a harness. Everything else is
+a finding, deliberately not changed, with the reason.
 
 ---
 
@@ -16,531 +21,601 @@ the Maw search in §2.1 likewise. Everything else is a finding, not a change.
 
 Ranked by what it buys against what it costs.
 
-1. **Fix the prosthetic scoping bug** (§1.1) — *done on this branch.* Two declarations are inside the wrong function.
-   Fitting a graft consumes the item and then throws; a fighter with a grafted arm throws on
-   every swing, and the throw aborts the rest of that sim step. Since 7c56501, twelve days.
-2. **Add ESLint to `prep.js`** (§3.2). `no-undef` alone would have caught §1.1 the day it
-   was written. `no-dupe-keys` catches the five duplicated save keys. One dev dependency,
-   two seconds per run, and it closes the class of bug this file is most exposed to.
-3. **Fix the Maw's quarry search** (§2.1) — *done on this branch.* One feature is 45–51% of every sim step. It is
-   an `O((down + corpses) × chars)` scan, re-run every tick by 151 bodies that found
-   nothing last tick. Two small changes halve the step in the measured world and stop it
-   scaling with the body count on a battlefield.
-4. **Precompute the warding casters** (§2.2) — *done on this branch, and the audit had it wrong.*
-   `wardedFrom` walks every body for every body — and so did two other copies of the same loop
-   that the profiler filed under their callee. Fixing the named one alone measured nothing.
-5. **Rename the two files with colons in their names** (§6.1). The repository cannot be
-   cloned on Windows.
-6. **A shared harness helper and a CI run of `check:fast`** (§4). 152 harnesses carry the
-   same 25-line preamble; nothing runs any of them automatically.
-7. **Inline three.js, or at least pin it with an integrity hash** (§5.1). The "one
-   self-contained file" is not: it fetches its engine from a CDN on every load.
+1. **A sigil-bound immortal's death was permanent** (§1.1) — *fixed.* Not dead code: a live
+   feature whose only door was deleted. The game tells you to carry the husk to a forge; the
+   forge screen went with the crafting revamp. One of three immortality paths, gone, silently.
+2. **Add the two-rule lint to `prep.js`** (§3.1). The same five duplicate save keys the last
+   audit found were still there eighty commits later, unchanged, because nothing asks. Forty
+   lines and one dev dependency. This is the second audit in a row to say so, which is itself
+   the argument.
+3. **Gather the three singleton lookups in `rebuildCharGrid`** (§2.3). ~5,000 element visits
+   a step — a third of what is left after this branch — to find one inquisitor, one brood and
+   the coil's members. The pass that would gather them already runs, already does this for
+   five other lists, and has a note beside each saying why.
+4. ~~**Decide whether the Maw can eat through a floor**~~ (§4.1) — *answered and fixed.* It was
+   five things, not one, and none of them should reach through a storey.
+5. ~~**Unify the two arena-containment rules**~~ (§4.2) — *withdrawn; the entry was wrong.* They
+   ask different questions and the difference is load-bearing. What is true is narrower: nothing
+   in the game asks whether a body is on the sand, so `pitInside` is test-only scaffolding.
 
-Longer-horizon: split the source (§3.1). Not a rewrite, and not urgent, but the file has
-crossed the point where its size is generating its own bugs, and the project has already
-built half of the tooling a split needs.
+6. **Defer the terrain mesh and worldgen off the load path** (§2.5). `domInteractive` is 11.3 s
+   here and **7,958 ms of it is top-level execution** — the whole world is built before the start
+   screen exists. Parsing all 2.9 MB is ~150 ms of that. The biggest single cost in the game, and
+   it is moving code rather than rewriting it.
+
+Longer-horizon: split the source (§3.3). Still the right eventual answer on maintainability
+grounds, and §2.5 now says what it is *not*: parse is 150 ms, so splitting the file is not a
+performance measure. Argue it on the merits it actually has.
 
 ---
 
-## 1. Bugs
+## 1. What the revamps left behind
 
-### 1.1 `PROS_TIER` and `prosVal` are local to `moveSpeedRaw`
+The method: parse the script block with `acorn`, build the call graph over every top-level
+declaration, and close it over from the page's own entry points (top-level statements, handler
+assignments, anything named in the markup). Anything left is unreachable. This is sound here
+because the file has **no `eval`, no `new Function`, no `window[name]` dispatch and exactly one
+inline handler in the markup** (`onclick="location.reload()"`) — verified, because without that
+check reachability analysis is guesswork.
 
-`dustward3d_hd.html:2658-2659` declares the graft table and its reader between two
-statements of `moveSpeedRaw` (2609–2666), so they are function-scoped. Two other functions
-use them as globals:
+36 declarations came back unreachable on 456e6cc: 191 lines, 77 KB. Two of them —
+`reEtchHusk` and `HUSK_COST` — are a live feature that had lost its door, and are §1.1. The
+other 34 are waste, and are §1.2 to §1.5.
 
-| caller | line | what happens |
+### 1.1 The sigil-bound dead had nowhere to go — **fixed**
+
+The one finding here that is not about waste.
+
+There are three immortalities. Two survive their own death. A lich sheds a phylactery you
+carry to a Binding Circle. A sigil-bound immortal sheds a **husk**, and `shedHusk` says so in
+as many words:
+
+```
+"<name>'s vessel gives out — but the sigils still glow in the wreck. A husk lies where they fell."
+"Carry it to a Forge and re-etch them. Leave it, and they wait in the metal."
+```
+
+`bearerNear`, which is what the Circle asks, refuses a husk on purpose (`!m.phyl.husk`) — so
+the forge is the road and not a second option. And `reEtchHusk`, which performs the rite, was
+whole, correct, and had exactly one caller: `openCrafting`, the per-bench crafting modal that
+the work-order book replaced. Nothing had called `openCrafting` since.
+
+So the rite was reachable from nowhere, the Circle refused them by design, and **a sigil-bound
+death was permanent** while the log line kept promising otherwise.
+
+The file already has a name for this shape. Beside the Soulbound rig:
+
+> *"This is the armet again: an authored asset behind a condition that cannot be true is
+> invisible in exactly the way a missing asset is, and nothing logs."*
+
+This is that with the condition removed entirely — there was no door, not even a shut one.
+
+**Fixed.** The re-etch is a row at the top of the work-order book, which is what replaced the
+modal. It is the one row in that window that cares where a body is standing (a husk is carried,
+not ordered), so the bearer must be at a forge — the gate `openCrafting` applied, kept rather
+than loosened. `tools/husk.js` is red two ways before and green nine after: it asserts the
+premise first, pins the Circle's refusal so a "fix" that lets the Circle swallow husks shows up
+as a change, proves the rite itself was never the broken part, and carries two negative
+controls.
+
+The harness also caught a bug in the first version of the fix: it used `shopFor('forge')`,
+which answers "is one built anywhere" and returns the *first* forge in `pBuilds` — so with two
+forges up, a bearer at the second was offered nothing.
+
+### 1.2 The baked helmets — 70 KB — **removed**
+
+| what | lines | bytes |
 |---|---|---|
-| `atkPower` | 3238 | `prosVal(a)` on a body whose arm is `severed && pros` → `ReferenceError` |
-| the WEAR handler in `refreshInv` | 30334 | `PROS_TIER[tier]` → `ReferenceError`, after `takeItem` and after the part was marked fitted |
+| `HELMP` — two base64 meshes | 4 | **67,301** |
+| `HELMFIT` — their tuning table | 15 | 1,220 |
+| `helmPart` — builds one | 19 | 1,018 |
+| `bakedGeo`'s `store === 'helm'` recolour branch | 6 | 291 |
+| `helmBaked`, `helmOf` | 2 | 91 |
 
-Verified live (appendix, probe 3):
+Both helms have been built out of boxes in `buildCharMesh` since the imported ones were
+reported as not working out — the note above `helmKind` says so. **67 KB of a 3 MB download,
+2.2% of what every player fetches, for geometry nothing constructs.**
 
-```
-prosValType: "undefined"        prosTierType: "undefined"
-atkPower(grafted arm):          THROWS: prosVal is not defined
-moveSpeedRaw(grafted leg):      ok 3.12          ← works, because the table lives there
-fit button:                     THROWS: PROS_TIER is not defined
-  after the throw:              pros: true, tier: 1, item 1 → 0
-```
+The bake is not lost: it is in `tools/helms.gen.js` and `tools/alch2.gen.js` byte for byte,
+and `tools/bakehead.js` regenerates it from the GLBs. Out of the download, still in the repo.
 
-So the fit half-works: the graft is consumed and the limb is fitted, but the log line and
-the two `refresh` calls never run, the panel does not update, and the player sees nothing
-happen. The attack half does not work at all. `atkPower` is called from `attack` (7801),
-from `physics` (11449, 11459), from `gauntTick` (15074) and from the structure-damage path
-(15466) — all inside `update()`, and nothing between them and `frame()`'s `try` catches. So
-every swing by a body with a grafted arm unwinds the whole sim step from that body onward:
-the rest of the roster does not tick, and everything `update()` does after the body loop is
-skipped for that step. `frame()` logs the first three of these and then goes silent
-(36026), so after three swings it is invisible.
+`helmOf` went with it — a one-line alias for `helmKind`, kept by a comment claiming *"the rest
+of the file asks it who is wearing what"*. The file asks `helmKind` directly, in both places.
+Only `tools/heads.js` still called the alias; it asks `helmKind` now.
 
-Introduced by 7c56501 "Every kind names its own" (2026-08-23), which is the commit that
-created the table. No harness covers prosthetics (`grep -l pros tools/*.js` finds only two
-incidental matches).
+### 1.3 The per-bench crafting modal — 3.8 KB — **removed**
 
-**Fixed on this branch.** The table and its reader are at the top level above `moveSpeedRaw`;
-`legFactor` stays where it was. `tools/grafts.js` pins all three readers and drives the swing
-through the real `update()`, and is red five ways on the build before the fix.
+`openCrafting` (60 lines), `craftingBench` and `bestCrafter`, replaced by the work-order book.
+This is the cluster that stranded §1.1.
 
-### 1.2 Duplicate keys in the save object
+### 1.4 The SVG paperdoll — 2.1 KB — **removed**
 
-ESLint `no-dupe-keys` on the script block:
+`dollSvg` and `dollFill`, replaced by the 3D `dollPortrait` directly below them in the file.
 
-| line | key | first value | second value |
-|---|---|---|---|
-| 34076 / 34091 | `roomId` | `(c.roomId??null)` | same |
-| 34109 | `eater` | `!!c.eater` | same |
-| 34112 | `npcNecro` | `!!c.npcNecro` | same |
-| 34114 | `construct` | `!!c.construct` | same |
-| 34118 / 34145 | `nodeUses` | `[...nodeUses]` | `[...nodeUses.entries()]` |
+### 1.5 Twenty-two singletons — **removed**
 
-No data is lost today because each pair evaluates to the same thing (`[...map]` and
-`[...map.entries()]` are identical). But the later key silently wins, `construct` is the one
-key `SAVE_KEEP` goes out of its way to protect, and a future edit to the first copy of any
-of these does nothing. This is what "appending to a 150-line object literal" looks like
-after enough rounds; the lint rule is the cure.
+`TS` (the tile size, off a line where `W` and `H` are used 450 times between them),
+`UNDER_DEEP`, `isDeck`, `TRADE_NAMES`, `canRebuild`, `CONVICTION_KEYS`, `regardOf`, `GUILD_R`,
+`FOCUS_LABEL`, `MATS_RECIPE`, `MATS_SECS`, `commanders`, `floorOf`, `inScar`, `dreadOf`,
+`riftSealer`, `altarNear`, `LANCE_COOL`, `nearestStairFor`, `_planeUp`, `TOUCH_TAP_MS`, `DIRS`.
 
-### 1.3 Small things the linter found
+### 1.6 And the packs that are *not* dead
 
-- `dustward3d_hd.html:5181` — `if(!(i===p.x && y1===y1))`. `y1===y1` is always true, so
-  this is `i !== p.x`. Harmless (it leaves the south-wall door open, which is what the
-  comment wants) but not what it says.
-- `dustward3d_hd.html:34189` — the `< 19` version gate sits below the `< 20` gate and can
-  never fire.
-- `function ai` (9823) shadows the browser's `window.ai`. Function declarations win, so
-  nothing breaks, but a 930-global script will keep colliding with new browser globals and
-  the failure mode for a `let`/`const` collision is a `SyntaxError` at load.
-- 47 unused declarations. Of the functions, 14 are read by nothing in the game or in
-  `tools/`: `isDeck`, `canRebuild`, `regardOf`, `commanders`, `floorOf`, `inScar`,
-  `dreadOf`, `riftSealer`, `helmPart`, `gearFor` and the constants `TS`, `TRADE_NAMES`,
-  `CONVICTION_KEYS`, `GUILD_R`, `LANCE_COOL`, `TOUCH_TAP_MS`, `DIRS`. Others (`cairn`,
-  `fractureName`, `helmOf`, `openCrafting`, `makeBark`, `nearestStairFor`, `unstuckN`) are
-  reached by harnesses through the global scope and are not dead. Check `tools/` before
-  removing any of them; the probes reach into the page by name.
+Worth recording, because "delete the big base64 blobs" is the wrong lesson:
+
+| pack | size | verdict |
+|---|---|---|
+| `HEADP` | 336 KB | **live** — all five keys reached: `lyonart`, `saga`, `lyre`, `czarina` assigned directly, `lyonlich` via `LICHFACE` |
+| `WEPP` | 45 KB | **live** — both keys reached through `WEPFIT` |
+| `LICHP` | 22 KB | **live** — the hood, the one authored lich part left |
+| `HELMP` | 67 KB | dead, §1.2 |
 
 ---
 
 ## 2. Performance
 
-Measured on the built `tools/game.html` in headless Chromium with SwiftShader, on the
-world worldgen produces from the fixed seed: 1,067 bodies (1,049 alive), day 1, 08:30.
-`update(SIM_DT)` was run 600 times with the frame loop paused. Two profiles: one that wraps
-every function `update()` calls (counts are exact, times carry wrapper overhead), and one
-from Chrome's sampling profiler (times are honest, no counts).
+The sim is **flat now**, which is the headline. The last audit found one feature at 45–51% of
+the step (the Maw's quarry search); that fix held and nothing has replaced it. The profile is a
+long tail with no single villain.
 
-| | ms per step |
+What is left is not a hot function but a hot **habit**: `chars.filter/find/some` over the whole
+roster, re-run every tick, to answer a question about a handful of bodies.
+
+Measured by wrapping the array methods on the live `chars` array and counting calls and
+elements visited per `update()`, on a 1,667-body world:
+
+| | scans per step | element visits per step |
+|---|---|---|
+| before | 21.6 | 36,063 |
+| after this branch | 8.8 | **14,600** |
+
+### 2.1 The three that mattered — **fixed**
+
+**The downed-body searches — 10,800 visits a step.** Six places ask "is there a body on the
+ground within a few tiles of me": the Maw's meal, the Larder-Kin's snatch, the slaver's grab, a
+squadmate's rescue, the gaol's pickup, the examine cursor. The Maw's was the single worst scan
+in the sim — 9,085 visits a step, asked 5.5 times a step, almost always to find nobody.
+
+`charsNear` is the obvious answer and the wrong one: **the grid holds only `state === 'ok'`
+bodies**, so a downed body is precisely what the spatial index does not contain. A list is the
+answer, not an index — which is what `rebuildCharGrid` already does for `warders`, `charmed`,
+`carriers`, `belowFolk` and `lamps`. `downFolk` joins them. Five of the six read it; the
+examine cursor keeps its roster scan, because it runs on a click and churning a cold path buys
+nothing.
+
+**The corpse sites — 6,668 visits a step.** `corpseSiteTick` read each site's population with a
+`chars.filter` *inside* the site loop: O(sites × chars) for something that is one pass no matter
+how many sites there are, and which then does nothing on better than 99 wakes in 100.
+
+**The two boss loops — 3,900 visits a step.** Both asked
+`chars.some(o => o.faction === 'player' && o.state !== 'dead' && …)` once per boss per wake.
+`_pl` is that exact filter, already gathered at the top of the same step for `_nearSquad`, and
+in scope at both call sites.
+
+Measured, three interleaved rounds per the README's rule:
+
+```
+prev  5.011  5.031  4.985 ms/step     mean 5.009
+new   4.578  4.447  4.562 ms/step     mean 4.529      -9.6%, no overlap
+```
+
+No rule changed. The predicates are carried over verbatim; what changed is what they are asked
+of. The one behavioural difference is stated in the code: a body that goes down partway through
+a step is not in `downFolk` until the next one, so a predator notices a thirty-third of a second
+later. `liveChars` beside it carries the same staleness the other way and says so.
+
+**It did cost something, and the full suite is what found it.** `civics.js` was the one red in
+156, and it was a true positive about the change even though the game was never exposed. Making
+`downFolk` a list turns `rebuildCharGrid` into a precondition of `ai` — which it very nearly
+already was, since `ai` reaches for `nearestEnemy` and everything else built on `charsNear`, and
+five of the six harnesses that drive `ai` by hand already call `rebuildCharGrid` in their loop.
+The gaol's pickup was the one path in `ai` that read the raw roster and so did not care, and
+`civics.js` was the one harness relying on that: it drove `ai` with no grid pass at all, so
+`downFolk` was never filled and the report read like a broken arrest.
+
+The harness stages the grid now, and the fix was checked against **both** builds — the fixed
+`civics.js` passes identically on the pre-audit base and on this branch (same sentence, same
+distance to the cell), which is what makes it a staging fix rather than a way of hiding a
+behaviour change. `update` rebuilds the grid first and always did, so nothing a player can reach
+was affected; the risk this leaves is that the next hand-rolled tick loop that forgets the pass
+will fail somewhere that looks nothing like the cause. The comment in `rebuildCharGrid` says so.
+
+### 2.2 The whole pattern, counted
+
+Not all of these are worth changing, but the size of the habit is worth knowing:
+
+- **57** sites hand-roll `chars.filter/find/some(c => c.faction === 'player' && …)` while
+  `player()` exists with a per-step cache built for exactly this. Many differ legitimately
+  (undead-only, phantoms included, dead included) — the number is the surface area, not a
+  to-do list.
+- **23** sites do a radius query as a full-roster scan. Some of those genuinely cannot use
+  `charsNear` for the §2.1 reason; the rest can.
+
+### 2.3 What is left, and the next move
+
+Post-fix line profile, hottest lines in the sim:
+
+| share | what |
 |---|---|
-| sampling profiler | 19.4 |
-| instrumented | 28.7 |
-| budget at 1× (`SIM_DT` = 1/30) | 33.3 |
+| 3.33% | `rebuildCharGrid` — `charById.set(c.id, c)`, a 1,667-entry Map rebuilt every step |
+| 3.05% | `update` — the far-body physics accumulator |
+| 2.04% | `paceKey` |
+| 2.02% | `rebuildCharGrid()` itself |
+| 1.97% | `separate()` |
+| 1.92% | `gearHas` — loops `EQ_SLOTS` doing `ITEMS` lookups |
+| 1.24% | `chars.find(c => c.inquisitor && c.state === 'ok')` |
 
-The absolute number is a sandbox CPU and means little. The shares are what matter, and at
-3× or 5× speed the frame needs three to five of these steps, which is where the
-`simSteps < 4` cap (35999) starts dropping sim time.
-
-### 2.1 The Carrion Maw is half the sim
-
-Sampling profile, self time, top of the list:
-
-| function | line | self | inclusive |
-|---|---|---|---|
-| anonymous — `chars.some(m => m.mawTarget === o …)` in the down-body loop | 15329 | 23.4% | |
-| anonymous — the same `some` in the corpse loop | 15335 | 13.5% | |
-| (program) | | 11.7% | |
-| `mawQuarry` | 15324 | 8.0% | 44.9% |
-| `mawFeed` | 15356 | 6.2% | 51.2% |
-| `update` | 19251 | 5.3% | 86.0% |
-| `physics` | 11321 | 4.8% | 71.2% |
-| `isConcentrating` (via `wardedFrom`) | 16560 | 3.3% | |
-| `wardedFrom` | 17963 | 1.9% | |
-| `rebuildCharGrid` | 9584 | 1.8% | |
-| `separate` | 20564 | 1.7% | 2.5% |
-| `hostile` | 9755 | 1.5% | |
-| `travel` | 11065 | 1.3% | 4.0% |
-| `charsNear` | 9600 | 1.2% | |
-| `findPath` | 10928 | 0.8% | 1.8% |
-
-`mawFeed` is called from `physics` for every body (11526). It returns immediately unless
-`c.eatsDead`, but 151 bodies in this world have it (gaunts and their kin), and a searcher
-with no quarry calls `mawQuarry` **every physics tick**. `mawQuarry` (15324) loops over
-`chars` and, for each down body, runs `chars.some(...)` to check whether another Maw has
-claimed it; then does the same over `corpses`. That is `(down + corpses) × chars`
-comparisons per searcher per tick, with 150 searchers finding nothing and asking again next
-tick:
+**The recommendation is the three singleton lookups**, which are the same habit as §2.1 and the
+same fix:
 
 ```
-searchers: 151   with a target: 1   down: 5   corpses: 6   chars: 1067
-one mawQuarry call: ~60 µs   →   150 × 60 µs ≈ 9 ms of a 19 ms step
+5786   const iq = chars.find(c => c.inquisitor && c.state === 'ok');
+17981  const members = chars.filter(c => c.coil && c.state === 'ok');
+16678  return chars.find(g => g.brood && g.state !== 'dead') || null;
 ```
 
-And it scales the wrong way: the cost is proportional to corpses, so it is cheapest on a
-quiet day and worst on a battlefield, which is exactly when the sim is already loaded. At
-~5.5 µs per candidate, a hundred corpses puts one search at ~0.6 ms and the Maws together at
-~90 ms per step on this machine.
+Three full-roster walks a step — ~5,000 element visits, a third of what remains — to find one
+inquisitor, one brood, and a handful of coil members. `rebuildCharGrid` already walks `chars`
+once and already gathers five lists of exactly this shape. Adding three more costs three
+predicates on a loop that runs anyway.
 
-Two changes, both local to those two functions:
+`charById.set` at 3.33% is worth a look after that: the Map is rebuilt from scratch every step
+although `regridAll()` exists for the case where membership actually changed.
 
-- Build the claimed set once per call — `const claimed = new Set(); for(const m of chars)
-  if(m.mawTarget && m !== c) claimed.add(m.mawTarget)` — and test `claimed.has(o)`. That is
-  `O(chars + down + corpses)` instead of the product.
-- Do not re-run a search that just failed. A retry timer on the body (`c.mawSearchT`, a
-  second or two, the same shape as `pathFail`) cuts 150 searches per tick to a handful. A
-  Maw that noticed a corpse two seconds late is not a design change.
+### 2.5 The eleven seconds before the menu — the largest single cost in the game
 
-Better still, do the search once per tick for all Maws (a world-level pass that hands out
-quarry), since every searcher is scanning the same two lists. But the two changes above
-are the ones that can be made without touching the design.
+Measured after the rest of this audit, prompted by the question "is it worth splitting the file".
+The answer to that question turns out to be a footnote to a much bigger number.
 
-**Fixed on this branch**, both changes, and measured interleaved three runs a side as the
-README asks:
-
-| | before | after |
-|---|---|---|
-| `simcost.js` direct, ms/step | 16.3 / 17.4 / 17.1 | 8.1 / 7.9 / 8.0 |
-| `simcost.js` 20 s soak, sim ms/frame | 35.1 / 34.5 / 39.6 | 19.0 / 16.7 / 20.7 |
-| sampling profile, ms/step | 19.4 | 8.2 |
-| `mawQuarry` calls per 90 steps | 5,435 | 269 |
-| one search, 6 corpses | ~60 µs | ~60 µs |
-| one search, 106 corpses + 10 down | 2,030 µs | 90 µs |
-
-On day one the retry timer is what halves the step; the claimed set is what keeps a search
-flat as the field fills. `tools/maws.js` pins the call count (a count, so it holds under suite
-load) and then asks the behaviour directly: a Maw that has already missed still takes a corpse
-put in front of it, 1.6 s later, and two Maws still never claim one body. After the change the
-next item on the profile is exactly §2.2: `isConcentrating` + `wardedFrom` at 10.3% of an
-8.2 ms step.
-
-### 2.2 `wardedFrom` walks the roster for every body
-
-`wardedFrom(c)` (17963) loops over all of `chars` looking for a concentrating warder. It is
-asked per body per tick, so it is `chars²` calls to `isConcentrating` — 3.3% + 1.9% of the
-step for a feature that has, in this world, zero active casters. Collect the active warders
-once per tick (there are never more than a few) and have `wardedFrom` check against that
-list. Same shape as the `_pl` / `_nearSquad` precompute already done at 20203.
-
-**Fixed on this branch — and the paragraph above was wrong about where the cost was.**
-`wardedFrom` is asked only for gaunts with a quarry (51 a step here), so its walk was 55k
-predicate calls a step, not `chars²`. The candidate-list fix for it alone measured 8.19 →
-8.31 ms a step across three interleaved pairs: nothing. The live-world counter in
-`tools/wards.js` then said 176k `isConcentrating` calls a step before and 121k after, and
-121k over 1,067 bodies is 113 a body, which nothing a body does to itself costs. The rest was
-two more copies of the same loop: `wardSears` (asked of every undead in `bodyTick` and on every
-blow in `mitigate`) and an unnamed inline IIFE in `physics`, asked for every gaunt every tick
-whether a light was near enough to turn from — 113 gaunts × 1,067 bodies. A sampling profiler
-files a loop's cost under its callee, so both hid under `isConcentrating`, and reading the
-profile by function name never finds them. One list gathered in `rebuildCharGrid`, one reader
-(`lightNear`), and `startConcentration` adding a light lit mid-step:
-
-| | before | after |
-|---|---|---|
-| `simcost.js` direct, ms/step | 8.9 / 8.3 / 8.3 | 7.0 / 6.5 / 7.0 |
-| `simcost.js` 20 s soak, sim ms/frame | 16.4 / 16.9 / 16.9 | 17.9 / 13.4 / 14.6 |
-| sampling profile, ms/step | 8.36 | 7.05 |
-| `isConcentrating` calls per step, live world | 176,482 | 0 |
-| bodies asked per `wardedFrom` / `wardSears` call | 1,067 / 1,067 | 0 / 0 |
-
-The lesson belongs in this document rather than only in the To Do: when a profile puts a
-tiny predicate high on the list, the cost is in its callers, and the callers to look for are
-loops without names.
-
-### 2.3 What is already good
-
-The things one would normally flag in a 1,000-body sim are already handled: a spatial hash
-(`charGrid`) with a zero-allocation query, numeric collision keys with a `Uint8Array` fast
-path for the ground floor, an A* with a binary heap and a search budget scaled to the trip,
-a per-body LOD that ticks far idle bodies at 4 Hz, a 4 Hz throttle on the expensive world
-scans, and a fixed-step loop that degrades instead of spiralling. Per step in the measured
-world: 8.3k `isBlocked`, 4.2k `hostile`, 1.6k `charsNear`, 93 `nearestEnemy`, 2.8
-`findPath`. None of those is a problem.
-
-The one design footgun is `charsNear`'s shared `_nearOut` buffer (9599). It is fast and it
-has already caused one real bug (the Wisp burst, per the README). A cheap guard: in the
-test build only, have `charsNear` bump a generation counter and have the returned array
-carry it, so a probe can assert that no caller is iterating a stale result. Or accept the
-footgun and keep the README note; it is documented well.
-
-`refreshSquadBar` rebuilds the whole bar's DOM (`bar.innerHTML = ''`, 28762) four times a
-second whether anything changed or not. Not measured as a problem; it would show up on a
-phone with a thirty-body host. A cheap hash of the inputs would skip the rebuild.
-
----
-
-## 3. Structure
-
-### 3.1 The file
+`domInteractive` on this container is **11.3 s**. Where it goes, measured by stamping the script's
+first and last top-level line:
 
 | | |
 |---|---|
-| lines | 36,036 (script block 35,462) |
-| bytes | 2,589,299 — of which 470,698 (18%) is ten lines of base64 mesh packs |
-| top-level function declarations | 933 |
-| top-level `let`/`const` bindings | 626 |
-| top-level statements | 1,659 |
-| lines inside functions / at top level | 24,141 / ~11,300 |
+| bytes on hand (`responseEnd`) | 28 ms |
+| the script's **first** line runs | **152 ms** — HTML parse + three.js + compiling all 2.9 MB |
+| the script's **last** line runs | 8,110 ms — so **7,958 ms of top-level execution** |
+| `domInteractive` | 11,313 ms |
 
-The largest functions, with cyclomatic complexity from a real parse:
+**Parsing and compiling the entire 2.9 MB file costs about 150 ms.** Everything else is work the
+script *does* while it evaluates. Cross-checked a second way: a page holding three.js alone is 93
+ms to interactive, and the same page with the whole game script present but wrapped in a function
+that is never called is 177 ms.
 
-| function | lines | branches | starts at |
-|---|---|---|---|
-| `buildCharMesh` | 2,395 | 491 | 24502 |
-| `physics` | 1,445 | 756 | 11321 |
-| `update` | 1,301 | 829 | 19251 |
-| `syncChars` | 658 | 225 | 26897 |
-| `restore` | 519 | 449 | 34187 |
-| `renderOverlay` | 432 | 188 | 27954 |
-| `refreshCharPanel` | 325 | 161 | 28901 |
+**The whole world is generated before the start screen exists.** There are 29 top-level IIFEs —
+`raiseMountains`, `placeTowns`, `seedOre`, `placeBastion`, `digUndercroft`, `seedWarrens`,
+`placeLegends` and the rest — and `btn-start` does not generate anything. It calls
+`applyCreation`, unpauses, and hides the overlay. "START OVER" is `location.reload()`, so it pays
+the entire cost again.
 
-Seven functions over 300 lines; 851 of 933 are under 50. So the shape is fine almost
-everywhere and extreme in seven places, and the seven are the ones every feature touches.
-`physics` and `update` are each a sequence of `if(c.something){...}` blocks that could be
-the `*Tick` functions the rest of the file already uses (there are 44 of them); the pattern
-exists, it just was not applied to the two biggest. `buildCharMesh` is a rig per body kind
-in one function and would split along `c.kin` the same way.
+Bracketing each IIFE separately:
 
-**The ordering hazard.** ESLint's `no-use-before-define` reports 327 uses of 72 globals
-before their declaration line. All are inside function bodies, so none throws today — but
-the distance is the point: `modalOpen` is first used at 4965 and declared at 30343;
-`selected` at 2856 vs 19178; `opts` at 6590 vs 19189; `sisterArc` at 12857 vs 35157.
-`boot.js` exists because this has bitten twice at worldgen (a `const` in its temporal dead
-zone), the README records a silent duplicate-function collision, and three
-`window.decorByTile`-style escape hatches plus 21 `typeof X === 'undefined'` guards are
-the same problem wearing other clothes. None of it is wrong; all of it is the cost of one
-scope.
+| | ms |
+|---|---|
+| the 29 worldgen IIFEs | 1,432 |
+| everything else at top level | 6,396 |
+| — of which **"ground & water"** (lines 27102–27282), the terrain mesh | **3,933** |
+| — of which scene assembly above it (25935–27102) | 1,744 |
 
-**A split, not a rewrite.** The constraint is that the *shipped* thing is one file, and
-`prep.js` already rewrites the file on every test run. A `src/` directory of numbered
-files in the order the sections already sit in (`00-core.js`, `01-terrain.js`, … the
-banners at `/* ==== CORE */`, `TERRAIN`, `ITEMS`, `TOWNS`, `CHARACTERS` are the seams) and
-a `build.js` that concatenates them into the HTML changes nothing at runtime — same scope,
-same order, same behaviour — and buys: the mesh packs out of every editor's way, a lint
-that runs per file, diffs that name the system they touch, and an end to anchored edits
-inside a 1.8 MB text (the README records three syntax breaks in one sitting from exactly
-that). The base64 packs alone are worth moving: `bakehead.js` already emits `.gen.js`
-files that are spliced in by hand, and the doc calls that splice the dangerous step.
+So the gameplay worldgen is not the problem: **the terrain mesh is**. `GC = 16` gives 256 chunks
+of `PlaneGeometry(90, 90, 90, 90)`, about 2.1 M vertices and 1,036,800 triangles, and all 256 are
+built eagerly before anything is on screen. The chunking itself was a deliberate and well-reasoned
+culling win (the comment above it records GC 8 → 16 and why); what was never revisited is that the
+whole grid is built up front.
 
-This is the largest change on the list and the least urgent. It is here because every
-other structural item gets cheaper after it.
+**Read the absolute numbers with care and the ratio without.** This container has no GPU — WebGL
+is SwiftShader — so buffer uploads and anything touching a driver are inflated, and a laptop will
+be far quicker. But 150 ms of parse against 8,000 ms of execution is a structural ratio, not a
+hardware artifact.
 
-### 3.2 There is no linter
+**What this means for splitting the file (§3.3).** Splitting addresses the 150 ms. It is a
+maintainability decision and should be argued on maintainability; as a performance measure it is
+noise. The load win is in *deferring work*, not in *dividing source*.
 
-`prep.js` syntax-checks the script block and stops. That catches "does not parse" and
-nothing else. Running ESLint 9 over the extracted script with a browser+`THREE` globals
-list and eleven rules took two seconds and found §1.1, §1.2 and §1.3. The rules worth
-turning on, all of which are quiet on the current file except where they found something:
+The shape of the fix, in rough order of value against risk:
 
-```
-no-undef, no-dupe-keys, no-redeclare, no-self-compare, no-unreachable,
-no-dupe-else-if, no-dupe-args, no-duplicate-case, use-isnan, valid-typeof,
-no-unused-vars (warn)
-```
+1. **Put the terrain mesh behind the start click**, ideally chunk-by-chunk with the camera's
+   chunks first. Four seconds of the wait, and the player is looking at a menu during it.
+2. **Put the 29 worldgen IIFEs behind it too** (1.4 s). This has a second payoff: the character
+   creator currently cannot influence worldgen at all, because the world already exists when the
+   creator is shown.
+3. **Make "START OVER" regenerate instead of reloading.** It currently re-parses, re-compiles and
+   re-runs everything.
 
-`no-use-before-define` is too noisy here (327) and should stay off; the load-time TDZ case
-it would catch is already `boot.js`'s job. The cheapest wiring is a `lint` step inside
-`prep.js` (it already extracts the script block) so that a build that fails lint never
-reaches a harness — the same policy as the NUL-byte and syntax checks.
+None of this is a rewrite — it is moving 29 IIFEs and one meshing loop inside a function and
+calling it from `btn-start`. The risk is ordering: several IIFEs read globals the others set, and
+the file's own boot harness exists because a `const` in its temporal dead zone at worldgen time
+has killed the script twice. `tools/boot.js` is the guard for exactly this, and it is cheap.
 
----
+### 2.6 Draw calls: 840 InstancedMeshes, batched by colour
 
-## 4. Test tooling
-
-The suite is the best thing in the repository and the README's notes section is a genuine
-document. The findings here are about the plumbing around it, not the probes.
-
-### 4.1 152 copies of the same preamble
+One frame at 1280×800, 1,667 bodies, from `renderer.info`:
 
 | | |
 |---|---|
-| files in `tools/` | 160 |
-| with their own `chromium.launch(...)` and the four SwiftShader flags | 152 |
-| that click `#btn-start` themselves | 151 |
-| that `require` a shared helper | 0 |
+| draw calls | 659 |
+| triangles | 541,748 |
+| InstancedMeshes | **840**, holding 122,445 instances |
+| plain meshes | 491 |
+| geometries / textures / programs | 380 / 5 / 9 |
 
-Every harness re-implements launch, the `DUSTWARD_CHROME` override, the error collectors,
-`gamePath`, the boot-and-wait and usually a `guard()`/`pin()` reporter. A `tools/lib.js`
-of eight functions removes ~25 lines from each of 150 files and, more importantly, makes
-the fixes the README keeps learning one edit instead of 150: "set `paused = true` for any
-probe that drives the sim itself" becomes the default of `boot()`, and the parallel-mode
-failures (`run.js --jobs`) — which the README attributes to exactly that wall-clock class —
-get one place to be fixed.
+`box()` batches by colour — *"every distinct shade is another InstancedMesh"*, as the note above
+`palette()` says. That note records the project hitting this once already: ad-hoc `shade()` calls
+took a town from 21 batches to 180, and the fix was to restrict each town to a fixed palette. It
+works, and it is a constraint on the art rather than on the renderer.
 
-### 4.2 Two lists, and eight orphans
+The distribution says the constraint is still binding: 579 of the 840 hold 64–511 instances, 207
+hold 8–63, and **49 hold fewer than eight** — an InstancedMesh for one instance is strictly worse
+than a plain mesh. Every one of these is a draw call, and the shadow pass walks them again.
 
-`package.json`'s `check` script and `run.js`'s `ALL` array both enumerate the suite. They
-have 113 entries each and agree today; nothing keeps them agreeing. `check` should be
-`node tools/prep.js && node tools/run.js`.
+r128 has `InstancedMesh.setColorAt` and `instanceColor` (checked in the vendored copy). Moving
+colour to a per-instance attribute would let the batch key drop to geometry + opacity, collapsing
+most of the 840 and lifting the fixed-palette restriction at the same time. This is a bigger change
+than §2.5 and wants its own measurement on real hardware, because draw-call cost is exactly what
+SwiftShader misrepresents.
 
-The README's **Correctness — run these before committing** table has 78 rows. Eight of
-them are in neither list: `doorsave.js`, `immortal.js`, `regard.js`, `rite.js`,
-`shaping.js`, `decay.js`, `moves.js` (visual), `corpses.js` (a report). Six of those are
-assertion harnesses that nobody has run as part of a push for some time.
+### 2.4 One that was tried and reverted
 
-All six were run for this audit. All six exit 0 with `errs: 0` — and none of them *can*
-fail: none contains a `process.exit(1)`, an `exitCode`, or the `***`/`!!` markers `run.js`
-greps for. They print a JSON report and stop. `doorsave.js`, `immortal.js`, `regard.js`,
-`rite.js`, `shaping.js` and `decay.js` are reports wearing the correctness table's label,
-which is a different thing from a harness that fails on the build before it. Either
-promote their `identical: true` lines to assertions and add them to `ALL`, or move them to
-the table where the reports live.
+The per-frame material update carried two loops with the same seven lines, and recomputed the
+hit-flash `k` per material although it depends only on `c.hitT`. Folding them into one closure
+and hoisting `k` reads better. Measured over four interleaved rounds: 26.28 fps against 26.35
+— inside a within-arm spread of 1.7 fps, i.e. **not measurable**. An earlier two-sample read
+suggested the closure was *worse* (a closure allocated per body per frame); four rounds do not
+support that either.
 
-Going the other way, 30 harnesses that *are* in `ALL` have no row in any README table
-(`world.js`, `host.js`, `raise.js`, `guns.js`, `roads.js`, `civics.js`, …). The `For
-Claude: To Do` header covers most of them, but the README is where the tables are.
-
-### 4.3 Nothing runs automatically
-
-There is no `.github/`. `check:fast` is six harnesses in 132 s here (2.5 minutes on a
-free runner is plausible), and it would have to be told to `curl` three.js and to install
-Playwright's Chromium, both of which are one line. Even that subset on every push turns
-"did I break the build" from a thing the author remembers to run into a thing that happens.
-The full `check` is ~15 minutes serially and would be fine as a nightly.
-
-### 4.4 The serial chain
-
-`run.js` records that four-way parallel goes red on four harnesses for wall-clock reasons.
-That is the shared-helper problem again (§4.1): if `boot()` pauses the sim and the probes
-drive it explicitly, load stops mattering. Until then the honest number is the serial one,
-and `run.js` already prints the three slowest so the next person knows where the time is
-(`roads.js` 233 s, `world.js` 77 s).
+Reverted. Seven duplicated lines that have not changed are not worth a commit justified by a
+measurement that does not survive its own error bars. Recorded here so the next person does not
+re-derive it.
 
 ---
 
-## 5. Robustness
+## 3. Structure and tooling
 
-### 5.1 The one file is two files
+### 3.1 There is still no linter, and it still costs
 
-`dustward3d_hd.html:471` loads three.js r128 from cdnjs at runtime, with no `integrity`
-attribute. Offline, or on a network that blocks the CDN, the game shows an error (20855)
-and stops. The harnesses swap the tag for a local copy precisely because of this. Inlining
-`three.min.js` (~600 KB, ~150 KB gzipped) makes the self-contained claim true, removes a
-network dependency from every load, and removes the one supply-chain surface the game has.
-If it must stay external, add `integrity="sha384-…" crossorigin="anonymous"` so a changed
-file cannot run.
+Run off the AST (appendix):
 
-Separately: r128 is from May 2021. `outputEncoding` and `sRGBEncoding` (20867) were removed
-in r152, and the renderer setup here would not survive an upgrade as-is. Not urgent — pin
-it forever if the inlined copy is chosen — but worth deciding deliberately rather than
-discovering when a browser change lands.
+**Five duplicate keys in the save object** — `roomId`, `eater`, `npcNecro`, `construct`,
+`nodeUses`. **The same five the last audit listed on 2026-09-04**, unchanged eighty commits
+later. That is the finding: not the keys, which lose no data today (each pair evaluates
+identically, and for a Map `[...m]` and `[...m.entries()]` are the same array), but that
+nothing in the repo asks the question, so the answer does not change. `construct` is the one
+key `SAVE_KEEP` goes out of its way to protect. **Fixed on this branch**, and it will come back.
 
-### 5.2 Names are not escaped
+**Identifiers used but never declared: none that are real.** `decorByTile` and `_decorHiddenMx`
+are assigned as `window.decorByTile` and read bare — legal, guarded by `typeof` checks at every
+read, lint-visible but not a bug.
 
-123 `innerHTML` assignments; 43 of them interpolate a `.name`. Names come from `prompt()`
-(group names at 28823/28857, rename at 29929) and from saves, and `restore` writes `s.name`
-straight through (34395). The game has a share-a-save-code feature (`DWZ1:` codes,
-34904–34928) whose whole point is that codes cross between players, so a name of
-`<img src=x onerror=…>` in a shared code runs script in the recipient's page. The blast
-radius is small — a single-player page whose only state is its own `localStorage` — but the
-fix is one `esc()` helper at the 43 sites, or one sanitiser on the way in (strip `<>&"`,
-cap length) at `prompt()` and in `restore`, which is fewer places.
+A first pass flagged four `hp` "duplicates" at 19320–19330. They are `get hp()` / `set hp(v)`
+pairs — one key, two accessors, which ESLint allows. **Written down so the next reader does not
+"fix" them.**
 
-### 5.3 Errors outside the frame are silent
+Forty lines and one dev dependency (`acorn`, dev-only — the game stays dependency-free) closes
+the class. The implementation is in the appendix.
 
-`frame()` catches and logs, and stops logging after three (36026). Errors in event handlers
-(the fit button in §1.1 is one) never reach the in-game log at all; the player's experience
-of every one of them is "the button did nothing". A `window.addEventListener('error', …)`
-that routes to `log()` — and a `frameErrs` cap that resets on a quiet minute rather than
-forever — would make the class visible.
+### 3.2 The harness suite is tidier than its size suggests
 
-### 5.4 Saves
+238 files, 45,792 lines. The honest result of looking:
 
-- Autosave runs at the day rollover (19516) and nowhere else: up to 192 s of play at 1×,
-  and there is no `pagehide` handler, so closing the tab loses it. Packing is async, but
-  the plain-JSON path already exists for browsers without `CompressionStream` and is
-  synchronous; a `pagehide` write through it closes the gap.
-- The save version is a literal `v:20` (34118) and the reader's gate is a separate literal
-  (34188). One `SAVE_V` used by both stops them drifting. There is no upper-bound check, so
-  a save from a future format loads with whatever the reader makes of it.
-- `chronicle` is capped at 500 entries; `lean` writes only non-defaults. Both good, and
-  `save.js`/`lean.js` guard them.
+- **45 public harnesses are in neither runner** — and on inspection that is correct. Every one
+  is a generator (`*.gen.js`), a contact sheet (`*pix.js`, `grips.js`, `swing.js`, `faces.js`)
+  or a measurement tool (`bench.js`, `simcost.js`, `cadence.js`, `frame.js`). None asserts and
+  silently passes. The one near-miss is `moves.js`, which has a `!!` marker and no exit code.
+- **Every harness still carries its own preamble** — 195 declare their own `gamePath`, 229 call
+  `chromium.launch` directly, 228 click `#btn-start` themselves. The last audit called this out
+  at 152 copies; it is 238 now. It is a real cost and a boring one.
+- **28 files do not honour `DUSTWARD_CHROME`** — all of them `_`-prefixed private probes. That
+  is a consistent split (public harnesses all honour it), but it means the private probes are
+  unusable wherever Playwright's own browser is not where it expects. `_simprof.js` is the one
+  you hit first.
 
----
+### 3.3 The file
 
-## 6. Repository
-
-### 6.1 Two filenames cannot exist on Windows
-
-`For Claude: To Do` and `Design Notes: Readability and the Binding Circle.md` contain
-colons. NTFS forbids them; `git clone` on Windows fails at checkout with "invalid path".
-Anyone on that platform cannot get the repository at all. Rename (`TODO.md`,
-`design-notes-readability-and-the-binding-circle.md` or similar).
-
-### 6.2 Missing at the root
-
-- **No README.** `tools/README.md` is thorough, but a visitor to the repository root sees a
-  2.5 MB HTML file, a 436 KB file called `For Claude: To Do`, and no sentence saying what
-  Dustward is or how to play it. Twenty lines would do.
-- **No LICENSE.** Only matters if the repository is or becomes public; without one, nobody
-  else may legally do anything with it.
-
-### 6.3 Things that are fine
-
-251 commits; `.git` is 6.9 MB despite a 2.5 MB file changing in most of them, so the delta
-compression is coping and there is no history problem. `.gitignore` is correct and
-commented. `package.json` declares the one dev dependency honestly.
+43,716 lines in one `<script>`. The last audit's argument for splitting stands unchanged and
+is not repeated here. What this audit adds is evidence for the *cost* of not splitting: all
+three dead clusters in §1 are cases where a replacement was written near the original, the
+original was left, and nobody could see it — and in §1.1 that cost a shipped feature.
 
 ---
 
-## 7. Checked and found sound
+## 4. Findings deliberately not changed
+
+Behaviour questions rather than cleanups, raised for an opinion rather than changed on the spot.
+§4.1 has since been answered and fixed. §4.2 turned out to be a misreading and is corrected in
+place rather than quietly dropped.
+
+### 4.1 Five things could reach through a floor — **fixed**
+
+Raised here as "the Maw can eat through a floor", answered by the owner as *"the Maw should
+definitely NOT be able to eat between floors. Cross-floor interactions should rarely happen, and
+most certainly not like this."* Looking properly, the Maw was one of five.
+
+`dist` is planar. `charsNear` is floor-blind by design and its own note says so — *"every caller
+filters by floor itself"* — which nine queries do with the same line:
+
+```js
+if((o.floor || 0) !== (c.floor || 0)) continue;   /* a floor is as good as a wall */
+```
+
+The five that did not are exactly the five that ask "is there a body on the ground near me", and
+they are the five that read the ROSTER rather than the grid, so they were never near the note:
+
+| what | radius |
+|---|---|
+| the Larder-Kin's snatch | 4.5 |
+| the slaver's grab | 4 |
+| the Maw's meal | 2.5 |
+| a bandit robbing the fallen | 3 |
+| the town guard's arrest | 5 |
+
+A body going down on the surface was at distance **zero** from anything standing on the same
+tile four storeys below, so it could be eaten, enslaved, robbed or arrested from underground.
+
+**Fixed**, all five, with the same idiom the other nine use. `tools/storeys.js` is red five ways
+before and green six after. Every claim is a PAIR — the same predator, the same body, the same
+tile, once on the floor below and once beside it — because a "fix" that simply stopped all five
+features working would pass the cross-floor half of every claim and be worse than the bug. The
+sixth claim is a premise control: `nearestEnemy` already refuses a foe one storey down and takes
+the same one beside, which is the convention this joins.
+
+The harness's own trap is worth recording. The robbery is gated on `!c.target`, and a bandit
+picks a target with `nearestEnemy(c, 9)` — so the first staging put the pair on ground that was
+clear of bodies ON the tile but not within nine tiles. Underground there was nobody to target so
+the robbery fired; on the surface the bandit found a fight and never reached the branch. That
+read as "the same-floor control failed", i.e. as the fix having broken the feature, when what it
+measured was ambient population. The staging is clear out past every targeting radius in play.
+
+maws, larder, jail, civics, beasts and survive are green after.
+
+### 4.2 `pitInside` is test-only scaffolding — and the "disagreement" was not one
+
+**This entry was wrong when first written and is corrected here**, because the correction is the
+useful part. It read: two containment rules, one strict and one inclusive, the same Chebyshev box
+written twice, and "unifying them is a behaviour change at the boundary". Looked at properly they
+are not two versions of one rule, and unifying them would be a bug.
+
+The geometry. `ARENA_R` is 8. The wall ring is laid at **exactly** offset 8
+(`Math.max(|i|,|j|) === ARENA_R`), so the sand inside is offsets -7..+7, 15×15, which is what the
+constant's own comment says. The **gate** tiles also sit at exactly offset 8 — and they are
+deliberately left out of `blocked` when the ring is built, and deleted from it again by
+`pitOpen()`.
+
+The two expressions ask different questions:
+
+- **`pitInside(c)`** — `|dx| < 8 && |dy| < 8`. *Is this body standing on the sand?* Strict is
+  correct: offset 8 is the wall, and a body cannot be inside a wall.
+- **the pit-master siting** — `Math.max(|dx|, |dy|) <= 8 → skip`. *Walking out along the gate's
+  own normal, is this candidate tile still the ring?* Inclusive is correct, and it is
+  **load-bearing**: the walk passes straight through the gate tile at offset exactly 8, which is
+  not blocked while the gate is open. With `<` the pit-master would stop there and stand in his
+  own gateway — which is a near miss of the bug the comment above that loop already describes
+  ("the darts started landing him on his own sand, where `hostile` puts him in the bout").
+
+So there is nothing to unify. What survives, and is the real finding:
+
+**Nothing in the game asks whether a body is on the sand at all.** The bout does not use geometry
+— it holds explicit `ours`/`theirs` rosters and ends on `state === 'ok'` counts, and hostility is
+`!!arena.bout`, not position. Containment is physical: the ring is sealed by construction and the
+gate shuts. `pitInside` exists only because `tools/pit.js` needs *some* way to ask "did anybody
+get out", and it is the one predicate in that harness that no game code is bound by. If the way
+the game keeps bodies in the ring ever changes, `pit.js` will keep passing.
+
+That is worth knowing and not worth changing: a test-only predicate is fine as long as it is
+labelled as one. `pitInside` carries a comment saying so. **No code change.**
+
+---
+
+## 5. Two harnesses were propping up dead code — **fixed**
+
+Worse than the dead code itself, because a green test is a claim.
+
+**`cloth.js`** drove `openCrafting('loom', shed)` and reported *"right-clicking the shed offers
+CRAFT on fabric"*. Right-clicking the shed had not opened that panel since the work-order book
+landed — the harness opened a caller-less function by hand and then made a claim about the
+player. It drives the book now, and covers the half the modal never had: an order has to find a
+pair of hands, so `takeOrder` is driven too.
+
+**`parley.js`** asserted `typeof makeBark === 'function' && barks.has(makeBark(v))` under the
+name `andTheBarksStillFireOnTheirOwn`. Nothing called `makeBark`; the ambient chatter is picked
+inline inside `update()`. Its own comment said it fired from `townTick` — **a function that has
+never existed in this file**. The claim proved a wrapper existed and would have stayed green
+with the barks switched off entirely. It now stands two townsfolk within gossip range and
+drives the real `update()` until one says something out of the town's table.
+
+The shared lesson: **a harness that opens a window by hand is not testing that the window
+opens.** Both of these were assertions about reachability that had stopped being about anything.
+
+`fractureName` was the mild version — a named function the top bar inlined rather than called.
+The bar calls it now.
+
+---
+
+## 6. Checked and found sound
 
 So the reader knows what was covered, not only what was found:
 
-- **Determinism.** `Math.random` appears 11 times, all inside the audio module; everything
-  that touches the world goes through the seeded `rnd()`/`ri()`. The README's rule about
-  new draws moving worldgen is real and respected.
+- **Determinism.** `Math.random` appears 11 times, all inside the audio module. Everything
+  touching the world goes through the seeded `rnd()`/`ri()`.
 - **Hygiene.** Zero `var`, zero `console.log`, zero `TODO`/`FIXME`/`HACK`, zero `debugger`,
-  zero `eval`. Ten empty `catch` blocks, all around `localStorage`, clipboard and audio-node
-  teardown, where swallowing is correct.
-- **Loops and memory.** `requestAnimationFrame` with a `dt` cap, fixed-step sim with a
-  step cap, EMAs for the HUD. Five `dispose()` sites and `wepsoak.js` soaks for leaks.
-  Twenty-two listeners added and none removed, which is right for a page that lives as
-  long as its listeners.
-- **Pathfinding and proximity.** Already discussed in §2.3; nothing to change.
-- **The suite itself.** `check:fast` is 6/6 green on this branch. `boot.js` comes up with
-  1,067 bodies and 7 towns.
+  zero `eval`, zero `new Function`.
+- **CSS.** 65 classes and 58 ids in the stylesheet; exactly one class (`.tp`, inside `.trow`)
+  is never used outside it. Not worth a commit on its own.
+- **The baked packs.** Three of four fully reached, key by key (§1.6).
+- **The suite.** The full 156-harness run is **155/156** — `civics.js` was the single red, was a
+  true positive about §2.1, and is green on both builds after its staging was fixed. `check:fast`
+  6/6. Plus, run individually against this branch: `heads`,
+  `kitdoll`, `craftwork`, `regard`, `pit`, `husk`, `cloth`, `parley`, `maws`, `larder`, `jail`,
+  `beasts`, `survive`, `watchers`, `sixfold`, `wyrm`, `press`, `pain`, `sundered`, `save`,
+  `roundtrip`, `walls`, `doorsave`. `sundered` covers corpse-site regrowth directly — stripped
+  to 0, back to 7 of 7 in 32 game-hours after the §2.1 change.
 
-- **`simcost.js`**, the project's own number, on this machine: `updateMs` 16.4 ms direct at
-  1,067 bodies, which agrees with the 19.4 ms sampling figure once the profiler's overhead
-  is allowed for. The 20 s soak under SwiftShader reports sim 35.8 ms and draw 19.9 ms per
-  frame at 25.7 fps, but the draw half is software rendering and says nothing about a GPU.
+---
+
+## 7. What the 2026-09-04 audit got right, and what survived it
+
+The most useful single measure of whether writing these is worth the time.
+
+**Held up:** the Maw fix (§2.1 of that audit) is still the reason the profile is flat — nothing
+has grown back into that slot. The `wardedFrom` correction held. The two Windows-hostile
+filenames were fixed. The prosthetic scoping bug stayed fixed and `tools/grafts.js` still pins it.
+
+**Did not happen, and the cost showed:** the linter (its recommendation #2). The five duplicate
+save keys it listed are the *same five* today. Its argument was that `no-undef` alone would have
+caught the prosthetic bug the day it was written; thirteen days later the evidence is simply
+that a list of defects nobody automated is a list that does not shrink.
+
+**Still open and still right:** the shared harness preamble (152 copies then, 238 now), and
+splitting the file.
+
+**What it could not have seen:** all of §1. Those clusters were created by revamps that landed
+*after* it. That is the argument for re-running this after a revamp rather than on a schedule —
+dead code is not a thing that accumulates evenly, it is a thing that appears the day a feature
+is replaced.
 
 ---
 
 ## Appendix: how the numbers were made
 
-All of it runs from the repository with `tools/three.min.js` present and Playwright's
-Chromium reachable (`DUSTWARD_CHROME=/path/to/chrome` if it is not where Playwright looks).
+Everything below runs from the repository with `tools/three.min.js` present and a Chromium
+Playwright can reach (`DUSTWARD_CHROME=/path/to/chrome` if it is not where Playwright looks —
+note §3.2: the `_`-prefixed probes ignore that variable).
 
-**Script extraction and lint.**
+**Reachability (§1).** `acorn` parse of the script block; collect every top-level
+`FunctionDeclaration`, `ClassDeclaration` and `VariableDeclarator`; walk every `Identifier`,
+dropping non-reference positions (member properties, property keys, method keys, labels);
+attribute each reference to the top-level declaration whose source extent contains it, or to
+`@root` if it sits in top-level code. Close over the graph from `@root` plus anything named in
+the markup above the script block. Unreached = dead.
+
+*This is only sound because the file has no dynamic dispatch* — check that first:
 
 ```sh
-sed -n '572,36033p' dustward3d_hd.html > /tmp/game.js     # the script block
-node --check /tmp/game.js
-npx eslint --no-config-lookup -c eslint.config.js /tmp/game.js -f json
+grep -n "\beval(\|new Function(\|window\[\|globalThis\[" dustward3d_hd.html
+sed -n '1,593p' dustward3d_hd.html | grep -o 'on[a-z]*="[^"]*"'
 ```
 
-with an `eslint.config.js` of `sourceType: 'script'`, `globals.browser` plus
-`THREE: 'readonly'`, and the rules in §3.2 plus `no-use-before-define` for the ordering
-count. The unused-name check against `tools/` was `grep -lw NAME tools/*.js`.
+**Roster-scan counting (§2).** Boot headless, start a world, then redefine `find`, `filter`,
+`some`, `every`, `forEach`, `reduce`, `findIndex`, `map` and `sort` **on the `chars` array
+itself** (not on `Array.prototype`) with a wrapper that records `this.length` and the call site
+off `new Error().stack`, run `update(1/30)` N times, and delete the own-properties afterwards.
+Attribution is per `game.html` line, and `prep.js` swaps one line for one line so those are
+source line numbers.
 
-**Function sizes and complexity.** `acorn` parse of the script block; top-level
-`FunctionDeclaration` line spans; branch count per function via `acorn-walk` over
-`If/Conditional/For/While/SwitchCase/Catch` and `&&`/`||`/`??`.
+**Line-level profile (§2.3).** CDP `Profiler` at a 60 µs sampling interval around a pure
+`update()` loop with no render in the path, then sum `profile.nodes[].positionTicks` per
+`(function, line)` rather than per function.
 
-**Profiles.** Both start the game in headless Chromium the way `boot.js` does, set
-`paused = true`, and run `for(i<600) update(SIM_DT)`. The instrumented one replaces every
-global function named in `update.toString()` (plus `physics`, `ai`, `isBlocked`, `hostile`,
-`dist`, `charsNear`, `nearestEnemy`, `findPath`, `travel`) with a timing wrapper and reports
-self and inclusive ms and call counts. The sampling one opens a CDP session, runs
-`Profiler.start` at a 200 µs interval around the same loop, and aggregates `Profiler.stop`'s
-nodes by function name and line. The script is inline, so the profiler's line numbers are
-HTML lines already.
+**A/B timing (§2.1, §2.4).** `node tools/prep.js HEAD prev`, then alternate
+`node tools/simcost.js prev.html` and `node tools/simcost.js game.html`, three or four rounds
+each, per the README's rule about interleaving. Report the spread, not a single pair — §2.4 is
+what happens when you do not.
 
-**The prosthetic probe.** After boot: read `typeof prosVal`; set `parts['l.arm'] =
-{severed, pros, prosTier:2}` on a player body and call `atkPower(c)` inside a try; do the
-same for a leg and call `moveSpeedRaw(c)`; then `addItem('g_arm')`, sever a second body's
-arm, `refreshInv()`, invoke the `[data-pros]` button's `onclick` inside a try, and read the
-part, the stash count and the last chronicle line.
+**The lint (§3.1).** Off the same AST. Duplicate keys: for each `ObjectExpression`, key on
+`name + '|' + property.kind` so a `get`/`set` pair is not flagged. Undeclared identifiers:
+collect every binding (declarations, params, catch params, function expression ids, labels),
+then walk every `Identifier` that is not a member property or property key and is not in a
+browser-globals list.
 
-**The Maw measurement.** `chars.filter(o => o.eatsDead && o.state === 'ok').length`,
-`corpses.length`, down count, and `mawQuarry(maws[0])` fifty times under
-`performance.now()`.
+Wiring it into `prep.js` is one call beside the existing NUL-byte and syntax checks, with
+`acorn` as a dev dependency — dev-only, alongside `playwright`; the game itself stays
+dependency-free and is still one self-contained file.
