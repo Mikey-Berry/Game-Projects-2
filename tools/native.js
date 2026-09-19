@@ -64,14 +64,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   });
 
   /* what each row photographs: who to stage, and what to put the camera on */
-  const SUBJECTS = [
-    { key: 'lance', label: 'Aether Lance',
-      stage: (c) => { c.weapon = 'w_lance'; c.armor = 'a_lea'; },
-      onPart: 'weapon' },
-    { key: 'skull', label: "lich's skull",
-      stage: (c) => { c.lich = true; c.undead = true; c.face = 'lyonart'; },
-      onPart: 'head' },
-  ];
+  const SUBJECTS = (process.env.NATIVE_ONLY || 'lance,hood').split(',').map(k => ({
+    lance: { key: 'lance', label: 'Aether Lance', onPart: 'weapon' },
+    /* the GENERIC lich: no `face`, so `headKeyOf` is null and the whole head is `LICHP.hood` —
+       which is not a hood. Its own note calls it "a hooded skull with a gold band". */
+    hood:  { key: 'hood',  label: "lich's hooded skull", onPart: 'head' },
+    /* and Lyonart's, which is a different asset and a different judgement */
+    lyon:  { key: 'lyon',  label: "Lyonart ascended", onPart: 'head' },
+  })[k]).filter(Boolean);
 
   const rows = [];
   for (const sub of SUBJECTS) {
@@ -79,6 +79,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const shots = [];
       await p.evaluate(({ key, mode, rest }) => {
         NATIVE_ART = (mode === 'native');
+        NATIVE_LYONLICH = (mode === 'native');
         if (rest && WEAPONS.w_lance) WEAPONS.w_lance.rest = rest;
         /* every cached entity goes, or the switch changes nothing that is already built */
         chars.length = 0;
@@ -88,6 +89,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const c = makeChar('X', 'player', s.x, s.y, { atk: 16, def: 14, tough: 14, ath: 8, sex: 'm' });
         c.dir = 0; c.state = 'ok';
         if (key === 'lance') { c.weapon = 'w_lance'; c.armor = 'a_lea'; }
+        else if (key === 'hood') { c.lich = true; c.undead = true; c.face = null; }
         else { c.lich = true; c.undead = true; c.face = 'lyonart'; }
         chars.push(c); window.__id = c.id;
       }, { key: sub.key, mode, rest: REST });
@@ -133,7 +135,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
       const m = await p.evaluate((onPart) => {
         const e = charMeshes.get(window.__id);
-        const t = onPart === 'weapon' ? e.weapon : e.sculptHead;
+        const t = onPart === 'weapon' ? e.weapon : (e.sculptHead || e.hood);
         if (!t || !t.geometry) return null;
         const g = t.geometry;
         const tris = g.index ? g.index.count / 3 : g.attributes.position.count / 3;
