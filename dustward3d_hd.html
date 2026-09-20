@@ -30327,7 +30327,21 @@ const WEAPONS = {
      import did (every other weapon in this table runs down -Y), with the grip at the origin so
      `rest.pos` still puts it in the fist. One merged geometry, shared by every arm in the
      world — the same cost structure as the bake, and 22 KB lighter. */
-  w_lance: {rest:{x:0.48, y:-0.42, pos:{x:0.14, y:-0.16, z:0.04}}, native:true, parts:[
+  /* TWO CARRIES, THE SAME PAIR THE BAKE HAS. `rest` is the spear carried upright and `aim` is
+     it levelled down range; `rebuildWeapon` hands both to the animator and `aimK` crossfades
+     them. In RADIANS here, where `WEPFIT`'s are degrees, because that is what the rest of a
+     box definition is — but they are otherwise the fit table's own numbers, and that is not a
+     coincidence: both models run down their own +Z and both need about -78 degrees to stand
+     up, so the pose the bake was fitted to is the pose this one wants. Three sweeps looked
+     everywhere except positive rx before trying the number already written down one table up. */
+  w_lance: {rest:{x:-1.3614, y:0, z:0, pos:{x:0.13, y:-0.15, z:0.03}},
+            aim: {x: 1.5708, y:0.4363, z:0, pos:{x:0.20, y:-0.22, z:0.14}},
+            /* WHERE THE HAND GOES, in this model's own coordinates — the pistol grip below the
+               receiver. `WEPFIT` declares the same thing for the bake, in the bake's unit box,
+               and a probe reading that one against this model measures a hand a quarter of a
+               metre off the handle and is right to complain. Every table a switch can select
+               has to carry every field the switch's consumers read. */
+            grip:{x:0, y:-0.118, z:-0.062}, native:true, parts:[
     /* ---- the shoulder end ---- */
     {w:0.082,h:0.145,d:0.045, y:-0.015,z:-0.355,col:WC.brass},                    /* butt plate */
     {w:0.062,h:0.120,d:0.300, y:-0.010,z:-0.195,col:WC.woodDk},                   /* the stock */
@@ -30407,9 +30421,18 @@ const ARMOR_TIER_TINT  = {c: 0.82, n: 1.0, f: 1.10, m: 1.20};
    because it took a while to find and the next person asking "could this be boxes" should be
    able to look rather than rebuild it.
 
-   `NATIVE_LANCE` is off, pending a look at the rebuilt spearhead. */
+   `NATIVE_LANCE` is ON. The built lance draws instead of `WEPP.lance`, at a quarter of the
+   triangles, and the bake is kept behind the switch for the same reason the robe is.
+
+   WHAT THE SWITCH CHANGES IS THE FIT PATH, NOT JUST THE MESH, which is the part that bit
+   once already: `weaponGeo` and `rebuildWeapon` each read `WEPFIT[base]` independently, and a
+   built lance handed the imported one's 2.05 scale came out at twice its length. Both are
+   gated on the same condition now. The consequence for anything driving this from outside is
+   that `WEPFIT.w_lance` is no longer consulted while the switch is on — the knob that moves a
+   built weapon is `WEAPONS.w_lance.rest`, which is what tools/native.js's fourth argument
+   drives. The entry in `WEPFIT` stays, because the bake it describes is still there. */
 let NATIVE_LICH = true;        /* THE RELIQUARY in place of the robed lich */
-let NATIVE_LANCE = false;      /* the built Aether Lance in place of `WEPP.lance` */
+let NATIVE_LANCE = true;       /* the built Aether Lance in place of `WEPP.lance` */
 let NATIVE_LYONLICH = false;   /* Lyonart's ascended head — the bake is better; kept to compare */
 const _wepGeo = {};
 function weaponGeo(key){
@@ -30497,10 +30520,26 @@ function rebuildWeapon(e, c){
                    rx:(A.rx||0)*D2R, ry:(A.ry||0)*D2R, rz:(A.rz||0)*D2R};
     } else { e.wepRest = e.wepAim = null; }
   } else {
-    e.wepRest = e.wepAim = null;
     const r = WEAPONS[base].rest || {}, pz = r.pos || {};
     m.position.set(pz.x || 0, pz.y === undefined ? -0.30 : pz.y, pz.z === undefined ? 0.05 : pz.z);
     m.rotation.set(r.x || 0, r.y || 0, r.z || 0);
+    /* A BUILT WEAPON GETS TWO CARRIES TOO. This branch used to clear the pair unconditionally,
+       which quietly cost the lance its aim pose the moment it drew natively: `wepAim` lives on
+       the FIT table, the switch takes a built weapon off the fit table, and the crossfade
+       below is gated on both ends being present — so the mesh stayed in its carry angle while
+       the arms went up, and a "levelled" lance pointed at the sky. It photographed as a bad
+       model and it was a missing field.
+       `rest` and `aim` are radians here, where the fit table's are degrees, because that is
+       what the rest of a box definition is; the two tables are read by two branches and never
+       compared. */
+    const A = WEAPONS[base].aim;
+    if(A){
+      const ap = A.pos || {};
+      e.wepRest = {x:m.position.x, y:m.position.y, z:m.position.z,
+                   rx:m.rotation.x, ry:m.rotation.y, rz:m.rotation.z};
+      e.wepAim  = {x:ap.x || 0, y:ap.y === undefined ? -0.30 : ap.y, z:ap.z === undefined ? 0.05 : ap.z,
+                   rx:A.x || 0, ry:A.y || 0, rz:A.z || 0};
+    } else e.wepRest = e.wepAim = null;
   }
   e.elbR.add(m);
   e.weapon = m;
