@@ -205,71 +205,272 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! THE VAT MARKS ARE STILL ON HER (human ${asHuman}, homunculus ${asVerity}) — ${JSON.stringify(window.__bone || {})}`;
     }
 
-    /* ================= THE VESSEL ================= */
+    /* ================= THE VESSEL, AND THERE ARE FOUR OF IT =================
+       The Sigil Rite is jury-rigged alchemy that worked, not a formula that is followed, so
+       what you get poured into is what somebody could build. Four patterns, rolled once at the
+       pouring and then yours for good. The claims below are in two halves: the ones every
+       vessel has to pass whatever shape it came out (it replaces the body, it is sealed, its
+       name goes dark as it fails) and the one thing each pattern exists to do that the other
+       three do not — because four patterns that pass the same four tests are one pattern in
+       four colours, which is the thing this was built to avoid. */
     clear();
     {
-      const { c, e } = one({ immortal: 'transmute', construct: true, big: 1.15 }, { gift: 'destruction' });
-      const plainOn = [e.boxBody, e.boxArm, e.boxLeg].flat().filter(m => m && m.visible).length
-                    + ((e.head && e.head.visible) ? 1 : 0) + ((e.torso && e.torso.visible) ? 1 : 0);
-      out.theVesselReplacesTheBody = (plainOn === 0 && tris(e.g) > 500)
-        ? `the plain body is gone and ${tris(e.g)} triangles of poured plate stand in its place`
-        : `!! THE VESSEL DID NOT REPLACE THE BODY (${plainOn} plain meshes, ${tris(e.g)} tris)`;
+      const PATS = ['funnel', 'plate', 'armature', 'canister'];
 
-      /* THE HOLE AT THE COLLAR, and this is the claim the whole figure rests on. The first
-         build put the collar rim at spine 0.665 and the helm's chin at head-local 0.105 —
-         world 1.71 against world 1.59 — so the helm was sunk a hand's width INSIDE the collar
-         and the one box that says "empty" was hidden behind the one most likely to hide it.
-         Measured on the vertices: the lowest point of the helm has to be clear above the
-         highest point of the shell that is NOT the darkness standing in the opening. */
-      const hv = verts(e.headG, null, true);
-      const helmBottom = Math.min(...hv.map(v => v.y));
-      const sv = verts(e.spine, e.headG, true).filter(v => v.l !== null);
-      const dark = sv.filter(v => v.l < 0.06);
-      const shell = sv.filter(v => v.l >= 0.06);
-      const shellTop = Math.max(...shell.map(v => v.y));
-      const darkTop = Math.max(...dark.map(v => v.y));
-      /* how wide each of them is UP WHERE THEY MEET, which is what decides whether there is a
-         ring to see into or just a lid on a jar */
-      const band = (arr, lo, hi) => {
-        const inb = arr.filter(v => v.y > lo && v.y < hi).map(v => Math.abs(v.x));
-        return inb.length ? Math.max(...inb) : 0;
+      /* THE POUR IS A ROLL AND IT HAS TO SPREAD. `vesselPattern` falls back to `hash2` off the
+         id for anyone the world minted before the roll existed, and a hash that lands on one
+         key for two thirds of the ids would ship a game with one vessel in it and three
+         rumours. */
+      const counts = {};
+      for (let i = 1; i <= 6000; i++) { const k = vesselPattern({ id: i }); counts[k] = (counts[k] || 0) + 1; }
+      out.pourSpread = PATS.map(k => `${k} ${((counts[k] || 0) / 60).toFixed(1)}%`).join(' | ');
+      out.everyPatternGetsPoured = PATS.every(k => (counts[k] || 0) > 600)
+        ? `all four come up, none of them rare enough to be a rumour — ${out.pourSpread}`
+        : `!! THE POUR DOES NOT SPREAD OVER FOUR PATTERNS (${out.pourSpread})`;
+
+      /* HOW MUCH OF ITS OWN SILHOUETTE EACH ONE FILLS. Rays straight through the torso from
+         the front, counted against the torso's own bounding box — which is the only honest way
+         to ask "can you see through this", because a frame and a drum have the same vertices
+         doing completely different work and a triangle count cannot tell them apart. */
+      /* THE OUTLINE ITSELF, on a grid normalised to the figure's own box. A triangle count and
+         a height cannot tell a flared collar from a bolted drum — they came back 0.055 apart on
+         two bodies nobody would confuse for a second, which is the probe being wrong about what
+         it was asked, not the models being the same. What "not a reskin" means is that the
+         SHAPE differs, so the shape is what gets sampled: rays through the whole figure from the
+         front, scaled into its own bounds, and two patterns are the same body only if the same
+         cells come back filled. */
+      const silhouette = (e, nx, ny) => {
+        const meshes = [];
+        e.g.updateWorldMatrix(true, true);
+        e.g.traverse(o => {
+          { let v = o.visible, q = o.parent; while (q && v) { v = q.visible; q = q.parent; } if (!v) return; }
+          if (o.isMesh && o.geometry) meshes.push(o);
+        });
+        const box = new THREE.Box3();
+        for (const m of meshes) box.expandByObject(m);
+        const rc = new THREE.Raycaster();
+        const o0 = new THREE.Vector3(), d0 = new THREE.Vector3(0, 0, -1);
+        const grid = [];
+        for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+          o0.set(box.min.x + (box.max.x - box.min.x) * (i + 0.5) / nx,
+                 box.min.y + (box.max.y - box.min.y) * (j + 0.5) / ny, box.max.z + 3);
+          rc.set(o0, d0);
+          grid.push(rc.intersectObjects(meshes, false).length > 0 ? 1 : 0);
+        }
+        return grid;
       };
-      const ringLo = helmBottom, ringHi = shellTop;
-      const funnelW = band(shell, ringLo, ringHi + 0.01);
-      const helmW = band(hv, ringLo - 0.01, ringHi);
-      out.collar = `funnel to ${shellTop.toFixed(3)} (half-width ${funnelW.toFixed(3)}), helm from ${helmBottom.toFixed(3)} (${helmW.toFixed(3)}), dark to ${darkTop.toFixed(3)}`;
-      /* THE HELM SITS DOWN IN THE FUNNEL AND THERE IS A RING OF DARK AROUND IT. This claim has
-         been rewritten twice and both rewrites were the figure changing under it rather than
-         the claim being wrong. It first asked for a GAP between the shell and the helm, which
-         was right for a collar-and-helm — and reported a 0.034 overlap on a body that visibly
-         had a hole in it, because the walk was counting the hidden plain body whose head box
-         is still built and still sitting inside the helm. Two wrong numbers agreed.
-         Then the collar became a FUNNEL that the helm comes down inside, so an overlap is the
-         intent and a gap would mean the funnel had stopped swallowing anything. What the
-         figure is actually about is the RING: the funnel has to reach up past the helm's base
-         AND be wider than the helm is there, or the helm is simply a lid. */
-      out.theVesselIsEmptyAtTheCollar = (shellTop > helmBottom + 0.03 && funnelW > helmW + 0.03 && darkTop > helmBottom)
-        ? `the helm comes down ${(shellTop - helmBottom).toFixed(3)} inside a funnel ${(funnelW - helmW).toFixed(3)} wider than it is, and the ring between them is dark all the way up — ${out.collar}`
-        : `!! THE HELM IS A LID ON THE FUNNEL, NOT A THING SITTING IN IT (${out.collar})`;
+      const openFrac = (e) => {
+        const skip = [e.headG, e.armL, e.armR, e.legL, e.legR, e.elbL, e.elbR, e.kneeL, e.kneeR].filter(Boolean);
+        const meshes = [];
+        e.spine.updateWorldMatrix(true, true);
+        e.spine.traverse(o => {
+          for (const s of skip) { let q = o; while (q) { if (q === s) return; q = q.parent; } }
+          { let v = o.visible, q2 = o.parent; while (q2 && v) { v = q2.visible; q2 = q2.parent; } if (!v) return; }
+          if (o.isMesh && o.geometry) meshes.push(o);
+        });
+        const box = new THREE.Box3();
+        for (const m of meshes) box.expandByObject(m);
+        const rc = new THREE.Raycaster();
+        const o0 = new THREE.Vector3(), d0 = new THREE.Vector3(0, 0, -1);
+        let hit = 0, tot = 0;
+        for (let i = 1; i <= 17; i++) for (let j = 1; j <= 17; j++) {
+          o0.set(box.min.x + (box.max.x - box.min.x) * i / 18,
+                 box.min.y + (box.max.y - box.min.y) * j / 18, box.max.z + 3);
+          rc.set(o0, d0);
+          tot++;
+          if (rc.intersectObjects(meshes, false).length) hit++;
+        }
+        return hit / tot;
+      };
 
-      /* AND IT IS SEALED. `helmKind` still answers 'sigil' for the named one, and the armet it
-         builds has a SIGHT SLIT that kit.js asserts the existence of — stacking it on top of
-         this helm puts an opening over the one figure that must not have one. */
-      out.theHelmIsSealed = (!e.helmParts || !e.helmParts.length)
-        ? 'no armet is built over it — the sealed helm is the only thing on the head, and there is no slit in it'
-        : `!! AN ARMET WENT ON OVER THE SEALED HELM (${e.helmParts.length} parts, and one of them is a sight slit)`;
+      const M = {};
+      for (const key of PATS) {
+        clear();
+        const { c, e } = one({ immortal: 'transmute', construct: true, big: 1.15, vesselPattern: key },
+                             { gift: 'destruction' });
+        const plainOn = [e.boxBody, e.boxArm, e.boxLeg].flat().filter(m => m && m.visible).length
+                      + ((e.head && e.head.visible) ? 1 : 0) + ((e.torso && e.torso.visible) ? 1 : 0);
+        const whole = new THREE.Box3().setFromObject(e.g);
+        const hv = verts(e.headG, null, true);
+        const litZ = [];
+        e.headG.traverse(o => {
+          if (o.isMesh && o.material && o.material.emissive && o.material.emissive.getHex() > 0)
+            litZ.push(new THREE.Box3().setFromObject(o).max.z);
+        });
+        const sv = verts(e.spine, e.headG, true).filter(v => v.l !== null);
+        const reads = {};
+        for (const blood of [100, 70, 40, 12]) {
+          c.blood = blood; syncChars(1 / 30);
+          reads[blood] = e.sigils.filter(m => m.material.emissive.getHex() > 0).length;
+        }
+        c.state = 'dead'; syncChars(1 / 30);
+        reads.dead = e.sigils.filter(m => m.material.emissive.getHex() > 0).length;
+        c.state = 'ok'; c.blood = c.maxBlood; syncChars(1 / 30);
+        M[key] = {
+          tris: tris(e.g), plainOn, sigils: e.sigils.length, reads,
+          helmParts: (e.helmParts && e.helmParts.length) || 0,
+          height: whole.max.y - whole.min.y,
+          width: whole.max.x - whole.min.x,
+          open: openFrac(e),
+          /* IN THE HEAD'S OWN FRAME. Measured off the spine's world box first, and all four
+             came back 0.10-0.14 off centre — that was the spine box being lopsided (one
+             mismatched shoulder, one intake) swamping the thing being asked about. `verts`
+             already hands back x relative to the bone it walked, so use that. */
+          headOffX: (Math.min(...hv.map(v => v.x)) + Math.max(...hv.map(v => v.x))) / 2,
+          faceZ: Math.max(...hv.map(v => v.z)),
+          litZ: litZ.length ? Math.max(...litZ) : null,
+          helmBottom: Math.min(...hv.map(v => v.y)),
+          shellTop: Math.max(...sv.filter(v => v.l >= 0.06).map(v => v.y)),
+          darkTop: Math.max(...sv.filter(v => v.l < 0.06).map(v => v.y)),
+          sil: silhouette(e, 14, 22),
+          hv, sv,
+        };
+        clear();
+      }
+      window.__M = M;
 
-      /* THE SIGILS GO OUT AS IT FAILS */
-      const on = () => e.sigils.filter(m => m.material.emissive.getHex() > 0x000000).length;
-      const reads = {};
-      for (const blood of [100, 70, 40, 12]) { c.blood = blood; syncChars(1 / 30); reads[blood] = on(); }
-      c.state = 'dead'; syncChars(1 / 30);
-      reads.dead = on();
-      out.sigilReadings = Object.entries(reads).map(([k, v]) => `${k}: ${v}`).join(' | ');
-      out.theSigilsGoOutAsItFails = (e.sigils.length === 8 && reads[100] === 8
-                                     && reads[40] < reads[70] && reads.dead === 0)
-        ? `eight sigils, and they go out as the vessel fails — "when the last one goes, so does what is left of me" (${out.sigilReadings})`
-        : `!! THE SIGILS ARE NOT TRACKING THE VESSEL (${e.sigils.length} of them, ${out.sigilReadings})`;
+      /* ---------- WHAT ALL FOUR OWE ---------- */
+      out.theVesselReplacesTheBody = PATS.every(k => M[k].plainOn === 0 && M[k].tris > 500)
+        ? `every pattern stands in place of the plain body — ${PATS.map(k => `${k} ${M[k].tris}`).join(', ')} triangles`
+        : `!! A PATTERN LEFT THE PLAIN BODY SHOWING (${PATS.map(k => `${k} ${M[k].plainOn}/${M[k].tris}`).join(', ')})`;
+
+      /* AND IT IS SEALED, on all four. `helmKind` still answers 'sigil' for the named one, and
+         the armet it builds has a SIGHT SLIT that kit.js asserts the existence of — stacking it
+         on any of these puts an opening over a figure that decides for itself where its one
+         opening goes, or whether it has one at all. */
+      out.theHelmIsSealed = PATS.every(k => M[k].helmParts === 0)
+        ? 'no armet is built over any of the four — each pattern owns its own head, and the slit the armet carries never lands on one of them'
+        : `!! AN ARMET WENT ON OVER A VESSEL (${PATS.map(k => `${k} ${M[k].helmParts}`).join(', ')})`;
+
+      /* THE NAME GOES DARK AS IT FAILS. "I REMEMBER A NAME. I DO NOT REMEMBER IF IT WAS MINE."
+         Struck into a bronze band on every pattern, because the band is what the rite puts
+         there rather than what the smith did — it is the questline, not an ornament. */
+      out.sigilReadings = PATS.map(k => `${k} ${Object.entries(M[k].reads).map(([b, v]) => b + ':' + v).join('/')}`).join(' | ');
+      out.theNameGoesDarkOnAllFour = PATS.every(k => {
+        const m = M[k];
+        return m.sigils >= 8 && m.reads[100] === m.sigils && m.reads[40] < m.reads[70] && m.reads.dead === 0;
+      })
+        ? `every vessel carries its name and every name burns down as the vessel does — ${out.sigilReadings}`
+        : `!! A PATTERN IS NOT TRACKING ITS OWN FAILURE (${out.sigilReadings})`;
+
+      /* ---------- AND WHAT MAKES THEM FOUR AND NOT ONE ----------
+         Not a colour test and not a triangle test. Each of these asks for the one thing that
+         pattern was built to say, and the four things are mutually exclusive: a funnel that
+         opens at the throat cannot also be a shut harness, and a frame you can see through
+         cannot also be a sealed drum. */
+      out.shapes = PATS.map(k => `${k} h${M[k].height.toFixed(2)} w${M[k].width.toFixed(2)} fill${M[k].open.toFixed(2)}`).join(' | ');
+
+      /* THE FUNNEL — the ceremonial pour, one of the eleven. The collar does not narrow at a
+         throat, it FLARES, and the helm comes down inside it with a ring of dark round it.
+         This claim has been rewritten twice and both rewrites were the figure changing under
+         it rather than the claim being wrong; what it is finally about is the RING. */
+      {
+        const m = M.funnel;
+        const band = (arr, lo, hi) => {
+          const inb = arr.filter(v => v.y > lo && v.y < hi).map(v => Math.abs(v.x));
+          return inb.length ? Math.max(...inb) : 0;
+        };
+        const shell = m.sv.filter(v => v.l >= 0.06);
+        const funnelW = band(shell, m.helmBottom, m.shellTop + 0.01);
+        const helmW = band(m.hv, m.helmBottom - 0.01, m.shellTop);
+        out.collar = `funnel to ${m.shellTop.toFixed(3)} (half-width ${funnelW.toFixed(3)}), helm from ${m.helmBottom.toFixed(3)} (${helmW.toFixed(3)}), dark to ${m.darkTop.toFixed(3)}`;
+        out.theFunnelIsEmptyAtTheCollar = (m.shellTop > m.helmBottom + 0.03 && funnelW > helmW + 0.03 && m.darkTop > m.helmBottom)
+          ? `the helm comes down ${(m.shellTop - m.helmBottom).toFixed(3)} inside a collar ${(funnelW - helmW).toFixed(3)} wider than it is, and the ring between them is dark all the way up — ${out.collar}`
+          : `!! THE HELM IS A LID ON THE FUNNEL, NOT A THING SITTING IN IT (${out.collar})`;
+      }
+
+      /* THE HARNESS — a complete suit of war plate with a person poured into it, and it is
+         ENORMOUS, because a harness is built around a body and this one was built around a
+         bigger body than his. It is shut everywhere except ONE place: a grille, with the dark
+         behind it and two small lights a long way back in that dark. The Vigil's eyes had to
+         stand PROUD of her face or the plate swallowed them; this one is the exact opposite
+         claim, and it is the only figure in the game you can look INTO. */
+      {
+        const m = M.plate;
+        out.grille = `face ${m.faceZ.toFixed(3)}, lights ${m.litZ === null ? 'none' : m.litZ.toFixed(3)}`;
+        out.theHarnessHasSomethingBehindTheGrille =
+          (m.litZ !== null && m.litZ < m.faceZ - 0.04 && M.plate.height > Math.max(M.funnel.height, M.armature.height, M.canister.height))
+            ? `it stands taller than any other pattern and its lights sit ${(m.faceZ - m.litZ).toFixed(3)} back behind the bars — you look into this one, you do not look at it (${out.grille}, ${out.shapes})`
+            : `!! THE GRILLE HAS NOTHING BEHIND IT, OR THE HARNESS IS NOT THE BIG ONE (${out.grille}, ${out.shapes})`;
+      }
+
+      /* THE ARMATURE — "a crude transfer leaves shreds of consciousness piloting a decaying
+         object." Not a suit at all: hoops, a bar up the back, struts for limbs. You can see
+         straight through the middle of it from any angle, which nothing else in the world
+         allows, and that is the whole of it. */
+      {
+        const others = ['funnel', 'plate', 'canister'].map(k => M[k].open);
+        out.theArmatureIsAFrameYouCanSeeThrough = (M.armature.open < Math.min(...others) - 0.15)
+          ? `only ${(M.armature.open * 100).toFixed(0)}% of its own outline is solid, against ${others.map(v => (v * 100).toFixed(0) + '%').join('/')} for the shells — there is nothing in the middle of it and you can tell (${out.shapes})`
+          : `!! THE ARMATURE IS A SHELL LIKE THE REST (${out.shapes})`;
+      }
+
+      /* THE CANISTER — poured into a sealed drum that was never meant to hold anybody. The
+         head is not a head: a cupola bolted on OFF CENTRE, where there was room. Everything
+         about this one says the shape came first and the person was fitted to it. */
+      {
+        const off = Math.abs(M.canister.headOffX);
+        out.headOffsets = PATS.map(k => `${k} ${M[k].headOffX.toFixed(3)}`).join(' | ');
+        out.theCanistersHeadIsBoltedOnWhereThereWasRoom =
+          (off > 0.02 && PATS.filter(k => k !== 'canister').every(k => Math.abs(M[k].headOffX) < off - 0.015))
+            ? `its cupola sits ${off.toFixed(3)} off the drum's axis while every other pattern is square on its shoulders — nobody centred this one because there was nothing to centre it on (${out.headOffsets})`
+            : `!! THE CANISTER'S HEAD IS ON STRAIGHT (${out.headOffsets})`;
+      }
+
+      /* AND NO TWO OF THEM ARE THE SAME BODY IN A DIFFERENT PAINT. Pairwise, on the three
+         numbers that survive a recolour: how much metal is in it, how tall it stands, and how
+         much of its own outline it fills. */
+      {
+        const pairs = [];
+        let worst = 1e9, worstPair = '';
+        for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) {
+          const a = M[PATS[i]], b2 = M[PATS[j]];
+          /* how many cells of the normalised outline disagree — scale is divided out on
+             purpose, so "it is the same body, bigger" counts as the same body */
+          let diff = 0;
+          for (let n = 0; n < a.sil.length; n++) if (a.sil[n] !== b2.sil[n]) diff++;
+          const d = diff / a.sil.length;
+          pairs.push(`${PATS[i]}/${PATS[j]} ${d.toFixed(3)}`);
+          if (d < worst) { worst = d; worstPair = PATS[i] + '/' + PATS[j]; }
+        }
+        out.patternDistance = pairs.join(' | ');
+        out.noTwoPatternsAreAReskin = worst > 0.12
+          ? `the closest two are ${worstPair}, and even scaled onto each other ${(worst * 100).toFixed(0)}% of their outline disagrees — four shapes, not one shape in four paints (${out.patternDistance})`
+          : `!! TWO PATTERNS ARE THE SAME BODY (${out.patternDistance})`;
+      }
+
+      /* THE POUR IS ROLLED ONCE AND THEN IT IS YOURS. A pattern that came back different off a
+         save, or off a re-etch, would be a second ascension nobody asked for — and the mesh
+         has to notice, which is `colorKeyOf`: without the pattern in the key the character
+         keeps whichever body was built first and the roll does nothing you can see. */
+      {
+        clear();
+        const { c } = one({}, { gift: 'destruction', sex: 'm' });
+        c.vesselPattern = null; c.immortal = null;
+        ascendTransmute(c);
+        const rolled = c.vesselPattern;
+        const keyA = colorKeyOf(c);
+        c.vesselPattern = PATS.find(k => k !== rolled);
+        const keyB = colorKeyOf(c);
+        c.vesselPattern = rolled;
+        ascendTransmute(c);                       /* a second ascension must not re-roll it */
+        const stillRolled = c.vesselPattern;
+        const snap = (typeof snapshot === 'function' ? snapshot() : null);
+        const row = snap && (snap.chars || []).find(r => r && r.name === c.name);
+        const inSave = row ? row.vesselPattern : undefined;
+        c._shed = false; c.blood = 0;
+        const before = phylacteries.length;
+        shedHusk(c);
+        const husk = phylacteries[phylacteries.length - 1];
+        const inHusk = (phylacteries.length > before && husk && husk.soul) ? husk.soul.vesselPattern : undefined;
+        phylacteries.pop();
+        clear();
+        out.pourCarry = `rolled ${rolled}, second ascension ${stillRolled}, save ${inSave}, husk ${inHusk}, key changes ${keyA !== keyB}`;
+        out.whatTheyPouredYouIntoStays =
+          (PATS.includes(rolled) && stillRolled === rolled && inSave === rolled && inHusk === rolled && keyA !== keyB)
+            ? `the pour is rolled once and then carried — the save keeps it, the husk keeps it, a re-etch puts them back in the same shape, and the mesh key notices when it changes (${out.pourCarry})`
+            : `!! THE POUR DOES NOT SURVIVE (${out.pourCarry})`;
+      }
       clear();
     }
 
@@ -300,12 +501,23 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const shot = await p.evaluate(async () => {
     const me = window.__spot;
     const png = [];
+    const PATS = ['funnel', 'plate', 'armature', 'canister'];
     const rows = [
-      { cap: 'THE VIGIL —   what the Unclouding leaves', who: 'divine' },
-      { cap: 'THE VESSEL —  what the Sigil Rite pours into', who: 'transmute', close: true },
+      { cap: 'THE VIGIL —   what the Unclouding leaves', who: 'divine', n: 3 },
+      { cap: 'THE VESSEL —  four patterns: funnel, harness, armature, canister', who: 'transmute', n: 4, close: true },
+      /* AND THE HEADS ON THEIR OWN. Four figures at full height in one 1280-wide strip puts
+         about a hundred pixels on each of them, and every decision that separates these four
+         is above the shoulders: a collar the helm sits down inside, a grille with lights back
+         in the dark, a flame in a cage, a cupola bolted on off centre. A sheet that cannot
+         resolve them is not evidence — this is the panel that caught the lantern rendering as
+         a black brick while every number about it came back green. */
+      { cap: 'THE VESSEL —  and what each of them has instead of a face', who: 'transmute', n: 4, heads: true },
     ];
     for (const row of rows) {
-      for (const hr of [11, 21]) {
+      /* the head row is shot at dusk on purpose: everything it exists to show is a LIT part
+         — two lights back behind a grille, a flame in a cage, a strip of glow in a slit — and
+         at noon the sun washes all three of them out to the same pale grey as the plate. */
+      for (const hr of (row.heads ? [19] : [11, 21])) {
         hour = hr;
         if (typeof updateSky === 'function') updateSky();
         chars.length = 0;
@@ -314,14 +526,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         document.querySelectorAll('.hud,#charpanel,#invpanel,#minimap,#log,#tip,#squadbar,#buildbar,#touchbar')
           .forEach(el => el.style.setProperty('display', 'none', 'important'));
         const made = [];
-        for (let j = 0; j < 3; j++) {
-          const c = makeChar('R', 'player', me.x + (j - 1) * 1.45, me.y,
+        /* the Vessel row is ONE OF EACH PATTERN rather than three of the same man at three
+           angles — the whole question this sheet now has to answer is whether four poured
+           bodies read as four different things, and three views of one of them cannot say. */
+        for (let j = 0; j < row.n; j++) {
+          const c = makeChar('R', 'player', me.x + (j - (row.n - 1) / 2) * (row.heads ? 1.40 : 1.55), me.y,
             { atk: 14, def: 14, tough: 14, sex: row.who === 'divine' ? 'f' : 'm', age: 30,
               gift: row.who === 'divine' ? 'divine' : 'destruction' });
           c.state = 'ok'; c.weapon = null; c.armor = null;
-          c.dir = j === 0 ? 0 : j === 1 ? 0.85 : 1.57;
+          c.dir = row.heads ? 0 : row.n === 4 ? (j === 3 ? 0.9 : 0) : (j === 0 ? 0 : j === 1 ? 0.85 : 1.57);
           c.immortal = row.who;
-          if (row.who === 'transmute') { c.construct = true; c.big = 1.15; c.blood = j === 2 ? 30 : c.maxBlood; }
+          if (row.who === 'transmute') {
+            c.construct = true; c.big = 1.15;
+            c.vesselPattern = PATS[j % PATS.length];
+            c.blood = (j === 3 && !row.heads) ? 34 : c.maxBlood;   /* and the last one is nearly spent */
+          }
           chars.push(c); made.push(c);
         }
         for (let i = 0; i < 14; i++) syncChars(0.05);
@@ -330,20 +549,35 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           const e = charMeshes.get(c.id);
           if (!e) continue;
           e.g.rotation.set(0, c.dir, 0); e.g.updateWorldMatrix(true, true);
-          box.expandByObject(e.g);
+          if (!row.heads) { box.expandByObject(e.g); continue; }
+          /* VISIBLE geometry only. `Box3.expandByObject` walks everything under the bone and
+             does not look at `visible`, so framing on the raw head bone framed the hidden
+             plain body along with it — a 2.21-unit-tall "head" on a figure whose head is half
+             a metre, which is why the sheet came back with the four of them shoved into the
+             bottom of the panel. */
+          (e.headG || e.g).traverse(o => {
+            if (!o.isMesh || !o.geometry) return;
+            let v = o.visible, q = o.parent; while (q && v) { v = q.visible; q = q.parent; }
+            if (v) box.expandByObject(o);
+          });
         }
+        if (row.heads) box.expandByScalar(0.18);
         const ctr = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+        /* the head row gets a taller panel of its own. Four helmets across a 2.6:1 strip is
+           about a hundred pixels each, which is the framing that let a black brick pass for a
+           lantern in the first place. */
+        const PW = 1280, PH = row.heads ? 660 : 492;
         const cam = camera.clone();
-        cam.aspect = 2.6; cam.fov = 27;
+        cam.aspect = PW / PH; cam.fov = 27;
         /* the Vessel is shot closer: the funnel, the name band and the mismatched shoulders are
            all things you have to be near enough to read, and a sheet that proves a silhouette
            does not prove the three details the silhouette is made of */
-        const back = Math.max(s.x, s.y * 2.6) * (row.close ? 0.80 : 1.04);
-        cam.position.set(ctr.x, ctr.y + back * 0.14, ctr.z + back);
+        const back = Math.max(s.x / cam.aspect, s.y) * 2.6 * (row.heads ? 0.96 : row.close ? 0.92 : 1.04);
+        cam.position.set(ctr.x, ctr.y + back * (row.heads ? -0.02 : 0.14), ctr.z + back);
         cam.lookAt(ctr); cam.updateProjectionMatrix();
         const cv0 = renderer.domElement;
         const w0 = cv0.width, h0 = cv0.height, sw = cv0.style.width, sh = cv0.style.height;
-        renderer.setSize(1280, 492, false);
+        renderer.setSize(PW, PH, false);
         renderer.render(scene, cam);
         png.push(cv0.toDataURL('image/png').split(',')[1]);
         renderer.setSize(w0, h0, false);
@@ -356,17 +590,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     })));
     const L = 28;
     const cv = document.createElement('canvas');
-    cv.width = ims[0].width; cv.height = (ims[0].height + L) * 4;
+    cv.width = Math.max(...ims.map(im => im.width));
+    cv.height = ims.reduce((a, im) => a + im.height + L, 0);
     const g = cv.getContext('2d');
     g.fillStyle = '#12100d'; g.fillRect(0, 0, cv.width, cv.height);
     const caps = [rows[0].cap + '   — noon', rows[0].cap + '   — after dark',
-                  rows[1].cap + '   — noon', rows[1].cap + '   — after dark, and the right-hand one is nearly spent'];
+                  rows[1].cap + '   — noon', rows[1].cap + '   — after dark, and the canister is nearly spent',
+                  rows[2].cap + '   — at dusk, when the lit parts read'];
+    let yc = 0;
     ims.forEach((im, i) => {
-      const y = i * (im.height + L);
       g.fillStyle = i < 2 ? '#ffe9b4' : '#f0c05a';
       g.font = 'bold 16px monospace';
-      g.fillText(caps[i], 12, y + 20);
-      g.drawImage(im, 0, y + L);
+      g.fillText(caps[i], 12, yc + 20);
+      g.drawImage(im, 0, yc + L);
+      yc += im.height + L;
     });
     return cv.toDataURL('image/png').split(',')[1];
   });
