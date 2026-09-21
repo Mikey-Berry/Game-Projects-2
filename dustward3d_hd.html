@@ -30069,13 +30069,22 @@ function colorKeyOf(c){
      whichever got built first in a session handed its rig to the other through the mesh
      cache — which is why the mage's mantle appeared some runs and not others. The beast
      rigs had the same collision: elk, grazer and gravehound are all just `|b`. */
-  return factionColor(c) + '|' + (c.kin||'') + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.head||'') + '|' + (c.cloak||'') + '|' + (c.house||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.wisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.eater?'|E':'') + (c.soulbound?'|B':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.face||'') + (c.skinShift ? '|F' + c.skinShift : '');
+  return factionColor(c) + '|' + (c.kin||'') + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.head||'') + '|' + (c.cloak||'') + '|' + (c.house||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.wisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.eater?'|E':'') + (c.soulbound?'|B':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.trade||'') + '|' + (c.face||'') + (c.skinShift ? '|F' + c.skinShift : '');
 }
 const SKINS = ['#8a5c34', '#6e4426', '#a06c40', '#5a3820', '#96683a'];
 const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0'];
 /* Eyes. Everything on two legs had a blank slab for a face; at this camera the eye line is
    the single strongest read a body has, and without it a crowd is a row of mannequins. */
 const EYES = ['#3a2a18', '#4a3520', '#2f4a52', '#3d5a46', '#5a4a2a', '#2a2a30'];
+/* Grey comes in at its own pace on every head — `k` is how far along the life is and `r` is
+   this body's own hash, so two people the same age are not the same shade of going grey, and
+   one of them is nearly white while the other still has most of it. Nobody goes to pure
+   white: `#b9b2a6` is grey hair in daylight, and `#ffffff` is a wig. */
+function greyed(hex, k, r){
+  if(!k) return hex;
+  const t = Math.min(1, k * (0.55 + r * 0.95));
+  return '#' + new THREE.Color(hex).lerp(new THREE.Color('#b9b2a6'), t).getHexString();
+}
 const PALE = ['#e6e0d4', '#ded7c9', '#e9e3d8', '#d6cfc0'];               /* homunculus: bloodless, ashen */
 const SCALES = ['#a83a2a', '#b3702a', '#c9a23a', '#2f5aa8'];            /* scaleborn: red, copper, gold, cobalt */
 /* ---------- THE FACES OF THE NAMED ----------
@@ -30952,7 +30961,26 @@ function buildCharMesh(c){
      it, something scraped off a month-old field is a frame with a rag hung on it. */
   const ROT_LIMB = {fresh:1.22, cooling:1.06, spoiled:0.92, bones:0.78};
   const rotLimb = (risen && c.rot && ROT_LIMB[c.rot]) ? ROT_LIMB[c.rot] : 1;
-  const LIMB = (fem ? 0.88 : 1) * ((BLD && BLD.limb) || 1) * A('limb') * (risen ? 0.66 * kinLimb * rotLimb : 1);   /* limb thickness — bone is thin */
+  /* ---------- AND WHAT THE YEARS DO TO IT ----------
+     `age` decided how well somebody fought and how soon they died, and the only thing it ever
+     did to a body was shrink the children. Everybody from sixteen to the grave was the same
+     thirty-year-old, so a town read as a cohort rather than as a population with parents in it.
+
+     AS A FRACTION OF THE LINE'S OWN LIFE, not as a number of years, because the lines do not
+     get the same allowance: a human has sixty-two and a homunculus has thirty-four, and an age
+     that reads as middle-aged on one is most of the way through the other. It starts at about
+     two-thirds of the way along and runs to the end.
+
+     Three things, and none of them is a new box: the limbs thin, the body loses a little
+     height, and the spine goes forward. The stoop cannot be set here — the animator writes
+     `e.spine.rotation.x` every frame and would overwrite it — so it is handed over as
+     `e.stoop` and added to the lean the animator was going to apply anyway. */
+  const _dAge = traitOf(c, 'deathAge', 62);
+  const aged = (c.undead || c.beast || c.construct || c.demilich || !c.age) ? 0
+    : clamp((c.age - _dAge * 0.60) / (_dAge * 0.40), 0, 1);
+  e.stoop = aged * 0.30;
+  if(aged) e.baseSY *= 1 - aged * 0.040;
+  const LIMB = (fem ? 0.88 : 1) * ((BLD && BLD.limb) || 1) * A('limb') * (1 - aged * 0.15) * (risen ? 0.66 * kinLimb * rotLimb : 1);   /* limb thickness — bone is thin, and so is an old arm */
   /* ---------- THE DEMILICH — A SKULL, A CROWN, AND WHAT IS LEFT OF EVERYTHING ELSE ----------
      "A single skull, crowned, with bejeweled eyes, seated upon a pile of sunbleached bones."
      Its own branch and not a costume on the humanoid rig, because there is no humanoid left:
@@ -32145,21 +32173,100 @@ function buildCharMesh(c){
         obox(0.26, 0.145, 0.075, dkh, 0.015, 0.215, -0.175, e.headG);   /* the nape */
       }
     }
-    else if(!c.undead && !subIs(c, 'scaleborn') && !subOf(c).bald && (fem ? h2 > 0.04 : h2 > 0.18)){
-      const hc = HAIRS[Math.floor(h3*HAIRS.length)];
-      obox(0.33, 0.11, 0.33, hc, 0, 0.42, -0.02, e.headG);
-      /* a beard on some of the men — at this range it is the difference between two
-         townsfolk and the same townsfolk twice */
-      if(!fem && h1 > 0.45 && !c.undead){
-        e.boxBody.push(obox(0.26, 0.10, 0.10, hc, 0, 0.155, 0.125, e.headG));
-        if(h2 > 0.55) e.boxBody.push(obox(0.12, 0.10, 0.09, hc, 0, 0.085, 0.115, e.headG));
+    else if(!c.undead && !subIs(c, 'scaleborn') && !subOf(c).bald){
+      /* ---------- HAIR IS A SHAPE BEFORE IT IS A COLOUR ----------
+         There were two heads of hair in the game. A man got a slab on the crown and, half the
+         time, a beard; a woman got the slab, and usually a fall down the back with an optional
+         braid. Six colours over two shapes, and the shape is the half that reads: at the
+         distance this camera sits at, a crop and a topknot are two different people and two
+         brown-haired crops are the same person twice.
+
+         So the STYLE is rolled on its own hash, weighted, and a style is nobody's property —
+         a man may wear his long and a woman may crop hers, which is a thing that has always
+         been true of people and was not true here. The BEARD is rolled separately, because
+         tying it to the hair made "bald with a full beard" and "long hair, clean-shaven"
+         impossible, and both of those are faces you see.
+
+         Every style stays inside the head's own footprint and is built proud of the skull, for
+         the reason the named hair block records at length: hair that rests ON the skull with
+         one level edge all the way round is a hat. */
+      const hc = greyed(HAIRS[Math.floor(h3*HAIRS.length)], aged, h2);
+      const hd = '#' + new THREE.Color(hc).multiplyScalar(0.74).getHexString();
+      const hs = hash2(c.id * 37 + 11, c.id * 19 + 7);
+      const STYLES = [
+        {k:'crop',     w:20},
+        {k:'long',     w:16},
+        {k:'braid',    w:10},
+        {k:'topknot',  w:10},
+        {k:'receding', w:10},
+        {k:'shaved',   w:10},
+        {k:'wrapped',  w:10},
+        {k:'bald',     w: 8},
+      ];
+      let _t = hs * STYLES.reduce((a, b) => a + b.w, 0);
+      let sty = STYLES[0];
+      for(const o of STYLES){ _t -= o.w; if(_t <= 0){ sty = o; break; } }
+      /* an old head keeps the shape and loses the coverage: nobody goes from long to shaved,
+         but a receding one recedes further and a crop thins out */
+      if(sty.k === 'receding' && aged > 0.7) sty = STYLES[7];
+      e.hairStyle = sty.k;
+
+      const crown = (y, h) => obox(0.33, h, 0.33, hc, 0, y, -0.02, e.headG);
+      if(sty.k === 'crop')     crown(0.42, 0.11);
+      else if(sty.k === 'shaved'){ crown(0.425, 0.045); obox(0.30, 0.10, 0.07, hd, 0, 0.36, -0.155, e.headG); }
+      else if(sty.k === 'receding'){
+        /* back off the brow and thin over the crown — the temples are where it goes first */
+        obox(0.30, 0.085, 0.27, hc, 0, 0.425, -0.075, e.headG);
+        obox(0.31, 0.13, 0.075, hd, 0, 0.345, -0.165, e.headG);
+        for(const sx of [-1, 1]) obox(0.045, 0.16, 0.20, hd, sx * 0.152, 0.315, -0.075, e.headG);
       }
-      /* worn long, most of the time — it's the fastest read at this camera distance */
-      if(fem && h1 > 0.22){
-        obox(0.30, 0.26, 0.10, hc, 0, 0.28, -0.16, e.headG);          /* fall down the back */
-        obox(0.09, 0.20, 0.20, hc, -0.15, 0.30, -0.02, e.headG);      /* framing the face */
-        obox(0.09, 0.20, 0.20, hc, 0.15, 0.30, -0.02, e.headG);
-        if(h2 > 0.62) obox(0.12, 0.30, 0.10, hc, 0, 0.10, -0.19, e.headG);   /* a long braid */
+      else if(sty.k === 'wrapped'){
+        /* not hair at all: a cloth wound over it, which is the one style that reads as a
+           choice somebody made rather than as a head they were born with */
+        const WRAP = ['#8a7a5e', '#6e5f4a', '#9c8a6a', '#7a6a72', '#5e5a4e'];
+        const wc = WRAP[Math.floor(h2 * WRAP.length) % WRAP.length];
+        const wd = '#' + new THREE.Color(wc).multiplyScalar(0.78).getHexString();
+        obox(0.345, 0.14, 0.345, wc, 0, 0.415, -0.015, e.headG);
+        obox(0.355, 0.045, 0.355, wd, 0, 0.335, -0.015, e.headG);        /* the band it is tucked into */
+        obox(0.10, 0.20, 0.09, wc, 0.13, 0.27, -0.155, e.headG);         /* and the tail of it, hanging */
+      }
+      else if(sty.k !== 'bald'){
+        crown(0.42, 0.11);
+        if(sty.k === 'topknot'){
+          obox(0.14, 0.13, 0.14, hc, 0, 0.525, -0.03, e.headG);
+          obox(0.17, 0.035, 0.17, hd, 0, 0.462, -0.03, e.headG);         /* the tie */
+          for(const sx of [-1, 1]) obox(0.042, 0.13, 0.22, hd, sx * 0.158, 0.355, -0.03, e.headG);
+        } else {
+          /* long, and braided on some of them */
+          obox(0.30, 0.26, 0.10, hc, 0, 0.28, -0.16, e.headG);           /* the fall down the back */
+          for(const sx of [-1, 1]) obox(0.09, 0.20, 0.20, hc, sx * 0.15, 0.30, -0.02, e.headG);  /* framing the face */
+          if(sty.k === 'braid'){
+            obox(0.115, 0.30, 0.095, hd, 0, 0.10, -0.19, e.headG);
+            obox(0.075, 0.045, 0.075, hc, 0, -0.06, -0.19, e.headG);     /* bound at the end */
+          }
+        }
+      }
+
+      /* ---------- AND THE BEARD IS ITS OWN ROLL ---------- */
+      if(!fem){
+        const bh = hash2(c.id * 53 + 3, c.id * 29 + 13);
+        const bc = sty.k === 'wrapped' ? greyed(HAIRS[Math.floor(h3*HAIRS.length)], aged, h2) : hc;
+        const bd = '#' + new THREE.Color(bc).multiplyScalar(0.74).getHexString();
+        if(bh > 0.86){        /* full, and long */
+          e.boxBody.push(obox(0.265, 0.115, 0.105, bc, 0, 0.155, 0.125, e.headG));
+          e.boxBody.push(obox(0.175, 0.145, 0.095, bc, 0, 0.055, 0.118, e.headG));
+          e.boxBody.push(obox(0.105, 0.075, 0.080, bd, 0, -0.035, 0.112, e.headG));
+        } else if(bh > 0.66){ /* full */
+          e.boxBody.push(obox(0.265, 0.105, 0.102, bc, 0, 0.155, 0.125, e.headG));
+          e.boxBody.push(obox(0.125, 0.095, 0.088, bc, 0, 0.078, 0.118, e.headG));
+        } else if(bh > 0.50){ /* short, close to the jaw */
+          e.boxBody.push(obox(0.255, 0.075, 0.098, bc, 0, 0.145, 0.122, e.headG));
+        } else if(bh > 0.34){ /* stubble: a value, not a shape */
+          e.boxBody.push(obox(0.250, 0.085, 0.030, '#' + new THREE.Color(skinCol).lerp(new THREE.Color(bd), 0.42).getHexString(),
+                              0, 0.145, 0.152, e.headG));
+        } else if(bh > 0.22){ /* moustache only */
+          e.boxBody.push(obox(0.135, 0.032, 0.035, bc, 0, 0.196, 0.150, e.headG));
+        }
       }
     }
     /* ---------- SCALEBORN ----------
@@ -33388,6 +33495,107 @@ function buildCharMesh(c){
          `bossKey: 'sigil'` ever takes the humanoid rig — one builder, so they cannot drift */
       buildArmet(e, e.headG);
     }
+    /* ---------- WHAT SOMEBODY DOES ALL DAY ----------
+       `trade` has always been on every townsman — smith, miner, brewer, crafter, farmer,
+       hunter, fisher, salter — and it decided what they sold and what their children grew up
+       to be and was invisible on the body. A town looked like a crowd of interchangeable
+       people who happened to have a shop behind them.
+
+       One or two pieces each, all of them things the work actually does to a person: an apron
+       that has been scorched, knees that have been knelt on, a strap that carries something.
+       Nobody gets a costume. The read is meant to be "that one works with fire" at a glance
+       and "oh, an apron" on a second look, not a uniform.
+
+       ONLY ON SOMEBODY WHO IS NOT DRESSED FOR SOMETHING ELSE. Armour is its own layer and a
+       leather apron over a breastplate is a man wearing two answers to the same question, so
+       this stands down the moment there is armour on. Everything hangs off the existing joints
+       and goes in before `bakeBoxes`, so it merges into the same buffers and costs no draw
+       call — the whole trade layer is triangles and nothing else. */
+    if(c.trade && !c.undead && !c.beast && !c.construct && !c.armor && e.spine && e.elbR){
+      const T = c.trade;
+      const wear = (h2 * 0.5 + h3 * 0.5);   /* how used their kit looks — same body, every rebuild */
+      if(T === 'smith'){
+        const hide = '#4e3826', scorch = '#2a1d14';
+        obox(0.40, 0.46, 0.055, hide, 0, 0.26, 0.145, e.spine);            /* the apron */
+        obox(0.16, 0.055, 0.05, hide, 0, 0.525, 0.148, e.spine);           /* its bib */
+        for(const sx of [-1, 1]) obox(0.035, 0.09, 0.05, hide, sx * 0.13, 0.545, 0.14, e.spine);  /* the straps */
+        obox(0.085, 0.10, 0.02, scorch, -0.10 + wear * 0.18, 0.30, 0.176, e.spine);   /* where a spark landed */
+        obox(0.055, 0.06, 0.02, scorch, 0.12, 0.14, 0.176, e.spine);
+        obox(0.135, 0.13, 0.135, hide, 0, -0.20, 0.01, e.elbR);            /* and the glove on the hammer hand */
+      }
+      else if(T === 'miner'){
+        const patch = '#3e3a30';
+        for(const kn of [e.kneeL, e.kneeR]) if(kn) obox(0.16, 0.12, 0.155, patch, 0, -0.14, 0.03, kn);
+        /* THE LAMP IS THE ONLY LIT THING A TOWNSMAN CARRIES, so it is the read, and it has to
+           be somewhere it can be seen. On the shoulder it was four pixels of warm grey with an
+           arm hanging in front of it; on the belt at the front it is unoccluded from every
+           angle a player looks at a body from, which is also where a real one hangs. A lit
+           thing only reads as lit when there is dark immediately around it, so the housing is
+           black and the flame sits in the MOUTH of it rather than inside. */
+        obox(0.135, 0.165, 0.115, '#211e1b', 0.115, 0.145, 0.150, e.spine);   /* the housing */
+        obox(0.155, 0.035, 0.135, '#3a3630', 0.115, 0.240, 0.150, e.spine);   /* its hood */
+        obox(0.050, 0.075, 0.050, '#3a3630', 0.115, 0.285, 0.150, e.spine);   /* the hook onto the belt */
+        mk(BOXG, ownGlow('#f6c65e'), 0.105, 0.115, 0.040, 0.115, 0.145, 0.212, e.spine);
+        obox(0.30, 0.05, 0.24, '#332f2a', 0, 0.045, 0, e.spine);           /* a belt it all hangs from */
+      }
+      else if(T === 'brewer'){
+        const duck = '#9a8f74', stain = '#6b5a3a';
+        obox(0.38, 0.30, 0.05, duck, 0, 0.16, 0.142, e.spine);             /* a shorter apron, from the waist */
+        obox(0.32, 0.045, 0.05, stain, 0, 0.31, 0.145, e.spine);           /* the tie */
+        obox(0.13, 0.10, 0.02, stain, -0.06 + wear * 0.14, 0.11, 0.172, e.spine);
+        for(const el of [e.elbL, e.elbR]) if(el) obox(0.155, 0.075, 0.155, duck, 0, -0.04, 0, el);  /* sleeves rolled */
+      }
+      else if(T === 'crafter'){
+        /* the one trade with no apron and no hat, so it has to be carried instead: a roll of
+           tools on the hip with the handles standing out of it, and the belt that holds it */
+        const roll = '#6a563a', strap = '#4a3c2a', horn = '#c6b795';
+        const bd = obox(0.06, 0.40, 0.055, strap, -0.06, 0.30, 0.150, e.spine);
+        bd.rotation.z = -0.36;                                             /* across the chest */
+        obox(0.34, 0.065, 0.26, strap, 0, 0.055, 0, e.spine);              /* and round the waist */
+        obox(0.135, 0.185, 0.115, roll, 0.205, 0.015, 0.055, e.spine);     /* the roll itself */
+        obox(0.145, 0.040, 0.125, strap, 0.205, 0.100, 0.055, e.spine);    /* tied at the top */
+        for(let i = -1; i <= 1; i++)
+          obox(0.028, 0.115, 0.028, horn, 0.205 + i * 0.042, 0.155, 0.055, e.spine);  /* handles out of it */
+        obox(0.055, 0.145, 0.045, horn, -0.20, 0.10, 0.075, e.spine);      /* and a mallet through the belt */
+        obox(0.085, 0.060, 0.070, roll, -0.20, 0.190, 0.075, e.spine);
+      }
+      else if(T === 'farmer'){
+        const straw = '#c2ab72', band = '#7a6a48';
+        obox(0.52, 0.030, 0.52, straw, 0, 0.485, -0.02, e.headG);          /* the brim */
+        obox(0.34, 0.075, 0.34, straw, 0, 0.525, -0.02, e.headG);          /* the crown of it */
+        obox(0.35, 0.028, 0.35, band, 0, 0.495, -0.02, e.headG);
+        /* the line where the collar stops and the sun starts. `dk` is block-scoped to the face
+           builder and reaching for it from out here is a ReferenceError thrown from inside the
+           render path — the scaleborn branch records the same trap and takes the same way out. */
+        obox(0.26, 0.045, 0.045,
+             '#' + new THREE.Color(skinCol).multiplyScalar(0.78).getHexString(),
+             0, 0.055, 0.115, e.headG);
+      }
+      else if(T === 'hunter'){
+        const leath = '#5a4630';
+        const bd = obox(0.055, 0.40, 0.05, leath, 0, 0.30, 0.148, e.spine); /* the quiver strap, across */
+        bd.rotation.z = 0.42;
+        obox(0.12, 0.30, 0.12, leath, -0.20, 0.34, -0.17, e.spine);         /* the quiver on the back */
+        for(let i = -1; i <= 1; i++)
+          obox(0.018, 0.14, 0.018, '#8e7a56', -0.20 + i * 0.035, 0.53, -0.17, e.spine);  /* and the shafts in it */
+        if(e.elbL) obox(0.16, 0.14, 0.16, leath, 0, -0.16, 0, e.elbL);      /* a bracer on the bow arm */
+      }
+      else if(T === 'fisher'){
+        const oil = '#3e4a46', boot = '#2e2a26';
+        const cp = obox(0.20, 0.40, 0.28, oil, -0.19, 0.34, -0.01, e.spine); /* oilskin, over one shoulder */
+        cp.rotation.z = 0.14;
+        obox(0.34, 0.075, 0.30, oil, -0.06, 0.565, -0.01, e.spine);
+        for(const kn of [e.kneeL, e.kneeR]) if(kn) obox(0.175, 0.30, 0.17, boot, 0, -0.16, 0.01, kn);
+      }
+      else if(T === 'salter'){
+        /* the brine gets into everything and dries white in it */
+        const crust = '#ddd6c4';
+        for(const el of [e.elbL, e.elbR]) if(el) obox(0.15, 0.085, 0.15, crust, 0, -0.22, 0, el);
+        for(const kn of [e.kneeL, e.kneeR]) if(kn) obox(0.165, 0.065, 0.16, crust, 0, -0.27, 0, kn);
+        obox(0.36, 0.055, 0.26, crust, 0, -0.035, 0, e.spine);             /* and the hem of everything */
+        obox(0.235, 0.075, 0.055, '#c8c0ad', 0, 0.135, 0.145, e.headG);    /* a cloth over the mouth */
+      }
+    }
     if(c.pack==='pack_s') obox(0.32, 0.4, 0.22, '#6b5a40', 0, 0.24, -0.28, e.spine);
     if(c.pack==='pack_l'){ obox(0.46, 0.64, 0.3, '#4a3b2c', 0, 0.26, -0.34, e.spine); obox(0.4, 0.11, 0.26, '#8a7048', 0, 0.62, -0.34, e.spine); }
     /* ---------- WHAT IS ACTUALLY WORN, BEFORE WHAT THE FACTION HANDS OUT ----------
@@ -34140,7 +34348,12 @@ function syncChars(dt){
       P(e.elbL, 'x', elbL, snap); P(e.elbR, 'x', elbR, snap);
       P(e.legL, 'x', legL); P(e.legR, 'x', legR);
       P(e.kneeL, 'x', kneeL); P(e.kneeR, 'x', kneeR);
-      P(e.spine, 'x', spineX, 10); P(e.headG, 'x', headX, 10);
+      /* THE STOOP RIDES ON TOP OF THE LEAN. It is built once and never changes, but it cannot
+         be baked into the rig: this line writes the spine's pitch every frame and a build-time
+         rotation would last exactly until the first tick. The head comes back up a little
+         against it, the way a person who is bent forward still looks where they are going. */
+      const _st = e.stoop || 0;
+      P(e.spine, 'x', spineX + _st, 10); P(e.headG, 'x', headX - _st * 0.55, 10);
       /* the channels that make it a stance rather than a posture */
       P(e.armL, 'z', armLz, snap); P(e.armR, 'z', armRz, snap);
       P(e.legL, 'z', legLz); P(e.legR, 'z', legRz);
