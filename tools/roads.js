@@ -123,7 +123,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const v = new THREE.Vector3();
         for (let i = 0; i < pos.count; i++) {
           v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(o.matrixWorld);
-          outv.push({ y: v.y, z: v.z,
+          outv.push({ x: v.x - root.getWorldPosition(new THREE.Vector3()).x, y: v.y, z: v.z,
                       l: col ? (col.getX(i) + col.getY(i) + col.getZ(i)) / 3 : null });
         }
       });
@@ -228,15 +228,29 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const shell = sv.filter(v => v.l >= 0.06);
       const shellTop = Math.max(...shell.map(v => v.y));
       const darkTop = Math.max(...dark.map(v => v.y));
-      out.collar = `shell to ${shellTop.toFixed(3)}, helm from ${helmBottom.toFixed(3)}, dark to ${darkTop.toFixed(3)}`;
-      /* AN OPENING, WITH DARKNESS STANDING IN IT. Worth recording that this claim was right
-         the first time and reported a 0.034 OVERLAP on a figure that visibly has a hole in it
-         — because the walk was counting the hidden plain body, whose head box is still built
-         and still sitting inside the helm. Two wrong numbers agreed with each other. The
-         moment the probe counted only what is drawn, the gap came out at 0.187. */
-      out.theVesselIsEmptyAtTheCollar = (helmBottom - shellTop > 0.08 && darkTop > shellTop + 0.05)
-        ? `a ${(helmBottom - shellTop).toFixed(3)} opening between the shell and the helm, with nothing but darkness standing in it — ${out.collar}`
-        : `!! THE HELM CLOSES THE COLLAR (${out.collar})`;
+      /* how wide each of them is UP WHERE THEY MEET, which is what decides whether there is a
+         ring to see into or just a lid on a jar */
+      const band = (arr, lo, hi) => {
+        const inb = arr.filter(v => v.y > lo && v.y < hi).map(v => Math.abs(v.x));
+        return inb.length ? Math.max(...inb) : 0;
+      };
+      const ringLo = helmBottom, ringHi = shellTop;
+      const funnelW = band(shell, ringLo, ringHi + 0.01);
+      const helmW = band(hv, ringLo - 0.01, ringHi);
+      out.collar = `funnel to ${shellTop.toFixed(3)} (half-width ${funnelW.toFixed(3)}), helm from ${helmBottom.toFixed(3)} (${helmW.toFixed(3)}), dark to ${darkTop.toFixed(3)}`;
+      /* THE HELM SITS DOWN IN THE FUNNEL AND THERE IS A RING OF DARK AROUND IT. This claim has
+         been rewritten twice and both rewrites were the figure changing under it rather than
+         the claim being wrong. It first asked for a GAP between the shell and the helm, which
+         was right for a collar-and-helm — and reported a 0.034 overlap on a body that visibly
+         had a hole in it, because the walk was counting the hidden plain body whose head box
+         is still built and still sitting inside the helm. Two wrong numbers agreed.
+         Then the collar became a FUNNEL that the helm comes down inside, so an overlap is the
+         intent and a gap would mean the funnel had stopped swallowing anything. What the
+         figure is actually about is the RING: the funnel has to reach up past the helm's base
+         AND be wider than the helm is there, or the helm is simply a lid. */
+      out.theVesselIsEmptyAtTheCollar = (shellTop > helmBottom + 0.03 && funnelW > helmW + 0.03 && darkTop > helmBottom)
+        ? `the helm comes down ${(shellTop - helmBottom).toFixed(3)} inside a funnel ${(funnelW - helmW).toFixed(3)} wider than it is, and the ring between them is dark all the way up — ${out.collar}`
+        : `!! THE HELM IS A LID ON THE FUNNEL, NOT A THING SITTING IN IT (${out.collar})`;
 
       /* AND IT IS SEALED. `helmKind` still answers 'sigil' for the named one, and the armet it
          builds has a SIGHT SLIT that kit.js asserts the existence of — stacking it on top of
@@ -288,7 +302,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const png = [];
     const rows = [
       { cap: 'THE VIGIL —   what the Unclouding leaves', who: 'divine' },
-      { cap: 'THE VESSEL —  what the Sigil Rite pours into', who: 'transmute' },
+      { cap: 'THE VESSEL —  what the Sigil Rite pours into', who: 'transmute', close: true },
     ];
     for (const row of rows) {
       for (const hr of [11, 21]) {
@@ -321,7 +335,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const ctr = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
         const cam = camera.clone();
         cam.aspect = 2.6; cam.fov = 27;
-        const back = Math.max(s.x, s.y * 2.6) * 1.04;
+        /* the Vessel is shot closer: the funnel, the name band and the mismatched shoulders are
+           all things you have to be near enough to read, and a sheet that proves a silhouette
+           does not prove the three details the silhouette is made of */
+        const back = Math.max(s.x, s.y * 2.6) * (row.close ? 0.80 : 1.04);
         cam.position.set(ctr.x, ctr.y + back * 0.14, ctr.z + back);
         cam.lookAt(ctr); cam.updateProjectionMatrix();
         const cv0 = renderer.domElement;
