@@ -1,247 +1,279 @@
 #!/usr/bin/env node
-/* A TOWN THAT LOOKS LIKE IT IS DOING SOMETHING.
+/* WHAT A TOWN LOOKS LIKE IT DOES, AND HOW OLD IT IS.
  *
- * "While I get that cities have their own economies, it's kind of invisible at the moment. I
- * want to see when the craftsman makes something, or the harvesters gathering. Basically we
- * should make this a bit more visible to the player, maybe even adding actual building models
- * (furnace, weavers, etc.) to the city for their people to use."
+ * Three things went into a body that had colour and nothing else:
  *
- * The economy worked perfectly. That is the whole problem: it was a bookkeeping pass that ran
- * once a day over a list of people standing anywhere, AT THE DAY ROLLOVER — which is midnight,
- * when the entire town is asleep. There is no version of "I want to see the craftsman make
- * something" that survives the making happening at three in the morning.
+ *   TRADE. Every townsman has had one since worldgen — smith, miner, brewer, crafter, farmer,
+ *   hunter, fisher, salter — and it decided what they sold and what their children grew up to
+ *   be, and was invisible. A scorched apron, knees that have been knelt on, a strap that
+ *   carries something.
  *
- * So four things have to be true, and the last one is the one that stops the fix from being a
- * rebalance nobody asked for:
+ *   AGE. It decided how well somebody fought and how soon they died and did nothing to the
+ *   body but shrink the children. Everyone from sixteen to the grave was the same
+ *   thirty-year-old. Now the limbs thin, the height goes, the hair greys and the spine goes
+ *   forward — as a fraction of the LINE's own life, because a human has sixty-two years and a
+ *   homunculus has thirty-four.
  *
- *   · there are places to work, and they are recognisable;
- *   · people with a trade GO to them, in daylight;
- *   · the making happens THERE, where you can see it;
- *   · and the shelves stock at exactly the rate they did before.
+ *   HAIR. There were two heads of hair in the game: a man got a slab and maybe a beard, a
+ *   woman got the slab and usually a fall down the back. Shape is the half that reads at this
+ *   camera and it was the half that never varied.
  *
- *   node tools/trades.js [game.html]
+ * The claim that matters most is the LAST one: none of this may touch `rnd()`. Worldgen is a
+ * single stream and a draw spent looking at a body moves every body placed after it.
+ *
+ *   node tools/trades.js [out.png] [game.html]
  */
 const { chromium } = require('playwright');
 const path = require('path');
+const fs = require('fs');
+const OUT = path.resolve(process.argv[2] || path.join(__dirname, 'trades.png'));
 const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__dirname, a)) : path.join(__dirname, 'game.html'));
+const TRADES = ['smith', 'miner', 'brewer', 'crafter', 'farmer', 'hunter', 'fisher', 'salter'];
 
 (async () => {
   const b = await chromium.launch({
     executablePath: process.env.DUSTWARD_CHROME || undefined,
     args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--disable-gpu-sandbox', '--no-sandbox'],
   });
-  const p = await b.newPage({ viewport: { width: 900, height: 600 } });
+  const p = await b.newPage({ viewport: { width: 900, height: 700 } });
   const errs = [];
-  p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
-  await p.waitForTimeout(3000);
+  p.on('pageerror', e => errs.push(e.message.slice(0, 220)));
+  await p.goto('file://' + gamePath(process.argv[3]), { waitUntil: 'load' });
+  await p.waitForSelector('#btn-start', { state: 'attached', timeout: 60000 });
   await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(3000);
 
-  const out = await p.evaluate(() => {
-    const R = {};
-    paused = true;
-
-    /* ---------- 1. THERE ARE PLACES TO WORK ---------- */
-    {
-      const want = ['FORGE', 'WEAVERY', 'BREWHOUSE'];
-      const missing = [];
-      for (const t of towns) for (const lbl of want)
-        if (!buildings.some(b2 => b2.town === t && b2.label === lbl)) missing.push(t.name + '/' + lbl);
-      R.everyTownHasAWorkshop = missing.length === 0
-        ? `all ${towns.length} towns have a forge, a weavery and a brewhouse`
-        : `!! ${missing.length} MISSING: ${missing.slice(0, 4).join(', ')}`;
-    }
-
-    /* AND THEY ARE RECOGNISABLE. A workshop that builds as a house with a different label is
-       a house with a different label, and the report asks for building MODELS. */
-    if (typeof BUILD_STYLE === 'object') {
-      const props = ['FORGE', 'WEAVERY', 'BREWHOUSE'].map(k => (BUILD_STYLE[k] || {}).prop);
-      const shared = props.filter(pr => Object.entries(BUILD_STYLE)
-        .some(([k, v]) => v.prop === pr && !['FORGE', 'WEAVERY', 'BREWHOUSE'].includes(k)));
-      R.andEachOneLooksLikeItself = (props.every(Boolean) && new Set(props).size === 3 && shared.length === 0)
-        ? `and each carries a prop nothing else in the world has — ${props.join(', ')}`
-        : `!! WORKSHOP PROPS: ${props.join(', ')}${shared.length ? ' (shared with other buildings: ' + shared.join(', ') + ')' : ''}`;
-    } else R.andEachOneLooksLikeItself = '!! THERE IS NO BUILD_STYLE';
-
-    /* ---------- 2. EVERY TRADE HAS SOMEWHERE TO BE ----------
-       Including the outdoor ones, which is the half that is easy to forget: a miner sent to
-       stand in a shed is the same mistake as a miner left on the plaza. */
-    if (typeof tradePost === 'function') {
-      const t = towns.find(t2 => t2.def.key === 'copperhold') || towns[0];
-      const kinds = {};
-      const homeless = [];
-      for (const c of chars) {
-        if (!c.civ || c.homeTown !== t || !c.trade) continue;
-        const post = tradePost(c, t);
-        if (!post) { homeless.push(c.trade); continue; }
-        kinds[c.trade] = post.kind;
-      }
-      const trades = Object.keys(kinds);
-      R.everyTradeHasAPost = (homeless.length === 0 && trades.length >= 3)
-        ? `${t.name}'s ${trades.length} trades all have somewhere to be: ${trades.map(k => k + '→' + kinds[k]).join(', ')}`
-        : `!! ${homeless.length} TRADE(S) HAVE NOWHERE TO WORK: ${[...new Set(homeless)].join(', ')}`;
-      R.andTheOutdoorOnesAreOutdoors = (!kinds.miner || kinds.miner === 'seam') && (!kinds.hunter || kinds.hunter === 'field')
-        ? `and a miner works a seam and a hunter works ground past the fences — neither of them is sent to stand in a shed`
-        : `!! miner→${kinds.miner}, hunter→${kinds.hunter}`;
-    } else {
-      R.everyTradeHasAPost = '!! THERE IS NO tradePost';
-      R.andTheOutdoorOnesAreOutdoors = '!! THERE IS NO tradePost';
-    }
-
-    /* ---------- 3. AND THEY GO ----------
-       Run the world through a working day and count how many tradespeople are standing at
-       their post at noon. Measured on bodies, not on flags. */
-    {
-      const t = towns.find(t2 => t2.def.key === 'copperhold') || towns[0];
-      const folk = chars.filter(c => c.civ && c.homeTown === t && c.trade && c.state === 'ok');
-      /* FOUR GAME-HOURS, NOT FOUR MINUTES. `HOUR_SEC` is 8, so 240 real seconds is thirty
-         game-hours — the first draft of this ran the town past dusk and through the next
-         midnight and then asked why nobody was at work. */
-      /* EIGHT GAME-HOURS, MEASURED AT THREE IN THE AFTERNOON. `HOUR_SEC` is 8, so 240 real
-         seconds is THIRTY game-hours — the first draft ran the town past dusk and through the
-         next midnight and then asked why nobody was at work. And a miner's post is the ore
-         field, which is thirty to fifty tiles outside the wall: half a working day of walking
-         is the honest answer for a pit and this window has to allow for it. */
-      /* ---------- ACROSS EVERY TOWN, NOT ONE OF THEM ----------
-         This counted ONE town's twenty-one hands against a 60% bar, which is a threshold of
-         thirteen bodies — and the number lands on 12, 12, 13 on the SAME build, so the
-         assertion was decided by one person's afternoon. It flipped this suite red on a batch
-         that changed nothing about work: the build before it has the identical trade mix
-         (9 smiths, 4 miners, 4 brewers, 4 crafters) and the identical midnight fallback rate
-         (42% against 43%), and the daylight figure alone swings seven points run to run.
-         The fault was the SAMPLE, so the fix is the sample. Seven towns and a hundred and
-         fifty hands is the same claim measured where it holds still. */
-      hour = 7;
-      const DT = 1 / 30;
-      for (let i = 0; i < 30 * HOUR_SEC * 8; i++) update(DT);
-      const atOf = (c, tt) => {
-        const post = (typeof tradePost === 'function') ? tradePost(c, tt) : null;
-        /* the post's own radius plus a body's worth of shuffle: at any instant a few of them
-           are walking round the bench rather than standing at it, and a probe that demands
-           everybody frozen on their mark is measuring a photograph, not a working day. */
-        return !!post && dist(c.x, c.y, post.x, post.y) < (post.near || 2.4) + 3.5;
-      };
-      let at = 0, all = 0;
-      for (const tt of towns) {
-        for (const c of chars) {
-          if (!c.civ || c.homeTown !== tt || !c.trade || c.state !== 'ok') continue;
-          all++; if (atOf(c, tt)) at++;
+  const R = await p.evaluate((TRADES) => {
+    paused = true; hour = 11; debugSeeAll = true;
+    if (typeof updateSky === 'function') updateSky();
+    if (typeof fogPlane !== 'undefined') fogPlane.visible = false;
+    if (typeof syncDecorFogFull === 'function') syncDecorFogFull();
+    const out = {};
+    const me = player()[0];
+    let spot = null;
+    for (const pad of [10, 7, 5]) {
+      for (let r = 40; r < 240 && !spot; r += 4) for (let a = 0; a < 24 && !spot; a++) {
+        const x = me.x + Math.cos(a / 24 * 6.283) * r, y = me.y + Math.sin(a / 24 * 6.283) * r;
+        if (x < pad + 4 || y < pad + 4 || x >= W - pad - 4 || y >= H - pad - 4) continue;
+        let ok = true;
+        for (let dy = -pad; dy <= pad && ok; dy++) for (let dx = -pad; dx <= pad && ok; dx++) {
+          const ix = Math.floor(x) + dx, iy = Math.floor(y) + dy;
+          if (isBlocked(ix + 0.5, iy + 0.5, 0) || terr[iy * W + ix] === 3 || decorAt(ix, iy)) ok = false;
         }
+        if (ok) spot = { x, y };
       }
-      R.andTheyGoToWork = (all >= 40 && at >= Math.ceil(all * 0.6))
-        ? `${at} of the world's ${all} tradespeople are at their post by mid-afternoon`
-        : `!! ONLY ${at}/${all} OF THEM ARE ANYWHERE NEAR THEIR WORK`;
+      if (spot) break;
     }
+    window.__spot = spot || { x: me.x, y: me.y };
+    const clear = () => {
+      chars.length = 0;
+      charMeshes.forEach(e => { if (e.g && e.g.parent) e.g.parent.remove(e.g); });
+      charMeshes.clear();
+    };
+    const one = (set) => {
+      const c = makeChar('P', 'player', window.__spot.x, window.__spot.y,
+        Object.assign({ atk: 8, def: 8, tough: 8, race: 'human', sex: 'm', age: 30 }, set.opts || {}));
+      c.state = 'ok'; c.weapon = null; c.armor = null;
+      Object.assign(c, set.set || {});
+      chars.push(c);
+      syncChars(0.05); syncChars(0.05);
+      return { c, e: charMeshes.get(c.id) };
+    };
+    /* how many boxes a body came to — the merged buffers make this the honest count of
+       "did geometry actually land on it", which is all a probe can ask of a costume */
+    const tris = (e) => {
+      let t = 0;
+      e.g.traverse(o => {
+        if (!o.isMesh || !o.geometry) return;
+        const g = o.geometry;
+        t += g.index ? g.index.count / 3 : g.attributes.position.count / 3;
+      });
+      return Math.round(t);
+    };
 
-    /* ---------- 4. AND THE MAKING HAPPENS THERE, IN DAYLIGHT ----------
-       The heart of it. `showWork` is the only thing that draws a float over a producing body,
-       so the probe wraps it and records WHEN and WHERE every unit of a town's economy was
-       actually made across four game-days. Under the old code the answer would be "all of it,
-       at midnight, wherever they happened to be standing". */
-    if (typeof workShift === 'function') {
-      const t = towns.find(t2 => t2.def.key === 'copperhold') || towns[0];
-      const seen = [];
-      const real = workShift;
-      /* every town's shifts, for the reason written out above — one town's forty shifts put
-         the daylight share anywhere between 57% and 65% on the same build */
-      window.workShift = (tt, cc) => {
-        const r = real(tt, cc);
-        if (r) seen.push({ hour, own: tt === t,
-                           at: (typeof tradePost === 'function' && tradePost(cc, tt)) ? dist(cc.x, cc.y, tradePost(cc, tt).x, tradePost(cc, tt).y) : 99 });
-        return r;
-      };
-      const DT = 1 / 30;
-      for (let i = 0; i < 30 * HOUR_SEC * 24 * 4; i++) update(DT);
-      window.workShift = real;
-      const day7to18 = seen.filter(x => x.hour >= 7 && x.hour < 18).length;
-      const atPost = seen.filter(x => x.at < 6.5).length;
-      /* ---------- ACROSS EVERY TOWN, BECAUSE ONE TOWN IS FORTY EVENTS ----------
-         This was deliberately scoped to ONE town, on the reasoning that it is "an exact ratio
-         and not a statistical one". It is not exact: the productive roll is `rnd() > 0.7` and
-         it is one gate among several — alive, at the post, in hours, not fleeing — so the
-         observed rate is a DRAW, and forty shifts from eighteen hands has a standard deviation
-         of five points on it. The band was fitted to one lucky run and the same unchanged code
-         came out at 0.56 on one build and 0.50 on the next, three standard deviations apart
-         from nothing but a different PRNG stream. Every town is eight times the sample. */
-      const own = seen.length;
-      const hands = chars.filter(c => c.civ && c.trade && c.state === 'ok').length;
-      const perHandDay = own / Math.max(1, hands * 4);
-      const mine = seen.filter(x => x.own).length;
-      R.work = `${own} shifts over four days from ${hands} hands in every town — ${perHandDay.toFixed(2)} a hand a day (${mine} of them ${t.name}'s)`;
-      /* ---------- THE THROUGHPUT INVARIANT, EXACTLY ----------
-         The old code did ONE shift per worker per productive day and the productive roll was
-         `rnd() > 0.7 ? skip : work`. Splitting the ledger from the moment must not touch that,
-         and counting shifts against worker-days says so directly — where measuring the SHELVES
-         only says it statistically, since two builds run different PRNG streams and eight days
-         of plague, war and death move a town's output around by a third on their own. */
-      /* AND THE BAND IS THE MEASUREMENT, NOT THE ROLL. `rnd() > 0.7` is the productive gate and
-         it is not the only one, so the rate a town actually turns in sits below it. Measured
-         across every town on two consecutive builds of unchanged economy code: 0.56
-         (319 shifts from 142 hands) and 0.55 (321 from 145) — a point apart, where the
-         one-town figure moved six points on the same pair of builds.
-         The claim worth holding is that the ledger did not MOVE — a build where the split
-         double-counted would run near 1.0, and one where it silently stopped would run near
-         nothing. */
-      R.andEveryHandWorksOneShiftADay = (perHandDay > 0.33 && perHandDay < 0.68)
-        ? `and that is ${perHandDay.toFixed(2)} shifts a hand a day, where a double-count would read near 1.0 and a stalled ledger near nothing — the ledger did not move, only the moment did`
-        : `!! ${perHandDay.toFixed(2)} SHIFTS A HAND A DAY, OUTSIDE THE 0.33-0.68 THE ECONOMY HAS ALWAYS TURNED IN`;
-      R.andTheMakingIsInDaylight = (seen.length >= 120 && day7to18 >= seen.length * 0.6)
-        ? `and ${day7to18} of ${seen.length} of them happened between seven and six — not at midnight over a body walking home`
-        : `!! ONLY ${day7to18}/${seen.length} SHIFTS HAPPENED IN WORKING HOURS`;
-      R.andItHappensAtTheBench = (seen.length >= 120 && atPost >= seen.length * 0.5)
-        ? `and ${atPost} of them were worked standing at the post itself`
-        : `!! ONLY ${atPost}/${seen.length} SHIFTS WERE WORKED ANYWHERE NEAR A POST`;
-    } else {
-      R.andTheMakingIsInDaylight = '!! THERE IS NO workShift';
-      R.andItHappensAtTheBench = '!! THERE IS NO workShift';
+    /* ---------- THE SAME BODY, TWICE ----------
+       A delta between two bodies is not a delta at all. Every `makeChar` mints a fresh id, and
+       off that id come the frame, the hair style, the beard and the colouring — so the first
+       version of this measured a smith against a DIFFERENT PERSON and reported the apron as
+       negative twelve triangles. What it was really measuring was one body's topknot against
+       another's crop.
+       A character is mutated instead, its mesh dropped, and `syncChars` builds it again: same
+       id, same hair, same frame, and the only thing that moved is the field under test. That
+       is also the real code path — `colorKeyOf` carries `trade` now, so a townsman who takes
+       up a trade rebuilds exactly this way in play. */
+    const rebuilt = (c) => {
+      const e0 = charMeshes.get(c.id);
+      if (e0 && e0.g && e0.g.parent) e0.g.parent.remove(e0.g);
+      charMeshes.delete(c.id);
+      syncChars(0.05); syncChars(0.05);
+      return charMeshes.get(c.id);
+    };
+    const delta = (mutate) => {
+      clear();
+      const { c, e } = one({});
+      const before = tris(e);
+      mutate(c);
+      const after = tris(rebuilt(c));
+      clear();
+      return after - before;
+    };
+
+    /* ---------- 1. EVERY TRADE PUTS SOMETHING ON THE BODY ---------- */
+    const got = {}, missing = [];
+    for (const t of TRADES) {
+      got[t] = delta(c => { c.trade = t; });
+      if (got[t] <= 0) missing.push(t);
     }
+    out.tradeSizes = TRADES.map(t => `${t} +${got[t]}`).join(', ');
+    out.everyTradeShows = missing.length ? `!! NOTHING LANDED ON: ${missing.join(', ')}`
+      : `all ${TRADES.length} trades put geometry on the body, ${Math.min(...Object.values(got))}-${Math.max(...Object.values(got))} tris of it`;
 
-    /* ---------- 5. AND THE SHELVES STOCK AT THE OLD RATE ----------
-       The one that stops this being a rebalance nobody asked for. Splitting the ledger from
-       the moment must not change how much a town makes: the draw that decides whether today
-       is productive still happens once per worker per day, and an owed shift that never
-       reached a bench is still spent at the next rollover. Measured over eight days against
-       the number of hands doing it. */
+    /* ---------- 2. AND IT STANDS DOWN UNDER ARMOUR ---------- */
+    clear();
     {
-      const t = towns.find(t2 => t2.def.key === 'greenrest') || towns[1];
-      const hands = chars.filter(c => c.civ && c.homeTown === t && c.trade && c.state === 'ok').length;
-      const before = Object.values(t.stock).reduce((a, x) => a + x, 0);
-      const d0 = day;
-      const DT = 1 / 30;
-      for (let i = 0; i < 30 * HOUR_SEC * 24 * 8; i++) update(DT);
-      const days = day - d0;
-      const gained = Object.values(t.stock).reduce((a, x) => a + x, 0) - before;
-      const perHandDay = gained / Math.max(1, hands * days);
-      /* 0.7 productive days a hand, one to three units a shift: anywhere in 0.4-3.5 is the
-         economy that was already there. A number outside that band is a different economy. */
-      R.andTheShelvesStillStock = (perHandDay > 0.4 && perHandDay < 3.5)
-        ? `and ${t.name} put ${gained} on its shelves over ${days} days with ${hands} hands — ${perHandDay.toFixed(2)} a hand a day, inside the band the economy has always run in`
-        : `!! ${t.name} MAKES ${perHandDay.toFixed(2)} A HAND A DAY OVER ${days} DAYS`;
+      const { c } = one({ set: { armor: 'a_lea' } });
+      const before = tris(charMeshes.get(c.id));
+      c.trade = 'smith';
+      const after = tris(rebuilt(c));
+      out.armourWins = after === before
+        ? 'a smith in armour wears the armour and not the apron — one answer to the question, not two'
+        : `!! AN APRON WENT ON OVER A BREASTPLATE (${before} -> ${after})`;
+      clear();
     }
 
-    /* ---------- 6. AND A TOWN NOBODY IS WATCHING COSTS NOTHING TO WATCH ----------
-       `showWork` runs on every unit of every town's economy. If it drew for towns off-screen
-       it would be a per-frame allocation for a world of seven towns nobody is looking at. */
-    if (typeof showWork === 'function') {
-      const far = chars.find(c => c.civ && Math.abs(c.x - camX) + Math.abs(c.y - camY) > 200);
-      const n0 = particles.length;
-      if (far) for (let i = 0; i < 40; i++) showWork(far, 'fruit', 2);
-      R.andNobodyDrawsForAnEmptyStreet = (!far || particles.length === n0)
-        ? 'and forty units made two hundred tiles away drew exactly nothing'
-        : `!! ${particles.length - n0} FLOATS WERE DRAWN FOR A TOWN NOBODY IS LOOKING AT`;
-    } else R.andNobodyDrawsForAnEmptyStreet = '!! THERE IS NO showWork';
+    /* ---------- 3. AGE MOVES THE BODY, AND IT IS THE SAME BODY ---------- */
+    clear();
+    const ages = {};
+    {
+      const { c, e } = one({ opts: { age: 20 } });
+      ages[20] = { stoop: +(e.stoop || 0).toFixed(3), sy: +e.baseSY.toFixed(4) };
+      for (const a of [38, 50, 58]) {
+        c.age = a;
+        const e2 = rebuilt(c);
+        ages[a] = { stoop: +(e2.stoop || 0).toFixed(3), sy: +e2.baseSY.toFixed(4) };
+      }
+      clear();
+    }
+    out.ageReadings = Object.entries(ages).map(([a, v]) => `${a}: stoop ${v.stoop}, height ${v.sy}`).join(' | ');
+    out.ageBendsTheBody = (ages[20].stoop === 0 && ages[58].stoop > 0.15 && ages[58].sy < ages[20].sy && ages[50].stoop > ages[38].stoop)
+      ? `the same body at 58 stoops ${ages[58].stoop} and stands ${((1 - ages[58].sy / ages[20].sy) * 100).toFixed(1)}% shorter than it did at 20, and the ramp is monotone`
+      : `!! AGE DOES NOT BEND THE BODY: ${out.ageReadings}`;
+    /* and it is the LINE's own life, not a number of years: a homunculus has 34 and is old at 30 */
+    clear();
+    const hu = one({ opts: { race: 'homunculus', age: 30 } }).e.stoop;
+    clear();
+    const ht = one({ opts: { race: 'human', age: 30 } }).e.stoop;
+    clear();
+    out.ageIsAFractionOfALife = (hu > 0.1 && ht === 0)
+      ? `at thirty a homunculus is near the end of its thirty-four and stoops ${hu.toFixed(2)}; a human of the same age has not started`
+      : `!! AGE IS BEING READ AS YEARS, NOT AS A FRACTION OF A LIFE (homunculus ${hu}, human ${ht})`;
 
-    return R;
-  });
+    /* ---------- 4. HAIR IS A SHAPE, AND EVERY SHAPE HAPPENS ---------- */
+    clear();
+    const styles = {};
+    for (let i = 0; i < 300; i++) {
+      const { e } = one({ opts: { sex: i % 2 ? 'f' : 'm' } });
+      styles[e.hairStyle || 'none'] = (styles[e.hairStyle || 'none'] || 0) + 1;
+      clear();
+    }
+    const keys = Object.keys(styles).sort();
+    out.hairSpread = keys.map(k => `${k} ${(styles[k] / 300 * 100).toFixed(0)}%`).join(', ');
+    out.everyHairStyleHappens = (keys.length === 8 && !styles.none)
+      ? `all eight styles turn up in 300 heads — ${out.hairSpread}`
+      : `!! ONLY ${keys.length} HAIR STYLES IN 300 HEADS: ${out.hairSpread}`;
 
-  const bad = Object.values(out).filter(v => typeof v === 'string' && v.startsWith('!!'));
-  for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(32) + v);
-  for (const e of errs) console.log('  ' + e);
-  console.log('');
-  console.log(bad.length || errs.length
-    ? `THE ECONOMY IS STILL HAPPENING OFF THE SIDE OF THE SCREEN (${bad.length + errs.length})`
-    : 'A TOWN THAT LOOKS LIKE IT IS DOING SOMETHING');
+    /* ---------- 5. AND NONE OF IT SPENT THE WORLD ---------- */
+    clear();
+    const keep = [];
+    for (const t of TRADES) keep.push(one({ set: { trade: t }, opts: { age: 55 } }).c);
+    const before = seed;
+    charMeshes.forEach(x => { if (x.g && x.g.parent) x.g.parent.remove(x.g); });
+    charMeshes.clear();
+    syncChars(0.05); syncChars(0.05);
+    out.costsNothingFromTheWorldStream = (seed === before)
+      ? `eight bodies with a trade, a beard and a stoop rebuilt and \`seed\` has not moved (${before})`
+      : `!! REBUILDING SPENT ${seed - before} OF THE WORLD STREAM`;
+    clear();
+    return out;
+  }, TRADES);
+
+  /* the eight trades in a row, and a row of ages beside them */
+  const shot = await p.evaluate(async (TRADES) => {
+    const me = window.__spot;
+    chars.length = 0;
+    charMeshes.forEach(e => { if (e.g && e.g.parent) e.g.parent.remove(e.g); });
+    charMeshes.clear();
+    document.querySelectorAll('.hud,#charpanel,#invpanel,#minimap,#log,#tip,#squadbar,#buildbar,#touchbar')
+      .forEach(el => el.style.setProperty('display', 'none', 'important'));
+    /* ONE ROW IN THE WORLD AT A TIME. The first version built both rows and then took two
+       photographs of a scene that contained all sixteen bodies — so each panel showed the
+       other panel's row standing behind its own, and neither read as anything. A sheet of two
+       rows is two scenes, not one scene shot twice. */
+    const rows = [
+      TRADES.map(t => ({ trade: t, age: 32 })),
+      [20, 30, 38, 44, 50, 55, 59, 62].map(a => ({ age: a })),
+    ];
+    const png = [];
+    for (const row of rows) {
+      chars.length = 0;
+      charMeshes.forEach(e => { if (e.g && e.g.parent) e.g.parent.remove(e.g); });
+      charMeshes.clear();
+      const made = [];
+      row.forEach((r, j) => {
+        const c = makeChar('T', 'player', me.x + (j - 3.5) * 1.05, me.y,
+          { atk: 8, def: 8, tough: 8, race: 'human', sex: 'm', age: r.age });
+        c.state = 'ok'; c.dir = 0; c.weapon = null; c.armor = null;
+        if (r.trade) c.trade = r.trade;
+        chars.push(c); made.push(c);
+      });
+      for (let i = 0; i < 12; i++) syncChars(0.05);
+      const box = new THREE.Box3();
+      for (const c of made) {
+        const e = charMeshes.get(c.id);
+        if (!e) continue;
+        e.g.rotation.set(0, 0, 0); e.g.updateWorldMatrix(true, true);
+        box.expandByObject(e.g);
+      }
+      const ctr = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+      const cam = camera.clone();
+      cam.aspect = 3.1; cam.fov = 28;
+      const back = Math.max(s.x, s.y * 3.1) * 1.02;
+      cam.position.set(ctr.x, ctr.y + back * 0.16, ctr.z + back);
+      cam.lookAt(ctr); cam.updateProjectionMatrix();
+      const cv0 = renderer.domElement;
+      const w0 = cv0.width, h0 = cv0.height, sw = cv0.style.width, sh = cv0.style.height;
+      renderer.setSize(1400, 452, false);
+      renderer.render(scene, cam);
+      png.push(cv0.toDataURL('image/png').split(',')[1]);
+      renderer.setSize(w0, h0, false);
+      cv0.style.width = sw; cv0.style.height = sh;
+    }
+    /* stack the two rows with a caption on each */
+    const ims = await Promise.all(png.map(d => new Promise(res => {
+      const im = new Image(); im.onload = () => res(im); im.src = 'data:image/png;base64,' + d;
+    })));
+    const L = 28;
+    const cv = document.createElement('canvas');
+    cv.width = ims[0].width; cv.height = (ims[0].height + L) * 2;
+    const g = cv.getContext('2d');
+    g.fillStyle = '#12100d'; g.fillRect(0, 0, cv.width, cv.height);
+    const caps = ['THE TRADES \u2014   ' + TRADES.join('      '),
+                  'THE YEARS  \u2014   20      30      38      44      50      55      59      62'];
+    ims.forEach((im, i) => {
+      const y = i * (im.height + L);
+      g.fillStyle = '#8fd8c0'; g.font = 'bold 16px monospace';
+      g.fillText(caps[i], 12, y + 20);
+      g.drawImage(im, 0, y + L);
+    });
+    return cv.toDataURL('image/png').split(',')[1];
+  }, TRADES);
+
+  fs.writeFileSync(OUT, Buffer.from(shot, 'base64'));
+  for (const [k, v] of Object.entries(R)) console.log('  ' + k.padEnd(30) + v);
+  for (const e of errs) console.log('  PAGEERROR: ' + e);
+  console.log('\n  ' + path.basename(OUT));
+  const bad = Object.values(R).map(String).filter(v => v.startsWith('!!'));
+  console.log('\n' + (bad.length || errs.length ? 'THE TOWN IS STILL ANONYMOUS' : 'A TOWN HAS TRADES AND AGES IN IT'));
   await b.close();
   process.exit(bad.length || errs.length ? 1 : 0);
 })();

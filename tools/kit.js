@@ -11,6 +11,12 @@
  *   node tools/kit.js [outdir] [game.html]
  *   node tools/kit.js . game.html '{"w_lance":{"s":2.4,"y":-0.2}}'
  *
+ * THE OVERRIDE ONLY REACHES A BAKED PART. It is applied to WEPFIT/HEADFIT/HELMFIT, and a
+ * weapon drawn natively never reads those — with `NATIVE_LANCE` on, which is the default, the
+ * knob that moves the lance is `WEAPONS.w_lance.rest` and tools/native.js's fourth argument is
+ * what drives it. Passing `{"w_lance":{...}}` here while the switch is on changes nothing, and
+ * silently.
+ *
  * The override is applied to WEPFIT/HEADFIT/HELMFIT by table, so one run can move a head and
  * a weapon at once without touching the source.
  *
@@ -58,7 +64,16 @@ const OVERRIDE = process.argv[4] ? JSON.parse(process.argv[4]) : null;
     debugSeeAll = true;
     if (typeof fogPlane !== 'undefined') fogPlane.visible = false;
     if (typeof syncDecorFogFull === 'function') syncDecorFogFull();
+    /* AND IT REACHES WHICHEVER TABLE IS LIVE. The override existed to move a BAKED part, and
+       a built weapon reads `WEAPONS[k].rest` / `.aim` instead — so while `NATIVE_LANCE` is on,
+       an override aimed at WEPFIT lands on a table nothing consults and the run silently
+       reports the unchanged pose. A key naming a weapon with a native definition writes
+       `rest`/`aim` there too, which is what "find the number by looking" needs. */
     if (OVERRIDE) for (const [k, v] of Object.entries(OVERRIDE)) {
+      if (typeof WEAPONS !== 'undefined' && WEAPONS[k] && WEAPONS[k].native) {
+        if (v.rest) WEAPONS[k].rest = v.rest;
+        if (v.aim) WEAPONS[k].aim = v.aim;
+      }
       for (const T of [typeof WEPFIT !== 'undefined' && WEPFIT, typeof HEADFIT !== 'undefined' && HEADFIT,
                        typeof HELMFIT !== 'undefined' && HELMFIT]) if (T && T[k]) Object.assign(T[k], v);
     }
@@ -207,6 +222,19 @@ const OVERRIDE = process.argv[4] ? JSON.parse(process.argv[4]) : null;
   const R = await p.evaluate((ground) => {
     const out = {};
     const span = (o) => { const bb = new THREE.Box3(); o.updateWorldMatrix(true, true); bb.expandByObject(o); return bb; };
+    /* THE WIELDER'S HEIGHT CANNOT INCLUDE THE THING BEING COMPARED TO IT. `e.weapon` is a
+       child of the elbow, so `span(e.g)` is the body PLUS whatever it is holding — and while
+       the lance was carried horizontally that cost a few centimetres and nobody noticed. Give
+       it its upright carry and the lance adds most of its own length to the body it is being
+       measured against: the probe reported a 2.09 lance against a 2.70 "body" and called it a
+       pen. The denominator was the numerator. */
+    const spanBody = (e) => {
+      const w = e.weapon, par = w && w.parent;
+      if (par) par.remove(w);
+      const bb = span(e.g);
+      if (par) par.add(w);
+      return bb;
+    };
     /* `ground`, not `player()[0]` — the sheets above emptied `chars`, and the first version of
        this read a position off a squad that no longer existed */
     const mk = (setup) => {
@@ -234,7 +262,7 @@ const OVERRIDE = process.argv[4] ? JSON.parse(process.argv[4]) : null;
     {
       const { c, e } = mk({ weapon: 'w_lance' });
       const s = new THREE.Vector3(); e.g.getWorldScale(s);
-      const bb = span(e.weapon), body = span(e.g);
+      const bb = span(e.weapon), body = spanBody(e);
       const len = Math.max(bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z) / s.y;
       const bodyH = (body.max.y - body.min.y) / s.y;
       out.lanceReaches = len > bodyH * 0.85
@@ -243,7 +271,7 @@ const OVERRIDE = process.argv[4] ? JSON.parse(process.argv[4]) : null;
       /* and longer than the longest sword, or "lance" is a lie */
       const nod = mk({ weapon: 'w_nod' });
       const ns = new THREE.Vector3(); nod.e.g.getWorldScale(ns);
-      const nb = span(nod.e.weapon);
+      const nb = span(nod.e.weapon);   /* the sword's own length; its body is not in this one */
       const nlen = Math.max(nb.max.x - nb.min.x, nb.max.y - nb.min.y, nb.max.z - nb.min.z) / ns.y;
       out.lanceOutreaches = len > nlen * 1.4
         ? `and ${(len / nlen).toFixed(1)}x a nodachi's ${nlen.toFixed(2)}`
@@ -349,7 +377,7 @@ const OVERRIDE = process.argv[4] ? JSON.parse(process.argv[4]) : null;
       out.keepsHisCoat = (legs && torso)
         ? 'the body under it is the one he always had — legs and torso still standing'
         : `!! THE ASCENSION STRIPPED HIS BODY (legs ${legs}, torso ${torso})`;
-      out.notRobed = !risen.e.lich && !risen.e.authored && !risen.e.hood
+      out.notRobed = !risen.e.lich && !risen.e.authored
         ? 'and he is not wearing the Deathless robe'
         : '!! A NAMED LICH GOT THE STANDARD ROBE ANYWAY';
       /* the rig is cached by colorKeyOf, so if the key does not move, a Lyonart already on
@@ -358,13 +386,22 @@ const OVERRIDE = process.argv[4] ? JSON.parse(process.argv[4]) : null;
         ? 'and the mesh key moves, so a body already on screen is rebuilt'
         : '!! THE MESH KEY IS UNCHANGED — HE WOULD ASCEND AND LOOK IDENTICAL';
     }
-    /* ---- AND A NAMELESS ONE IS STILL THE DEATHLESS ---- */
+    /* ---- AND A NAMELESS ONE IS STILL THE DEATHLESS ----
+       ON `e.authored` AND A HEAD ON THE BONE, NOT ON `e.hood`. `e.hood` is one figure's handle
+       for one part: the robed lich hangs an authored hood mesh there, and THE RELIQUARY — the
+       default now, behind `NATIVE_LICH` — builds its skull as merged boxes on `e.headG` and
+       sets no such field. The claim here is that a lich with no name of its own still arrives
+       as an AUTHORED body with nothing walking under it, which is true of both and is what
+       actually matters to the rest of the game; which field holds the head is the body's own
+       business. Asserting the field instead of the property would have gone red on the day
+       the default figure changed, reporting a broken lich that was working perfectly. */
     {
       const { e } = mk({ set: { lich: true, undead: true } });
       const legs = (e.boxLeg || []).some(m => m.visible);
-      out.robedLichIntact = (e.lich && e.authored && e.hood && !legs)
-        ? 'a lich with no name of its own still arrives in the robe, with no legs under it'
-        : `!! THE ORDINARY LICH BROKE (robe ${!!e.lich}, hood ${!!e.hood}, legs ${legs})`;
+      const head = !!e.hood || !!(e.headG && e.headG.children.length);
+      out.robedLichIntact = (e.lich && e.authored && head && !legs)
+        ? 'a lich with no name of its own still arrives authored, head on, with no legs under it'
+        : `!! THE ORDINARY LICH BROKE (authored ${!!e.authored}, head ${head}, legs ${legs})`;
     }
     return out;
   }, ground);

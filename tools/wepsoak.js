@@ -71,8 +71,17 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
    R.keys = keys.join(', ');
    R.allFitted = keys.every(k=>WEPFIT[k]) ? 'both authored weapons have a fit'
      : '!! MISSING A FIT: '+keys.filter(k=>!WEPFIT[k]).join(', ');
-   /* the baked mesh is what gets drawn, not the box fallback */
+   /* WHAT GETS DRAWN IS WHAT THE SWITCH SAYS, AND THE CLAIM INVERTS WITH IT. This asked one
+      question — "is this more triangles than the box fallback" — which was the whole of the
+      story while every authored weapon was a bake and boxes meant something had gone wrong.
+      `NATIVE_LANCE` makes the boxes the INTENDED mesh for the lance, and a check written
+      against the old assumption reported the correct geometry as a failure: "456 tris, that
+      is the box, not the model". It was the model. So each weapon is asked about the path it
+      is actually on, mirroring `weaponGeo`'s own condition rather than a second guess at it,
+      and the wrong mesh is still caught in both directions. */
    const boxTris = k => (WEAPONS[k].parts||[]).length * 12;
+   const drawnNative = k => !!(typeof NATIVE_LANCE !== 'undefined' && NATIVE_LANCE
+                               && WEAPONS[k] && WEAPONS[k].native);
    const bad=[];
    for(const k of keys){
      const g=weaponGeo(k);
@@ -80,9 +89,13 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
      /* a merged box weapon is not indexed, so `g.index` is null and counting only indices
         reports it as zero triangles — right answer, wrong reason, and a confusing message */
      const t=g.index?g.index.count/3:g.attributes.position.count/3;
-     if(t <= boxTris(k)) bad.push(`${k} drew ${t} tris — that is the box, not the model`);
+     if(drawnNative(k)){
+       if(t !== boxTris(k))
+         bad.push(`${k} is switched to its built mesh and drew ${t} tris, not the ${boxTris(k)} its ${(WEAPONS[k].parts||[]).length} boxes come to — the bake is still being drawn`);
+     } else if(t <= boxTris(k)) bad.push(`${k} drew ${t} tris — that is the box, not the model`);
    }
-   R.authoredDrawn = bad.length ? '!! '+bad.join('; ') : keys.length+' authored weapons draw their own mesh';
+   R.authoredDrawn = bad.length ? '!! '+bad.join('; ')
+     : keys.map(k => k + (drawnNative(k) ? ' (built)' : ' (baked)')).join(', ') + ' draw the mesh their switch selects';
    /* ONE GEOMETRY, EVERY ARM. Arm four bodies with the same authored weapon and every one of
       them must be pointing at the same BufferGeometry object. */
    {
@@ -148,7 +161,11 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
      const born=[];
      const bad2=[];
      for(const k of keys){
-       const F=WEPFIT[k];
+       /* THE GRIP OF WHICHEVER MODEL IS DRAWN. The bake declares its handle in `WEPFIT`, in
+          its own unit box; a built weapon declares it in `WEAPONS`, in real units. Reading the
+          bake's number against the built model put the hand 0.25 off a handle it was holding
+          perfectly well. */
+       const F = drawnNative(k) ? WEAPONS[k] : WEPFIT[k];
        if(!F||!F.grip){ bad2.push(k+' DECLARES NO GRIP'); continue; }
        const u=makeChar('G','player',c.x+3,c.y+3,{atk:8,def:8,tough:8});
        u.weapon=k; u.state='ok'; chars.push(u); born.push(u);
@@ -165,7 +182,15 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
        const inv=new THREE.Matrix4().copy(e.weapon.matrixWorld).invert();
        const local=fist.clone().applyMatrix4(inv);
        const off=local.distanceTo(new THREE.Vector3(F.grip.x,F.grip.y,F.grip.z));
-       if(off > 0.12) bad2.push(`${k}'s hand is ${off.toFixed(2)} from its declared grip`);
+       /* AS A FRACTION OF THE MODEL'S OWN LENGTH, which is what the paragraph above was
+          reaching for and what a flat 0.12 only approximated while every model arrived in a
+          unit box. A built weapon is authored at full size, so its local units ARE world
+          units and a flat tolerance silently tightened by the length of the model. */
+       const gb=new THREE.Box3().setFromBufferAttribute(e.weapon.geometry.attributes.position);
+       const gs=gb.getSize(new THREE.Vector3());
+       const modelLen=Math.max(gs.x,gs.y,gs.z)||1;
+       if(off/modelLen > 0.12)
+         bad2.push(`${k}'s hand is ${off.toFixed(2)} from its declared grip, ${(off/modelLen*100).toFixed(0)}% of a ${modelLen.toFixed(2)} model`);
      }
      R.heldByTheHandle = bad2.length ? '!! '+bad2.join('; ')
        : 'each authored weapon has its grip in the fist and its business end away from it';

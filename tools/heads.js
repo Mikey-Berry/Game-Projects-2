@@ -66,7 +66,7 @@ const WHO = [
   });
   if (!spot) { console.log('*** NO OPEN GROUND'); await b.close(); process.exitCode = 1; return; }
   /* counted before a single portrait is staged, because staging one empties the world */
-  await p.evaluate(() => { window.__helmedAtBoot = chars.filter(c => helmOf(c)).length; });
+  await p.evaluate(() => { window.__helmedAtBoot = chars.filter(c => helmKind(c)).length; });
 
   const rows = [];
   for (const w of WHO) {
@@ -307,10 +307,10 @@ const WHO = [
     };
     /* the rule itself, before any geometry */
     /* the keys are the creatures now rather than the bakes they used to name */
-    R.whoWearsOne = (helmOf({ bossKey: 'sigil' }) === 'sigil'
-                  && helmOf({ faction: 'redoubt', race: 'homunculus' }) === 'redoubt'
-                  && !helmOf({ faction: 'town' })
-                  && !helmOf({ faction: 'redoubt', race: 'homunculus', undead: true }))
+    R.whoWearsOne = (helmKind({ bossKey: 'sigil' }) === 'sigil'
+                  && helmKind({ faction: 'redoubt', race: 'homunculus' }) === 'redoubt'
+                  && !helmKind({ faction: 'town' })
+                  && !helmKind({ faction: 'redoubt', race: 'homunculus', undead: true }))
       ? 'the Sigil-Bound and the redoubt soldiers, and nobody else'
       : '!! THE HELMET RULE PICKS THE WRONG PEOPLE';
     /* AND THE RULE STILL MATCHES SOMEBODY THE WORLD SPAWNS, counted at boot and carried here

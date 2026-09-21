@@ -123,8 +123,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const heckler = makeChar('Test Heckler', 'player', g.x + 4, g.y + 1, { tough: 40 });
     chars.push(heckler);
 
-    /* hand-run the tick rather than waiting on wall-clock: 20Hz for four sim minutes */
+    /* hand-run the tick rather than waiting on wall-clock: 20Hz for four sim minutes.
+       WITH `rebuildCharGrid` IN THE LOOP, which is what `update` does first and what the other
+       five harnesses that drive `ai` by hand all do. Without it `ai` is being asked to think
+       against a char grid from before the staging: `nearestEnemy` and everything built on
+       `charsNear` see a world that does not contain the bodies this probe just pushed, and the
+       short lists the step gathers (`carriers`, `warders`, `downFolk`, …) are never filled at
+       all. This harness got away with it for as long as the one path it drives happened to read
+       the raw roster; it stopped when the gaol's pickup moved onto `downFolk`, and the failure
+       looked exactly like a broken arrest. The staging was the thing that was wrong. */
     for (let i = 0; i < 4800; i++) {
+      rebuildCharGrid();
       for (const c of chars) { if (c.state !== 'dead') { ai(c, 0.05); physics(c, 0.05); } }
       if (perp.jailedAt) break;
     }
