@@ -114,7 +114,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const outv = [];
       root.updateWorldMatrix(true, true);
       root.traverse(o => {
-        if (skip) { let q = o; while (q) { if (q === skip) return; q = q.parent; } }
+        /* `skip` takes a list, because the limb bones hang off the spine: a walk from the
+           spine collects the arms and the legs as well, and a claim about the shape of a TORSO
+           that is quietly measuring an arm is not measuring anything. */
+        if (skip) for (const s2 of (Array.isArray(skip) ? skip : [skip])) {
+          let q = o; while (q) { if (q === s2) return; q = q.parent; }
+        }
         { let v = o.visible, q2 = o.parent; while (q2 && v) { v = q2.visible; q2 = q2.parent; } if (!v) return; }
         if (dropLit && o.material && o.material.emissive && o.material.emissive.getHex() > 0) return;
         if (dropLit && o.material && o.material.transparent) return;
@@ -228,10 +233,6 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? `all four come up, none of them rare enough to be a rumour — ${out.pourSpread}`
         : `!! THE POUR DOES NOT SPREAD OVER FOUR PATTERNS (${out.pourSpread})`;
 
-      /* HOW MUCH OF ITS OWN SILHOUETTE EACH ONE FILLS. Rays straight through the torso from
-         the front, counted against the torso's own bounding box — which is the only honest way
-         to ask "can you see through this", because a frame and a drum have the same vertices
-         doing completely different work and a triangle count cannot tell them apart. */
       /* THE OUTLINE ITSELF, on a grid normalised to the figure's own box. A triangle count and
          a height cannot tell a flared collar from a bolted drum — they came back 0.055 apart on
          two bodies nobody would confuse for a second, which is the probe being wrong about what
@@ -259,6 +260,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         }
         return grid;
       };
+      /* HOW MUCH OF ITS CHEST EACH ONE FILLS — the chest, not the whole silhouette. Rays
+         straight through from the front, counted against the middle of the torso's own box,
+         because a frame and a drum have the same vertices doing completely different work and
+         a triangle count cannot tell them apart.
+
+         It sampled the WHOLE torso box at first, and that became the wrong question the moment
+         these grew pauldrons. Nobody expects to see through a shoulder — a pauldron is solid on
+         every knight who ever lived — so counting them as fill punished the armature for
+         becoming more of a knight, which is backwards. The window is the middle 62% of the
+         width and the band from a quarter to three quarters of the height: inside the
+         shoulders, above the fauld, below the gorget. That is where a man's chest is, and it
+         is where this one has a hole. */
       const openFrac = (e) => {
         const skip = [e.headG, e.armL, e.armR, e.legL, e.legR, e.elbL, e.elbR, e.kneeL, e.kneeR].filter(Boolean);
         const meshes = [];
@@ -273,9 +286,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const rc = new THREE.Raycaster();
         const o0 = new THREE.Vector3(), d0 = new THREE.Vector3(0, 0, -1);
         let hit = 0, tot = 0;
-        for (let i = 1; i <= 17; i++) for (let j = 1; j <= 17; j++) {
-          o0.set(box.min.x + (box.max.x - box.min.x) * i / 18,
-                 box.min.y + (box.max.y - box.min.y) * j / 18, box.max.z + 3);
+        const w = box.max.x - box.min.x, h = box.max.y - box.min.y;
+        const x0 = box.min.x + w * 0.19, x1 = box.max.x - w * 0.19;
+        const y0 = box.min.y + h * 0.25, y1 = box.min.y + h * 0.75;
+        for (let i = 0; i < 17; i++) for (let j = 0; j < 17; j++) {
+          o0.set(x0 + (x1 - x0) * (i + 0.5) / 17, y0 + (y1 - y0) * (j + 0.5) / 17, box.max.z + 3);
           rc.set(o0, d0);
           tot++;
           if (rc.intersectObjects(meshes, false).length) hit++;
@@ -283,6 +298,58 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         return hit / tot;
       };
 
+      /* ---------- IS IT A KNIGHT BEFORE IT IS A MACHINE ----------
+         What separated the harness pattern from the first frame and the first drum was not
+         detail and not palette: the harness had the pieces a suit of plate reads by at any
+         distance and the other two had none of them, so one looked like a man in armour and
+         two looked like furniture. That is not a thing to take on trust again. A shoulder that
+         overhangs the chest, a dome at the knee wider than the shin under it, and a foot that
+         runs out in front of the leg — measured, on every pattern. */
+      const knightly = (e) => {
+        /* HOW FAR THE SHOULDERS OVERHANG THE WAIST — which is the whole of what a pauldron
+           does to a silhouette, and the only form of the question that has survived contact.
+
+           It was "the shoulder band is wider than the chest band" first, and reported the
+           harness — which has the biggest pauldrons in the set — at shoulder 0.58 against chest
+           0.60, because a pauldron hangs DOWN past the shoulder and its own bottom course
+           landed in the band being called the chest. No two fixed bands can be drawn that a
+           pauldron does not cross.
+
+           Then it was "the widest slice is in the top third", and the harness came back at 56%
+           — also correct, and also not a defect: its pauldrons splay outward AS they go down,
+           so the widest course is the last one. Worse, that test would have PASSED the rack and
+           the barrel this work replaced, because the rack's top hoop was its widest part too.
+
+           What a knight actually does is carry a shoulder much wider than his waist, and a
+           barrel does not, so that is what gets measured: the widest slice anywhere against the
+           slice down at the hips. */
+        const sv = verts(e.spine, [e.headG, e.armL, e.armR, e.elbL, e.elbR,
+                                   e.legL, e.legR, e.kneeL, e.kneeR].filter(Boolean), true);
+        const ys = sv.map(v => v.y), lo = Math.min(...ys), hi = Math.max(...ys), H = (hi - lo) || 1;
+        const widthAt = (a, b) => {
+          const ws = sv.filter(v => v.y >= lo + H * a && v.y < lo + H * b).map(v => Math.abs(v.x));
+          return ws.length ? Math.max(...ws) : 0;
+        };
+        let best = 0, bestAt = 0;
+        for (let i = 0; i < 24; i++) {
+          const w = widthAt(i / 24, (i + 1) / 24);
+          if (w > best) { best = w; bestAt = (i + 0.5) / 24; }
+        }
+        const waist = widthAt(0.12, 0.30);
+        /* AND WHETHER THE FOOT RUNS OUT IN FRONT OF THE LEG. A sabaton is the other thing a
+           suit of plate reads by from across a street.
+           What is NOT asked here is whether the knee is wider than the shin, which was the
+           third claim and had to go: the harness hangs its poleyn off the LEG bone and these
+           two hang theirs off the KNEE bone, so the comparison was reading rig parenting
+           rather than armour, and called a figure with a perfectly good poleyn on it bare. */
+        const kv = e.kneeR ? verts(e.kneeR, null, true) : [];
+        const lv = e.legR ? verts(e.legR, e.kneeR, true) : [];
+        return {
+          widest: best, widestAt: bestAt, waist,
+          flare: waist > 0 ? best / waist : 0,
+          foot: (kv.length ? Math.max(...kv.map(v => v.z)) : 0) - (lv.length ? Math.max(...lv.map(v => v.z)) : 0),
+        };
+      };
       const M = {};
       for (const key of PATS) {
         clear();
@@ -323,6 +390,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           shellTop: Math.max(...sv.filter(v => v.l >= 0.06).map(v => v.y)),
           darkTop: Math.max(...sv.filter(v => v.l < 0.06).map(v => v.y)),
           sil: silhouette(e, 14, 22),
+          kn: knightly(e),
           hv, sv,
         };
         clear();
@@ -353,12 +421,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? `every vessel carries its name and every name burns down as the vessel does — ${out.sigilReadings}`
         : `!! A PATTERN IS NOT TRACKING ITS OWN FAILURE (${out.sigilReadings})`;
 
+      out.knightly = PATS.map(k => {
+        const n = M[k].kn;
+        return `${k} shoulder ${n.widest.toFixed(2)} over waist ${n.waist.toFixed(2)} (x${n.flare.toFixed(2)}, at ${(n.widestAt * 100).toFixed(0)}% up), foot +${n.foot.toFixed(2)}`;
+      }).join(' | ');
+      out.everyVesselIsAKnightFirst =
+        PATS.every(k => M[k].kn.flare > 1.25 && M[k].kn.widestAt > 0.50 && M[k].kn.foot > 0.10)
+          ? `all four wear plate before they carry plumbing — every one of them carries a shoulder well over its own waist and a foot out in front of its leg (${out.knightly})`
+          : `!! A VESSEL IS FURNITURE WITH A FACE ON IT (${out.knightly})`;
+
       /* ---------- AND WHAT MAKES THEM FOUR AND NOT ONE ----------
          Not a colour test and not a triangle test. Each of these asks for the one thing that
          pattern was built to say, and the four things are mutually exclusive: a funnel that
          opens at the throat cannot also be a shut harness, and a frame you can see through
          cannot also be a sealed drum. */
-      out.shapes = PATS.map(k => `${k} h${M[k].height.toFixed(2)} w${M[k].width.toFixed(2)} fill${M[k].open.toFixed(2)}`).join(' | ');
+      out.shapes = PATS.map(k => `${k} h${M[k].height.toFixed(2)} w${M[k].width.toFixed(2)} chest${M[k].open.toFixed(2)}`).join(' | ');
 
       /* THE FUNNEL — the ceremonial pour, one of the eleven. The collar does not narrow at a
          throat, it FLARES, and the helm comes down inside it with a ring of dark round it.
@@ -400,9 +477,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          allows, and that is the whole of it. */
       {
         const others = ['funnel', 'plate', 'canister'].map(k => M[k].open);
-        out.theArmatureIsAFrameYouCanSeeThrough = (M.armature.open < Math.min(...others) - 0.15)
-          ? `only ${(M.armature.open * 100).toFixed(0)}% of its own outline is solid, against ${others.map(v => (v * 100).toFixed(0) + '%').join('/')} for the shells — there is nothing in the middle of it and you can tell (${out.shapes})`
-          : `!! THE ARMATURE IS A SHELL LIKE THE REST (${out.shapes})`;
+        out.theArmatureIsAFrameYouCanSeeThrough = (M.armature.open < Math.min(...others) - 0.20)
+          ? `only ${(M.armature.open * 100).toFixed(0)}% of its chest is solid, against ${others.map(v => (v * 100).toFixed(0) + '%').join('/')} for the shells — a knight with a hole where his chest was, and you can see straight through him (${out.shapes})`
+          : `!! THE ARMATURE HAS A CHEST LIKE THE REST (${out.shapes})`;
       }
 
       /* THE CANISTER — poured into a sealed drum that was never meant to hold anybody. The
