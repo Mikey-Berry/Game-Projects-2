@@ -123,6 +123,18 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
    }
    /* HELD BY THE RIGHT END, and long enough to be the weapon it says it is. Both are measured
       against the rig rather than against the fit table, which is the thing being checked. */
+   /* WHERE THE FIST IS, and it is not straight down from the elbow. This was
+      `elbR.getWorldPosition(f); f.y -= 0.30` — a point 30cm below the elbow IN WORLD Y, which
+      is only the hand while the arm hangs. The animator rotates the forearm (`e.elbR.rotation.x`
+      is driven every frame), so the moment it swings, the estimate stays hanging vertically
+      while the hand moves out in front of it, and everything measured against that estimate
+      drifts by however far through its cycle the animation happens to be.
+      That is why this file passed on its own and went red inside the suite with
+      "w_lance's hand is 0.27 from its declared grip": nothing about the lance had moved, the
+      probe was reading a hand that was somewhere else. The hand sits at a FIXED POINT IN THE
+      FOREARM'S OWN SPACE, so that is where it gets measured from — which also picks up the
+      body scale for free, where the world-space constant silently assumed one size of person. */
+   const fistOf = (e) => new THREE.Vector3(0, -0.30, 0).applyMatrix4(e.elbR.matrixWorld);
    {
      const u=makeChar('Z','player',c.x+2,c.y+2,{atk:8,def:8,tough:8});
      u.weapon='w_sever'; u.state='ok'; chars.push(u);
@@ -132,7 +144,7 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
      else {
        e.g.updateWorldMatrix(true,true);
        const wb=new THREE.Box3().setFromObject(e.weapon);
-       const fist=new THREE.Vector3(); e.elbR.getWorldPosition(fist); fist.y-=0.30;
+       const fist=fistOf(e);
        const below=fist.y-wb.min.y, above=wb.max.y-fist.y;
        R.pointsDown = below > above*1.5
          ? `the blade hangs ${below.toFixed(2)} below the fist and ${above.toFixed(2)} above it`
@@ -160,6 +172,7 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
    {
      const born=[];
      const bad2=[];
+     const margins=[];
      for(const k of keys){
        /* THE GRIP OF WHICHEVER MODEL IS DRAWN. The bake declares its handle in `WEPFIT`, in
           its own unit box; a built weapon declares it in `WEAPONS`, in real units. Reading the
@@ -173,7 +186,7 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
        const e=charMeshes.get(u.id);
        if(!e||!e.weapon){ bad2.push(k+' HAS NO MESH'); continue; }
        e.g.updateWorldMatrix(true,true);
-       const fist=new THREE.Vector3(); e.elbR.getWorldPosition(fist); fist.y-=0.30;
+       const fist=fistOf(e);
        /* IN THE MODEL'S OWN BOX, not in world units — that makes the tolerance mean the same
           thing for a 1.45-scaled sword and a 0.80-scaled lance, and it is the frame the fit
           is actually written in. A weapon flipped end for end moves its grip most of the
@@ -189,11 +202,15 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
        const gb=new THREE.Box3().setFromBufferAttribute(e.weapon.geometry.attributes.position);
        const gs=gb.getSize(new THREE.Vector3());
        const modelLen=Math.max(gs.x,gs.y,gs.z)||1;
+       margins.push(`${k} ${(off/modelLen*100).toFixed(0)}%`);
        if(off/modelLen > 0.12)
          bad2.push(`${k}'s hand is ${off.toFixed(2)} from its declared grip, ${(off/modelLen*100).toFixed(0)}% of a ${modelLen.toFixed(2)} model`);
      }
+     /* the margin goes in the GREEN too. This claim spent a suite run failing at 13% against a
+        12% ceiling and the passing runs said nothing at all — a number that is one point from
+        red reads exactly like a number that is nowhere near it. */
      R.heldByTheHandle = bad2.length ? '!! '+bad2.join('; ')
-       : 'each authored weapon has its grip in the fist and its business end away from it';
+       : `each authored weapon has its grip in the fist and its business end away from it (${margins.join(', ')} of the model's length, 12% is the ceiling)`;
      for(const u of born){ const i=chars.indexOf(u); if(i>=0) chars.splice(i,1); }
    }
    return R;
