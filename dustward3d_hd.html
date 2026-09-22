@@ -26641,21 +26641,55 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
      place, and a change to the search radius does not move the towns. */
   for(let di = 1; di < DEPTHS.length; di++){
     const up = DEPTHS[di - 1], dn = DEPTHS[di];
+    /* the halls of the storey ABOVE, which is where a body looking for a way down will be */
+    const upHalls = U.halls.filter(q => q.f === up);
     for(const h of U.halls){
       if(h.f !== dn) continue;
-      if(rnd() > 0.40) continue;
+      /* ---------- HOW MANY, AND IT WAS NOT THE MAIN FAULT ----------
+         Reported: "I cannot find any entrances that lead deeper than the first layer. I'm not
+         sure if they are invisible or if they are simply not there." They were there and they
+         worked — 14 down to the Deepworks and 6 to the Sump, all 20 open on both sides. What
+         they were not was FINDABLE, and the measurement says why: from a hall on the Undercroft
+         the nearest way down was a median of 190 tiles away and as much as 555.
+         This roll is the smaller half of the answer. It stays a roll of one number per hall, so
+         the world's dice land exactly where they did; only the threshold moved. The sparseness
+         is deliberate — the walk to the onward shaft is most of what makes the Sump feel like
+         the bottom of something — so this is a nudge rather than a flood. */
+      if(rnd() > 0.62) continue;
       const openOn = (x, y, f) => { const k = bkey(x, y, f); return decks.has(k) && !blocked.has(k); };
-      let sp = null;
-      for(let rad = 0; rad <= 60 && !sp; rad++){
-        for(let dy = -rad; dy <= rad && !sp; dy++) for(let dx = -rad; dx <= rad && !sp; dx++){
-          if(Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;      /* the ring, not the disc */
-          const qx = h.x + dx, qy = h.y + dy;
-          if(qx < 4 || qy < 4 || qx >= W-4 || qy >= H-4) continue;
-          if(!openOn(qx, qy, dn) || !openOn(qx, qy, up)) continue;
-          if(stairAt(qx, qy)) continue;
-          sp = {x: qx, y: qy};
+      /* ---------- AND WHERE, WHICH WAS THE LARGER HALF ----------
+         The ring search took the FIRST tile open on both storeys, scanning out from the LOWER
+         hall. That put the mouth wherever the two lattices happened to cross — most often in
+         the middle of a tunnel on the upper storey, where nobody has a reason to stand and
+         where a body walking the hall network never passes. A hole in the floor of a corridor
+         is findable only by walking every corridor.
+         SO THE SEARCH MOVES TO THE OTHER END OF IT. Scoring candidates inside a ring centred on
+         the lower hall was the first attempt and it barely helped — measured, the mouths still
+         came out a median of 57 and 81 tiles from a hall above, because if the lower hall is
+         eighty tiles from anything upstairs then so is every tile in every ring around it. The
+         centre was the problem, not the choice within it.
+         A body hunting for a way down is walking the UPPER storey, so the upper storey's halls
+         decide where to look: take the hall above nearest this one and ring outward from THAT,
+         which lands the mouth at a junction somebody actually passes through. The old search
+         from the lower hall stays as the fallback for a pairing with nothing above it in reach.
+         THIS SPENDS NO DICE. The rings were already pure arithmetic and so is choosing a centre,
+         so a change here cannot move a town — the note above about the stream still holds. */
+      const ok = (qx, qy) => qx >= 4 && qy >= 4 && qx < W-4 && qy < H-4 &&
+                             openOn(qx, qy, dn) && openOn(qx, qy, up) && !stairAt(qx, qy);
+      const ringFrom = (cx2, cy2, maxR) => {
+        for(let rad = 0; rad <= maxR; rad++){
+          for(let dy = -rad; dy <= rad; dy++) for(let dx = -rad; dx <= rad; dx++){
+            if(Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;    /* the ring, not the disc */
+            const qx = cx2 + dx, qy = cy2 + dy;
+            if(ok(qx, qy)) return {x: qx, y: qy};
+          }
         }
-      }
+        return null;
+      };
+      let uh = null, ud = Infinity;
+      for(const q of upHalls){ const dd = Math.hypot(q.x - h.x, q.y - h.y); if(dd < ud){ ud = dd; uh = q; } }
+      let sp = uh ? ringFrom(uh.x, uh.y, 26) : null;
+      if(!sp) sp = ringFrom(h.x, h.y, 60);
       if(!sp) continue;
       stairs.push({x: sp.x, y: sp.y, from: up, to: dn, shaft: true});
       U.shafts.push({x: sp.x, y: sp.y, hall: h, f: dn, from: up});
@@ -29713,6 +29747,42 @@ const syncStairs = makeDynGroup(
       /* a post at the head of it, so you can find the thing from across the room */
       box(g, 0.18, FLOOR_H, 0.18, '#d4a040',
           st.x + 0.5, y + floorY(lo) + FLOOR_H/2, st.y + 0.5);
+      /* ---------- AND UNDERGROUND, A MOUTH YOU CAN SEE FROM ACROSS A DARK HALL ----------
+         "I cannot find any entrances that lead deeper than the first layer. I'm not sure if
+          they are invisible or if they are simply not there."
+         They were there, all twenty of them open on both sides. The post above is the whole of
+         what marked one, it is eighteen hundredths of a tile wide, and it is drawn from the
+         LOWER storey up — so from the floor you are standing on, the thing you are looking for
+         is a matchstick poking through at your feet, in a room lit to a torch's radius.
+         Above ground that is enough, because you can see to the horizon. Below it, nothing you
+         have not walked within a few tiles of exists at all.
+         So the mouth gets the palefrond treatment: `MeshBasicMaterial`, which shows exactly the
+         hex it is given however black the room is, and no PointLight — the scene is budgeted
+         for three fires and a way down is not a fire. A ring on the floor of the UPPER storey,
+         because that is the storey a body hunting for it is standing on, and a column standing
+         out of it. Cold white-gold against the orange of every torch in the game, so the two
+         never read as each other at a distance. */
+      if(hi < 0){
+        const my = y + floorY(hi);
+        const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.95, 22),
+          new THREE.MeshBasicMaterial({color: 0xffe3a0, transparent:true, opacity:0.85,
+            side:THREE.DoubleSide, depthWrite:false}));
+        ring.rotation.x = -Math.PI/2;
+        ring.position.set(st.x + 0.5, my + 0.07, st.y + 0.5);
+        ring.renderOrder = 4;
+        g.add(ring);
+        /* the column, which is what carries across a hall — a ring on the floor is edge-on and
+           invisible from anywhere but directly above it */
+        const col = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color: 0xffe3a0, transparent:true, opacity:0.5, depthWrite:false}));
+        col.scale.set(0.16, 2.4, 0.16);
+        col.position.set(st.x + 0.5, my + 1.2, st.y + 0.5);
+        col.renderOrder = 4;
+        g.add(col);
+        const bulb = new THREE.Mesh(SPHG, new THREE.MeshBasicMaterial({color: 0xfff4d0}));
+        bulb.scale.set(0.3, 0.3, 0.3);
+        bulb.position.set(st.x + 0.5, my + 2.5, st.y + 0.5);
+        g.add(bulb);
+      }
     }
   }
 );
@@ -36496,8 +36566,28 @@ function renderOverlay(){
     setFont('bold 12px monospace');
   }
   /* stairs: the way up, marked, because a black tower is confusing enough */
+  /* ---------- AND A WAY DOWN YOU HAVE ALREADY FOUND STAYS FOUND ----------
+     This drew only at `visAt === 2`, which is LIVE SIGHT — a body of yours standing there
+     looking at it right now. Above ground that is nearly always true of anything in front of
+     you. Below it, sight is a torch's radius, so the glyph appeared when you were already on
+     top of the thing and vanished the moment you stepped away. A player who found a way down,
+     went to fetch the rest of the squad and came back had no way to find it again.
+     Seen once is known thereafter: the stair remembers, and the glyph then draws on explored
+     ground as well as on ground in sight.
+     AND IT HAS TO ASK WHICH STOREY YOU ARE ON, which the first cut did not. `vis` is indexed
+     `y*W+x` and has no floor dimension at all — one bitmap for a world four storeys deep — so
+     walking the surface marks the tile above a shaft as explored exactly as walking the shaft
+     does. Left on `visAt` alone this would have lit up every way down in the world as you
+     crossed the waste above it, remembered them, and drawn them through a quarter mile of
+     rock: the same giveaway the minimap note forbids, arrived at from a different direction.
+     So the camera has to be on one of the two storeys the stair actually joins. On the surface
+     that is free — tower stairs leave from floor 0 — and underground it is the difference
+     between having been there and having walked over it. */
   for(const st of stairs){
-    if(visAt(st.x, st.y) !== 2) continue;
+    if(activeFloor !== st.from && activeFloor !== st.to) continue;
+    const v = visAt(st.x, st.y);
+    if(v === 2) st.seen = true;
+    if(!(v === 2 || (st.seen && v >= 1))) continue;
     const lo = Math.min(st.from, st.to);
     const q = w2s(st.x + 0.5, st.y + 0.5, groundY(st.x+0.5, st.y+0.5) + floorY(lo) + 1.6);
     if(!q) continue;
@@ -37166,6 +37256,20 @@ function renderMinimap(){
        to keep doing it — a diagram is allowed to be legible in a way a person is not. */
     mmcx.fillStyle = allegianceColor(c);
     mmcx.fillRect(c.x*128/W-1, c.y*128/H-1, 2, 2);
+  }
+  /* ---------- AND THE WAYS DOWN, ON THE STOREY YOU ARE ACTUALLY ON ----------
+     Under the same rule as the bodies above: a way down is drawn only when you have somebody
+     on the storey it leaves from, so this never tells you the shape of a floor you have not
+     walked. It is memory, not sight — where the hole you already found was — which is the one
+     thing the minimap can offer that a torch cannot. */
+  for(const st of stairs){
+    if(!st.seen || st.to >= 0) continue;
+    if(!mmOpen[st.from] && !mmOpen[st.to]) continue;
+    const px = st.x*128/W, py = st.y*128/H;
+    mmcx.fillStyle = '#ffe3a0';
+    mmcx.fillRect(px - 1.5, py - 1.5, 3, 3);
+    mmcx.fillStyle = '#141008';
+    mmcx.fillRect(px - 0.5, py - 0.5, 1, 1);
   }
   mmcx.drawImage(mmFog, 0, 0);
   /* YOUR OWN PINS GO ON AFTER THE FOG TOO — see the note by `marks`. A hollow ring rather
@@ -43915,6 +44019,11 @@ function snapshot(){
       caravanOut: t.caravanOut ? {...t.caravanOut, dest: {...t.caravanOut.dest}} : null})),
     contractN,
     explored: packExplored(),
+    /* WHICH WAYS DOWN YOU HAVE FOUND. The stairs themselves are worldgen and come back off the
+       seed, so only the knowledge needs carrying — and it cannot be derived from `explored`,
+       which has no floor dimension and would hand you every shaft under ground you had merely
+       walked over. One index per stair you have actually stood at. */
+    stairsSeen: stairs.filter(st => st.seen).map(st => st.y * W + st.x),
     nodeUses: [...nodeUses.entries()],
     townWalls: towns.map(t => t.walls.map(w => ({x:w.x, y:w.y, hp:w.hp}))),
     squadGroups: squadGroups.map(g => ({name:g.name, open:g.open})),
@@ -44426,6 +44535,10 @@ function restore(d){
   });
   risenN = d.risenN || 0;
   if(d.explored) unpackExplored(d.explored);
+  if(Array.isArray(d.stairsSeen)){
+    const known = new Set(d.stairsSeen);
+    for(const st of stairs) if(known.has(st.y * W + st.x)) st.seen = true;
+  }
   camps.length = 0;
   if(d.camps){
     for(const sc of d.camps){
