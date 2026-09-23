@@ -1105,6 +1105,10 @@ const ITEMS = {
      walking around a town. */
   w_torch: {name:'Torch',         base:24,  type:'weapon', dmg:9,  wt:'burn', torch:true,
     desc:'A yard of ash, a head of tow soaked in pitch. It is a poor club and the only reason anyone comes back up.'},
+  /* the same stick with Fallowend's glass on the head. It lights the same ground and it does
+     the other thing as well, which is why it costs a cell and a torch does not. */
+  w_torch_v:{name:'Violet Torch',  base:260, type:'weapon', dmg:9,  wt:'burn', torch:true, violet:true,
+    desc:'A torch with cut glass caged over the head. It burns the same hours and throws the same light, and while it is in your hand the tear-born keep their distance.'},
   w_rkat:  {name:'Rusty Katana',  base:160, type:'weapon', dmg:12, wt:'cut'},
   /* ---------- TWO WEAPONS THE WORLD HAS BEEN HANDING OUT FOR A LONG TIME ----------
      `w_sw` and `w_dag` were spawned by seven different tables — town levies, mercenaries,
@@ -7653,6 +7657,9 @@ let estate = null;
      · AND THE GOOD KAMI ARE NOT THE CHURCH, so their stone does not consecrate. Fallowend is the
        second place on this map where the rite will answer — which is a real fact about the world
        and follows from the fiction rather than being granted to make the map easier. */
+const VIOLET_FIRE = 0x8a52d8;      /* Fallowend's glass, and everything cut in its pattern */
+/* the lit ground under a town's lamps, shared per colour — see the note where they are drawn */
+const townPoolMats = {};
 const LANTERN_R = 13;              /* violet light: further than the Light, and it does far less */
 /* AND A CHARM IS THE SAME LIGHT IN SOMEBODY'S POCKET, at half the reach of a post. Six rather
    than the four and a half it was first written at: four and a half plus the AI's own tile and a
@@ -7683,6 +7690,78 @@ let fallowend = null;
      rule. It is the town's own box, on the town's own object, and it is not for sale. */
   fallowend.cells = ri(3, 6);
 })();
+/* ============================================================ THE LAMPS A TOWN KEEPS ========
+   "Please add some more torches to the cities to build on this ambiance. Fallowend could
+    perhaps use a purple variant to reflect their anti-gaunt lamps."
+
+   FALLOWEND'S LANTERNS HAVE NEVER HAD A PHOTON IN THEM. Everything above this line is a
+   complete mechanic — six posts, aether cells, seventy days a cell, thirteen tiles of
+   gaunt-turning, a box the Elder will not admit is empty — and not one line of it draws
+   anything or lights anything. The one town whose entire identity is the lamps on its road
+   looked exactly like the one next door.
+   So the two halves of the note meet here: a town gets fires, and Fallowend's get seen.
+
+   NO DICE ARE SPENT PLACING THEM. `findOpenNear` looks good for this and draws up to a hundred
+   and twenty random numbers doing it, which would move every town on the map — the seeded
+   stream is the world. The search below is a deterministic spiral, the same device the shafts
+   already use for the same reason, and `hash2` is a hash of the coordinates rather than a draw.
+
+   AND THEY DO NOT COST A LIGHT EACH. Hollowmere had four violet lamps with a `PointLight`
+   apiece, added to the town's own group — permanently in the scene, in every Lambert shader,
+   burning at noon as brightly as at midnight. They are folded in here: the three-light pool
+   picks the nearest fires whatever kind they are, and the day curve turns the lot down at
+   dawn. Four fewer lights in the scene and four more things that behave like fires. */
+const townFires = [];
+(function seedTownFires(){
+  /* open ground near a point, found by walking outward rather than by throwing darts */
+  const dryAt = (x, y) => {
+    for(let r = 0; r <= 7; r++){
+      const n = Math.max(1, r * 8);
+      for(let a = 0; a < n; a++){
+        const th = (a / n) * Math.PI * 2;
+        const qx = Math.round(x + Math.cos(th) * r), qy = Math.round(y + Math.sin(th) * r);
+        if(qx < 3 || qy < 3 || qx >= W - 3 || qy >= H - 3) continue;
+        if(isBlocked(qx + 0.5, qy + 0.5, 0)) continue;
+        if(typeof tileAt === 'function' && tileAt(qx, qy) === 3) continue;   /* not in the sea */
+        return {x: qx + 0.5, y: qy + 0.5};
+      }
+    }
+    return null;
+  };
+  for(const t of towns){
+    const R = Math.max(7, (t.clearR || 20) - 5);
+    /* ---------- ALONG THE STREETS, NOT JUST AT THE MIDDLE AND THE EDGE ----------
+       The first cut put two at the well and five out on the rim at `clearR - 5`, and measured
+       at DUSTPORT that is 2.1, 3.5, and then five of them at 22 to 24 tiles — so the whole
+       built area between the plaza and the wall had nothing in it. A town lit at its centre and
+       its fence is not a lit town, it is two lit places with a dark one in between.
+       Two rings and the plaza pair. Offset by half a step from each other so they read as
+       lamps on streets rather than as spokes on a wheel, and phased off `hash2` of the town's
+       own coordinates so no two towns have the same arrangement — a hash, not a draw. */
+    const want = [[2.4, 1.8], [-2.4, -1.8]];
+    const ph = hash2(Math.round(t.x), Math.round(t.y)) * Math.PI * 2;
+    const rings = t.def.key === 'hollowmere' ? [[0.44, 5], [0.82, 6]] : [[0.44, 6], [0.82, 8]];
+    for(const [frac, n] of rings){
+      for(let i = 0; i < n; i++){
+        const a = (i / n) * Math.PI * 2 + ph + (frac > 0.6 ? Math.PI / n : 0);
+        want.push([Math.cos(a) * R * frac / 0.82, Math.sin(a) * R * frac / 0.82]);
+      }
+    }
+    /* Hollowmere burns violet over its bone-ground, and always has — those four lamps were
+       drawn here long before Fallowend's were a mechanic. Same list now, same budget.
+       AND SO DOES FALLOWEND, obviously: a town whose whole identity is the violet lamps on its
+       road does not light its own square with pitch. Its cressets are cut from the same glass
+       as the six outside, which is also what stops an amber street washing the road out. */
+    const col = (t.def.key === 'hollowmere') ? 0xa98ad4
+              : (t.def.key === 'fallowend')  ? VIOLET_FIRE
+              : 0xffb060;
+    for(const [ox, oy] of want){
+      const q = dryAt(t.x + ox, t.y + oy);
+      if(!q) continue;
+      townFires.push({x: q.x, y: q.y, town: t, col, k: 1.15, h: 1.5});
+    }
+  }
+})();
 /* WHETHER THERE IS VIOLET LIGHT ON SOMEBODY. Two sources, one question, and both lists are
    small and precomputed — `lanterns` is fixed at six and `charmed` is gathered once a tick in
    `rebuildCharGrid`, for exactly the reason the ward readers were rewritten to do the same. */
@@ -7693,7 +7772,25 @@ function violetNear(c, extra){
     if((c.floor || 0) !== 0) continue;              /* a lamp on the surface lights the surface */
     if(dist(L.x, L.y, c.x, c.y) < LANTERN_R + e) return L;
   }
+  /* ---------- AND WHAT YOU BUILT IN THEIR PATTERN ----------
+     A Violet Lamp is a Fallowend lantern that happens to be standing in your yard, so it
+     answers this question the same way and at the same reach. `litPosts` is gathered once a
+     tick beside the warders and the charm-bearers, so this costs a walk of a list that is
+     almost always two or three long — and unlike the six on the road, yours can be on a storey
+     under the world, which is the point of being able to build one. */
+  for(const b of litPosts){
+    if(b.type !== 'lampviolet') continue;
+    if((b.floor || 0) !== (c.floor || 0)) continue;
+    if(dist(b.x + 0.5, b.y + 0.5, c.x, c.y) < LANTERN_R + e) return b;
+  }
   for(const o of charmed){
+    if((o.floor || 0) !== (c.floor || 0)) continue;
+    if(dist(o.x, o.y, c.x, c.y) < CHARM_R + e) return o;
+  }
+  /* a violet torch is the same light in a hand — the reach a charm gets, because it is the
+     same trick at the same size */
+  for(const o of torchers){
+    if(!violetHand(o)) continue;
     if((o.floor || 0) !== (c.floor || 0)) continue;
     if(dist(o.x, o.y, c.x, c.y) < CHARM_R + e) return o;
   }
@@ -7726,6 +7823,21 @@ function lanternFeed(){
   fallowend.dark = lanterns.filter(l => !l.fuel).length;
   fallowend.town.rep = clamp((fallowend.town.rep || 0) + 6, -100, 100);
   log('The post takes the cell and comes up violet. Nobody in Fallowend asks how you knew where it went.', 'good');
+  return true;
+}
+/* how well Fallowend has to think of you before the Elder will teach you her glass. High, and
+   deliberately so: feeding the posts is worth six a time, so this is a relationship rather than
+   an errand. */
+const VIOLET_REGARD = 55;
+/* ---------- WHAT SHE ACTUALLY TEACHES ----------
+   `found` on the tech means nothing anywhere can queue it, so this is the only door it has. */
+function learnVioletGlass(){
+  if(research.done.violet_light){ log('You already have the cut of it.', ''); return false; }
+  research.done.violet_light = true;
+  log('The Elder shows you the ninth face of the cut, and the housing, and says the words twice so you have them. '
+    + 'You can make the violet light now — the glass, at least. The rest of it is somebody else\'s salvage.', 'good');
+  if(typeof AU !== 'undefined' && AU.news) AU.news(false);
+  if(typeof refreshBuildBar === 'function') refreshBuildBar();
   return true;
 }
 /* ---------- AND THE STONE KEEPS A CHARM ----------
@@ -11171,6 +11283,14 @@ const BUILD_TYPES = {
      day out of the stores after that. Run the stores dry and your outpost goes dark. */
   torchpost:{name:'Pitch Post',  cost:{wood:6, mats:2}, w:1, h:1, light:true,
     desc:'A cresset on an iron stand, kept fed with pitch. The only thing that will stand underground and go on burning without a hand on it — and it eats a log a day to do it'},
+  /* ---------- AND THE ONE FALLOWEND CUTS ----------
+     A pitch post burns wood and holds ground. This one burns an aether cell and holds a
+     LINE: it is the Fallowend lantern, built in your own yard, and it turns the gaunts at
+     thirteen tiles exactly the way the six on their road do. It costs what it costs because a
+     cell is salvage — nobody makes them any more — so this is a thing you raise where it
+     matters rather than a thing you fence a camp with. */
+  lampviolet:{name:'Violet Lamp',  cost:{mats:4, copper:3, aether_cell:1}, w:1, h:1, light:true, violet:true,
+    desc:'Cut glass on an old housing, in the Fallowend pattern. It burns a cell instead of a log, it will not go out for seventy days, and nothing born of the tears will come within thirteen tiles of it'},
 };
 /* crafted undead: bound at the circle from remains + materials + a necromancer's mana */
 /* ---------- A ROLE ON THE ROW, THE PROSE BEHIND A BUTTON ----------
@@ -11654,6 +11774,15 @@ const TECHS = {
     desc:'A Still and a Taproom. Greenfruit and fire into rum — and somewhere of your own to drink it, which is the half that mends what your people think of you'},
   cask_ageing:  {name:'Cask Ageing',       cost:900, hours:72, req:'distilling', needs:'still', mats:{wood:16, mats:8},
     desc:'Oak, dark and time. Cask Rum: more measure out of the same fruit, longer in the body, and a steadier hand on it'},
+  /* ---------- THE OTHER THING NOBODY WILL WRITE DOWN ----------
+     The same shape as the Harbour Receipt below and for the same reason: `found` means there is
+     no START button for it anywhere, so a violet lamp on your own ground is a lamp whose owner
+     went to Fallowend and was thought well of enough to be told. Fallowend does not know what
+     the cells are — the Elder will tell you it is the words — so what she teaches is the
+     pattern of the glass and the shape of the housing, which is all her grandmother taught her
+     and all anybody there has ever needed. */
+  violet_light: {name:'The Violet Glass', cost:0, hours:0, req:null, found:true,
+    desc:'How Fallowend cuts the glass and sets the housing so the light comes up violet and the gaunts will not cross it. Four generations of saying the words over it, and nobody there can tell you why it works'},
   black_receipt:{name:'The Harbour Receipt', cost:0, hours:0, req:'cask_ageing', found:true,
     desc:'How Harbourblack is actually made. Sella Vane knows, and she is not going to write it down for a stranger'},
   sleight:      {name:'Sleight',           cost:500, hours:56, req:'construction', rp:10,
@@ -11838,6 +11967,8 @@ const RECIPES = {
        out is "make forty more", not "abandon the expedition" — the pressure is meant to be
        remembering to bring them, not affording them. */
     {out:'w_torch', n:2, cost:{wood:1, fabric:1},  tech:'construction'},
+    /* ONE, not two: the cell is the cost and there is no making it cheaper. */
+    {out:'w_torch_v',n:1, cost:{wood:1, fabric:1, copper:2, aether_cell:1}, tech:'violet_light'},
   ],
   kiln: [
     {out:'coal',    n:2, cost:{wood:3},               tech:'smelting'},
@@ -12351,7 +12482,7 @@ function rebuildCharGrid(){
   litPosts.length = 0;
   shrouders.length = 0;
   carriers.length = 0;
-  for(const b of pBuilds) if(b.type === 'torchpost' && (b.fuel || 0) > 0 &&
+  for(const b of pBuilds) if((b.type === 'torchpost' || b.type === 'lampviolet') && (b.fuel || 0) > 0 &&
                              (b.progress === undefined || b.progress >= 1)) litPosts.push(b);
   for(const c of chars){
     charById.set(c.id, c);
@@ -22555,7 +22686,20 @@ function seesInDark(c){
 /* A torch that has never been lit reads as full, so a body handed one mid-frame — by a trade,
    a loot, a save — is never briefly holding an unlit stick. */
 function torchHours(c){ return c.torchH === undefined ? TORCH_HOURS : c.torchH; }
-function torchLit(c){ return !!(c && c.weapon === 'w_torch' && c.state === 'ok' && torchHours(c) > 0); }
+/* ---------- A TORCH IS A TORCH, WHATEVER IS CAGED OVER THE HEAD ----------
+   Asked of the ITEM rather than of one key, so the violet one burns the same hours, lights the
+   same ground, lets the same blind hand work and runs out at the same rate — everything that
+   reads "is there a fire in this hand" gets the right answer without knowing there are two
+   kinds. What the violet one does EXTRA is `violetHand` below, and nothing else changes. */
+function torchLit(c){
+  const w = c && c.weapon && ITEMS[c.weapon];
+  return !!(w && w.torch && c.state === 'ok' && torchHours(c) > 0);
+}
+/* and whether that fire is the Fallowend kind */
+function violetHand(c){
+  const w = c && c.weapon && ITEMS[c.weapon];
+  return !!(w && w.violet && torchLit(c));
+}
 /* the nearest live light on this body's storey, of any kind and anybody's. A fire lights the
    room for whoever is standing in it, including the people it was not lit for. */
 function litNear(c){
@@ -22649,6 +22793,20 @@ function torchTick(dh){
 /* and the posts burn down a day's worth, and eat a log to keep doing it */
 function postTick(){
   for(const b of pBuilds){
+    /* ---------- THE VIOLET ONE KEEPS FALLOWEND'S CLOCK ----------
+       Seventy days a cell, the same as the six on their road, and it eats a cell rather than a
+       log — which is the whole difference between holding a tunnel and holding a line. There
+       is no "the stores keep it lit" here on purpose: a cell is salvage, the stores will not
+       have one to spare by accident, and a lamp going dark should be a decision you notice. */
+    if(b.type === 'lampviolet'){
+      if(b.progress !== undefined && b.progress < 1) continue;
+      if(b.fuel === undefined) b.fuel = LANTERN_CELL_DAYS * 24;
+      b.fuel -= 24;
+      if(b.fuel > 0) continue;
+      if(campSpend({aether_cell: 1})) b.fuel = LANTERN_CELL_DAYS * 24;
+      else { b.fuel = 0; log('A Violet Lamp has gone dark. There is no cell in the stores to feed it.', 'bad'); }
+      continue;
+    }
     if(b.type !== 'torchpost') continue;
     if(b.progress !== undefined && b.progress < 1) continue;
     if(b.fuel === undefined) b.fuel = POST_HOURS;
@@ -26423,14 +26581,46 @@ function syncTorchLights(){
      of the daylight hours, so the cost above ground is one clamped sine per frame until the sun
      is low enough for a fire to be worth anything. */
   const wk = fireWeight();
+  /* ---------- AND THE GLASS FADES WITH THE HOUR ----------
+     The heads are basic materials, so they show their own colour at every hour and would be a
+     row of bright beads on a sunlit street. They are faded on the same curve the light is, and
+     a lantern with no cell in it loses its glass entirely — which is the town's decline made
+     visible, and the only thing on the map that says so without a line of text. */
+  const glassK = 0.18 + wk * 0.82;
+  for(const f of townFires) if(f.head) f.head.material.opacity = glassK;
+  for(const L of lanterns) if(L.head){
+    L.head.visible = !!L.fuel;
+    L.head.material.opacity = glassK;
+    if(L.pool) L.pool.visible = !!L.fuel;
+  }
+  /* two objects, a hundred and twelve discs. A fire is never still, so the pools breathe. */
+  const poolK = wk * (0.30 + Math.sin(Date.now() * 0.0016) * 0.025);
+  for(const k in townPoolMats) if(townPoolMats[k]) townPoolMats[k].opacity = poolK;
   if(wk <= 0.01){
     for(const pl of TORCH_LIGHTS) pl.intensity = 0;
     return;
   }
   const fires = [];
-  for(const o of torchers) if((o.floor || 0) === activeFloor) fires.push({x: o.x, y: o.y, h: 1.5, k: 1});
-  for(const b of litPosts) if((b.floor || 0) === activeFloor) fires.push({x: b.x + 0.5, y: b.y + 0.5, h: 1.2, k: 1.5});
-  if(activeFloor < 0) for(const b of caveFireList()) if(b.floor === activeFloor) fires.push({x: b.x + 0.5, y: b.y + 0.5, h: 1.0, k: 1.3});
+  const AMBER = 0xffb060;
+  for(const o of torchers) if((o.floor || 0) === activeFloor)
+    fires.push({x: o.x, y: o.y, h: 1.5, k: 1, col: violetHand(o) ? VIOLET_FIRE : AMBER});
+  for(const b of litPosts) if((b.floor || 0) === activeFloor)
+    fires.push({x: b.x + 0.5, y: b.y + 0.5, h: 1.2, k: 1.5, col: b.type === 'lampviolet' ? VIOLET_FIRE : AMBER});
+  if(activeFloor < 0) for(const b of caveFireList()) if(b.floor === activeFloor) fires.push({x: b.x + 0.5, y: b.y + 0.5, h: 1.0, k: 1.3, col: AMBER});
+  /* ---------- AND WHAT THE TOWNS ARE BURNING ----------
+     Surface only, and culled to what could possibly reach the camera before anything is sorted
+     — there are seven towns' worth of these and the pool only ever wants the nearest three. */
+  if(activeFloor === 0){
+    for(const f of townFires){
+      if(Math.abs(f.x - camSX) > 120 || Math.abs(f.y - camSY) > 120) continue;
+      fires.push({x: f.x, y: f.y, h: f.h, k: f.k, col: f.col});
+    }
+    for(const L of lanterns){
+      if(!L.fuel) continue;
+      if(Math.abs(L.x - camSX) > 120 || Math.abs(L.y - camSY) > 120) continue;
+      fires.push({x: L.x, y: L.y, h: 1.7, k: 1.4, col: VIOLET_FIRE});
+    }
+  }
   fires.sort((a, b) => (Math.abs(a.x-camSX) + Math.abs(a.y-camSY)) - (Math.abs(b.x-camSX) + Math.abs(b.y-camSY)));
   const t = Date.now();
   for(let i = 0; i < TORCH_LIGHTS.length; i++){
@@ -26438,6 +26628,11 @@ function syncTorchLights(){
     if(!f){ pl.intensity = 0; continue; }
     pl.position.set(f.x, groundY(f.x, f.y) + floorY(activeFloor) + f.h, f.y);
     pl.distance = f.k > 1 ? TORCH_POST_R * 2.1 : TORCH_R * 2.4;
+    /* COLOUR IS A UNIFORM. A violet lamp and an amber cresset are the same light object with a
+       different number in it — nothing is added to the scene and no shader is rebuilt, which is
+       the whole reason this pool is three lights held at zero rather than lights coming and
+       going. */
+    if(pl.color.getHex() !== (f.col || 0xffb060)) pl.color.setHex(f.col || 0xffb060);
     /* the same guttering the pool on the floor has, on a different phase per light so three
        fires in one room do not breathe in unison */
     pl.intensity = (1.5 * f.k) * wk * (0.88 + Math.sin(t * 0.009 + i * 2.1) * 0.09 + Math.sin(t * 0.023 + i) * 0.05);
@@ -29299,17 +29494,69 @@ function palette(t){
         box(g, 0.7, 0.3, 0.7, '#d8d4c4', t.x+ox2, groundY(t.x+ox2,t.y+oy2)+0.15, t.y+oy2, false);
         box(g, 0.4, 0.25, 0.4, '#c9c2b2', t.x+ox2+0.2, groundY(t.x+ox2,t.y+oy2)+0.4, t.y+oy2-0.1, false);
       }
-      for(const [lx,ly] of [[-4,-4],[4,4],[4,-4],[-4,4]]){
-        const px3 = t.x+lx, py3 = t.y+ly;
-        box(g, 0.1, 1.6, 0.1, '#38290f', px3, groundY(px3,py3)+0.8, py3, false);
-        const lamp = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color:0xa98ad4}));
-        lamp.scale.set(0.22, 0.28, 0.22); lamp.position.set(px3, groundY(px3,py3)+1.7, py3);
-        g.add(lamp);
-        const pl = new THREE.PointLight(0x8a6ab5, 0.7, 7);
-        pl.position.set(px3, groundY(px3,py3)+1.8, py3);
-        g.add(pl);
-      }
+      /* ---------- HOLLOWMERE'S LAMPS ARE IN THE TOWN-FIRE LIST NOW ----------
+         Four posts with a `PointLight` apiece used to be built here: permanently in the scene,
+         in every Lambert shader, and burning at noon exactly as hard as at midnight. They are
+         seeded as ordinary town fires with Hollowmere's own violet on them, so they obey the
+         day curve, share the three-light pool with everything else that burns, and cost the
+         scene nothing when the sun is up. Drawn with the rest, below. */
     }
+  }
+  /* ---------- AND THE LAMPS EVERY TOWN KEEPS ----------
+     The post and the glass are permanent and go in with the town. What they do NOT get is a
+     light each — `syncTorchLights` picks the nearest three fires of any kind and turns them
+     down to nothing through the middle of the day, so a town at noon is a town with some iron
+     stands in it and a town at midnight is lit.
+     The head is a basic material: it shows its own colour whatever the light is doing, which
+     is the only way a lamp reads as the thing making the light rather than a thing catching
+     it. Kept on the fire so the day curve can fade it — see `syncTorchLights`. */
+  /* ---------- AND THE GROUND EACH ONE STANDS ON ----------
+     Three point lights is the whole budget and a town has sixteen lamps in it, so the light on
+     the ground cannot come from lights. It comes from the same additive disc a torch already
+     puts under its bearer: a basic material, no shading, no shadow, and no place in anybody's
+     light count. The nearest three still get a real `PointLight` on top, which is what makes a
+     lamp you are standing next to different from one across the square.
+     ONE MATERIAL EACH FOR AMBER AND VIOLET, shared by every disc of that colour — the day curve
+     moves all of them by touching two objects rather than a hundred and twelve. */
+  const poolMat = (col) => new THREE.MeshBasicMaterial({map: torchTex(), color: col,
+    transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false});
+  townPoolMats.amber = townPoolMats.amber || poolMat(0xffb060);
+  townPoolMats.violet = townPoolMats.violet || poolMat(VIOLET_FIRE);
+  townPoolMats.hollow = townPoolMats.hollow || poolMat(0xa98ad4);
+  const poolGeo = new THREE.CircleGeometry(TORCH_POST_R * 0.8, 24);
+  for(const f of townFires){
+    const fy = groundY(f.x, f.y);
+    box(g, 0.12, 1.5, 0.12, '#38290f', f.x, fy + 0.75, f.y, false);
+    box(g, 0.34, 0.1, 0.34, '#4a4038', f.x, fy + 1.52, f.y, false);
+    const head = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color: f.col, transparent: true, opacity: 1}));
+    head.scale.set(0.24, 0.3, 0.24);
+    head.position.set(f.x, fy + 1.72, f.y);
+    g.add(head);
+    f.head = head;
+    const key = f.col === VIOLET_FIRE ? 'violet' : f.col === 0xa98ad4 ? 'hollow' : 'amber';
+    const pool = new THREE.Mesh(poolGeo, townPoolMats[key]);
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(f.x, fy + 0.06, f.y);
+    pool.renderOrder = 3;
+    g.add(pool);
+  }
+  /* and the six on the Fallowend road, which have been a mechanic with nothing to look at
+     since the day they were written. A dead one keeps its post and loses its glass. */
+  for(const L of lanterns){
+    const ly2 = groundY(L.x, L.y);
+    box(g, 0.14, 1.7, 0.14, '#2f2a20', L.x, ly2 + 0.85, L.y, false);
+    box(g, 0.44, 0.12, 0.44, '#3a3428', L.x, ly2 + 1.73, L.y, false);
+    const glass = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color: VIOLET_FIRE, transparent: true, opacity: 1}));
+    glass.scale.set(0.3, 0.38, 0.3);
+    glass.position.set(L.x, ly2 + 1.95, L.y);
+    g.add(glass);
+    L.head = glass;
+    const lp = new THREE.Mesh(new THREE.CircleGeometry(LANTERN_R * 0.55, 28), townPoolMats.violet);
+    lp.rotation.x = -Math.PI / 2;
+    lp.position.set(L.x, ly2 + 0.06, L.y);
+    lp.renderOrder = 3;
+    g.add(lp);
+    L.pool = lp;
   }
   for(const v of vendors){
     const y = groundY(v.x, v.y);
@@ -41076,7 +41323,7 @@ const BUILD_CATS = [
      thing — every part of it reachable only by a harness calling past the build bar.
      tools/kin2.js asks the BAR for it now, not the table. */
   ['STRUCTURE',  ['wall', 'rampart', 'shack', 'home', 'tower', 'cell', 'wartable']],
-  ['DEFENCE',    ['turret', 'lance', 'torchpost']],
+  ['DEFENCE',    ['turret', 'lance', 'torchpost', 'lampviolet']],
   ['LABOUR',     ['farm', 'workbench', 'armoury', 'loom', 'forge', 'kiln', 'smelter', 'still']],
   /* ITS OWN ROW. The well and the pan are what anybody can manage; the plant is the one
      thing in this game you build off a found drawing rather than off a research tree. */
@@ -41100,6 +41347,8 @@ function buildLock(key){
   /* NOT A RESEARCH NAME, because there is no project that reaches it. The lock says what
      you actually have to go and find, the way the Lance's does. */
   if(key==='desal' && !research.done.golden_water) return 'a Waterworks Schematic';
+  /* and this one is not a schematic either — it is a person, in a town, who has to like you */
+  if(key==='lampviolet' && !research.done.violet_light) return "Fallowend's regard";
   if(key==='vat' && !research.done.quickening) return 'The Quickening';
   if(key==='boneyard' && !research.done.rites_binding) return 'Rites of Binding';
   if(key==='charnel' && !research.done.carrion_rites) return 'Carrion Rites';
@@ -44063,8 +44312,39 @@ const TALK_TREES = {
          when:(t2)=>!!(fallowend && towns[t2.isLeader] === fallowend.town && fallowend.dark > 0), to:'lanterns'},
         {say:'I have a charm your people made. Will your stone keep it?',
          when:(t2)=>!!(fallowend && towns[t2.isLeader] === fallowend.town && (stash.t_charm || 0) > 0), to:'keeping'},
+        /* ---------- AND THE THING SHE WILL ONLY TELL SOMEBODY SHE TRUSTS ----------
+           A `found` tech with no START button anywhere, the way the Harbour Receipt is, and the
+           gate is the town's regard rather than a stat or a gift: Fallowend's one real asset is
+           the pattern of its glass, and the Elder is not going to hand it to a stranger who
+           wandered in off the road. Hidden rather than shown-and-refused, because a line she
+           would not say to you is a line you should not see her decline. */
+        {say:'Teach me how the glass is cut.',
+         when:(t2)=>!!(fallowend && towns[t2.isLeader] === fallowend.town &&
+                       (fallowend.town.rep || 0) >= VIOLET_REGARD && !research.done.violet_light),
+         to:'teaching'},
         {say:'Nothing today.'},
       ],
+    },
+    /* ---------- WHAT FOUR GENERATIONS OF KEEPING IT ALIGHT LOOKS LIKE FROM INSIDE ----------
+       She is not being coy and she is not withholding a secret: she genuinely believes it is
+       the words, because that is what she was taught and it has worked every time. What she can
+       actually give you is the craft — the cut of the glass and the shape of the housing — and
+       she gives it the way a person gives away the only thing their town still owns. */
+    teaching: {
+      line: () => 'You have kept our lamps burning. That is more than the seats have managed between them.\n\n' +
+        'Sit, then. It is the cut that matters — nine faces, not eight, and the ninth one slightly off true, which my ' +
+        'grandmother said was where the light gets out. The housing is old and you will not make a new one, so find them ' +
+        'where the old world left them. Then you say the words over it. I do not know whether the words are the part ' +
+        'that works. I have never once dared leave them out.',
+      opts: [
+        {say:'I will sit with you until I have it.', fn:()=>{ learnVioletGlass(); }, to:'taught'},
+        {say:'Another time.'},
+      ],
+    },
+    taught: {
+      line: 'Then it is not only ours any more. Good. Put one up somewhere that needs it, and do not tell me where — ' +
+        'I would rather think it is everywhere.',
+      opts: [ {say:'It will be.'} ],
     },
     lanterns: {
       line: () => {
