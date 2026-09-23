@@ -6138,9 +6138,29 @@ function placeDeepRedoubt(){
    side of it — and a BARRED one is a decision: you can hear something behind it, and getting in
    is going to be loud. */
 const doors = [];
+/* ---------- A DOORWAY IS AS WIDE AS IT IS, AND EVERY TILE OF IT IS THE SAME DOOR ----------
+   "the doors in general... tend to be extremely narrow."
+   They were one tile, which is a doorway a host of forty goes through in single file forever —
+   and the complaint about pencil paths is the same complaint arriving from the other side of
+   the wall. A doorway is a SPAN now: `d.w` lists the tiles it occupies, the door's own tile
+   first, and every piece of machinery that used to ask about `d.x, d.y` asks this instead.
+   The one tile stays authoritative — it is what `forcing`, the save and the room record are
+   keyed on — so a door that has no span, which is any door in an old save, is a span of one
+   and everything below goes on working unchanged. */
+function doorTiles(d){
+  if(!d) return [];
+  if(d.w && d.w.length) return d.w;
+  return [{x: d.x, y: d.y}];
+}
 function doorAt(x, y, f){
   const xi = Math.floor(x), yi = Math.floor(y);
-  return doors.find(d => d.x === xi && d.y === yi && (d.f || 0) === (f || 0)) || null;
+  const ff = f || 0;
+  for(const d of doors){
+    if((d.f || 0) !== ff) continue;
+    if(d.x === xi && d.y === yi) return d;
+    for(const t of (d.w || [])) if(t.x === xi && t.y === yi) return d;
+  }
+  return null;
 }
 /* THE ONE PLACE THE FLAG AND THE WORLD ARE PUT IN AGREEMENT. Every other path — the world
    generator, the save loader, the right-click, the forcing — goes through this, so the flag can
@@ -6148,9 +6168,13 @@ function doorAt(x, y, f){
 function setDoor(d, open){
   if(!d) return;
   d.open = !!open;
-  const k = bkey(d.x, d.y, d.f || 0);
-  decks.add(k);                       /* there is always something to stand on in a doorway */
-  if(open){ blocked.delete(k); } else { blocked.add(k); }
+  /* EVERY TILE OF THE SPAN, TOGETHER. A three-tile doorway with one tile unbarred is a door
+     you walk around, which is the same as no door at all. */
+  for(const t of doorTiles(d)){
+    const k = bkey(t.x, t.y, d.f || 0);
+    decks.add(k);                     /* there is always something to stand on in a doorway */
+    if(open){ blocked.delete(k); } else { blocked.add(k); }
+  }
   /* NOT `baseBlocked`. A door's state is the player's business and travels in the save with the
      door; the base world is what the generator made. Writing it here is how you get a door that
      silently re-bars itself on the next reload. */
@@ -6255,17 +6279,42 @@ function placeCave(h){
        Slide the free axis one tile off each end. */
     if(nx2) dy2 = clamp(dy2, ay + 1, by - 1);
     else    dx2 = clamp(dx2, ax + 1, bx - 1);
-    const door = {x: dx2, y: dy2, nx: nx2, ny: ny2};
-    for(let i = ax; i <= bx; i++){ if(!(i===door.x && ay===door.y)) wall(i, ay, fl); if(!(i===door.x && by===door.y)) wall(i, by, fl); }
-    for(let j = ay; j <= by; j++){ if(!(ax===door.x && j===door.y)) wall(ax, j, fl); if(!(bx===door.x && j===door.y)) wall(bx, j, fl); }
-    blocked.delete(bkey(door.x, door.y, fl)); baseBlocked.delete(bkey(door.x, door.y, fl));
-    deck(door.x, door.y, fl);
-    cave.walls = cave.walls.filter(w => !(w.x===door.x && w.y===door.y && w.f===fl));
+    /* ---------- AND IT IS THREE TILES WIDE, NOT ONE ----------
+       "the doors in general... tend to be extremely narrow."
+       A one-tile doorway is a turnstile: a host of forty goes through it one body at a time,
+       under fire, for as long as it takes. Three is a doorway two can walk abreast, which is
+       the difference between a chamber you assault and a chamber you queue at.
+       Pulled a further tile off each end first, so the span still clears both corners — a
+       corner tile's only neighbours inside the room are diagonal and the pathfinder moves
+       orthogonally, which is the fault the clamp above exists to prevent and which a wider
+       doorway would walk straight back into. A wall too short to hold three keeps as many as
+       it can rather than refusing: `doorTiles` reads the span off the door, so a span of one
+       is simply the old doorway and nothing downstream can tell.
+       NO DICE ARE SPENT HERE. The span is arithmetic off a position that was already chosen. */
+    if(nx2 && by - ay >= 4) dy2 = clamp(dy2, ay + 2, by - 2);
+    if(!nx2 && bx - ax >= 4) dx2 = clamp(dx2, ax + 2, bx - 2);
+    const span = [{x: dx2, y: dy2}];
+    if(nx2){
+      if(dy2 - 1 > ay) span.push({x: dx2, y: dy2 - 1});
+      if(dy2 + 1 < by) span.push({x: dx2, y: dy2 + 1});
+    } else {
+      if(dx2 - 1 > ax) span.push({x: dx2 - 1, y: dy2});
+      if(dx2 + 1 < bx) span.push({x: dx2 + 1, y: dy2});
+    }
+    const door = {x: dx2, y: dy2, nx: nx2, ny: ny2, w: span};
+    const inSpan = (i, j) => span.some(t => t.x === i && t.y === j);
+    for(let i = ax; i <= bx; i++){ if(!inSpan(i, ay)) wall(i, ay, fl); if(!inSpan(i, by)) wall(i, by, fl); }
+    for(let j = ay; j <= by; j++){ if(!inSpan(ax, j)) wall(ax, j, fl); if(!inSpan(bx, j)) wall(bx, j, fl); }
+    for(const t of span){
+      blocked.delete(bkey(t.x, t.y, fl)); baseBlocked.delete(bkey(t.x, t.y, fl));
+      deck(t.x, t.y, fl);
+    }
+    cave.walls = cave.walls.filter(w => !(w.f===fl && inSpan(w.x, w.y)));
     const rm = {x0:ax, y0:ay, x1:bx, y1:by, f:fl, cx, cy, door, id:cave.rooms.length};
     /* SHUT, AND REGISTERED IN THE ONE LIST EVERYTHING READS. `cave.doors` was a renderer's
        decoration; `doors` is the mechanic. The chamber ring carved this tile open a moment ago,
        which is right — a doorway needs floor — and `setDoor` puts the rock back across it. */
-    const dd = {x:door.x, y:door.y, f:fl, roomId:rm.id, caveId:cave.id, open:false, barred:false};
+    const dd = {x:door.x, y:door.y, w:span, f:fl, roomId:rm.id, caveId:cave.id, open:false, barred:false};
     doors.push(dd); cave.doors.push(dd);
     setDoor(dd, false);
     cave.rooms.push(rm);
@@ -6513,9 +6562,24 @@ function placeCave(h){
 function rebuildCaveWalls(cv){
   cv.walls = [];
   const seen = new Set();
+  /* ---------- AND A SHUT DOOR IS NOT ROCK ----------
+     "the doors in general are really hard to see visually... quite a few hallways/rooms in the
+     undercroft simply dead-end without a door to pass through."
+     Both of those were this list. A shut door is implemented as a decked tile that is also in
+     `blocked` — that is the whole mechanic, and it is why `isBlocked` refuses it without any
+     door code at all. This derivation asks `blocked` and nothing else, so it read every shut
+     door in the world as stone and pushed it onto the list the renderer draws as rock: a box
+     0.98 wide and FLOOR_H*0.85 tall, which is larger in every dimension than the door slab
+     drawn inside it. Measured: 176 of 176. Every door in the game was sealed in a block of
+     granite the moment it closed, and a corridor ending at one is a corridor that dead-ends
+     into rock with no door to pass through.
+     `blocked` cannot tell the two apart because they are the same flag. The doorway has to be
+     named, so it is. */
+  const dk = new Set();
+  for(const d of (cv.doors || [])) for(const t of doorTiles(d)) dk.add(bkey(t.x, t.y, d.f || 0));
   const put = (x, y, f) => {
     const k = bkey(x, y, f);
-    if(seen.has(k) || !blocked.has(k)) return;
+    if(seen.has(k) || !blocked.has(k) || dk.has(k)) return;
     seen.add(k); cv.walls.push({x, y, f});
   };
   for(const rm of cv.rooms || []){
@@ -26883,7 +26947,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
      raise every ring once, at the end, with the doors the only gap in it. A shut door is then
      the only way in BY CONSTRUCTION rather than by the tunnels happening to miss. */
   const doorK = new Set(), ringK = new Set();
-  for(const cv of caves) for(const d of cv.doors) doorK.add(bkey(d.x, d.y, d.f || 0));
+  for(const cv of caves) for(const d of cv.doors) for(const t of doorTiles(d)) doorK.add(bkey(t.x, t.y, d.f || 0));
   for(const cv of caves) for(const w of cv.walls){
     const k = bkey(w.x, w.y, w.f);
     if(!doorK.has(k)) ringK.add(k);
@@ -26923,6 +26987,28 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
     for(let c = [tx, ty]; c; c = seen.get(c[1] * W + c[0])) path.push(c);
     return path;
   };
+  /* ---------- A RUN THREE WIDE, AND NOTHING HANGING OFF THE ENDS OF IT ----------
+     The obvious brush is the tile and its four neighbours, and it is wrong in a way that only
+     shows up once you count: at the two ends of a carved run the neighbour ALONG the run has
+     nothing beyond it, so the brush leaves a one-tile stub — and a stub is the thing this was
+     widened to stop making. Measured on the four-neighbour version: twenty-four dead ends
+     became eleven, and the eleven were not the original twenty-four.
+     So the brush knows which way the run is going and lays only ACROSS it. Same three tiles
+     abreast, no tail at either end, and it still refuses a ring or a doorway — a shut door is
+     the only way into a chamber and a brush that ate the wall beside one would hand that back. */
+  const carveRun = (path, f) => {
+    for(let i = 0; i < path.length; i++){
+      const [x, y] = path[i];
+      U.put(x, y, f);
+      const nxt = path[i + 1] || path[i - 1];
+      if(!nxt) continue;
+      let dx2 = Math.sign(nxt[0] - x), dy2 = Math.sign(nxt[1] - y);
+      if(!dx2 && !dy2) continue;
+      const px2 = -dy2, py2 = dx2;                  /* across the run */
+      if(!walled(x + px2, y + py2, f)) U.put(x + px2, y + py2, f);
+      if(!walled(x - px2, y - py2, f)) U.put(x - px2, y - py2, f);
+    }
+  };
   let routed = 0, straight = 0;
   for(const cv of caves){
     const CF = cv.f === undefined ? UNDER : cv.f;
@@ -26930,15 +27016,30 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
       /* the door and its doorstep, out along the door's own axis. These are outside the room by
          construction; the only thing that can be in the way is a NEIGHBOUR's ring, so it stops
          short rather than punching through one. */
+      /* ---------- AND THE WAY IN IS NOT A PENCIL PATH ----------
+         "Sometimes the hallway leading to the door is also extremely narrow. I understand that
+         the undercroft should not necessarily be WIDE, but it's like a pencil path that only
+         one undead can pass through at a time."
+         It was exactly one tile. `route` returns a four-connected line and this loop opened the
+         line — so every chamber in the world hung off a corridor a single body wide, up to
+         twenty-five tiles of it, while the lattice it joined was bored five to six across.
+         Measured: 109 of 176 doorways were reached down something two tiles wide or less.
+         `wide` brushes the tile and its four neighbours, which lays a three-wide run whichever
+         way the route turns, and it refuses a tile that is somebody's ring or somebody's
+         doorway — the whole shape of this function is that a shut door is the only way into a
+         chamber BY CONSTRUCTION, and a brush that ate a wall either side of the route would
+         hand that back. IT SPENDS NO DICE: `U.put` never drew any and neither does this. */
       let sx = bx, sy = by, t = 0;
       U.put(bx, by, CF);
+      const stub = [[bx, by]];
       for(t = 1; t <= 4; t++){
         const nx = bx + ux * t, ny = by + uy * t;
         if(walled(nx, ny, CF)) break;
-        U.put(nx, ny, CF); sx = nx; sy = ny;
+        stub.push([nx, ny]); sx = nx; sy = ny;
       }
+      carveRun(stub, CF);
       const path = route(sx, sy, ax, ay, CF);
-      if(path){ for(const [px, py] of path) U.put(px, py, CF); routed++; }
+      if(path){ carveRun(path, CF); routed++; }
       else {
         /* nothing legal reaches the hall — carve it straight and let the wall win at the end.
            `warrens.js` then reports it as a chamber you cannot get INTO, loudly, which is the
@@ -26954,6 +27055,24 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
   for(const k of ringK){ blocked.add(k); baseBlocked.add(k); }
   for(const cv of caves) for(const d of cv.doors) setDoor(d, false);
   U.warrenRouted = routed; U.warrenStraight = straight;
+  /* ---------- AND THE DOORSTEP IS AS WIDE AS THE DOORWAY ----------
+     A three-tile doorway that opens onto one tile of floor is a one-tile doorway with two
+     decorative leaves. The approach was widened along the route, but the route starts at the
+     middle tile of the span, so the outer two opened onto rock. Brush the square outside each
+     leaf, refusing anything that is somebody else's ring. */
+  for(const cv of caves) for(const d of cv.doors){
+    const f = d.f || 0;
+    const rm = (cv.rooms || []).find(r => r.id === d.roomId);
+    const nx = rm && rm.door ? (rm.door.nx || 0) : 0, ny = rm && rm.door ? (rm.door.ny || 0) : 0;
+    if(!nx && !ny) continue;
+    for(const t of doorTiles(d)){
+      const qx = t.x + nx, qy = t.y + ny;
+      if(walled(qx, qy, f)) continue;
+      U.put(qx, qy, f);
+      const q2x = t.x + nx * 2, q2y = t.y + ny * 2;
+      if(!walled(q2x, q2y, f)) U.put(q2x, q2y, f);
+    }
+  }
   /* ---------- AND THE NETWORK IS STILL ONE PLACE AFTERWARDS ----------
      A chamber's wall ring does not know what it was built across. Cutting warrens into the halls
      walled one hall in eighty-one off from the rest of the lattice — `under.js` says "and you can
@@ -27042,6 +27161,99 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
       }
     }
   }
+  /* ---------- AND A CORRIDOR GOES SOMEWHERE ----------
+     "Quite a few hallways/rooms in the undercroft simply dead-end without a door to pass
+     through."
+     Most of that was the doors being drawn as rock, and that is fixed where it lived. This is
+     the rest of it, and it is real: twenty-three tunnels on the Undercroft alone that stop at
+     bare stone with nothing at the end. They are carving accidents — an approach severed when
+     the rings went up over it, a repair thread that ran into a pocket and gave up, a chamber
+     floor plate laid across an older wall whose entry was still in the list that re-blocks at
+     the end. Three causes, one shape, and the shape is what the player walks.
+     A dead end could be filled in instead of opened, and that was the first instinct: a tunnel
+     that goes nowhere should not have been cut. But the player has already walked it by the
+     time they find out, and the thing that makes that walk worth having is finding it joins
+     something — so it is JOINED. Tunnel on through the rock to the nearest floor that is not
+     part of this same stub, which turns a wasted trip into a loop.
+     NEVER THROUGH A RING OR A DOORWAY. A shut door is the only way into a chamber and this runs
+     after the rings are up, so a repair that ate a wall would hand that back — the same fault
+     the approaches above already carry a note about.
+     AND IT SPENDS NO DICE. A flood and a brush, both arithmetic. */
+  const DIRS4 = [[1,0],[-1,0],[0,1],[0,-1]];
+  let joined = 0, stranded = 0, rounds = 0;
+  /* ---------- AND IT TAKES MORE THAN ONE PASS ----------
+     `wide` brushes the four neighbours of every tile it lays, and at the two ends of a join the
+     outermost of those can hang off the side with a single open neighbour of its own — a fresh
+     one-tile stub, made by the thing that exists to remove stubs. Measured: twenty-four became
+     eleven in one pass, and the eleven were not the original twenty-four.
+     So it runs until it finds nothing, rather than once and hopefully. Capped, because a repair
+     that cannot converge must stop rather than chew the map, and the counters say which
+     happened. */
+  for(const F of DEPTHS) for(let round = 0; round < 6; round++){
+    rounds++;
+    const openAt = (x, y) => { const k = bkey(x, y, F); return decks.has(k) && !blocked.has(k); };
+    const nearDoor = (x, y) => {
+      if(doorK.has(bkey(x, y, F))) return true;
+      for(const [dx, dy] of DIRS4) if(doorK.has(bkey(x + dx, y + dy, F))) return true;
+      return false;
+    };
+    const dIdx2 = -(F || -1) - 1;
+    const ends = [];
+    for(const [bk, arr] of U.grid){
+      if(Math.floor(bk / 16777216) !== dIdx2) continue;
+      for(const id of arr){
+        const x = id % W, y = Math.floor(id / W);
+        if(!openAt(x, y) || nearDoor(x, y)) continue;
+        let nb = 0;
+        for(const [dx, dy] of DIRS4) if(openAt(x + dx, y + dy)) nb++;
+        if(nb <= 1) ends.push([x, y]);
+      }
+    }
+    if(!ends.length) break;
+    for(const [ex, ey] of ends){
+      if(!openAt(ex, ey)) continue;
+      /* the stub itself, so the flood below cannot declare it joined to its own tail */
+      const mine = new Set();
+      {
+        let cx = ex, cy = ey, px = -1, py = -1;
+        for(let st = 0; st < 80; st++){
+          mine.add(cy * W + cx);
+          const nbs = [];
+          for(const [dx, dy] of DIRS4){
+            const nx = cx + dx, ny = cy + dy;
+            if(nx === px && ny === py) continue;
+            if(openAt(nx, ny)) nbs.push([nx, ny]);
+          }
+          if(nbs.length !== 1) break;
+          px = cx; py = cy; cx = nbs[0][0]; cy = nbs[0][1];
+        }
+      }
+      /* out through the rock to the first floor that is somebody else's */
+      const prev = new Map(), q = [[ex, ey]];
+      prev.set(ey * W + ex, null);
+      let hit = null;
+      for(let qi = 0; qi < q.length && !hit; qi++){
+        const [x, y] = q[qi];
+        if(Math.abs(x - ex) > 44 || Math.abs(y - ey) > 44) continue;
+        for(const [dx, dy] of DIRS4){
+          const nx = x + dx, ny = y + dy;
+          if(nx < 4 || ny < 4 || nx >= W - 4 || ny >= H - 4) continue;
+          const id = ny * W + nx;
+          if(prev.has(id)) continue;
+          if(walled(nx, ny, F)) continue;            /* never a ring, never a doorway */
+          prev.set(id, [x, y]);
+          if(openAt(nx, ny) && !mine.has(id)){ hit = [nx, ny]; break; }
+          q.push([nx, ny]);
+        }
+      }
+      if(!hit){ stranded++; continue; }
+      const join = [];
+      for(let c = hit; c; c = prev.get(c[1] * W + c[0])) join.push(c);
+      carveRun(join, F);
+      joined++;
+    }
+  }
+  U.blindJoined = joined; U.blindStranded = stranded;
   /* ---------- AND THE DRAWN LIST IS FILTERED LAST, AFTER EVERY CARVE ----------
      This used to run before the connectivity repair, which is fine right up until the repair
      opens something — and `U.put` deletes from `baseBlocked` as well as `blocked`, so the tile
@@ -29555,6 +29767,10 @@ const syncUndercroft = makeDynGroup(
       });
     }
   });
+/* The two colours a doorway announces itself in. Module-level because the warren group is
+   rebuilt whenever somebody walks into range and a material built per rebuild is a leak. */
+const DOORGLOW = new THREE.MeshBasicMaterial({color: 0xffc46a});
+const DOORGLOW_BARRED = new THREE.MeshBasicMaterial({color: 0xd05a28});
 const syncRedoubts = makeDynGroup(
   () => 'rd' + redoubts.length + ':' + activeFloor + ':' + middens.filter(m=>m.found).length + ':' + caves.length + ':' +
         /* PER CAVE TOO, and for the same reason as the redoubts below: which warren has one of
@@ -29627,18 +29843,53 @@ const syncRedoubts = makeDynGroup(
          open it is the only interesting thing about it. Barred ones are darker and banded. */
       for(const dr of cv.doors){
         if(!occ[dr.f]) continue;
+        /* ---------- THE NORMAL IS ON THE ROOM, NOT ON THE DOOR RECORD ----------
+           `chamber` writes `nx/ny` onto `rm.door` and pushes a door record that carries
+           neither, so `dr.nx` has been undefined here since doors became a mechanic — every
+           door in the world was drawn as though it stood on a north or south wall. Harmless
+           while a door was two little posts and invisible; not harmless now that the posts
+           frame a three-tile span. */
+        const rmD = (cv.rooms || []).find(r => r.id === dr.roomId);
+        const nx = rmD && rmD.door ? (rmD.door.nx || 0) : (dr.nx || 0);
+        const span = doorTiles(dr);
         const gy = groundY(dr.x+0.5, dr.y+0.5) + floorY(dr.f);
-        const along = dr.nx ? 0.16 : 0.94, across = dr.nx ? 0.94 : 0.16;
-        box(g, dr.nx ? 0.16 : 0.2, FLOOR_H*0.8, dr.nx ? 0.2 : 0.16, '#5a4a38',
-            dr.x + 0.5 + (dr.nx ? 0 : -0.42), gy + FLOOR_H*0.4, dr.y + 0.5 + (dr.nx ? -0.42 : 0), false);
-        box(g, dr.nx ? 0.16 : 0.2, FLOOR_H*0.8, dr.nx ? 0.2 : 0.16, '#5a4a38',
-            dr.x + 0.5 + (dr.nx ? 0 : 0.42), gy + FLOOR_H*0.4, dr.y + 0.5 + (dr.nx ? 0.42 : 0), false);
-        if(!dr.open){
+        /* the jambs, at the two ends of the span rather than either side of one tile */
+        let lo = span[0], hi = span[0];
+        for(const t of span){
+          if(nx ? t.y < lo.y : t.x < lo.x) lo = t;
+          if(nx ? t.y > hi.y : t.x > hi.x) hi = t;
+        }
+        box(g, nx ? 0.16 : 0.2, FLOOR_H*0.8, nx ? 0.2 : 0.16, '#5a4a38',
+            lo.x + 0.5 + (nx ? 0 : -0.42), gy + FLOOR_H*0.4, lo.y + 0.5 + (nx ? -0.42 : 0), false);
+        box(g, nx ? 0.16 : 0.2, FLOOR_H*0.8, nx ? 0.2 : 0.16, '#5a4a38',
+            hi.x + 0.5 + (nx ? 0 : 0.42), gy + FLOOR_H*0.4, hi.y + 0.5 + (nx ? 0.42 : 0), false);
+        if(!dr.open) for(const t of span){
+          const along = nx ? 0.16 : 0.98, across = nx ? 0.98 : 0.16;
           box(g, along, FLOOR_H*0.74, across, dr.barred ? '#3a2f26' : '#6b5637',
-              dr.x + 0.5, gy + FLOOR_H*0.37, dr.y + 0.5, false);
+              t.x + 0.5, gy + FLOOR_H*0.37, t.y + 0.5, false);
           if(dr.barred)
-            box(g, dr.nx ? 0.1 : 0.86, 0.16, dr.nx ? 0.86 : 0.1, '#8a7048',
-                dr.x + 0.5, gy + FLOOR_H*0.46, dr.y + 0.5, false);
+            box(g, nx ? 0.1 : 0.9, 0.16, nx ? 0.9 : 0.1, '#8a7048',
+                t.x + 0.5, gy + FLOOR_H*0.46, t.y + 0.5, false);
+        }
+        /* ---------- AND IT IS THE BRIGHTEST THING ON THAT WALL ----------
+           "the doors in general are really hard to see visually."
+           Underground the sun is off, the fill is 0.20 and there are exactly three point lights
+           in the whole world, so a Lambert box in a doorway past the torch is black — and so is
+           the rock beside it. Measured before this: the brightest pixel at a doorway was 18
+           against 18 for the stone next to it, which is not a door that is hard to see, it is a
+           door that is not there.
+           A lintel in a basic material, which is the trick the descents already use: it shows
+           its own colour whatever the light is doing and costs none of the three lights. Built
+           as its own mesh rather than through `box`, because `box` batches into Lambert
+           instances and the whole point is a surface that does not care about light. Amber for
+           a door, a hotter red for a barred one — a vault should read as a different decision
+           from across the room. */
+        {
+          const wSpan = span.length;
+          const bar = new THREE.Mesh(BOXG, dr.barred ? DOORGLOW_BARRED : DOORGLOW);
+          bar.scale.set(nx ? 0.14 : wSpan + 0.1, 0.13, nx ? wSpan + 0.1 : 0.14);
+          bar.position.set((lo.x + hi.x)/2 + 0.5, gy + FLOOR_H*0.84, (lo.y + hi.y)/2 + 0.5);
+          g.add(bar);
         }
       }
     }
@@ -41764,7 +42015,11 @@ cv.addEventListener('mousedown', e => {
         const items = [];
         if(dr.open){
           items.push({label:'CLOSE THE DOOR', fn:()=>{
-            if(chars.some(o => o.state !== 'dead' && Math.floor(o.x) === dr.x && Math.floor(o.y) === dr.y && (o.floor||0) === (dr.f||0))){
+            /* ANY TILE OF THE SPAN. A three-tile doorway shut on somebody standing in the
+               outer leaf is a body inside the rock. */
+            const span = doorTiles(dr);
+            if(chars.some(o => o.state !== 'dead' && (o.floor||0) === (dr.f||0) &&
+                               span.some(t => Math.floor(o.x) === t.x && Math.floor(o.y) === t.y))){
               log('Somebody is standing in the doorway.', 'bad'); return;
             }
             setDoor(dr, false); log('The door swings shut.', '');
