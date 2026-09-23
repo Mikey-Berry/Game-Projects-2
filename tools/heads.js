@@ -144,35 +144,56 @@ const WHO = [
          because the thing being matched is whatever the rig currently produces. The first fit
          was sized against the head CUBE alone — but a box head is a cube with a hair slab on
          top and usually a beard below, and it is the whole assembly a player sees. */
-      let ref = null;
-      {
+      /* ---------- ONE REFERENCE, AND IT IS A MEDIAN ----------
+         This built ONE box-headed body per sculpt and compared against it, and a box-headed
+         body is a rolled thing: sub-race, build, hair slab and beard all vary, and so does the
+         fraction of its height its head takes up. Measured over twelve draws: 24.3% to 29.3%,
+         median 25.4 — a twenty per cent span on the number every sculpt is judged against.
+         Lyre drew a 29.4% reference and read 0.78x against a 0.88 floor, and was reported as
+         undersized for two years' worth of runs. Her head is 22.9% of her body; the other three
+         sculpts are 23.1, 23.2 and 23.6. She is the same size as they are. What differed was
+         who she was measured against.
+         Nine draws, the median of them, computed ONCE and shared by every sculpt — so the four
+         are judged against the same ruler as well as a stable one. */
+      let ref = window.__ref || null;
+      if (!ref) {
         const keep = chars.slice();
-        chars.length = 0;
-        const pm = makeChar('Ref', 'player', window.__spot.x, window.__spot.y, { sex: 'm' });
-        pm.state = 'ok'; chars.push(pm);
-        syncChars(0.05); syncChars(0.05);
-        const pe = charMeshes.get(pm.id);
-        if (pe) {
-          const pb = new THREE.Box3();
-          pe.headG.updateWorldMatrix(true, true);
-          pe.headG.traverse(o => {
-            if (!o.isMesh) return;
-            let v = o.visible, q = o.parent; while (q && v) { v = q.visible; q = q.parent; }
-            if (v) pb.expandByObject(o);
-          });
-          const pbb = new THREE.Box3().setFromObject(pe.g);
-          ref = { h: pb.max.y - pb.min.y, body: pbb.max.y - pbb.min.y };
+        const fr = [];
+        for (let k = 0; k < 9; k++) {
+          chars.length = 0;
+          const pm = makeChar('Ref' + k, 'player', window.__spot.x, window.__spot.y, { sex: 'm' });
+          pm.state = 'ok'; chars.push(pm);
+          syncChars(0.05); syncChars(0.05);
+          const pe = charMeshes.get(pm.id);
+          if (pe) {
+            const pb = new THREE.Box3();
+            pe.headG.updateWorldMatrix(true, true);
+            pe.headG.traverse(o => {
+              if (!o.isMesh) return;
+              let v = o.visible, q = o.parent; while (q && v) { v = q.visible; q = q.parent; }
+              if (v) pb.expandByObject(o);
+            });
+            const pbb = new THREE.Box3().setFromObject(pe.g);
+            const body = pbb.max.y - pbb.min.y;
+            if (body > 0.01) fr.push((pb.max.y - pb.min.y) / body);
+          }
+          const pe2 = charMeshes.get(pm.id);
+          if (pe2 && pe2.g && pe2.g.parent) pe2.g.parent.remove(pe2.g);
+          charMeshes.delete(pm.id);
         }
-        const pe2 = charMeshes.get(pm.id);
-        if (pe2 && pe2.g && pe2.g.parent) pe2.g.parent.remove(pe2.g);
-        charMeshes.delete(pm.id);
         chars.length = 0; for (const k of keep) chars.push(k);
+        if (fr.length) {
+          fr.sort((a, z) => a - z);
+          ref = { frac: fr[Math.floor(fr.length / 2)], n: fr.length,
+                  lo: fr[0], hi: fr[fr.length - 1] };
+          window.__ref = ref;
+        }
       }
       let sized = 'no reference body';
       if (bb && ref) {
         const bodyBB = new THREE.Box3().setFromObject(e.g);
         const mine = (bb.max.y - bb.min.y) / (bodyBB.max.y - bodyBB.min.y);
-        const theirs = ref.h / ref.body;
+        const theirs = ref.frac;
         const r = mine / theirs;
         /* Band, not a target: these are sculpted heads on a blocky rig and they will never
            match to the centimetre. The band has been TIGHTENED once. It first ran 0.70-1.15,
@@ -181,7 +202,7 @@ const WHO = [
            now and measures 0.95-1.04, so the floor comes up to where it can actually catch
            the thing that kept being wrong. */
         sized = r >= 0.88 && r <= 1.15
-          ? `head is ${(mine * 100).toFixed(1)}% of body against a box head's ${(theirs * 100).toFixed(1)}%`
+          ? `head is ${(mine * 100).toFixed(1)}% of body against a box head's ${(theirs * 100).toFixed(1)}% (median of ${ref.n}, ${(ref.lo * 100).toFixed(1)}-${(ref.hi * 100).toFixed(1)})`
           : `!! THE HEAD IS THE WRONG SIZE — ${(mine * 100).toFixed(1)}% of body against a box head's ${(theirs * 100).toFixed(1)}% (${r.toFixed(2)}x)`;
       }
       return { ok: !!e.sculptHead, sculpt, boxes, sized, top: bb ? +bb.max.y.toFixed(2) : 0, bot: bb ? +bb.min.y.toFixed(2) : 0,
