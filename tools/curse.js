@@ -139,6 +139,24 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const c0 = liveCurses()[0];
         if (c0) { bornBig = c0.big; bornAte = c0.ate || 0; bornX = c0.x; bornY = c0.y; }
       }
+      /* ---------- AND THE FIELD IS LAID WHERE IT IS STANDING ----------
+         "and it goes on eating what is lying there" is a claim about the APPETITE, and it was
+         being decided by the rise point. The dead are laid in a nine-by-ten block at each
+         site's centre; `itRoseFromTheGround` below allows the beast up to twenty tiles from
+         one, and its reach is `1.4 + big * 0.9` — five to six tiles. So a beast that rose at
+         the edge of its site had nothing within reach and the claim failed for a reason that
+         has nothing to do with eating.
+         Measured across twelve days on two builds: `inReach` was ZERO every single day on both
+         of them, and the one that passed had simply eaten during the rite window because it
+         happened to rise 6.4 tiles from the field with a 6.3-tile reach. That is not a margin,
+         it is a coin.
+         `cairnOne` does not walk toward food while it holds a target and it holds one the whole
+         time, so the field goes to the beast rather than the beast to the field. This tests the
+         thing the claim names instead of where the ground chose to open. */
+      {
+        const c1 = liveCurses()[0];
+        if (c1) layDead(40, c1.x, c1.y);
+      }
       for (let i = 0; i < 4 * 40; i++) update(0.5);
       paused = true;
       const now = liveCurses();
