@@ -2253,6 +2253,13 @@ function placeTownAt(def, cx0, cy0){
       decks.add(bkey(wx, wy, 1));
       t.walls.push({x:wx, y:wy, hp:def.wall.hp, maxHp:def.wall.hp, mat:def.wall.mat});
     }
+    /* THE RING AS IT WAS LAID. `wall0` is what a breach is measured against, and `wallRing` is
+       where the masons put it back — a breach has to leave a record of itself somewhere or the
+       hole is permanent, and a world where every war leaves a scar nobody ever closes ends up
+       as seven towns full of holes. Both are written from the finished ring rather than inside
+       the loop, and neither spends a roll, so worldgen's stream is untouched. */
+    t.wall0 = t.walls.length;
+    t.wallRing = t.walls.map(w => ({x:w.x, y:w.y}));
     /* stairs to the rampart, on the INSIDE face — you must already be through the gate */
     for(const [sx, sy] of [[cx0+2, cy0-r+1], [cx0+2, cy0+r-1], [cx0-r+1, cy0], [cx0+r-1, cy0]]){
       if(sx<2||sy<2||sx>=W-2||sy>=H-2) continue;
@@ -15771,6 +15778,46 @@ function physics(c, dt){
       return;
     }
   }
+  /* ---------- A HOST THAT REACHES THE WALL TAKES THE WALL ----------
+     "We killed siege mechanics previously... specifically, damaging/destroying walls."
+     Almost all of this already existed. `structAt` hands back a town wall with hp accessors,
+     `hitStructure` swings at it, `destroyStructure` unblocks the tile and splices it out of
+     `t.walls`, and `syncTownWalls` is keyed on the wall count and the hp sum — so a breach
+     renders itself with no new geometry anywhere. The save layer was built for it too:
+     `walls.js` has a note about loading an intact save AFTER A SIEGE.
+     What was missing is the one thing that starts it. The game's existing "jammed? smash
+     through" lives inside the COMBAT APPROACH — it is reached only under `if(c.target)`, when
+     a body walking at somebody stops getting closer — and a besieging army has nobody to
+     target, because the defenders are behind the wall. Measured on the control: a soldier of
+     one town stood against another's wall for thirty seconds with `stuckT` at 0.00 and the
+     wall at 900 of 900.
+     So a host at war acquires the wall itself. Gated hard because `t.walls` is two hundred
+     tiles and this must not become a scan: only a `warband`, only one with a town as its
+     target, only twice a second, and only while it is actually AT the ring. */
+  if(c.faction === 'warband' && c.warT >= 0 && !c.structTarget && c.state === 'ok' && !c.target){
+    const tt = towns[c.warT];
+    if(tt && tt.def.wall && tt.walls.length && !tt.sacked){
+      c.siegeT = (c.siegeT || 0) - dt;
+      if(c.siegeT <= 0){
+        c.siegeT = 0.5;
+        /* CHEBYSHEV, BECAUSE THE RING IS A SQUARE. It is laid with
+           `Math.max(abs(i), abs(j)) === r`, so a corner tile sits at r·√2 from the centre —
+           thirty-eight tiles on a ring of twenty-seven. A Euclidean band of R±5 therefore
+           excluded every corner and most of the diagonals, and the first cut of this acquired
+           a wall in the middle of a face and nothing at all at `walls[0]`. */
+        const R = tt.def.wall.r;
+        const cheb = Math.max(Math.abs(c.x - tt.x), Math.abs(c.y - tt.y));
+        if(cheb < R + 5 && cheb > R - 5){
+          let best = null, bd = 2.4;
+          for(const w of tt.walls){
+            const dw = dist(w.x + 0.5, w.y + 0.5, c.x, c.y);
+            if(dw < bd){ bd = dw; best = w; }
+          }
+          if(best) c.structTarget = structAt(best.x + 0.5, best.y + 0.5);
+        }
+      }
+    }
+  }
   /* smash a structure */
   if(c.structTarget){
     const st = c.structTarget;
@@ -19951,6 +19998,10 @@ function destroyStructure(st){
     log('Bastion wall breached!', 'good');
   } else if(st.kind==='twall'){
     blocked.delete(bkey(st.ref.x, st.ref.y));
+    /* AND THE RAMPART GOES WITH IT. The wall-top is a `decks` floor so archers can stand on it;
+       leaving that behind when the stone falls gives you a walkable tile hanging over an open
+       breach, and a defender standing on nothing above the hole his wall used to be. */
+    decks.delete(bkey(st.ref.x, st.ref.y, 1));
     const i = st.town.walls.indexOf(st.ref); if(i>=0) st.town.walls.splice(i,1);
     log(`${st.town.name}'s wall breached!`, 'bad');
     dropRep(st.town, 15);
@@ -25333,7 +25384,18 @@ function update(dt){
       const ti = towns.indexOf(t);
       const enemyArmy = chars.filter(c => c.faction==='warband' && c.warT === ti && c.state==='ok');
       const defenders = chars.filter(c => c.faction==='town' && c.homeTown===t && c.guard && c.state==='ok');
-      if(!defenders.length && enemyArmy.length >= 3 && !t.sacked){
+      /* ---------- AND A SACK WAITS FOR THE WALL ----------
+         This was a headcount: no defenders left and three of the enemy standing. The log said
+         "its walls are breached and its stores put to the torch" and nothing had ever touched
+         `t.walls` — the only thing in the game that damaged one was a three-per-cent daily
+         earthquake. A town is taken when somebody gets IN now.
+         HOLLOWMERE HAS NO WALL, and a rule that reads "the ring must be broken" would make the
+         one unwalled town on the map permanently unsackable. An open town falls the old way.
+         `wall0` is written at worldgen and defaulted here for a save made before it existed, so
+         an old world reads as intact rather than as permanently breached. */
+      if(t.wall0 === undefined) t.wall0 = t.walls.length;
+      const breached = !t.def.wall || t.walls.length < t.wall0;
+      if(!defenders.length && enemyArmy.length >= 3 && breached && !t.sacked){
         t.sacked = 5;
         worldEvent('sack', t.x, t.y, `${t.name} has been sacked. Its walls are breached and its stores put to the torch.`);
         for(const c of chars){ if(c.civ && c.homeTown===t && rnd()<0.25) kill(c, null); }
@@ -25364,6 +25426,32 @@ function update(dt){
         }
       }
       if(t.plague > 0){ t.plague--; if(t.plague <= 0) t.plagueCd = day + ri(20, 40); }
+    }
+    /* ---------- AND THE MASONS COME BACK ----------
+       A breach that never closes is a permanent scar, and now that an army can actually make
+       one the map would otherwise degrade in one direction for the whole campaign: a town
+       breached in a war twenty days ago is a town that is still wide open, still reads as
+       `breached`, and can be sacked on a headcount by the next host that turns up without
+       laying a hand on it. So a town at peace rebuilds.
+       Not under siege and not while it is still burning — masons do not work with a host at
+       the gate — and SLOWLY: a tenth of a tile's strength a day, and one tile relaid a day,
+       so a ring taken apart in a siege takes the better part of a season to stand again.
+       Nothing here spends a roll, so the world's stream is exactly where it was. */
+    for(const t of towns){
+      if(!t.def.wall || t.warWith || t.sacked > 0 || !t.wallRing) continue;
+      const full = t.def.wall.hp;
+      for(const w of t.walls) if(w.hp < w.maxHp) w.hp = Math.min(w.maxHp, w.hp + w.maxHp * 0.1);
+      if(t.walls.length >= t.wall0) continue;
+      const up = new Set(t.walls.map(w => w.x + ',' + w.y));
+      for(const g of t.wallRing){
+        if(up.has(g.x + ',' + g.y)) continue;
+        if(isBlocked(g.x + 0.5, g.y + 0.5)) continue;   /* something else took the tile — relay a different one */
+        /* relaid green: a quarter strength, so a host that comes straight back still gets in */
+        t.walls.push({x:g.x, y:g.y, hp:full * 0.25, maxHp:full, mat:t.def.wall.mat});
+        blocked.add(bkey(g.x, g.y));
+        decks.add(bkey(g.x, g.y, 1));
+        break;
+      }
     }
     /* misfortune rolls */
     if(rnd() < 0.006){ const t = pick(towns.filter(t=>!t.plague && !t.sacked && (t.plagueCd||0) < day)); if(t){ t.plague = ri(4,7); worldEvent('plague', t.x, t.y, `A plague has broken out in ${t.name}. Travelers are warned to keep their distance.`); } }
@@ -45159,7 +45247,13 @@ function restore(d){
      builds, or another seed), NONE of the coords line up, every one of them reads as "this
      wall was destroyed", and the town gets unbuilt. A save must never be able to raze a town
      it doesn't recognise — so only prune when most of what the SAVE claims is actually here. */
-  const applyWalls = (ring, base, saved) => {
+  /* `decked` is towns only. A town wall tile is also a `decks` floor — the rampart archers
+     stand on — and a breach now takes that floor with it, so a load has to put it back or an
+     intact save restored after a siege comes back with the stone standing and no walk on top
+     of it. There is no `baseDecks` to rebuild from, which is why this is done here rather than
+     alongside the `blocked` reset. The bastion and the guild pass `false`: their rings were
+     never decked, and adding one would hand them an upper floor that does not exist. */
+  const applyWalls = (ring, base, saved, decked) => {
     if(!ring || !base || !base.length) return;
     /* Start from the world as it was GENERATED, not from whatever is left of the ring in
        memory. This is the whole fix: `blocked` has just been reset to baseBlocked, so every
@@ -45168,7 +45262,7 @@ function restore(d){
        out the same as the first — the old code only ever spliced, so damage accumulated
        across loads and never came back. */
     ring.length = 0;
-    for(const w of base) ring.push({...w});
+    for(const w of base){ ring.push({...w}); if(decked) decks.add(bkey(w.x, w.y, 1)); }
     /* null means the save has no wall data at all (it predates the field) — keep the ring we
        just rebuilt. An EMPTY array is different: it means this town was recorded with its
        ring flat, and that has to be honoured. */
@@ -45190,11 +45284,12 @@ function restore(d){
       const sw = savedAt.get(w.x + ',' + w.y);
       if(!sw){
         blocked.delete(bkey(w.x, w.y));
+        if(decked) decks.delete(bkey(w.x, w.y, 1));
         ring.splice(ring.indexOf(w), 1);
       } else w.hp = sw.hp;
     }
   };
-  towns.forEach((t, ti) => applyWalls(t.walls, baseTownWalls[ti], d.townWalls ? (d.townWalls[ti] || []) : null));
+  towns.forEach((t, ti) => applyWalls(t.walls, baseTownWalls[ti], d.townWalls ? (d.townWalls[ti] || []) : null, true));
   if(bastion) applyWalls(bastion.walls, baseBastionWalls, d.bastionWalls || null);
   if(guild) applyWalls(guild.walls, baseGuildWalls, d.guildWalls || null);
   middens.length = 0;
