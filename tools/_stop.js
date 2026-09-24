@@ -26,6 +26,12 @@
  * shared stash, that was too aggressive ("one proscribed formula put the whole company at risk"),
  * and the swing went from always to never.
  *
+ * ANSWERED. The gate searches the cart now — one roll, at a crossing, once a day per town, and
+ * only when nothing was found on anybody, so the swing does not go back to always. This probe
+ * is kept because it is the measurement the fix was built on, and because the first finding is
+ * still true and still load-bearing: contraband goes to the wagon and never to a pack.
+ * `tools/cart.js` is the harness that holds the fix in place.
+ *
  * A probe rather than a harness: it asserts nothing, it establishes what is true.
  *
  *   node tools/_stop.js [game.html]

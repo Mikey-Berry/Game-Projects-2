@@ -9487,6 +9487,25 @@ let _stopOpen = false;
 function contrabandOn(c){
   return Object.keys(CONTRABAND).filter(k => c.inv && c.inv[k] > 0);
 }
+/* ---------- AND WHAT IS IN THE CART ----------
+   "I haven't got stopped for an inspection like ever. I'm wondering if that mechanic is
+    working properly... Note that I never walk in anyone blatantly carrying mortal remains or
+    other contraband and just send it straight to the stash."
+   That is the whole bug, and it is not in the odds. `contrabandOn` reads `c.inv`, and nothing
+   ever ends up in `c.inv`: `lootCorpse` finishes at `addItem`, which is the WAGON. Measured on
+   a diagnostic probe — see `tools/_stop.js` — forty samples of ordinary play produced
+   contraband on a person ZERO times, and stripping a body put three remains into the wagon and
+   none into the looter's pack. The gate has been searching a place nothing is ever kept.
+   So the gate searches the cart. The note above this — "a stop should be about what is ON YOU"
+   — was written against a version that read the shared stash for EVERY body on EVERY tick, so
+   one proscribed formula put the whole company at risk every time any of them moved. This is
+   not that: it is one roll, at a crossing, at lower odds than a personal search, once a day per
+   town, and it only happens at all when nothing was found on anybody.
+   And it leaves the choice intact rather than removing it, because the camp bins are not the
+   cart: what you leave in a storehouse at home cannot be found at a gate. */
+function contrabandInCart(){
+  return Object.keys(CONTRABAND).filter(k => (stash[k] || 0) > 0);
+}
 /* What a guard makes of you before they look in the bag.
    THERE IS A SILVER-TONGUE STAT NOW, and the note this comment used to carry — "inventing one
    for a single scene would be worse than using what is already true" — was right about the
@@ -9544,8 +9563,10 @@ function inWalls(c){
 }
 const GATE_ODDS = 0.55;     /* walking in past a watched gate with it on you */
 const LINGER_ODDS = 0.045;  /* and the ambient risk of carrying it around inside, per 4s */
+const CART_ODDS  = 0.25;    /* and the cart, at the gate, once a day, when nobody was carrying */
 function contrabandCheck(){
   if(_stopOpen || modalOpen) return;
+  let cartAt = null, cartWho = null;
   for(const c of player()){
     if(c.state !== 'ok' || c.undead) continue;
     const t = inWalls(c);
@@ -9557,6 +9578,9 @@ function contrabandCheck(){
     const crossed = !!t && was !== nowKey;
     c._walls = nowKey;
     if(!t || t.playerRuled || t.def.undeadFriendly) continue;
+    /* remember the crossing for the cart pass below — the cart comes in with whoever is
+       leading, and it is one cart however many of you walk through the gate */
+    if(crossed && !cartAt){ cartAt = t; cartWho = c; }
     /* ON THE PERSON. The shared pool is everybody's; a guard cannot search a stash that is
        not there, and reading it meant one proscribed formula put the whole company at risk
        every time any of them walked through a gate. */
@@ -9587,18 +9611,37 @@ function contrabandCheck(){
     theStop(c, g, t, found);
     return;
   }
+  /* ---------- AND THEN THE CART ----------
+     Only after nobody has been stopped, only on the crossing, and only once a day per town:
+     they looked in the cart on the way in, and they are not going to look again this afternoon. */
+  if(!cartAt) return;
+  const cart = contrabandInCart();
+  if(!cart.length) return;
+  if((cartAt.cartDay || -9) >= day) return;
+  const g = charsNear(cartWho.x, cartWho.y, 12).find(o => o.faction === 'town' && !o.civ && o.state === 'ok' &&
+    o.homeTown === cartAt && dist(o.x, o.y, cartWho.x, cartWho.y) < 12);
+  if(!g) return;
+  let odds = CART_ODDS * (1 + Math.min(0.9, (cartAt.bounty || 0) / 500) + noticeTier * 0.12);
+  if((cartAt.rep || 0) > 25) odds *= 0.6;
+  if(rnd() > clamp(odds, 0, 0.8)) return;
+  cartAt.cartDay = day;
+  cartWho.stoppedDay = day; cartWho.stoppedAt = cartAt.def.key;
+  theStop(cartWho, g, cartAt, cart, cart);
 }
-function theStop(c, g, t, found){
+function theStop(c, g, t, found, cart){
   _stopOpen = true;
   const key = found[0], what = CONTRABAND[key];
-  say(g, 'Open the pack.');
+  say(g, cart ? 'Hold the cart. Sheet off.' : 'Open the pack.');
   AU.open && AU.open();
   const odds = talkOdds(c, t, found);
   const bribe = Math.round((60 + CRIMES.contraband.bounty * 1.4) * (1 + Math.max(0, -(t.rep || 0)) * 0.01));
   const close = () => { $('modal').style.display = 'none'; modalOpen = false; _stopOpen = false; };
   openModal('THE STOP — ' + t.name,
-    `${g.name} has a hand on ${c.name}'s pack and is not moving it. Inside: ${what}. ` +
-    `The street has gone quiet in the way streets do.`);
+    cart
+      ? `${g.name} has walked the length of the cart and put a hand on the sheet. Under it: ${what}. ` +
+        `${c.name} is the one standing nearest the tailboard. The street has gone quiet in the way streets do.`
+      : `${g.name} has a hand on ${c.name}'s pack and is not moving it. Inside: ${what}. ` +
+        `The street has gone quiet in the way streets do.`);
   const body = $('modalbody'); body.innerHTML = '';
   const mk = (label, note, fn) => {
     const b = document.createElement('button');
@@ -9621,7 +9664,7 @@ function theStop(c, g, t, found){
   const lost = (line) => {
     say(g, line);
     log(`${g.name} is not having it.`, 'bad');
-    theReckoning(c, g, t, what);
+    theReckoning(c, g, t, what, cart);
   };
   mk('TALK', `${Math.round(odds * 100)}% — your tongue, your standing here, and what they are holding`, () => {
     const ok = rnd() < odds;
@@ -9641,7 +9684,7 @@ function theStop(c, g, t, found){
       } else {
         say(g, 'You think you are the first?');
         log(`${g.name} does not move, and now the street is watching.`, 'bad');
-        theReckoning(c, g, t, what);
+        theReckoning(c, g, t, what, cart);
       }
     });
   }
@@ -9704,7 +9747,7 @@ function theStop(c, g, t, found){
     });
   }
   mk(`BRIBE — ${bribe}g`, cats >= bribe ? 'coin, quietly' : 'you do not have it', () => {
-    if(cats < bribe){ log('You do not have it, and counting it out in front of them made that plain.', 'bad'); theReckoning(c, g, t, what); return; }
+    if(cats < bribe){ log('You do not have it, and counting it out in front of them made that plain.', 'bad'); theReckoning(c, g, t, what, cart); return; }
     cats -= bribe;
     say(g, '...');
     log(`${bribe} gold changes hands and the pack is not opened any further.`, '');
@@ -9727,13 +9770,23 @@ function theStop(c, g, t, found){
 }
 /* Talking failed. This is the fork the player actually wanted: the cell or the blade, chosen
    rather than arrived at. */
-function theReckoning(c, g, t, what){
+function theReckoning(c, g, t, what, cart){
   _stopOpen = true;
   const days = CRIMES.contraband.days;
+  /* WHAT THEY FOUND IN THE CART, THEY TAKE. Without this a cart search has no bite at all: you
+     go quietly, serve the days, and the wagon is still full of it when you come out. */
+  const seize = () => {
+    if(!cart) return 0;
+    let n = 0;
+    for(const k of cart){ const have = stash[k] || 0; if(have > 0){ takeItem(k, have); n += have; } }
+    if(n) log(`The watch of ${t.name} empties ${n} of it out of the cart and carts it away themselves.`, 'bad');
+    return n;
+  };
   const close = () => { $('modal').style.display = 'none'; modalOpen = false; _stopOpen = false; };
   openModal('HANDS WHERE THEY ARE',
     `"${what.charAt(0).toUpperCase() + what.slice(1)}. You will come with me." ` +
-    `${g.name} has not drawn yet. Two of the watch are already walking over.`);
+    `${g.name} has not drawn yet. Two of the watch are already walking over.` +
+    (cart ? ' Somebody else has taken the cart horse by the head.' : ''));
   const body = $('modalbody'); body.innerHTML = '';
   const mk = (label, note, fn) => {
     const b = document.createElement('button');
@@ -9742,8 +9795,9 @@ function theReckoning(c, g, t, what){
     b.onclick = () => { close(); fn(); };
     body.appendChild(b);
   };
-  mk('GO PEACEFULLY', `${days} days, and they keep your kit`, () => {
+  mk('GO PEACEFULLY', cart ? `${days} days, they keep your kit, and the cart is emptied of it` : `${days} days, and they keep your kit`, () => {
     crime('contraband', c.x, c.y, c);
+    seize();
     const cell = freeCell(t);
     if(cell){ stripKit(c); jail(c, cell, days); log(`${c.name} is taken in without a fight. ${days} days.`, 'bad'); }
     else { log(`${c.name} submits — and ${t.name} has nowhere to put ${c.sex === 'f' ? 'her' : 'them'}. A fine, and a warning.`, 'bad'); cats = Math.max(0, cats - 150); }
