@@ -9,6 +9,11 @@
     --ink:#0d0b09; --panel:#1a1512; --panel2:#241d17; --edge:#3a2f24;
     --bone:#e8dcc4; --dust:#9c8a6e; --rust:#c4543a; --blood:#8a2418;
     --ok:#7a9c5a; --warn:#d4a040;
+    /* read in 18 places and never defined until now. An undefined var() makes the property
+       invalid, so the selected character-creation option, the CONTINUE hover, the guard and
+       COMMAND buttons and the remains-quality figure were all drawing in their parent's colour.
+       #c8a86a is the gold .ccopt.on already mixes into its background (#c8a86a14). */
+    --gold:#c8a86a; --muted:var(--dust);
   }
   *{margin:0;padding:0;box-sizing:border-box}
   html,body{width:100%;height:100%;overflow:hidden;background:var(--ink);
@@ -101,7 +106,6 @@
   #modalbody{overflow-y:auto;flex:1}
   .trow{display:flex;align-items:center;gap:8px;padding:4px 2px;border-bottom:1px solid #ffffff10}
   .trow .tn{flex:1}
-  .trow .tp{width:80px;text-align:right;color:var(--warn)}
   .trow .tc{width:50px;text-align:right;color:var(--dust)}
   #modalclose{margin-top:10px;align-self:flex-end}
   /* THE PAPERDOLL. A figure with the slots hung around it, which is the whole reason the
@@ -123,7 +127,6 @@
   .dslot .dv{color:var(--ink)}
   .dslot .dv.empty{color:#ffffff44}
   .dfig{border:1px solid var(--edge);background:#ffffff06;display:flex;align-items:center;justify-content:center;padding:6px}
-  .dfig svg{width:100%;height:auto;display:block}
   .dfig canvas{display:block;margin:0 auto}
   .dnote{color:var(--dust);font-size:11px;margin:2px 0 6px}
   /* build bar */
@@ -389,10 +392,6 @@ body.touch #hint{display:none}
   #charpanel, #invpanel{max-width:46vw}
 }
 
-}
-.overlay .help{width:480px;max-height:40vh;overflow-y:auto;text-align:left;font-size:12px;line-height:1.9;
-    color:var(--dust);border:1px solid var(--edge);padding:16px 20px;margin-bottom:26px;background:var(--panel)}
-  .overlay .help b{color:var(--bone)}
   .overlay button{font-size:15px;padding:10px 34px;letter-spacing:3px}
   #deadoverlay{display:none}
   #deadoverlay h1{color:var(--blood);text-shadow:4px 4px 0 #000}
@@ -404,9 +403,11 @@ body.touch #hint{display:none}
      touch target the command menu already sizes for. Nothing is hidden — a character creation
      screen with options removed on small screens is a worse answer than one you scroll.
      IT HAS TO COME AFTER THE RULES IT OVERRIDES. The first version of this block sat above
-     `.overlay .help`, which has identical specificity, so the desktop 480px won on every phone
-     and the help box went on overflowing exactly as before. A media query is not a bigger
-     hammer than source order.
+     the rules it was meant to override, which had identical specificity, so the desktop sizes
+     won on every phone. A media query is not a bigger hammer than source order. (The help box
+     it was written for is gone: the manual is a modal now. Its `.overlay .help` rules were
+     removed along with a stray `}` above them, which had been making Chromium drop the first
+     of them anyway.)
      AND `.ccopt` IS A BUTTON. `.overlay button{width:100%}` was meant for WAKE UP and caught
      all forty option chips, which turned four wrapped rows into forty stacked ones and made
      the panel 1546px tall — scrollable, and awful. The width belongs to the one button that
@@ -415,8 +416,6 @@ body.touch #hint{display:none}
     .overlay{padding:14px 10px}
     .overlay h1{font-size:30px;letter-spacing:5px;text-shadow:2px 2px 0 var(--blood)}
     .overlay .tag{font-size:10px;letter-spacing:2px;margin-bottom:14px}
-    .overlay .help{width:100%;max-width:100%;max-height:26vh;font-size:11px;line-height:1.65;
-      padding:10px 12px;margin-bottom:14px}
     #btn-start, #deadoverlay button{width:100%;max-width:320px;min-height:48px;padding:12px 20px;font-size:14px}
     /* THE OVERLAY'S OWN PADDING IS PART OF THE HEIGHT. At `max-height:100vh` the panel plus
        the overlay's 16px top and bottom came to 788 against a 760 viewport and the rail went
@@ -969,15 +968,13 @@ function rawDecorAt(x,y){
   if((t===1||t===2) && h > .955) return 'rock';
   return null;
 }
-function nodeDepleted(x,y){
-  const raw = rawDecorAt(x,y);
-  if(!raw || !NODE_CAP[raw]) return false;
-  return (nodeUses.get(x+','+y)||0) >= NODE_CAP[raw];
-}
+/* whether the node `raw` at x,y is worked out. Split from nodeDepleted so the two callers that
+   already hold rawDecorAt(x,y) do not work the terrain out a second time for the same tile. */
+function nodeUsedUp(x, y, raw){ return !!raw && !!NODE_CAP[raw] && (nodeUses.get(x+','+y)||0) >= NODE_CAP[raw]; }
+function nodeDepleted(x,y){ return nodeUsedUp(x, y, rawDecorAt(x,y)); }
 function decorAt(x,y){
   const d = rawDecorAt(x,y);
-  if(d && NODE_CAP[d] && nodeDepleted(x,y)) return null;
-  return d;
+  return nodeUsedUp(x, y, d) ? null : d;
 }
 let hideNodeInstance = () => {};   /* wired up by the renderer */
 let showNodeInstance = () => {};
@@ -990,7 +987,7 @@ function useNode(x,y,by){
   if(!raw || !NODE_CAP[raw]) return;
   const k = x+','+y;
   nodeUses.set(k, (nodeUses.get(k)||0) + 1);
-  if(nodeDepleted(x,y)){
+  if(nodeUsedUp(x, y, raw)){
     /* the stump: the counter is pushed past the cap by the days it should lie there, so the
        one test everything else already makes keeps answering "worked out" for all of them */
     nodeUses.set(k, NODE_CAP[raw] + (NODE_REGROW[raw]||0) * (NODE_DEAD_DAYS[raw]||0));
@@ -1442,16 +1439,16 @@ function raceName(full, race, sub, sex){
 function pickNameFor(sex, full, race, sub){ return raceName(full, race || 'human', sub || null, sex || 'm'); }
 /* ============================================================ TOWNS */
 const TOWNS = [
-  {key:'dustport',  name:'DUSTPORT',   pref:1, giftChance:.35, mult:{copper:1.5, fabric:0.8, rum:0.65, rum_black:0.75, hide:1.2, meat:1.0, fruit:1.1, iron_ore:1.35, iron:1.25},
+  {key:'dustport',  name:'DUSTPORT',   giftChance:.35, mult:{copper:1.5, fabric:0.8, rum:0.65, rum_black:0.75, hide:1.2, meat:1.0, fruit:1.1, iron_ore:1.35, iron:1.25},
     wall:{r:25, mat:'wood', hp:400}, guards:11, civs:19,
     civBarks:['Nets came up empty again.','Storm coming off the water, mark me.','Rum\'s cheap, everything else costs blood.','Watch the docks after dark.'],
     lore:'A rough harbor town. Everything washes up here eventually — cargo, drifters, bodies.'},
-  {key:'copperhold',name:'COPPERHOLD', pref:2, giftChance:.35, mult:{copper:0.5, fabric:1.35, rum:1.3, rum_black:1.0, hide:1.0, meat:1.3, fruit:1.4,
+  {key:'copperhold',name:'COPPERHOLD', giftChance:.35, mult:{copper:0.5, fabric:1.35, rum:1.3, rum_black:1.0, hide:1.0, meat:1.3, fruit:1.4,
            iron_ore:1.15, coal:1.05, iron:0.85},   /* it smelts, but it does not dig iron */
     wall:{r:27, mat:'stone', hp:900}, guards:13, civs:21, mercs:true,
     civBarks:['The vein runs deep this year.','Mercenary pay is triple guard pay. Triple.','Copper buys anything. Even quiet.','New shipment of arms at the smelter.'],
     lore:'Mine money built these walls, and mine money hires the blades on them.'},
-  {key:'greenrest', name:'GREENREST',  pref:0, giftChance:.35, mult:{copper:1.3, fabric:0.6, rum:1.1, rum_black:0.92, hide:0.7, meat:0.6, fruit:0.5},
+  {key:'greenrest', name:'GREENREST',  giftChance:.35, mult:{copper:1.3, fabric:0.6, rum:1.1, rum_black:0.92, hide:0.7, meat:0.6, fruit:0.5},
     /* THE TOWN IS BUILT ROUND THE HOUSE, so the wall goes out to hold the house and the streets
        both — and the guard is heavy because Greenrest has always had more watchmen than a quiet
        farm town needs, and now the reason is in the middle of it. */
@@ -1459,17 +1456,17 @@ const TOWNS = [
     civBarks:['Harvest looks kind this season.','My grandmother planted that orchard.','Never seen a bandit inside these walls. Never will.','Fresh bread at the bar, if you\'re quick.',
               'The Aldercotts have fed this town four generations. Say what you like about them, not to me.','They sent for the Marrows last winter. Lovely people. Moved on somewhere warmer, I heard.'],
     lore:'Quiet fields, full granaries, and more watchmen than any town its size. They like it that way.'},
-  {key:'hollowmere',name:'HOLLOWMERE', pref:0, giftChance:.7, undeadFriendly:true,
+  {key:'hollowmere',name:'HOLLOWMERE', giftChance:.7, undeadFriendly:true,
     wall:null, guards:11, civs:18,
     mult:{copper:1.1, fabric:1.2, rum:0.9, rum_black:0.9, hide:0.9, meat:1.2, fruit:1.2, tome:0.75},
     civBarks:['Walls? What would climb over that the wardens couldn\'t burn?','The bog keeps its own gate.','Osric raised my uncle. He\'s better company now.','Mind the standing stones after midnight.'],
     lore:'No walls, no fear. The wardens\' fire and the gravekeepers\' dead are gate enough.'},
-  {key:'saltmere',  name:'SALTMERE',   pref:1, giftChance:.28,
+  {key:'saltmere',  name:'SALTMERE',   giftChance:.28,
     wall:{r:23, mat:'wood', hp:400}, guards:11, civs:20,
     mult:{copper:1.4, fabric:1.05, rum:0.85, rum_black:0.96, hide:1.3, meat:1.15, fruit:1.25, fish:0.55, salt:0.35},
     civBarks:['The flats give salt, the salt gives everything else.','We mind the tide-marks. You should too.','Outsiders taste of copper. We can tell.','Cure it in brine and it keeps till judgment.','Low tide at dusk. Stay off the pans.'],
     lore:'A shuttered town on the salt flats, curing fish and hoarding brine. They marry among themselves, bury among themselves, and count every stranger twice.'},
-  {key:'ironscar',  name:'IRONSCAR',   pref:2, giftChance:.42, mercs:true,
+  {key:'ironscar',  name:'IRONSCAR',   giftChance:.42, mercs:true,
     /* THE PIT IS THE MIDDLE OF THE TOWN, not an outbuilding, so the walls stand well back from
        it: seventeen tiles of sand, a lane round the pit, and the streets outside that. */
     wall:{r:37, mat:'stone', hp:900}, guards:19, civs:26,
@@ -1477,7 +1474,7 @@ const TOWNS = [
            iron_ore:0.45, coal:0.50, iron:0.60},   /* the pit sets the price of iron */
     civBarks:['Work off the debt or the debt works you off.','Copper is cheap here. So are we.','The pit took my brother. It is hiring.','Mercs eat first. Always have.','Nobody leaves Ironscar paid up.'],
     lore:'An open pit worked by the indebted, order kept by hired blades over a workforce that would knife them for a day off. Copper flows out cheap because someone bleeds for every ingot.'},
-  {key:'fallowend', name:'FALLOWEND',  pref:0, giftChance:.3, kami:true,
+  {key:'fallowend', name:'FALLOWEND',  giftChance:.3, kami:true,
     wall:{r:24, mat:'wood', hp:400}, guards:9, civs:21,
     mult:{copper:1.35, fabric:0.75, rum:1.0, rum_black:0.92, hide:0.85, meat:0.65, fruit:0.55},
     civBarks:['Last honest soil before the waste.','We salt the doorframes. You would too, out here.','Nothing good walks in from the dark.','Harvest is kind. The nights are not.','Charm on your saddle, traveler? You will want one.'],
@@ -2010,7 +2007,7 @@ function makeLeader(t){
      three lines of ordering. Same two draws, in the other order. */
   const lrace = rollNpcRace();
   return { name: pickNameFor(lsex, true, lrace), sex: lsex, race: lrace, trait,
-    title: LEADER_TITLES[t.def.key] || 'Lord', age: ri(34, 58), since: (typeof day==='number' ? day : 0),
+    title: LEADER_TITLES[t.def.key] || 'Lord', age: ri(34, 58), since: day,
     knownFor: LEADER_TRAITS[trait] };
 }
 function succeed(t, cause){
@@ -3331,7 +3328,7 @@ function moveSpeedRaw(c){
      not really terrain — the route over a range should be the slow way, chosen because it
      is short or because someone is waiting for you on the road. The cheap height test comes
      first so the thousand bodies down on the flat never pay for the gradient lookup. */
-  if(typeof heightAt === 'function' && heightAt(c.x, c.y) > 1.5){
+  if(heightAt(c.x, c.y) > 1.5){
     const h0 = heightAt(c.x, c.y);
     const grade = Math.max(Math.abs(heightAt(c.x+1, c.y) - h0), Math.abs(heightAt(c.x, c.y+1) - h0));
     if(grade > 0.22) s *= 1 - Math.min(0.45, (grade - 0.22) * 0.5);
@@ -4383,7 +4380,7 @@ function regardTick(){
     if(c.undead && !c.lich && !c.lieutenant && !c.minded) continue;
     const v = c.regard || 0;
     /* DEVOTION: they stop needing to be paid, and they will not be moved */
-    if(v >= 60 && !c.devoted){ c.devoted = true; c.morale = 100;
+    if(v >= 60 && !c.devoted){ c.devoted = true;
       log(`${c.name} has thrown in with you completely. Whatever it is you are doing, they are doing it too.`, 'good'); }
     if(v < 45 && c.devoted){ c.devoted = false; }
     /* ---------- THE BOUND DO NOT WALK OUT ----------
@@ -5260,7 +5257,6 @@ function licenseCompany(town, against, marching){
     c.homeTown = town;
     c.merc = true;
     c.guildLicensed = true;      /* the oath travels with them — see hostile() */
-    c.licensedAgainst = against || null;
     if(marching){
       c.warF = ti; c.warT = ai;
       c.armyEnds = day + 10;
@@ -5711,7 +5707,7 @@ function seizeSuspect(t){
 function burnGround(c){
   const grounds = [];
   if(bastion && bastion.pyre) grounds.push(bastion.pyre);
-  if(typeof saltmere !== 'undefined' && saltmere && saltmere.pyre && !saltmere.town.sacked)
+  if(saltmere && saltmere.pyre && !saltmere.town.sacked)
     grounds.push(saltmere.pyre);
   if(!grounds.length) return {x: c.x, y: c.y};
   const home = c.homeTown || (c.jailedAt && c.jailedAt.town) || c;
@@ -5728,7 +5724,7 @@ function burnHeretic(c){
   kill(c, null);
   /* AND SAY WHICH GROUND, because "at the Bastion" was true when there was only one and is a
      wrong direction the moment there are two. */
-  const where = (typeof saltmere !== 'undefined' && saltmere && saltmere.pyre &&
+  const where = (saltmere && saltmere.pyre &&
                  dist(p2.x, p2.y, saltmere.pyre.x, saltmere.pyre.y) < 8)
     ? `${saltmere.town.name}, on the standing fire` : 'the Bastion gate';
   worldEvent('purge', p2.x, p2.y,
@@ -5972,7 +5968,6 @@ function bossSpot(minTown, minStart){
    Three branches of the golden age went looking for immortality. The Dark found lichdom —
    that is your road. These two took the others, and they are still paying for it. */
 const immortals = [];
-let demilich = null;                /* the one who went all the way through the door */
 /* ============================================================ THE REDOUBTS
    Some scholars saw it coming. They built bunkers, grew soldiers, forged weapons the
    like of which nobody has managed since — and it made no difference whatsoever.
@@ -6053,7 +6048,7 @@ function placeDeepRedoubt(){
 
   /* ---- FLOOR 0: the entry hall + two flanking cells ---- */
   /* outer shell of the whole ground floor */
-  for(let i=x0;i<=x1;i++){ wall(i, y0, 0); if(!(i===p.x && y1===y1)) wall(i, y1, 0); }
+  for(let i=x0;i<=x1;i++){ wall(i, y0, 0); if(i !== p.x) wall(i, y1, 0); }   /* the door gap in the bottom wall */
   for(let j=y0;j<=y1;j++){ wall(x0, j, 0); wall(x1, j, 0); }
   /* the entry door in the south wall */
   blocked.delete(bkey(p.x, y1, 0));
@@ -6096,7 +6091,7 @@ function placeDeepRedoubt(){
          a second one would be a duplicate, and this is not a thing you should find twice. */
       ...(redoubts.length===0?{sch_lance:1}:{})}}});
 
-  buildings.push({x:x0, y:y0, w:HW*2+1, h:HH*2+1, label:'DEEP REDOUBT', door:{x:p.x, y:y1}, redoubt:true, deep:true, redoubtRef:r});
+  buildings.push({x:x0, y:y0, w:HW*2+1, h:HH*2+1, label:'DEEP REDOUBT', door:{x:p.x, y:y1}, redoubt:true, deep:true});
   redoubts.push(r);
   worldEvent('redoubt', p.x, p.y, 'A great sealed complex from before the Fracture stands in the waste — three storeys deep, and every door still locked from the inside.');
   return r;
@@ -6161,7 +6156,6 @@ const caves = [];
    unchanged; only where it is put has changed. */
 function placeCave(h){
   if(!h) return null;
-  const hallR = h.r || 8;
   /* ---------- ON ITS HALL'S OWN STOREY ----------
      `UNDER_F` was right for as long as there was one storey under the world. A warren cut at
      -1 around a hall whose coordinates came off the Sump's lattice is chambers in the middle of
@@ -6183,7 +6177,7 @@ function placeCave(h){
      is born, before anything reads it. Nothing downstream sets it any more. */
   const cave = {id: caves.length + 1, x: mouth.x, y: mouth.y, mouth, depth, deep: true, f: CF,
                 menace: depth01(CF),
-                walls: [], rooms: [], doors: [], links: [], floors: 1, mtnId: 0};
+                walls: [], rooms: [], doors: [], links: [], floors: 1};
 
   /* ---------- AND THE ROCK HAS TO BE IN `baseBlocked` ----------
      `baseBlocked` is the world AS GENERATED and `restore` rebuilds `blocked` from it — but it
@@ -6916,7 +6910,7 @@ function spawnDemilich(){
     c.minded = true;
     c.big = 1.0;
     c.blood = 260; c.maxBlood = 260;
-    c.mana = 200; c.maxMana = 200;
+    c.mana = 200;
     c.guard = {x: px, y: py};
     c.hunger = 100;
     c.bindWeight = 0;
@@ -6927,7 +6921,6 @@ function spawnDemilich(){
                'The King would not finish. I did. Between us we have covered every mistake there is.'];
     chars.push(c);
     immortals.push(c);
-    demilich = c;
     worldEvent('immortal', c.x, c.y,
       'In one of the far ruins there is a skull that talks. It has not moved in living memory and it knows your name before you give it.');
   } finally { seed = pocket; }
@@ -7376,7 +7369,7 @@ let estate = null;
   const nx = 0, ny = 1;
   const gate = [{x: nx ? cx + nx * HW : cx, y: nx ? cy : cy + ny * HH}];
   estate = {x: cx, y: cy, hw: HW, hh: HH, town: t, walls: [], gate,
-            admitted: false, told: false, opened: false, graves: [],
+            admitted: false, deal: null, watched: false, opened: false, graves: [],
             invites: [], taken: 0, nextInvite: 6 + ri(0, 5),
             gx: cx - nx * (HW + 9), gy: cy - ny * (HH + 9)};   /* the orchard, out the back */
   const gk = new Set(gate.map(q => q.x + ',' + q.y));
@@ -7629,7 +7622,7 @@ function lanternFeed(){
   if(!takeItem('aether_cell')){ log('You have no aether cell to put in it.', 'bad'); return false; }
   L.fuel = LANTERN_CELL_DAYS;
   fallowend.dark = lanterns.filter(l => !l.fuel).length;
-  fallowend.town.rep = clamp((fallowend.town.rep || 0) + 6, -100, 100);
+  fallowend.town.rep = clamp((fallowend.town.rep || 0) + 6, -300, 100);
   log('The post takes the cell and comes up violet. Nobody in Fallowend asks how you knew where it went.', 'good');
   return true;
 }
@@ -8046,7 +8039,7 @@ function arenaTick(dt){
     arena.wins++;
     arena.best = Math.max(arena.best, PIT_CARDS.findIndex(c => c.key === b.key));
     cats += b.purse;
-    if(t) t.rep = clamp((t.rep || 0) + 4, -100, 100);
+    if(t) t.rep = clamp((t.rep || 0) + 4, -300, 100);
     deed('gold', b.purse / 400);
     log(`${b.name}: the pit is yours. The house pays ${b.purse}, and Ironscar has seen you do it.`, 'good');
   } else if(!oursUp && theirsUp){
@@ -8124,7 +8117,7 @@ for(let i=0;i<6;i++) spawnDrifter();
    seed happening to be clean is the only reason this was not reported long ago.
    Evicting once here is the fix rather than a special case in `spawnDrifter`, because it does
    not matter who put them there: at hour zero the yard is what it claims to be. */
-if(typeof estateEvict === 'function') estateEvict();
+estateEvict();
 /* dust elk: skittish herds worth hunting */
 (function spawnElk(){
   for(let h2=0; h2<6; h2++){
@@ -8407,10 +8400,8 @@ function log(msg, cls=''){
     logFade(d);
   }
   /* stamp with the in-world day and hour, keep a bounded history */
-  if(typeof day !== 'undefined'){
-    chronicle.push({d: day, h: hour, m: msg, c: cls});
-    if(chronicle.length > 500) chronicle.splice(0, chronicle.length - 500);
-  }
+  chronicle.push({d: day, h: hour, m: msg, c: cls});
+  if(chronicle.length > 500) chronicle.splice(0, chronicle.length - 500);
 }
 /* a refusal the player asked for by clicking something. It says so, and it sounds like it. */
 function refuse(msg){ log(msg, 'bad'); AU.deny(); }
@@ -8591,9 +8582,9 @@ const HOUR_SEC = 8;   /* real seconds per game hour at 1x */
 const AU = (() => {
   let ctx = null, master = null, sfx = null, amb = null;
   let noiseBuf = null, whiteBuf = null;
-  let windSrc = null, windFilt = null, windGain = null;
-  let gritSrc = null, gritFilt = null, gritGain = null;
-  let lapSrc = null, lapFilt = null, lapGain = null;
+  let windFilt = null, windGain = null;
+  let gritFilt = null, gritGain = null;
+  let lapGain = null;
   let nightOsc = null, nightGain = null;
   let moonOscA = null, moonOscB = null, moonGain = null;
   let riftOscA = null, riftOscB = null, riftGain = null, riftFilt = null;
@@ -8646,14 +8637,14 @@ const AU = (() => {
       whiteBuf = makeNoise(false);
       /* the wind never stops; only its throat opens and closes */
       const w = layer(noiseBuf, 'lowpass', 320);
-      windSrc = w.s; windFilt = w.f; windGain = w.g;
+      windFilt = w.f; windGain = w.g;
       /* grit rides on top of the gust — sand and dust actually striking things. This is
          most of what separates a desert from a quiet room. */
       const g2 = layer(whiteBuf, 'highpass', 1600);
-      gritSrc = g2.s; gritFilt = g2.f; gritGain = g2.g;
+      gritFilt = g2.f; gritGain = g2.g;
       /* and if there is water in shot, it is doing something */
       const l = layer(noiseBuf, 'bandpass', 480, 0.7);
-      lapSrc = l.s; lapFilt = l.f; lapGain = l.g;
+      lapGain = l.g;
       /* the night has a floor to it */
       nightOsc = ctx.createOscillator(); nightOsc.type = 'sine'; nightOsc.frequency.value = 47;
       nightGain = ctx.createGain(); nightGain.gain.value = 0;
@@ -9326,7 +9317,7 @@ function theStop(c, g, t, found){
   _stopOpen = true;
   const key = found[0], what = CONTRABAND[key];
   say(g, 'Open the pack.');
-  AU.open && AU.open();
+  AU.open();
   const odds = talkOdds(c, t, found);
   const bribe = Math.round((60 + CRIMES.contraband.bounty * 1.4) * (1 + Math.max(0, -(t.rep || 0)) * 0.01));
   const close = () => { $('modal').style.display = 'none'; modalOpen = false; _stopOpen = false; };
@@ -9368,7 +9359,7 @@ function theStop(c, g, t, found){
   {
     const sc = scareOdds(c, t, g);
     mk('LET THEM SEE WHAT YOU ARE', `${Math.round(sc * 100)}% — your bounty, what has been heard of you, and what is standing behind you`, () => {
-      t.rep = clamp((t.rep || 0) - 4, -100, 100);
+      t.rep = clamp((t.rep || 0) - 4, -300, 100);
       if(rnd() < sc){
         say(g, pick(['...go.', 'I did not stop you. Remember that.', 'Not for what they pay me.']));
         log(`${g.name}'s hand comes off the pack. ${c.name} walks on, and is watched the whole way.`, 'good');
@@ -9396,7 +9387,7 @@ function theStop(c, g, t, found){
        are" and inventing one to fire would be a no-op dressed as a mechanic — `fameDeed`
        returns early on an unknown kind and nothing happens. The town's own memory is the
        consequence, and that is a real one. */
-    t.rep = clamp((t.rep || 0) - 6, -100, 100);
+    t.rep = clamp((t.rep || 0) - 6, -300, 100);
   });
   else if(c.gift === 'divine') mk('[DIVINE] It is sanctified. Ask your own chapter.', `${Math.round(clamp(odds + 0.24, 0.05, 0.95) * 100)}% — the light is a hard thing to argue with`, () => {
     const p2 = clamp(odds + 0.24, 0.05, 0.95), ok = rnd() < p2;
@@ -9442,14 +9433,14 @@ function theStop(c, g, t, found){
     cats -= bribe;
     say(g, '...');
     log(`${bribe} gold changes hands and the pack is not opened any further.`, '');
-    t.rep = clamp((t.rep || 0) - 2, -100, 100);
+    t.rep = clamp((t.rep || 0) - 2, -300, 100);
     refreshTop();
   });
   mk('HAND IT OVER', 'lose it, and walk away clean', () => {
     const n = c.inv[key];
     delete c.inv[key];
     log(`${c.name} gives up ${n > 1 ? n + ' of ' + what : what}. ${g.name} takes it without a word.`, '');
-    t.rep = clamp((t.rep || 0) - 1, -100, 100);
+    t.rep = clamp((t.rep || 0) - 1, -300, 100);
     refreshInv(); refreshCharPanel();
   });
   mk('FIGHT', 'here, now, in their town', () => {
@@ -10273,7 +10264,7 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
       d.shoveT = d.shoveDur = 0.22 * clamp(ahf, 0.8, 1.6);
       d.shoveK = 0.30 * clamp(ahf, 0.8, 1.6);
       d.shoveDX = (d.x - a.x)/dd; d.shoveDY = (d.y - a.y)/dd;
-      if(typeof kickCam === 'function') kickCam(d.x, d.y, clamp(0.10 + dmg*0.006, 0, 0.42) * clamp(ahf, 0.7, 1.6));
+      kickCam(d.x, d.y, clamp(0.10 + dmg*0.006, 0, 0.42) * clamp(ahf, 0.7, 1.6));
     }
   }
   /* bosses shrug off NPC scraps — their fights are reserved for you */
@@ -10840,7 +10831,7 @@ function bodyTick(c, dh){
   /* wound healing: bandaged parts heal; beds heal everything, fast */
   let rate = 4 * (c.hunger>20 || c.undead ? 1 : 0.3);
   if(inBed) rate *= 8;
-  else if(nearShack(c) && !c.moveTarget && !c.target) rate *= 2;
+  else if(!c.moveTarget && !c.target && nearShack(c)) rate *= 2;   /* the building scan last: most bodies are moving or fighting */
   for(const k of PARTS){
     const p = c.parts[k];
     if(p.severed && !p.pros) continue;
@@ -11223,10 +11214,8 @@ function deconstruct(b){
     return;
   }
   /* unblock the footprint on every storey it could have touched */
-  for(let j = b.y - 1; j <= b.y + b.h + 1; j++) for(let i = b.x - 1; i <= b.x + b.w + 1; i++){
-    if(i < b.x || j < b.y || i >= b.x + b.w || j >= b.y + b.h) continue;
-    blocked.delete(bkey(i, j));
-    blocked.delete(bkey(i, j, 0));
+  for(let j = b.y; j < b.y + b.h; j++) for(let i = b.x; i < b.x + b.w; i++){
+    blocked.delete(bkey(i, j));      /* storey 0: bkey's default */
     decks.delete(bkey(i, j, 1));
   }
   /* a tower takes its stair with it */
@@ -11255,7 +11244,7 @@ function deconstruct(b){
 }
 function placeStructure(type, tx, ty, fl){
   const bt = BUILD_TYPES[type];
-  const b = {type, x:tx, y:ty, w:bt.w, h:bt.h, growth:0};
+  const b = {type, x:tx, y:ty, w:bt.w, h:bt.h};
   /* the storey the frame was staked on. Emplacements work theirs out from what is under them
      a few lines down; everything else is on the ground it was raised on, which is floor zero
      for all of them except the one thing allowed underground. */
@@ -11343,8 +11332,8 @@ function placeStructure(type, tx, ty, fl){
        same complaint written about it a week later. */
     beds.push({x:tx+1.5, y:ty+1.5, fee:0, user:null, town:null, home:true});
     beds.push({x:tx+2.5, y:ty+1.5, fee:0, user:null, town:null, home:true});
-    beds.push({x:tx+1.5, y:ty+2.5, fee:0, user:null, town:null, home:true, cot:true});
-    beds.push({x:tx+2.5, y:ty+2.5, fee:0, user:null, town:null, home:true, cot:true});
+    beds.push({x:tx+1.5, y:ty+2.5, fee:0, user:null, town:null, home:true});
+    beds.push({x:tx+2.5, y:ty+2.5, fee:0, user:null, town:null, home:true});
   }
   return b;
 }
@@ -11402,7 +11391,6 @@ function tryBuild(type, tx, ty, quiet){
      thing allowed to be staked out on ground the collision map calls solid. Anywhere else it
      wants clear dirt or an existing deck like everything else does. */
   const onWall = isEmpl(type) && pBuilds.some(o => o.type==='wall' && o.x===tx && o.y===ty);
-  const onDeck = isEmpl(type) && decks.has(bkey(tx, ty, 1));
   if(isEmpl(type)){
     const spec = EMPL[bt.empl];
     if(spec.unlock && !research.done[spec.unlock]){
@@ -11805,6 +11793,16 @@ const RECIPES = {
    ONE list, read by the job buttons, by the right-click menu and by shift+right-click, so
    none of the three can disagree with the simulation or with each other. */
 const NEEDS_A_MIND = ['research', 'craft', 'gunner'];
+/* The list above, and putting a body on a standing job, now each live in one place. Four
+   callers (the JOB button, the 2ND button, the job chord, and ctrl+right-click on a building)
+   had their own copies, and they had drifted: the building menu checked only STUDY, and only
+   against the risen, so a mindless body could be put on CRAFT from a workbench. */
+function canWork(u, jk){ return !NEEDS_A_MIND.includes(jk) || mindedDead(u); }
+function setJob(u, jk){
+  u.job = jk;
+  if(!jk){ u.gather = null; u.gatherT = 0; }
+  u.jobNodeT = 0;
+}
 /* which standing job tends which building, and which job works which kind of node. Both are
    read by the right-click menu AND by shift+right-click — see the mousedown handler — so the
    two ways of assigning a job cannot mean different things. */
@@ -12177,20 +12175,19 @@ const carriers = [];   /* everyone with a corpse in hand — see the haul loop a
    `charById` is that check, and it is exact because it holds EVERY body, not only the standing
    ones: it gains an entry per new body and loses none, so `size !== chars.length` the moment
    anybody leaves the roster — including the case where one leaves and another arrives in the
-   same step, which a bare length comparison would miss. `_gridFiled` deliberately is NOT the
-   guard: it counts only `ok` bodies, so a world with a hundred down would hide five departures
-   inside the gap. It is kept because the two of them together are what a harness can assert on. */
-let _gridFiled = 0;
+   same step, which a bare length comparison would miss. (A `_gridFiled` counter of filed `ok`
+   bodies used to sit beside it "for a harness to assert on"; no harness ever read it, so it is
+   gone.) */
 function gridFile(c, k){
   const a = charGrid.get(k);
   if(a) a.push(c); else charGrid.set(k, [c]);
-  c._gk = k; _gridFiled++;
+  c._gk = k;
 }
 function gridUnfile(c){
   const a = charGrid.get(c._gk);
   /* swap-pop: order inside a bucket means nothing to any reader */
   if(a){ const i = a.indexOf(c); if(i >= 0){ a[i] = a[a.length - 1]; a.pop(); } }
-  c._gk = -1; _gridFiled--;
+  c._gk = -1;
 }
 function gridCellOf(c){ return ((c.y / CELL) | 0) * GW + ((c.x / CELL) | 0); }
 /* which storeys are awake. Its own function because BOTH rebuilders need it and one of them is
@@ -12203,7 +12200,6 @@ function refreshWarmFloors(){
 function regridAll(){
   charGrid.clear();
   charById.clear();
-  _gridFiled = 0;
   /* ---------- AND A FULL REBUILD OBEYS THE FREEZE TOO ----------
      The first cut of this filed every `ok` body and left the frozen storeys in the grid until the
      next pass swept them out — one step of a load holding eleven hundred bodies nobody can reach.
@@ -12749,6 +12745,10 @@ function hostile(a, b){
 }
 function dropRep(t, n){
   if(!t) return;
+  /* -300 is the floor for a town's standing, and every other place that moves t.rep clamps to
+     it. Thirteen of them used to clamp to -100 instead, so on a town below -100 they pulled rep
+     back up to -100. That included penalties: declaring war on a town at -250 raised its
+     standing by 150. */
   t.rep = Math.max(-300, t.rep - n);
   if(t.rep < -50 && !t.warnedHostile){ t.warnedHostile = true; log(`${t.name} now treats you as an enemy.`, 'bad'); }
 }
@@ -13530,7 +13530,7 @@ function standDown(cdr, quiet){
   cdr.cmd = null;
   clearOrders(cdr);
   unshelve(cdr);
-  if(typeof assignPatrolPosts === 'function') assignPatrolPosts();
+  assignPatrolPosts();
   if(!quiet) log(`${cdr.name}'s band stands down.`, '');
 }
 /* the ring of ground an order covers, walked as a circuit rather than orbited: a marching
@@ -13925,14 +13925,13 @@ function baseHolds(){
 /* two on watch means one north and one south — not both in the same corner */
 function assignPatrolPosts(){
   const w = player().filter(c => c.job === 'patrol' && c.state !== 'dead');
-  /* THE INDICES WERE WRITTEN AND NEVER READ. `patrolIx`/`patrolN` have been assigned here
-     since the first version and nothing has ever looked at them, so every watchman picked an
-     independent random bearing and an independent direction of travel — which is why a watch
-     of six bunches instead of ringing anything. Hand each body its own arc of the circle and
-     send them all the same way round, so the spacing they start with is the spacing they
-     keep. */
+  /* Hand each body its own arc of the circle and send them all the same way round, so the
+     spacing they start with is the spacing they keep. Before this, `patrolIx`/`patrolN` were
+     assigned here and never read, so every watchman picked its own random bearing and
+     direction, and a watch of six bunched up instead of ringing anything. `patrolAng` is what
+     does the dealing now, and the two index fields (and a `patrolPost` that nothing read either)
+     have been removed. */
   w.forEach((c, i) => {
-    c.patrolIx = i; c.patrolN = w.length; c.patrolPost = null;
     c.patrolAng = (i / Math.max(1, w.length)) * Math.PI * 2;
     c.patrolDir = 1;
     c.patrolSpot = null; c.patrolT = 0; c.patrolHold = 0; c.path = null;
@@ -15924,10 +15923,13 @@ function physics(c, dt){
           let body = null, bd = 1e9;
           for(const b of corpses){
             if(b.bossKey) continue;                          /* lieutenants are chosen, not chores */
-            if(!raisableBody(b)) continue;                   /* it would walk there and fail, forever */
-            if(chars.some(o => o.carry === b)) continue;
+            /* the distance test first: it is one subtraction, and the two below it are a
+               body check and a full-roster scan. All three are pure, so the pick is the same. */
             const d2 = dist(b.x, b.y, c.x, c.y);
-            if(d2 < 14 && d2 < bd){ bd = d2; body = b; }
+            if(!(d2 < 14 && d2 < bd)) continue;
+            if(!raisableBody(b)) continue;                   /* it would walk there and fail, forever */
+            if(whoCarries(b)) continue;                      /* on a back OR on a Bone Mule's list */
+            bd = d2; body = b;
           }
           c.raiseBody = body;
         }
@@ -16030,7 +16032,7 @@ function physics(c, dt){
             n > 0 ? 'good' : '');
         c.carrBody = null; c.carrScanT = 0;
         xpGain(c, 'labor', 0.4);
-        AU.build && AU.build(c.x, c.y);
+        AU.build(c.x, c.y);
       }
       return;
     } else if(ej==='build'){
@@ -16174,17 +16176,17 @@ function runVats(){
   if(idle) log('A Flesh Vat runs dry — it wants greenfruit and cloth.', 'bad');
 }
 function harvestFlesh(){
-  let grown = 0, starved = 0;
+  let grown = 0;
   for(const b of pBuilds){
     const f = FLESH[b.type];
     if(!f) continue;
     if(b.off) continue;   /* shut down — it will not eat your flesh stores behind your back */
-    if(!b.tended){ starved++; continue; }   /* the house wants hands. CHARNEL job, or Ctrl+right-click it. */
+    if(!b.tended) continue;   /* the house wants hands. CHARNEL job, or Ctrl+right-click it. */
     b.tended = false;
     /* deeper rites quicken the growth in every house you keep */
     const want = f.n + (research.done.ossuary_rites && b.type==='charnel' ? 1 : 0);
     for(let i=0;i<want;i++){
-      if(!canAfford(f.cost)){ starved++; break; }
+      if(!canAfford(f.cost)) break;
       campSpend(f.cost);
       /* thrown clear of the house, in a row, where you can actually see them */
       const p = findOpenNear(b.x + 1.5 + ri(-2, 2), b.y + 5.5 + ri(0, 2), 5);
@@ -16231,7 +16233,7 @@ const RIFT_SEAL_COST = {vflesh:10, iron:6, remains:12};
    headline figure want. */
 function riftSealCost(r){
   const out = {};
-  const f = (typeof sisterArc === 'object' && sisterArc.taught) ? 0.4 : 1;
+  const f = sisterArc.taught ? 0.4 : 1;
   const w = r ? clamp(((r.r || 6) - 4) / 12, 0.25, 1) : 1;
   for(const k in RIFT_SEAL_COST) out[k] = Math.max(1, Math.round(RIFT_SEAL_COST[k] * f * w));
   return out;
@@ -16770,10 +16772,12 @@ function broodLimbsOff(b){
 }
 let _broodT = 0;
 function broodTick(dt){
+  /* the door first: with no door there is nothing to do, and broodAlive() is a full-roster
+     scan that used to run every step of every game to find that out (~1% of the step). */
+  const d = theDoor;
+  if(!d) return;
   const b = broodAlive();
   if(!b) return;
-  const d = theDoor;
-  if(!d){ return; }
   /* ---- IT DOES NOT LEAVE ---- */
   const away = dist(b.x, b.y, d.x, d.y);
   if(away > d.r + 4){
@@ -17221,7 +17225,7 @@ function tearRiteTick(c, dt){
       g.target = c;
     }
     log(`The tear answers: ${n} of them come through at the one holding it.`, 'bad');
-    AU.news && AU.news();
+    AU.news();
   }
   if(r.tearWork >= TEAR_WORK){
     log('The rite lands. No iron, no quickened flesh — just the hours and whoever stood in front of them.', 'good');
@@ -17500,7 +17504,7 @@ function glareOn(c){
     if((o.floor || 0) !== (c.floor || 0)) continue;
     if(dist(o.x, o.y, c.x, c.y) < DEEP_SHY_R) return o;
   }
-  const v = (typeof violetNear === 'function') ? violetNear(c, 0) : null;
+  const v = violetNear(c, 0);
   return v || null;
 }
 /* the vigil's own idea of what to do about you: hold at the edge of what you can see, back off
@@ -18209,7 +18213,7 @@ function spawnCairnBeast(force, atSite, quiet){
      `atSite` names one instead of taking whichever; `quiet` withholds the ordinary notice for
      a caller that is going to say something better. Both are for the Curse, and both leave the
      no-argument call — which is the one worldgen and cairnTick make — byte for byte as it was. */
-  const site = atSite || ((typeof corpseSites !== 'undefined' && corpseSites.length) ? pick(corpseSites) : null);
+  const site = atSite || (corpseSites.length ? pick(corpseSites) : null);
   const q = site ? findOpenNear(site.x + ri(-6, 6), site.y + ri(-6, 6), 8)
                  : findOpenNear(ri(60, W-60), ri(60, H-60), 10);
   /* NAMED FOR WHERE IT ROSE, once there is more than one — a log with three identical
@@ -18888,7 +18892,7 @@ function sixfoldTick(dt){
       c._stampT -= dt;
       if(c._stampT <= 0){
         c._stampT = 0;
-        AU.thud && AU.thud(c.x, c.y);
+        AU.thud(c.x, c.y);
         addSpecks(c.x, c.y, '#8a7a6a', 34);
         for(const o of charsNear(c.x, c.y, SIX_STAMP_R + 1)){
           if(o === c || o.state !== 'ok' || !hostile(c, o)) continue;
@@ -18959,7 +18963,6 @@ spawnWanderers();
    Once in a long while the moon comes up wrong, and everything on the other side
    of the world can see the door. One night. Then it passes, and you count the dead. */
 let bloodMoon = 0;        /* days remaining — only ever 0 or 1 */
-let bloodMoonWarned = false;
 /* ---------- AND A FLOOR UNDER THE GAP ----------
    "We need a cooldown for blood moon events too. Getting them several times in a row is rough."
 
@@ -19008,7 +19011,6 @@ function bloodMoonOdds(){
 function bloodMoonSet(){
   if(bloodMoon <= 0) return;
   bloodMoon = 0;
-  bloodMoonWarned = false;
   log('The moon is white again. Count the dead and bury what is left of them.', 'good');
   worldEvent('bloodmoon', W/2, H/2, 'The blood moon has passed. Every settlement on the road counted its losses at dawn.');
 }
@@ -19224,7 +19226,6 @@ function mawFeed(c, dt){
     /* it hauls the body along behind it */
     q.x = c.x + (rnd()-0.5)*0.2;
     q.y = c.y + 0.55;
-    if(q.state === 'down') q.dragT = 0;
     if(travel(c, lair.x, lair.y, dt, 1.2) || nearestTownDist(c.x, c.y) > 26){
       c.dragging = null;
     }
@@ -19336,7 +19337,7 @@ function destroyStructure(st){
     /* the alchemist's share of it */
     const ash = ri(2, 4);
     addItem('s_ash', ash);
-    if(typeof research === 'object') research.rp = (research.rp || 0) + 12;
+    research.rp = (research.rp || 0) + 12;
     log(`The shrine stone at ${t ? t.name : 'the waste'} is broken open. ${ash} measures of sanctified ash, and the ground goes quiet.`, 'good');
     if(t){
       /* they will rebuild, and until they do the town is workable */
@@ -19734,7 +19735,7 @@ function forceTick(c, dt){
   c._working = 0.5;
   F.t += dt * (1 + (c.stats.labor + c.stats.atk) * 0.012);
   c.noise = Math.max(c.noise || 0, 6);
-  if(rnd() < dt * 1.4) AU.hammer && AU.hammer(c.x, c.y);
+  if(rnd() < dt * 1.4) AU.hammer(c.x, c.y);
   if(rnd() < dt * 0.9) addSpecks(F.x + 0.5, F.y + 0.5, '#6a5a44', 3);
   if(F.t >= FORCE_SECS){
     dr.barred = false;
@@ -19927,7 +19928,7 @@ const WISP_WARD = 16;   /* tiles of dark it holds off — a warding lamp is 22, 
 function wispBurst(c){
   addSpecks(c.x, c.y, '#9fe8ff', 40);
   addSpecks(c.x, c.y, '#ffffff', 24);
-  AU.rite && AU.rite(c.x, c.y);
+  AU.rite(c.x, c.y);
   log(`${c.name} goes out — and it does not go out quietly.`, 'bad');
   /* SLICE IT. `charsNear` hands back `_nearOut`, one module-level scratch array reused by
      every caller — and `applyDamage` below calls it again, which CLEARS the list this loop is
@@ -20044,7 +20045,7 @@ function carrionFodder(b){
   if(isGreatBody(b) && b.fieldDone && !inBoneyard(b)) return false;
   if(b.bossKey || b.vip || b.phyl) return false;              /* names, not material */
   if(b.faction === 'town' || b.homeTown) return false;        /* that is a theft, not a chore */
-  if(chars.some(o => o.carry === b || o.raiseBody === b)) return false;   /* already spoken for */
+  if(chars.some(o => o.carry === b || (o.carryList && o.carryList.includes(b)) || o.raiseBody === b)) return false;   /* already spoken for — a Bone Mule's load included */
   /* your own fallen are not stock. A grown cadaver was never a person, and a risen thing put
      down a second time is already yours to render. */
   if(b.faction === 'player' && !b.grown && !b.undead) return false;
@@ -20356,6 +20357,15 @@ function upkeepDue(){
 function hostUpkeep(){
   const due = upkeepDue();
   if(due <= 0) return;
+  /* The wagon pays first, as before. If it is short, whole remains are moved into it from the
+     bins and packs, because a Reliquary is where a necromancer keeps remains and this function
+     never looked there: a body came apart while forty remains sat in storage. campTake counts
+     anything it takes from the wagon itself, so adding the total back only moves the
+     bins-and-packs share. */
+  if((stash.remains || 0) < due){
+    const got = campTake('remains', Math.ceil(due - (stash.remains || 0)));
+    if(got > 0) stash.remains = (stash.remains || 0) + got;
+  }
   const have = stash.remains || 0;
   if(have >= due){
     stash.remains = have - due;
@@ -20424,8 +20434,11 @@ function refreshBindStrain(){
   }
 }
 function maxMana(c){
+  /* runs for every body every step (physics), and rawMaxMana walks all six gear slots, so it
+     is read once rather than twice */
   const lock = Math.min(0.92, concLock(c) + bindStrain(c));
-  return Math.max(0, rawMaxMana(c) - lock * rawMaxMana(c));
+  const raw = rawMaxMana(c);
+  return Math.max(0, raw - lock * raw);
 }
 function isConcentrating(c, key){ return !!c.concentrating && (!key || c.concentrating.key === key); }
 function concExclusive(c){ return !!(c.concentrating && c.concentrating.exclusive); }
@@ -20445,7 +20458,7 @@ function endConcentration(c, quiet){
   if(!c.concentrating) return;
   const key = c.concentrating.key;
   c.concentrating = null;
-  if(typeof onConcentrationEnd === 'function') onConcentrationEnd(c, key);
+  onConcentrationEnd(c, key);
   if(!quiet){ const sp = SPELLS[key]; log(`${c.name} lets go of ${sp ? sp.label : key}.`, ''); }
 }
 /* the maintenance tick: exclusive concentration breaks if the caster is downed, staggered,
@@ -20609,6 +20622,15 @@ function spellsFor(c){
 let castMode = null; /* {caster, spell} */
 /* (risenN hoisted above worldgen — roaming necromancers count against it too) */
 let muleN = 0;
+/* a pack mule of yours, as the bar sells one and the merchant starts with one: carries, will
+   not fight, bolts when hit. One maker, because the two copies were one edit from differing. */
+function makeMule(x, y){
+  const m = makeChar('Mule ' + (++muleN), 'player', x, y, {atk:2, def:4, tough:14, ath:5, labor:20});
+  m.beast = true; m.mule = true; m.fleeOnHit = true;
+  m.blood = 120; m.maxBlood = 120;
+  chars.push(m);
+  return m;
+}
 const AGE_YEAR_DAYS = 7;   /* a year passes in a week. Lives here are short and everyone knows it. */
 /* ---------- AND NINE MONTHS OF IT ----------
    Twelve days was written without the calendar in front of it: a year here is SEVEN days, so
@@ -21711,7 +21733,6 @@ function resolveCastAt(c, key, wx, wy){
     if(!body){ log('No corpse there.', 'bad'); return; }
     castRaise(c, body);
   } else if(key==='revive'){
-    const now = day + hour/24;
     const body2 = corpses.find(o => o.faction==='player' && !o.undead && !o.beast && bodyHit(o, wx, wy, 0.9));
     if(!body2){ log('No companion lies there.', 'bad'); return; }
     /* ---------- THE BODY DECIDES, NOT THE CLOCK ----------
@@ -21815,7 +21836,7 @@ function disintegrate(nec, u){
   if(whole / total > 0.6 && rnd() < 0.5){ addItem('vflesh', 1); got.push('Quickened Flesh'); }
   addSpecks(u.x, u.y - 0.4, '#8a6ab5', 22);
   /* it does not leave a corpse — there is nothing left to raise twice */
-  u.state = 'dead'; u.noCorpse = true;
+  u.state = 'dead';
   const ci = corpses.indexOf(u); if(ci >= 0) corpses.splice(ci, 1);
   const ix = chars.indexOf(u); if(ix >= 0) chars.splice(ix, 1);
   const si = selected.indexOf(u); if(si >= 0) selected.splice(si, 1);
@@ -22204,7 +22225,10 @@ function craftUndead(kind, caster, circle, shape){
   const extra = shape ? shapeCost(shape, caster) : {};
   const bill = {...ut.cost};
   for(const k in extra) bill[k] = (bill[k] || 0) + extra[k];
-  if(!Object.keys(bill).every(k => (stash[k]||0) >= bill[k])){ refuse('Missing materials.'); return false; }
+  /* checked against the same pool it is paid from (bins, wagon, packs). It used to check the
+     wagon alone, so remains kept in a Reliquary got "Missing materials." while campTake below
+     would have found them. */
+  if(!canAfford(bill)){ refuse('Missing materials.'); return false; }
   for(const k of Object.keys(bill)) campTake(k, bill[k]);
   const m = caster.stats.magic * (research.done.necromancy ? 1.5 : 1);
   const p = findOpenNear(circle.x+1, circle.y+1, 2.5);
@@ -22673,7 +22697,7 @@ const IMMORTAL_LINES = {
         done:'She takes the flesh in both hands. For one moment something moves behind her face. ' +
              '"Ah," she says. "So that is what it was." Then it is gone, and she looks at her hands as though they belong to somebody else.',
         give: () => { addItem('tome', 2); cats += 800; },
-        giveTxt:'2 Codices, 800 gold' },
+        giveTxt:'2 Weathered Tomes, 800 gold' },
       { kind:'visit', at:'corpse', also:{sunder:1},
         ask:'There is ground out in the deep waste where something died during the Fracture and has not finished. ' +
             'Nine generations and it is STILL DYING. Go and stand in it. Bring me back a piece. ' +
@@ -22711,7 +22735,7 @@ const IMMORTAL_LINES = {
              'She opens them and looks almost amused. "Well. You were here. That is nearer than I have been in ninety years." ' +
              'She tells you how it was done. THE UNCLOUDING is yours to study.',
         give: () => { addItem('tome', 3); addItem('formula_p', 1); cats += 3000; },
-        giveTxt:'3 Codices, a Preserved Formula, 3000 gold — and The Unclouding' },
+        giveTxt:'3 Weathered Tomes, a Preserved Formula, 3000 gold — and The Unclouding' },
     ],
   },
   sigil: {
@@ -22805,7 +22829,7 @@ const IMMORTAL_LINES = {
              'Nothing in the room moves for a while. "Nobody will quote you a price again. They do not haggle ' +
              'with what I am. They run, or they kneel, and neither one of those is a number you can pay."',
         give: () => { addItem('tome', 1); addItem('formula_w', 2); cats += 1400; },
-        giveTxt:'a Codex, 2 Worn Formulae, 1400 gold' },
+        giveTxt:'a Weathered Tome, 2 Worn Formulae, 1400 gold' },
       { kind:'show', need:{crown:1},
         ask:'There is a crown in a ruin on a king who would not finish. Take it. ' +
             'Read the inner band before you bring it to me, and do not tell me what it says — ' +
@@ -22825,7 +22849,7 @@ const IMMORTAL_LINES = {
              '"Well. You will have sixty of them before the end, and one mouth to answer them all with. ' +
              'I am not warning you. I am telling you what the work is."',
         give: () => { addItem('tome', 2); addItem('formula_p', 1); cats += 2600; },
-        giveTxt:'2 Codices, a Preserved Formula, 2600 gold' },
+        giveTxt:'2 Weathered Tomes, a Preserved Formula, 2600 gold' },
       { kind:'fetch', need:{},
         ask:'Ask me anything. I have had four hundred years and no mouth to spend them on. ' +
             'Then decide in front of me — I will not have you do it alone in a cellar somewhere ' +
@@ -23743,7 +23767,7 @@ let selected = [];
 let camX = startTown.x, camY = startTown.y;
 let buildMode = null, mouseTX = 0, mouseTY = 0;
 let buildAnchor = null;   /* first corner of a wall run, waiting on the second click */
-let spawnT = 20, hourAcc = 0, necroT = 0, bastionWarned = false, autosaveWarned = false;
+let spawnT = 20, necroT = 0, bastionWarned = false, autosaveWarned = false;
 let started = false;
 
 let wldT = 0;
@@ -23782,8 +23806,8 @@ function applyInputMode(){
   TOUCH = opts.input === 'touch' ? true : opts.input === 'mouse' ? false : coarsePointer();
   document.body.classList.toggle('touch', TOUCH);
   stripKeyHints();
-  if(typeof applyStashFold === 'function'){ applyStashFold(); if(started) refreshInv(); }
-  if(TOUCH !== was && typeof log === 'function' && started)
+  applyStashFold(); if(started) refreshInv();
+  if(TOUCH !== was && started)
     log(TOUCH ? 'Touch controls on. Tap to select, tap again to order, hold for the menu.'
               : 'Mouse and keyboard controls on.', '');
   /* the first time a touch device is seen, and only then, take the quality dials down. It is
@@ -23794,11 +23818,14 @@ function applyInputMode(){
     if(opts.shadows === 'high') opts.shadows = 'low';
   }
 }
+/* pixel ratio: high-DPI screens quietly quadruple the fragments — the cap is free smoothness.
+   One function, because fit3d sets the ratio too, on every resize and every turn of the phone,
+   and it used to hard-code 2 — which undid the cap (and the 1.0 a touch device is given by
+   default) the first time the window changed shape. */
+function dprCap(){ return Math.min(devicePixelRatio, opts.dpr === '1.0' ? 1.0 : opts.dpr === '1.5' ? 1.5 : 2); }
 function applyOpts(){
   applyInputMode();
-  /* pixel ratio: high-DPI screens quietly quadruple the fragments — the cap is free smoothness */
-  const cap = opts.dpr === '1.0' ? 1.0 : opts.dpr === '1.5' ? 1.5 : 2;
-  renderer.setPixelRatio(Math.min(devicePixelRatio, cap));
+  renderer.setPixelRatio(dprCap());
   renderer.setSize(viewW(), viewH());
   /* shadows: the single most expensive light in the scene */
   renderer.shadowMap.enabled = opts.shadows !== 'off';
@@ -23842,7 +23869,6 @@ function update(dt){
   if(wtick) wldT = 0;
   if(wtick) orchardTick();    /* and the ground at Greenrest is felt by whoever can feel it */
   stonewakeTick(dt);          /* and something is still cutting the halls it was set to cut */
-  hourAcc += dt / HOUR_SEC;
   const dh = dt / HOUR_SEC;
   hour += dh;
   torchTick(dh);           /* and whatever is burning underground burns down by that much */
@@ -23985,9 +24011,9 @@ function update(dt){
       drew += storeItem('water', WELL_DRAW, b);
     }
     if(drew) log(`The wells draw ${drew} water.`, '');
-    let farmYielded = 0, farmsIdle = 0, farmsDry = 0;
+    let farmYielded = 0, farmsDry = 0;
     for(const b of pBuilds) if(b.type==='farm' && !b.off){
-      if(!b.tended){ farmsIdle++; continue; }   /* untended earth grows weeds */
+      if(!b.tended) continue;   /* untended earth grows weeds */
       const tender = player().filter(c=>c.job==='farm' && c.state==='ok')
         .sort((a,b2)=>b2.stats.farming - a.stats.farming)[0];
       /* ---------- AND WATER IS NOT A BONUS, IT IS MOST OF THE CROP ----------
@@ -24017,7 +24043,6 @@ function update(dt){
       /* The Bastion answers what you are actually fielding. A host of thirty used to draw
          the same two patrols as a host of four; now the riders keep coming in proportion,
          and the wrath that summons an Inquest builds faster the larger you get. */
-      const deadArmy = chars.filter(c => c.faction==='player' && c.undead && c.state!=='dead').length;
       const patrolCap = 2 + Math.floor(Math.max(0, hostSize - 5) / 5);
       if(menaceFlag && siegeClear() && purgePatrolCount() < patrolCap && rnd() < clamp(0.45 + hostSize*0.012, 0.45, 0.85)){
         siegeSent('patrol'); spawnPurge(false);
@@ -24567,8 +24592,7 @@ function update(dt){
         const route = pick(tradeRoutes);
         const wp = pick(route.wps);
         squadN++;
-        const asq = {id: squadN, anchor:{x:wp.x, y:wp.y}, kind:'camp', lair:{x:wp.x, y:wp.y, r:7},
-          routeTxt: `${towns[route.aI].name} and ${towns[route.bI].name}`};
+        const asq = {id: squadN, anchor:{x:wp.x, y:wp.y}, kind:'camp', lair:{x:wp.x, y:wp.y, r:7}};
         const party = chars.filter(o => o.campId === camp.id && o.state === 'ok').slice(0, ri(3,4));
         for(const m of party){
           m.squad = asq; m.ambushEnds = day + 2;
@@ -24723,12 +24747,6 @@ function update(dt){
         'The dust stopped falling for eleven seconds. Everyone noticed. Nobody said anything.',
       ]));
     }
-    if(rnd() < 0.12){ const hm = towns.find(t => t.def.undeadFriendly);
-      if(hm && corpses.filter(b=>dist(b.x,b.y,hm.x,hm.y)<14).length < 4){
-        const p = findOpenNear(hm.x+ri(-8,8), hm.y+ri(-8,8), 5);
-        const b = makeChar('Pauper','town',p.x,p.y,{atk:ri(4,9),def:ri(4,8),tough:ri(4,8)});
-        b.state='dead'; b.homeTown=hm; b.deadAt = day + hour/24; corpses.push(b);
-      } }
     if(rnd() < 0.008){
       const t = pick(towns.filter(t=>!t.sacked && !t.uprising && !t.def.undeadFriendly));
       if(t){
@@ -25350,11 +25368,14 @@ function update(dt){
     if(!hm) continue;
     let body = null, bd = 1e9;
     for(const b of corpses){
-      if(chars.some(o => o.carry === b)) continue;
-      if(!raisableBody(b)) continue;                     /* same walk-and-fail loop as the raise job */
+      /* cheapest test first. This scan used to walk the whole roster for EVERY corpse before
+         asking whether the corpse was even in this keeper's yard. All four tests are pure. */
       if(dist(b.x, b.y, hm.x, hm.y) >= 14) continue;
       const d2 = dist(b.x, b.y, c.x, c.y);
-      if(d2 < bd){ bd = d2; body = b; }
+      if(!(d2 < bd)) continue;
+      if(!raisableBody(b)) continue;                     /* same walk-and-fail loop as the raise job */
+      if(whoCarries(b)) continue;                        /* on a back OR on a Bone Mule's list */
+      bd = d2; body = b;
     }
     /* THE CLAIM, WHICH IS WHAT THE WALK READS. A scan that only sets a `moveTarget` is making
        a suggestion, and a posted body's leash outvotes a suggestion every tick — see `ai`. */
@@ -25842,7 +25863,7 @@ function tickBubbles(rdt){
 }
 function fit3d(){
   renderer.setSize(viewW(), viewH());
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setPixelRatio(dprCap());
   camera.aspect = viewW()/viewH();
   camera.updateProjectionMatrix();
   /* without this the canvas is upscaled by the browser and glyphs land on subpixel
@@ -26154,7 +26175,7 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
     const cx = Math.round(reg.cx), cy = Math.round(reg.cy);
     const clearTown = !towns.some(t => dist(t.x, t.y, cx, cy) < r * 1.4 + 20);
     const clearStart = !startTown || dist(startTown.x, startTown.y, cx, cy) > r * 1.4 + 24;
-    const clearBastion = (typeof bastion === 'undefined' || !bastion) || dist(bastion.x, bastion.y, cx, cy) > r * 1.4 + 18;
+    const clearBastion = !bastion || dist(bastion.x, bastion.y, cx, cy) > r * 1.4 + 18;
     if(!clearTown || !clearStart || !clearBastion) continue;
     const peak = 5.5 + Math.min(9, r * 0.5) + rnd() * 3;
     mountains.push({x: cx, y: cy, r, peak});
@@ -26871,7 +26892,6 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
     for(let c = [tx, ty]; c; c = seen.get(c[1] * W + c[0])) path.push(c);
     return path;
   };
-  let routed = 0, straight = 0;
   for(const cv of caves){
     const CF = cv.f === undefined ? UNDER : cv.f;
     for(const [ax, ay, bx, by, ux, uy] of (cv.links || [])){
@@ -26886,7 +26906,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
         U.put(nx, ny, CF); sx = nx; sy = ny;
       }
       const path = route(sx, sy, ax, ay, CF);
-      if(path){ for(const [px, py] of path) U.put(px, py, CF); routed++; }
+      if(path){ for(const [px, py] of path) U.put(px, py, CF); }
       else {
         /* nothing legal reaches the hall — carve it straight and let the wall win at the end.
            `warrens.js` then reports it as a chamber you cannot get INTO, loudly, which is the
@@ -26894,14 +26914,12 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
         let px = sx, py = sy;
         while(px !== ax){ px += Math.sign(ax - px); U.put(px, py, CF); }
         while(py !== ay){ py += Math.sign(ay - py); U.put(px, py, CF); }
-        straight++;
       }
     }
   }
   /* AND NOW THE RINGS GO UP, once, over everything that has been cut */
   for(const k of ringK){ blocked.add(k); baseBlocked.add(k); }
   for(const cv of caves) for(const d of cv.doors) setDoor(d, false);
-  U.warrenRouted = routed; U.warrenStraight = straight;
   /* ---------- AND THE NETWORK IS STILL ONE PLACE AFTERWARDS ----------
      A chamber's wall ring does not know what it was built across. Cutting warrens into the halls
      walled one hall in eighty-one off from the rest of the lattice — `under.js` says "and you can
@@ -27083,7 +27101,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
        is depth first and distance only to break the tie between the ones down there. It falls
        back gracefully — if nothing blind is standing on the Sump the deepest one anywhere gets
        it, which is what the sort says without needing a branch to say it. */
-    const blind = (typeof deepFolk !== 'undefined' ? deepFolk : [])
+    const blind = deepFolk
       .filter(c => c.deepKin === 'unblind' && c.state !== 'dead')
       .sort((a, b) => depth01(b.floor) - depth01(a.floor) ||
                       dist(b.x, b.y, t0.x, t0.y) - dist(a.x, a.y, t0.x, t0.y));
@@ -27097,7 +27115,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
        So the deepest one is MOVED rather than merely preferred. No new spawn, no extra die —
        the body that was going to hold it walks down to a hall on the bottom floor, which is
        where the design said it was all along. */
-    if(blind[0] && typeof undercroft !== 'undefined' && undercroft.halls){
+    if(blind[0] && undercroft.halls){
       const floors = undercroft.halls.map(h => (h.f ?? -1));
       const bottom = floors.length ? Math.min(...floors) : (blind[0].floor || -1);
       if((blind[0].floor || 0) > bottom){
@@ -27136,7 +27154,8 @@ function heightAt(wx, wy){
 }
 
 /* ---------- ground & water ---------- */
-for(let i=0; i<HV.length; i++) if(HV[i] > _terrMaxY) _terrMaxY = HV[i];
+/* (_terrMaxY is taken at the end of raiseMountains, the last thing that writes HV; a second
+   1.4M-vertex pass here found the same number) */
 {
   /* ---- the land, in pieces ----
      One 720x720 plane is 1,036,800 triangles in a single object, and a single object is
@@ -27514,11 +27533,6 @@ scene.add(water);
 
 /* ---------- shared geometry / materials ---------- */
 const BOXG = new THREE.BoxGeometry(1,1,1);
-/* Darken or lighten a hex colour. There is a `shade2` doing this inside the named-origin
-   branch of the character builder, but it is declared in that block and is not in scope
-   anywhere else in the function — reaching for it from the lich body threw during the mesh
-   build, and a throw in there does not reach the console; the body simply never appears. */
-function shadeHex(hex, k){ return '#' + new THREE.Color(hex).multiplyScalar(k).getHexString(); }
 /* '#rrggbb' with an alpha on it, for the 2D overlay — `new THREE.Color` per particle per frame
    is a parse and an allocation in the hottest draw loop there is, so this is arithmetic. */
 const _hexACache = new Map();
@@ -27781,99 +27795,6 @@ const WEPFIT = {
     grip: {x:-0.118, y:-0.14, z:-0.03}},
 };
 const D2R = Math.PI/180;
-/* ---------- THE LICH'S HEAD, DESIGNED RATHER THAN COPIED ----------
-   FOUR ATTEMPTS AT REWORKING THE BAKE FAILED AND THE REASON WAS THE PREMISE. `LICHP.hood` is a
-   skull in a gold cowl, and every pass at rebuilding it in boxes produced a worse skull in a
-   worse cowl — because a cowl is cloth and a carved skull is carved, and boxes are neither. A
-   template you cannot execute is not a template. This starts from the fiction instead.
-
-   WHAT THE FICTION SAYS. Lichdom is the Last Rite, the Dark road, and it costs a life given
-   whole. It is "transference favouring the ETERNAL VIGOUR OF BONE over decaying metal" — the
-   Sigil Rite takes the metal vessel, this one refuses it. `ascendLich` logs "the flesh is gone;
-   the will endures". And the Scholars ask a lich, "Do you still dream?"
-
-   SO: BONE IS NOT A REMNANT HERE, IT IS THE LIVING PART. That is the whole design. This head
-   has not decayed into a skull — it has kept GROWING, the way the rite promised it would. The
-   cranium has ossified up and back into a crown of bone spurs, uneven, some longer than others,
-   because nothing was shaping it.
-
-   AND THERE IS NO JAW AND NO TEETH. The flesh is gone and nothing replaced it: the snout tapers
-   forward and simply ends, because there is nothing left to chew with. What it keeps is TWO
-   ORBITS, cut deep under an overhanging shelf, with a violet spark burning in each. One wide
-   cavity and a single light was tried first and read as a lamp in a box — two is what gives a
-   skull a FRONT, and a front is what tells you which way a thing is facing across a field. The
-   violet is the lich branch's own `soul`, the colour its phylactery and its risen already use,
-   rather than a new one: the light is the will, and the will is what the rite keeps.
-
-   ONE PIECE OF METAL, and it is a collar rather than a crown: a thin tarnished band at the base
-   where the tether binds. The road that refused metal wears exactly as much of it as it must.
-
-   Reads at thirty tiles as a tall uneven crown of spurs over one violet point, which is nothing
-   else in the game. Sized to sit where `LICHFIT.hood` put the bake so the robe's collar still
-   closes under it. */
-const LV_BONE = '#d6d2c4', LV_BONE_DK = '#a29e90', LV_BONE_SH = '#6f6d60', LV_HOLLOW = '#0e0c12';
-const LV_TORC = '#6d5418', LV_TORC_DK = '#463612';
-const LICH_HOOD = [
-  /* ---- the skull: narrow, tall, tapering forward and DOWN. Not a human skull — the proportion
-          is the first thing that says this stopped being a person's head ---- */
-  {w:0.172,h:0.160,d:0.212, y: 0.306,z:-0.014, col:LV_BONE},          /* the braincase */
-  {w:0.146,h:0.054,d:0.180, y: 0.398,z:-0.026, col:LV_BONE_DK},       /* its crown plate */
-  {w:0.100,h:0.030,d:0.128, y: 0.430,z:-0.040, col:LV_BONE},          /* and the ridge the spurs rise off */
-  {w:0.158,h:0.132,d:0.050, y: 0.300,z:-0.126, col:LV_BONE_SH},       /* the back of it */
-  {w:0.036,h:0.124,d:0.168, x: 0.086,y: 0.294,z:-0.020, col:LV_BONE_SH},  /* temples, hollowed */
-  {w:0.036,h:0.124,d:0.168, x:-0.086,y: 0.294,z:-0.020, col:LV_BONE_SH},
-  {w:0.060,h:0.040,d:0.150, x: 0.062,y: 0.372,z:-0.026, col:LV_BONE_DK},  /* plates over them */
-  {w:0.060,h:0.040,d:0.150, x:-0.062,y: 0.372,z:-0.026, col:LV_BONE_DK},
-  /* the face narrows forward: two angled cheek planes rather than a flat front */
-  {w:0.040,h:0.170,d:0.126, x: 0.090,y: 0.262,z: 0.062, col:LV_BONE, rz:-0.26},
-  {w:0.040,h:0.170,d:0.126, x:-0.090,y: 0.262,z: 0.062, col:LV_BONE, rz: 0.26},
-  {w:0.148,h:0.040,d:0.062, y: 0.352,z: 0.082, col:LV_BONE},          /* the shelf over the hollow */
-  {w:0.150,h:0.018,d:0.028, y: 0.372,z: 0.104, col:LV_BONE_DK},
-  /* ---- TWO ORBITS, CUT DEEP. The first pass made one wide cavity and a single spark, which
-          read as a lamp in a box rather than as a face looking at you. Two is what the eye
-          wants: it gives the skull a FRONT, and a front is what tells you which way a thing
-          is facing from thirty tiles up. Set well apart, with a bone ridge between them and
-          the brow shelf overhanging both. ---- */
-  {w:0.078,h:0.104,d:0.066, x: 0.058,y: 0.266,z: 0.084, col:LV_HOLLOW},
-  {w:0.078,h:0.104,d:0.066, x:-0.058,y: 0.266,z: 0.084, col:LV_HOLLOW},
-  {w:0.034,h:0.108,d:0.058, y: 0.266,z: 0.094, col:LV_BONE},          /* the ridge between them */
-  {w:0.024,h:0.108,d:0.054, x: 0.104,y: 0.266,z: 0.086, col:LV_BONE_DK},  /* outer rims */
-  {w:0.024,h:0.108,d:0.054, x:-0.104,y: 0.266,z: 0.086, col:LV_BONE_DK},
-  {w:0.128,h:0.024,d:0.040, y: 0.326,z: 0.100, col:LV_BONE_SH},       /* shadow line under the shelf */
-  {w:0.034,h:0.058,d:0.044, y: 0.198,z: 0.100, col:LV_HOLLOW},        /* the nasal gap, below them */
-  /* ---- the snout: it tapers forward and simply ENDS. No jaw; there is nothing to chew with ---- */
-  {w:0.100,h:0.048,d:0.110, y: 0.164,z: 0.100, col:LV_BONE},
-  {w:0.074,h:0.040,d:0.088, y: 0.160,z: 0.150, col:LV_BONE_DK},
-  {w:0.046,h:0.026,d:0.062, y: 0.144,z: 0.194, col:LV_BONE_SH},
-  /* ---- THE CROWN OF GROWN BONE. Eleven spurs, and they go AROUND rather than back: the first
-          pass leaned them all one way and made a mohawk. Lengths are uneven on purpose —
-          nothing was shaping this. ---- */
-  {w:0.034,h:0.180,d:0.038, y: 0.492,z:-0.086, col:LV_BONE, rx:-0.46},
-  {w:0.022,h:0.120,d:0.026, y: 0.606,z:-0.166, col:LV_BONE_DK, rx:-0.58},
-  {w:0.032,h:0.130,d:0.036, x: 0.066,y: 0.462,z:-0.070, col:LV_BONE, rx:-0.36, rz:-0.40},
-  {w:0.020,h:0.090,d:0.024, x: 0.116,y: 0.546,z:-0.116, col:LV_BONE_DK, rx:-0.44, rz:-0.52},
-  {w:0.032,h:0.156,d:0.036, x:-0.066,y: 0.474,z:-0.070, col:LV_BONE, rx:-0.36, rz: 0.40},
-  {w:0.020,h:0.118,d:0.024, x:-0.124,y: 0.578,z:-0.124, col:LV_BONE_DK, rx:-0.44, rz: 0.56},
-  /* out to the sides, nearly horizontal — this is what stops it being a fan */
-  {w:0.030,h:0.150,d:0.034, x: 0.126,y: 0.410,z:-0.010, col:LV_BONE, rz:-0.92},
-  {w:0.030,h:0.126,d:0.034, x:-0.130,y: 0.398,z:-0.010, col:LV_BONE, rz: 0.92},
-  {w:0.020,h:0.094,d:0.024, x: 0.196,y: 0.446,z:-0.026, col:LV_BONE_DK, rz:-1.02},
-  {w:0.020,h:0.078,d:0.024, x:-0.194,y: 0.430,z:-0.026, col:LV_BONE_DK, rz: 1.02},
-  /* and two forward over the shelf, which is the bit that makes it a crown and not a crest */
-  {w:0.026,h:0.120,d:0.030, x: 0.074,y: 0.446,z: 0.062, col:LV_BONE, rx: 0.34, rz:-0.46},
-  {w:0.026,h:0.100,d:0.030, x:-0.078,y: 0.438,z: 0.058, col:LV_BONE, rx: 0.34, rz: 0.46},
-  {w:0.020,h:0.072,d:0.024, x: 0.036,y: 0.462,z: 0.010, col:LV_BONE_SH, rx:-0.24, rz:-0.18},
-  {w:0.020,h:0.058,d:0.024, x:-0.040,y: 0.452,z: 0.014, col:LV_BONE_SH, rx:-0.24, rz: 0.18},
-  /* ---- the torc: the one piece of metal, and it is a collar ---- */
-  {w:0.196,h:0.028,d:0.196, y: 0.158,z:-0.020, col:LV_TORC},
-  {w:0.206,h:0.012,d:0.206, y: 0.140,z:-0.020, col:LV_TORC_DK},
-  {w:0.036,h:0.036,d:0.022, y: 0.158,z: 0.084, col:LV_TORC_DK},       /* its clasp, at the front */
-];
-let _lichHoodGeo = null;
-function lichHoodGeo(){
-  if(!_lichHoodGeo){ _lichHoodGeo = mergeBoxes(LICH_HOOD); _sharedRes.add(_lichHoodGeo); }
-  return _lichHoodGeo;
-}
 /* ---------- LYONART'S ASCENDED HEAD, BUILT — AND NOT USED ----------
    KEPT AS AN ALTERNATIVE, NOT AS A REPLACEMENT. Behind `NATIVE_LYONLICH`, which is off: the
    bake reads better than this does and the judgement was made by looking at both. What boxes
@@ -28114,7 +28035,7 @@ function vscaleOf(c){
       cg = geo.clone();
       cg.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 6, 0), CH_R);
       _chunkGeo.set(geo, cg);
-      if(typeof _sharedRes !== 'undefined') _sharedRes.add(cg);
+      _sharedRes.add(cg);
     }
     return cg;
   };
@@ -28185,11 +28106,10 @@ function vscaleOf(c){
     addInst(list, new THREE.DodecahedronGeometry(L.baseSz, 0), L.base, 0.22, veinScale, true);
     addInst(list, new THREE.OctahedronGeometry(L.crustSz, 0), L.crust, 0.44, veinScale, true);
   }
-  for(const k of nodeInstances.keys()){
-    const [nx, ny] = k.split(',').map(Number);
-    if(nodeDepleted(nx, ny)) hideNodeInstance(k);
-  }
-  /* re-hide anything depleted before this render init (loaded saves) */
+  /* Hide anything already worked out. Only a node with a nodeUses entry can be depleted, so walk
+     nodeUses, not every instance. (It is empty this early, since a save is restored after the
+     start menu and restore() does its own hiding. The old loop called rawDecorAt for every
+     tree, rock and vein on the map at load to find nothing.) */
   for(const [k] of nodeUses){ const [nx,ny] = k.split(',').map(Number); if(nodeDepleted(nx,ny)) hideNodeInstance(k); }
 }
 
@@ -28573,11 +28493,11 @@ function palette(t){
       }
     } else if(t.def.key==='dustport'){
       /* a dock reaching for open water, fish racks */
-      let dx2 = t.x, dy2 = t.y, dirX = 0, dirY = 1;
+      let dirX = 0, dirY = 1;
       /* find the nearest water direction */
       for(const [ddx,ddy] of [[1,0],[-1,0],[0,1],[0,-1]]){
         for(let step=1; step<16; step++){
-          if(tileAt(Math.floor(t.x+ddx*step), Math.floor(t.y+ddy*step))===3){ dirX=ddx; dirY=ddy; step=99; break; }
+          if(tileAt(Math.floor(t.x+ddx*step), Math.floor(t.y+ddy*step))===3){ dirX=ddx; dirY=ddy; break; }
         }
         if(dirX||dirY) break;
       }
@@ -28767,12 +28687,11 @@ const syncSundered = makeDynGroup(
             if(key === 0) continue;                        /* that one is gone entirely */
             const brk = key === 3 ? 0.42 : key === 5 ? 0.62 : 1;
             const h2 = full * brk;
-            const rib = B3(boneMat, 0.8, h2, 1.5,
+            B3(boneMat, 0.8, h2, 1.5,
               side * (4.5 - Math.abs(t2) * 1.2), h2 * 0.42, t2 * 16, 0, 0, side * -0.5);
             /* and the arc closes over the top on the ones that survived whole */
             if(brk === 1) B3(boneMat, 0.7, 3.4, 1.3,
               side * (3.1 - Math.abs(t2) * 0.9), full * 0.86, t2 * 16, 0, 0, side * -1.15);
-            void rib;
           }
           /* the spine: a vertebra with a process standing off it, not a lump */
           B3(oldMat, 2.4, 1.6, 1.9, 0, 0.85, t2 * 16);
@@ -28817,8 +28736,7 @@ const syncSundered = makeDynGroup(
           B3(oldMat, 0.72, th, 0.7, tx, 0.75 - (th - 1.05) * 0.5, -4.9);
         }
         /* the lower jaw, off its hinge and half into the ground */
-        const jaw = B3(oldMat, 8.6, 1.4, 6.4, -0.9, 0.5, 1.6, 0.20, 0.16, 0.05);
-        void jaw;
+        B3(oldMat, 8.6, 1.4, 6.4, -0.9, 0.5, 1.6, 0.20, 0.16, 0.05);
         B3(dirtMat, 7.4, 1.1, 2.0, -1.4, 0.1, -2.6, 0.12, 0.16, 0);
         /* and the back of it going into the earth */
         B3(dirtMat, 11.0, 2.6, 4.6, 0, 1.1, 5.6, -0.1, 0, 0);
@@ -28828,8 +28746,7 @@ const syncSundered = makeDynGroup(
            knuckle, and without them a pale rectangle standing in dirt is what you get. Each
            one is built in three segments that lean further back as they go up, with a knuckle
            between, and the thumb is set off across the palm where a thumb goes. */
-        const back = B3(dirtMat, 9.6, 2.6, 6.4, 0, 1.0, 3.4, 0.12, 0, 0);   /* back of the hand */
-        void back;
+        B3(dirtMat, 9.6, 2.6, 6.4, 0, 1.0, 3.4, 0.12, 0, 0);   /* back of the hand */
         B3(dirtMat, 7.6, 2.2, 4.2, 0.4, 0.2, 7.2, 0.20, 0.12, 0);           /* the wrist, going under */
         const FINGERS = [[-3.9, 5.4, 0.30], [-1.9, 7.2, 0.14], [0.1, 7.9, 0.02], [2.1, 6.9, -0.14]];
         for(const [fx, len, lean] of FINGERS){
@@ -29072,7 +28989,7 @@ function drawStation(g, b, cx0, cz0, y){
       box(g, W2*0.58, 0.04, D2*0.45, PB.paper, cx0 - 0.05, y + 0.86, cz0 + 0.04, false);
       for(let i = 0; i < 3; i++)
         box(g, 0.12, 0.34, 0.26, i ? PB.timberDk : PB.occult,
-            cx0 + W2*0.32, y + 0.17 + 0.34*0, cz0 - D2*0.2 + i*0.2, false);
+            cx0 + W2*0.32, y + 0.17, cz0 - D2*0.2 + i*0.2, false);
       break;
     case 'armoury':
       /* A RACK, WHICH IS THE WHOLE READ. Four uprights with things standing in them, a chest
@@ -29359,8 +29276,7 @@ const syncUndercroft = makeDynGroup(
       hole.position.set(cxs, gy + 0.18, czs);
       g.add(hole);
       for(const [ox, oz] of [[-0.6,-0.6],[0.6,-0.6],[-0.6,0.6],[0.6,0.6]]){
-        const leg = box(g, 0.14, 2.6, 0.14, '#4a3a26', cxs + ox*1.02, gy + 1.3, czs + oz*1.02);
-        if(leg) leg.rotation.set(ox ? 0 : 0, 0, 0);
+        box(g, 0.14, 2.6, 0.14, '#4a3a26', cxs + ox*1.02, gy + 1.3, czs + oz*1.02);
       }
       box(g, 1.7, 0.16, 0.16, '#4a3a26', cxs, gy + 2.6, czs - 0.6);                     /* the head */
       box(g, 1.7, 0.16, 0.16, '#4a3a26', cxs, gy + 2.6, czs + 0.6);
@@ -29503,13 +29419,21 @@ const syncUndercroft = makeDynGroup(
       });
     }
   });
+/* Yours below ground (any living or risen body of the player's under storey 0), in roster
+   order, from one pass over the roster. Read by syncRedoubts' signature every frame and by its
+   build. The signature used to run a full chars.filter once per cave, every frame: measured at
+   ~2ms a frame on a 1,700-body world, to build a key that almost never changes. */
+function yoursBelow(){
+  const a = [];
+  for(const c of chars) if(c.faction === 'player' && c.state !== 'dead' && (c.floor||0) < 0) a.push(c);
+  return a;
+}
 const syncRedoubts = makeDynGroup(
   () => 'rd' + redoubts.length + ':' + activeFloor + ':' + middens.filter(m=>m.found).length + ':' + caves.length + ':' +
         /* PER CAVE TOO, and for the same reason as the redoubts below: which warren has one of
            yours in it, not merely which storey somebody is on somewhere in the world. */
-        caves.map(cv => chars.filter(c => c.faction === 'player' && c.state !== 'dead' && (c.floor||0) < 0 &&
-                                          dist(c.x, c.y, cv.mouth.x, cv.mouth.y) < 70)
-                             .map(c => c.floor).sort().join('')).join('/') + ':' +
+        ((below) => caves.map(cv => below.filter(c => dist(c.x, c.y, cv.mouth.x, cv.mouth.y) < 70)
+                                         .map(c => c.floor).sort().join('')).join('/'))(yoursBelow()) + ':' +
         /* PER REDOUBT, not one bitmask for the whole world — the old key could not tell
            "somebody is on floor 1 of THIS complex" from "somebody is on floor 1 of a rampart
            two hundred tiles away", which is exactly the distinction the opacity now turns on */
@@ -29540,6 +29464,7 @@ const syncRedoubts = makeDynGroup(
     /* CAVES: floors going DOWN. A mouth on the surface, always visible; the warrens below
        are drawn only for the floor a unit of yours currently stands on, so the world isn't
        a permanent x-ray of every tunnel. */
+    const below = yoursBelow();
     for(const cv of caves){
       /* NO MOUTH ANY MORE. A warren is cut into an undercroft hall and has no surface opening —
          drawing a ring and a black hole on the grass above one would be marking an entrance that
@@ -29551,9 +29476,7 @@ const syncRedoubts = makeDynGroup(
        under everything, so standing anywhere underground turned all seven warrens into an
        x-ray. Same fault `syncRedoubts` already carries a note about — ask about THIS one. */
       const occ = {};
-      for(const c of chars)
-        if(c.faction === 'player' && c.state !== 'dead' && (c.floor||0) < 0 &&
-           dist(c.x, c.y, cv.mouth.x, cv.mouth.y) < 70) occ[c.floor] = true;
+      for(const c of below) if(dist(c.x, c.y, cv.mouth.x, cv.mouth.y) < 70) occ[c.floor] = true;
       for(const rm of cv.rooms){
         if(!occ[rm.f]) continue;                       /* unlit tunnels stay dark */
         const fy = floorY(rm.f);
@@ -29613,7 +29536,7 @@ const syncRedoubts = makeDynGroup(
     /* SALTMERE'S STANDING FIRE. Lit before anybody now living was born and not out since. Its
        own geometry rather than the Order's pole, because it is not one of the Order's poles —
        no crossbar and nothing hanging on it, just a stone bowl and a fire nobody lets die. */
-    if(typeof saltmere !== 'undefined' && saltmere && saltmere.pyre){
+    if(saltmere && saltmere.pyre){
       const q = saltmere.pyre, gy2 = groundY(q.x, q.y);
       box(g, 2.4, 0.34, 2.4, '#6e6354', q.x, gy2 + 0.17, q.y, false);
       box(g, 1.5, 0.5, 1.5, '#3a332b', q.x, gy2 + 0.55, q.y, false);
@@ -29703,7 +29626,7 @@ const syncStairs = makeDynGroup(
   (g) => {
     for(const st of stairs){
       const y = groundY(st.x + 0.5, st.y + 0.5);
-      const lo = Math.min(st.from, st.to), hi = Math.max(st.from, st.to);
+      const lo = Math.min(st.from, st.to);
       /* four risers climbing from one storey to the next */
       for(let i = 0; i < 4; i++){
         box(g, 0.85, 0.22, 0.85 - i * 0.16, '#b89a58',
@@ -29845,7 +29768,7 @@ const syncCamps = makeDynGroup(
 function occupiedFloors(x0, y0, x1, y1, pad){
   const p = pad === undefined ? 0.5 : pad;
   const out = {};
-  for(const c of (selected.length ? selected : [])){
+  for(const c of selected){
     if(c.faction !== 'player' || c.state === 'dead') continue;
     if(c.x < x0 - p || c.x > x1 + p || c.y < y0 - p || c.y > y1 + p) continue;
     out[c.floor || 0] = true;
@@ -30055,7 +29978,6 @@ function factionColor(c){
                               : c.deepKin === 'priest'  ? '#4a4a40' : '#6d7068';
   if(c.faction==='fauna') return '#6a7a4a';
   if(c.faction==='exiledead') return '#b8b09a';
-  if(c.faction==='drifter') return '#a08858';
   if(c.faction==='cannibal') return '#6e3428';
   if(c.faction==='warband') return '#5a6a7a';
   if(c.faction==='rebel') return '#c47a2a';
@@ -30252,7 +30174,7 @@ function faceOf(c){ return (c && c.face && FACES[c.face]) || null; }
 
    The frame: origin is where the fist closes. Blades hang down -Y, ranged weapons point
    forward +Z. `rest` is how the thing sits in an idle hand. */
-const _boxSrc = (() => { const g = BOXG.index ? BOXG.toNonIndexed() : BOXG; return g; })();
+const _boxSrc = BOXG.index ? BOXG.toNonIndexed() : BOXG;
 function mergeBoxes(parts){
   const pos = [], nrm = [], col = [];
   const sp = _boxSrc.attributes.position.array, sn = _boxSrc.attributes.normal.array;
@@ -30902,6 +30824,16 @@ function buildCharMesh(c){
     parent.add(o); boxes.push(o);
     return o;
   };
+  /* Two variants of obox. Each is used in more than one branch below, and until now each branch
+     wrote its own copy: rbox turns the box about its own centre, and B also files it on
+     e.boxBody, so an authored body can hide it and the batcher folds it into the body's draw
+     call. (`e` is declared further down; B only runs after it exists.) */
+  const rbox = (w, h, d, col, x, y, z, par, rx, ry, rz) => {
+    const o = obox(w, h, d, col, x, y, z, par);
+    o.rotation.set(rx || 0, ry || 0, rz || 0);
+    return o;
+  };
+  const B = (w, h, d, col, x, y, z, par) => { const o = obox(w, h, d, col, x, y, z, par); e.boxBody.push(o); return o; };
   const bakeBoxes = () => {
     /* The hidden/kept split exists for ONE body in the game — a lich, whose authored parts
        replace the plain boxes. Splitting every other body into two buckets per group cost a
@@ -31188,7 +31120,6 @@ function buildCharMesh(c){
   const risen = !!c.undead && !c.lich && !c.beast && !c.construct;
   const SH = (fem ? 0.82 : 1) * ((BLD && BLD.sh) || 1) * A('sh');        /* shoulder width */
   const HIP = (fem ? 1.16 : 1) * ((BLD && BLD.hip) || 1) * A('hip');     /* pelvis width */
-  const CH = (fem ? 0.90 : 1) * ((BLD && BLD.ch) || 1) * A('ch');        /* chest breadth */
   /* what a risen was bound FOR shows in the frame: a brute is built thick, an archer lean */
   const kin = risen ? (c.kin || null) : null;
   const kinLimb = kin === 'brute' ? 1.55 : kin === 'colossus' ? 1.9
@@ -31446,7 +31377,6 @@ function buildCharMesh(c){
       e.legL = a3.sh; e.kneeL = a3.el; e.legR = a4.sh; e.kneeR = a4.el;
       e.legL2 = null; e.legR2 = null;
       e.spine = e.torso;
-      e.noGait = true;                 /* it does not walk. It shifts its grip. */
     } else if(c.bossKey === 'cairn'){
       /* ---------- THE CAIRN BEAST ----------
          Not an animal. A slope of fused dead with a gait, and the read has to be that it is
@@ -31516,9 +31446,7 @@ function buildCharMesh(c){
          smaller; that is the only difference the player ever needs to see.
          Nothing here is rolled. This runs from `syncChars` at frame rate, so a `rnd()` would
          put the world's dice back on the renderer's leash — `hash2` off the id instead. */
-      const stone = '#cfc6b4', dk3 = '#7e7566', glow = '#cfe8ff';
-      const B2 = (w, h, d, col, x, y, z, par) => obox(w, h, d, col, x, y, z, par);
-      const shade2 = (hex, k2) => '#' + new THREE.Color(hex).multiplyScalar(k2).getHexString();
+      const stone = '#cfc6b4', dk3 = '#7e7566';
       const spine = new THREE.Group(); spine.position.set(0, 1.30, 0); g.add(spine);
       const head  = new THREE.Group(); head.position.set(0, 2.16, 0); g.add(head);
       e.torso = obox(0.52, 0.92, 0.34, stone, 0, 0.30, 0, spine);
@@ -31530,7 +31458,7 @@ function buildCharMesh(c){
         eye.scale.set(0.055, 0.035, 0.02); eye.position.set(ex, 0.03, 0.19); head.add(eye);
       }
       e.head = head;
-      oldGodPlate(e, c, stone, shade2, B2, {head, spine, scale: 1.25, crown: 0.125});
+      oldGodPlate(e, c, stone, shade, obox, {head, spine, scale: 1.25, crown: 0.125});
       /* arms that hang, and legs that are columns rather than joints */
       for(const sx of [-1, 1]){
         const arm = new THREE.Group(); arm.position.set(sx*0.40, 0.60, 0); spine.add(arm);
@@ -31545,7 +31473,6 @@ function buildCharMesh(c){
         return hip;
       };
       e.legL = mkCol(0.20); e.legR = mkCol(-0.20);
-      void glow;
     } else if(c.bossKey === 'sixfold'){
       /* the body hangs; the limbs arch over it and come down like the frame of a tent */
       const hide = '#3a3230', bone = '#c9bfa8';
@@ -31808,7 +31735,6 @@ function buildCharMesh(c){
       /* not fauna. A heavy bipedal frame of poured alchemical iron —
          hunched, faceless, a single burning optic. The Warden is the same, built bigger. */
       const iron = '#4a4640', dark = '#2c2924', hot = c.name && c.name.indexOf('Warden')>=0 ? '#ff5a2a' : '#ff8a3a';
-      const S = 1;
       /* the boiler torso, canted forward */
       e.torso = mk(BOXG, ownMetal(iron), 0.52, 0.62, 0.42, 0, 0.86, 0.03, g);
       mk(BOXG, ownMetal(dark), 0.44, 0.20, 0.36, 0, 1.14, 0.02, g);         /* shoulder yoke */
@@ -32276,7 +32202,6 @@ function buildCharMesh(c){
        with a full plate and once with two smaller covers. Not drawing it in the first place
        leaves one surface and no seam. */
     if(!c.construct && !subOf(c).ownFace && !uncloudedBody(c) && !vesselBody(c)){
-      const dk = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
       /* the socket goes dark and the iris comes up to meet it — a dark-on-dark eye
          disappears entirely once the head is twelve pixels tall */
       const lighten = (hex, k) => '#' + new THREE.Color(hex).lerp(new THREE.Color('#cfc4ad'), k).getHexString();
@@ -32291,10 +32216,10 @@ function buildCharMesh(c){
         e.boxBody.push(obox(0.175, 0.050, 0.026, '#15100e', 0, 0.136, 0.146, e.headG));   /* the dark of the mouth */
         for(const tx of [-0.056, -0.019, 0.019, 0.056])
           e.boxBody.push(obox(0.023, 0.044, 0.024, skinCol, tx, 0.137, 0.152, e.headG));  /* teeth standing in it */
-        e.boxBody.push(obox(0.265, 0.034, 0.028, dk(skinCol, 0.80), 0, 0.322, 0.140, e.headG)); /* brow ridge */
+        e.boxBody.push(obox(0.265, 0.034, 0.028, shade(skinCol, 0.80), 0, 0.322, 0.140, e.headG)); /* brow ridge */
         e.boxBody.push(obox(0.19, 0.052, 0.10, skinCol, 0, 0.103, 0.100, e.headG));       /* the jaw juts */
       } else {
-        e.boxBody.push(obox(0.235, 0.055, 0.02, dk(skinCol, 0.42), 0, 0.265, 0.152, e.headG));
+        e.boxBody.push(obox(0.235, 0.055, 0.02, shade(skinCol, 0.42), 0, 0.265, 0.152, e.headG));
       }
       if(!hollowEyed){
         /* the risen keep their sockets and lose what was in them */
@@ -32320,8 +32245,8 @@ function buildCharMesh(c){
       }
       /* a brow gives the head an expression it does not otherwise have */
       if(!hollowEyed){
-        e.boxBody.push(obox(0.25, 0.028, 0.02, dk(skinCol, 0.72), 0, 0.303, 0.150, e.headG));
-        e.boxBody.push(obox(0.095, 0.022, 0.02, dk(skinCol, 0.5), 0, 0.176, 0.152, e.headG));
+        e.boxBody.push(obox(0.25, 0.028, 0.02, shade(skinCol, 0.72), 0, 0.303, 0.150, e.headG));
+        e.boxBody.push(obox(0.095, 0.022, 0.02, shade(skinCol, 0.5), 0, 0.176, 0.152, e.headG));
       }
       /* ---------- THE THING IN THE HOST, AND HOW FAR ALONG IT IS ----------
          A Hollow is a rider in a borrowed body and it goes through two rites. `awakenHollow`
@@ -32430,7 +32355,7 @@ function buildCharMesh(c){
          Deterministic, not rolled: named hair is authored, and `h1..h3` come off the id, so
          a probe that spawns a fresh body would render a different head every run. */
       const hc = FACE.hair;
-      const dkh = '#' + new THREE.Color(hc).multiplyScalar(0.72).getHexString();   /* the underside */
+      const dkh = shade(hc, 0.72);   /* the underside */
       /* the shell: hair follows the skull down the sides and the back, in four masses at
          four heights, and it is proud of the head everywhere so no skin shows through */
       const shell = (yTop, drop) => {
@@ -32513,7 +32438,7 @@ function buildCharMesh(c){
          the reason the named hair block records at length: hair that rests ON the skull with
          one level edge all the way round is a hat. */
       const hc = greyed(HAIRS[Math.floor(h3*HAIRS.length)], aged, h2);
-      const hd = '#' + new THREE.Color(hc).multiplyScalar(0.74).getHexString();
+      const hd = shade(hc, 0.74);
       const hs = hash2(c.id * 37 + 11, c.id * 19 + 7);
       const STYLES = [
         {k:'crop',     w:20},
@@ -32547,7 +32472,7 @@ function buildCharMesh(c){
            choice somebody made rather than as a head they were born with */
         const WRAP = ['#8a7a5e', '#6e5f4a', '#9c8a6a', '#7a6a72', '#5e5a4e'];
         const wc = WRAP[Math.floor(h2 * WRAP.length) % WRAP.length];
-        const wd = '#' + new THREE.Color(wc).multiplyScalar(0.78).getHexString();
+        const wd = shade(wc, 0.78);
         obox(0.345, 0.14, 0.345, wc, 0, 0.415, -0.015, e.headG);
         obox(0.355, 0.045, 0.355, wd, 0, 0.335, -0.015, e.headG);        /* the band it is tucked into */
         obox(0.10, 0.20, 0.09, wc, 0.13, 0.27, -0.155, e.headG);         /* and the tail of it, hanging */
@@ -32573,7 +32498,7 @@ function buildCharMesh(c){
       if(!fem){
         const bh = hash2(c.id * 53 + 3, c.id * 29 + 13);
         const bc = sty.k === 'wrapped' ? greyed(HAIRS[Math.floor(h3*HAIRS.length)], aged, h2) : hc;
-        const bd = '#' + new THREE.Color(bc).multiplyScalar(0.74).getHexString();
+        const bd = shade(bc, 0.74);
         if(bh > 0.86){        /* full, and long */
           e.boxBody.push(obox(0.265, 0.115, 0.105, bc, 0, 0.155, 0.125, e.headG));
           e.boxBody.push(obox(0.175, 0.145, 0.095, bc, 0, 0.055, 0.118, e.headG));
@@ -32605,7 +32530,7 @@ function buildCharMesh(c){
       /* `dk` further up is block-scoped to the face builder and not visible from here —
          reaching for it threw a ReferenceError out of buildCharMesh every time a scaleborn
          was rigged, which is a crash in the render path, not a cosmetic problem. */
-      const dark  = '#' + new THREE.Color(scale).multiplyScalar(0.62).getHexString();
+      const dark  = shade(scale, 0.62);
       const belly = '#' + new THREE.Color(scale).lerp(new THREE.Color('#e8dcc4'), 0.42).getHexString();
       const membrane = '#' + new THREE.Color(scale).lerp(new THREE.Color('#2a1a18'), 0.45).getHexString();
 
@@ -32676,7 +32601,6 @@ function buildCharMesh(c){
        no veins — the frame those things were stretched over, which is the better object. */
     if(risen && c.race === 'chimera'){
       const bone = skinCol, dkb = shade(bone, 0.78);
-      const B = (w, h, d, col, x, y, z, par) => { e.boxBody.push(obox(w, h, d, col, x, y, z, par)); return e.boxBody[e.boxBody.length-1]; };
       if(subIs(c, 'houndkin')){
         /* the long jaw outlasts everything else about it */
         B(0.130, 0.095, 0.20, bone, 0, 0.205, 0.20, e.headG);
@@ -32760,9 +32684,7 @@ function buildCharMesh(c){
     if(!c.undead && !c.beast && subOf(c).label && !subIs(c, 'scaleborn')){
       const M = subOf(c);
       const base = M.body || skinCol;
-      const shade = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
       const dk2 = shade(base, 0.66), lt2 = shade(base, 1.26);
-      const B = (w, h, d, col, x, y, z, par) => { e.boxBody.push(obox(w, h, d, col, x, y, z, par)); return e.boxBody[e.boxBody.length-1]; };
 
       /* ================= THE MIMICS =================
          Three ways of not quite being a person, and each line gets the one it got wrong.
@@ -32933,12 +32855,11 @@ function buildCharMesh(c){
              The eyes are the tell and the only part it did not choose: it is still a Watcher
              underneath, and that light is the thing it walked away from. `oldGodPlate` builds
              the same motif on a Messenger, because they are the same stuff. */
-          const cols = oldGodPlate(e, c, base, shade, B, {crown: 0.400});
+          oldGodPlate(e, c, base, shade, B, {crown: 0.400});
           /* THE EYES ARE THE PART IT DID NOT CHOOSE. Glow, so they are not baked flat with
              the rest of it — a Fallen in a dark street should be two lights and a shape. */
           for(const sx of [-1, 1])
             mkGlow(BOXG, ownGlow('#cfe8ff'), 0.055, 0.030, 0.02, sx*0.075, 0.175, 0.152, e.headG);
-          void cols;
         }
       }
 
@@ -33126,7 +33047,6 @@ function buildCharMesh(c){
        recognisable at the distance the camera actually sits at, which means silhouette —
        a tall mitre and a hanging stole, or a crown and a cloak — not detail. */
     if(c.bossKey === 'ash' || c.bossKey === 'baroness'){
-      const shade = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
       e.cape = [];
       if(c.bossKey === 'ash'){
         /* SISTER ASH. An inquisitor gone out into the waste and stayed there: the mitre
@@ -33193,7 +33113,6 @@ function buildCharMesh(c){
        that moves and one thing on it that is not on anybody else. Both of these hang off
        `e.cape`, which the animator already drags a beat behind the body. */
     if(FACE){
-      const shade2 = (hex, k) => '#' + new THREE.Color(hex).multiplyScalar(k).getHexString();
       e.cape = e.cape || [];
       /* ---------- A COAT SKIRT IS NOT A CLOAK ----------
          The first version of both of these was copied off the Baroness, and it inherited her
@@ -33215,13 +33134,13 @@ function buildCharMesh(c){
           const seg = new THREE.Group();
           seg.position.set(0, i === 0 ? -0.02 : -0.215, 0);
           par.add(seg);
-          const w = 0.46 - i*0.035, c2 = shade2(col, 1 + i*0.09), h = 0.225;
+          const w = 0.46 - i*0.035, c2 = shade(col, 1 + i*0.09), h = 0.225;
           e.boxBody.push(obox(w, h, 0.055, c2, 0, -0.11, -0.135, seg));              /* the back */
           for(const sx of [-1, 1]){
             e.boxBody.push(obox(0.06, h, 0.29, c2, sx*(w/2 - 0.03), -0.11, 0, seg)); /* the sides */
             e.boxBody.push(obox(w*0.36, h, 0.05, c2, sx*(w*0.28), -0.11, 0.135, seg)); /* front, vented at the centre */
           }
-          if(hemCol) e.boxBody.push(obox(w, 0.028, 0.062, shade2(hemCol, 0.75 + i*0.12), 0, -0.226, -0.135, seg));
+          if(hemCol) e.boxBody.push(obox(w, 0.028, 0.062, shade(hemCol, 0.75 + i*0.12), 0, -0.226, -0.135, seg));
           if(per) per(seg, i, w, c2);
           e.cape.push(seg); par = seg;
         }
@@ -33247,9 +33166,9 @@ function buildCharMesh(c){
           /* gold only where the skirt meets the waist. Running it the whole length turned the
              front into two continuous rails and, with the frogging above, read as a ladder. */
           if(i === 0) for(const sx of [-1, 1])
-            e.boxBody.push(obox(0.022, 0.135, 0.055, shade2(gold, 0.85), sx*(w*0.115), -0.075, 0.152, seg));
-          e.boxBody.push(obox(w*0.36, 0.026, 0.058, shade2(dust, 0.8 + i*0.10), -w*0.28, -0.226, 0.135, seg));
-          e.boxBody.push(obox(w*0.36, 0.026, 0.058, shade2(dust, 0.8 + i*0.10),  w*0.28, -0.226, 0.135, seg));
+            e.boxBody.push(obox(0.022, 0.135, 0.055, shade(gold, 0.85), sx*(w*0.115), -0.075, 0.152, seg));
+          e.boxBody.push(obox(w*0.36, 0.026, 0.058, shade(dust, 0.8 + i*0.10), -w*0.28, -0.226, 0.135, seg));
+          e.boxBody.push(obox(w*0.36, 0.026, 0.058, shade(dust, 0.8 + i*0.10),  w*0.28, -0.226, 0.135, seg));
         });
       } else if(c.face === 'lyre'){
         /* THE SAME COAT, ELEVEN YEARS OF DIFFERENT WORK. He has been walking; she has been
@@ -33265,23 +33184,23 @@ function buildCharMesh(c){
         e.boxBody.push(obox(0.235, 0.20, 0.095, black, 0, 0.555, 0.125, e.spine));/* a standing collar */
         e.boxBody.push(obox(0.25, 0.032, 0.033, gold, 0, 0.655, 0.145, e.spine)); /* the first of the two golds */
         /* the placket runs to the waist and stops — hers was cut down, not tailored short */
-        e.boxBody.push(obox(0.045, 0.34, 0.028, shade2(black, 1.5), 0, 0.32, 0.172, e.spine));
+        e.boxBody.push(obox(0.045, 0.34, 0.028, shade(black, 1.5), 0, 0.32, 0.172, e.spine));
         for(let i = 0; i < 3; i++)                                                /* what is left of the frogging */
           e.boxBody.push(obox(0.13, 0.024, 0.028, i === 1 ? gold : worn, 0, 0.44 - i*0.115, 0.174, e.spine));
         /* THE CORD. Wound twice at the waist, and the working end hanging free at the hip —
            this is the one thing in her silhouette that is hers and not the family's. */
         e.boxBody.push(obox(0.42, 0.042, 0.28, cord, 0, 0.095, 0, e.spine));
-        e.boxBody.push(obox(0.42, 0.030, 0.28, shade2(cord, 0.78), 0, 0.052, 0, e.spine));
+        e.boxBody.push(obox(0.42, 0.030, 0.28, shade(cord, 0.78), 0, 0.052, 0, e.spine));
         e.boxBody.push(obox(0.035, 0.26, 0.035, cord, 0.185, -0.06, 0.10, e.spine));
         /* the tablet case, on the other hip */
         e.boxBody.push(obox(0.14, 0.18, 0.06, worn, -0.20, -0.02, 0.09, e.spine));
-        e.boxBody.push(obox(0.15, 0.028, 0.065, shade2(worn, 1.3), -0.20, 0.078, 0.09, e.spine));
+        e.boxBody.push(obox(0.15, 0.028, 0.065, shade(worn, 1.3), -0.20, 0.078, 0.09, e.spine));
         /* TWO SEGMENTS, NOT THREE. Split at the front and ending above the knee, because she
            spends her working hours on the ground and his coat would be in the way of it. */
         coatSkirt(black, ash, 2, (seg, i, w) => {
           if(i === 0) e.boxBody.push(obox(0.020, 0.12, 0.052, gold, w*0.135, -0.070, 0.150, seg));
-          e.boxBody.push(obox(w*0.34, 0.024, 0.056, shade2(ash, 0.85 + i*0.12), -w*0.27, -0.226, 0.135, seg));
-          e.boxBody.push(obox(w*0.34, 0.024, 0.056, shade2(ash, 0.85 + i*0.12),  w*0.27, -0.226, 0.135, seg));
+          e.boxBody.push(obox(w*0.34, 0.024, 0.056, shade(ash, 0.85 + i*0.12), -w*0.27, -0.226, 0.135, seg));
+          e.boxBody.push(obox(w*0.34, 0.024, 0.056, shade(ash, 0.85 + i*0.12),  w*0.27, -0.226, 0.135, seg));
         });
       } else {
         /* RAGGED MILITARY GREEN, AND ONE SUNFLOWER. The coat is army issue nine generations
@@ -33293,10 +33212,10 @@ function buildCharMesh(c){
         e.boxBody.push(obox(0.55, 0.22, 0.31, green, 0, 0.49, 0, e.spine));       /* the coat over the yoke */
         e.boxBody.push(obox(0.56, 0.05, 0.32, worn, 0, 0.625, 0, e.spine));       /* sun-bleached shoulders */
         e.boxBody.push(obox(0.24, 0.16, 0.12, worn, 0, 0.60, 0.12, e.spine));     /* a turned-down collar */
-        e.boxBody.push(obox(0.05, 0.46, 0.03, shade2(green, 0.7), 0, 0.28, 0.185, e.spine));  /* the front seam */
+        e.boxBody.push(obox(0.05, 0.46, 0.03, shade(green, 0.7), 0, 0.28, 0.185, e.spine));  /* the front seam */
         e.boxBody.push(obox(0.40, 0.055, 0.12, strap, 0, 0.185, 0.16, e.spine));  /* a belt across the chest */
         /* THE POCKET, and the flower wilting out of it */
-        e.boxBody.push(obox(0.16, 0.14, 0.03, shade2(green, 0.82), -0.145, 0.30, 0.186, e.spine));
+        e.boxBody.push(obox(0.16, 0.14, 0.03, shade(green, 0.82), -0.145, 0.30, 0.186, e.spine));
         const sun = new THREE.Group();
         sun.position.set(-0.155, 0.395, 0.215); sun.rotation.z = 0.62; sun.rotation.x = 0.30;
         e.spine.add(sun);
@@ -33321,7 +33240,7 @@ function buildCharMesh(c){
           for(const [rx, rz, len] of [[-0.155, 0.30, 0.15], [-0.055, -0.16, 0.10],
                                       [0.060, 0.22, 0.17], [0.150, -0.34, 0.12]]){
             for(const rzz of [-0.135, 0.135]){
-              const rag = obox(0.062, len, 0.05, shade2(worn, 0.86), rx, -0.225 - len/2, rzz, seg);
+              const rag = obox(0.062, len, 0.05, shade(worn, 0.86), rx, -0.225 - len/2, rzz, seg);
               rag.rotation.z = rz;
               e.boxBody.push(rag);
             }
@@ -33336,7 +33255,7 @@ function buildCharMesh(c){
       const el = new THREE.Group(); el.position.set(0, -0.3, 0); sh.add(el);
       const fore = obox(0.11*LIMB, 0.28, 0.11*LIMB, skinCol, 0, -0.14, 0, el);
       /* a hand the same colour as the arm it hangs off is not a hand, it is a longer arm */
-      const handCol = risen ? skinCol : '#' + new THREE.Color(skinCol).multiplyScalar(0.84).getHexString();
+      const handCol = risen ? skinCol : shade(skinCol, 0.84);
       const fist = obox(0.125*LIMB, 0.105, 0.125*LIMB, handCol, 0, -0.3, 0, el);
       return {sh, el, fore, up, fist};
     };
@@ -33361,7 +33280,7 @@ function buildCharMesh(c){
       const shin = obox(0.14*LIMB, 0.38, 0.15*LIMB, legCol, 0, -0.19, 0, kn);
       /* bare bone ends in a foot, not a boot */
       const boot = obox(risen ? 0.115 : 0.15*LIMB, risen ? 0.06 : 0.09, risen ? 0.18 : 0.24,
-                        risen ? skinCol : bare ? shadeHex(bodyCol, 0.86) : '#1a120a',
+                        risen ? skinCol : bare ? shade(bodyCol, 0.86) : '#1a120a',
                         0, -0.41, risen ? 0.02 : 0.04, kn);
       return {hip, kn, shin, thigh, boot};
     };
@@ -33418,7 +33337,7 @@ function buildCharMesh(c){
         const MTL = [[0.34, 0.585], [0.50, 0.552], [0.63, 0.516], [0.73, 0.478], [0.70, 0.440]];
         for(let i = 0; i < MTL.length; i++){
           const [w, y] = MTL[i];
-          obox(w, 0.042, w * 0.56, i < 2 ? mantle : shadeHex(mantle, 1 - i * 0.05), 0, y, 0, e.spine);
+          obox(w, 0.042, w * 0.56, i < 2 ? mantle : shade(mantle, 1 - i * 0.05), 0, y, 0, e.spine);
         }
         obox(0.36, 0.016, 0.22, ash,   0, 0.607, 0, e.spine);                    /* dust on top */
         obox(0.62, 0.011, 0.36, trim, 0, 0.418, 0, e.spine);                     /* one thin gold line */
@@ -33454,7 +33373,7 @@ function buildCharMesh(c){
             seg.position.set(0, i === 0 ? -0.10 : -0.20, 0);
             par.add(seg);
             const w = 0.38 + i*0.034, dep = 0.25 + i*0.022;
-            const col = shadeHex(cloth, 1 - i*0.05);          /* darker the further from the light */
+            const col = shade(cloth, 1 - i*0.05);          /* darker the further from the light */
             const h = 0.28;
             obox(w, h, 0.05, col, 0, -0.12, -dep/2 + 0.025, seg);              /* back */
             obox(w, h, 0.05, col, 0, -0.12,  dep/2 - 0.025, seg);              /* front — closed; no legs to show */
@@ -33462,7 +33381,7 @@ function buildCharMesh(c){
               obox(0.05, h, dep, col, sx*(w/2 - 0.025), -0.12, 0, seg);        /* sides */
             /* a fold down each corner, so the cylinder is not four flat faces */
             for(const sx of [-1, 1]) for(const sz of [-1, 1])
-              obox(0.06, h, 0.06, shadeHex(col, 1.35), sx*w*0.42, -0.12, sz*dep*0.40, seg);
+              obox(0.06, h, 0.06, shade(col, 1.35), sx*w*0.42, -0.12, sz*dep*0.40, seg);
             if(i === N - 1){
               obox(w + 0.015, 0.022, dep + 0.015, ash, 0, -0.252, 0, seg);      /* the hem edge */
               /* what a century of walking does to a hem */
@@ -33482,7 +33401,7 @@ function buildCharMesh(c){
           obox(0.165, 0.16, 0.165, mantle, sx*-0.02, -0.07, 0, arm);
           obox(0.185, 0.17, 0.185, cloth,  sx*-0.02, -0.22, 0, arm);
           obox(0.215, 0.20, 0.215, cloth,  0, -0.10, 0, elb);      /* the bell of the sleeve */
-          obox(0.245, 0.13, 0.245, shadeHex(cloth, 0.85), 0, -0.255, 0, elb);
+          obox(0.245, 0.13, 0.245, shade(cloth, 0.85), 0, -0.255, 0, elb);
           obox(0.255, 0.020, 0.255, ash,   0, -0.322, 0, elb);
           obox(0.062, 0.13, 0.062, bone2,  0, -0.385, 0.01, elb);  /* wrist */
           obox(0.088, 0.045, 0.078, bone2, 0, -0.452, 0.02, elb);  /* and the hand */
@@ -33546,11 +33465,6 @@ function buildCharMesh(c){
       const BIND = '#231d2e', BIND_D = '#100d18', BRZ = '#6f5318', PIT = '#080610';
       const SOUL = '#a978ff';
       /* an obox with a rotation on it, which is the thing that keeps this off the grid */
-      const rbox = (w, h, d, col, x, y, z, par, rx, ry, rz) => {
-        const o = obox(w, h, d, col, x, y, z, par);
-        o.rotation.set(rx || 0, ry || 0, rz || 0);
-        return o;
-      };
 
       /* ---- THE NECK. Bare vertebrae with binding between them: the first thing that says
               there is no flesh on this, read before the eye gets to the skull. ---- */
@@ -33671,7 +33585,7 @@ function buildCharMesh(c){
       /* ---- THE ARMS. Long and thin, and the forearm is TWO bones, which is the detail that
               makes an arm read as a skeleton's rather than as a stick. Bound at every joint,
               because the binding is the only thing holding this together. ---- */
-      for(const [arm, elb, sx] of [[e.armL, e.elbL, -1], [e.armR, e.elbR, 1]]){
+      for(const [arm, elb] of [[e.armL, e.elbL], [e.armR, e.elbR]]){
         obox(0.108, 0.090, 0.108, BN_D, 0, 0.010, 0, arm);                     /* the shoulder ball */
         obox(0.058, 0.036, 0.058, BIND, 0, -0.040, 0, arm);
         obox(0.064, 0.250, 0.058, BN,   0, -0.160, 0, arm);                    /* humerus */
@@ -33803,17 +33717,17 @@ function buildCharMesh(c){
          land on, or it is an egg. So: a hard brow ridge, a cheek taper, and a sensor cluster
          where a face would be — asymmetric, because a made thing whose sensors are arranged
          for a job rather than for a face is far more unsettling than a symmetrical mask. */
-      const shell = '#e6e4dc', shade = '#c9c6bb', lens = WC.aether;
+      const shell = '#e6e4dc', seam = '#c9c6bb', lens = WC.aether;
       _hp(obox(0.35, 0.30, 0.34, shell, 0, 0.27, 0.01, e.headG));          /* the shell */
       _hp(obox(0.33, 0.09, 0.31, shell, 0, 0.11, 0.02, e.headG));          /* the jaw, closed */
-      _hp(obox(0.36, 0.05, 0.35, shade, 0, 0.40, 0.01, e.headG));          /* the crown seam */
-      _hp(obox(0.30, 0.07, 0.03, shade, 0, 0.30, 0.18, e.headG));          /* a brow ridge, not a slit */
+      _hp(obox(0.36, 0.05, 0.35, seam, 0, 0.40, 0.01, e.headG));          /* the crown seam */
+      _hp(obox(0.30, 0.07, 0.03, seam, 0, 0.30, 0.18, e.headG));          /* a brow ridge, not a slit */
       /* the sensors: three lenses, off centre, and one of them larger */
       _hp(mkGlow(BOXG, ownGlow(lens), 0.055, 0.055, 0.02, -0.07, 0.29, 0.185, e.headG));
       _hp(mkGlow(BOXG, ownGlow(lens), 0.035, 0.035, 0.02,  0.04, 0.30, 0.185, e.headG));
       _hp(mkGlow(BOXG, ownGlow(lens), 0.028, 0.028, 0.02,  0.10, 0.26, 0.185, e.headG));
-      _hp(obox(0.07, 0.10, 0.05, shade, 0, 0.16, 0.17, e.headG));          /* the filter, where a mouth is not */
-      _hp(obox(0.05, 0.05, 0.14, shade, -0.17, 0.22, 0.04, e.headG));      /* intake, left side only */
+      _hp(obox(0.07, 0.10, 0.05, seam, 0, 0.16, 0.17, e.headG));          /* the filter, where a mouth is not */
+      _hp(obox(0.05, 0.05, 0.14, seam, -0.17, 0.22, 0.04, e.headG));      /* intake, left side only */
     } else if(_helm === 'sigil'){
       /* the same helmet the automaton branch builds, for the case where somebody carrying
          `bossKey: 'sigil'` ever takes the humanoid rig — one builder, so they cannot drift */
@@ -33899,13 +33813,12 @@ function buildCharMesh(c){
               looked like the one with no price on it. A hem that stops at the ankle with two
               feet under it is that sentence. The first build of her had a floor-length skirt
               and no legs at all, which made her a lich in white. ---- */
-      for(const [kn, sx] of [[e.kneeL, -1], [e.kneeR, 1]]){
+      for(const kn of [e.kneeL, e.kneeR]){
         if(!kn) continue;
         obox(0.150, 0.330, 0.150, PL,    0, -0.170, 0, kn);           /* the shin, bare */
         obox(0.160, 0.030, 0.160, PL_HI, 0, -0.010, 0, kn);
         obox(0.170, 0.075, 0.245, PL_D,  0, -0.355, 0.048, kn);       /* and a foot, unshod */
         obox(0.150, 0.035, 0.100, PL_S,  0, -0.390, 0.110, kn);
-        void sx;
       }
 
       /* ---- THE SKIRT, on `e.cape` so the animator drags it. It falls straight: a flare is a
@@ -34043,11 +33956,6 @@ function buildCharMesh(c){
         e.sigils.push(m);
         return m;
       };
-      const rb = (w, h, d, col, x, y, z, par, rx, ry, rz) => {
-        const o = obox(w, h, d, col, x, y, z, par);
-        o.rotation.set(rx || 0, ry || 0, rz || 0);
-        return o;
-      };
       /* ---------- WHAT EVERY VESSEL HAS, WHATEVER SHAPE IT CAME OUT ----------
          THE NAME. "I REMEMBER A NAME. I DO NOT REMEMBER IF IT WAS MINE." The eleven were
          signed for at the pouring — the Ossuary King's hand under all of them — so it is
@@ -34067,7 +33975,7 @@ function buildCharMesh(c){
       const intake = (x, y, z, par) => {
         obox(0.140, 0.130, 0.130, IR_S,  x, y, z, par);
         obox(0.160, 0.030, 0.150, BRZ_D, x, y + 0.075, z, par);
-        rb(0.150, 0.026, 0.140, IR_HI,   x - 0.007, y + 0.118, z + 0.035, par, -0.55, 0, 0);
+        rbox(0.150, 0.026, 0.140, IR_HI,   x - 0.007, y + 0.118, z + 0.035, par, -0.55, 0, 0);
         obox(0.100, 0.070, 0.026, '#1a1512', x, y + 0.010, z + 0.072, par);
         obox(0.062, 0.040, 0.022, '#241c16', x, y + 0.060, z + 0.074, par);
       };
@@ -34102,7 +34010,7 @@ function buildCharMesh(c){
         obox(w, 0.142, w * 1.02, col, 0, y, 0.014, par);
         obox(w + 0.024, 0.028, w + 0.018, rim, 0, y + 0.082, 0.012, par);
         for(const sx of [-1, 1])                                 /* the little wings on it */
-          rb(0.030, 0.092, 0.042, rim, sx * w * 0.54, y - 0.012, 0.010, par, 0, 0, sx * 0.26);
+          rbox(0.030, 0.092, 0.042, rim, sx * w * 0.54, y - 0.012, 0.010, par, 0, 0, sx * 0.26);
       };
       const sabaton = (w, y, col, colD, rim, par) => {           /* a foot that runs forward */
         obox(w, 0.092, 0.230, col,  0, y, 0.048, par);
@@ -34123,8 +34031,8 @@ function buildCharMesh(c){
         }
       };
       const tasset = (sx, x0, y, w, h, col, rim, par) => {
-        rb(w, h, w * 0.78, col, sx * x0, y, 0.052, par, 0, 0, sx * 0.13);
-        rb(w + 0.014, 0.024, w * 0.78 + 0.010, rim, sx * x0, y + h * 0.5 - 0.012, 0.052, par, 0, 0, sx * 0.13);
+        rbox(w, h, w * 0.78, col, sx * x0, y, 0.052, par, 0, 0, sx * 0.13);
+        rbox(w + 0.014, 0.024, w * 0.78 + 0.010, rim, sx * x0, y + h * 0.5 - 0.012, 0.052, par, 0, 0, sx * 0.13);
       };
 
       if(PAT === 'funnel'){
@@ -34203,8 +34111,8 @@ function buildCharMesh(c){
           }
         }
         for(const sx of [-1, 1]){                                              /* the standing points */
-          rb(0.048, 0.290, 0.062, IR_HI,  sx * 0.236, 0.900, 0.004, e.spine, 0, 0, sx * -0.20);
-          rb(0.040, 0.225, 0.054, GILT_D, sx * 0.158, 0.868, -0.158, e.spine, 0.18, 0, sx * -0.13);
+          rbox(0.048, 0.290, 0.062, IR_HI,  sx * 0.236, 0.900, 0.004, e.spine, 0, 0, sx * -0.20);
+          rbox(0.040, 0.225, 0.054, GILT_D, sx * 0.158, 0.868, -0.158, e.spine, 0.18, 0, sx * -0.13);
         }
         /* ---------- THE LEFT SHOULDER IS ORIGINAL ---------- */
         for(let i = 0; i < 4; i++){
@@ -34213,8 +34121,8 @@ function buildCharMesh(c){
                -(0.262 + t * 0.052), 0.530 - t * 0.152, 0.006, e.spine);
         }
         obox(0.326, 0.030, 0.374, GILT, -0.264, 0.600, 0.006, e.spine);
-        rb(0.054, 0.235, 0.132, IR_HI,  -0.302, 0.658, -0.042, e.spine, -0.18, 0, -0.26);
-        rb(0.040, 0.092, 0.092, GILT,   -0.342, 0.760, -0.072, e.spine, -0.30, 0, -0.38);
+        rbox(0.054, 0.235, 0.132, IR_HI,  -0.302, 0.658, -0.042, e.spine, -0.18, 0, -0.26);
+        rbox(0.040, 0.092, 0.092, GILT,   -0.342, 0.760, -0.072, e.spine, -0.30, 0, -0.38);
         obox(0.152, 0.152, 0.046, GILT_D, -0.268, 0.390, 0.150, e.spine);      /* a besagew */
         obox(0.106, 0.106, 0.052, GILT,  -0.268, 0.390, 0.162, e.spine);
         sigil(0.034, 0.034, 0.024, -0.268, 0.390, 0.184, e.spine);
@@ -34330,8 +34238,8 @@ function buildCharMesh(c){
         obox(0.082, 0.082, 0.048, BRZ_D, 0, 0.400, 0.220, e.spine);
         sigil(0.046, 0.046, 0.026, 0, 0.400, 0.238, e.spine);
         for(const sx of [-1, 1]){
-          rb(0.150, 0.054, 0.048, BRZ,   sx * 0.136, 0.420, 0.188, e.spine, 0, 0, sx * -0.28);
-          rb(0.118, 0.046, 0.044, BRZ_D, sx * 0.244, 0.456, 0.176, e.spine, 0, 0, sx * -0.44);
+          rbox(0.150, 0.054, 0.048, BRZ,   sx * 0.136, 0.420, 0.188, e.spine, 0, 0, sx * -0.28);
+          rbox(0.118, 0.046, 0.044, BRZ_D, sx * 0.244, 0.456, 0.176, e.spine, 0, 0, sx * -0.44);
         }
         /* A BELT YOU COULD NOT LIFT, with a buckle the size of a dinner plate. The waist has
            to stay narrow — that is what makes the shoulders read as huge — so the weight goes
@@ -34347,9 +34255,9 @@ function buildCharMesh(c){
           obox(0.038, 0.038, 0.034, IR_S, sx * 0.170, 0.000, 0.152, e.spine);
         /* and tassets hanging off it, which nothing else here has */
         for(const sx of [-1, 1]){
-          rb(0.205, 0.250, 0.165, IR,   sx * 0.158, -0.140, 0.070, e.spine, 0, 0, sx * 0.10);
-          rb(0.216, 0.028, 0.174, BRZ,  sx * 0.158, -0.010, 0.070, e.spine, 0, 0, sx * 0.10);
-          rb(0.180, 0.140, 0.142, IR_D, sx * 0.180, -0.306, 0.062, e.spine, 0, 0, sx * 0.16);
+          rbox(0.205, 0.250, 0.165, IR,   sx * 0.158, -0.140, 0.070, e.spine, 0, 0, sx * 0.10);
+          rbox(0.216, 0.028, 0.174, BRZ,  sx * 0.158, -0.010, 0.070, e.spine, 0, 0, sx * 0.10);
+          rbox(0.180, 0.140, 0.142, IR_D, sx * 0.180, -0.306, 0.062, e.spine, 0, 0, sx * 0.16);
         }
         seal(0.146, -0.028, 0.168, 0.170, e.spine);
         /* ---------- THE PAULDRONS ----------
@@ -34364,15 +34272,15 @@ function buildCharMesh(c){
              side of the neck, and a few degrees of tip drops the outer edge, which is what
              stops a big shoulder looking like a shelf. */
           const px = sx * 0.352, tip = sx * -0.14;
-          rb(0.336, 0.124, 0.344, IR_D, px, 0.618, 0.010, e.spine, 0, 0, tip);
-          rb(0.372, 0.196, 0.412, IR,   px, 0.498, 0.010, e.spine, 0, 0, tip);
-          rb(0.344, 0.116, 0.362, IR_D, px, 0.382, 0.010, e.spine, 0, 0, tip);
-          rb(0.384, 0.046, 0.426, BRZ,  px, 0.690, 0.010, e.spine, 0, 0, tip);  /* the flat cap */
-          rb(0.356, 0.040, 0.374, BRZ,  px, 0.316, 0.010, e.spine, 0, 0, tip);  /* the lower band */
-          rb(0.046, 0.344, 0.438, BRZ_D, px + sx * 0.182, 0.486, 0.010, e.spine, 0, 0, tip);
+          rbox(0.336, 0.124, 0.344, IR_D, px, 0.618, 0.010, e.spine, 0, 0, tip);
+          rbox(0.372, 0.196, 0.412, IR,   px, 0.498, 0.010, e.spine, 0, 0, tip);
+          rbox(0.344, 0.116, 0.362, IR_D, px, 0.382, 0.010, e.spine, 0, 0, tip);
+          rbox(0.384, 0.046, 0.426, BRZ,  px, 0.690, 0.010, e.spine, 0, 0, tip);  /* the flat cap */
+          rbox(0.356, 0.040, 0.374, BRZ,  px, 0.316, 0.010, e.spine, 0, 0, tip);  /* the lower band */
+          rbox(0.046, 0.344, 0.438, BRZ_D, px + sx * 0.182, 0.486, 0.010, e.spine, 0, 0, tip);
           for(let i = -1; i <= 1; i++)
             obox(0.036, 0.036, 0.034, IR_S, px + i * 0.106, 0.690 - sx * i * 0.015, 0.150, e.spine);
-          rb(0.098, 0.174, 0.108, IR_HI, px + sx * 0.132, 0.462, 0.150, e.spine, 0, 0, tip);
+          rbox(0.098, 0.174, 0.108, IR_HI, px + sx * 0.132, 0.462, 0.150, e.spine, 0, 0, tip);
         }
         seal(-0.352, 0.286, 0.212, 0.200, e.spine);
         /* ---------- THE PACK ----------
@@ -34411,7 +34319,7 @@ function buildCharMesh(c){
             const tip = mkGlow(BOXG, ownGlow('#ffd089'), 0.038, 0.050, 0.038, sx * 0.236, 1.098, -0.216, e.spine);
             tip.material.emissiveIntensity = 1.35;
           }
-          rb(0.056, 0.190, 0.062, IR_S,   sx * 0.146, 0.610, -0.208, e.spine, 0, 0, sx * 0.30);
+          rbox(0.056, 0.190, 0.062, IR_S,   sx * 0.146, 0.610, -0.208, e.spine, 0, 0, sx * 0.30);
         }
         /* a proper gorget, narrow — the opposite statement to the funnel's */
         obox(0.290, 0.090, 0.260, IR_D, 0, 0.590, 0.005, e.spine);
@@ -34452,14 +34360,14 @@ function buildCharMesh(c){
         obox(0.300, 0.150, 0.310, IR_D,  0, 0.300, 0.030, e.headG);           /* it comes to a chin */
         obox(0.230, 0.080, 0.250, IR_S,  0, 0.205, 0.040, e.headG);
         obox(0.345, 0.032, 0.345, BRZ_D, 0, 0.600, 0.010, e.headG);
-        rb(0.115, 0.300, 0.145, IR_HI,   0, 0.735, -0.035, e.headG, -0.20, 0, 0);   /* the horn */
-        rb(0.088, 0.150, 0.115, BRZ,     0, 0.880, -0.100, e.headG, -0.40, 0, 0);
+        rbox(0.115, 0.300, 0.145, IR_HI,   0, 0.735, -0.035, e.headG, -0.20, 0, 0);   /* the horn */
+        rbox(0.088, 0.150, 0.115, BRZ,     0, 0.880, -0.100, e.headG, -0.40, 0, 0);
         for(let i = 0; i < 4; i++)                                             /* and the crest off it */
           obox(0.076 - i * 0.008, 0.150 - i * 0.028, 0.076,
                i % 2 ? IR_HI : IR, 0, 0.672 - i * 0.016, 0.046 + i * 0.058, e.headG);
         obox(0.056, 0.036, 0.300, BRZ_D, 0, 0.616, 0.100, e.headG);
         for(const sx of [-1, 1])                                               /* and two small ones */
-          rb(0.044, 0.150, 0.056, BRZ_D, sx * 0.130, 0.640, -0.040, e.headG, -0.20, 0, sx * -0.30);
+          rbox(0.044, 0.150, 0.056, BRZ_D, sx * 0.130, 0.640, -0.040, e.headG, -0.20, 0, sx * -0.30);
         /* THE GRILLE: a dark recess, two lights standing in front of it, and the bars in
            front of THEM. The order matters and it was wrong: the recess ran from z 0.133 to
            0.208 and the lights sat at 0.150, which is to say inside it — the same sealed-in
@@ -34507,10 +34415,10 @@ function buildCharMesh(c){
         for(let i = 0; i < 3; i++){
           const y = HOOP_Y[i], w = 0.442 - i * 0.026, d2 = 0.336 - i * 0.024;
           const tilt = (i === 0) ? -0.09 : 0;                                  /* never true */
-          rb(w, 0.042, 0.058, i % 2 ? BAR : BAR_D, 0, y, d2 * 0.5, e.spine, 0, 0, tilt);
-          rb(w, 0.042, 0.058, BAR_D, 0, y, -d2 * 0.5, e.spine, 0, 0, tilt);
+          rbox(w, 0.042, 0.058, i % 2 ? BAR : BAR_D, 0, y, d2 * 0.5, e.spine, 0, 0, tilt);
+          rbox(w, 0.042, 0.058, BAR_D, 0, y, -d2 * 0.5, e.spine, 0, 0, tilt);
           for(const sx of [-1, 1])
-            rb(0.056, 0.042, d2, i % 2 ? BAR : BAR_D, sx * w * 0.5, y, 0, e.spine, 0, 0, tilt);
+            rbox(0.056, 0.042, d2, i % 2 ? BAR : BAR_D, sx * w * 0.5, y, 0, e.spine, 0, 0, tilt);
           for(const sx of [-1, 1])
             obox(0.032, 0.032, 0.030, BOLT, sx * w * 0.46, y, d2 * 0.46, e.spine);
           sigil(0.120, 0.024, 0.026, (i % 2 ? -1 : 1) * 0.095, y + 0.002, d2 * 0.5 + 0.030, e.spine);
@@ -34532,7 +34440,7 @@ function buildCharMesh(c){
         intake(0.286, 0.176, 0.050, e.spine);
         /* AND THE PIPE OFF IT, up the flank to the back of the helm: whatever the intake eats
            goes somewhere, and on this one you can watch it go. */
-        rb(0.038, 0.420, 0.038, BRZ_D, 0.268, 0.420, -0.060, e.spine, 0, 0, -0.10);
+        rbox(0.038, 0.420, 0.038, BRZ_D, 0.268, 0.420, -0.060, e.spine, 0, 0, -0.10);
         obox(0.054, 0.054, 0.050, BRZ, 0.232, 0.642, -0.060, e.spine);
         for(let i = 0; i < 3; i++)
           obox(0.048, 0.020, 0.046, BRZ, 0.282 - i * 0.014, 0.300 + i * 0.105, -0.060, e.spine);
@@ -34582,8 +34490,8 @@ function buildCharMesh(c){
         obox(0.330, 0.165, 0.350, BAR,  0, 0.478, -0.012, e.headG);
         obox(0.292, 0.108, 0.316, BAR_D, 0, 0.588, -0.024, e.headG);
         obox(0.060, 0.066, 0.366, BRZ_D, 0, 0.628, -0.024, e.headG);           /* the comb */
-        rb(0.296, 0.100, 0.290, BAR_D,  0, 0.436, -0.232, e.headG, 0.44, 0, 0);/* and the tail */
-        rb(0.254, 0.030, 0.200, BRZ_D,  0, 0.376, -0.306, e.headG, 0.44, 0, 0);
+        rbox(0.296, 0.100, 0.290, BAR_D,  0, 0.436, -0.232, e.headG, 0.44, 0, 0);/* and the tail */
+        rbox(0.254, 0.030, 0.200, BRZ_D,  0, 0.376, -0.306, e.headG, 0.44, 0, 0);
         obox(0.340, 0.056, 0.080, IR_HI, 0, 0.436, 0.158, e.headG);            /* the brow */
         obox(0.234, 0.052, 0.052, VOID,  0, 0.380, 0.152, e.headG);            /* the slit */
         obox(0.322, 0.046, 0.066, BAR,   0, 0.330, 0.144, e.headG);            /* and its lip */
@@ -34653,13 +34561,13 @@ function buildCharMesh(c){
         }
         obox(0.180, 0.038, 0.044, BRZ, 0, 0.300, 0.280, e.spine);              /* the wheel */
         obox(0.038, 0.180, 0.044, BRZ, 0, 0.300, 0.280, e.spine);
-        rb(0.148, 0.038, 0.040, BRZ_D, 0, 0.300, 0.284, e.spine, 0, 0, 0.785); /* a spoke off true */
+        rbox(0.148, 0.038, 0.040, BRZ_D, 0, 0.300, 0.284, e.spine, 0, 0, 0.785); /* a spoke off true */
         obox(0.074, 0.074, 0.048, BRZ_D, 0, 0.300, 0.290, e.spine);
         /* A RELIEF VALVE on the left shoulder, because a sealed drum with a man in it is a
            sealed drum with a pressure in it */
         obox(0.078, 0.110, 0.078, BRZ_D, -0.212, 0.575, 0.090, e.spine);
         obox(0.104, 0.030, 0.104, BRZ,   -0.212, 0.640, 0.090, e.spine);
-        rb(0.048, 0.120, 0.048, BRZ,     -0.212, 0.700, 0.070, e.spine, -0.30, 0, 0);
+        rbox(0.048, 0.120, 0.048, BRZ,     -0.212, 0.700, 0.070, e.spine, -0.30, 0, 0);
         /* one seam has gone, and you can see into it */
         obox(0.058, 0.130, 0.062, VOID, -0.296, 0.170, 0.180, e.spine);
         obox(0.028, 0.150, 0.030, RIM,  -0.266, 0.170, 0.208, e.spine);
@@ -34742,7 +34650,7 @@ function buildCharMesh(c){
        built below the face section — see what that cost the homunculus, and the two elbow
        seams above it that have never existed. */
     if(subIs(c, 'doppelganger') && !c.undead && e.spine && e.elbR){
-      const seam = '#' + new THREE.Color(skinCol).multiplyScalar(0.80).getHexString();
+      const seam = shade(skinCol, 0.80);
       const flesh = skinCol;
       /* the two seams that belong on the arms, finally on the arms */
       for(const el of [e.elbL, e.elbR]) if(el) obox(0.118, 0.026, 0.118, seam, 0, 0.02, 0, el);
@@ -34755,7 +34663,7 @@ function buildCharMesh(c){
            At this camera nobody counts them either — what reads is that one hand is a
            different WIDTH from the other, which is the version of the joke that survives
            being twelve pixels tall. */
-        const hand = '#' + new THREE.Color(skinCol).multiplyScalar(0.84).getHexString();
+        const hand = shade(skinCol, 0.84);
         const digits = (el, n) => {
           if(!el) return;
           for(let i = 0; i < n; i++)
@@ -34820,7 +34728,7 @@ function buildCharMesh(c){
        it now drags a mould seam, a batch stamp and an eleven-year decay clock onto a
        ninety-year-old Scholar who ascended. The road wins over the shortcut. */
     if(c.race === 'homunculus' && !c.undead && !uncloudedBody(c) && e.spine){
-      const seam = '#' + new THREE.Color(skinCol).multiplyScalar(0.80).getHexString();
+      const seam = shade(skinCol, 0.80);
       /* THE MOULD LINE. Down the sternum and the outside of every limb, which is where the
          halves of a mould meet — thin, and the same on every body, because a mould is. */
       obox(0.022, 0.52, 0.022, seam, 0, 0.28, 0.140, e.spine);
@@ -34944,7 +34852,7 @@ function buildCharMesh(c){
            builder and reaching for it from out here is a ReferenceError thrown from inside the
            render path — the scaleborn branch records the same trap and takes the same way out. */
         obox(0.26, 0.045, 0.045,
-             '#' + new THREE.Color(skinCol).multiplyScalar(0.78).getHexString(),
+             shade(skinCol, 0.78),
              0, 0.055, 0.115, e.headG);
       }
       else if(T === 'hunter'){
@@ -35348,11 +35256,10 @@ function syncChars(dt){
         const snap = st * st;                                  /* sharp out, quick settle */
         const lunge = rear * 0.22 - snap * 0.40;               /* body back, then thrown forward */
         const pitch = rear * 0.30 - snap * 0.34;
-        e.g.position.z = (e.g.position.z || 0) * 0 + 0;        /* the group carries the world pos; lean on the torso */
-        if(e.torso){
-          e.torso.rotation.x = -pitch;
-          e.torso.position.y = (e.torso.position.y || 0);
-        }
+        /* The group carries the world position (set above, from c.x/c.y), so the lean goes on
+           the torso and nothing here may touch e.g.position. This block used to zero
+           e.g.position.z every frame, which drew every quadruped in sight on the map's north edge. */
+        if(e.torso) e.torso.rotation.x = -pitch;
         if(e.head){
           /* up and back on the wind, then driven down and forward through the target */
           e.head.position.y = e._headY0 + rear * 0.42 - snap * 0.30;
@@ -36403,7 +36310,7 @@ function projCircle(wx, wy, r, style){
    actually changes. */
 let _cxFont = '';
 function setFont(f){ if(_cxFont !== f){ cx.font = f; _cxFont = f; } }
-function renderOverlay(){
+function renderOverlay(rdt){
   _cxFont = '';   /* the fps readout writes cx.font directly after us; never trust it across frames */
   cx.clearRect(0, 0, viewW(), viewH());
   cx.textAlign = 'center';
@@ -36716,7 +36623,7 @@ function renderOverlay(){
     if(c.captured){ cx.fillStyle='#c9c2b2'; setFont('bold 11px monospace'); cx.fillText('⛓', top.x, top.y-12); }
     if(c.resting){ cx.fillStyle='#e8dcc4'; setFont('10px monospace'); cx.fillText('z', top.x+8, top.y-6); }
     if(c.idT > 0 && !c.bossKey && !(c.isLeader >= 0)){
-      c.idT -= 0.016;
+      c.idT -= rdt || 0.016;     /* real seconds: 0.016 a frame lasted 1.25s at 144Hz and 6s at 30fps */
       setFont('11px monospace');
       cx.fillStyle = '#141008'; cx.fillText(c.name, top.x+1, top.y-13);
       cx.fillStyle = '#d4c8a0'; cx.fillText(c.name, top.x, top.y-14);
@@ -36959,9 +36866,12 @@ function render(){
     hemi.color.setHex(0x8e8a7e);
     dayCol.night.setHex(0x080a12);
   }
+  let _spun = null;
   for(const r of rifts){
     if(!r.mesh) continue;
-    r.mesh.parent.children.forEach(m => { if(m.userData.spin) m.rotation.y = camYaw; });
+    /* every rift's tear hangs in the one syncRifts group, so turn that group's billboards once,
+       not once per rift (which re-turned every tear in it N times a frame) */
+    if(r.mesh.parent !== _spun){ _spun = r.mesh.parent; _spun.children.forEach(m => { if(m.userData.spin) m.rotation.y = camYaw; }); }
     const t2 = now / 380;
     r.mesh.scale.set(1 + Math.sin(t2) * 0.06, 1 + Math.sin(t2 * 1.7) * 0.09, 1);
   }
@@ -37004,7 +36914,7 @@ function render(){
   syncChars(rdt);
   updateDust(rdt);
   renderer.render(scene, camera);
-  renderOverlay();
+  renderOverlay(rdt);
 }
 /* wheel zoom */
 cv.addEventListener('wheel', e => {
@@ -37566,7 +37476,7 @@ function refreshCharPanel(){
   /* The bar has to show the pool they actually have, not the one they would have with
      nothing bound. A necromancer holding a host cannot regenerate back to full and needs
      to be told why. */
-  const mmRaw = rawMaxMana(c), mm = Math.max(1, maxMana(c));
+  const mm = Math.max(1, maxMana(c));
   const srow = $('spellrow');
   srow.innerHTML = '';
   if(hasArts(c)){
@@ -37618,7 +37528,7 @@ function refreshCharPanel(){
   let bindTxt = '';
   if(c.faction === 'player' && (c.gift === 'dark' || c.lich)){
     const load = risenLoad(c), cap = risenCap(c);
-    const held = (typeof anchorCircles === 'function' && anchorCircles().length)
+    const held = anchorCircles().length
       ? chars.filter(x => x.anchored && x.master === c && x.state !== 'dead').length : 0;
     const col = load >= cap ? 'var(--rust)' : load >= cap - 1 ? 'var(--warn)' : 'var(--dust)';
     bindTxt = ` · <span style="color:${col}" data-tip="binding">BOUND ${load}/${cap}` +
@@ -37684,7 +37594,7 @@ function refreshCharPanel(){
      amber under three hours — an hour of walking back is worth knowing about before you spend
      it. Shown only while it is burning, which is only underground. */
   let torchTxt = '';
-  if(typeof torchLit === 'function' && torchLit(c)){
+  if(torchLit(c)){
     const left = torchHours(c);
     const col = left < 3 ? 'var(--warn)' : 'var(--dust)';
     torchTxt = ` · <span style="color:${col}" data-tip="torch">TORCH ${left.toFixed(1)}h` +
@@ -37740,77 +37650,49 @@ function refreshCharPanel(){
     [null,'NONE'], ['wood','WOOD'], ['stone','STONE'], ['fish','FISH'], ['saltwork','SALTWORK'], ['farm','TEND'],
     ['build','BUILD'], ['flesh','FLESH'], ['charnel','CHARNEL'], ['raise','RAISE'], ['carrion','HARVEST'], ['bones','BONE HAUL'], ['mine','MINE'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
   ];
-  /* the trades that want somebody home behind the eyes — hoisted to module scope, because
-     shift+right-click assigns jobs too and a second copy of this list would drift */
-  /* the fallback trade: shown beside the primary, set the same way */
+  /* THE JOB AND 2ND BUTTONS, ONE BUILDER. The primary used to be a hand-copied second version of
+     this menu, and this one carried `which === 2 ?` branches for a primary it was never asked
+     to build. The one real difference is kept: the primary opens UPWARD from the foot of the
+     panel. showCtxMenu measures the menu and clamps both edges, so asking for the button's top
+     is enough. */
   const mkJobButton = (which) => {
+    const key = which === 2 ? 'job2' : 'job';
     const b2 = document.createElement('button');
-    const curJ = JOBS.find(j => j[0] === ((which === 2 ? c.job2 : c.job) || null));
+    const curJ = JOBS.find(j => j[0] === (c[key] || null));
     b2.textContent = (which === 2 ? '2ND: ' : 'JOB: ') + (curJ ? curJ[1] : 'NONE');
     b2.style.cssText = 'padding:2px 6px;font-size:10px';
     b2.onclick = () => {
       const targets = selected.filter(u => u.faction === 'player' && u.state !== 'dead');
       const r2 = b2.getBoundingClientRect();
-      const items2 = JOBS.filter(([jk]) => {
-        if(NEEDS_A_MIND.includes(jk))
-          return targets.some(u => mindedDead(u));
-        return true;
-      }).map(([jk, jl]) => ({
-        label: (targets.every(u => ((which === 2 ? u.job2 : u.job) || null) === jk) ? '● ' : '   ') + jl,
+      /* the mindless dead can haul and fight, but they cannot study, craft or work a machine */
+      const items2 = JOBS.filter(([jk]) => !NEEDS_A_MIND.includes(jk) || targets.some(u => mindedDead(u)))
+        .map(([jk, jl]) => ({
+        label: (targets.every(u => (u[key] || null) === jk) ? '● ' : '   ') + jl,
         fn: () => {
           for(const u of targets){
-            if(NEEDS_A_MIND.includes(jk) && !mindedDead(u)) continue;
-            if(which === 2){ u.job2 = jk; }
-            else { u.job = jk; if(!jk){ u.gather = null; u.gatherT = 0; } u.jobNodeT = 0; u.patrolPost = null;
-                   if(jk === 'guard') u.guardTarget = wardFor(u, targets); }
+            if(!canWork(u, jk)) continue;
+            if(which === 2){ u.job2 = jk; continue; }
+            setJob(u, jk);
+            if(jk === 'guard') u.guardTarget = wardFor(u, targets);
           }
           assignPatrolPosts();
-          if(which !== 2 && jk === 'guard') announceWards(targets);
-          log(`${targets.length > 1 ? targets.length + ' hands' : targets[0].name}: ${which===2?'fallback ':''}${jk ? jk.toUpperCase() : 'none'}.`);
+          if(which === 2){
+            log(`${targets.length > 1 ? targets.length + ' hands' : targets[0].name}: fallback ${jk ? jk.toUpperCase() : 'none'}.`);
+          } else {
+            if(jk === 'guard') announceWards(targets);
+            log(targets.length > 1
+              ? `${targets.length} set to ${jk ? jk.toUpperCase() : 'no job'}.`
+              : `${targets[0].name}: ${jk ? jk.toUpperCase() : 'no job'}.`);
+          }
           refreshCharPanel();
         }
       }));
-      showCtxMenu(r2.left, r2.bottom + 4, items2);
+      if(which === 2) showCtxMenu(r2.left, r2.bottom + 4, items2);
+      else showCtxMenu(r2.left, r2.top, items2, true);
     };
     return b2;
   };
-  const jb = document.createElement('button');
-  const cur = JOBS.find(j => j[0] === (c.job || null));
-  jb.textContent = 'JOB: ' + (cur ? cur[1] : 'NONE');
-  jb.style.cssText = 'padding:2px 6px;font-size:10px';
-  jb.onclick = () => {
-    const targets = selected.filter(u => u.faction === 'player' && u.state !== 'dead');
-    const r = jb.getBoundingClientRect();
-    const items = JOBS.filter(([jk]) => {
-      /* the mindless dead can haul and fight, but they cannot study, craft or work a machine */
-      if(NEEDS_A_MIND.includes(jk))
-        return targets.some(u => mindedDead(u));
-      return true;
-    }).map(([jk, jl]) => ({
-      label: (targets.every(u => (u.job || null) === jk) ? '● ' : '   ') + jl,
-      fn: () => {
-        for(const u of targets){
-          if(NEEDS_A_MIND.includes(jk) && !mindedDead(u)) continue;
-          u.job = jk;
-          if(!jk){ u.gather = null; u.gatherT = 0; }
-          u.jobNodeT = 0; u.patrolPost = null;
-          if(jk === 'guard') u.guardTarget = wardFor(u, targets);
-        }
-        assignPatrolPosts();
-        if(jk === 'guard') announceWards(targets);
-        log(targets.length > 1
-          ? `${targets.length} set to ${jk ? jk.toUpperCase() : 'no job'}.`
-          : `${targets[0].name}: ${jk ? jk.toUpperCase() : 'no job'}.`);
-        refreshCharPanel();
-      }
-    }));
-    /* opens UPWARD from its button, because the button lives at the bottom of the character
-       panel. The `- items.length * 30` guess that used to be here is gone: `showCtxMenu`
-       measures the real menu and clamps both edges, so asking for the button's top is enough
-       and asking for a computed offset was actively wrong. */
-    showCtxMenu(r.left, r.top, items, true);   /* upward: the button sits at the panel's foot */
-  };
-  jr.appendChild(jb);
+  jr.appendChild(mkJobButton(1));
   jr.appendChild(mkJobButton(2));   /* the fallback trade sits beside the first */
   /* WHO THEY ARE STANDING OVER. `guardTarget` can be set by the job, by G, or by right-click,
      and until now none of the three showed anywhere — so the one field that decides whether
@@ -38757,7 +38639,7 @@ function campStoresLine(){
    a light rig and a copy of the body builder; a silhouette in SVG costs nothing, reads at a
    glance, and — the part that matters — can highlight the slot you are hovering, which a
    render of the actual body could not do without a picking pass. */
-let gearFor = null, gearSlot = null;
+let gearSlot = null;
 /* ---------- A SECOND, VERY SMALL RENDERER ----------
    Its own WebGL context rather than a second pass on the main one, because the world's camera,
    fog, shadow map and post state would all have to be saved and restored around it — and the
@@ -39209,6 +39091,9 @@ function refreshInv(){
   });
   b.querySelectorAll('[data-eat]').forEach(btn => btn.onclick = () => {
     const c = selected[0]; if(!c) return;
+    /* the same refusal the backpack's EAT gives. This copy of the handler never had it, so
+       a risen or a lich could be fed from the wagon, and the food was used up. */
+    if(c.undead){ log('The dead do not eat.', 'bad'); return; }
     /* a vessel has no stomach. This was never enforced anywhere, so the answer to a starving
        golem was to hand it a loaf — which worked, and is the opposite of what it is */
     if(eatsMetal(c)){ log(`${c.name} has no use for that. The etchings want metal.`, 'bad'); return; }
@@ -39311,7 +39196,6 @@ function refreshStudyBtn(){
   b.title = has ? '' : 'No research bench built.';
 }
 function openInventory(c){
-  gearFor = c;
   openModal('KIT — ' + c.name, 'Click a slot, then something from the wagon. Below: what they are carrying — eat it, hand it over, stash it or drop it. [I] reopens.');
   const body = $('modalbody');
   const hdr = (t) => { const d=document.createElement('div'); d.style.cssText='color:var(--warn);font-size:11px;letter-spacing:1px;margin:10px 0 4px'; d.textContent=t; body.appendChild(d); };
@@ -39502,7 +39386,7 @@ function hireGuildCompany(co, x, y){
     chars.push(c); made.push(c);
   }
   /* one order, one band — they arrived together and they march together */
-  if(typeof formBand === 'function') formBand(made);
+  formBand(made);
   log(`${made.length} of the Guild fall in. ${cost} gold for the first day; ${guildWageDue()} a day after that.`, 'good');
   refreshTop(); refreshSquadBar();
   return true;
@@ -40228,10 +40112,7 @@ function openBar(v){
       if(cats < 600){ refuse('Not enough gold.'); return; }
       cats -= 600;
       const p = findOpenNear(v.x, v.y+1, 2);
-      const m = makeChar('Mule ' + (++muleN), 'player', p.x, p.y, {atk:2, def:4, tough:14, ath:5, labor:20});
-      m.beast = true; m.mule = true; m.fleeOnHit = true;
-      m.blood = 120; m.maxBlood = 120;
-      chars.push(m);
+      makeMule(p.x, p.y);
       log('The mule regards you with deep skepticism, but follows.', 'good');
       refreshTop(); refreshSquadBar(); render();
     });
@@ -40494,7 +40375,7 @@ let attackMoveMode = false, camFollow = true;
    none, because it lies. */
 function attackArmed(on){
   attackMoveMode = on;
-  if(on){ castMode = null; guardMode = false; if(typeof marqueeSet === 'function') marqueeSet(false); }
+  if(on){ castMode = null; guardMode = false; marqueeSet(false); }
   const ab2 = document.getElementById('tb-attack');
   if(ab2) ab2.classList.toggle('on', !!on);
 }
@@ -40725,7 +40606,7 @@ cv.addEventListener('touchstart', e => {
     tg.hold = setTimeout(() => {
       if(!tg || tg.mode !== 'pending') return;
       tg.held = true; tg.mode = 'done';
-      AU.ui && AU.ui();
+      AU.ui();
       fakeMouse(cv, 'mousedown', tg.sx, tg.sy, 2, false);
     }, TOUCH_HOLD_MS);
   } else if(e.touches.length === 2){
@@ -41022,9 +40903,9 @@ cv.addEventListener('mousedown', e => {
         const took = [], cannot = [];
         for(const m of movers){
           if(m.faction !== 'player') continue;
-          if(NEEDS_A_MIND.includes(jk) && !mindedDead(m)){ cannot.push(m); continue; }
-          clearOrders(m);
-          m.job = jk; m.gather = null; m.gatherT = 0; m.jobNodeT = 0; m.patrolPost = null;
+          if(!canWork(m, jk)){ cannot.push(m); continue; }
+          clearOrders(m);          /* which also drops `gather` */
+          setJob(m, jk);
           took.push(m);
         }
         assignPatrolPosts();
@@ -41056,7 +40937,7 @@ cv.addEventListener('mousedown', e => {
         const c = movers.filter(m => !m.phyl && mindedDead(m))
           .sort((a,b2)=>dist(a.x,a.y,ph.x,ph.y)-dist(b2.x,b2.y,ph.x,ph.y))[0];
         if(!c){ log('Only a mind can carry a soul. Send someone who has one.', 'bad'); return; }
-        if(c){ clearOrders(c); c.phylTarget = ph; log(`${c.name} goes to retrieve ${ph.soul.name}.`); return; }
+        clearOrders(c); c.phylTarget = ph; log(`${c.name} goes to retrieve ${ph.soul.name}.`); return;
       }
       const hit = drops.find(d => d._rect && e.clientX >= d._rect.x && e.clientX <= d._rect.x + d._rect.w && e.clientY >= d._rect.y && e.clientY <= d._rect.y + d._rect.h);
       if(hit){
@@ -41803,10 +41684,11 @@ cv.addEventListener('mousedown', e => {
         const bj = BUILD_JOB[pb.type];
         if(bj && movers.length) items.push({label:`ASSIGN ${movers.length > 1 ? movers.length + ' UNITS' : movers[0].name.toUpperCase()}: ${bj.toUpperCase()}`, fn:()=>{
           for(const m of movers){
-            if((bj === 'research') && m.undead && !m.lich){ log(`${m.name} cannot study. The risen don't think.`, 'bad'); continue; }
-            m.job = bj;
+            if(!canWork(m, bj)){ log(`${m.name} has nobody home to do that work.`, 'bad'); continue; }
+            setJob(m, bj);
             log(`${m.name} takes up the ${bj} work.`, 'good');
           }
+          assignPatrolPosts();
           refreshCharPanel();
         }});
         items.push({label: pb.off ? 'RESUME OPERATION' : 'SHUT DOWN', fn:()=>{
@@ -41820,7 +41702,10 @@ cv.addEventListener('mousedown', e => {
         return;
       }
     }
-    const ws = pBuilds.find(b => ['r_bench','script','workbench','forge','circle','crypt','kiln','smelter','loom','wartable','armoury','still','taproom'].includes(b.type) &&
+    /* 'way' has to be in this list: the dispatch below has an openWayline branch, and this
+       lookup is the only way to reach it. Without 'way' here, right-clicking a built
+       wayline just walked the party onto the stone. */
+    const ws = pBuilds.find(b => ['r_bench','script','workbench','forge','circle','crypt','kiln','smelter','loom','wartable','armoury','still','taproom','way'].includes(b.type) &&
       wx >= b.x-0.3 && wx <= b.x+b.w+0.3 && wy >= b.y-0.3 && wy <= b.y+b.h+0.3);
     if(ws){
       const near = movers.some(m => dist(m.x,m.y,ws.x+1,ws.y+1) < 5) ||
@@ -41903,6 +41788,13 @@ const TRADE_BUILDING = {
   farmer:  ['ORCHARD HOUSE', 'GRANARY'],
   fisher:  ['NET LOFT', 'CURING HOUSE'],
 };
+/* a tradesman's spot at a building's door, drawn off their id so it is the same square metre
+   every morning (see below). Shared by the guild yard and the town trades. */
+function benchPost(c, b){
+  const a = hash2(c.id * 17 + 1, c.id * 11 + 7) * Math.PI * 2;
+  const rr = 0.7 + hash2(c.id * 5 + 2, c.id * 3 + 9) * 1.5;
+  return {x: b.door.x + 1 + Math.cos(a) * rr, y: b.door.y + 1.8 + Math.sin(a) * rr, kind: 'bench', near: 2.4};
+}
 function tradePost(c, t){
   if(c._post !== undefined && c._postT === t) return c._post;
   c._postT = t;
@@ -41914,12 +41806,7 @@ function tradePost(c, t){
   if(!t && c.guildFolk && guild){
     const want = {smith: 'FORGE', crafter: 'FORGE', brewer: 'BAR', farmer: 'STOREHOUSE'}[c.trade];
     const b = want && buildings.find(x => !x.town && x.label === want && dist(x.x, x.y, guild.x, guild.y) < 20);
-    if(b){
-      const a = hash2(c.id * 17 + 1, c.id * 11 + 7) * Math.PI * 2;
-      const rr = 0.7 + hash2(c.id * 5 + 2, c.id * 3 + 9) * 1.5;
-      c._post = {x: b.door.x + 1 + Math.cos(a) * rr, y: b.door.y + 1.8 + Math.sin(a) * rr,
-                 kind: 'bench', near: 2.4};
-    }
+    if(b) c._post = benchPost(c, b);
     return c._post;
   }
   if(!t) return null;
@@ -41935,10 +41822,7 @@ function tradePost(c, t){
            and were pushed off again, forever. Each gets its own square metre of the yard,
            drawn off its id so it is the SAME square metre every morning: a bench somebody
            stands at is a bench, and a bench they are shuffled around at random is a queue. */
-        const a = hash2(c.id * 17 + 1, c.id * 11 + 7) * Math.PI * 2;
-        const rr = 0.7 + hash2(c.id * 5 + 2, c.id * 3 + 9) * 1.5;
-        c._post = {x: b.door.x + 1 + Math.cos(a) * rr, y: b.door.y + 1.8 + Math.sin(a) * rr,
-                   kind: 'bench', near: 2.4};
+        c._post = benchPost(c, b);
         return c._post;
       }
     }
@@ -42150,6 +42034,15 @@ const CRAFT_TALK = [
   'A gift is a gift until it is a curse. The difference is who is watching you use it.',
   'Every formula draws on something. Ask a priest what, and watch how fast he changes the subject.',
 ];
+/* where a good sells dear, told from town `t`. Both the trade-tip roll and makeRumor's fallback
+   say this; it was written out twice. */
+function priceTip(t){
+  const k = pick(['copper','hide','fabric','rum','fruit','meat']);
+  const best = [...towns].sort((a,b2) => priceBuy(b2,k) - priceBuy(a,k))[0];
+  return best !== t
+    ? `${ITEMS[k].name}? Fetches its best price in ${best.name}, if you can make the road.`
+    : `Folk come from all over to sell ${ITEMS[k].name.toLowerCase()} here. Best coin around.`;
+}
 function makeRumor(speaker){
   const t = speaker.homeTown || towns[0];
   const roll = rnd();
@@ -42191,13 +42084,7 @@ function makeRumor(speaker){
     }
   }
   /* trade tips: where a good sells dear */
-  if(roll < 0.60){
-    const goods = ['copper','hide','fabric','rum','fruit','meat'];
-    const k = pick(goods);
-    const best = [...towns].sort((a,b2) => priceBuy(b2,k) - priceBuy(a,k))[0];
-    if(best !== t) return `${ITEMS[k].name}? Fetches its best price in ${best.name}, if you can make the road.`;
-    return `Folk come from all over to sell ${ITEMS[k].name.toLowerCase()} here. Best coin around.`;
-  }
+  if(roll < 0.60) return priceTip(t);
   /* The world's state — but only the part of it this speaker's town has actually heard.
      Reading global truth here meant a drifter in the far corner of the map could tell you
      about a war declared two seconds ago on the other side of the world. Now word has to
@@ -42236,14 +42123,7 @@ function makeRumor(speaker){
      to the one generator that can always produce — where a good sells dear — rather than to
      somebody begging for a coin. */
   if(rnd() < 0.55) return t.def.lore;
-  {
-    const goods = ['copper','hide','fabric','rum','fruit','meat'];
-    const k = pick(goods);
-    const best = [...towns].sort((a,b2) => priceBuy(b2,k) - priceBuy(a,k))[0];
-    return best !== t
-      ? `${ITEMS[k].name}? Fetches its best price in ${best.name}, if you can make the road.`
-      : `Folk come from all over to sell ${ITEMS[k].name.toLowerCase()} here. Best coin around.`;
-  }
+  return priceTip(t);
 }
 /* AMBIENT CHATTER IS THE OTHER CATEGORY, and it does not live here. What a body says to the air
    as you walk past fires on its own out of `townTick`, which picks from `t.def.civBarks` and
@@ -42500,7 +42380,7 @@ function openRule(px, py, t){
           t.warWith = o; o.warWith = t;
           delete (t.pacts||{})[oi];
           t.order = clamp(t.order - 10, 0, 100);
-          o.rep = clamp(o.rep - 25, -100, 100);
+          o.rep = clamp(o.rep - 25, -300, 100);
           relSet(ti, oi, -60);
           log(`${t.name} declares war on ${o.name}, by your word. The town grumbles. (−order)`, 'bad');
           worldEvent('war', t.x, t.y, `${t.name} has declared war on ${o.name} at their Overlord's command.`);
@@ -42518,7 +42398,7 @@ function payTribute(t, L){
   if(cats < cost){ refuse('Not enough gold.'); return; }
   cats -= cost;
   const gain = L.trait==='mercantile' ? 22 : L.trait==='pious' ? 10 : 15;
-  t.rep = clamp(t.rep + gain, -100, 100);
+  t.rep = clamp(t.rep + gain, -300, 100);
   log(`${L.title} ${L.name} accepts the tribute. (+${gain} standing with ${t.name})`, 'good');
   refreshTop();
 }
@@ -42532,8 +42412,8 @@ function brokerPeace(t, L){
     const ti = towns.indexOf(t), oi = towns.indexOf(o);
     t.warWith = null; if(o.warWith === t) o.warWith = null;
     relSet(ti, oi, Math.max(relGet(ti, oi), -5));
-    t.rep = clamp(t.rep + 10, -100, 100);
-    o.rep = clamp(o.rep + 6, -100, 100);
+    t.rep = clamp(t.rep + 10, -300, 100);
+    o.rep = clamp(o.rep + 6, -300, 100);
     log(`${L.title} ${L.name} agrees. The war with ${o.name} is over — and both sides know who ended it.`, 'good');
     worldEvent('peace', t.x, t.y, `${t.name} and ${o.name} have made peace, brokered by an outsider's coin.`);
   } else {
@@ -42556,7 +42436,7 @@ function inciteWar(t, L, target){
     worldEvent('war', t.x, t.y, `${t.name} has declared war on ${target.name}. Coin changed hands first, some say.`);
   } else {
     log(`${L.title} ${L.name} listens, keeps the coin, and does nothing. ${L.trait==='cunning' ? 'You suspect they knew exactly what you were doing.' : ''}`, 'bad');
-    if(L.trait==='cunning' || L.trait==='just'){ t.rep = clamp(t.rep - 8, -100, 100); }
+    if(L.trait==='cunning' || L.trait==='just'){ t.rep = clamp(t.rep - 8, -300, 100); }
   }
   refreshTop();
 }
@@ -42981,7 +42861,6 @@ const TALK_TREES = {
        nobody does anything is not that nobody knows. */
     count: {
       line: (t) => {
-        const n = (estate && estate.taken) || 0;
         const names = (estate && estate.invites.slice(-2).map(i => i.name)) || [];
         return `Twenty that are still worth counting, and more that are not. Some of them came over that wall meaning us harm. ` +
           `Most of them came up the front path, in their good coat, delighted to have been asked.` +
@@ -43017,7 +42896,7 @@ const TALK_TREES = {
         if(!estate || estate.deal) return;
         estate.deal = 'kept';
         addItem('fruit', 24); addItem('rum', 3);
-        if(estate.town) estate.town.rep = clamp((estate.town.rep || 0) + 8, -100, 100);
+        if(estate.town) estate.town.rep = clamp((estate.town.rep || 0) + 8, -300, 100);
         log('The Aldercotts consider you a friend of the house. Greenrest follows the Aldercotts.', 'good');
       }}],
     },
@@ -43036,7 +42915,7 @@ const TALK_TREES = {
           if(!estate || estate.deal) return;
           estate.deal = 'told';
           estate.watched = true;
-          if(estate.town) estate.town.rep = clamp((estate.town.rep || 0) - 35, -100, 100);
+          if(estate.town) estate.town.rep = clamp((estate.town.rep || 0) - 35, -300, 100);
           log('You say it in the square, at the well, to anybody who will stand still. Greenrest listens politely and goes back to work.', '');
           log('Nobody calls you a liar. That is somehow worse. By evening the watch has been told to keep an eye on you.', 'bad');
           log('The invitations stop while you are in town. It is the only thing that changes.', '');
@@ -43051,7 +42930,6 @@ const TALK_TREES = {
         if(!estate || estate.deal) return;
         estate.deal = 'taken';
         orchardOpen('The Dame has the rows opened for you herself, and stands well back while it is done.');
-        for(const b of chars) if(b.orchardDead) b.freeToTake = true;
         log('Twenty bodies, four generations in the ground, and the woman who buried them holding the lamp.', 'good');
       }}],
     },
@@ -43884,7 +43762,7 @@ function snapshot(){
        deep has no roads: what you did in one hall is not known in the next one. */
     altarS: deepAltars.map(a => ({regard: a.regard, kin: !!a.kin, given: a.given.slice()})),
     estateS: estate ? {admitted: !!estate.admitted, opened: !!estate.opened, doorOpen: !!estate.doorOpen,
-                       told: !!estate.told, taken: estate.taken || 0,
+                       deal: estate.deal || null, watched: !!estate.watched, taken: estate.taken || 0,
                        invites: (estate.invites || []).map(i => ({...i})),
                        pending: estate.pending ? {...estate.pending} : null,
                        nextInvite: estate.nextInvite,
@@ -43970,7 +43848,6 @@ function snapshot(){
 }
 function restore(d){
   if(!d || (d.v||0) < 20){ log('That save predates the map expansion (v20). It can no longer be loaded.', 'bad'); return; }
-  if(!d || (d.v||0) < 19){ log('That save predates the city expansion and can no longer be loaded.', 'bad'); return; }
   chars.length = 0; corpses.length = 0; particles.length = 0; projectiles.length = 0;
   pBuilds.length = 0;
   blocked.clear(); for(const k of baseBlocked) blocked.add(k);
@@ -43998,7 +43875,7 @@ function restore(d){
        without this the trail ends at a corpse-field with nobody standing in it. Roll the leg
        it never had, and treat the first field as already walked. */
     if(search.found && search.siteId2 < 0 && !search.met){
-      const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+      const sites = corpseSites;
       if(sites.length > 1){
         do { search.siteId2 = ri(0, sites.length - 1); } while(search.siteId2 === search.siteId);
       } else search.siteId2 = search.siteId;
@@ -44170,7 +44047,12 @@ function restore(d){
 
   if(estate && d.estateS){
     const E = d.estateS;
-    estate.admitted = !!E.admitted; estate.opened = !!E.opened; estate.told = !!E.told;
+    estate.admitted = !!E.admitted; estate.opened = !!E.opened;
+    /* THE DEAL IS KEPT ACROSS A SAVE. The save used to carry a `told` field that nothing ever
+       set, and not the `deal` the Dame's lines actually guard on, or the `watched` that keeps
+       the invitations stopped. After a reload her gift (fruit, rum, standing) could be taken
+       again, or the town told again. */
+    estate.deal = E.deal || null; estate.watched = !!E.watched;
     estate.taken = E.taken || 0;
     estate.invites = (E.invites || []).map(i => ({...i}));
     estate.pending = E.pending ? {...E.pending} : null;
@@ -44201,13 +44083,13 @@ function restore(d){
   if(Array.isArray(d.rifts)) for(const r of d.rifts) rifts.push({...r, mesh:null});
   riftN = d.riftN || 0;
   if(Array.isArray(d.oreFields) && d.oreFields.length) oreFields = d.oreFields;
-  if(Array.isArray(d.nodeUses)){
-    nodeUses.clear();
-    for(const [k, v] of d.nodeUses) nodeUses.set(k, v);
-    for(const k of nodeUses.keys()){
-      const [nx, ny] = k.split(',').map(Number);
-      if(nodeDepleted(nx, ny)) hideNodeInstance(k); else showNodeInstance(k);
-    }
+  /* once, here. A second clear-and-reload further down this function wrote the same entries
+     back in the same order and hid the same stumps again. */
+  nodeUses.clear();
+  if(Array.isArray(d.nodeUses)) for(const [k, v] of d.nodeUses) nodeUses.set(k, v);
+  for(const k of nodeUses.keys()){
+    const [nx, ny] = k.split(',').map(Number);
+    if(nodeDepleted(nx, ny)) hideNodeInstance(k); else showNodeInstance(k);
   }
   for(const k of Object.keys(stash)) delete stash[k];
   Object.assign(stash, d.stash);
@@ -44471,8 +44353,6 @@ function restore(d){
   for(const t of towns) if(t.board) for(const j of t.board.jobs) if(j.taken && !j.paid && !j.failed) contracts.push(j);
   contractN = Math.max(d.contractN || 0, contracts.reduce((m, j) => Math.max(m, j.id || 0), 0));
   computeVision();
-  nodeUses.clear();
-  if(d.nodeUses) for(const [k,v] of d.nodeUses){ nodeUses.set(k, v); if(nodeDepleted(...k.split(',').map(Number))) hideNodeInstance(k); }
   purgeWrath = d.purgeWrath || 0; lastInquestDay = d.lastInquestDay ?? -99;
   /* A SAVE FROM BEFORE THIS HAS NO NAME YET, which is the right answer for it — an old game
      starts unknown and earns its reputation from here rather than being handed one. */
@@ -44552,7 +44432,7 @@ function restore(d){
   const f = player()[0]; if(f){ camX = f.x; camY = f.y; }
   refreshTop(); refreshInv(); refreshSquadBar(); refreshCharPanel();
   computeVision();   /* a loaded squad stands somewhere new; light it before the first frame */
-  if(typeof syncDecorFog === 'function') syncDecorFog();
+  syncDecorFog();
   log('Game loaded.', 'good');
   /* ---------- A SAVE FROM BEFORE THE FLESH JOB SPLIT ----------
      FLESH used to tend the vats AND the Charnel Houses. It now tends the vats only, so a save
@@ -44825,14 +44705,12 @@ $('btn-move').onclick = () => { openMoveDialog(); };
    now, and the creator is behind one of them.
    CONTINUE IS ONLY OFFERED WHEN THERE IS SOMETHING TO CONTINUE, and it says what: a save with
    nothing in it is worse than no button, because it looks like a way back to a run you had. */
-let ccMode = 'front';
 function ccSavedText(){
   let data = null;
   try { data = localStorage.getItem('dustward_save'); } catch(e){}
   return data || null;
 }
 function showCCFront(){
-  ccMode = 'front';
   const data = ccSavedText();
   const f = $('ccfront');
   f.classList.add('on');
@@ -44844,7 +44722,7 @@ function showCCFront(){
     `<button class="ccfront-btn" id="cc-new">NEW GAME<small>Choose what you are, where you came from and how it starts. Five short steps.</small></button>` +
     (data ? '' : '<div style="color:var(--dust);font-size:11.5px;line-height:1.6">No saved run on this browser yet. The game autosaves as you play.</div>');
   const nb = $('cc-new');
-  if(nb) nb.onclick = () => { ccMode = 'create'; ccStep = 0; showCCCreate(); };
+  if(nb) nb.onclick = () => { ccStep = 0; showCCCreate(); };
   const cb = $('cc-continue');
   if(cb) cb.onclick = async () => {
     let snap = null;
@@ -44862,7 +44740,6 @@ function showCCFront(){
 }
 let ccSaveNote = '';
 function showCCCreate(){
-  ccMode = 'create';
   $('ccfront').classList.remove('on');
   $('ccsteps').style.display = '';
   $('ccbody').style.display = '';
@@ -44887,7 +44764,7 @@ function startTheSearch(me){
   search.cairn = false; search.told = false;
   /* she is somewhere out past the last of the towns — the corpse sites are the places the
      exiled ended up, which is exactly where somebody sent here to die would have gone */
-  const sites = (typeof corpseSites !== 'undefined' && corpseSites.length) ? corpseSites : null;
+  const sites = corpseSites.length ? corpseSites : null;
   search.siteId = sites ? ri(0, sites.length - 1) : -1;
   /* AND SHE DID NOT STAY THERE. The second field is where she is now; the first is only where
      she was put. Rolled here so the whole trail exists from the first day of the run. */
@@ -44906,7 +44783,7 @@ function askAfterLyre(t, L){
   const key = t.def.key;
   if(search.asked[key]){ log(`${L ? L.name : t.name} has told you what they know.`, ''); return; }
   search.asked[key] = 1; search.leads++;
-  const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+  const sites = corpseSites;
   if(search.leads >= 3 && sites.length && search.siteId >= 0){
     search.found = true;
     const site = sites[search.siteId];
@@ -44914,7 +44791,6 @@ function askAfterLyre(t, L){
     worldEvent('lyre', site.x, site.y,
       'Three tellings agree. A woman was put out past the last fence years ago, and walked toward the corpse-fields on purpose.');
     say(L || t.leader || {name:t.name}, 'Nobody walks out that way to live.');
-    const from = player()[0] || {x: t.x, y: t.y};
     threadSet('lyre', 'The search for Lyre',
       'Three halls agree on where she was put out. Walk to the corpse-field.',
       {hint: 'It is a long way past the last fence. Take water and somebody who can fight.',
@@ -44939,7 +44815,7 @@ function askAfterLyre(t, L){
    stretch of waste for years and know precisely which fields have stopped producing it. */
 function lyreCairn(){
   if(!search.on || !search.found || search.cairn || search.met) return;
-  const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+  const sites = corpseSites;
   const site = sites[search.siteId]; if(!site) return;
   const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 20);
   if(!near) return;
@@ -44957,10 +44833,9 @@ function lyreCairn(){
 /* the scholar names the field she is in now. It costs nothing but finding one. */
 function tellScholarOfTheCairn(sc){
   if(!search.on || !search.found || !search.cairn || search.told || search.met) return false;
-  const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+  const sites = corpseSites;
   const site2 = sites[search.siteId2]; if(!site2) return false;
   search.told = true;
-  const from = player()[0] || sc;
   log(`${sc.name}: "A field that has stopped producing. Yes. I keep a ledger of those, and there are four, and they went quiet in ORDER — one after another, walking outward." They turn the page around so you can see it.`, 'good');
   log(`${sc.name}: "Whatever is doing it is working through them. This is the one that went quiet last." They tap the page.`, 'good');
   worldEvent('lyre', site2.x, site2.y,
@@ -44982,7 +44857,7 @@ function lyreTick(dt){
   /* the first field is the cairn; she is standing in the last one the scholar's ledger names */
   if(!search.cairn){ lyreCairn(); return; }
   if(!search.told) return;
-  const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+  const sites = corpseSites;
   const site = sites[search.siteId2 >= 0 ? search.siteId2 : search.siteId];
   if(!site) return;
   /* WIDER THAN THE SITE. A corpse-field carries r:12 and the old arrival test was 14, which
@@ -45047,7 +44922,7 @@ const SISTER_BEATS = [
    line:'There is a seat back there that bars its doors when it hears your name. I have been on the wrong side of one of those. It is not a small thing and it does not wash off.'},
   {key:'work', when: () => sisterArc.sealed >= 1, move: 4,
    line:'That is one. I stopped counting somewhere past four hundred. Take me to the next one and I will stop asking what the crown is for.'},
-  {key:'signed', when: () => typeof compactActive === 'function' && compactActive(), move: 6,
+  {key:'signed', when: () => compactActive(), move: 6,
    line:'Seven halls with their names on the same page. Eleven years and I could not get two of them to agree on the weather. You did that wearing the crown.'},
   {key:'warm', at: 25, move: 0,
    line:'I have spent a month working out what you are. I have decided I do not have to. You are here, and the tears are closing.'},
@@ -45136,7 +45011,7 @@ function sisterLeaves(c){
   clearOrders(c);
   selected = selected.filter(x => x !== c);
   /* back to the field the ledger named, which is where he found her and where she will be */
-  const sites = (typeof corpseSites !== 'undefined') ? corpseSites : [];
+  const sites = corpseSites;
   const site = sites[search.siteId2 >= 0 ? search.siteId2 : search.siteId];
   if(site){ const q = findOpenNear(site.x + ri(-4, 4), site.y + ri(-4, 4), 8); if(q){ c.x = q.x; c.y = q.y; } }
   log(`${c.name} HAS GONE. Not into the waste with the rest of the leavers — back to the field, and the work. She left the way she arrived here: on her own feet, carrying nothing.`, 'bad');
@@ -45152,7 +45027,7 @@ function sisterLeaves(c){
 }
 function sisterCommits(c){
   sisterArc.committed = true; sisterArc.taught = true; sisterArc.done = 'kept';
-  c.devoted = true; c.morale = 100;
+  c.devoted = true;
   say(c, 'Sit down. There is a way to close one that costs a tenth of what you have been paying for it, and I have never told anybody, because the last person I told sold it within the month. I am telling you.');
   log(`${c.name} HAS THROWN IN. She has been holding one thing back since the field and she has stopped holding it.`, 'good');
   log(`She teaches the closing. A tear now costs ${costText(riftSealCost())} instead of ${costText(RIFT_SEAL_COST)}.`, 'good');
@@ -45261,7 +45136,7 @@ function sisterTick(){
 const mother = {caveId:-1, sought:false, found:false, spoken:false, reads:0, toldPrice:false, stirred:false};
 function motherCaveId(){
   if(mother.caveId >= 0) return mother.caveId;
-  if(typeof caves === 'undefined' || !caves.length) return -1;
+  if(!caves.length) return -1;
   let best = null, bestH = -1;
   for(const cv of caves){
     if(!cv.vault) continue;
@@ -45272,7 +45147,6 @@ function motherCaveId(){
   return mother.caveId;
 }
 function motherCave(){
-  if(typeof caves === 'undefined') return null;
   const id = motherCaveId();
   return id < 0 ? null : caves.find(v => v.id === id);
 }
@@ -45302,7 +45176,7 @@ function motherSought(line, step, hint){
    floor, inside one of that cave's carved rooms. Small numbers — a handful of caves, a dozen
    rooms each — and it is only asked on a keypress or a two-second tick. */
 function caveContaining(c){
-  if((c.floor || 0) >= 0 || typeof caves === 'undefined') return null;
+  if((c.floor || 0) >= 0) return null;
   const f = c.floor || 0;
   for(const cv of caves) for(const rm of cv.rooms){
     if(rm.f !== f) continue;
@@ -45735,11 +45609,8 @@ function applyCreation(race, gift, origin, sub){
     me = mk(p, {atk:3, def:3, tough:4, ath:4, medic:4, magic:5, labor:4, gift:g, race});
     mk(beside(p, 1, 0.5), {atk:3, def:4, tough:4, ath:4, medic:6, magic:3, gift: g==='divine' ? null : 'divine'});
     mk(beside(p, -1, 0.5), {atk:4, def:3, tough:4, ath:4, medic:3, magic:3});
-    muleN++;
     const mp = beside(p, 0, 1);
-    const m = makeChar('Mule '+muleN, 'player', mp.x, mp.y, {atk:2, def:4, tough:14, ath:5, labor:20});
-    m.beast = true; m.mule = true; m.fleeOnHit = true; m.blood = 120; m.maxBlood = 120;
-    chars.push(m);
+    makeMule(mp.x, mp.y);
     cats = 3200; stash.mats = 40; stash.pack_s = 1;
   } else if(origin === 'lyonart'){
     /* the far edge, as far from anyone who might know the name as the map allows */
@@ -45800,7 +45671,7 @@ function applyCreation(race, gift, origin, sub){
     /* He starts where he was made. The deep redoubt is a three-storey golden-age complex
        with a Last Warden on the top floor — walking out of it is the first thing he ever
        did, so he begins outside its door with it still open behind him. */
-    const home = (typeof redoubts !== 'undefined' && redoubts.length) ? redoubts[0] : null;
+    const home = redoubts.length ? redoubts[0] : null;
     const at = home ? {x: home.x, y: home.y + (home.deep ? 12 : 10)} : bossSpot(44, 58);
     const p = findOpenNear(at.x, at.y, 5);
     /* HIGH COMBAT, and it should read as built rather than earned: no medic, no craft, no

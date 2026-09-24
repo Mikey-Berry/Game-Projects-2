@@ -46,7 +46,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        probe measures the machine's patience instead of the clock. */
     const sweep = (days, stage) => {
       fractureStage = stage; fracture = FRACTURE_STAGES[stage].at;
-      bloodMoon = 0; bloodMoonWarned = false;
+      bloodMoon = 0;
       if (typeof bloodMoonLast !== 'undefined') bloodMoonLast = -999;
       const nights = [];
       const d0 = day;
