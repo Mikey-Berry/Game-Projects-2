@@ -17630,7 +17630,7 @@ function siegeTick(){
   if(!ruin && towns.every(t => t.sacked > 0)) enterRuin();
 }
 function fallToTheDark(t){
-  t.sacked = 9;
+  t.sacked = 9; t.sackKind = 'dark';   /* nothing burned here — see the sack branch in update() */
   t.order = 0;
   compactRelease(t);
   for(const c of chars) if(c.civ && c.homeTown === t && rnd() < 0.45) kill(c, null);
@@ -24555,6 +24555,7 @@ function update(dt){
   const wdh = wldT / HOUR_SEC;
   if(wtick) wldT = 0;
   if(wtick) orchardTick();    /* and the ground at Greenrest is felt by whoever can feel it */
+  if(wtick) ruinTick();       /* and a town that was put to the torch is still burning */
   stonewakeTick(dt);          /* and something is still cutting the halls it was set to cut */
   hourAcc += dt / HOUR_SEC;
   const dh = dt / HOUR_SEC;
@@ -25396,7 +25397,13 @@ function update(dt){
       if(t.wall0 === undefined) t.wall0 = t.walls.length;
       const breached = !t.def.wall || t.walls.length < t.wall0;
       if(!defenders.length && enemyArmy.length >= 3 && breached && !t.sacked){
-        t.sacked = 5;
+        /* ---------- TWO WAYS A TOWN ENDS ----------
+           This is the host's sack: a breach, and then the torch. `fallToTheDark` is the other
+           one, and it leaves the buildings standing. The COUNTER cannot carry the difference —
+           5 and 9 are the two starting values and both tick down through the same numbers, so
+           by its fourth day a town that fell to the dark is indistinguishable from a burnt one.
+           The kind is its own field, and it is what everything that draws a ruin reads. */
+        t.sacked = 5; t.sackKind = 'torch';
         worldEvent('sack', t.x, t.y, `${t.name} has been sacked. Its walls are breached and its stores put to the torch.`);
         for(const c of chars){ if(c.civ && c.homeTown===t && rnd()<0.25) kill(c, null); }
         if(rnd() < 0.6) succeed(t, 'was slain when the walls fell');
@@ -26675,7 +26682,16 @@ function syncTorchLights(){
      a lantern with no cell in it loses its glass entirely — which is the town's decline made
      visible, and the only thing on the map that says so without a line of text. */
   const glassK = 0.18 + wk * 0.82;
-  for(const f of townFires) if(f.head) f.head.material.opacity = glassK;
+  /* ---------- AND A RUIN KEEPS NO LAMPS ----------
+     Both kinds of ending put the street out. It is the same two objects the day curve already
+     moves, and it has to be the mesh rather than the material: one amber material is shared by
+     every amber disc in all seven towns, so fading it would take the lamps out of the towns
+     that are still standing. */
+  for(const f of townFires){
+    const out = f.town.sacked > 0;
+    if(f.head){ f.head.visible = !out; f.head.material.opacity = glassK; }
+    if(f.pool) f.pool.visible = !out;
+  }
   for(const L of lanterns) if(L.head){
     L.head.visible = !!L.fuel;
     L.head.material.opacity = glassK;
@@ -26701,6 +26717,13 @@ function syncTorchLights(){
   if(activeFloor === 0){
     for(const f of townFires){
       if(Math.abs(f.x - camSX) > 120 || Math.abs(f.y - camSY) > 120) continue;
+      /* a burnt town is not lit, it is BURNING: the same posts, a dirtier red, and lower down,
+         because what is alight is the wreckage around the post and not a cresset on top of it */
+      if(f.town.sacked > 0){
+        if((f.town.sackKind || 'torch') === 'dark' || !ruinBurns(f)) continue;
+        fires.push({x: f.x, y: f.y, h: 0.7, k: 1.35, col: 0xff7a2e});
+        continue;
+      }
       fires.push({x: f.x, y: f.y, h: f.h, k: f.k, col: f.col});
     }
     for(const L of lanterns){
@@ -29513,6 +29536,16 @@ function palette(t){
     roof.castShadow = true;
     g.add(roof);
     b._roof = roof;
+    /* ---------- WHAT THE SCAR NEEDS TO KNOW ----------
+       A burnt roof and a blacked doorway have to sit exactly where this building's roof and
+       doorway are, and every one of those numbers is rolled out of `hash2` here — eave height,
+       pitch, the stilt lift under a Hollowmere house. `syncTownScar` recomputing them would be
+       the same arithmetic written twice, and it would drift the first time one of them moved.
+       `mat()` CACHES BY COLOUR, so the roof material is shared with every other roof of that
+       colour and must never be recoloured in place; the scar swaps the whole material and puts
+       this one back. */
+    b._roofMat0 = roof.material;
+    b._eaveY = y + lift + wallH; b._ridgeY = ridgeY; b._lift = lift; b._gy = y;
   }
   for(const r of ruins) for(const [bx,by] of r.rubble){
     box(g, 0.8, 0.5+hash2(bx,by)*0.6, 0.8, '#4a443c', bx+0.5, groundY(bx+0.5,by+0.5)+0.3, by+0.5);
@@ -29627,6 +29660,7 @@ function palette(t){
     pool.position.set(f.x, fy + 0.06, f.y);
     pool.renderOrder = 3;
     g.add(pool);
+    f.pool = pool;     /* retained, so a ruin can put this one lamp out — the MATERIAL is shared */
   }
   /* and the six on the Fallowend road, which have been a mechanic with nothing to look at
      since the day they were written. A dead one keeps its post and loses its glass. */
@@ -30338,6 +30372,7 @@ function syncRoofs(){
   for(const c of chars) if(c.faction==='player' && c.state!=='dead') _roofWho.push(c);
   for(const b of buildings){
     if(!b._roof) continue;
+    if(b._fallen){ b._roof.visible = false; continue; }   /* burnt in; there is nothing to lift */
     let open = false;
     for(let i=0; i<_roofWho.length; i++){
       const c = _roofWho[i];
@@ -31042,6 +31077,7 @@ const syncTownWalls = makeDynGroup(
     const BANNER = {dustport:'#3f7fa0', copperhold:'#c47a2a', greenrest:'#5a8a3a', hollowmere:'#8a6ab5'};
     for(const t of towns){
       if(!t.def.wall) continue;
+      if(t.sacked > 0) continue;      /* nobody is left to fly it, either way the town ended */
       const r = t.def.wall.r;
       for(const gy of [t.y-r, t.y+r]){
         const bx = t.x - 1.6, y = groundY(bx, gy);
@@ -31051,6 +31087,119 @@ const syncTownWalls = makeDynGroup(
     }
   }
 );
+/* ---------- AND WHAT IS LEFT OF A TOWN THAT ENDED ----------
+   "Let's add some visuals for sacks and plagues... Two flavors of sack would be best."
+   A town has been able to end two different ways since long before either of them had
+   anything to look at. `t.sacked = 5` is a host through the breach and the stores put to the
+   torch. `fallToTheDark` is order reaching zero — "whatever came over its wall is still in
+   there" — and it sets 9. On the map both of them looked exactly like the town next door.
+   They are opposites and they are drawn as opposites. A TORCHED town has lost a third of its
+   roofs, the rest are charred, fire is still working through it and the smell of it is the
+   light you see it by at night. A town that FELL TO THE DARK is whole: every roof on, nothing
+   scorched, nothing burning — and not one light anywhere in it, with each doorway a flat black
+   hole that stays black at noon.
+   The signature is the KIND and not the counter, so this is built once when a town falls and
+   once when it comes back, rather than on each of the nine days of the count. */
+const RUIN_DARK = new THREE.MeshBasicMaterial({color: 0x07060a});
+_sharedRes.add(RUIN_DARK);          /* shared across rebuilds — `disposeTree` must leave it alone */
+const syncTownScar = makeDynGroup(
+  () => towns.map(t => t.sacked > 0 ? (t.sackKind || 'torch') : '-').join('|'),
+  (g) => {
+    /* THE ROOFS ARE NOT THIS GROUP'S CHILDREN. `b._roof` is a retained mesh built once with the
+       town, so it is not disposed and rebuilt with the rest of this — which means every
+       building has to be SET on every pass, not just the burnt ones, or a town that comes back
+       from a sack keeps its charred roofs and its holes for the rest of the run. */
+    for(const b of buildings){
+      if(!b._roof) continue;
+      const ruined = !!(b.town && b.town.sacked > 0);
+      const burnt = ruined && (b.town.sackKind || 'torch') !== 'dark';
+      b._fallen = burnt && hash2(b.x * 3 + 1, b.y * 5 + 2) < 0.34;
+      /* CHARRED IS NEAR-BLACK AND THE SAME FOR EVERY ROOF; COLD IS THE ROOF'S OWN COLOUR WITH
+         THE LIFE TAKEN OUT OF IT. `shade` is here for exactly this — the same stuff in a
+         different condition — and it keeps a town that fell to the dark reading as the town it
+         was, which is the whole difference between the two endings. */
+      b._roof.material = !ruined ? (b._roofMat0 || b._roof.material)
+                       : burnt   ? (b._fallen ? b._roof.material : mat('#2b2520'))
+                       : mat(shade('#' + (b._roofMat0 || b._roof.material).color.getHexString(), 0.42));
+      if(!b._fallen) b._roof.visible = true;
+    }
+    for(const t of towns){
+      if(!(t.sacked > 0)) continue;
+      const dark = (t.sackKind || 'torch') === 'dark';
+      for(const b of buildings){
+        if(b.town !== t || b.citadel || !b._roof) continue;
+        const cxp = b.x + b.w/2, czp = b.y + b.h/2;
+        const wallH = b._eaveY - b._gy - (b._lift || 0);
+        const dx = b.door.x + 1, dz = b.y + b.h - 0.5;
+        if(dark){
+          /* the doorway, and nothing behind it. A BASIC material, because this is the one
+             black in the world that has to stay black in full sun — a Lambert panel in a
+             doorway at noon is a grey rectangle, which reads as a shutter. */
+          const m = new THREE.Mesh(BOXG, RUIN_DARK);
+          m.scale.set(1.96, wallH * 0.94, 0.1);
+          m.position.set(dx, b._gy + (b._lift || 0) + wallH * 0.47, dz);
+          g.add(m);
+          continue;
+        }
+        if(b._fallen){
+          /* the roof is down. What is left is the frame of it — beams across the footprint at
+             eave height, and the rest of it on the floor. */
+          for(let k = 0; k < 3; k++){
+            const fz = b.y + 1.0 + k * (b.h - 2.0) / 2;
+            box(g, b.w - 0.9, 0.12, 0.14, '#2a231c', cxp, b._eaveY - 0.12, fz, false);
+          }
+          for(let i = b.x + 1; i < b.x + b.w - 1; i++) for(let j = b.y + 1; j < b.y + b.h - 1; j++){
+            const hh = hash2(i * 17 + 3, j * 13 + 9);
+            if(hh > 0.42) continue;
+            box(g, 0.7, 0.18 + hh * 0.5, 0.7, hh < 0.2 ? '#231d18' : '#3d362d',
+                i + 0.5, b._gy + (b._lift || 0) + 0.12 + hh * 0.25, j + 0.5);
+          }
+        } else {
+          /* it kept its roof, and the fire still came out of the door */
+          box(g, 1.9, Math.min(0.7, wallH * 0.4), 0.07, '#221c17', dx, b._eaveY - 0.3, b.y + b.h - 0.02, false);
+        }
+      }
+      /* AND THE GROUND ITSELF. The lamp posts are where a town's streets are — see the two
+         rings in `townFires` — so both endings are written on the ground at the posts, which
+         is also the list `syncTorchLights` and `ruinTick` read. The torched town gets scorch
+         under the ones still alight and a stump of burnt wreckage on it; the other gets the
+         cold that came up the street, at every post, because nothing there burned and the
+         town would otherwise read as merely unlit from more than a few tiles away. */
+      for(const f of townFires){
+        if(f.town !== t) continue;
+        const fy = groundY(f.x, f.y);
+        if(dark){
+          box(g, 3.0, 0.05, 3.0, '#0f0e14', f.x, fy + 0.04, f.y, false);
+          box(g, 0.2, 1.5, 0.2, '#14121a', f.x, fy + 0.75, f.y, false);   /* the post, gone cold */
+        } else if(ruinBurns(f)){
+          box(g, 2.6, 0.05, 2.6, '#241f1a', f.x, fy + 0.04, f.y, false);
+          box(g, 0.5, 0.35, 0.5, '#1c1713', f.x, fy + 0.18, f.y);
+        }
+      }
+    }
+  }
+);
+/* WHICH OF A BURNT TOWN'S POSTS IS STILL ALIGHT. A hash of the post's own position, so the
+   same handful burn from the moment the town falls to the moment it is rebuilt, and the
+   scorch on the ground, the flame particles and the light all agree about which ones. */
+function ruinBurns(f){ return hash2(Math.round(f.x) * 11 + 7, Math.round(f.y) * 19 + 3) < 0.45; }
+/* ---------- AND IT IS STILL BURNING ----------
+   Fire moves, so this is the one part of the scar that cannot be geometry. Thrown from the
+   same posts the scorch is laid at, on the world tick rather than the frame, and culled to the
+   camera before anything is spent — seven towns of sixteen posts is a hundred and twelve
+   places this would otherwise ask about sixty times a second.
+   `addFlame` DRAWS ON `vrnd`, which is the visual stream and not the world's. A fire thrown
+   off `rnd` four times a second would walk the seeded stream for as long as the town burned,
+   and every roll the world made afterwards — every raid, every birth, every ore in the ground
+   — would come out somewhere else. */
+function ruinTick(){
+  for(const f of townFires){
+    if(!(f.town.sacked > 0) || (f.town.sackKind || 'torch') === 'dark') continue;
+    if(Math.abs(f.x - camSX) > 70 || Math.abs(f.y - camSY) > 70) continue;
+    if(!ruinBurns(f)) continue;
+    addFlame(f.x, f.y, 2, 0.8);
+  }
+}
 const syncSlaverCamp = makeDynGroup(
   () => slaverCamp ? '1' : '0',
   (g) => {
@@ -38124,7 +38273,7 @@ function render(){
   updateSky();
   syncTorchLights();      /* and the three fires nearest the camera, if the camera is under the world */
   water.position.y = -0.22 + Math.sin(now*0.001)*0.03;
-  syncPBuilds(); syncBlueprints(); syncSundered(); syncWells(); syncPyres(); syncBastion(); syncChests(); syncBeds(); syncTownWalls(); syncCamps(); syncSlaverCamp(); syncRoofs(); syncVertical(); syncRifts(); syncStairs(); syncUndercroft(); syncRedoubts();
+  syncPBuilds(); syncBlueprints(); syncSundered(); syncWells(); syncPyres(); syncBastion(); syncChests(); syncBeds(); syncTownWalls(); syncTownScar(); syncCamps(); syncSlaverCamp(); syncRoofs(); syncVertical(); syncRifts(); syncStairs(); syncUndercroft(); syncRedoubts();
   if(fogDirty) redrawFog();
   syncChars(rdt);
   updateDust(rdt);
@@ -45071,7 +45220,7 @@ function snapshot(){
     bonds: [...bonds.entries()],
     campN, weather: {...weather}, rel: {...rel}, slaverRazed: !slaverCamp,
     townState: towns.map(t => ({warWithI: t.warWith ? towns.indexOf(t.warWith) : -1,
-      warDay: t.warDay||0, plague: t.plague||0, plagueCd: t.plagueCd||0, sacked: t.sacked||0, uprising: !!t.uprising,
+      warDay: t.warDay||0, plague: t.plague||0, plagueCd: t.plagueCd||0, sacked: t.sacked||0, sackKind: t.sackKind||null, uprising: !!t.uprising,
       stock: {...(t.stock||{})}, leaderSeats: t.leaderSeats||0, playerRuled: !!t.playerRuled, settlerT: t.settlerT||0,
       order: t.order ?? 55, pacts: {...(t.pacts||{})}, petitions: (t.petitions||[]).map(p=>({k:p.k, txt:p.txt, opts:p.opts, expires:p.expires, filed:!!p.filed})),
       feastCd: t.feastCd||0, rebelDay: t.rebelDay||0, promise: t.promise ? {...t.promise} : null,
@@ -45640,6 +45789,9 @@ function restore(d){
     const ts = d.townState[i]; if(!ts) return;
     t.warWith = ts.warWithI >= 0 ? towns[ts.warWithI] : null;
     t.warDay = ts.warDay; t.plague = ts.plague; t.plagueCd = ts.plagueCd||0; t.sacked = ts.sacked; t.uprising = ts.uprising;
+    /* a save written before the two kinds were told apart has a ruin with no name for it; a
+       burnt town is the older of the two and the one that save is far more likely to hold */
+    t.sackKind = ts.sackKind || (ts.sacked > 0 ? 'torch' : null);
     if(ts.stock) t.stock = {...ts.stock};
     t.leaderSeats = ts.leaderSeats || 0;
     t.playerRuled = !!ts.playerRuled; t.settlerT = ts.settlerT || 0;
