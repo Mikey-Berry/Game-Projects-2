@@ -2062,6 +2062,15 @@ function placeTownAt(def, cx0, cy0){
     /* how far out the streets are swept — the wall and a little past it, so nothing wild
        grows against the ramparts either. An unwalled town still has a settlement to keep clear. */
     clearR: def.wall ? def.wall.r + 3 : 18,
+    /* ---------- A TOWN THAT HAS NEVER BEEN SICK IS NOT `undefined` SICK ----------
+       These were never initialised, and the sickness tick opens `if(t.plague <= 0) continue`.
+       `undefined <= 0` is FALSE, so that guard let every healthy town in the world through:
+       within thirteen tiles of ANY town, townsfolk were taking raw damage and anyone of yours
+       without brine in them was catching a three-day fever off a plague that did not exist.
+       The comparisons are hardened where they are read as well, but the field existing is the
+       fix — an absent number that reads as "yes" to `<= 0` and as "no" to `> 0` is a trap that
+       every future reader of it walks into. */
+    plague:0, plagueCd:0, plagueTold:0, plagueToldDay:0, sacked:0, sackKind:null,
     necroHostile:false, necroWarned:false, necroGrace:0, necroCalm:0, warnedHostile:false};
   towns.push(t);
   t.leader = makeLeader(t);
@@ -2927,6 +2936,23 @@ function makeChar(name, faction, x, y, o={}){
    lines matter most. tickBubbles() below runs off the render clock instead. */
 const BUBBLE_T = 4.2;
 function say(c, text){ c.bubble = {text, t: BUBBLE_T}; }
+/* ---------- AND NOBODY CARTS GOODS INTO A TOWN THAT IS SICK ----------
+   "The guards at gates warn away incoming people" is the beat you can see at a gate; this is
+   the same rule applied to everybody who is not you, and it is the one with a consequence — a
+   plagued town stops being resupplied for as long as it is shut, and a sacked one is not a
+   destination at all.
+   BUT A CARAVAN WITH NOWHERE TO GO IS A CARAVAN THAT STOPS FOR GOOD, so when the only road out
+   leads somewhere shut, it is taken anyway. Greenrest has exactly one.
+   `pick` is called ONCE on every branch, so the world's seeded stream is where it was:
+   filtering the list changes what comes out of the draw, never how many draws it took.
+   It is a named function so it can be asked the question directly — written inline in the
+   caravan tick it could only be tested by a harness re-implementing it, which is a harness
+   testing itself. */
+function nextCaravanDest(from){
+  const open = towns.filter(t => t !== from && routeFor(from, t) && !(t.plague > 0) && !t.sacked);
+  const conn = open.length ? open : towns.filter(t => t !== from && routeFor(from, t));
+  return conn.length ? pick(conn) : pick(towns.filter(t => t !== from));
+}
 function pick(arr){ return arr[ri(0, arr.length-1)]; }
 const chars = [], corpses = [];
 /* ---------- WHO IS "YOU" ----------
@@ -9201,6 +9227,32 @@ const AU = (() => {
     deny(){ if(ok('deny', 120)) tone('square', 200, 130, 0.045, 0.11); },
     /* news landing has its own small sound, because it is the one thing you must not miss */
     news(bad){ if(ok('news', 200)) tone('sine', bad ? 420 : 300, bad ? 300 : 560, 0.075, 0.24); },
+
+    /* ---------- AND ONE THING IN THIS WORLD IS A BELL ----------
+       The note beside `ring` says a harmonic stack is a bell and nothing in this world is a
+       bell. That was written about STRUCK METAL — a blade on plate, an anvil, a frame taking
+       the shock — and for those it is right: make those partials harmonic and a sword fight
+       starts to chime. A town tolling over its own sick is the one sound that is meant to be a
+       bell, so it gets to be one. The hum an octave under the strike, the strike, a minor
+       third above it, and two quiet partials over that: the third is what makes it sombre
+       rather than the hour being struck.
+       TWO STRIKES, because one is a clock and three is an alarm, and a second toll is what
+       tells you the first was not a noise you imagined. Rung from `plagueGate` and from
+       nowhere else in the game, at most twice in an outbreak. */
+    bell(x, y){
+      if(!ok('bell', 4000)) return;
+      const strike = () => {
+        const k = near(x, y); if(k <= 0.02) return;
+        for(const [m, w, d] of [[0.5, 0.85, 3.6], [1, 1, 3.0], [1.19, 0.55, 2.4], [2, 0.4, 1.7], [3.01, 0.18, 1.1]]){
+          const o = ctx.createOscillator(); o.type = 'sine';
+          o.frequency.value = 196 * m;
+          const end = env(o, 0.085 * k * w, 0.005, d);
+          o.start(); o.stop(end + 0.03);
+        }
+      };
+      strike();
+      setTimeout(() => { try { strike(); } catch(e){} }, 1650);
+    },
   };
 })();
 /* ============================================================ THE LAW
@@ -9812,11 +9864,52 @@ function rescueTick(dt){
     return;
   }
 }
+/* ---------- THE WATCH TURNS YOU AWAY FROM A SICK TOWN ----------
+   "Perhaps instead of just visuals, we make it more mechanical. Like the guards at gates warn
+    away incoming people, bark about plague, ring a somber bell when nearby."
+   And, on how often: "it shouldn't be annoying — it should be once or twice and that's it. No
+   constant repetition."
+   So this is not a proximity poll that fires while you stand there. It is TWICE, ever, for a
+   given outbreak, and never twice in one day: the first time you come near the ring, and once
+   more if you come back on a later day. When the sickness passes the count is cleared, so the
+   next outbreak gets its own warning.
+   The bark is drawn with `vpick`, not `pick`. Which line a guard says is a thing that depends
+   on where the player happens to be standing, and off `rnd()` that would move the world's
+   seeded stream by an amount decided by the player's feet. */
+const PLAGUE_WARNINGS = [
+  'Keep out. We are sick in here.',
+  'Turn around. There is nothing in this town you want.',
+  'Do not come through this gate. Whatever you need, it is not worth it.',
+  'We are under the sickness. Go around.',
+  'Not today. Come back when the bell stops.',
+];
+function plagueGate(){
+  for(const t of towns){
+    /* `!(t.plague > 0)`, NOT `t.plague <= 0`. A town that has never been sick has no `plague`
+       field at all, and `undefined <= 0` is FALSE — so the first cut of this treated all six
+       healthy towns as plagued and had the watch wave you off at every gate on the map. */
+    if(!(t.plague > 0) || t.sacked > 0) continue;
+    if((t.plagueTold | 0) >= 2 || (t.plagueToldDay | 0) === day) continue;
+    const R = t.def.wall ? t.def.wall.r : 18;
+    /* somebody of yours, on the surface, close enough to the ring to be read as coming in */
+    const c = player().find(o => o.state === 'ok' && !o.undead && (o.floor | 0) === 0 &&
+      Math.max(Math.abs(o.x - t.x), Math.abs(o.y - t.y)) < R + 7);
+    if(!c) continue;
+    const g = charsNear(c.x, c.y, 16).find(o => o.faction === 'town' && !o.civ && o.state === 'ok' && o.homeTown === t);
+    if(!g) continue;
+    t.plagueTold = (t.plagueTold | 0) + 1;
+    t.plagueToldDay = day;
+    say(g, vpick(PLAGUE_WARNINGS));
+    log(`${g.name} of ${t.name} waves you off at the gate. The sickness is in the town, and the bell is going.`, 'bad');
+    AU.bell && AU.bell(t.x, t.y);
+  }
+}
 let _walkDeadT = 0;
 function walkingDeadCheck(dt){
   if((_walkDeadT -= dt) > 0) return;
   _walkDeadT = 4;
   contrabandCheck();
+  plagueGate();
   for(const c of chars){
     /* ---------- A DISGUISE THE LAW CANNOT SEE THROUGH EITHER ----------
        "Casting shroud the dead seems to only work while the caster is extremely close."
@@ -13167,8 +13260,7 @@ function ai(c, dt){
       /* the caravan unloads its news at the town, then takes on the town's for the next leg */
       if(c.caravan.satchel) for(const id of c.caravan.satchel){ const e = eventById(id); if(e) townLearns(d, e); }
       c.caravan.satchel = d.known ? Object.keys(d.known).map(Number) : [];
-      const conn = towns.filter(t => t !== d && routeFor(d, t));
-      c.caravan.dest = conn.length ? pick(conn) : pick(towns.filter(t => t !== d));
+      c.caravan.dest = nextCaravanDest(d);
       const rt = routeFor(d, c.caravan.dest);
       c.caravan.wps = rt ? rt.wps : null; c.caravan.wi = 0;
       c.caravan.waitT = 20 + rnd()*20;
@@ -25432,7 +25524,7 @@ function update(dt){
           }
         }
       }
-      if(t.plague > 0){ t.plague--; if(t.plague <= 0) t.plagueCd = day + ri(20, 40); }
+      if(t.plague > 0){ t.plague--; if(t.plague <= 0){ t.plagueCd = day + ri(20, 40); t.plagueTold = 0; t.plagueToldDay = 0; } }
     }
     /* ---------- AND THE MASONS COME BACK ----------
        A breach that never closes is a permanent scar, and now that an army can actually make
@@ -25907,7 +25999,7 @@ function update(dt){
   }
   /* plague towns: the sick cough, the careless catch it */
   if(wtick) for(const t of towns){
-    if(t.plague <= 0) continue;
+    if(!(t.plague > 0)) continue;
     for(const c of chars){
       if(c.state==='dead') continue;
       const near = dist(c.x, c.y, t.x, t.y) < 13;
