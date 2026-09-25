@@ -21,6 +21,8 @@
  *   6. Mother's seal is hers: her door is not forced by a shoulder and holds against a Hollow
  *      still riding; a finished one puts a hand on it, it opens, and the scene behind it is said.
  *      Her lines promised this and the door was an ordinary barred door
+ *   7. the Church speaks in its own layer: a Paladin at peace, the Inquisitor, and Vey open the
+ *      Order's conversation (the Light, the Original Purge, the pyre) instead of the townsfolk's
  *
  * Anything starting '!!' fails the build.
  *
@@ -497,6 +499,86 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     out.herSealIsHers = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
       : `her door answers nobody with a shoulder (${x.strangerMenu}) while every other vault still forces, holds against a rider, and opens to a finished Hollow's hand on the seal: ` +
         `the second scene is said, her thread closes, a reload keeps it, and a door an old save already broke still gives the scene to one of hers in the room${x.otherForced === undefined ? ' (no other vault to compare)' : ''}`;
+  }
+
+  /* ---- 7. the Church speaks in its own layer ----
+     A Paladin at peace with you, clicked the way a player clicks anybody; the Inquisitor under
+     the white banner, through the TALK on the neutral menu; and Vey, asked directly. */
+  const talkText = () => (document.getElementById('modalbody') || {}).textContent || '';
+  const seven = await p.evaluate(() => {
+    const R = {};
+    const pal = chars.find(o => o.faction === 'purge' && o.state === 'ok' && !o.gauntKind && !o.neutral && !o.bossKey && /^Paladin/.test(o.name));
+    if (!pal) { R.none = true; return R; }
+    const m = makeChar('Pilgrim', 'player', pal.x + 2.2, pal.y, { atk: 10, def: 30, tough: 90 });
+    m.__probe = true; m.floor = pal.floor || 0; chars.push(m);
+    const iq = makeChar('Inquisitor', 'purge', pal.x - 2.6, pal.y + 2.6, { atk: 20, def: 20, tough: 30, magic: 12 });
+    iq.__probe = true; iq.inquisitor = true; iq.neutral = true; iq.floor = pal.floor || 0; chars.push(iq);
+    rebuildCharGrid();
+    computeVision();                     /* the pilgrim's own eyes: a click only finds who can be seen */
+    selected = [m]; if (typeof closeTalk === 'function') closeTalk();
+    window.__seven = { pal, iq, m };
+    __aim(pal.x, pal.y); activeFloor = pal.floor || 0;
+    R.hostile = hostile(m, pal);
+    return R;
+  });
+  if (!seven.none) {
+    await settle();
+    Object.assign(seven, await p.evaluate(() => {
+      const R = {};
+      const { pal } = window.__seven;
+      R.palClick = __rclick(pal.x, pal.y, /^TALK$/);
+      R.palTree = talkState ? talkState.key : null;
+      return R;
+    }));
+    seven.palRoot = await p.evaluate(talkText);
+    /* walk it: two of the doctrine's branches, by the buttons the player presses */
+    const press = (re) => p.evaluate((src) => {
+      const re2 = new RegExp(src);
+      const b = [...document.querySelectorAll('#modalbody button')].find(x => re2.test(x.textContent));
+      if (!b) return false; b.click(); return true;
+    }, re.source);
+    seven.pressedPurge = await press(/^Why is your order called the Purge\?/);
+    seven.purgeNode = await p.evaluate(talkText);
+    await p.evaluate(() => { closeTalk(); talkTo(window.__seven.pal); });
+    seven.pressedPyre = (await press(/^Why burn them\?/)) && (await press(/^With fire from the blessed gift/));
+    seven.fireNode = await p.evaluate(talkText);
+    Object.assign(seven, await p.evaluate(() => {
+      const R = {};
+      closeTalk();
+      const { iq } = window.__seven;
+      R.iqClick = __rclick(iq.x, iq.y, /^TALK$/);
+      R.iqTree = talkState ? talkState.key : null;
+      R.iqRoot = (document.getElementById('modalbody') || {}).textContent || '';
+      closeTalk();
+      const vey = chars.find(o => o.bossKey === 'marshal' && o.state === 'ok');
+      if (vey) {
+        talkTo(vey);
+        R.veyTree = talkState ? talkState.key : null;
+        R.veyRoot = (document.getElementById('modalbody') || {}).textContent || '';
+        closeTalk();
+      }
+      for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+      selected = [];
+      return R;
+    }));
+  }
+  {
+    const x = seven, bits = [];
+    if (x.none) bits.push('no Paladin in this world to talk to');
+    else if (x.hostile) bits.push('the staged Paladin is hunting the probe, so the claim cannot be asked');
+    else {
+      if (x.palTree !== 'purge') bits.push(`a right-click on a Paladin at peace opened ${x.palTree ? `the "${x.palTree}" tree` : 'nothing'} (${x.palClick || 'no menu'})`);
+      else {
+        if (!/Walk in the Light/.test(x.palRoot)) bits.push(`the Paladin's greeting is not the Order's (${x.palRoot.slice(0, 60)})`);
+        if (!x.pressedPurge || !/Original Purge/.test(x.purgeNode)) bits.push('asked why the Order is the Purge, nobody says the Original Purge');
+        if (!x.pressedPyre || !/His own fire/.test(x.fireNode)) bits.push('asked what lights the pyre, nobody says His own fire');
+      }
+      if (x.iqTree !== 'purge' || !/The Order speaks before it burns/.test(x.iqRoot || '')) bits.push(`the Inquisitor's TALK opened ${x.iqTree || 'nothing'} (${x.iqClick || ''})`);
+      if (x.veyTree !== undefined && (x.veyTree !== 'purge' || !/What does the Order want with me/.test(x.veyRoot || ''))) bits.push(`Vey opened ${x.veyTree || 'nothing'}`);
+    }
+    out.theChurchSpeaks = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+      : `a Paladin at peace answers a plain right-click in the Order's own words: the Light without end, the Original Purge, and a pyre lit with His own fire; ` +
+        `the Inquisitor speaks it from under the white banner${x.veyTree ? ', and Vey from his hall' : ''}`;
   }
 
   const bad = Object.values(out).filter(v => typeof v === 'string' && v.startsWith('!!'));

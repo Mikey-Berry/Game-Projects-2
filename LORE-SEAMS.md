@@ -34,8 +34,10 @@ Ranked by how much lore weight each carries against what it costs to close.
    force it, and her scene stopped at the door. The bible calls what she knows "the scene at
    the bottom of that cave, and nothing else in the setting carries more". The door is hers
    now, and the second scene is drafted in §2.1.
-3. **The Church has no voice** (§3.1). The bible says the gap between what the Church teaches
-   and what is true "*is* the setting's engine". In the game only the true side is ever spoken.
+3. **The Church has no voice** (§3.1) — **closed 2026-09-25, lines pending approval**. The
+   bible says the gap between what the Church teaches and what is true "*is* the setting's
+   engine". In the game only the true side was ever spoken. Paladins, the Inquisitor and Vey
+   now speak the Church's side.
 4. **Half the conviction reactions never fire** (§1.2) — **closed 2026-09-25**. The bible
    says the compassionate hate a sack, the ambitious resent retreat and the inquisitive care
    about formulae. None of those events was ever raised. All six fire now, and the player can
@@ -283,7 +285,54 @@ invitations. This is `CODE-AUDIT.md` §5.4. It is a story seam more than a bible
 
 ## 3. Built, but only one layer of it
 
-### 3.1 The Church Teaches: no mouth
+### 3.1 The Church Teaches: no mouth — **closed, lines pending your approval**
+
+Closed on 2026-09-25. `tools/seams.js` claim 7 checks it. On the build before, a right-click on
+a Paladin at peace with you became a move order, and the Inquisitor and Vey opened the
+townsfolk tree.
+
+- **A `purge` talk tree.** Every Paladin line is in the Church's layer. The player's options
+  are where the true layer can come in, and the Order answers it in its own terms.
+- **Who reaches it:** a Paladin at peace with you, from a plain right-click (the Order is its
+  own faction, so that click matched nothing before). The Inquisitor under the white banner,
+  from TALK on the neutral menu. Vey in the Bastion, with one extra option. A Paladin hunting
+  you is still a foe, and the Watcher in the yard is still silent.
+
+**The lines, drafted for your approval.** The greeting depends on who is speaking:
+
+- **Vey:** "You are standing in the Bastion because I have not yet decided otherwise. Say what
+  you came to say."
+- **Inquisitor:** "The Order speaks before it burns. Today I am the speaking. Ask."
+- **Paladin, once there are poles:** "Walk in the Light, stranger. The poles at the gate are
+  there so the road remembers what happens to the ones who do not."
+- **Paladin otherwise:** "Walk in the Light, stranger. Or walk on. Those are the two roads, and
+  there is not a third."
+
+| You say | Gate | They say |
+|---|---|---|
+| Who is it you pray to? | — | Ainzopha'ar. The Light without end. His eye goes over the world looking for the sun that was lost, and one day it finds it, and on that day everything anybody ever worked in the dark is seen. All of it. By Him. |
+| → And the miracles? | — | Mercy. The blessed gift is His hand held out to the penitent, and a hand held out can be taken back. Pray you never see what that looks like. |
+| Why is your order called the Purge? | — | For the Original Purge. The kingdom reached up for Him, and He answered once, and there was no kingdom. We carry the name so that nobody forgets the price of reaching. |
+| → And the rest of us? | — | Spared. Left standing to do better. Every morning the sky is still up there is another morning He has not finished the work. We would rather He did not have to. |
+| Why burn them? | — | The profane gift is the kingdom's sin, carried in one body. We do not hate them for it. We burn it out of the world before He comes looking for it and finds the rest of us standing near. |
+| → With fire from the blessed gift. | — | With His own fire. What else would you light it with? |
+| There is something standing in your yard. | a Messenger is in the Bastion yard | It came to the yard and stood, and it has not moved since, and it has not spoken. We do not cross in front of it. He sent it. Who else sends? |
+| The light is in me. | divine gift | Then you have been shown mercy, and one day you will be asked what you did with it. The ones who are asked the most are the ones who were given the most. |
+| And the ones born with the dark gift? | dark gift | Then the Light has set them a test. The ones who fail it, we meet at the pole. The ones who pass it never lift the gift once in their lives. I have met two. |
+| And the fire-workers? | Destruction I+ | Wild magic. Fire out of the air, iron gone soft in the hand. The kingdom worked that, near the end. Inside a wall it is a crime. Outside one we watch it, and it is always nearer the pole than it thinks. |
+| A tear closes for the blessed art and the profane one alike. It is the same well. | Inquisitive | That is a Scholar's sentence, and you should not say it near a Paladin. The Light suffers the profane to work so that the profane can be found. You have it backwards, and you have it backwards out loud. |
+| What does the Order want with me? | Vey only | Nothing yet. You are a name in a ledger with nothing written beside it. Keep it that way. I would rather not learn how you fight. |
+
+Notes for your review:
+
+- **No effects.** Nothing in the tree moves rep, wrath or bounty. It is a voice, not a mechanic.
+  If you want the dark-gift or Scholar options to carry risk, that is a separate call.
+- **What stays out:** the name as a corruption of *Ain Soph Aur*, and anything from §4. The
+  Church does not know it and would not say it.
+- **The "wild" line** follows your formula-crime ruling: Destruction is a crime inside a
+  Church town's walls.
+
+The original finding:
 
 The bible says all Church material is written in two layers, what **the Church teaches** and
 what is **true**, and that "the gap between the two layers *is* the setting's engine".

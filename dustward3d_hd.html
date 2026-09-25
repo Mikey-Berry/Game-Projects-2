@@ -42617,7 +42617,12 @@ cv.addEventListener('mousedown', e => {
          wanderer. The talk check above now catches those first, so this exclusion is the
          belt to that braces — it keeps this branch from claiming them on any path where the
          one above was skipped. */
-      const local = chars.filter(c => c.state==='ok' && (c.faction==='drifter' || (c.faction==='town' && !hostile(movers[0], c))) &&
+      /* AND A PALADIN WHO IS NOT HUNTING YOU. The Order is its own faction, so a click on one at
+         peace with you matched nothing here and became a move order: the Church's side of the
+         setting had nobody in the world you could ask. A hunting one is a foe, below, and the
+         Inquisitor's party is `neutral` and gets TALK from the foe branch's own menu. */
+      const local = chars.filter(c => c.state==='ok' && (c.faction==='drifter' ||
+          ((c.faction==='town' || (c.faction==='purge' && speaksAtAll(c) && !c.neutral)) && !hostile(movers[0], c))) &&
         !c.mobileVendor && !c.scholar && !c.wanderKey && !c.immortal &&
         visAt(c.x,c.y)===2 && bodyHit(c, wx, wy, 0.9))
         .sort((a,b) => bodyGap(a, wx, wy) - bodyGap(b, wx, wy))[0];
@@ -44292,6 +44297,8 @@ function talkTitleOf(t){
   if(t.isLeader >= 0 && towns[t.isLeader]) return `${towns[t.isLeader].leader.title} of ${towns[t.isLeader].name}`;
   if(isWatch(t)) return t.homeTown ? `Watch of ${t.homeTown.name}` : 'Watch';
   if(t.scholar) return 'A lettered one, far from a desk';
+  if(t.faction === 'purge') return t.bossKey === 'marshal' ? 'Grand Marshal of the Bastion'
+    : t.inquisitor ? 'Inquisitor of the Order' : 'Of the Order';
   return t.homeTown ? `Of ${t.homeTown.name}` : 'Out on the road';
 }
 function closeTalk(){
@@ -44669,6 +44676,83 @@ const TALK_TREES = {
         ? 'That you take them out of the ground before they are cold. That the ones who go looking do not come back and do not stay buried either.'
         : 'That you closed a tear with your own hands while better-armed men watched. I did not believe it. I am reconsidering.',
       opts: [{say:'Believe what you like.'}],
+    },
+  },
+  /* ---------- THE CHURCH, IN ITS OWN WORDS ----------
+     The lore bible writes everything about the Church in two layers, what the Church teaches
+     and what is true, and says the gap between them is the setting's engine. The true layer was
+     spoken all over the game — by Scholars, by Mother, by the First Doctrine — and the taught
+     one nowhere: no Paladin, Inquisitor or Marshal said a word of doctrine. This is that word.
+     EVERY LINE A PALADIN SAYS HERE IS THE CHURCH'S LAYER, and none of it is a wink. They believe
+     it, most of them entirely. The player's lines are where the other layer can come in, and
+     the Order's answer to it is the Order's answer. */
+  purge: {
+    root: {
+      line: (t) => t.bossKey === 'marshal'
+        ? 'You are standing in the Bastion because I have not yet decided otherwise. Say what you came to say.'
+        : t.inquisitor ? 'The Order speaks before it burns. Today I am the speaking. Ask.'
+        : pyres.length ? 'Walk in the Light, stranger. The poles at the gate are there so the road remembers what happens to the ones who do not.'
+        : 'Walk in the Light, stranger. Or walk on. Those are the two roads, and there is not a third.',
+      opts: [
+        {say:'Who is it you pray to?', to:'light'},
+        {say:'Why is your order called the Purge?', to:'purge'},
+        {say:'Why burn them?', to:'pyre'},
+        {say:'There is something standing in your yard.', when:() => chars.some(o => o.bastionGuest && o.state !== 'dead'), to:'guest'},
+        {say:'The light is in me.', req:{gift:'divine'}, to:'blessed'},
+        {say:'And the ones born with the dark gift?', req:{gift:'dark'}, to:'dark'},
+        {say:'And the fire-workers?', req:{att:{destruction:1}}, to:'wild'},
+        {say:'A tear closes for the blessed art and the profane one alike. It is the same well.', req:{conv:'scholar'}, to:'samewell'},
+        {say:'What does the Order want with me?', when:(t) => t.bossKey === 'marshal', to:'want'},
+        {say:'Walk on.'},
+      ],
+    },
+    light: {
+      line: 'Ainzopha\'ar. The Light without end. His eye goes over the world looking for the sun that was lost, and one day it finds it, and on that day everything anybody ever worked in the dark is seen. All of it. By Him.',
+      opts: [{say:'And the miracles?', to:'mercy'}, {say:'Walk on.'}],
+    },
+    mercy: {
+      line: 'Mercy. The blessed gift is His hand held out to the penitent, and a hand held out can be taken back. Pray you never see what that looks like.',
+      opts: [{say:'I will.'}],
+    },
+    purge: {
+      line: 'For the Original Purge. The kingdom reached up for Him, and He answered once, and there was no kingdom. We carry the name so that nobody forgets the price of reaching.',
+      opts: [{say:'And the rest of us?', to:'spared'}, {say:'Walk on.'}],
+    },
+    spared: {
+      line: 'Spared. Left standing to do better. Every morning the sky is still up there is another morning He has not finished the work. We would rather He did not have to.',
+      opts: [{say:'So would I.'}],
+    },
+    pyre: {
+      line: 'The profane gift is the kingdom\'s sin, carried in one body. We do not hate them for it. We burn it out of the world before He comes looking for it and finds the rest of us standing near.',
+      opts: [{say:'With fire from the blessed gift.', to:'fire'}, {say:'Walk on.'}],
+    },
+    fire: {
+      line: 'With His own fire. What else would you light it with?',
+      opts: [{say:'Nothing, I suppose.'}],
+    },
+    guest: {
+      line: 'It came to the yard and stood, and it has not moved since, and it has not spoken. We do not cross in front of it. He sent it. Who else sends?',
+      opts: [{say:'Who else.'}],
+    },
+    blessed: {
+      line: 'Then you have been shown mercy, and one day you will be asked what you did with it. The ones who are asked the most are the ones who were given the most.',
+      opts: [{say:'I will have an answer.'}],
+    },
+    dark: {
+      line: 'Then the Light has set them a test. The ones who fail it, we meet at the pole. The ones who pass it never lift the gift once in their lives. I have met two.',
+      opts: [{say:'Two.'}],
+    },
+    wild: {
+      line: 'Wild magic. Fire out of the air, iron gone soft in the hand. The kingdom worked that, near the end. Inside a wall it is a crime. Outside one we watch it, and it is always nearer the pole than it thinks.',
+      opts: [{say:'I will keep it outside the walls.'}],
+    },
+    samewell: {
+      line: 'That is a Scholar\'s sentence, and you should not say it near a Paladin. The Light suffers the profane to work so that the profane can be found. You have it backwards, and you have it backwards out loud.',
+      opts: [{say:'Noted.'}],
+    },
+    want: {
+      line: 'Nothing yet. You are a name in a ledger with nothing written beside it. Keep it that way. I would rather not learn how you fight.',
+      opts: [{say:'Likewise.'}],
     },
   },
   guard: {
@@ -45059,6 +45143,9 @@ function talkTo(t, who){
   if(t.orchardServant){ if(openDiscourse(t, 'servant')) return; }
   if(t.orchardDame){ if(openDiscourse(t, 'dame')) return; }
   if(!speaksAtAll(t)){ say(t, pick(['...', 'It does not turn its head.', 'Something behind its face declines to answer.'])); return; }
+  /* THE ORDER SPEAKS FOR ITSELF. A Paladin, the Inquisitor under the white banner, and Vey in
+     his own hall used to fall through to the townsfolk tree below and talk about the weather. */
+  if(t.faction === 'purge'){ if(openDiscourse(t, 'purge')) return; }
   if(isWatch(t)){ if(openDiscourse(t, 'guard')) return; }
   /* THE OTHER PRACTITIONER GETS A CONVERSATION TOO. This was in the exclusion list beside the
      Coil cultist, and for the Coil that is right — one strange sentence and a turned back IS the
