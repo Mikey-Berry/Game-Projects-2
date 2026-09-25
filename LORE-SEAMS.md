@@ -48,7 +48,9 @@ Ranked by how much lore weight each carries against what it costs to close.
 
 The lore exists in the code as text or data. Nothing carries it to the player.
 
-### 1.1 The barks: 53 lines, set on bodies, never spoken
+### 1.1 The barks: 53 lines, set on bodies, never spoken — **closed**
+
+Closed on 2026-09-25. Every kind with authored lines now says one when a player body is near, on its own storey. It uses `vpick`, so a bark never moves the world's dice. There is a 45–90 s wait per body and one line anywhere every 5 s. `tools/seams.js` claim 1 checks it: 19 of 19 kinds were silent before, and 19 of 19 speak after. The original finding:
 
 `c.barks` is set in eight places:
 
@@ -249,8 +251,13 @@ These have real equivalents in play, listed so nobody re-checks them:
   ladder; the Attention's four tiers; the six Fracture stages and the Stillness; the Door and
   the closing rite.
 - **Creatures:** the Brood, the Sixfold, the Larder-Kin and its midden, the Cairn Beast,
-  Malathuun's Curse, the sundered ground, the Eyes of Ainzopha'ar, and the Kept (the
-  purebloods) with their altars.
+  Malathuun's Curse, the sundered ground, and the Kept (the purebloods) with their altars.
+- **Built but broken, and fixed on 2026-09-25:** the **Eyes of Ainzopha'ar** and the
+  **Shoallings**. An Eye has 22 blood and a Shoalling 18, against absolute down and rise
+  lines of 40 and 50 blood. So both went down on their first tick and could never get up,
+  and a Marrow Tick (40) stayed down after its first scratch. `tools/watchers.js` never
+  noticed, because it casts the Eye's gaze by hand. A pool of 50 or less now falls and
+  rises at the same shares of itself (`tools/seams.js` claim 2).
 - **Factions:** the Compact, the Coil (with its stone and its exposure dialogue), and the
   redoubts with their Warden Automatons.
 - **Relics:** the Aether Lance, deaf hands only.

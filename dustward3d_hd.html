@@ -6005,6 +6005,7 @@ function purgeHuntActive(){
   return chars.some(c => c.faction==='purge' && c.squad && c.squad.hunt && c.state!=='dead');
 }
 /* ============================================================ WANDERING BOSSES */
+let _ambientBarkT = 0;   /* seconds until any ambient bark may be said; see the bark loop in `update` */
 const BOSS_BARKS = {
   king: ['...another walker of graves...', 'The crown is heavy. Take it, if you dare.', '...my kingdom, all dust now...'],
   grazer: ['*a low rumble shakes the ground*'],
@@ -10739,6 +10740,18 @@ function updateState(c, loud){
      only reason the whole mechanic is four lines: you keep going past where you would have
      dropped, and you come round sooner than you would have. */
   if(gritted(c)) downAt = Math.max(4, downAt - GRIT_DOWN);
+  /* ---------- A SMALL BODY FALLS AT THE SAME SHARE OF ITSELF ----------
+     Both lines were absolute: down under 40 blood, up again over 50. That is 40% and 50% of the
+     hundred an ordinary body carries, and it is nothing at all to an Eye of Ainzopha'ar (22)
+     or a Shoalling (18). Both went down on their first tick and could never rise, so a whole
+     undercroft faction and the Eldest's own eyes lay on the ground from the moment they were
+     made. A Marrow Tick (40) went down at the first scratch and stayed down. `watchers.js`
+     never noticed because it casts the Eye's gaze by hand.
+     A pool too small to clear the rise line uses the same shares of itself instead. Anything
+     with more than fifty blood keeps exactly the lines it had. */
+  const pool = c.maxBlood || 100;
+  const small = pool <= 50;
+  if(small) downAt = Math.min(downAt, pool * 0.4);
   if(c.state==='ok' && (vitalDown || c.blood < downAt || (c.race==='hollow' && severedN >= 2))){
     if(c.undead){
       /* a lich is a spark in a jar. Break the jar and the spark goes looking for the next one. */
@@ -10753,7 +10766,8 @@ function updateState(c, loud){
     AU.bodyfall(c.x, c.y, (c.big || 1) > 1.3);
     if(loud || c.faction==='player') log(`${c.name} is down.`, c.faction==='player'?'bad':'');
   }
-  const riseAt = (c.race==='hollow' ? 20 : 50) - (gritted(c) ? GRIT_RISE : 0);
+  let riseAt = (c.race==='hollow' ? 20 : 50) - (gritted(c) ? GRIT_RISE : 0);
+  if(small) riseAt = Math.min(riseAt, pool * 0.5);
   if(c.state==='down' && !vitalDown && c.blood > riseAt && !c.captured && !(c.race==='hollow' && severedN >= 2)) {
     c.state = 'ok';
     if(c.faction==='player') log(`${c.name} is back on their feet.`, 'good');
@@ -26309,14 +26323,38 @@ function update(dt){
       }
     }
   }
-  /* bosses speak when you draw near */
-  if(wtick) for(const c of chars){
-    if(!c.bossKey || c.state==='dead') continue;
-    c.barkCd -= dt;
-    if(c.barkCd <= 0 && BOSS_BARKS[c.bossKey] &&
-       _pl.some(o => dist(o.x,o.y,c.x,c.y) < 9)){        /* the same short list, same reason */
-      say(c, pick(BOSS_BARKS[c.bossKey]));
-      c.barkCd = 25;
+  /* bosses speak when you draw near — and so does everything else somebody wrote lines for */
+  /* ---------- FIFTY-THREE LINES THAT WERE NEVER SAID ----------
+     `c.barks` was set on eight kinds of body — the redoubt's vat-soldiers, three immortals, the
+     Archivist, the thing in the rock, and every row of GAUNTS and DEEP_KIN that has a `bark:`
+     — and nothing ever read it. The lore bible quotes some of them as shipped: Verity's "I have
+     not eaten in ninety years", the garrison's "You are nine generations late", the night
+     ecology's "(a sound like scissors)", the Messengers' tongue. Only BOSS_BARKS reached a
+     bubble.
+     Bosses keep exactly what they had, `pick` and all. Everything else draws its line off
+     `vpick`, because a bark is a look and not an event: a gaunt clearing its throat on `rnd`
+     would move the world's seed every time one of them was near you. A per-body wait of 45 to
+     90 seconds, and one line anywhere every five, so a night of gaunts or a hall of the
+     garrison does not talk over itself. Same storey only: a thing in the rock under your feet
+     is not standing next to you. */
+  if(wtick){
+    _ambientBarkT -= dt;
+    for(const c of chars){
+      if(c.state === 'dead') continue;
+      if(c.bossKey && BOSS_BARKS[c.bossKey]){
+        c.barkCd -= dt;
+        if(c.barkCd <= 0 && _pl.some(o => dist(o.x,o.y,c.x,c.y) < 9)){   /* the same short list, same reason */
+          say(c, pick(BOSS_BARKS[c.bossKey]));
+          c.barkCd = 25;
+        }
+        continue;
+      }
+      if(!c.barks || !c.barks.length || c.state !== 'ok') continue;
+      if((c.barkCd -= dt) > 0 || _ambientBarkT > 0 || c.bubble) continue;
+      if(!_pl.some(o => (o.floor || 0) === (c.floor || 0) && dist(o.x, o.y, c.x, c.y) < 9)) continue;
+      say(c, vpick(c.barks));
+      c.barkCd = 45 + vrnd() * 45;
+      _ambientBarkT = 5;
     }
   }
   /* carried corpses ride along */

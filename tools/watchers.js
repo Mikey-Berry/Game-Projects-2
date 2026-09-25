@@ -123,6 +123,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       eye.mana = 999; eye.castCd = 0;
       castEmberRot(eye, plated);
       castEmberRot(eye, bare);
+      /* AND THEN THE EYE STANDS BACK. The claim is the GAZE against plate. Until 2026-09-25 an
+         Eye went down on its first tick (22 blood under an absolute down line of 40), so it lay
+         here inert and only the rot did anything. Standing, it claws the bare knight too, which
+         plate stops, and the comparison measured the claw. It stays on the roster, because the
+         rot's `src` is who `applyDamage` is told struck the blow, but it is out of the fight. */
+      eye.noFight = true; eye.target = null; eye.moveTarget = null; eye.x += 60;
       R.theGazeCatches = !!plated.dot && !!bare.dot
         ? `the gaze sets a rot-fire in both (${plated.dot.dps.toFixed(1)} dps for ${plated.dot.t}s)`
         : '!! THE GAZE DOES NOTHING';
@@ -207,8 +213,19 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.theHeraldIsTheAlchemist = h.arts && h.arts.emberrot && h.onlyArt === 'destruction' && attCap(h, 'divine') === 0
         ? 'the Herald knows fire and is capped at zero in every other branch, however long it lives'
         : `!! THE HERALD IS NOT AN ALCHEMIST (arts ${JSON.stringify(h.arts)}, onlyArt ${h.onlyArt})`;
-      R.andItSpeaks = (m.barks || []).length >= 2 && (h.barks || []).length >= 2
-        ? `and both of them talk: "${m.barks[0]}"`
+      /* AND IT IS SAID, NOT MERELY OWNED. This used to pass on `barks.length >= 2`, which was
+         true for as long as the lines existed and nothing ever spoke them: `c.barks` was written
+         on eight kinds of body and read by nothing. A listener stands beside the Herald and the
+         real `update()` runs until a line of its own lands in a bubble. */
+      const ear = makeChar('Listener', 'player', gx + 4, gy, { atk: 1, def: 30, tough: 60 });
+      ear.__probe = true; ear.floor = h.floor || 0; chars.push(ear);
+      h.bubble = null; h.barkCd = 0;
+      if (typeof _ambientBarkT !== 'undefined') _ambientBarkT = 0;   /* absent on the build before, which must still read red rather than throw */
+      let heard = null;
+      for (let i = 0; i < 40 && !heard; i++) { run(1); if (h.bubble && (h.barks || []).includes(h.bubble.text)) heard = h.bubble.text; }
+      R.andItSpeaks = (m.barks || []).length >= 2 && heard
+        ? `and it talks when somebody is near enough to hear it: "${heard}"`
+        : !heard ? '!! IT OWNS ITS LINES AND NEVER SAYS ONE — nobody within four tiles heard a word in four seconds'
         : '!! THEY ARE SILENT — the ancient tongue costs nothing and is missing';
       wipe();
     }
