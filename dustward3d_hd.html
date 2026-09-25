@@ -726,6 +726,57 @@ const CRATER_SLABS = (() => {
   }
   return out;
 })();
+/* ---------- AND THE CAPITAL, WHAT IS LEFT OF IT ----------
+   The footings of a city on a street grid across the bowl, turned by a hashed angle so no two
+   worlds lay it the same way: a block every twelve tiles, nine across, and of each block's four
+   walls only what the flash left, which is less the nearer the middle it stood and nothing at
+   all inside twenty-four tiles. Every wall keeps a doorway in the middle of each side, so no
+   block is sealed. Round the middle, a colonnade of twelve: whatever stood where the rite was
+   worked, a third of it lying on the glass pointing outward. Three of the ruined blocks still
+   hold a cache, and so does the colonnade. Pure and hashed: the walls it makes and the stone
+   drawn are the same list. */
+const CRATER_RUINS = (() => {
+  const walls = [], pillars = [], vaults = [];
+  const th = hash2(CRATER_SEED & 0xffff, 331) * Math.PI / 2, c0 = Math.cos(th), s0 = Math.sin(th);
+  const toW = (u, v) => ({x: CRATER.x + u * c0 - v * s0, y: CRATER.y + u * s0 + v * c0});
+  const seen = new Set(), cand = [];
+  for(let bu = -6; bu <= 6; bu++) for(let bv = -6; bv <= 6; bv++){
+    const cu = bu * 12, cv = bv * 12, cd = Math.hypot(cu, cv);
+    if(cd < 24 || cd > CRATER.rim - 16) continue;
+    const kk = clamp((cd - 24) / 34, 0, 1);
+    const keep = 0.16 + 0.4 * kk, hMax = 0.6 + 1.6 * kk;
+    for(let i = -4; i <= 4; i++){
+      if(i === 0) continue;                                    /* the doorways */
+      for(const [u, v] of [[cu + i, cv - 4], [cu + i, cv + 4], [cu - 4, cv + i], [cu + 4, cv + i]]){
+        if(hash2((u + 500) * 7, (v + 500) * 13) > keep) continue;
+        if(Math.hypot(u, v) < 24) continue;                    /* a block's corner inside the flash */
+        const q = toW(u, v), tx = Math.floor(q.x), ty = Math.floor(q.y), k = tx + ',' + ty;
+        if(seen.has(k)) continue;
+        seen.add(k);
+        walls.push({x: tx, y: ty, h: 0.4 + hash2(u * 3 + 11, v * 5 + 7) * hMax});
+      }
+    }
+    if(cd > 30 && cd < 56) cand.push({x: toW(cu, cv).x, y: toW(cu, cv).y, w: hash2(bu + 50, bv + 70)});
+  }
+  cand.sort((a, b) => b.w - a.w);
+  for(const c of cand.slice(0, 3)) vaults.push({x: c.x, y: c.y, kind: 'block'});
+  for(let i = 0; i < 12; i++){
+    const a = i / 12 * Math.PI * 2 + th;
+    pillars.push({x: CRATER.x + Math.cos(a) * 17, y: CRATER.y + Math.sin(a) * 17, a,
+                  fallen: hash2(i, 341) < 0.34, h: 5 + hash2(i, 343) * 4});
+  }
+  vaults.push({x: CRATER.x + Math.cos(th + 0.26) * 11, y: CRATER.y + Math.sin(th + 0.26) * 11, kind: 'heart'});
+  return {walls, pillars, vaults, th};
+})();
+/* the tiles the ruins stand on, fallen pillars included: one list for the wall stamp and the probe */
+function craterRuinTiles(){
+  const out = CRATER_RUINS.walls.map(w => [w.x, w.y]);
+  for(const pl of CRATER_RUINS.pillars){
+    if(!pl.fallen){ out.push([Math.floor(pl.x), Math.floor(pl.y)]); continue; }
+    for(let t = 0; t < pl.h; t += 0.8) out.push([Math.floor(pl.x + Math.cos(pl.a) * t), Math.floor(pl.y + Math.sin(pl.a) * t)]);
+  }
+  return out;
+}
 /* is any part of a w-by-h rectangle at x,y within r of the centre — the question a town, the
    Bastion or the Guild asks before it lays out a plan */
 function craterNear(x, y, w, h, r){
@@ -6119,6 +6170,9 @@ const BOSS_BARKS = {
   /* it does not talk. It is not a Watcher and it is not a person — it is an animal the size
      of a hall, and what comes out of it is weather. */
   wyrm: ['*the air over it goes hot*', '*a sound like a quarry falling in*', '*it draws a very long breath*'],
+  /* the Messengers' tongue: nobody understands it, and the brackets are all anybody can say */
+  custodian: ['SHEM ARAK. SHEM ARAK ORU.', '(it is not looking at you. it has never stopped looking at the middle.)',
+              'KA-ORU NETH. ANAK.', '(the words arrive before it has opened anything to say them with)'],
 };
 function bossSpot(minTown, minStart){
   for(let tries=0; tries<6000; tries++){
@@ -10932,6 +10986,7 @@ function kill(c, by){
   if(c.state==='dead') return;
   /* the ledger is written here, not inferred from a body that will be gone in two days */
   if(c.bossKey && !bossSlain[c.bossKey]) bossSlain[c.bossKey] = day;
+  if(c.bossKey === 'custodian') custodianFalls(c);
   /* a risen that has done the work is a candidate for a name */
   if(by && by.undead && by.crafted) by.kills = (by.kills || 0) + 1;
   /* ---------- COMMANDING THE DEAD SHARPENS THE CRAFT — WHEN THEY ARE COMMANDED ----------
@@ -17643,15 +17698,16 @@ const DOOR_WORK = 240;           /* seconds of sustained rite, at magic 0 */
 function fractureOpen(){ return fracture >= 100; }
 function openTheDoor(){
   if(theDoor) return theDoor;
-  /* it opens where the world is thinnest — the oldest standing tear, or failing that, out
-     past the fences where nobody built anything */
-  let x, y;
-  const oldest = rifts.slice().sort((a,b) => b.age - a.age)[0];
-  if(oldest){ x = oldest.x; y = oldest.y; closeRift(oldest, null); }
-  else { const q = findOpenNear(ri(60, W-60), ri(60, H-60), 12); x = q.x; y = q.y; }
+  /* ---------- IT OPENS WHERE THE WORLD WAS FIRST TORN ----------
+     This used to open at the oldest standing tear, or anywhere past the fences. The lore bible
+     has always said the kingdom's crater is the natural site for it, and there is a crater now:
+     the Door opens at the bottom of the bowl, inside the colonnade, and closing it is an
+     expedition through the worst ground in the world. The Custodian that stood there is gone. */
+  const x = CRATER.x, y = CRATER.y;
+  custodianWithdraws();
   theDoor = {x, y, r: 14, seal: 0, work: 0, opened: day, fed: 0};
-  log('THE SKY HAS OPENED. Not a tear — a door, and it is standing wide. Whatever has been watching the fences is not watching any more.', 'bad');
-  worldEvent('door', x, y, 'The sky has opened out past the fences. Not a tear this time. A door, and it is standing wide.');
+  log('THE SKY HAS OPENED. Not a tear — a door, at the bottom of the crater, and it is standing wide. Whatever has been watching the fences is not watching any more.', 'bad');
+  worldEvent('door', x, y, 'The sky has opened over the crater at the middle of the world. Not a tear this time. A door, and it is standing wide.');
   AU.news();
   spawnBrood();
   return theDoor;
@@ -19504,6 +19560,38 @@ function craterMessenger(){
   const g = craterSpawn('bowl', rnd() < 0.34 ? 'herald' : 'messenger');
   g.craterOwn = 'messenger';
   return g;
+}
+/* ---------- THE CUSTODIAN ----------
+   A Messenger larger and older than the three in the bowl, standing at the middle of it, over
+   the place the rite was worked. It is the crater's reason until the Second Fracture: when the
+   Door opens it is not there any more, and the Door is the thing at the bottom of the bowl.
+   Killing it first is allowed and costs what it costs: the thing that was standing over the
+   wound is not standing over it, and something far larger notices. */
+function spawnCustodian(){
+  if(bossSlain.custodian || fractureOpen()) return null;
+  const q = {x: CRATER.x + 3, y: CRATER.y + 3};
+  const c = spawnGaunt('messenger', q.x, q.y);
+  c.name = 'The Custodian'; c.bossKey = 'custodian'; c.craterOwn = 'custodian';
+  c.nightborn = false; c.floor = 0; c.big = 1.9;
+  c.stats.atk = 48; c.stats.def = 44; c.stats.tough = 60; c.stats.ath = 12;
+  c.clawDmg = 26; c.blood = c.maxBlood = 420;
+  c.guard = {x: CRATER.x + 3, y: CRATER.y + 3};
+  c.barks = [...BOSS_BARKS.custodian];
+  return c;
+}
+function custodianFalls(c){
+  bumpNotice(8);
+  const text = 'Something that stood over the middle of the world has been put down. Everybody who was out after dark last night says the sky looked back at them, and none of them can say what they mean by that.';
+  worldEvent('boss', CRATER.x, CRATER.y, text);
+  log('THE CUSTODIAN IS DOWN. Whatever it was standing over, nothing is standing over it now.', 'bad');
+}
+/* at the Second Fracture: it goes, and it does not walk out */
+function custodianWithdraws(){
+  const c = chars.find(o => o.bossKey === 'custodian' && o.state !== 'dead');
+  if(!c) return;
+  addSpecks(c.x, c.y, '#f4f0ff', 24);
+  chars.splice(chars.indexOf(c), 1);
+  worldEvent('door', CRATER.x, CRATER.y, 'The Custodian is gone from the bowl. It did not leave the crater; it is simply not in it. Where it stood, the Door is open.');
 }
 /* the hours: what the crater has lost, it grows back, but never where one of yours can see it */
 function craterDangerTick(dh){
@@ -27730,6 +27818,7 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
       blocked.add(k); baseBlocked.add(k);
     }
     for(const sl of CRATER_SLABS){ const k = bkey(Math.floor(sl.x), Math.floor(sl.y), 0); blocked.add(k); baseBlocked.add(k); }
+    for(const [x, y] of craterRuinTiles()){ const k = bkey(x, y, 0); blocked.add(k); baseBlocked.add(k); }
   }
   _terrMaxY = 0;
   for(let i=0; i<HV.length; i++) if(HV[i] > _terrMaxY) _terrMaxY = HV[i];
@@ -27831,6 +27920,23 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
   try {
     for(const ring of ['glass', 'bowl']) for(let i = 0; i < CRATER_POP[ring].want; i++) craterSpawn(ring);
     for(let i = 0; i < CRATER_MESSENGERS; i++) craterMessenger();
+    /* THE CACHES. What the capital kept, and what the flash did not reach: the richest in the
+       world after the warren vaults, because nothing else is this hard to reach. Three in the
+       ruined blocks, one in the colonnade under the Custodian, three at the foot of a slab. */
+    for(const v of CRATER_RUINS.vaults){
+      const heart = v.kind === 'heart';
+      chests.push({x: v.x, y: v.y, opened: false, vault: true, floor: 0, crater: true, loot: {cats: heart ? ri(900, 1600) : ri(300, 700), items: {
+        formula_p: heart ? ri(2, 3) : ri(1, 2), codex: heart ? 2 : (rnd() < 0.5 ? 1 : 0), tome: ri(1, 3), gold_bar: ri(1, 3),
+        ...(rnd() < (heart ? 0.8 : 0.3) ? {aether_cell: ri(1, 3)} : {}), ...(heart && rnd() < 0.5 ? {w_lance: 1} : {}),
+        ...(rnd() < 0.35 ? {t_lens: 1} : {}), ...(rnd() < 0.35 ? {t_phial: 1} : {})}}});
+    }
+    for(const i of [5, 31, 57]){
+      const sl = CRATER_SLABS[i]; if(!sl) continue;
+      const x = sl.x - Math.cos(sl.a) * 1.6, y = sl.y - Math.sin(sl.a) * 1.6;
+      chests.push({x, y, opened: false, floor: 0, crater: true, loot: {cats: ri(120, 320), items: {
+        formula_w: ri(1, 2), tome: 1, ...(rnd() < 0.4 ? {gold_bar: 1} : {})}}});
+    }
+    spawnCustodian();
   } finally { seed = pocket; }
 })();
 /* THE WARRENS USED TO BE SEEDED HERE, at the feet of the mountains, before the lattice
@@ -30324,6 +30430,26 @@ function palette(t){
   }
   for(const r of ruins) for(const [bx,by] of r.rubble){
     box(g, 0.8, 0.5+hash2(bx,by)*0.6, 0.8, '#4a443c', bx+0.5, groundY(bx+0.5,by+0.5)+0.3, by+0.5);
+  }
+  /* the capital's footings: scorched stone, a shade paler where the top of the wall caught the light */
+  for(const w of CRATER_RUINS.walls){
+    const gy = groundY(w.x + 0.5, w.y + 0.5);
+    box(g, 1, w.h, 1, '#38342f', w.x + 0.5, gy + w.h / 2, w.y + 0.5);
+    box(g, 1.02, 0.08, 1.02, '#6f6a62', w.x + 0.5, gy + w.h + 0.04, w.y + 0.5, false);
+  }
+  /* and the colonnade round the middle, standing or lying where it fell */
+  for(const pl of CRATER_RUINS.pillars){
+    if(!pl.fallen){
+      const gy = groundY(pl.x, pl.y);
+      box(g, 1.3, pl.h, 1.3, '#bdb6a8', pl.x, gy + pl.h / 2, pl.y);
+      box(g, 1.8, 0.45, 1.8, '#a49d90', pl.x, gy + pl.h + 0.22, pl.y);
+      box(g, 1.7, 0.35, 1.7, '#8e877b', pl.x, gy + 0.17, pl.y);
+    } else {
+      for(let t = 0; t < pl.h; t += 0.8){
+        const x = pl.x + Math.cos(pl.a) * t, y = pl.y + Math.sin(pl.a) * t;
+        box(g, 1.15, 1.15, 1.15, t < 0.8 ? '#8e877b' : '#b3ac9e', x, groundY(x, y) + 0.57, y);
+      }
+    }
   }
   /* per-town personality props */
   for(const t of towns){

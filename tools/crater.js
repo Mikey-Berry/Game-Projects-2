@@ -23,6 +23,13 @@
  *   9. what is killed grows back, and never within sight of one of yours
  *  10. the light comes back at night: strikes are telegraphed, land on and around whoever of
  *      yours is in the glass, burn what they land on, and spare the Watchers; none by day
+ *  11. the capital's footings stand in the bowl and a colonnade round the middle; nothing
+ *      within twenty-four tiles of the centre but the colonnade, and every cache can be walked to
+ *  12. the caches are there, and the one in the colonnade is the richest
+ *  13. the Custodian stands at the middle, a Messenger, at peace with what the crater keeps
+ *  14. the Second Fracture opens the Door at the bottom of the bowl, and the Custodian is gone
+ *      rather than dead
+ *  15. killed first, it stays dead, and something larger notices
  *
  * Anything starting '!!' fails the build.
  *
@@ -224,7 +231,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       /* ---- 10. the light at night ---- */
       if (typeof strikeTick !== 'undefined') {
         const me = player()[0];
-        for (const c of chars) if (c.craterOwn && c.state !== 'dead') c.state = 'dead';   /* nothing else hurting anybody */
+        for (const c of chars) if (c.craterOwn === 'glass' && c.state !== 'dead') c.state = 'dead';   /* nothing else in the glass hurting anybody */
         const hp = (o) => PARTS.reduce((a, k) => a + o.parts[k].hp, 0);
         me.x = CRATER.x + 105; me.y = CRATER.y; me.floor = 0; me.state = 'ok';
         for (const k of PARTS) { me.parts[k].hp = me.parts[k].max; me.parts[k].bleed = 0; }
@@ -260,6 +267,64 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           : `none by day; at night ${warned} strikes in twenty seconds, each ringed on the glass for ${STRIKE_WARN}s before it lands, all within eight tiles of the one standing there, who lost ${took.toFixed(0)} across the body, while the Watcher beside them lost nothing`;
         chars.splice(chars.indexOf(g), 1);
       } else R.theLightComesBack = '!! NO LIGHT COMES DOWN IN THIS BUILD';
+      /* ---- 11. the capital ---- */
+      if (typeof CRATER_RUINS !== 'undefined') {
+        const W0 = CRATER_RUINS.walls, bits = [];
+        const inner = W0.filter(w => craterD(w.x + 0.5, w.y + 0.5) < 22).length;
+        const blockedAll = craterRuinTiles().every(([x, y]) => isBlocked(x + 0.5, y + 0.5));
+        if (W0.length < 150) bits.push(`only ${W0.length} wall stones stand`);
+        if (inner) bits.push(`${inner} stones stand inside twenty-two tiles of the middle`);
+        if (CRATER_RUINS.pillars.length !== 12) bits.push(`the colonnade has ${CRATER_RUINS.pillars.length} pillars`);
+        if (!blockedAll) bits.push('some of the stone can be walked through');
+        const from = { x: CRATER.x + 8, y: CRATER.y - 8 };
+        const unreached = CRATER_RUINS.vaults.filter(v => !findPath(from.x, from.y, v.x, v.y));
+        if (unreached.length) bits.push(`${unreached.length} caches cannot be walked to from the floor`);
+        R.theCapitalStands = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : `${W0.length} stones of the capital's footings stand on a turned grid, none inside the flash's twenty-four tiles but the colonnade of 12 (${CRATER_RUINS.pillars.filter(p => p.fallen).length} fallen), all of it solid, and every cache can be walked to from the floor`;
+      } else R.theCapitalStands = '!! NO CAPITAL IN THIS BUILD';
+      /* ---- 12. the caches ---- */
+      {
+        const cc = chests.filter(c => c.crater && !c.opened);
+        const heart = CRATER_RUINS && chests.find(c => c.crater && c.vault && dist(c.x, c.y, CRATER.x, CRATER.y) < 14);
+        const worth = (c) => (c.loot.cats || 0) + 200 * ((c.loot.items.formula_p || 0) + (c.loot.items.codex || 0));
+        const richest = cc.length ? cc.reduce((a, b) => worth(b) > worth(a) ? b : a) : null;
+        R.theCachesAreThere = cc.length >= 7 && heart && richest === heart
+          ? `${cc.length} caches in the crater, and the one in the colonnade is the richest (${heart.loot.cats} coin, ${heart.loot.items.formula_p} preserved formulae, ${heart.loot.items.codex} codices)`
+          : `!! ${cc.length} CACHES; THE COLONNADE'S IS ${heart ? (richest === heart ? 'RICHEST' : 'NOT THE RICHEST') : 'MISSING'}`;
+      }
+      /* ---- 13 to 15. the Custodian and the Door ---- */
+      {
+        const cu = chars.find(c => c.bossKey === 'custodian' && c.state !== 'dead');
+        const bits = [];
+        if (!cu) bits.push('nobody stands at the middle');
+        else {
+          if (craterD(cu.x, cu.y) > 10) bits.push(`the Custodian stands ${craterD(cu.x, cu.y).toFixed(0)} from the middle`);
+          if (cu.gauntKind !== 'messenger') bits.push('the Custodian is not a Messenger');
+          const kept = chars.filter(c => (c.craterOwn === 'glass' || c.craterOwn === 'bowl' || c.craterOwn === 'messenger') && c.state !== 'dead');
+          if (kept.some(g => hostile(cu, g))) bits.push('it is at war with the crater\'s own');
+        }
+        R.theCustodianStands = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : `the Custodian, a Messenger with ${cu.maxBlood} blood, stands ${craterD(cu.x, cu.y).toFixed(0)} tiles from the middle at peace with everything the crater keeps`;
+        /* the Door */
+        const ev0 = events.length;
+        const d = openTheDoor();
+        const gone = !chars.some(c => c.bossKey === 'custodian' && c.state !== 'dead');
+        const said = events.slice(ev0).map(e => e.text || '').join(' ');
+        R.theDoorOpensInTheBowl = d && dist(d.x, d.y, CRATER.x, CRATER.y) < 1 && gone && !bossSlain.custodian && /Custodian is gone/.test(said) && broodAlive()
+          ? 'at the Second Fracture the Door opens at the bottom of the bowl with the Brood in it, and the Custodian is gone from it, not killed'
+          : `!! THE DOOR OPENED AT ${d ? Math.round(d.x) + ',' + Math.round(d.y) : 'NOWHERE'} (CUSTODIAN ${gone ? 'gone' : 'still there'}, SLAIN ${!!bossSlain.custodian}, BROOD ${!!broodAlive()})`;
+        /* killed first */
+        const c2 = spawnCustodian();
+        if (!c2) R.killedItStaysDead = '!! NO SECOND CUSTODIAN COULD BE STOOD UP TO KILL';
+        else {
+          const n0 = noticed || 0;
+          kill(c2, player()[0]);
+          const again = spawnCustodian();
+          R.killedItStaysDead = bossSlain.custodian && (noticed || 0) > n0 && !again
+            ? `killed, it goes in the ledger, the Attention rises by ${((noticed || 0) - n0).toFixed(1)}, and it does not come back`
+            : `!! KILLED: LEDGER ${!!bossSlain.custodian}, ATTENTION ${n0} -> ${noticed}, BACK AGAIN ${!!again}`;
+        }
+      }
       /* ---- 7. an old save ---- */
       {
         const lines = [];

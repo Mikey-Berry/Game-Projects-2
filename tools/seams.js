@@ -172,7 +172,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const castIn = (t, cast) => {
         const w = chars.find(o => o.homeTown === t && o.faction === 'town' && o.state === 'ok' && !o.civ) ||
                   chars.find(o => o.homeTown === t && o.faction === 'town' && o.state === 'ok');
-        const q = findOpenNear(Math.round(w.x) + 2, Math.round(w.y), 3);
+        /* beside the watch AND in its sight, placed without dice: `findOpenNear` is random darts,
+           and on the draw where it landed behind a house the watch saw nothing and booked nothing */
+        let q = null;
+        for (const r of [2, 3, 2.5, 4]) {
+          for (let a = 0; a < 16 && !q; a++) {
+            const x = w.x + Math.cos(a / 16 * Math.PI * 2) * r, y = w.y + Math.sin(a / 16 * Math.PI * 2) * r;
+            if (!isBlocked(x, y, w.floor || 0) && !losBlocked(w.x, w.y, x, y, w.floor || 0)) q = { x, y };
+          }
+          if (q) break;
+        }
+        q = q || findOpenNear(Math.round(w.x) + 2, Math.round(w.y), 3);
         const c = makeChar('Caster', 'player', q.x, q.y, { atk: 6, def: 30, tough: 90, magic: 60 });
         c.__probe = true; c.floor = w.floor || 0; c.mana = 999; c.castCd = 0;
         c.att = { divine: 3, destruction: 3, dark: 3, dust: 3 };
