@@ -630,6 +630,31 @@ removed (§1.6), and nothing else, and the red goes green.
   PR 39 already used in `storeys.js`: stage past every town. It is green on PR 39 alone and on
   the merge. It belongs in the merge commit, because the file does not exist on this branch.
 
+**And the full suite on the merged head found three more, all red on `main` before this branch
+touched it.** PR 39 ran a subset of the suite, not all of it. On `main` alone the three came
+back identically, so none of them was this branch's.
+
+- **`rim.js` and `order.js` timed out loading seed 404.** It took 37 s to reach the menu
+  against 16 s for every other seed and for `30223c9`, which is past the 30 s the tests allow a
+  page. The CPU profile named `seedWarrens` → `route`: 17 s of self time. PR 39's corridor
+  repairs call the warren BFS for every widened run and every stranded hall. On that seed some
+  joins span nearly the whole map (a search box of 1.9 million tiles), and 269 calls visited
+  29.9 million tiles, each costing a `Map` insert, two array allocations and two string-keyed
+  `Set` lookups. `route` is now the same BFS on flat typed arrays: the same neighbour order,
+  the same first-found parent, and the wall test cached once per tile per call. Seed 404 loads
+  in 19.5 s. The worlds are byte-identical to `main` on five seeds (0, 7, 91, 404, 1234),
+  fingerprinted over `blocked`, `decks`, every cave, the stairs, the towns, every body's
+  position and the next `rnd()`. An attempt that only replaced `q.shift()` with an index was
+  exact and bought nothing, so it was dropped. V8 already makes that shift cheap.
+- **`sweep.js` measured the captain, and PR 39 moved him to the rear.** The claim was "the
+  captain gets more than 34 tiles from the anchor", standing in for "the band walked out past
+  its own sight". With the captain behind his blades, and a sweep that steers for the nearest
+  unseen ground, the band maps the whole 48-tile circle from 30-odd tiles out: 441 of 441
+  points learned. The captain topped out at 31.5 and the front at 35.5. The claim now counts
+  what it was about: lattice points past 34 tiles that nobody had seen, learned while the order
+  is live. The bar is a quarter of them. Measured: 96 of 216 on `30223c9`, 104 of 216 on
+  `main`, and 0 of 216 for a negative control whose sweep has nowhere to go.
+
 **Order, as done:** PR 39 merged first. `main` was then merged into this branch as a merge
 commit, not a rebase, carrying the five hunks, `hi`, and the `marchorder.js` staging.
 

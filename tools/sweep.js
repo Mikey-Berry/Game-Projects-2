@@ -125,12 +125,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
       /* and the country inside it is unwalked, which is the thing they are supposed to notice */
       let blank = 0, total = 0;
+      const farBlank = [];     /* unseen, and further out than anyone can see from the anchor */
       for (let y = Math.floor(gy - m.r); y <= Math.ceil(gy + m.r); y += 4)
         for (let x = Math.floor(gx - m.r); x <= Math.ceil(gx + m.r); x += 4) {
           if (x < 2 || y < 2 || x >= W - 2 || y >= H - 2) continue;
           if (dist(x, y, gx, gy) > m.r) continue;
           total++;
-          if (vis[y * W + x] === 0) blank++;
+          if (vis[y * W + x] === 0){ blank++; if (dist(x, y, gx, gy) > 34) farBlank.push(y * W + x); }
         }
       O._blank = `${blank} of ${total} lattice points inside the order have never been seen`;
 
@@ -155,7 +156,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       for (let i = 0; i < 900 && !ended; i++) {
         update(1 / 30);
         if (!cdr.cmd) { ended = true; break; }
-        maxOut = Math.max(maxOut, dist(cdr.x, cdr.y, gx, gy));   /* only while the order is live */
+        for (const o of band) maxOut = Math.max(maxOut, dist(o.x, o.y, gx, gy));   /* only while the order is live */
       }
       paused = wasPaused;
       window.log = realLog;
@@ -167,23 +168,34 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           if (vis[y * W + x] === 0) stillBlank++;
         }
       learned = blank - stillBlank;
+      const farLearned = farBlank.filter(i => vis[i] !== 0).length;
       const said = logs.join(' | ');
-      /* THE BAR IS HOW FAR THEY GOT, AND IT IS SET OFF THE GAME'S OWN SIGHT RADIUS.
+      /* THE BAR IS GROUND LEARNED PAST SIGHT, AND IT IS SET OFF THE GAME'S OWN SIGHT RADIUS.
          Counting ground learned is not enough on its own and the first cut of this found out
          why: a body sees `17 + dayness*13`, up to THIRTY tiles in full daylight, so on a build
          whose forage circle is only 26 tiles wide a band that never moves has already mapped
          half of it — the claim went green on the control about an order that ends on tick one.
-         Ground learned inside your own eyeline is not scouting. So the question is whether they
-         WENT anywhere: the furthest the captain gets from the anchor while the order is still
-         live. Past 34 is past what anyone can see from the middle in the brightest light, so
-         every tile learned out there was learned by walking to it. */
-      O.aForageWalksWhatNobodyHasSeen = maxOut > 34
-        ? `with nothing left to lift the band walks OUT — ${maxOut.toFixed(0)} tiles from the anchor, `
-          + `past the ${'30'}-tile daylight sight they would have had standing still — and maps `
-          + `${learned} of the order's ${blank} unwalked lattice points on the way`
-        : `!! THE SWEEP NEVER LEAVES THE SPOT (${maxOut.toFixed(0)} tiles out at furthest, `
-          + `${learned}/${blank} points learned, ${ended ? 'order ended' : 'order still out'}) — `
-          + `${said.slice(0, 110) || 'and it says nothing'}`;
+         Ground learned inside your own eyeline is not scouting.
+         So the claim is the lattice points more than 34 tiles from the anchor — past what anyone
+         can see from the middle in the brightest light — that nobody had seen, and how many of
+         them the band learned while the order was live. Every one of those was learned by
+         walking toward it.
+         It used to be "the CAPTAIN got more than 34 tiles out", which was the same question
+         while the captain led. PR 39 put him at the rear on purpose, with his blades five tiles
+         in front of him, and a sweep that steers for the NEAREST unseen ground maps a 48-tile
+         circle from 30-odd tiles out: 441 of 441 points learned, the captain at 31.5, the front
+         of the band at 35.5. The proxy had stopped meaning the thing it stood for.
+         The bar is a quarter of those points inside the step budget. Measured: 96 of 216 on the
+         build before PR 39, 104 of 216 after, and 0 for an order that ends on its first tick. */
+      O.aForageWalksWhatNobodyHasSeen = !farBlank.length
+        ? `!! NOTHING OUT PAST SIGHT TO LEARN — the staging has to leave unwalked ground beyond 34 tiles`
+        : farLearned >= Math.max(1, farBlank.length * 0.25)
+          ? `with nothing left to lift the band walks OUT — ${maxOut.toFixed(0)} tiles from the anchor at the front — `
+            + `and learns ${farLearned} of the ${farBlank.length} unwalked points past the ${'30'}-tile daylight sight `
+            + `they would have had standing still (${learned} of ${blank} in all)`
+          : `!! THE SWEEP NEVER LEAVES THE SPOT (${farLearned} of ${farBlank.length} points past sight learned, `
+            + `${maxOut.toFixed(0)} tiles out at furthest, ${ended ? 'order ended' : 'order still out'}) — `
+            + `${said.slice(0, 110) || 'and it says nothing'}`;
       /* and it says why, once, rather than announcing a failure */
       const fizzled = /nothing here worth carrying/i.test(said);
       O.andSaysWhyItIsStillOut = !fizzled
