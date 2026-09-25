@@ -611,7 +611,7 @@ town fires.
 - Five guards on names that always exist: `typeof tileAt`, `typeof AU`,
   `typeof refreshBuildBar`, `typeof weather` and `AU.bell &&`.
 
-A one-commit tidy after the merge covers them.
+All seven are removed in the commit after the merge; each one is exact.
 
 **The merged build, run.** I ran 30 harnesses against the resolved merge: all 12 of PR 39's new
 ones, plus every harness covering code both branches touched. The first run passed 28. The two
