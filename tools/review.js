@@ -89,9 +89,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const u = makeChar('Bound One', 'player', me.x + 1, me.y, { atk: 5 });
       u.undead = true; u.crafted = true; u.master = me; u.bindWeight = 2; chars.push(u);
       hostUpkeep();
-      R.theReliquaryFeedsTheHost = u.state !== 'dead' && chars.includes(u)
-        ? `a bound body with 40 remains in the Reliquary and none in the wagon is held for another day (Reliquary now ${rel.store.remains})`
-        : '!! THE HOST CAME APART WITH REMAINS IN THE RELIQUARY';
+      /* and what the top-up took over the bill goes back to the Reliquary, not into the wagon:
+         any remains in the cart are grave-goods at a gate */
+      R.theReliquaryFeedsTheHost = !(u.state !== 'dead' && chars.includes(u)) ? '!! THE HOST CAME APART WITH REMAINS IN THE RELIQUARY'
+        : (stash.remains || 0) > 0 ? `!! THE UPKEEP LEFT ${(+stash.remains).toFixed(2)} REMAINS IN THE WAGON — the cart is dirty for a necromancer who kept it clean`
+        : `a bound body with 40 remains in the Reliquary and none in the wagon is held for another day (Reliquary now ${(+rel.store.remains).toFixed(2)}, wagon still empty)`;
       const k = Object.keys(UNDEAD_TYPES).find(k2 => { const ut = UNDEAD_TYPES[k2]; return ut.cost && Object.keys(ut.cost).every(x => x === 'remains'); });
       if (!k) R.theCircleReadsTheReliquary = '!! NO REMAINS-ONLY BINDING TO TEST WITH';
       else {
