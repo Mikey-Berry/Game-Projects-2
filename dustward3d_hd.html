@@ -807,6 +807,24 @@ const UNDER_DROP = 22;
    every click ray and every screenshot of the Undercroft is what it was. */
 const DEPTHS = [-1, -2, -3];
 const UNDER_STEP = 14;
+/* ---------- AND A DECK IS A SLAB, NOT A SURFACE ----------
+   "the torch lighting is looking amazing... One point though - they sometimes cause black
+    visual artifacts to appear on the floor."
+   The torch. Underground the floor is not a heightfield, it is a run of BOXES 0.2 thick drawn
+   centred on `groundY + floorY`, so the ground you actually walk on is half that box higher
+   than the number every other piece of code uses for "the floor here". A body's group is
+   placed at the centre, which sinks it a tenth of a unit into its own floor, and the flat
+   decals parented to that group inherit the mistake: measured, the torch pool sat at -22.050
+   against a floor surface at -22.000 — FIFTY THOUSANDTHS UNDER IT.
+   A transparent disc buried in an opaque slab, with `depthTest` on, is a z-fight: the two
+   surfaces trade the depth test pixel by pixel as the camera moves and the floor comes out in
+   hard-edged black patches that flicker. Exactly what was reported, exactly where, and only
+   ever with a torch out — the pool is the only thing that draws there.
+   `DECK_TOP` is that half-thickness, and `deckLift` is it for a body that is standing on a
+   deck rather than on the world's own dirt. Above ground the group origin IS the ground and
+   the lift is zero, which is why this never showed up in daylight. */
+const DECK_TOP = 0.1;
+function deckLift(c){ return (c && (c.floor || 0) < 0) ? DECK_TOP : 0; }
 /* how much of the world each depth's lattice actually spans, as a multiplier on the node
    spacing: bigger spacing, fewer halls, more rock between them. 1.0 is the full net under the
    whole map that -1 has always been. */
@@ -1084,6 +1102,10 @@ const ITEMS = {
      walking around a town. */
   w_torch: {name:'Torch',         base:24,  type:'weapon', dmg:9,  wt:'burn', torch:true,
     desc:'A yard of ash, a head of tow soaked in pitch. It is a poor club and the only reason anyone comes back up.'},
+  /* the same stick with Fallowend's glass on the head. It lights the same ground and it does
+     the other thing as well, which is why it costs a cell and a torch does not. */
+  w_torch_v:{name:'Violet Torch',  base:260, type:'weapon', dmg:9,  wt:'burn', torch:true, violet:true,
+    desc:'A torch with cut glass caged over the head. It burns the same hours and throws the same light, and while it is in your hand the tear-born keep their distance.'},
   w_rkat:  {name:'Rusty Katana',  base:160, type:'weapon', dmg:12, wt:'cut'},
   /* ---------- TWO WEAPONS THE WORLD HAS BEEN HANDING OUT FOR A LONG TIME ----------
      `w_sw` and `w_dag` were spawned by seven different tables — town levies, mercenaries,
@@ -2037,6 +2059,15 @@ function placeTownAt(def, cx0, cy0){
     /* how far out the streets are swept — the wall and a little past it, so nothing wild
        grows against the ramparts either. An unwalled town still has a settlement to keep clear. */
     clearR: def.wall ? def.wall.r + 3 : 18,
+    /* ---------- A TOWN THAT HAS NEVER BEEN SICK IS NOT `undefined` SICK ----------
+       These were never initialised, and the sickness tick opens `if(t.plague <= 0) continue`.
+       `undefined <= 0` is FALSE, so that guard let every healthy town in the world through:
+       within thirteen tiles of ANY town, townsfolk were taking raw damage and anyone of yours
+       without brine in them was catching a three-day fever off a plague that did not exist.
+       The comparisons are hardened where they are read as well, but the field existing is the
+       fix — an absent number that reads as "yes" to `<= 0` and as "no" to `> 0` is a trap that
+       every future reader of it walks into. */
+    plague:0, plagueCd:0, plagueTold:0, plagueToldDay:0, sacked:0, sackKind:null,
     necroHostile:false, necroWarned:false, necroGrace:0, necroCalm:0, warnedHostile:false};
   towns.push(t);
   t.leader = makeLeader(t);
@@ -2228,6 +2259,13 @@ function placeTownAt(def, cx0, cy0){
       decks.add(bkey(wx, wy, 1));
       t.walls.push({x:wx, y:wy, hp:def.wall.hp, maxHp:def.wall.hp, mat:def.wall.mat});
     }
+    /* THE RING AS IT WAS LAID. `wall0` is what a breach is measured against, and `wallRing` is
+       where the masons put it back — a breach has to leave a record of itself somewhere or the
+       hole is permanent, and a world where every war leaves a scar nobody ever closes ends up
+       as seven towns full of holes. Both are written from the finished ring rather than inside
+       the loop, and neither spends a roll, so worldgen's stream is untouched. */
+    t.wall0 = t.walls.length;
+    t.wallRing = t.walls.map(w => ({x:w.x, y:w.y}));
     /* stairs to the rampart, on the INSIDE face — you must already be through the gate */
     for(const [sx, sy] of [[cx0+2, cy0-r+1], [cx0+2, cy0+r-1], [cx0-r+1, cy0], [cx0+r-1, cy0]]){
       if(sx<2||sy<2||sx>=W-2||sy>=H-2) continue;
@@ -2895,6 +2933,23 @@ function makeChar(name, faction, x, y, o={}){
    lines matter most. tickBubbles() below runs off the render clock instead. */
 const BUBBLE_T = 4.2;
 function say(c, text){ c.bubble = {text, t: BUBBLE_T}; }
+/* ---------- AND NOBODY CARTS GOODS INTO A TOWN THAT IS SICK ----------
+   "The guards at gates warn away incoming people" is the beat you can see at a gate; this is
+   the same rule applied to everybody who is not you, and it is the one with a consequence — a
+   plagued town stops being resupplied for as long as it is shut, and a sacked one is not a
+   destination at all.
+   BUT A CARAVAN WITH NOWHERE TO GO IS A CARAVAN THAT STOPS FOR GOOD, so when the only road out
+   leads somewhere shut, it is taken anyway. Greenrest has exactly one.
+   `pick` is called ONCE on every branch, so the world's seeded stream is where it was:
+   filtering the list changes what comes out of the draw, never how many draws it took.
+   It is a named function so it can be asked the question directly — written inline in the
+   caravan tick it could only be tested by a harness re-implementing it, which is a harness
+   testing itself. */
+function nextCaravanDest(from){
+  const open = towns.filter(t => t !== from && routeFor(from, t) && !(t.plague > 0) && !t.sacked);
+  const conn = open.length ? open : towns.filter(t => t !== from && routeFor(from, t));
+  return conn.length ? pick(conn) : pick(towns.filter(t => t !== from));
+}
 function pick(arr){ return arr[ri(0, arr.length-1)]; }
 const chars = [], corpses = [];
 /* ---------- WHO IS "YOU" ----------
@@ -3268,7 +3323,20 @@ function paceBands(){
 function moveSpeed(c){
   const s = moveSpeedRaw(c);
   const p = c._bandPace;
-  return (p > 0 && p < s) ? Math.max(0.5, p) : s;
+  let v = (p > 0 && p < s) ? Math.max(0.5, p) : s;
+  /* ---------- AND A CAPTAIN MARCHES AT HIS VAN'S HEELS ----------
+     The ranks alone cannot build a column and the reason is arithmetic, not a bug: everybody
+     walks at the same speed, so a blade chasing a point five tiles ahead of a moving captain
+     never closes on it — the gap stays whatever it was when the order was given, which is
+     nothing, because the band was standing round him. Measured with the ranks in and nothing
+     else: blades 2.4 tiles ahead, bows 2.0. A formation on paper.
+     A fifth off his pace is all it takes. The van draws out to its station in a few seconds
+     and then holds there, because he walks into the gap at exactly the rate they walk out of
+     it. Its own field rather than `_bandPace`, which `paceBands` rewrites every frame from the
+     slowest body in the party — that number is about keeping a march together and this one is
+     about where the captain is IN it. */
+  if(c._cdrPace > 0) v = Math.min(v, Math.max(0.5, s * c._cdrPace));
+  return v;
 }
 /* ---------- what a graft is worth ----------
    tier 1 bone graft: it holds you up. Barely.
@@ -6115,9 +6183,29 @@ function placeDeepRedoubt(){
    side of it — and a BARRED one is a decision: you can hear something behind it, and getting in
    is going to be loud. */
 const doors = [];
+/* ---------- A DOORWAY IS AS WIDE AS IT IS, AND EVERY TILE OF IT IS THE SAME DOOR ----------
+   "the doors in general... tend to be extremely narrow."
+   They were one tile, which is a doorway a host of forty goes through in single file forever —
+   and the complaint about pencil paths is the same complaint arriving from the other side of
+   the wall. A doorway is a SPAN now: `d.w` lists the tiles it occupies, the door's own tile
+   first, and every piece of machinery that used to ask about `d.x, d.y` asks this instead.
+   The one tile stays authoritative — it is what `forcing`, the save and the room record are
+   keyed on — so a door that has no span, which is any door in an old save, is a span of one
+   and everything below goes on working unchanged. */
+function doorTiles(d){
+  if(!d) return [];
+  if(d.w && d.w.length) return d.w;
+  return [{x: d.x, y: d.y}];
+}
 function doorAt(x, y, f){
   const xi = Math.floor(x), yi = Math.floor(y);
-  return doors.find(d => d.x === xi && d.y === yi && (d.f || 0) === (f || 0)) || null;
+  const ff = f || 0;
+  for(const d of doors){
+    if((d.f || 0) !== ff) continue;
+    if(d.x === xi && d.y === yi) return d;
+    for(const t of (d.w || [])) if(t.x === xi && t.y === yi) return d;
+  }
+  return null;
 }
 /* THE ONE PLACE THE FLAG AND THE WORLD ARE PUT IN AGREEMENT. Every other path — the world
    generator, the save loader, the right-click, the forcing — goes through this, so the flag can
@@ -6125,9 +6213,13 @@ function doorAt(x, y, f){
 function setDoor(d, open){
   if(!d) return;
   d.open = !!open;
-  const k = bkey(d.x, d.y, d.f || 0);
-  decks.add(k);                       /* there is always something to stand on in a doorway */
-  if(open){ blocked.delete(k); } else { blocked.add(k); }
+  /* EVERY TILE OF THE SPAN, TOGETHER. A three-tile doorway with one tile unbarred is a door
+     you walk around, which is the same as no door at all. */
+  for(const t of doorTiles(d)){
+    const k = bkey(t.x, t.y, d.f || 0);
+    decks.add(k);                     /* there is always something to stand on in a doorway */
+    if(open){ blocked.delete(k); } else { blocked.add(k); }
+  }
   /* NOT `baseBlocked`. A door's state is the player's business and travels in the save with the
      door; the base world is what the generator made. Writing it here is how you get a door that
      silently re-bars itself on the next reload. */
@@ -6231,17 +6323,42 @@ function placeCave(h){
        Slide the free axis one tile off each end. */
     if(nx2) dy2 = clamp(dy2, ay + 1, by - 1);
     else    dx2 = clamp(dx2, ax + 1, bx - 1);
-    const door = {x: dx2, y: dy2, nx: nx2, ny: ny2};
-    for(let i = ax; i <= bx; i++){ if(!(i===door.x && ay===door.y)) wall(i, ay, fl); if(!(i===door.x && by===door.y)) wall(i, by, fl); }
-    for(let j = ay; j <= by; j++){ if(!(ax===door.x && j===door.y)) wall(ax, j, fl); if(!(bx===door.x && j===door.y)) wall(bx, j, fl); }
-    blocked.delete(bkey(door.x, door.y, fl)); baseBlocked.delete(bkey(door.x, door.y, fl));
-    deck(door.x, door.y, fl);
-    cave.walls = cave.walls.filter(w => !(w.x===door.x && w.y===door.y && w.f===fl));
+    /* ---------- AND IT IS THREE TILES WIDE, NOT ONE ----------
+       "the doors in general... tend to be extremely narrow."
+       A one-tile doorway is a turnstile: a host of forty goes through it one body at a time,
+       under fire, for as long as it takes. Three is a doorway two can walk abreast, which is
+       the difference between a chamber you assault and a chamber you queue at.
+       Pulled a further tile off each end first, so the span still clears both corners — a
+       corner tile's only neighbours inside the room are diagonal and the pathfinder moves
+       orthogonally, which is the fault the clamp above exists to prevent and which a wider
+       doorway would walk straight back into. A wall too short to hold three keeps as many as
+       it can rather than refusing: `doorTiles` reads the span off the door, so a span of one
+       is simply the old doorway and nothing downstream can tell.
+       NO DICE ARE SPENT HERE. The span is arithmetic off a position that was already chosen. */
+    if(nx2 && by - ay >= 4) dy2 = clamp(dy2, ay + 2, by - 2);
+    if(!nx2 && bx - ax >= 4) dx2 = clamp(dx2, ax + 2, bx - 2);
+    const span = [{x: dx2, y: dy2}];
+    if(nx2){
+      if(dy2 - 1 > ay) span.push({x: dx2, y: dy2 - 1});
+      if(dy2 + 1 < by) span.push({x: dx2, y: dy2 + 1});
+    } else {
+      if(dx2 - 1 > ax) span.push({x: dx2 - 1, y: dy2});
+      if(dx2 + 1 < bx) span.push({x: dx2 + 1, y: dy2});
+    }
+    const door = {x: dx2, y: dy2, nx: nx2, ny: ny2, w: span};
+    const inSpan = (i, j) => span.some(t => t.x === i && t.y === j);
+    for(let i = ax; i <= bx; i++){ if(!inSpan(i, ay)) wall(i, ay, fl); if(!inSpan(i, by)) wall(i, by, fl); }
+    for(let j = ay; j <= by; j++){ if(!inSpan(ax, j)) wall(ax, j, fl); if(!inSpan(bx, j)) wall(bx, j, fl); }
+    for(const t of span){
+      blocked.delete(bkey(t.x, t.y, fl)); baseBlocked.delete(bkey(t.x, t.y, fl));
+      deck(t.x, t.y, fl);
+    }
+    cave.walls = cave.walls.filter(w => !(w.f===fl && inSpan(w.x, w.y)));
     const rm = {x0:ax, y0:ay, x1:bx, y1:by, f:fl, cx, cy, door, id:cave.rooms.length};
     /* SHUT, AND REGISTERED IN THE ONE LIST EVERYTHING READS. `cave.doors` was a renderer's
        decoration; `doors` is the mechanic. The chamber ring carved this tile open a moment ago,
        which is right — a doorway needs floor — and `setDoor` puts the rock back across it. */
-    const dd = {x:door.x, y:door.y, f:fl, roomId:rm.id, caveId:cave.id, open:false, barred:false};
+    const dd = {x:door.x, y:door.y, w:span, f:fl, roomId:rm.id, caveId:cave.id, open:false, barred:false};
     doors.push(dd); cave.doors.push(dd);
     setDoor(dd, false);
     cave.rooms.push(rm);
@@ -6489,9 +6606,24 @@ function placeCave(h){
 function rebuildCaveWalls(cv){
   cv.walls = [];
   const seen = new Set();
+  /* ---------- AND A SHUT DOOR IS NOT ROCK ----------
+     "the doors in general are really hard to see visually... quite a few hallways/rooms in the
+     undercroft simply dead-end without a door to pass through."
+     Both of those were this list. A shut door is implemented as a decked tile that is also in
+     `blocked` — that is the whole mechanic, and it is why `isBlocked` refuses it without any
+     door code at all. This derivation asks `blocked` and nothing else, so it read every shut
+     door in the world as stone and pushed it onto the list the renderer draws as rock: a box
+     0.98 wide and FLOOR_H*0.85 tall, which is larger in every dimension than the door slab
+     drawn inside it. Measured: 176 of 176. Every door in the game was sealed in a block of
+     granite the moment it closed, and a corridor ending at one is a corridor that dead-ends
+     into rock with no door to pass through.
+     `blocked` cannot tell the two apart because they are the same flag. The doorway has to be
+     named, so it is. */
+  const dk = new Set();
+  for(const d of (cv.doors || [])) for(const t of doorTiles(d)) dk.add(bkey(t.x, t.y, d.f || 0));
   const put = (x, y, f) => {
     const k = bkey(x, y, f);
-    if(seen.has(k) || !blocked.has(k)) return;
+    if(seen.has(k) || !blocked.has(k) || dk.has(k)) return;
     seen.add(k); cv.walls.push({x, y, f});
   };
   for(const rm of cv.rooms || []){
@@ -7551,6 +7683,9 @@ let estate = null;
      · AND THE GOOD KAMI ARE NOT THE CHURCH, so their stone does not consecrate. Fallowend is the
        second place on this map where the rite will answer — which is a real fact about the world
        and follows from the fiction rather than being granted to make the map easier. */
+const VIOLET_FIRE = 0x8a52d8;      /* Fallowend's glass, and everything cut in its pattern */
+/* the lit ground under a town's lamps, shared per colour — see the note where they are drawn */
+const townPoolMats = {};
 const LANTERN_R = 13;              /* violet light: further than the Light, and it does far less */
 /* AND A CHARM IS THE SAME LIGHT IN SOMEBODY'S POCKET, at half the reach of a post. Six rather
    than the four and a half it was first written at: four and a half plus the AI's own tile and a
@@ -7581,6 +7716,78 @@ let fallowend = null;
      rule. It is the town's own box, on the town's own object, and it is not for sale. */
   fallowend.cells = ri(3, 6);
 })();
+/* ============================================================ THE LAMPS A TOWN KEEPS ========
+   "Please add some more torches to the cities to build on this ambiance. Fallowend could
+    perhaps use a purple variant to reflect their anti-gaunt lamps."
+
+   FALLOWEND'S LANTERNS HAVE NEVER HAD A PHOTON IN THEM. Everything above this line is a
+   complete mechanic — six posts, aether cells, seventy days a cell, thirteen tiles of
+   gaunt-turning, a box the Elder will not admit is empty — and not one line of it draws
+   anything or lights anything. The one town whose entire identity is the lamps on its road
+   looked exactly like the one next door.
+   So the two halves of the note meet here: a town gets fires, and Fallowend's get seen.
+
+   NO DICE ARE SPENT PLACING THEM. `findOpenNear` looks good for this and draws up to a hundred
+   and twenty random numbers doing it, which would move every town on the map — the seeded
+   stream is the world. The search below is a deterministic spiral, the same device the shafts
+   already use for the same reason, and `hash2` is a hash of the coordinates rather than a draw.
+
+   AND THEY DO NOT COST A LIGHT EACH. Hollowmere had four violet lamps with a `PointLight`
+   apiece, added to the town's own group — permanently in the scene, in every Lambert shader,
+   burning at noon as brightly as at midnight. They are folded in here: the three-light pool
+   picks the nearest fires whatever kind they are, and the day curve turns the lot down at
+   dawn. Four fewer lights in the scene and four more things that behave like fires. */
+const townFires = [];
+(function seedTownFires(){
+  /* open ground near a point, found by walking outward rather than by throwing darts */
+  const dryAt = (x, y) => {
+    for(let r = 0; r <= 7; r++){
+      const n = Math.max(1, r * 8);
+      for(let a = 0; a < n; a++){
+        const th = (a / n) * Math.PI * 2;
+        const qx = Math.round(x + Math.cos(th) * r), qy = Math.round(y + Math.sin(th) * r);
+        if(qx < 3 || qy < 3 || qx >= W - 3 || qy >= H - 3) continue;
+        if(isBlocked(qx + 0.5, qy + 0.5, 0)) continue;
+        if(typeof tileAt === 'function' && tileAt(qx, qy) === 3) continue;   /* not in the sea */
+        return {x: qx + 0.5, y: qy + 0.5};
+      }
+    }
+    return null;
+  };
+  for(const t of towns){
+    const R = Math.max(7, (t.clearR || 20) - 5);
+    /* ---------- ALONG THE STREETS, NOT JUST AT THE MIDDLE AND THE EDGE ----------
+       The first cut put two at the well and five out on the rim at `clearR - 5`, and measured
+       at DUSTPORT that is 2.1, 3.5, and then five of them at 22 to 24 tiles — so the whole
+       built area between the plaza and the wall had nothing in it. A town lit at its centre and
+       its fence is not a lit town, it is two lit places with a dark one in between.
+       Two rings and the plaza pair. Offset by half a step from each other so they read as
+       lamps on streets rather than as spokes on a wheel, and phased off `hash2` of the town's
+       own coordinates so no two towns have the same arrangement — a hash, not a draw. */
+    const want = [[2.4, 1.8], [-2.4, -1.8]];
+    const ph = hash2(Math.round(t.x), Math.round(t.y)) * Math.PI * 2;
+    const rings = t.def.key === 'hollowmere' ? [[0.44, 5], [0.82, 6]] : [[0.44, 6], [0.82, 8]];
+    for(const [frac, n] of rings){
+      for(let i = 0; i < n; i++){
+        const a = (i / n) * Math.PI * 2 + ph + (frac > 0.6 ? Math.PI / n : 0);
+        want.push([Math.cos(a) * R * frac / 0.82, Math.sin(a) * R * frac / 0.82]);
+      }
+    }
+    /* Hollowmere burns violet over its bone-ground, and always has — those four lamps were
+       drawn here long before Fallowend's were a mechanic. Same list now, same budget.
+       AND SO DOES FALLOWEND, obviously: a town whose whole identity is the violet lamps on its
+       road does not light its own square with pitch. Its cressets are cut from the same glass
+       as the six outside, which is also what stops an amber street washing the road out. */
+    const col = (t.def.key === 'hollowmere') ? 0xa98ad4
+              : (t.def.key === 'fallowend')  ? VIOLET_FIRE
+              : 0xffb060;
+    for(const [ox, oy] of want){
+      const q = dryAt(t.x + ox, t.y + oy);
+      if(!q) continue;
+      townFires.push({x: q.x, y: q.y, town: t, col, k: 1.15, h: 1.5});
+    }
+  }
+})();
 /* WHETHER THERE IS VIOLET LIGHT ON SOMEBODY. Two sources, one question, and both lists are
    small and precomputed — `lanterns` is fixed at six and `charmed` is gathered once a tick in
    `rebuildCharGrid`, for exactly the reason the ward readers were rewritten to do the same. */
@@ -7591,7 +7798,25 @@ function violetNear(c, extra){
     if((c.floor || 0) !== 0) continue;              /* a lamp on the surface lights the surface */
     if(dist(L.x, L.y, c.x, c.y) < LANTERN_R + e) return L;
   }
+  /* ---------- AND WHAT YOU BUILT IN THEIR PATTERN ----------
+     A Violet Lamp is a Fallowend lantern that happens to be standing in your yard, so it
+     answers this question the same way and at the same reach. `litPosts` is gathered once a
+     tick beside the warders and the charm-bearers, so this costs a walk of a list that is
+     almost always two or three long — and unlike the six on the road, yours can be on a storey
+     under the world, which is the point of being able to build one. */
+  for(const b of litPosts){
+    if(b.type !== 'lampviolet') continue;
+    if((b.floor || 0) !== (c.floor || 0)) continue;
+    if(dist(b.x + 0.5, b.y + 0.5, c.x, c.y) < LANTERN_R + e) return b;
+  }
   for(const o of charmed){
+    if((o.floor || 0) !== (c.floor || 0)) continue;
+    if(dist(o.x, o.y, c.x, c.y) < CHARM_R + e) return o;
+  }
+  /* a violet torch is the same light in a hand — the reach a charm gets, because it is the
+     same trick at the same size */
+  for(const o of torchers){
+    if(!violetHand(o)) continue;
     if((o.floor || 0) !== (c.floor || 0)) continue;
     if(dist(o.x, o.y, c.x, c.y) < CHARM_R + e) return o;
   }
@@ -7624,6 +7849,21 @@ function lanternFeed(){
   fallowend.dark = lanterns.filter(l => !l.fuel).length;
   fallowend.town.rep = clamp((fallowend.town.rep || 0) + 6, -300, 100);
   log('The post takes the cell and comes up violet. Nobody in Fallowend asks how you knew where it went.', 'good');
+  return true;
+}
+/* how well Fallowend has to think of you before the Elder will teach you her glass. High, and
+   deliberately so: feeding the posts is worth six a time, so this is a relationship rather than
+   an errand. */
+const VIOLET_REGARD = 55;
+/* ---------- WHAT SHE ACTUALLY TEACHES ----------
+   `found` on the tech means nothing anywhere can queue it, so this is the only door it has. */
+function learnVioletGlass(){
+  if(research.done.violet_light){ log('You already have the cut of it.', ''); return false; }
+  research.done.violet_light = true;
+  log('The Elder shows you the ninth face of the cut, and the housing, and says the words twice so you have them. '
+    + 'You can make the violet light now — the glass, at least. The rest of it is somebody else\'s salvage.', 'good');
+  if(typeof AU !== 'undefined' && AU.news) AU.news(false);
+  if(typeof refreshBuildBar === 'function') refreshBuildBar();
   return true;
 }
 /* ---------- AND THE STONE KEEPS A CHARM ----------
@@ -8978,6 +9218,32 @@ const AU = (() => {
     deny(){ if(ok('deny', 120)) tone('square', 200, 130, 0.045, 0.11); },
     /* news landing has its own small sound, because it is the one thing you must not miss */
     news(bad){ if(ok('news', 200)) tone('sine', bad ? 420 : 300, bad ? 300 : 560, 0.075, 0.24); },
+
+    /* ---------- AND ONE THING IN THIS WORLD IS A BELL ----------
+       The note beside `ring` says a harmonic stack is a bell and nothing in this world is a
+       bell. That was written about STRUCK METAL — a blade on plate, an anvil, a frame taking
+       the shock — and for those it is right: make those partials harmonic and a sword fight
+       starts to chime. A town tolling over its own sick is the one sound that is meant to be a
+       bell, so it gets to be one. The hum an octave under the strike, the strike, a minor
+       third above it, and two quiet partials over that: the third is what makes it sombre
+       rather than the hour being struck.
+       TWO STRIKES, because one is a clock and three is an alarm, and a second toll is what
+       tells you the first was not a noise you imagined. Rung from `plagueGate` and from
+       nowhere else in the game, at most twice in an outbreak. */
+    bell(x, y){
+      if(!ok('bell', 4000)) return;
+      const strike = () => {
+        const k = near(x, y); if(k <= 0.02) return;
+        for(const [m, w, d] of [[0.5, 0.85, 3.6], [1, 1, 3.0], [1.19, 0.55, 2.4], [2, 0.4, 1.7], [3.01, 0.18, 1.1]]){
+          const o = ctx.createOscillator(); o.type = 'sine';
+          o.frequency.value = 196 * m;
+          const end = env(o, 0.085 * k * w, 0.005, d);
+          o.start(); o.stop(end + 0.03);
+        }
+      };
+      strike();
+      setTimeout(() => { try { strike(); } catch(e){} }, 1650);
+    },
   };
 })();
 /* ============================================================ THE LAW
@@ -9212,6 +9478,25 @@ let _stopOpen = false;
 function contrabandOn(c){
   return Object.keys(CONTRABAND).filter(k => c.inv && c.inv[k] > 0);
 }
+/* ---------- AND WHAT IS IN THE CART ----------
+   "I haven't got stopped for an inspection like ever. I'm wondering if that mechanic is
+    working properly... Note that I never walk in anyone blatantly carrying mortal remains or
+    other contraband and just send it straight to the stash."
+   That is the whole bug, and it is not in the odds. `contrabandOn` reads `c.inv`, and nothing
+   ever ends up in `c.inv`: `lootCorpse` finishes at `addItem`, which is the WAGON. Measured on
+   a diagnostic probe — see `tools/_stop.js` — forty samples of ordinary play produced
+   contraband on a person ZERO times, and stripping a body put three remains into the wagon and
+   none into the looter's pack. The gate has been searching a place nothing is ever kept.
+   So the gate searches the cart. The note above this — "a stop should be about what is ON YOU"
+   — was written against a version that read the shared stash for EVERY body on EVERY tick, so
+   one proscribed formula put the whole company at risk every time any of them moved. This is
+   not that: it is one roll, at a crossing, at lower odds than a personal search, once a day per
+   town, and it only happens at all when nothing was found on anybody.
+   And it leaves the choice intact rather than removing it, because the camp bins are not the
+   cart: what you leave in a storehouse at home cannot be found at a gate. */
+function contrabandInCart(){
+  return Object.keys(CONTRABAND).filter(k => (stash[k] || 0) > 0);
+}
 /* What a guard makes of you before they look in the bag.
    THERE IS A SILVER-TONGUE STAT NOW, and the note this comment used to carry — "inventing one
    for a single scene would be worse than using what is already true" — was right about the
@@ -9269,8 +9554,10 @@ function inWalls(c){
 }
 const GATE_ODDS = 0.55;     /* walking in past a watched gate with it on you */
 const LINGER_ODDS = 0.045;  /* and the ambient risk of carrying it around inside, per 4s */
+const CART_ODDS  = 0.25;    /* and the cart, at the gate, once a day, when nobody was carrying */
 function contrabandCheck(){
   if(_stopOpen || modalOpen) return;
+  let cartAt = null, cartWho = null;
   for(const c of player()){
     if(c.state !== 'ok' || c.undead) continue;
     const t = inWalls(c);
@@ -9282,6 +9569,9 @@ function contrabandCheck(){
     const crossed = !!t && was !== nowKey;
     c._walls = nowKey;
     if(!t || t.playerRuled || t.def.undeadFriendly) continue;
+    /* remember the crossing for the cart pass below — the cart comes in with whoever is
+       leading, and it is one cart however many of you walk through the gate */
+    if(crossed && !cartAt){ cartAt = t; cartWho = c; }
     /* ON THE PERSON. The shared pool is everybody's; a guard cannot search a stash that is
        not there, and reading it meant one proscribed formula put the whole company at risk
        every time any of them walked through a gate. */
@@ -9312,18 +9602,37 @@ function contrabandCheck(){
     theStop(c, g, t, found);
     return;
   }
+  /* ---------- AND THEN THE CART ----------
+     Only after nobody has been stopped, only on the crossing, and only once a day per town:
+     they looked in the cart on the way in, and they are not going to look again this afternoon. */
+  if(!cartAt) return;
+  const cart = contrabandInCart();
+  if(!cart.length) return;
+  if((cartAt.cartDay || -9) >= day) return;
+  const g = charsNear(cartWho.x, cartWho.y, 12).find(o => o.faction === 'town' && !o.civ && o.state === 'ok' &&
+    o.homeTown === cartAt && dist(o.x, o.y, cartWho.x, cartWho.y) < 12);
+  if(!g) return;
+  let odds = CART_ODDS * (1 + Math.min(0.9, (cartAt.bounty || 0) / 500) + noticeTier * 0.12);
+  if((cartAt.rep || 0) > 25) odds *= 0.6;
+  if(rnd() > clamp(odds, 0, 0.8)) return;
+  cartAt.cartDay = day;
+  cartWho.stoppedDay = day; cartWho.stoppedAt = cartAt.def.key;
+  theStop(cartWho, g, cartAt, cart, cart);
 }
-function theStop(c, g, t, found){
+function theStop(c, g, t, found, cart){
   _stopOpen = true;
   const key = found[0], what = CONTRABAND[key];
-  say(g, 'Open the pack.');
+  say(g, cart ? 'Hold the cart. Sheet off.' : 'Open the pack.');
   AU.open();
   const odds = talkOdds(c, t, found);
   const bribe = Math.round((60 + CRIMES.contraband.bounty * 1.4) * (1 + Math.max(0, -(t.rep || 0)) * 0.01));
   const close = () => { $('modal').style.display = 'none'; modalOpen = false; _stopOpen = false; };
   openModal('THE STOP — ' + t.name,
-    `${g.name} has a hand on ${c.name}'s pack and is not moving it. Inside: ${what}. ` +
-    `The street has gone quiet in the way streets do.`);
+    cart
+      ? `${g.name} has walked the length of the cart and put a hand on the sheet. Under it: ${what}. ` +
+        `${c.name} is the one standing nearest the tailboard. The street has gone quiet in the way streets do.`
+      : `${g.name} has a hand on ${c.name}'s pack and is not moving it. Inside: ${what}. ` +
+        `The street has gone quiet in the way streets do.`);
   const body = $('modalbody'); body.innerHTML = '';
   const mk = (label, note, fn) => {
     const b = document.createElement('button');
@@ -9346,7 +9655,7 @@ function theStop(c, g, t, found){
   const lost = (line) => {
     say(g, line);
     log(`${g.name} is not having it.`, 'bad');
-    theReckoning(c, g, t, what);
+    theReckoning(c, g, t, what, cart);
   };
   mk('TALK', `${Math.round(odds * 100)}% — your tongue, your standing here, and what they are holding`, () => {
     const ok = rnd() < odds;
@@ -9366,7 +9675,7 @@ function theStop(c, g, t, found){
       } else {
         say(g, 'You think you are the first?');
         log(`${g.name} does not move, and now the street is watching.`, 'bad');
-        theReckoning(c, g, t, what);
+        theReckoning(c, g, t, what, cart);
       }
     });
   }
@@ -9429,7 +9738,7 @@ function theStop(c, g, t, found){
     });
   }
   mk(`BRIBE — ${bribe}g`, cats >= bribe ? 'coin, quietly' : 'you do not have it', () => {
-    if(cats < bribe){ log('You do not have it, and counting it out in front of them made that plain.', 'bad'); theReckoning(c, g, t, what); return; }
+    if(cats < bribe){ log('You do not have it, and counting it out in front of them made that plain.', 'bad'); theReckoning(c, g, t, what, cart); return; }
     cats -= bribe;
     say(g, '...');
     log(`${bribe} gold changes hands and the pack is not opened any further.`, '');
@@ -9452,13 +9761,23 @@ function theStop(c, g, t, found){
 }
 /* Talking failed. This is the fork the player actually wanted: the cell or the blade, chosen
    rather than arrived at. */
-function theReckoning(c, g, t, what){
+function theReckoning(c, g, t, what, cart){
   _stopOpen = true;
   const days = CRIMES.contraband.days;
+  /* WHAT THEY FOUND IN THE CART, THEY TAKE. Without this a cart search has no bite at all: you
+     go quietly, serve the days, and the wagon is still full of it when you come out. */
+  const seize = () => {
+    if(!cart) return 0;
+    let n = 0;
+    for(const k of cart){ const have = stash[k] || 0; if(have > 0){ takeItem(k, have); n += have; } }
+    if(n) log(`The watch of ${t.name} empties ${n} of it out of the cart and carts it away themselves.`, 'bad');
+    return n;
+  };
   const close = () => { $('modal').style.display = 'none'; modalOpen = false; _stopOpen = false; };
   openModal('HANDS WHERE THEY ARE',
     `"${what.charAt(0).toUpperCase() + what.slice(1)}. You will come with me." ` +
-    `${g.name} has not drawn yet. Two of the watch are already walking over.`);
+    `${g.name} has not drawn yet. Two of the watch are already walking over.` +
+    (cart ? ' Somebody else has taken the cart horse by the head.' : ''));
   const body = $('modalbody'); body.innerHTML = '';
   const mk = (label, note, fn) => {
     const b = document.createElement('button');
@@ -9467,8 +9786,9 @@ function theReckoning(c, g, t, what){
     b.onclick = () => { close(); fn(); };
     body.appendChild(b);
   };
-  mk('GO PEACEFULLY', `${days} days, and they keep your kit`, () => {
+  mk('GO PEACEFULLY', cart ? `${days} days, they keep your kit, and the cart is emptied of it` : `${days} days, and they keep your kit`, () => {
     crime('contraband', c.x, c.y, c);
+    seize();
     const cell = freeCell(t);
     if(cell){ stripKit(c); jail(c, cell, days); log(`${c.name} is taken in without a fight. ${days} days.`, 'bad'); }
     else { log(`${c.name} submits — and ${t.name} has nowhere to put ${c.sex === 'f' ? 'her' : 'them'}. A fine, and a warning.`, 'bad'); cats = Math.max(0, cats - 150); }
@@ -9589,11 +9909,52 @@ function rescueTick(dt){
     return;
   }
 }
+/* ---------- THE WATCH TURNS YOU AWAY FROM A SICK TOWN ----------
+   "Perhaps instead of just visuals, we make it more mechanical. Like the guards at gates warn
+    away incoming people, bark about plague, ring a somber bell when nearby."
+   And, on how often: "it shouldn't be annoying — it should be once or twice and that's it. No
+   constant repetition."
+   So this is not a proximity poll that fires while you stand there. It is TWICE, ever, for a
+   given outbreak, and never twice in one day: the first time you come near the ring, and once
+   more if you come back on a later day. When the sickness passes the count is cleared, so the
+   next outbreak gets its own warning.
+   The bark is drawn with `vpick`, not `pick`. Which line a guard says is a thing that depends
+   on where the player happens to be standing, and off `rnd()` that would move the world's
+   seeded stream by an amount decided by the player's feet. */
+const PLAGUE_WARNINGS = [
+  'Keep out. We are sick in here.',
+  'Turn around. There is nothing in this town you want.',
+  'Do not come through this gate. Whatever you need, it is not worth it.',
+  'We are under the sickness. Go around.',
+  'Not today. Come back when the bell stops.',
+];
+function plagueGate(){
+  for(const t of towns){
+    /* `!(t.plague > 0)`, NOT `t.plague <= 0`. A town that has never been sick has no `plague`
+       field at all, and `undefined <= 0` is FALSE — so the first cut of this treated all six
+       healthy towns as plagued and had the watch wave you off at every gate on the map. */
+    if(!(t.plague > 0) || t.sacked > 0) continue;
+    if((t.plagueTold | 0) >= 2 || (t.plagueToldDay | 0) === day) continue;
+    const R = t.def.wall ? t.def.wall.r : 18;
+    /* somebody of yours, on the surface, close enough to the ring to be read as coming in */
+    const c = player().find(o => o.state === 'ok' && !o.undead && (o.floor | 0) === 0 &&
+      Math.max(Math.abs(o.x - t.x), Math.abs(o.y - t.y)) < R + 7);
+    if(!c) continue;
+    const g = charsNear(c.x, c.y, 16).find(o => o.faction === 'town' && !o.civ && o.state === 'ok' && o.homeTown === t);
+    if(!g) continue;
+    t.plagueTold = (t.plagueTold | 0) + 1;
+    t.plagueToldDay = day;
+    say(g, vpick(PLAGUE_WARNINGS));
+    log(`${g.name} of ${t.name} waves you off at the gate. The sickness is in the town, and the bell is going.`, 'bad');
+    AU.bell && AU.bell(t.x, t.y);
+  }
+}
 let _walkDeadT = 0;
 function walkingDeadCheck(dt){
   if((_walkDeadT -= dt) > 0) return;
   _walkDeadT = 4;
   contrabandCheck();
+  plagueGate();
   for(const c of chars){
     /* ---------- A DISGUISE THE LAW CANNOT SEE THROUGH EITHER ----------
        "Casting shroud the dead seems to only work while the caster is extremely close."
@@ -11067,8 +11428,28 @@ const BUILD_TYPES = {
      day out of the stores after that. Run the stores dry and your outpost goes dark. */
   torchpost:{name:'Pitch Post',  cost:{wood:6, mats:2}, w:1, h:1, light:true,
     desc:'A cresset on an iron stand, kept fed with pitch. The only thing that will stand underground and go on burning without a hand on it — and it eats a log a day to do it'},
+  /* ---------- AND THE ONE FALLOWEND CUTS ----------
+     A pitch post burns wood and holds ground. This one burns an aether cell and holds a
+     LINE: it is the Fallowend lantern, built in your own yard, and it turns the gaunts at
+     thirteen tiles exactly the way the six on their road do. It costs what it costs because a
+     cell is salvage — nobody makes them any more — so this is a thing you raise where it
+     matters rather than a thing you fence a camp with. */
+  lampviolet:{name:'Violet Lamp',  cost:{mats:4, copper:3, aether_cell:1}, w:1, h:1, light:true, violet:true,
+    desc:'Cut glass on an old housing, in the Fallowend pattern. It burns a cell instead of a log, it will not go out for seventy days, and nothing born of the tears will come within thirteen tiles of it'},
 };
 /* crafted undead: bound at the circle from remains + materials + a necromancer's mana */
+/* ---------- A ROLE ON THE ROW, THE PROSE BEHIND A BUTTON ----------
+   "In the binding circle UI, the descriptions for all of these undead are getting a bit too
+   long. Perhaps we can have an abbreviated description (ranged bow unit; ranged alchemist;
+   etc...) and then leave the extended version for a mouseover. Or perhaps an
+   expandable/collapsable 'description' button."
+   Every entry here carries both now. `role` is the line the circle draws — two or three words,
+   and the four things the choice is actually made on (name, cost, mana, slots) come straight
+   after it instead of behind a paragraph. Measured on the control: the median row ran to 214
+   characters and the longest to 273, with the numbers at the far end of them.
+   `desc` is untouched and nothing is lost: the circle hangs it on the row as a hover title AND
+   puts a button beside the BIND that opens it on the page, because a hover tooltip is not an
+   interface on a touchscreen and half the answer is not the answer. */
 const UNDEAD_TYPES = {
   /* ---------- THE LONGDEAD ----------
      "Maybe we can add a 'longdead' unit to the binding circle... It is simply put together
@@ -11084,14 +11465,14 @@ const UNDEAD_TYPES = {
      day; what it has instead is that it can LEARN, so the ones that survive become worth
      something and the ones that do not were nearly free. That is a different kind of unit
      from anything else at the circle: not bought, but kept. */
-  longdead:   {name:'Longdead',      tech:'rites_binding', mana:4,  weight:0.25, tag:'LD',
+  longdead:   {name:'Longdead',      tech:'rites_binding', mana:4,  weight:0.25, tag:'LD', role:'cheap body, and it learns',
     cost:{remains:2},                   desc:'Old bones, brown with the dust of whatever they were buried in. Feeble, nearly free to hold, and the only thing at this circle that gets better by surviving'},
-  gravehound: {name:'Gravehound',    tech:'rites_binding', mana:10, weight:1, tag:'GH',
+  gravehound: {name:'Gravehound',    tech:'rites_binding', mana:10, weight:1, tag:'GH', role:'fast melee, runs down fleers',
     cost:{remains:1, hide:2},           desc:'Fast bone hound — runs down stragglers'},
   /* Renamed from HOLLOW BRUTE, and paid for in stone rather than hide. Hide comes off beasts
      and beasts are scarce in the first fortnight, so the one binding a new necromancer most
      wants was gated behind hunting trips. Stone is under your feet everywhere. */
-  brute:      {name:'Bone Knight',   tech:'rites_binding', mana:16, weight:2, tag:'BK',
+  brute:      {name:'Bone Knight',   tech:'rites_binding', mana:16, weight:2, tag:'BK', role:'heavy melee, holds the line',
     cost:{remains:2, stone:4, fabric:2}, desc:'A hulk in grafted bone plate — draws every blade toward it'},
   /* WEIGHT 1 AND THE EARLY TIER, for the same reason the range moved. Against a Skeleton Mage
      it cost the same two of a necromancer's binding cap and arrived at the same research — so
@@ -11099,41 +11480,41 @@ const UNDEAD_TYPES = {
      every mage, which is what makes a rank of them a formation rather than a downgrade; and it
      comes in with the Bone Knight, because a line to hold and something behind it is the first
      shape a host takes and neither half of that should be a tier-two unlock. */
-  archer:     {name:'Marrow Archer', tech:'rites_binding', mana:12, weight:1, tag:'MA',
+  archer:     {name:'Marrow Archer', tech:'rites_binding', mana:12, weight:1, tag:'MA', role:'ranged bow, longest reach',
     cost:{remains:2, wood:3, hide:1},  desc:'Dead hands and a bow of bone and sinew grown through them. It brings its own — no bench, no bowyer, and nothing to drop. It reaches further than anything else in the host'},
-  colossus:   {name:'Ashen Colossus',tech:'rites_deep',    mana:25, weight:3, tag:'CO',
+  colossus:   {name:'Ashen Colossus',tech:'rites_deep',    mana:25, weight:3, tag:'CO', role:'walking wall, very slow',
     cost:{remains:3, stone:6, copper:4},desc:'A wall that walks — barely. Enormously hard to put down, and slow enough that it should be waiting where the fight comes to it'},
   /* THE BONE MULE IS GONE and the Gravecart has its job. A mule that hauls goods was a
      solution to a problem the stores never actually had; what the dark tree runs on is
      BODIES, and nothing in the roster fetched one. This carries six, and carrying is all it
      does — it does not render them down, because a corpse you rendered is a corpse you
      cannot raise, and that should stay your decision rather than a chore's. */
-  gravecart:  {name:'Gravecart',     tech:'rites_binding', mana:12, weight:1, tag:'GC',
+  gravecart:  {name:'Gravecart',     tech:'rites_binding', mana:12, weight:1, tag:'GC', role:'hauler, six dead at a time',
     cost:{remains:2, wood:4, stone:2},
     desc:'Four legs and a flatbed of ribs. Fetches the dead home, six at a time, and does nothing else at all'},
   /* The one thing in the world that can put a limb back on. */
-  stitch:     {name:'Stitch-Hand',   tech:'rites_binding', mana:12, weight:1, tag:'SH',
+  stitch:     {name:'Stitch-Hand',   tech:'rites_binding', mana:12, weight:1, tag:'SH', role:'field surgeon, cannot fight',
     cost:{remains:1, fabric:3, copper:2},
     desc:'A surgeon with its hands still in the trade. It cannot fight. It walks the line mending what you bound, and every mending is paid for in Mortal Remains'},
   /* THE DEDICATED HARVESTER. The HARVEST job already exists and any hand can be put on it —
      what this is for is being BETTER at it than a person, which is the whole argument for
      spending a binding slot on something that cannot fight: it loots first, renders second,
      and takes more out of a body than anybody else would have got. */
-  deatheater: {name:'Death Eater',  tech:'rites_binding', mana:14, weight:1, tag:'DE',
+  deatheater: {name:'Death Eater',  tech:'rites_binding', mana:14, weight:1, tag:'DE', role:'harvester, loots and renders',
     cost:{remains:2, fabric:2, hide:2},
     desc:'Bound for one purpose and thoroughly good at it. Turns out a body, then renders it — and gets more Mortal Remains out of one than any living hand would'},
   /* THE LOAD-BEARER. A necromancer's ceiling is one number, and until now the only way to
      raise it was to raise the necromancer. This spends a slot to buy several back. */
-  soulbound:  {name:'Soulbound',    tech:'rites_deep',    mana:20, weight:1, tag:'SB',
+  soulbound:  {name:'Soulbound',    tech:'rites_deep',    mana:20, weight:1, tag:'SB', role:'support, +3 binding cap',
     cost:{remains:2, copper:6, vflesh:3},
     desc:'A simulacrum with the binding poured through it instead of around it. Its master can hold three more of the dead — and it is made of glass, and the dark can hear it from a long way off'},
-  wisp:       {name:'Wisp',         tech:'rites_deep',    mana:16, weight:1, tag:'WP',
+  wisp:       {name:'Wisp',         tech:'rites_deep',    mana:16, weight:1, tag:'WP', role:'lamp and ward, bursts on death',
     cost:{remains:1, copper:5, fabric:2},
     desc:'A held ball of alchemical fire, bound and given just enough of a mind to follow. It lights the country and the dark will not come near it — and everything within a few strides of it dies when it goes out'},
-  servitor:   {name:'Bound Servitor',tech:'rites_binding', mana:8,  weight:1, tag:'SV',
+  servitor:   {name:'Bound Servitor',tech:'rites_binding', mana:8,  weight:1, tag:'SV', role:'clerk, keeps ledgers, no fight',
     cost:{remains:1, copper:3, fabric:2},
     desc:'A skull bound around a mind instead of a pair of hands. It reads, it files, it keeps a hall\'s ledgers — and a stiff breeze would end it'},
-  mage:       {name:'Skeleton Mage', tech:'rites_deep',    mana:18, weight:2, tag:'SM',
+  mage:       {name:'Skeleton Mage', tech:'rites_deep',    mana:18, weight:2, tag:'SM', role:'ranged alchemist, fire only',
     cost:{remains:2, copper:4, fabric:3},
     desc:'Latent alchemy, set in bone. It knows fire and will never know anything else'},
 };
@@ -11535,6 +11916,15 @@ const TECHS = {
     desc:'A Still and a Taproom. Greenfruit and fire into rum — and somewhere of your own to drink it, which is the half that mends what your people think of you'},
   cask_ageing:  {name:'Cask Ageing',       cost:900, hours:72, req:'distilling', needs:'still', mats:{wood:16, mats:8},
     desc:'Oak, dark and time. Cask Rum: more measure out of the same fruit, longer in the body, and a steadier hand on it'},
+  /* ---------- THE OTHER THING NOBODY WILL WRITE DOWN ----------
+     The same shape as the Harbour Receipt below and for the same reason: `found` means there is
+     no START button for it anywhere, so a violet lamp on your own ground is a lamp whose owner
+     went to Fallowend and was thought well of enough to be told. Fallowend does not know what
+     the cells are — the Elder will tell you it is the words — so what she teaches is the
+     pattern of the glass and the shape of the housing, which is all her grandmother taught her
+     and all anybody there has ever needed. */
+  violet_light: {name:'The Violet Glass', cost:0, hours:0, req:null, found:true,
+    desc:'How Fallowend cuts the glass and sets the housing so the light comes up violet and the gaunts will not cross it. Four generations of saying the words over it, and nobody there can tell you why it works'},
   black_receipt:{name:'The Harbour Receipt', cost:0, hours:0, req:'cask_ageing', found:true,
     desc:'How Harbourblack is actually made. Sella Vane knows, and she is not going to write it down for a stranger'},
   sleight:      {name:'Sleight',           cost:500, hours:56, req:'construction', rp:10,
@@ -11719,6 +12109,8 @@ const RECIPES = {
        out is "make forty more", not "abandon the expedition" — the pressure is meant to be
        remembering to bring them, not affording them. */
     {out:'w_torch', n:2, cost:{wood:1, fabric:1},  tech:'construction'},
+    /* ONE, not two: the cell is the cost and there is no making it cheaper. */
+    {out:'w_torch_v',n:1, cost:{wood:1, fabric:1, copper:2, aether_cell:1}, tech:'violet_light'},
   ],
   kiln: [
     {out:'coal',    n:2, cost:{wood:3},               tech:'smelting'},
@@ -12240,7 +12632,7 @@ function rebuildCharGrid(){
   litPosts.length = 0;
   shrouders.length = 0;
   carriers.length = 0;
-  for(const b of pBuilds) if(b.type === 'torchpost' && (b.fuel || 0) > 0 &&
+  for(const b of pBuilds) if((b.type === 'torchpost' || b.type === 'lampviolet') && (b.fuel || 0) > 0 &&
                              (b.progress === undefined || b.progress >= 1)) litPosts.push(b);
   for(const c of chars){
     charById.set(c.id, c);
@@ -12922,8 +13314,7 @@ function ai(c, dt){
       /* the caravan unloads its news at the town, then takes on the town's for the next leg */
       if(c.caravan.satchel) for(const id of c.caravan.satchel){ const e = eventById(id); if(e) townLearns(d, e); }
       c.caravan.satchel = d.known ? Object.keys(d.known).map(Number) : [];
-      const conn = towns.filter(t => t !== d && routeFor(d, t));
-      c.caravan.dest = conn.length ? pick(conn) : pick(towns.filter(t => t !== d));
+      c.caravan.dest = nextCaravanDest(d);
       const rt = routeFor(d, c.caravan.dest);
       c.caravan.wps = rt ? rt.wps : null; c.caravan.wi = 0;
       c.caravan.waitT = 20 + rnd()*20;
@@ -13409,6 +13800,24 @@ const CMD = {
 const WELL_DRAW  = 5;          /* water a finished well lifts in a day */
 const FARM_WATER = 2;          /* what one tended field drinks */
 const DRY_FIELD  = 0.25;       /* and what it yields when it does not get it */
+/* ---------- THE ORDER OF MARCH ----------
+   "Right now, the commander leads from the front — meaning he's often the first to die and
+   collapse the whole team. Commanders should lead from the rear, at the very least. Ideally,
+   an army should march according to its composition (melee at the front, ranged behind, and
+   then commander(s) at the rear)."
+   It was one line of the bodyguard code. A band member with nothing on it walks to the ward's
+   own tile, so the column converges on the captain from behind and he is the point of the
+   arrow by construction — and losing him ends the order for everybody, which is why it reads
+   as collapsing the team rather than as losing a man. Measured through a fight: the captain
+   held a mean 8.7 tiles off the nearest raider against 9.1 for his own blades, with 44% of
+   them between him and it. He was, on average, the closest man to the enemy.
+   These are distances AHEAD of the captain along the line of march, so he is the rear rank by
+   arithmetic rather than by being told to hang back. */
+const CMD_RANK_MELEE = 5.5;    /* blades, out in front */
+const CMD_RANK_BOW   = 2.6;    /* bows, behind them and still in range */
+const CMD_FILE_GAP   = 1.5;    /* shoulder to shoulder, across the line of march */
+const CMD_STANDOFF   = 9.0;    /* and how close the captain himself will get to a live enemy */
+const CMD_AFTER_R    = 26;     /* how far around a fight a band strips before it leaves */
 const CMD_REST_H = 3;          /* game-hours at home between tours */
 const CMD_HAUL_BASE = 3;       /* how much a band carries before it has to come in */
 const CMD_R_MAX = 60;          /* how wide an order may be, in tiles */
@@ -13504,8 +13913,14 @@ function giveCommand(cdr, band, order, at, r){
     phase: 'out', leg: 0, t: 0, took: 0, fights: 0, id: cmdN,
     standing: !!CMD[order].standing, tours: 0, restUntil: 0, nightIn: true,
     wardId: (order === 'escort' && at.ward) ? at.ward.id : null,
-    home: {x: cdr.x, y: cdr.y}, report: '',
+    home: {x: cdr.x, y: cdr.y}, report: '', debrief: '',
+    /* what the report is built out of, taken at the moment the order is given rather than
+       reconstructed afterwards — a tour can run for days and nothing else remembers when it
+       started or how much of the ground was dark when it did */
+    startAt: day * 24 + hour, startUnseen: 0, strength: band.filter(o => o !== cdr).length + 1,
+    gold: 0, bag: {}, lost: 0,
   };
+  cdr.cmd.startUnseen = unseenCount(cdr);
   cdr.under = null;
   /* A hand on an order is not also a woodcutter — but the trade is STASHED, not thrown away.
      Clearing it outright meant a sawyer you sent on one patrol came back and never cut wood
@@ -13526,7 +13941,7 @@ function giveCommand(cdr, band, order, at, r){
 function standDown(cdr, quiet){
   if(!cdr.cmd) return;
   const unshelve = (o) => { if(o.wasJob){ o.job = o.wasJob[0]; o.job2 = o.wasJob[1]; o.wasJob = null; } };
-  for(const o of bandOf(cdr)){ o.under = null; clearOrders(o); unshelve(o); }
+  for(const o of bandOf(cdr)){ o.under = null; o.bandStation = null; clearOrders(o); unshelve(o); }
   cdr.cmd = null;
   clearOrders(cdr);
   unshelve(cdr);
@@ -13567,21 +13982,25 @@ function cmdLeg(cdr){
 }
 /* the nearest thing worth walking to, inside the order's ground. Chests first — a sealed
    vault is worth more than anything you can strip off a body — then the dead. */
-function forageFind(cdr){
+/* `at`/`rad` override the order's own circle. The sweep asks about the ground it was sent to;
+   the aftermath of a fight asks about the ground the fight happened on, which is not the same
+   place and is often most of the way to the edge of the order. */
+function forageFind(cdr, at, rad){
   const m = cdr.cmd;
+  const cx = at ? at.x : m.ax, cy = at ? at.y : m.ay, rr = rad || m.r;
   let best = null, bd = 1e9;
   for(const ch of chests){
     if(ch.opened || (ch.floor || 0) !== 0) continue;
     if(m.cantReach && m.cantReach.indexOf(ch) >= 0) continue;   /* the band already tried */
-    const d = dist(ch.x, ch.y, m.ax, m.ay);
-    if(d > m.r) continue;
+    const d = dist(ch.x, ch.y, cx, cy);
+    if(d > rr) continue;
     const w = dist(cdr.x, cdr.y, ch.x, ch.y) * 0.6;      /* a vault is worth a detour */
     if(w < bd){ bd = w; best = {kind: 'chest', at: ch}; }
   }
   for(const b of corpses){
     if(b.looted || (b.floor || 0) !== 0) continue;
     if(m.cantReach && m.cantReach.indexOf(b) >= 0) continue;
-    if(dist(b.x, b.y, m.ax, m.ay) > m.r) continue;
+    if(dist(b.x, b.y, cx, cy) > rr) continue;
     const w = dist(cdr.x, cdr.y, b.x, b.y);
     if(w < bd){ bd = w; best = {kind: 'corpse', at: b}; }
   }
@@ -13652,6 +14071,172 @@ function fieldSurgeon(cdr){
   }
   return true;
 }
+/* which way the column is facing. The enemy first — "commanders aren't at the front of
+   ENGAGEMENTS" is the sentence this exists to satisfy — then whatever the captain is walking
+   at, then the order's anchor. The last heading that meant anything is kept on the mission, so
+   a band standing still holds its shape instead of collapsing back onto the captain. */
+function bandHeading(cdr){
+  const m = cdr.cmd;
+  const foe = nearestEnemy(cdr, 26);
+  const t = foe ? foe
+          : cdr.attackMove ? cdr.attackMove
+          : cdr.moveTarget ? cdr.moveTarget
+          : {x: m.ax, y: m.ay};
+  const dx = t.x - cdr.x, dy = t.y - cdr.y, L = Math.hypot(dx, dy);
+  if(L < 0.6) return m.hd || {x: 1, y: 0};
+  const h = {x: dx / L, y: dy / L};
+  m.hd = h;
+  return h;
+}
+/* melee out front, ranged behind them, the captain in neither rank — which is what puts him
+   at the back. Each rank is a line across the march rather than a queue along it, so a band of
+   eight arrives as a front rather than as a column of one. */
+function bandStations(cdr, band){
+  const m = cdr.cmd;
+  const up = [];
+  for(const o of band){
+    if(o.state !== 'ok'){ o.bandStation = null; continue; }
+    up.push(o);
+  }
+  /* ---------- GOING HOME IS NOT A MARCH INTO CONTACT ----------
+     The ranks put the band in front of the captain along whatever he is walking at — and on
+     the way in, what he is walking at is his own home tile, so seven bodies formed up ON it,
+     arrived first, and stood in the doorway. Measured: the captain stalled 7.7 tiles short of
+     a home point that was not blocked, moving nowhere for four hundred seconds, because he
+     could not push through his own band.
+     So the homeward phases form a ring on the HOME POINT rather than a line ahead of him. It
+     is also the thing the report asks for — everybody ends where they set out from, not strung
+     out behind the last man in. */
+  if(m.phase === 'home' || m.phase === 'rest'){
+    /* CLOSE TO HOME, ON HOME; FAR FROM IT, ON HIM. Ringing a point twenty tiles away sent the
+       band off on its own while the captain walked back alone, and a band strung across open
+       country is a band that gets picked apart — measured, five of seven went down on a walk
+       home they had previously made without a scratch. They escort him until the home point is
+       in reach, and only then form on it. */
+    const near = dist(cdr.x, cdr.y, m.home.x, m.home.y) < 7;
+    const cx = near ? m.home.x : cdr.x, cy = near ? m.home.y : cdr.y;
+    for(let i = 0; i < up.length; i++){
+      const a = (i / Math.max(1, up.length)) * Math.PI * 2 + m.id;
+      const rr = (near ? 1.2 : 2.2) + (i % 3) * 0.45;
+      up[i].bandStation = {x: clamp(cx + Math.cos(a) * rr, 2, W - 3),
+                           y: clamp(cy + Math.sin(a) * rr, 2, H - 3)};
+    }
+    return;
+  }
+  const hd = bandHeading(cdr);
+  const melee = [], bows = [];
+  for(const o of up){ const w = wepOf(o); (w && w.range ? bows : melee).push(o); }
+  const place = (list, ahead) => {
+    for(let i = 0; i < list.length; i++){
+      const off = (i - (list.length - 1) / 2) * CMD_FILE_GAP;
+      list[i].bandStation = {
+        x: clamp(cdr.x + hd.x * ahead - hd.y * off, 2, W - 3),
+        y: clamp(cdr.y + hd.y * ahead + hd.x * off, 2, H - 3),
+      };
+    }
+  };
+  place(melee, CMD_RANK_MELEE);
+  place(bows, CMD_RANK_BOW);
+}
+/* ---------- WHAT THEY CAME BACK WITH ----------
+   Booked by DIFFERENCE rather than by hooking the two loot paths. `lootChest` and `lootCorpse`
+   are called from the body that reached the thing, several ticks after the order pointed it
+   there, and threading a mission through both of them to tally items would put the band's
+   bookkeeping inside the code that handles a player right-clicking a corpse. The stores are
+   the truth and they are cheap to read: snapshot when a lift is set, diff when it lands. */
+function storeSnap(){ return {cats: cats, items: {...stash}}; }
+/* ---------- THE MISSION KEEPS ITS OWN HANDLE ON A LIFT ----------
+   `m.took` has been zero for the whole life of this feature and the reason is two lines apart:
+   the order booked a lift by testing `cdr.lootTarget` on the tick AFTER it completed, and the
+   body clears that field in the same statement that goes through the pockets
+   (`lootCorpse(t, ...); c.lootTarget = null;`). There was never a tick where the target was
+   both finished and still set. So the haul cap never fired, "Loaded — N. Bringing it in."
+   never printed, and every homecoming in the game reported "nothing taken" however much the
+   band was carrying. `m.lift` is the order's own copy, and only the order clears it. */
+function missionLift(cdr, kind, at){
+  cdr.cmd.lift = {kind, at};
+  cdr.cmd.snap = storeSnap();
+}
+function missionLanded(cdr){
+  const m = cdr.cmd, L = m.lift;
+  if(!L) return;
+  const done = L.kind === 'chest' ? L.at.opened : L.at.looted;
+  if(done){ m.lift = null; missionTook(cdr); return; }
+  if(!cdr.chestTarget && !cdr.lootTarget){ m.lift = null; m.snap = null; }   /* gave up on it */
+}
+function missionTook(cdr){
+  const m = cdr.cmd;
+  m.took++;
+  /* ---------- PER TOUR AND PER TRIP, BECAUSE THEY ARE DIFFERENT QUESTIONS ----------
+     `took` is the load in their hands and has to reset when they drop it, or the haul cap
+     turns them round at the door forever. A sweep that comes in loaded, drops it and goes back
+     out is the MIDDLE of one errand, though, so the debrief at the end of it wants the whole
+     trip — otherwise a band that spent four days out reports whatever it was carrying on the
+     last afternoon. Two ledgers, one line of arithmetic each. */
+  m.totTook = (m.totTook || 0) + 1;
+  if(!m.snap) return;
+  const gold = Math.max(0, cats - m.snap.cats);
+  m.gold = (m.gold || 0) + gold;
+  m.totGold = (m.totGold || 0) + gold;
+  m.bag = m.bag || {}; m.totBag = m.totBag || {};
+  for(const k of Object.keys(stash)){
+    const got = (stash[k] || 0) - (m.snap.items[k] || 0);
+    if(got > 0){ m.bag[k] = (m.bag[k] || 0) + got; m.totBag[k] = (m.totBag[k] || 0) + got; }
+  }
+  m.snap = null;
+}
+/* how much of the order's ground nobody has walked, on the same coarse lattice `unseenIn` uses
+   — so "ground covered" in the report is the same measurement the errand's end condition is */
+function unseenCount(cdr){
+  const m = cdr.cmd;
+  let n = 0;
+  const x0 = Math.max(2, Math.floor(m.ax - m.r)), x1 = Math.min(W - 3, Math.ceil(m.ax + m.r));
+  const y0 = Math.max(2, Math.floor(m.ay - m.r)), y1 = Math.min(H - 3, Math.ceil(m.ay + m.r));
+  for(let y = y0; y <= y1; y += FORAGE_STEP) for(let x = x0; x <= x1; x += FORAGE_STEP){
+    if(vis[y * W + x] !== 0) continue;
+    if(dist(x, y, m.ax, m.ay) > m.r) continue;
+    n++;
+  }
+  return n;
+}
+/* ---------- THE FULL REPORT ----------
+   "and then return to the exact point from where they started with a full report."
+   What came back was `Back, with 3 taken and 2 fought.` — two numbers out of a tour that could
+   run for days. Five things are worth knowing and the band knows all of them: how long it was
+   gone, how much ground it opened, what it is carrying, what it met, and what that cost. Built
+   off the mission's own record, so it cannot be satisfied by printing a longer sentence. */
+function missionReport(cdr){
+  const m = cdr.cmd;
+  const hrs = Math.max(0, (day * 24 + hour) - (m.startAt || (day * 24 + hour)));
+  const d = Math.floor(hrs / 24), h = Math.round(hrs % 24);
+  const when = d ? `${d} day${d === 1 ? '' : 's'}${h ? ` and ${h} hour${h === 1 ? '' : 's'}` : ''} out`
+                 : `${h} hour${h === 1 ? '' : 's'} out`;
+  const opened = Math.max(0, (m.startUnseen || 0) - unseenCount(cdr));
+  const ground = opened
+    ? `${opened * FORAGE_STEP * FORAGE_STEP} tiles of ground nobody had walked`
+    : 'no ground we had not already walked';
+  /* a duty reports the tour it has just walked; an errand reports the whole trip */
+  const whole = !m.standing;
+  const took_ = whole ? (m.totTook || 0) : m.took;
+  const gold_ = whole ? (m.totGold || 0) : (m.gold || 0);
+  const fights_ = whole ? (m.totFights || m.fights) : m.fights;
+  const bag = (whole ? m.totBag : m.bag) || {};
+  const named = Object.keys(bag).filter(k => ITEMS[k]).sort((a, b2) => bag[b2] - bag[a]).slice(0, 4)
+    .map(k => ITEMS[k].name + (bag[k] > 1 ? ' ×' + bag[k] : ''));
+  const took = took_
+    ? `${took_} lift${took_ === 1 ? '' : 's'}` +
+      (gold_ ? `, ${gold_} in coin` : '') +
+      (named.length ? ` and ${named.join(', ')}` : '')
+    : 'nothing worth carrying';
+  const met = fights_
+    ? `${fights_} contact${fights_ === 1 ? '' : 's'} fought`
+    : 'nobody met';
+  const lost = (m.lost || 0), cut = [cdr, ...bandOf(cdr)].filter(o => o.state === 'ok' && o.blood < o.maxBlood * 0.8).length;
+  const cost = lost
+    ? `${lost} did not come back${cut ? `, and ${cut} of us are cut` : ''}`
+    : (cut ? `${cut} of us are cut, nobody lost` : 'the band is whole and unhurt');
+  return `${when}. Walked ${ground}. Brought in ${took}. ${met[0].toUpperCase()}${met.slice(1)}. ${cost[0].toUpperCase()}${cost.slice(1)}.`;
+}
 let _cmdT = 0;
 function commandTick(dt){
   if((_cmdT -= dt) > 0) return;
@@ -13677,6 +14262,15 @@ function commandTick(dt){
       if(o.state !== 'ok') continue;
       if(o.guardTarget !== cdr){ o.guardTarget = cdr; }
     }
+    /* ---------- AND IT WALKS IN ITS OWN ORDER ----------
+       Blades ahead, bows behind them, the captain at the back. The stations are handed to the
+       bodyguard path, which uses them instead of walking at the captain's own tile — so the
+       existing threat pickup, interposing and leash all still work and the only thing that
+       changes is WHERE a body with nothing on it stands.
+       The heading is the enemy when there is one and the objective when there is not, which is
+       what makes this about engagements rather than about tidiness: a band ambushed from behind
+       turns its ranks round rather than keeping a parade formation pointed at a chest. */
+    bandStations(cdr, band);
     /* a captain on the floor is not commanding anybody */
     if(cdr.state !== 'ok'){
       if(m.phase !== 'down'){
@@ -13698,9 +14292,29 @@ function commandTick(dt){
     }
     if(m.phase === 'down'){ m.phase = 'out'; cmdSay(cdr, 'Up. Re-forming.', ''); }
     /* --- the judgement: is this still worth doing --- */
+    /* ---------- THE CONTACT IS NOTICED BEFORE THE JUDGEMENT, NOT AFTER IT ----------
+       This lookup used to live at the bottom of the tick, with the order's own work, and the
+       break-off below fired on the same tick a body went down — so the judgement ran with
+       `m.after` still unset, sent the band home, and the aftermath block never got a tick to
+       run in. Measured while it was down there: the captain closed to 3.4 tiles of a raider,
+       two raiders went down and two died, and the order recorded no fight at all.
+       A fight is a fact about this instant and the judgement is a decision about it, so the
+       fact is established first. */
+    const foe = nearestEnemy(cdr, 16);
+    if(foe){ m.after = true; m.afterAt = {x: foe.x, y: foe.y}; }
     const standing = bandStanding(cdr);
     const hurtCdr = cdr.blood < cdr.maxBlood * 0.45;
-    if(m.phase !== 'home' && (standing < grit(cdr) || hurtCdr)){
+    /* the butcher's bill, counted as it happens: `bandOf` drops the dead, so a tally taken at
+       the end of the tour would report a band that came back whole out of one that lost half
+       of itself */
+    m.lost = Math.max(m.lost || 0, (m.strength || 1) - 1 - bandOf(cdr).length);
+    /* A BEATEN BAND STILL GOES. `m.after` holds the ordinary break-off while there is ground
+       to strip, because the two conditions fire at the same instant — a band is cut and short
+       of men exactly when it has just finished a fight — and the one that wins decides whether
+       the fight paid for itself. The dire case is not held: half the band down or the captain
+       at a fifth of his blood is not a looting problem. */
+    const dire = standing < 0.25 || cdr.blood < cdr.maxBlood * 0.22;
+    if(m.phase !== 'home' && (standing < grit(cdr) || hurtCdr) && (!m.after || dire)){
       m.phase = 'home';
       cmdSay(cdr, standing < grit(cdr) ? 'Too many down. Breaking off.' : 'I am cut. Pulling back.', 'bad');
     }
@@ -13710,15 +14324,52 @@ function commandTick(dt){
       cmdSay(cdr, 'We are too far out. Turning back.', '');
     }
     if(m.phase === 'home'){
-      if(dist(cdr.x, cdr.y, m.home.x, m.home.y) < 4){
+      /* ---------- BACK TO THE SPOT, AND THE BAND WITH HIM ----------
+         "return to the exact point from where they started".
+         It was a four-tile circle and then a `standDown` wherever everybody happened to be
+         standing, so the column stopped strung out behind the captain rather than re-forming
+         where it set off from — measured, the furthest of eight was 5.4 tiles out.
+         The captain walks onto the tile itself, and then the band is given a beat to close up
+         on it before the order closes. `homeTries` is the out: a home point that has been built
+         over or walled off since the order was given must not leave a band circling it, so
+         after a few attempts that get nowhere he takes where he is standing as home. */
+      const dh = dist(cdr.x, cdr.y, m.home.x, m.home.y);
+      /* COUNTED IN TICKS, NOT IN ATTEMPTS. The first cut only counted a try when `moveTarget`
+         had cleared, so a captain who could not reach the tile at all never counted one and
+         stood there indefinitely. A home point that has been built over or walled off since
+         the order was given must not hold a band forever. */
+      if(dh > 1.4){
+        m.homeTries = (m.homeTries || 0) + 1;
+        if(m.homeTries < 90){
+          if(!cdr.moveTarget){ cdr.attackMove = null; cdr.moveTarget = {x: m.home.x, y: m.home.y}; }
+          continue;
+        }
+      }
+      {
+        /* `bandStations` has had them forming on the home point since the phase turned; this
+           only waits for them to get there, and gives up rather than holding an order open on
+           one body that cannot make the last two tiles. */
+        const late = bandOf(cdr).filter(o => o.state === 'ok' && dist(o.x, o.y, m.home.x, m.home.y) > 2.4);
+        if(late.length){
+          m.formT = (m.formT || 0) + 1;
+          if(m.formT < 40) continue;        /* about thirty-six seconds of closing up */
+        }
+      }
+      {
         m.tours++;
         const tally = m.took ? `with ${m.took} taken and ${m.fights} fought` : `nothing taken, ${m.fights} fought`;
         if(m.standing){
           /* A DUTY, not an errand. They come in, put their wounded back together, and go out
              again — which is the whole point of posting somebody: you stop having to
              remember them. */
+          /* a duty reports per tour, and then starts the next one's books clean */
+          m.debrief = missionReport(cdr);
+          cdr.lastReport = m.debrief;
+          log(`${cdr.name} reports: ${m.debrief}`, '');
           m.phase = 'rest'; m.restUntil = day * 24 + hour + CMD_REST_H;
           m.took = 0; m.fights = 0; m.leg = 0;
+          m.gold = 0; m.bag = {}; m.startAt = day * 24 + hour; m.startUnseen = unseenCount(cdr);
+          m.formT = 0; m.homeTries = 0;
           cmdSay(cdr, `Tour ${m.tours} done, ${tally}. Standing to at ${CMD_REST_H} hours.`, 'good');
         } else if(m.order === 'forage' && m.tours < FORAGE_TOURS && unseenIn(cdr)){
           /* ---------- AND THE ERRAND IS NOT DONE WHILE THERE IS GROUND LEFT ----------
@@ -13732,16 +14383,24 @@ function commandTick(dt){
              FORAGE_TOURS they come in for good and SAY that the rest could not be got to. */
           m.phase = 'rest'; m.restUntil = day * 24 + hour + CMD_REST_H;
           m.took = 0; m.fights = 0; m.leg = 0; m.scouting = false;
+          m.formT = 0; m.homeTries = 0;
           cmdSay(cdr, `Dropping ${tally.replace('with ', '')}. There is ground out there we have not walked.`, 'good');
         } else {
           const left = m.order === 'forage' ? unseenIn(cdr) : null;
-          cmdSay(cdr, left ? `Back, ${tally}. There is ground out there we cannot get to.`
-                           : `Back, ${tally}.`, 'good');
+          /* ---------- AND SAYS WHAT IT DID ----------
+             Kept on the mission as well as spoken, because a line in the log scrolls away and
+             the thing a player wants when a band walks back in is the whole trip. */
+          /* NOT `m.report`. That field is `cmdSay`'s speech buffer — every line the captain
+             says overwrites it — which is why an order has carried a `report` since the day it
+             was written and has never once contained one. The debrief is its own field, and it
+             also outlives the order: `standDown` clears `cdr.cmd` on the next line, and a line
+             in the log scrolls away. */
+          m.debrief = missionReport(cdr) + (left ? ' There is ground out there we cannot get to.' : '');
+          cdr.lastReport = m.debrief;
+          cmdSay(cdr, `Back on the spot we left from.`, 'good');
+          log(`${cdr.name} reports: ${m.debrief}`, 'good');
           standDown(cdr, true);
         }
-      } else if(!cdr.moveTarget){
-        cdr.attackMove = null;
-        cdr.moveTarget = {x: m.home.x, y: m.home.y};
       }
       continue;
     }
@@ -13761,10 +14420,62 @@ function commandTick(dt){
     }
     /* what they can see, before what they are doing about it */
     contactCall(cdr);
-    if(nearestEnemy(cdr, 9)){ m.fights += (m.fightSeen ? 0 : 1); m.fightSeen = true; continue; }
+    /* ---------- AND THE CAPTAIN IS NOT THE ONE WHO MEETS IT ----------
+       The ranks put his blades five tiles in front of him, which only holds while he is
+       standing still — he was walking at the loot or the enemy himself, so he arrived first
+       whatever the band was doing behind him. He gives ground to the standoff line instead and
+       lets the front rank do the work, which is the whole of "commanders lead from the rear".
+       CMD_STANDOFF is inside the nine tiles the bodyguard path reads as a threat to him, so
+       the band still counts it as something on their ward and still interposes. */
+    if(foe){
+      m.fights += (m.fightSeen ? 0 : 1);
+      m.totFights = (m.totFights || 0) + (m.fightSeen ? 0 : 1);
+      m.fightSeen = true;
+      const dx = cdr.x - foe.x, dy = cdr.y - foe.y, L = Math.hypot(dx, dy) || 1;
+      if(L < CMD_STANDOFF - 0.5){
+        cdr.target = null; cdr.targetManual = false; cdr.attackMove = null;
+        cdr.moveTarget = {x: clamp(foe.x + dx / L * CMD_STANDOFF, 2, W - 3),
+                          y: clamp(foe.y + dy / L * CMD_STANDOFF, 2, H - 3)};
+      }
+      continue;
+    }
+    /* ---------- AND WHEN IT IS OVER THEY TAKE THEIR TIME ----------
+       "After any engagements, they take their time, loot everything, and then return."
+       They did not. The break-off reads the captain's blood and the band's standing, which is
+       the exact state a band is in the moment a fight ENDS — so the order turned for home over
+       the bodies it had just made. Measured: four fresh corpses and a chest inside the order's
+       own circle, and it went home over all five of them.
+       `m.after` holds the judgement off (see the break-off above) and sends them round the
+       ground the fight happened on until there is nothing left on it. It clears itself, so the
+       band is not stuck in an aftermath on ground it cannot reach. */
+    if(m.after && m.order === 'forage'){
+      missionLanded(cdr);
+      if(cdr.chestTarget || cdr.lootTarget) continue;     /* still on its way to one */
+      if(fieldSurgeon(cdr)) continue;       /* patch up while they are at it */
+      /* AND IT IS BOUNDED. "Loot everything" is everything the fight put on the ground, not
+         every unopened thing within reach of it until the sun goes down — a band held in an
+         aftermath is a band not coming home. */
+      m.afterT = (m.afterT || 0) + 1;
+      const spoil = m.afterT < 400 ? forageFind(cdr, m.afterAt, CMD_AFTER_R) : null;
+      if(spoil){
+        if(!m.afterSaid){ m.afterSaid = 1; cmdSay(cdr, 'Hold. Strip the ground before we move.', ''); }
+        const far = dist(cdr.x, cdr.y, spoil.at.x, spoil.at.y);
+        if(far > 6){ if(!cdr.attackMove) cdr.attackMove = {x: spoil.at.x, y: spoil.at.y}; continue; }
+        cdr.attackMove = null;
+        missionLift(cdr, spoil.kind, spoil.at);
+        if(spoil.kind === 'chest') cdr.chestTarget = spoil.at; else cdr.lootTarget = spoil.at;
+        continue;
+      }
+      m.after = false; m.afterSaid = 0; m.afterT = 0;
+      cmdSay(cdr, 'Ground is clear. Nothing left on it.', '');
+    }
     m.fightSeen = false;
     /* nobody in reach: the surgeon works between fights rather than at the end of the day */
     if(fieldSurgeon(cdr)) continue;
+    /* he marches a fifth slower than his blades while there are blades to march behind — see
+       `moveSpeed`. Dropped the moment there is no front rank left, because a captain alone
+       should not also be a slow one. */
+    cdr._cdrPace = band.some(o => o.state === 'ok' && !((wepOf(o) || {}).range)) ? 0.8 : 0;
     /* --- the order itself --- */
     if(m.order === 'hold'){
       if(dist(cdr.x, cdr.y, m.ax, m.ay) > 3 && !cdr.moveTarget) cdr.moveTarget = {x: m.ax, y: m.ay};
@@ -13779,12 +14490,14 @@ function commandTick(dt){
     }
     if(m.order === 'forage'){
       /* mid-errand: leave them to finish it */
-      if(cdr.chestTarget && !cdr.chestTarget.opened) continue;
-      if(cdr.lootTarget && !cdr.lootTarget.looted) continue;
-      if(cdr.chestTarget || cdr.lootTarget){ m.took++; cdr.chestTarget = null; cdr.lootTarget = null; }
+      missionLanded(cdr);
+      if(cdr.chestTarget || cdr.lootTarget) continue;
       /* hands are hands: a band with no mule fills up fast, and a mule is the difference
          between one sweep and three */
-      if(m.took >= haulCap(cdr)){
+      /* AND NOT WITH THE GROUND STILL COVERED. The haul cap is the other thing that turns a
+         band for home the instant a fight ends, and it wants the same answer as the break-off:
+         finish what is on the floor, then decide. */
+      if(m.took >= haulCap(cdr) && !m.after){
         m.phase = 'home';
         cmdSay(cdr, `Loaded — ${m.took}. Bringing it in.`, 'good');
         continue;
@@ -13813,6 +14526,7 @@ function commandTick(dt){
       const far = dist(cdr.x, cdr.y, find.at.x, find.at.y);
       if(far > 6){ if(!cdr.attackMove) cdr.attackMove = {x: find.at.x, y: find.at.y}; continue; }
       cdr.attackMove = null;
+      missionLift(cdr, find.kind, find.at);
       if(find.kind === 'chest') cdr.chestTarget = find.at; else cdr.lootTarget = find.at;
       continue;
     }
@@ -14543,6 +15257,7 @@ function clearOrders(c){
   c.path = null; c.pathGoal = null;
   c.band = null;          /* a band is an order — see formBand */
   c._bandPace = 0;
+  c._cdrPace = 0;         /* a captain's half-step behind his van is part of the order */
   if(c.resting){ c.resting.user = null; c.resting = null; }
 }
 /* ---------- ONE ORDER, SEVERAL BODIES ----------
@@ -15208,6 +15923,46 @@ function physics(c, dt){
       return;
     }
   }
+  /* ---------- A HOST THAT REACHES THE WALL TAKES THE WALL ----------
+     "We killed siege mechanics previously... specifically, damaging/destroying walls."
+     Almost all of this already existed. `structAt` hands back a town wall with hp accessors,
+     `hitStructure` swings at it, `destroyStructure` unblocks the tile and splices it out of
+     `t.walls`, and `syncTownWalls` is keyed on the wall count and the hp sum — so a breach
+     renders itself with no new geometry anywhere. The save layer was built for it too:
+     `walls.js` has a note about loading an intact save AFTER A SIEGE.
+     What was missing is the one thing that starts it. The game's existing "jammed? smash
+     through" lives inside the COMBAT APPROACH — it is reached only under `if(c.target)`, when
+     a body walking at somebody stops getting closer — and a besieging army has nobody to
+     target, because the defenders are behind the wall. Measured on the control: a soldier of
+     one town stood against another's wall for thirty seconds with `stuckT` at 0.00 and the
+     wall at 900 of 900.
+     So a host at war acquires the wall itself. Gated hard because `t.walls` is two hundred
+     tiles and this must not become a scan: only a `warband`, only one with a town as its
+     target, only twice a second, and only while it is actually AT the ring. */
+  if(c.faction === 'warband' && c.warT >= 0 && !c.structTarget && c.state === 'ok' && !c.target){
+    const tt = towns[c.warT];
+    if(tt && tt.def.wall && tt.walls.length && !tt.sacked){
+      c.siegeT = (c.siegeT || 0) - dt;
+      if(c.siegeT <= 0){
+        c.siegeT = 0.5;
+        /* CHEBYSHEV, BECAUSE THE RING IS A SQUARE. It is laid with
+           `Math.max(abs(i), abs(j)) === r`, so a corner tile sits at r·√2 from the centre —
+           thirty-eight tiles on a ring of twenty-seven. A Euclidean band of R±5 therefore
+           excluded every corner and most of the diagonals, and the first cut of this acquired
+           a wall in the middle of a face and nothing at all at `walls[0]`. */
+        const R = tt.def.wall.r;
+        const cheb = Math.max(Math.abs(c.x - tt.x), Math.abs(c.y - tt.y));
+        if(cheb < R + 5 && cheb > R - 5){
+          let best = null, bd = 2.4;
+          for(const w of tt.walls){
+            const dw = dist(w.x + 0.5, w.y + 0.5, c.x, c.y);
+            if(dw < bd){ bd = dw; best = w; }
+          }
+          if(best) c.structTarget = structAt(best.x + 0.5, best.y + 0.5);
+        }
+      }
+    }
+  }
   /* smash a structure */
   if(c.structTarget){
     const st = c.structTarget;
@@ -15800,6 +16555,19 @@ function physics(c, dt){
       let onWard = null, justNear = null;
       for(const o of charsNear(w.x, w.y, 9)){
         if(o.state !== 'ok') continue;
+        /* ---------- AND A STOREY IS AS GOOD AS A WALL, HERE TOO ----------
+           `dist` is two-dimensional, so a body standing directly under the ward reads as
+           standing ON it. `nearestEnemy` has had this line since the world grew storeys and
+           this sweep never did — it was covered by accident, because the grid holds no body on
+           a frozen storey and a storey with nobody of yours on it is frozen. That is luck, not
+           a rule: the moment you have somebody downstairs, the floor below a guard is live and
+           nine tiles of it are within reach of `charsNear`.
+           Measured on the sampled world: the grid hands back 10 cross-storey pairs inside nine
+           tiles and 0 of 53 guard picks landed on one — which is why it has never been noticed.
+           Staged, it bites immediately: a hostile two tiles from the ward and one storey down,
+           with one of yours downstairs to keep that storey awake, and the guard picks it and
+           charges. `walk.js` drives the real block for exactly that case. */
+        if((o.floor || 0) !== (w.floor || 0)) continue;
         const dw2 = dist(o.x, o.y, w.x, w.y);
         if(dw2 >= 9) continue;
         if(!hostile(c, o)) continue;
@@ -15818,8 +16586,17 @@ function physics(c, dt){
           c.target = null;
           c.moveTarget = {x: w.x + ux * 1.2, y: w.y + uy * 1.2};
         }
-      } else if(!c.target && dw > 2.2){
-        c.moveTarget = {x: w.x, y: w.y};
+      } else if(!c.target){
+        /* ---------- A STATION, NOT THE WARD'S OWN TILE ----------
+           A band member under a commander is given a place in the column by `bandStations`;
+           everything else guarding somebody still closes on them the way it always did. This
+           is the one line that used to put the captain at the head of his own band. */
+        const st = c.bandStation;
+        if(st && c.under != null){
+          if(dist(c.x, c.y, st.x, st.y) > 1.5) c.moveTarget = {x: st.x, y: st.y};
+        } else if(dw > 2.2){
+          c.moveTarget = {x: w.x, y: w.y};
+        }
       }
     }
   }
@@ -17003,7 +17780,7 @@ function siegeTick(){
   if(!ruin && towns.every(t => t.sacked > 0)) enterRuin();
 }
 function fallToTheDark(t){
-  t.sacked = 9;
+  t.sacked = 9; t.sackKind = 'dark';   /* nothing burned here — see the sack branch in update() */
   t.order = 0;
   compactRelease(t);
   for(const c of chars) if(c.civ && c.homeTown === t && rnd() < 0.45) kill(c, null);
@@ -19368,6 +20145,10 @@ function destroyStructure(st){
     log('Bastion wall breached!', 'good');
   } else if(st.kind==='twall'){
     blocked.delete(bkey(st.ref.x, st.ref.y));
+    /* AND THE RAMPART GOES WITH IT. The wall-top is a `decks` floor so archers can stand on it;
+       leaving that behind when the stone falls gives you a walkable tile hanging over an open
+       breach, and a defender standing on nothing above the hole his wall used to be. */
+    decks.delete(bkey(st.ref.x, st.ref.y, 1));
     const i = st.town.walls.indexOf(st.ref); if(i>=0) st.town.walls.splice(i,1);
     log(`${st.town.name}'s wall breached!`, 'bad');
     dropRep(st.town, 15);
@@ -22063,6 +22844,30 @@ const DARK_SIGHT_LIT   = 22;   /* and what a torch opens for it */
 const DARK_SIGHT_DEAD  = 18;   /* what needs no light sees regardless — good, but not a torch */
 const TORCH_R      = 5.5;      /* the pool a held torch throws */
 const TORCH_POST_R = 8.5;      /* a post is a bigger fire on a stand, and it does not walk off */
+/* ---------- WHAT A FIRE IS WORTH ABOVE GROUND ----------
+   "the torch lighting is looking amazing. (Honestly I think we should maybe incorporate that
+   into the overworld too.)"
+   It could not: `syncTorchLights` opened with `if(activeFloor >= 0){ … return; }`, so the three
+   point lights the underworld runs on were held at zero everywhere above ground at every hour,
+   and the pool on the floor was gated on `darkFloor`. Measured: a torch carried at midnight on
+   the grass changed the ground under it by exactly ZERO.
+   The gate wants to be darkness rather than depth, and darkness on the surface is a CURVE — a
+   boolean would snap three fires on at the stroke of dusk. This is the same one the lit windows
+   use (`windowMat.opacity` in `updateSky`), so a torch comes up at the hour a town's windows
+   do, which is one fewer number to keep in step. A dust storm is its own kind of dark and is
+   worth a little of it.
+   AND IT IS A LOOK, NOT A RULE. `darkFloor` decides who is blind, and surface night is
+   deliberately not that: nobody asked for a torch to become mandatory after sunset. This
+   number is read by the renderer and by the light pool and by nothing else. */
+function surfaceNightK(){
+  const dayness = clamp(Math.sin((hour - 6) / 13 * Math.PI), 0, 1);
+  const storm = (typeof weather !== 'undefined' && weather.storm > 0) ? 0.3 : 0;
+  return clamp((1 - dayness) * 1.3 - 0.15 + storm, 0, 1);
+}
+/* for the camera's storey — what `syncTorchLights` spends its three lights on */
+function fireWeight(){ return activeFloor < 0 ? 1 : surfaceNightK(); }
+/* and for one body, which may not be on the camera's storey */
+function fireWeightFor(c){ return (c && (c.floor || 0) < 0) ? 1 : surfaceNightK(); }
 /* NOT `WISP_R`, which is taken: that one is how far a Wisp's DETONATION reaches, and this is
    how far its glow does. Two numbers about the same body meaning opposite things, and this
    file has already paid for `e.servitor`, `raised` and `wisp` itself carrying two meanings
@@ -22110,7 +22915,20 @@ function seesInDark(c){
 /* A torch that has never been lit reads as full, so a body handed one mid-frame — by a trade,
    a loot, a save — is never briefly holding an unlit stick. */
 function torchHours(c){ return c.torchH === undefined ? TORCH_HOURS : c.torchH; }
-function torchLit(c){ return !!(c && c.weapon === 'w_torch' && c.state === 'ok' && torchHours(c) > 0); }
+/* ---------- A TORCH IS A TORCH, WHATEVER IS CAGED OVER THE HEAD ----------
+   Asked of the ITEM rather than of one key, so the violet one burns the same hours, lights the
+   same ground, lets the same blind hand work and runs out at the same rate — everything that
+   reads "is there a fire in this hand" gets the right answer without knowing there are two
+   kinds. What the violet one does EXTRA is `violetHand` below, and nothing else changes. */
+function torchLit(c){
+  const w = c && c.weapon && ITEMS[c.weapon];
+  return !!(w && w.torch && c.state === 'ok' && torchHours(c) > 0);
+}
+/* and whether that fire is the Fallowend kind */
+function violetHand(c){
+  const w = c && c.weapon && ITEMS[c.weapon];
+  return !!(w && w.violet && torchLit(c));
+}
 /* the nearest live light on this body's storey, of any kind and anybody's. A fire lights the
    room for whoever is standing in it, including the people it was not lit for. */
 function litNear(c){
@@ -22204,6 +23022,20 @@ function torchTick(dh){
 /* and the posts burn down a day's worth, and eat a log to keep doing it */
 function postTick(){
   for(const b of pBuilds){
+    /* ---------- THE VIOLET ONE KEEPS FALLOWEND'S CLOCK ----------
+       Seventy days a cell, the same as the six on their road, and it eats a cell rather than a
+       log — which is the whole difference between holding a tunnel and holding a line. There
+       is no "the stores keep it lit" here on purpose: a cell is salvage, the stores will not
+       have one to spare by accident, and a lamp going dark should be a decision you notice. */
+    if(b.type === 'lampviolet'){
+      if(b.progress !== undefined && b.progress < 1) continue;
+      if(b.fuel === undefined) b.fuel = LANTERN_CELL_DAYS * 24;
+      b.fuel -= 24;
+      if(b.fuel > 0) continue;
+      if(campSpend({aether_cell: 1})) b.fuel = LANTERN_CELL_DAYS * 24;
+      else { b.fuel = 0; log('A Violet Lamp has gone dark. There is no cell in the stores to feed it.', 'bad'); }
+      continue;
+    }
     if(b.type !== 'torchpost') continue;
     if(b.progress !== undefined && b.progress < 1) continue;
     if(b.fuel === undefined) b.fuel = POST_HOURS;
@@ -23369,6 +24201,9 @@ function openBinding(circle){
   /* which page of the circle is open. Per-open, so walking up to a circle always starts at the
      work rather than wherever you left the bench. */
   let shapePage = false;
+  /* which rows have their prose unfolded. Per-open, like `shapePage`: walking up to a circle
+     starts with twelve short rows rather than with whatever was left expanded last time. */
+  const descOpen = new Set();
   openModal('BINDING CIRCLE', `Ritualist: ${ritualist.name} — MAG ${Math.floor(ritualist.stats.magic)} · mana ${Math.round(ritualist.mana)} · bound ${risenLoad(ritualist)}/${risenCap(ritualist)}${anchorLine()}`);
   ctxCircle = circle;
   const body = $('modalbody');
@@ -23522,6 +24357,18 @@ function openBinding(circle){
         `<span style="color:var(--muted)">A body is never stronger than what it was made of. Render better dead and the ceiling rises.</span>`;
       body.appendChild(qr);
     }
+    /* ---------- THE ROW IS A ROLE AND FOUR NUMBERS; THE PROSE IS BEHIND A BUTTON ----------
+       "the descriptions for all of these undead are getting a bit too long. Perhaps we can have
+       an abbreviated description... and then leave the extended version for a mouseover. Or
+       perhaps an expandable/collapsable 'description' button."
+       Both, because they answer different halves of it. The hover is free and is the right
+       thing at a desk; it is nothing at all on a touchscreen, and the thing a player is doing
+       at a binding circle is comparing twelve rows, which wants the prose ON the page for the
+       one row they are weighing rather than a tooltip they have to chase. So the full text
+       hangs off the row as a title and there is a button beside the BIND that unfolds it.
+       Measured on the control: median row 214 characters, longest 273 — with the cost, the
+       mana and the slot weight at the far end of all of it. */
+    const escq = (t) => String(t).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
     for(const [k, ut] of (shapePage ? [] : Object.entries(UNDEAD_TYPES))){
       const row = document.createElement('div'); row.className = 'trow';
       const bill = {...ut.cost};
@@ -23529,10 +24376,23 @@ function openBinding(circle){
       const costTxt = Object.keys(bill).map(ck => `${bill[ck]} ${ITEMS[ck].name}`).join(' + ');
       const locked = !research.done[ut.tech];
       const afford = canAfford(bill);
-      row.innerHTML = `<span class="tn">${ut.name} <span style="color:var(--dust)">${ut.desc} · ${costTxt} · ${ut.mana} mana · slots ${ut.weight}</span></span>
-        <span>${locked ? `<span style="color:var(--dust)">needs ${TECHS[ut.tech].name}</span>` : `<button data-bind="${k}" ${afford?'':'disabled'}>BIND</button>`}</span>`;
+      const shown = descOpen.has(k);
+      row.innerHTML = `<span class="tn" title="${escq(ut.desc)}">${ut.name} <span style="color:var(--dust)">${ut.role || ''} · ${costTxt} · ${ut.mana} mana · slots ${ut.weight}</span></span>
+        <span><button data-desc="${k}" title="${escq(ut.desc)}" style="padding:1px 6px;font-size:10px;margin-right:4px">${shown ? '⌃' : '⌄'}</button>${locked ? `<span style="color:var(--dust)">needs ${TECHS[ut.tech].name}</span>` : `<button data-bind="${k}" ${afford?'':'disabled'}>BIND</button>`}</span>`;
       body.appendChild(row);
+      if(shown){
+        const d = document.createElement('div');
+        d.setAttribute('data-descfor', k);
+        d.style.cssText = 'color:var(--dust);font-size:11px;margin:0 0 6px 10px;line-height:1.5';
+        d.textContent = ut.desc;
+        body.appendChild(d);
+      }
     }
+    body.querySelectorAll('[data-desc]').forEach(b => b.onclick = () => {
+      const k = b.dataset.desc;
+      if(descOpen.has(k)) descOpen.delete(k); else descOpen.add(k);
+      rndr();
+    });
     body.querySelectorAll('[data-bind]').forEach(b => b.onclick = () => { craftUndead(b.dataset.bind, ritualist, circle, {...circle.shape}); rndr(); });
     /* ---- RAISING ONE UP ----
        Anything of yours that has done the work can be given a name and a mind. */
@@ -23879,6 +24739,7 @@ function update(dt){
   const wdh = wldT / HOUR_SEC;
   if(wtick) wldT = 0;
   if(wtick) orchardTick();    /* and the ground at Greenrest is felt by whoever can feel it */
+  if(wtick) ruinTick();       /* and a town that was put to the torch is still burning */
   stonewakeTick(dt);          /* and something is still cutting the halls it was set to cut */
   const dh = dt / HOUR_SEC;
   hour += dh;
@@ -24705,8 +25566,25 @@ function update(dt){
       const ti = towns.indexOf(t);
       const enemyArmy = chars.filter(c => c.faction==='warband' && c.warT === ti && c.state==='ok');
       const defenders = chars.filter(c => c.faction==='town' && c.homeTown===t && c.guard && c.state==='ok');
-      if(!defenders.length && enemyArmy.length >= 3 && !t.sacked){
-        t.sacked = 5;
+      /* ---------- AND A SACK WAITS FOR THE WALL ----------
+         This was a headcount: no defenders left and three of the enemy standing. The log said
+         "its walls are breached and its stores put to the torch" and nothing had ever touched
+         `t.walls` — the only thing in the game that damaged one was a three-per-cent daily
+         earthquake. A town is taken when somebody gets IN now.
+         HOLLOWMERE HAS NO WALL, and a rule that reads "the ring must be broken" would make the
+         one unwalled town on the map permanently unsackable. An open town falls the old way.
+         `wall0` is written at worldgen and defaulted here for a save made before it existed, so
+         an old world reads as intact rather than as permanently breached. */
+      if(t.wall0 === undefined) t.wall0 = t.walls.length;
+      const breached = !t.def.wall || t.walls.length < t.wall0;
+      if(!defenders.length && enemyArmy.length >= 3 && breached && !t.sacked){
+        /* ---------- TWO WAYS A TOWN ENDS ----------
+           This is the host's sack: a breach, and then the torch. `fallToTheDark` is the other
+           one, and it leaves the buildings standing. The COUNTER cannot carry the difference —
+           5 and 9 are the two starting values and both tick down through the same numbers, so
+           by its fourth day a town that fell to the dark is indistinguishable from a burnt one.
+           The kind is its own field, and it is what everything that draws a ruin reads. */
+        t.sacked = 5; t.sackKind = 'torch';
         worldEvent('sack', t.x, t.y, `${t.name} has been sacked. Its walls are breached and its stores put to the torch.`);
         for(const c of chars){ if(c.civ && c.homeTown===t && rnd()<0.25) kill(c, null); }
         if(rnd() < 0.6) succeed(t, 'was slain when the walls fell');
@@ -24735,7 +25613,33 @@ function update(dt){
           }
         }
       }
-      if(t.plague > 0){ t.plague--; if(t.plague <= 0) t.plagueCd = day + ri(20, 40); }
+      if(t.plague > 0){ t.plague--; if(t.plague <= 0){ t.plagueCd = day + ri(20, 40); t.plagueTold = 0; t.plagueToldDay = 0; } }
+    }
+    /* ---------- AND THE MASONS COME BACK ----------
+       A breach that never closes is a permanent scar, and now that an army can actually make
+       one the map would otherwise degrade in one direction for the whole campaign: a town
+       breached in a war twenty days ago is a town that is still wide open, still reads as
+       `breached`, and can be sacked on a headcount by the next host that turns up without
+       laying a hand on it. So a town at peace rebuilds.
+       Not under siege and not while it is still burning — masons do not work with a host at
+       the gate — and SLOWLY: a tenth of a tile's strength a day, and one tile relaid a day,
+       so a ring taken apart in a siege takes the better part of a season to stand again.
+       Nothing here spends a roll, so the world's stream is exactly where it was. */
+    for(const t of towns){
+      if(!t.def.wall || t.warWith || t.sacked > 0 || !t.wallRing) continue;
+      const full = t.def.wall.hp;
+      for(const w of t.walls) if(w.hp < w.maxHp) w.hp = Math.min(w.maxHp, w.hp + w.maxHp * 0.1);
+      if(t.walls.length >= t.wall0) continue;
+      const up = new Set(t.walls.map(w => w.x + ',' + w.y));
+      for(const g of t.wallRing){
+        if(up.has(g.x + ',' + g.y)) continue;
+        if(isBlocked(g.x + 0.5, g.y + 0.5)) continue;   /* something else took the tile — relay a different one */
+        /* relaid green: a quarter strength, so a host that comes straight back still gets in */
+        t.walls.push({x:g.x, y:g.y, hp:full * 0.25, maxHp:full, mat:t.def.wall.mat});
+        blocked.add(bkey(g.x, g.y));
+        decks.add(bkey(g.x, g.y, 1));
+        break;
+      }
     }
     /* misfortune rolls */
     if(rnd() < 0.006){ const t = pick(towns.filter(t=>!t.plague && !t.sacked && (t.plagueCd||0) < day)); if(t){ t.plague = ri(4,7); worldEvent('plague', t.x, t.y, `A plague has broken out in ${t.name}. Travelers are warned to keep their distance.`); } }
@@ -25178,7 +26082,7 @@ function update(dt){
   }
   /* plague towns: the sick cough, the careless catch it */
   if(wtick) for(const t of towns){
-    if(t.plague <= 0) continue;
+    if(!(t.plague > 0)) continue;
     for(const c of chars){
       if(c.state==='dead') continue;
       const near = dist(c.x, c.y, t.x, t.y) < 13;
@@ -25946,14 +26850,66 @@ function torchTex(){
    nearest first. Held torches and posts both, because the player cannot tell which is which by
    looking and should not have to. */
 function syncTorchLights(){
-  if(activeFloor >= 0){
+  /* DARKNESS, NOT DEPTH — see `surfaceNightK`. Still an early-out, and it still takes the whole
+     of the daylight hours, so the cost above ground is one clamped sine per frame until the sun
+     is low enough for a fire to be worth anything. */
+  const wk = fireWeight();
+  /* ---------- AND THE GLASS FADES WITH THE HOUR ----------
+     The heads are basic materials, so they show their own colour at every hour and would be a
+     row of bright beads on a sunlit street. They are faded on the same curve the light is, and
+     a lantern with no cell in it loses its glass entirely — which is the town's decline made
+     visible, and the only thing on the map that says so without a line of text. */
+  const glassK = 0.18 + wk * 0.82;
+  /* ---------- AND A RUIN KEEPS NO LAMPS ----------
+     Both kinds of ending put the street out. It is the same two objects the day curve already
+     moves, and it has to be the mesh rather than the material: one amber material is shared by
+     every amber disc in all seven towns, so fading it would take the lamps out of the towns
+     that are still standing. */
+  for(const f of townFires){
+    const out = f.town.sacked > 0;
+    if(f.head){ f.head.visible = !out; f.head.material.opacity = glassK; }
+    if(f.pool) f.pool.visible = !out;
+  }
+  for(const L of lanterns) if(L.head){
+    L.head.visible = !!L.fuel;
+    L.head.material.opacity = glassK;
+    if(L.pool) L.pool.visible = !!L.fuel;
+  }
+  /* two objects, a hundred and twelve discs. A fire is never still, so the pools breathe. */
+  const poolK = wk * (0.30 + Math.sin(Date.now() * 0.0016) * 0.025);
+  for(const k in townPoolMats) if(townPoolMats[k]) townPoolMats[k].opacity = poolK;
+  if(wk <= 0.01){
     for(const pl of TORCH_LIGHTS) pl.intensity = 0;
     return;
   }
   const fires = [];
-  for(const o of torchers) if((o.floor || 0) === activeFloor) fires.push({x: o.x, y: o.y, h: 1.5, k: 1});
-  for(const b of litPosts) if((b.floor || 0) === activeFloor) fires.push({x: b.x + 0.5, y: b.y + 0.5, h: 1.2, k: 1.5});
-  if(activeFloor < 0) for(const b of caveFireList()) if(b.floor === activeFloor) fires.push({x: b.x + 0.5, y: b.y + 0.5, h: 1.0, k: 1.3});
+  const AMBER = 0xffb060;
+  for(const o of torchers) if((o.floor || 0) === activeFloor)
+    fires.push({x: o.x, y: o.y, h: 1.5, k: 1, col: violetHand(o) ? VIOLET_FIRE : AMBER});
+  for(const b of litPosts) if((b.floor || 0) === activeFloor)
+    fires.push({x: b.x + 0.5, y: b.y + 0.5, h: 1.2, k: 1.5, col: b.type === 'lampviolet' ? VIOLET_FIRE : AMBER});
+  if(activeFloor < 0) for(const b of caveFireList()) if(b.floor === activeFloor) fires.push({x: b.x + 0.5, y: b.y + 0.5, h: 1.0, k: 1.3, col: AMBER});
+  /* ---------- AND WHAT THE TOWNS ARE BURNING ----------
+     Surface only, and culled to what could possibly reach the camera before anything is sorted
+     — there are seven towns' worth of these and the pool only ever wants the nearest three. */
+  if(activeFloor === 0){
+    for(const f of townFires){
+      if(Math.abs(f.x - camSX) > 120 || Math.abs(f.y - camSY) > 120) continue;
+      /* a burnt town is not lit, it is BURNING: the same posts, a dirtier red, and lower down,
+         because what is alight is the wreckage around the post and not a cresset on top of it */
+      if(f.town.sacked > 0){
+        if((f.town.sackKind || 'torch') === 'dark' || !ruinBurns(f)) continue;
+        fires.push({x: f.x, y: f.y, h: 0.7, k: 1.35, col: 0xff7a2e});
+        continue;
+      }
+      fires.push({x: f.x, y: f.y, h: f.h, k: f.k, col: f.col});
+    }
+    for(const L of lanterns){
+      if(!L.fuel) continue;
+      if(Math.abs(L.x - camSX) > 120 || Math.abs(L.y - camSY) > 120) continue;
+      fires.push({x: L.x, y: L.y, h: 1.7, k: 1.4, col: VIOLET_FIRE});
+    }
+  }
   fires.sort((a, b) => (Math.abs(a.x-camSX) + Math.abs(a.y-camSY)) - (Math.abs(b.x-camSX) + Math.abs(b.y-camSY)));
   const t = Date.now();
   for(let i = 0; i < TORCH_LIGHTS.length; i++){
@@ -25961,9 +26917,14 @@ function syncTorchLights(){
     if(!f){ pl.intensity = 0; continue; }
     pl.position.set(f.x, groundY(f.x, f.y) + floorY(activeFloor) + f.h, f.y);
     pl.distance = f.k > 1 ? TORCH_POST_R * 2.1 : TORCH_R * 2.4;
+    /* COLOUR IS A UNIFORM. A violet lamp and an amber cresset are the same light object with a
+       different number in it — nothing is added to the scene and no shader is rebuilt, which is
+       the whole reason this pool is three lights held at zero rather than lights coming and
+       going. */
+    if(pl.color.getHex() !== (f.col || 0xffb060)) pl.color.setHex(f.col || 0xffb060);
     /* the same guttering the pool on the floor has, on a different phase per light so three
        fires in one room do not breathe in unison */
-    pl.intensity = (1.5 * f.k) * (0.88 + Math.sin(t * 0.009 + i * 2.1) * 0.09 + Math.sin(t * 0.023 + i) * 0.05);
+    pl.intensity = (1.5 * f.k) * wk * (0.88 + Math.sin(t * 0.009 + i * 2.1) * 0.09 + Math.sin(t * 0.023 + i) * 0.05);
   }
 }
 scene.fog = new THREE.Fog(0x8f8878, 34, 142);
@@ -26673,21 +27634,55 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
      place, and a change to the search radius does not move the towns. */
   for(let di = 1; di < DEPTHS.length; di++){
     const up = DEPTHS[di - 1], dn = DEPTHS[di];
+    /* the halls of the storey ABOVE, which is where a body looking for a way down will be */
+    const upHalls = U.halls.filter(q => q.f === up);
     for(const h of U.halls){
       if(h.f !== dn) continue;
-      if(rnd() > 0.40) continue;
+      /* ---------- HOW MANY, AND IT WAS NOT THE MAIN FAULT ----------
+         Reported: "I cannot find any entrances that lead deeper than the first layer. I'm not
+         sure if they are invisible or if they are simply not there." They were there and they
+         worked — 14 down to the Deepworks and 6 to the Sump, all 20 open on both sides. What
+         they were not was FINDABLE, and the measurement says why: from a hall on the Undercroft
+         the nearest way down was a median of 190 tiles away and as much as 555.
+         This roll is the smaller half of the answer. It stays a roll of one number per hall, so
+         the world's dice land exactly where they did; only the threshold moved. The sparseness
+         is deliberate — the walk to the onward shaft is most of what makes the Sump feel like
+         the bottom of something — so this is a nudge rather than a flood. */
+      if(rnd() > 0.62) continue;
       const openOn = (x, y, f) => { const k = bkey(x, y, f); return decks.has(k) && !blocked.has(k); };
-      let sp = null;
-      for(let rad = 0; rad <= 60 && !sp; rad++){
-        for(let dy = -rad; dy <= rad && !sp; dy++) for(let dx = -rad; dx <= rad && !sp; dx++){
-          if(Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;      /* the ring, not the disc */
-          const qx = h.x + dx, qy = h.y + dy;
-          if(qx < 4 || qy < 4 || qx >= W-4 || qy >= H-4) continue;
-          if(!openOn(qx, qy, dn) || !openOn(qx, qy, up)) continue;
-          if(stairAt(qx, qy)) continue;
-          sp = {x: qx, y: qy};
+      /* ---------- AND WHERE, WHICH WAS THE LARGER HALF ----------
+         The ring search took the FIRST tile open on both storeys, scanning out from the LOWER
+         hall. That put the mouth wherever the two lattices happened to cross — most often in
+         the middle of a tunnel on the upper storey, where nobody has a reason to stand and
+         where a body walking the hall network never passes. A hole in the floor of a corridor
+         is findable only by walking every corridor.
+         SO THE SEARCH MOVES TO THE OTHER END OF IT. Scoring candidates inside a ring centred on
+         the lower hall was the first attempt and it barely helped — measured, the mouths still
+         came out a median of 57 and 81 tiles from a hall above, because if the lower hall is
+         eighty tiles from anything upstairs then so is every tile in every ring around it. The
+         centre was the problem, not the choice within it.
+         A body hunting for a way down is walking the UPPER storey, so the upper storey's halls
+         decide where to look: take the hall above nearest this one and ring outward from THAT,
+         which lands the mouth at a junction somebody actually passes through. The old search
+         from the lower hall stays as the fallback for a pairing with nothing above it in reach.
+         THIS SPENDS NO DICE. The rings were already pure arithmetic and so is choosing a centre,
+         so a change here cannot move a town — the note above about the stream still holds. */
+      const ok = (qx, qy) => qx >= 4 && qy >= 4 && qx < W-4 && qy < H-4 &&
+                             openOn(qx, qy, dn) && openOn(qx, qy, up) && !stairAt(qx, qy);
+      const ringFrom = (cx2, cy2, maxR) => {
+        for(let rad = 0; rad <= maxR; rad++){
+          for(let dy = -rad; dy <= rad; dy++) for(let dx = -rad; dx <= rad; dx++){
+            if(Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;    /* the ring, not the disc */
+            const qx = cx2 + dx, qy = cy2 + dy;
+            if(ok(qx, qy)) return {x: qx, y: qy};
+          }
         }
-      }
+        return null;
+      };
+      let uh = null, ud = Infinity;
+      for(const q of upHalls){ const dd = Math.hypot(q.x - h.x, q.y - h.y); if(dd < ud){ ud = dd; uh = q; } }
+      let sp = uh ? ringFrom(uh.x, uh.y, 26) : null;
+      if(!sp) sp = ringFrom(h.x, h.y, 60);
       if(!sp) continue;
       stairs.push({x: sp.x, y: sp.y, from: up, to: dn, shaft: true});
       U.shafts.push({x: sp.x, y: sp.y, hall: h, f: dn, from: up});
@@ -26863,7 +27858,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
      raise every ring once, at the end, with the doors the only gap in it. A shut door is then
      the only way in BY CONSTRUCTION rather than by the tunnels happening to miss. */
   const doorK = new Set(), ringK = new Set();
-  for(const cv of caves) for(const d of cv.doors) doorK.add(bkey(d.x, d.y, d.f || 0));
+  for(const cv of caves) for(const d of cv.doors) for(const t of doorTiles(d)) doorK.add(bkey(t.x, t.y, d.f || 0));
   for(const cv of caves) for(const w of cv.walls){
     const k = bkey(w.x, w.y, w.f);
     if(!doorK.has(k)) ringK.add(k);
@@ -26903,21 +27898,58 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
     for(let c = [tx, ty]; c; c = seen.get(c[1] * W + c[0])) path.push(c);
     return path;
   };
+  /* ---------- A RUN THREE WIDE, AND NOTHING HANGING OFF THE ENDS OF IT ----------
+     The obvious brush is the tile and its four neighbours, and it is wrong in a way that only
+     shows up once you count: at the two ends of a carved run the neighbour ALONG the run has
+     nothing beyond it, so the brush leaves a one-tile stub — and a stub is the thing this was
+     widened to stop making. Measured on the four-neighbour version: twenty-four dead ends
+     became eleven, and the eleven were not the original twenty-four.
+     So the brush knows which way the run is going and lays only ACROSS it. Same three tiles
+     abreast, no tail at either end, and it still refuses a ring or a doorway — a shut door is
+     the only way into a chamber and a brush that ate the wall beside one would hand that back. */
+  const carveRun = (path, f) => {
+    for(let i = 0; i < path.length; i++){
+      const [x, y] = path[i];
+      U.put(x, y, f);
+      const nxt = path[i + 1] || path[i - 1];
+      if(!nxt) continue;
+      let dx2 = Math.sign(nxt[0] - x), dy2 = Math.sign(nxt[1] - y);
+      if(!dx2 && !dy2) continue;
+      const px2 = -dy2, py2 = dx2;                  /* across the run */
+      if(!walled(x + px2, y + py2, f)) U.put(x + px2, y + py2, f);
+      if(!walled(x - px2, y - py2, f)) U.put(x - px2, y - py2, f);
+    }
+  };
   for(const cv of caves){
     const CF = cv.f === undefined ? UNDER : cv.f;
     for(const [ax, ay, bx, by, ux, uy] of (cv.links || [])){
       /* the door and its doorstep, out along the door's own axis. These are outside the room by
          construction; the only thing that can be in the way is a NEIGHBOUR's ring, so it stops
          short rather than punching through one. */
+      /* ---------- AND THE WAY IN IS NOT A PENCIL PATH ----------
+         "Sometimes the hallway leading to the door is also extremely narrow. I understand that
+         the undercroft should not necessarily be WIDE, but it's like a pencil path that only
+         one undead can pass through at a time."
+         It was exactly one tile. `route` returns a four-connected line and this loop opened the
+         line — so every chamber in the world hung off a corridor a single body wide, up to
+         twenty-five tiles of it, while the lattice it joined was bored five to six across.
+         Measured: 109 of 176 doorways were reached down something two tiles wide or less.
+         `wide` brushes the tile and its four neighbours, which lays a three-wide run whichever
+         way the route turns, and it refuses a tile that is somebody's ring or somebody's
+         doorway — the whole shape of this function is that a shut door is the only way into a
+         chamber BY CONSTRUCTION, and a brush that ate a wall either side of the route would
+         hand that back. IT SPENDS NO DICE: `U.put` never drew any and neither does this. */
       let sx = bx, sy = by, t = 0;
       U.put(bx, by, CF);
+      const stub = [[bx, by]];
       for(t = 1; t <= 4; t++){
         const nx = bx + ux * t, ny = by + uy * t;
         if(walled(nx, ny, CF)) break;
-        U.put(nx, ny, CF); sx = nx; sy = ny;
+        stub.push([nx, ny]); sx = nx; sy = ny;
       }
+      carveRun(stub, CF);
       const path = route(sx, sy, ax, ay, CF);
-      if(path){ for(const [px, py] of path) U.put(px, py, CF); }
+      if(path) carveRun(path, CF);
       else {
         /* nothing legal reaches the hall — carve it straight and let the wall win at the end.
            `warrens.js` then reports it as a chamber you cannot get INTO, loudly, which is the
@@ -26931,6 +27963,24 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
   /* AND NOW THE RINGS GO UP, once, over everything that has been cut */
   for(const k of ringK){ blocked.add(k); baseBlocked.add(k); }
   for(const cv of caves) for(const d of cv.doors) setDoor(d, false);
+  /* ---------- AND THE DOORSTEP IS AS WIDE AS THE DOORWAY ----------
+     A three-tile doorway that opens onto one tile of floor is a one-tile doorway with two
+     decorative leaves. The approach was widened along the route, but the route starts at the
+     middle tile of the span, so the outer two opened onto rock. Brush the square outside each
+     leaf, refusing anything that is somebody else's ring. */
+  for(const cv of caves) for(const d of cv.doors){
+    const f = d.f || 0;
+    const rm = (cv.rooms || []).find(r => r.id === d.roomId);
+    const nx = rm && rm.door ? (rm.door.nx || 0) : 0, ny = rm && rm.door ? (rm.door.ny || 0) : 0;
+    if(!nx && !ny) continue;
+    for(const t of doorTiles(d)){
+      const qx = t.x + nx, qy = t.y + ny;
+      if(walled(qx, qy, f)) continue;
+      U.put(qx, qy, f);
+      const q2x = t.x + nx * 2, q2y = t.y + ny * 2;
+      if(!walled(q2x, q2y, f)) U.put(q2x, q2y, f);
+    }
+  }
   /* ---------- AND THE NETWORK IS STILL ONE PLACE AFTERWARDS ----------
      A chamber's wall ring does not know what it was built across. Cutting warrens into the halls
      walled one hall in eighty-one off from the rest of the lattice — `under.js` says "and you can
@@ -27019,6 +28069,99 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
       }
     }
   }
+  /* ---------- AND A CORRIDOR GOES SOMEWHERE ----------
+     "Quite a few hallways/rooms in the undercroft simply dead-end without a door to pass
+     through."
+     Most of that was the doors being drawn as rock, and that is fixed where it lived. This is
+     the rest of it, and it is real: twenty-three tunnels on the Undercroft alone that stop at
+     bare stone with nothing at the end. They are carving accidents — an approach severed when
+     the rings went up over it, a repair thread that ran into a pocket and gave up, a chamber
+     floor plate laid across an older wall whose entry was still in the list that re-blocks at
+     the end. Three causes, one shape, and the shape is what the player walks.
+     A dead end could be filled in instead of opened, and that was the first instinct: a tunnel
+     that goes nowhere should not have been cut. But the player has already walked it by the
+     time they find out, and the thing that makes that walk worth having is finding it joins
+     something — so it is JOINED. Tunnel on through the rock to the nearest floor that is not
+     part of this same stub, which turns a wasted trip into a loop.
+     NEVER THROUGH A RING OR A DOORWAY. A shut door is the only way into a chamber and this runs
+     after the rings are up, so a repair that ate a wall would hand that back — the same fault
+     the approaches above already carry a note about.
+     AND IT SPENDS NO DICE. A flood and a brush, both arithmetic. */
+  const DIRS4 = [[1,0],[-1,0],[0,1],[0,-1]];
+  let joined = 0, stranded = 0, rounds = 0;
+  /* ---------- AND IT TAKES MORE THAN ONE PASS ----------
+     `wide` brushes the four neighbours of every tile it lays, and at the two ends of a join the
+     outermost of those can hang off the side with a single open neighbour of its own — a fresh
+     one-tile stub, made by the thing that exists to remove stubs. Measured: twenty-four became
+     eleven in one pass, and the eleven were not the original twenty-four.
+     So it runs until it finds nothing, rather than once and hopefully. Capped, because a repair
+     that cannot converge must stop rather than chew the map, and the counters say which
+     happened. */
+  for(const F of DEPTHS) for(let round = 0; round < 6; round++){
+    rounds++;
+    const openAt = (x, y) => { const k = bkey(x, y, F); return decks.has(k) && !blocked.has(k); };
+    const nearDoor = (x, y) => {
+      if(doorK.has(bkey(x, y, F))) return true;
+      for(const [dx, dy] of DIRS4) if(doorK.has(bkey(x + dx, y + dy, F))) return true;
+      return false;
+    };
+    const dIdx2 = -(F || -1) - 1;
+    const ends = [];
+    for(const [bk, arr] of U.grid){
+      if(Math.floor(bk / 16777216) !== dIdx2) continue;
+      for(const id of arr){
+        const x = id % W, y = Math.floor(id / W);
+        if(!openAt(x, y) || nearDoor(x, y)) continue;
+        let nb = 0;
+        for(const [dx, dy] of DIRS4) if(openAt(x + dx, y + dy)) nb++;
+        if(nb <= 1) ends.push([x, y]);
+      }
+    }
+    if(!ends.length) break;
+    for(const [ex, ey] of ends){
+      if(!openAt(ex, ey)) continue;
+      /* the stub itself, so the flood below cannot declare it joined to its own tail */
+      const mine = new Set();
+      {
+        let cx = ex, cy = ey, px = -1, py = -1;
+        for(let st = 0; st < 80; st++){
+          mine.add(cy * W + cx);
+          const nbs = [];
+          for(const [dx, dy] of DIRS4){
+            const nx = cx + dx, ny = cy + dy;
+            if(nx === px && ny === py) continue;
+            if(openAt(nx, ny)) nbs.push([nx, ny]);
+          }
+          if(nbs.length !== 1) break;
+          px = cx; py = cy; cx = nbs[0][0]; cy = nbs[0][1];
+        }
+      }
+      /* out through the rock to the first floor that is somebody else's */
+      const prev = new Map(), q = [[ex, ey]];
+      prev.set(ey * W + ex, null);
+      let hit = null;
+      for(let qi = 0; qi < q.length && !hit; qi++){
+        const [x, y] = q[qi];
+        if(Math.abs(x - ex) > 44 || Math.abs(y - ey) > 44) continue;
+        for(const [dx, dy] of DIRS4){
+          const nx = x + dx, ny = y + dy;
+          if(nx < 4 || ny < 4 || nx >= W - 4 || ny >= H - 4) continue;
+          const id = ny * W + nx;
+          if(prev.has(id)) continue;
+          if(walled(nx, ny, F)) continue;            /* never a ring, never a doorway */
+          prev.set(id, [x, y]);
+          if(openAt(nx, ny) && !mine.has(id)){ hit = [nx, ny]; break; }
+          q.push([nx, ny]);
+        }
+      }
+      if(!hit){ stranded++; continue; }
+      const join = [];
+      for(let c = hit; c; c = prev.get(c[1] * W + c[0])) join.push(c);
+      carveRun(join, F);
+      joined++;
+    }
+  }
+  U.blindJoined = joined; U.blindStranded = stranded;
   /* ---------- AND THE DRAWN LIST IS FILTERED LAST, AFTER EVERY CARVE ----------
      This used to run before the connectivity repair, which is fine right up until the repair
      opens something — and `U.put` deletes from `baseBlocked` as well as `blocked`, so the tile
@@ -28470,6 +29613,16 @@ function palette(t){
     roof.castShadow = true;
     g.add(roof);
     b._roof = roof;
+    /* ---------- WHAT THE SCAR NEEDS TO KNOW ----------
+       A burnt roof and a blacked doorway have to sit exactly where this building's roof and
+       doorway are, and every one of those numbers is rolled out of `hash2` here — eave height,
+       pitch, the stilt lift under a Hollowmere house. `syncTownScar` recomputing them would be
+       the same arithmetic written twice, and it would drift the first time one of them moved.
+       `mat()` CACHES BY COLOUR, so the roof material is shared with every other roof of that
+       colour and must never be recoloured in place; the scar swaps the whole material and puts
+       this one back. */
+    b._roofMat0 = roof.material;
+    b._eaveY = y + lift + wallH; b._ridgeY = ridgeY; b._lift = lift; b._gy = y;
   }
   for(const r of ruins) for(const [bx,by] of r.rubble){
     box(g, 0.8, 0.5+hash2(bx,by)*0.6, 0.8, '#4a443c', bx+0.5, groundY(bx+0.5,by+0.5)+0.3, by+0.5);
@@ -28539,17 +29692,70 @@ function palette(t){
         box(g, 0.7, 0.3, 0.7, '#d8d4c4', t.x+ox2, groundY(t.x+ox2,t.y+oy2)+0.15, t.y+oy2, false);
         box(g, 0.4, 0.25, 0.4, '#c9c2b2', t.x+ox2+0.2, groundY(t.x+ox2,t.y+oy2)+0.4, t.y+oy2-0.1, false);
       }
-      for(const [lx,ly] of [[-4,-4],[4,4],[4,-4],[-4,4]]){
-        const px3 = t.x+lx, py3 = t.y+ly;
-        box(g, 0.1, 1.6, 0.1, '#38290f', px3, groundY(px3,py3)+0.8, py3, false);
-        const lamp = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color:0xa98ad4}));
-        lamp.scale.set(0.22, 0.28, 0.22); lamp.position.set(px3, groundY(px3,py3)+1.7, py3);
-        g.add(lamp);
-        const pl = new THREE.PointLight(0x8a6ab5, 0.7, 7);
-        pl.position.set(px3, groundY(px3,py3)+1.8, py3);
-        g.add(pl);
-      }
+      /* ---------- HOLLOWMERE'S LAMPS ARE IN THE TOWN-FIRE LIST NOW ----------
+         Four posts with a `PointLight` apiece used to be built here: permanently in the scene,
+         in every Lambert shader, and burning at noon exactly as hard as at midnight. They are
+         seeded as ordinary town fires with Hollowmere's own violet on them, so they obey the
+         day curve, share the three-light pool with everything else that burns, and cost the
+         scene nothing when the sun is up. Drawn with the rest, below. */
     }
+  }
+  /* ---------- AND THE LAMPS EVERY TOWN KEEPS ----------
+     The post and the glass are permanent and go in with the town. What they do NOT get is a
+     light each — `syncTorchLights` picks the nearest three fires of any kind and turns them
+     down to nothing through the middle of the day, so a town at noon is a town with some iron
+     stands in it and a town at midnight is lit.
+     The head is a basic material: it shows its own colour whatever the light is doing, which
+     is the only way a lamp reads as the thing making the light rather than a thing catching
+     it. Kept on the fire so the day curve can fade it — see `syncTorchLights`. */
+  /* ---------- AND THE GROUND EACH ONE STANDS ON ----------
+     Three point lights is the whole budget and a town has sixteen lamps in it, so the light on
+     the ground cannot come from lights. It comes from the same additive disc a torch already
+     puts under its bearer: a basic material, no shading, no shadow, and no place in anybody's
+     light count. The nearest three still get a real `PointLight` on top, which is what makes a
+     lamp you are standing next to different from one across the square.
+     ONE MATERIAL EACH FOR AMBER AND VIOLET, shared by every disc of that colour — the day curve
+     moves all of them by touching two objects rather than a hundred and twelve. */
+  const poolMat = (col) => new THREE.MeshBasicMaterial({map: torchTex(), color: col,
+    transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false});
+  townPoolMats.amber = townPoolMats.amber || poolMat(0xffb060);
+  townPoolMats.violet = townPoolMats.violet || poolMat(VIOLET_FIRE);
+  townPoolMats.hollow = townPoolMats.hollow || poolMat(0xa98ad4);
+  const poolGeo = new THREE.CircleGeometry(TORCH_POST_R * 0.8, 24);
+  for(const f of townFires){
+    const fy = groundY(f.x, f.y);
+    box(g, 0.12, 1.5, 0.12, '#38290f', f.x, fy + 0.75, f.y, false);
+    box(g, 0.34, 0.1, 0.34, '#4a4038', f.x, fy + 1.52, f.y, false);
+    const head = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color: f.col, transparent: true, opacity: 1}));
+    head.scale.set(0.24, 0.3, 0.24);
+    head.position.set(f.x, fy + 1.72, f.y);
+    g.add(head);
+    f.head = head;
+    const key = f.col === VIOLET_FIRE ? 'violet' : f.col === 0xa98ad4 ? 'hollow' : 'amber';
+    const pool = new THREE.Mesh(poolGeo, townPoolMats[key]);
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(f.x, fy + 0.06, f.y);
+    pool.renderOrder = 3;
+    g.add(pool);
+    f.pool = pool;     /* retained, so a ruin can put this one lamp out — the MATERIAL is shared */
+  }
+  /* and the six on the Fallowend road, which have been a mechanic with nothing to look at
+     since the day they were written. A dead one keeps its post and loses its glass. */
+  for(const L of lanterns){
+    const ly2 = groundY(L.x, L.y);
+    box(g, 0.14, 1.7, 0.14, '#2f2a20', L.x, ly2 + 0.85, L.y, false);
+    box(g, 0.44, 0.12, 0.44, '#3a3428', L.x, ly2 + 1.73, L.y, false);
+    const glass = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color: VIOLET_FIRE, transparent: true, opacity: 1}));
+    glass.scale.set(0.3, 0.38, 0.3);
+    glass.position.set(L.x, ly2 + 1.95, L.y);
+    g.add(glass);
+    L.head = glass;
+    const lp = new THREE.Mesh(new THREE.CircleGeometry(LANTERN_R * 0.55, 28), townPoolMats.violet);
+    lp.rotation.x = -Math.PI / 2;
+    lp.position.set(L.x, ly2 + 0.06, L.y);
+    lp.renderOrder = 3;
+    g.add(lp);
+    L.pool = lp;
   }
   for(const v of vendors){
     const y = groundY(v.x, v.y);
@@ -29240,6 +30446,7 @@ function syncRoofs(){
   for(const c of chars) if(c.faction==='player' && c.state!=='dead') _roofWho.push(c);
   for(const b of buildings){
     if(!b._roof) continue;
+    if(b._fallen){ b._roof.visible = false; continue; }   /* burnt in; there is nothing to lift */
     let open = false;
     for(let i=0; i<_roofWho.length; i++){
       const c = _roofWho[i];
@@ -29439,6 +30646,10 @@ function yoursBelow(){
   for(const c of chars) if(c.faction === 'player' && c.state !== 'dead' && (c.floor||0) < 0) a.push(c);
   return a;
 }
+/* The two colours a doorway announces itself in. Module-level because the warren group is
+   rebuilt whenever somebody walks into range and a material built per rebuild is a leak. */
+const DOORGLOW = new THREE.MeshBasicMaterial({color: 0xffc46a});
+const DOORGLOW_BARRED = new THREE.MeshBasicMaterial({color: 0xd05a28});
 const syncRedoubts = makeDynGroup(
   () => 'rd' + redoubts.length + ':' + activeFloor + ':' + middens.filter(m=>m.found).length + ':' + caves.length + ':' +
         /* PER CAVE TOO, and for the same reason as the redoubts below: which warren has one of
@@ -29509,18 +30720,53 @@ const syncRedoubts = makeDynGroup(
          open it is the only interesting thing about it. Barred ones are darker and banded. */
       for(const dr of cv.doors){
         if(!occ[dr.f]) continue;
+        /* ---------- THE NORMAL IS ON THE ROOM, NOT ON THE DOOR RECORD ----------
+           `chamber` writes `nx/ny` onto `rm.door` and pushes a door record that carries
+           neither, so `dr.nx` has been undefined here since doors became a mechanic — every
+           door in the world was drawn as though it stood on a north or south wall. Harmless
+           while a door was two little posts and invisible; not harmless now that the posts
+           frame a three-tile span. */
+        const rmD = (cv.rooms || []).find(r => r.id === dr.roomId);
+        const nx = rmD && rmD.door ? (rmD.door.nx || 0) : (dr.nx || 0);
+        const span = doorTiles(dr);
         const gy = groundY(dr.x+0.5, dr.y+0.5) + floorY(dr.f);
-        const along = dr.nx ? 0.16 : 0.94, across = dr.nx ? 0.94 : 0.16;
-        box(g, dr.nx ? 0.16 : 0.2, FLOOR_H*0.8, dr.nx ? 0.2 : 0.16, '#5a4a38',
-            dr.x + 0.5 + (dr.nx ? 0 : -0.42), gy + FLOOR_H*0.4, dr.y + 0.5 + (dr.nx ? -0.42 : 0), false);
-        box(g, dr.nx ? 0.16 : 0.2, FLOOR_H*0.8, dr.nx ? 0.2 : 0.16, '#5a4a38',
-            dr.x + 0.5 + (dr.nx ? 0 : 0.42), gy + FLOOR_H*0.4, dr.y + 0.5 + (dr.nx ? 0.42 : 0), false);
-        if(!dr.open){
+        /* the jambs, at the two ends of the span rather than either side of one tile */
+        let lo = span[0], hi = span[0];
+        for(const t of span){
+          if(nx ? t.y < lo.y : t.x < lo.x) lo = t;
+          if(nx ? t.y > hi.y : t.x > hi.x) hi = t;
+        }
+        box(g, nx ? 0.16 : 0.2, FLOOR_H*0.8, nx ? 0.2 : 0.16, '#5a4a38',
+            lo.x + 0.5 + (nx ? 0 : -0.42), gy + FLOOR_H*0.4, lo.y + 0.5 + (nx ? -0.42 : 0), false);
+        box(g, nx ? 0.16 : 0.2, FLOOR_H*0.8, nx ? 0.2 : 0.16, '#5a4a38',
+            hi.x + 0.5 + (nx ? 0 : 0.42), gy + FLOOR_H*0.4, hi.y + 0.5 + (nx ? 0.42 : 0), false);
+        if(!dr.open) for(const t of span){
+          const along = nx ? 0.16 : 0.98, across = nx ? 0.98 : 0.16;
           box(g, along, FLOOR_H*0.74, across, dr.barred ? '#3a2f26' : '#6b5637',
-              dr.x + 0.5, gy + FLOOR_H*0.37, dr.y + 0.5, false);
+              t.x + 0.5, gy + FLOOR_H*0.37, t.y + 0.5, false);
           if(dr.barred)
-            box(g, dr.nx ? 0.1 : 0.86, 0.16, dr.nx ? 0.86 : 0.1, '#8a7048',
-                dr.x + 0.5, gy + FLOOR_H*0.46, dr.y + 0.5, false);
+            box(g, nx ? 0.1 : 0.9, 0.16, nx ? 0.9 : 0.1, '#8a7048',
+                t.x + 0.5, gy + FLOOR_H*0.46, t.y + 0.5, false);
+        }
+        /* ---------- AND IT IS THE BRIGHTEST THING ON THAT WALL ----------
+           "the doors in general are really hard to see visually."
+           Underground the sun is off, the fill is 0.20 and there are exactly three point lights
+           in the whole world, so a Lambert box in a doorway past the torch is black — and so is
+           the rock beside it. Measured before this: the brightest pixel at a doorway was 18
+           against 18 for the stone next to it, which is not a door that is hard to see, it is a
+           door that is not there.
+           A lintel in a basic material, which is the trick the descents already use: it shows
+           its own colour whatever the light is doing and costs none of the three lights. Built
+           as its own mesh rather than through `box`, because `box` batches into Lambert
+           instances and the whole point is a surface that does not care about light. Amber for
+           a door, a hotter red for a barred one — a vault should read as a different decision
+           from across the room. */
+        {
+          const wSpan = span.length;
+          const bar = new THREE.Mesh(BOXG, dr.barred ? DOORGLOW_BARRED : DOORGLOW);
+          bar.scale.set(nx ? 0.14 : wSpan + 0.1, 0.13, nx ? wSpan + 0.1 : 0.14);
+          bar.position.set((lo.x + hi.x)/2 + 0.5, gy + FLOOR_H*0.84, (lo.y + hi.y)/2 + 0.5);
+          g.add(bar);
         }
       }
     }
@@ -29637,7 +30883,7 @@ const syncStairs = makeDynGroup(
   (g) => {
     for(const st of stairs){
       const y = groundY(st.x + 0.5, st.y + 0.5);
-      const lo = Math.min(st.from, st.to);
+      const lo = Math.min(st.from, st.to), hi = Math.max(st.from, st.to);
       /* four risers climbing from one storey to the next */
       for(let i = 0; i < 4; i++){
         box(g, 0.85, 0.22, 0.85 - i * 0.16, '#b89a58',
@@ -29647,6 +30893,42 @@ const syncStairs = makeDynGroup(
       /* a post at the head of it, so you can find the thing from across the room */
       box(g, 0.18, FLOOR_H, 0.18, '#d4a040',
           st.x + 0.5, y + floorY(lo) + FLOOR_H/2, st.y + 0.5);
+      /* ---------- AND UNDERGROUND, A MOUTH YOU CAN SEE FROM ACROSS A DARK HALL ----------
+         "I cannot find any entrances that lead deeper than the first layer. I'm not sure if
+          they are invisible or if they are simply not there."
+         They were there, all twenty of them open on both sides. The post above is the whole of
+         what marked one, it is eighteen hundredths of a tile wide, and it is drawn from the
+         LOWER storey up — so from the floor you are standing on, the thing you are looking for
+         is a matchstick poking through at your feet, in a room lit to a torch's radius.
+         Above ground that is enough, because you can see to the horizon. Below it, nothing you
+         have not walked within a few tiles of exists at all.
+         So the mouth gets the palefrond treatment: `MeshBasicMaterial`, which shows exactly the
+         hex it is given however black the room is, and no PointLight — the scene is budgeted
+         for three fires and a way down is not a fire. A ring on the floor of the UPPER storey,
+         because that is the storey a body hunting for it is standing on, and a column standing
+         out of it. Cold white-gold against the orange of every torch in the game, so the two
+         never read as each other at a distance. */
+      if(hi < 0){
+        const my = y + floorY(hi);
+        const ring = new THREE.Mesh(new THREE.RingGeometry(0.62, 0.95, 22),
+          new THREE.MeshBasicMaterial({color: 0xffe3a0, transparent:true, opacity:0.85,
+            side:THREE.DoubleSide, depthWrite:false}));
+        ring.rotation.x = -Math.PI/2;
+        ring.position.set(st.x + 0.5, my + 0.07 + DECK_TOP, st.y + 0.5);
+        ring.renderOrder = 4;
+        g.add(ring);
+        /* the column, which is what carries across a hall — a ring on the floor is edge-on and
+           invisible from anywhere but directly above it */
+        const col = new THREE.Mesh(BOXG, new THREE.MeshBasicMaterial({color: 0xffe3a0, transparent:true, opacity:0.5, depthWrite:false}));
+        col.scale.set(0.16, 2.4, 0.16);
+        col.position.set(st.x + 0.5, my + 1.2, st.y + 0.5);
+        col.renderOrder = 4;
+        g.add(col);
+        const bulb = new THREE.Mesh(SPHG, new THREE.MeshBasicMaterial({color: 0xfff4d0}));
+        bulb.scale.set(0.3, 0.3, 0.3);
+        bulb.position.set(st.x + 0.5, my + 2.5, st.y + 0.5);
+        g.add(bulb);
+      }
     }
   }
 );
@@ -29875,6 +31157,7 @@ const syncTownWalls = makeDynGroup(
     const BANNER = {dustport:'#3f7fa0', copperhold:'#c47a2a', greenrest:'#5a8a3a', hollowmere:'#8a6ab5'};
     for(const t of towns){
       if(!t.def.wall) continue;
+      if(t.sacked > 0) continue;      /* nobody is left to fly it, either way the town ended */
       const r = t.def.wall.r;
       for(const gy of [t.y-r, t.y+r]){
         const bx = t.x - 1.6, y = groundY(bx, gy);
@@ -29884,6 +31167,119 @@ const syncTownWalls = makeDynGroup(
     }
   }
 );
+/* ---------- AND WHAT IS LEFT OF A TOWN THAT ENDED ----------
+   "Let's add some visuals for sacks and plagues... Two flavors of sack would be best."
+   A town has been able to end two different ways since long before either of them had
+   anything to look at. `t.sacked = 5` is a host through the breach and the stores put to the
+   torch. `fallToTheDark` is order reaching zero — "whatever came over its wall is still in
+   there" — and it sets 9. On the map both of them looked exactly like the town next door.
+   They are opposites and they are drawn as opposites. A TORCHED town has lost a third of its
+   roofs, the rest are charred, fire is still working through it and the smell of it is the
+   light you see it by at night. A town that FELL TO THE DARK is whole: every roof on, nothing
+   scorched, nothing burning — and not one light anywhere in it, with each doorway a flat black
+   hole that stays black at noon.
+   The signature is the KIND and not the counter, so this is built once when a town falls and
+   once when it comes back, rather than on each of the nine days of the count. */
+const RUIN_DARK = new THREE.MeshBasicMaterial({color: 0x07060a});
+_sharedRes.add(RUIN_DARK);          /* shared across rebuilds — `disposeTree` must leave it alone */
+const syncTownScar = makeDynGroup(
+  () => towns.map(t => t.sacked > 0 ? (t.sackKind || 'torch') : '-').join('|'),
+  (g) => {
+    /* THE ROOFS ARE NOT THIS GROUP'S CHILDREN. `b._roof` is a retained mesh built once with the
+       town, so it is not disposed and rebuilt with the rest of this — which means every
+       building has to be SET on every pass, not just the burnt ones, or a town that comes back
+       from a sack keeps its charred roofs and its holes for the rest of the run. */
+    for(const b of buildings){
+      if(!b._roof) continue;
+      const ruined = !!(b.town && b.town.sacked > 0);
+      const burnt = ruined && (b.town.sackKind || 'torch') !== 'dark';
+      b._fallen = burnt && hash2(b.x * 3 + 1, b.y * 5 + 2) < 0.34;
+      /* CHARRED IS NEAR-BLACK AND THE SAME FOR EVERY ROOF; COLD IS THE ROOF'S OWN COLOUR WITH
+         THE LIFE TAKEN OUT OF IT. `shade` is here for exactly this — the same stuff in a
+         different condition — and it keeps a town that fell to the dark reading as the town it
+         was, which is the whole difference between the two endings. */
+      b._roof.material = !ruined ? (b._roofMat0 || b._roof.material)
+                       : burnt   ? (b._fallen ? b._roof.material : mat('#2b2520'))
+                       : mat(shade('#' + (b._roofMat0 || b._roof.material).color.getHexString(), 0.42));
+      if(!b._fallen) b._roof.visible = true;
+    }
+    for(const t of towns){
+      if(!(t.sacked > 0)) continue;
+      const dark = (t.sackKind || 'torch') === 'dark';
+      for(const b of buildings){
+        if(b.town !== t || b.citadel || !b._roof) continue;
+        const cxp = b.x + b.w/2, czp = b.y + b.h/2;
+        const wallH = b._eaveY - b._gy - (b._lift || 0);
+        const dx = b.door.x + 1, dz = b.y + b.h - 0.5;
+        if(dark){
+          /* the doorway, and nothing behind it. A BASIC material, because this is the one
+             black in the world that has to stay black in full sun — a Lambert panel in a
+             doorway at noon is a grey rectangle, which reads as a shutter. */
+          const m = new THREE.Mesh(BOXG, RUIN_DARK);
+          m.scale.set(1.96, wallH * 0.94, 0.1);
+          m.position.set(dx, b._gy + (b._lift || 0) + wallH * 0.47, dz);
+          g.add(m);
+          continue;
+        }
+        if(b._fallen){
+          /* the roof is down. What is left is the frame of it — beams across the footprint at
+             eave height, and the rest of it on the floor. */
+          for(let k = 0; k < 3; k++){
+            const fz = b.y + 1.0 + k * (b.h - 2.0) / 2;
+            box(g, b.w - 0.9, 0.12, 0.14, '#2a231c', cxp, b._eaveY - 0.12, fz, false);
+          }
+          for(let i = b.x + 1; i < b.x + b.w - 1; i++) for(let j = b.y + 1; j < b.y + b.h - 1; j++){
+            const hh = hash2(i * 17 + 3, j * 13 + 9);
+            if(hh > 0.42) continue;
+            box(g, 0.7, 0.18 + hh * 0.5, 0.7, hh < 0.2 ? '#231d18' : '#3d362d',
+                i + 0.5, b._gy + (b._lift || 0) + 0.12 + hh * 0.25, j + 0.5);
+          }
+        } else {
+          /* it kept its roof, and the fire still came out of the door */
+          box(g, 1.9, Math.min(0.7, wallH * 0.4), 0.07, '#221c17', dx, b._eaveY - 0.3, b.y + b.h - 0.02, false);
+        }
+      }
+      /* AND THE GROUND ITSELF. The lamp posts are where a town's streets are — see the two
+         rings in `townFires` — so both endings are written on the ground at the posts, which
+         is also the list `syncTorchLights` and `ruinTick` read. The torched town gets scorch
+         under the ones still alight and a stump of burnt wreckage on it; the other gets the
+         cold that came up the street, at every post, because nothing there burned and the
+         town would otherwise read as merely unlit from more than a few tiles away. */
+      for(const f of townFires){
+        if(f.town !== t) continue;
+        const fy = groundY(f.x, f.y);
+        if(dark){
+          box(g, 3.0, 0.05, 3.0, '#0f0e14', f.x, fy + 0.04, f.y, false);
+          box(g, 0.2, 1.5, 0.2, '#14121a', f.x, fy + 0.75, f.y, false);   /* the post, gone cold */
+        } else if(ruinBurns(f)){
+          box(g, 2.6, 0.05, 2.6, '#241f1a', f.x, fy + 0.04, f.y, false);
+          box(g, 0.5, 0.35, 0.5, '#1c1713', f.x, fy + 0.18, f.y);
+        }
+      }
+    }
+  }
+);
+/* WHICH OF A BURNT TOWN'S POSTS IS STILL ALIGHT. A hash of the post's own position, so the
+   same handful burn from the moment the town falls to the moment it is rebuilt, and the
+   scorch on the ground, the flame particles and the light all agree about which ones. */
+function ruinBurns(f){ return hash2(Math.round(f.x) * 11 + 7, Math.round(f.y) * 19 + 3) < 0.45; }
+/* ---------- AND IT IS STILL BURNING ----------
+   Fire moves, so this is the one part of the scar that cannot be geometry. Thrown from the
+   same posts the scorch is laid at, on the world tick rather than the frame, and culled to the
+   camera before anything is spent — seven towns of sixteen posts is a hundred and twelve
+   places this would otherwise ask about sixty times a second.
+   `addFlame` DRAWS ON `vrnd`, which is the visual stream and not the world's. A fire thrown
+   off `rnd` four times a second would walk the seeded stream for as long as the town burned,
+   and every roll the world made afterwards — every raid, every birth, every ore in the ground
+   — would come out somewhere else. */
+function ruinTick(){
+  for(const f of townFires){
+    if(!(f.town.sacked > 0) || (f.town.sackKind || 'torch') === 'dark') continue;
+    if(Math.abs(f.x - camSX) > 70 || Math.abs(f.y - camSY) > 70) continue;
+    if(!ruinBurns(f)) continue;
+    addFlame(f.x, f.y, 2, 0.8);
+  }
+}
 const syncSlaverCamp = makeDynGroup(
   () => slaverCamp ? '1' : '0',
   (g) => {
@@ -35869,7 +37265,7 @@ function syncChars(dt){
       e.wardRing.visible = true;
       const sx = e.g.scale.x || 1, sy = e.g.scale.y || 1;
       e.wardRing.scale.setScalar(1 / sx);
-      e.wardRing.position.set(0, 0.07 / sy, 0);
+      e.wardRing.position.set(0, (0.07 + deckLift(c)) / sy, 0);
       e.wardRing.material.opacity = 0.30 + Math.sin(Date.now() * 0.0025) * 0.12;
     } else if(e.wardRing){ e.wardRing.visible = false; }
     /* ---------- AND THE GROUND A TORCH ACTUALLY REACHES ----------
@@ -35878,9 +37274,13 @@ function syncChars(dt){
        where it ended. A filled disc rather than a ring, because this one is a POOL — the
        thing it wants to show is the lit ground, not the boundary — and additive, so it warms
        whatever it lies over instead of painting a flat plate on it.
-       Only below ground. On the surface a torch is a stick with a fire on it and the sun is
-       doing the work; drawing an orange dinner plate under everyone at noon would be noise. */
-    if(torchLit(c) && darkFloor(c)){
+       Below ground at every hour, and above ground by how dark it is — `fireWeightFor` rather
+       than `darkFloor`, which is the gameplay predicate for being blind and must not follow the
+       sun. The old note here said "on the surface the sun is doing the work", and at noon it
+       still is: the weight is zero through the middle of the day, so there is no orange dinner
+       plate under anybody at midday, and it comes up over dusk rather than switching on. */
+    const fw = torchLit(c) ? fireWeightFor(c) : 0;
+    if(fw > 0.01){
       if(!e.torchPool){
         e.torchPool = new THREE.Mesh(new THREE.CircleGeometry(TORCH_R, 40),
           new THREE.MeshBasicMaterial({map: torchTex(), color: 0xffffff, transparent: true,
@@ -35892,9 +37292,9 @@ function syncChars(dt){
       e.torchPool.visible = true;
       const sx2 = e.g.scale.x || 1, sy2 = e.g.scale.y || 1;
       e.torchPool.scale.setScalar(1 / sx2);
-      e.torchPool.position.set(0, 0.05 / sy2, 0);
+      e.torchPool.position.set(0, (0.05 + deckLift(c)) / sy2, 0);
       /* a fire is never still, and the flicker is most of what sells it */
-      const fk = 0.34 + Math.sin(Date.now() * 0.011) * 0.05 + Math.sin(Date.now() * 0.027) * 0.035;
+      const fk = (0.34 + Math.sin(Date.now() * 0.011) * 0.05 + Math.sin(Date.now() * 0.027) * 0.035) * fw;
       e.torchPool.material.opacity = fk;
       if(e.torchFlame) e.torchFlame.scale.set(0.13, 0.19 + fk * 0.5, 0.13);
     } else if(e.torchPool){ e.torchPool.visible = false; }
@@ -36414,8 +37814,28 @@ function renderOverlay(rdt){
     setFont('bold 12px monospace');
   }
   /* stairs: the way up, marked, because a black tower is confusing enough */
+  /* ---------- AND A WAY DOWN YOU HAVE ALREADY FOUND STAYS FOUND ----------
+     This drew only at `visAt === 2`, which is LIVE SIGHT — a body of yours standing there
+     looking at it right now. Above ground that is nearly always true of anything in front of
+     you. Below it, sight is a torch's radius, so the glyph appeared when you were already on
+     top of the thing and vanished the moment you stepped away. A player who found a way down,
+     went to fetch the rest of the squad and came back had no way to find it again.
+     Seen once is known thereafter: the stair remembers, and the glyph then draws on explored
+     ground as well as on ground in sight.
+     AND IT HAS TO ASK WHICH STOREY YOU ARE ON, which the first cut did not. `vis` is indexed
+     `y*W+x` and has no floor dimension at all — one bitmap for a world four storeys deep — so
+     walking the surface marks the tile above a shaft as explored exactly as walking the shaft
+     does. Left on `visAt` alone this would have lit up every way down in the world as you
+     crossed the waste above it, remembered them, and drawn them through a quarter mile of
+     rock: the same giveaway the minimap note forbids, arrived at from a different direction.
+     So the camera has to be on one of the two storeys the stair actually joins. On the surface
+     that is free — tower stairs leave from floor 0 — and underground it is the difference
+     between having been there and having walked over it. */
   for(const st of stairs){
-    if(visAt(st.x, st.y) !== 2) continue;
+    if(activeFloor !== st.from && activeFloor !== st.to) continue;
+    const v = visAt(st.x, st.y);
+    if(v === 2) st.seen = true;
+    if(!(v === 2 || (st.seen && v >= 1))) continue;
     const lo = Math.min(st.from, st.to);
     const q = w2s(st.x + 0.5, st.y + 0.5, groundY(st.x+0.5, st.y+0.5) + floorY(lo) + 1.6);
     if(!q) continue;
@@ -36920,7 +38340,7 @@ function render(){
   updateSky();
   syncTorchLights();      /* and the three fires nearest the camera, if the camera is under the world */
   water.position.y = -0.22 + Math.sin(now*0.001)*0.03;
-  syncPBuilds(); syncBlueprints(); syncSundered(); syncWells(); syncPyres(); syncBastion(); syncChests(); syncBeds(); syncTownWalls(); syncCamps(); syncSlaverCamp(); syncRoofs(); syncVertical(); syncRifts(); syncStairs(); syncUndercroft(); syncRedoubts();
+  syncPBuilds(); syncBlueprints(); syncSundered(); syncWells(); syncPyres(); syncBastion(); syncChests(); syncBeds(); syncTownWalls(); syncTownScar(); syncCamps(); syncSlaverCamp(); syncRoofs(); syncVertical(); syncRifts(); syncStairs(); syncUndercroft(); syncRedoubts();
   if(fogDirty) redrawFog();
   syncChars(rdt);
   updateDust(rdt);
@@ -37087,6 +38507,20 @@ function renderMinimap(){
        to keep doing it — a diagram is allowed to be legible in a way a person is not. */
     mmcx.fillStyle = allegianceColor(c);
     mmcx.fillRect(c.x*128/W-1, c.y*128/H-1, 2, 2);
+  }
+  /* ---------- AND THE WAYS DOWN, ON THE STOREY YOU ARE ACTUALLY ON ----------
+     Under the same rule as the bodies above: a way down is drawn only when you have somebody
+     on the storey it leaves from, so this never tells you the shape of a floor you have not
+     walked. It is memory, not sight — where the hole you already found was — which is the one
+     thing the minimap can offer that a torch cannot. */
+  for(const st of stairs){
+    if(!st.seen || st.to >= 0) continue;
+    if(!mmOpen[st.from] && !mmOpen[st.to]) continue;
+    const px = st.x*128/W, py = st.y*128/H;
+    mmcx.fillStyle = '#ffe3a0';
+    mmcx.fillRect(px - 1.5, py - 1.5, 3, 3);
+    mmcx.fillStyle = '#141008';
+    mmcx.fillRect(px - 0.5, py - 0.5, 1, 1);
   }
   mmcx.drawImage(mmFog, 0, 0);
   /* YOUR OWN PINS GO ON AFTER THE FOG TOO — see the note by `marks`. A hollow ring rather
@@ -40164,7 +41598,7 @@ const BUILD_CATS = [
      thing — every part of it reachable only by a harness calling past the build bar.
      tools/kin2.js asks the BAR for it now, not the table. */
   ['STRUCTURE',  ['wall', 'rampart', 'shack', 'home', 'tower', 'cell', 'wartable']],
-  ['DEFENCE',    ['turret', 'lance', 'torchpost']],
+  ['DEFENCE',    ['turret', 'lance', 'torchpost', 'lampviolet']],
   ['LABOUR',     ['farm', 'workbench', 'armoury', 'loom', 'forge', 'kiln', 'smelter', 'still']],
   /* ITS OWN ROW. The well and the pan are what anybody can manage; the plant is the one
      thing in this game you build off a found drawing rather than off a research tree. */
@@ -40188,6 +41622,8 @@ function buildLock(key){
   /* NOT A RESEARCH NAME, because there is no project that reaches it. The lock says what
      you actually have to go and find, the way the Lance's does. */
   if(key==='desal' && !research.done.golden_water) return 'a Waterworks Schematic';
+  /* and this one is not a schematic either — it is a person, in a town, who has to like you */
+  if(key==='lampviolet' && !research.done.violet_light) return "Fallowend's regard";
   if(key==='vat' && !research.done.quickening) return 'The Quickening';
   if(key==='boneyard' && !research.done.rites_binding) return 'Rites of Binding';
   if(key==='charnel' && !research.done.carrion_rites) return 'Carrion Rites';
@@ -41534,7 +42970,11 @@ cv.addEventListener('mousedown', e => {
         const items = [];
         if(dr.open){
           items.push({label:'CLOSE THE DOOR', fn:()=>{
-            if(chars.some(o => o.state !== 'dead' && Math.floor(o.x) === dr.x && Math.floor(o.y) === dr.y && (o.floor||0) === (dr.f||0))){
+            /* ANY TILE OF THE SPAN. A three-tile doorway shut on somebody standing in the
+               outer leaf is a body inside the rock. */
+            const span = doorTiles(dr);
+            if(chars.some(o => o.state !== 'dead' && (o.floor||0) === (dr.f||0) &&
+                               span.some(t => Math.floor(o.x) === t.x && Math.floor(o.y) === t.y))){
               log('Somebody is standing in the doorway.', 'bad'); return;
             }
             setDoor(dr, false); log('The door swings shut.', '');
@@ -43144,8 +44584,39 @@ const TALK_TREES = {
          when:(t2)=>!!(fallowend && towns[t2.isLeader] === fallowend.town && fallowend.dark > 0), to:'lanterns'},
         {say:'I have a charm your people made. Will your stone keep it?',
          when:(t2)=>!!(fallowend && towns[t2.isLeader] === fallowend.town && (stash.t_charm || 0) > 0), to:'keeping'},
+        /* ---------- AND THE THING SHE WILL ONLY TELL SOMEBODY SHE TRUSTS ----------
+           A `found` tech with no START button anywhere, the way the Harbour Receipt is, and the
+           gate is the town's regard rather than a stat or a gift: Fallowend's one real asset is
+           the pattern of its glass, and the Elder is not going to hand it to a stranger who
+           wandered in off the road. Hidden rather than shown-and-refused, because a line she
+           would not say to you is a line you should not see her decline. */
+        {say:'Teach me how the glass is cut.',
+         when:(t2)=>!!(fallowend && towns[t2.isLeader] === fallowend.town &&
+                       (fallowend.town.rep || 0) >= VIOLET_REGARD && !research.done.violet_light),
+         to:'teaching'},
         {say:'Nothing today.'},
       ],
+    },
+    /* ---------- WHAT FOUR GENERATIONS OF KEEPING IT ALIGHT LOOKS LIKE FROM INSIDE ----------
+       She is not being coy and she is not withholding a secret: she genuinely believes it is
+       the words, because that is what she was taught and it has worked every time. What she can
+       actually give you is the craft — the cut of the glass and the shape of the housing — and
+       she gives it the way a person gives away the only thing their town still owns. */
+    teaching: {
+      line: () => 'You have kept our lamps burning. That is more than the seats have managed between them.\n\n' +
+        'Sit, then. It is the cut that matters — nine faces, not eight, and the ninth one slightly off true, which my ' +
+        'grandmother said was where the light gets out. The housing is old and you will not make a new one, so find them ' +
+        'where the old world left them. Then you say the words over it. I do not know whether the words are the part ' +
+        'that works. I have never once dared leave them out.',
+      opts: [
+        {say:'I will sit with you until I have it.', fn:()=>{ learnVioletGlass(); }, to:'taught'},
+        {say:'Another time.'},
+      ],
+    },
+    taught: {
+      line: 'Then it is not only ours any more. Good. Put one up somewhere that needs it, and do not tell me where — ' +
+        'I would rather think it is everywhere.',
+      opts: [ {say:'It will be.'} ],
     },
     lanterns: {
       line: () => {
@@ -43784,7 +45255,7 @@ function snapshot(){
     bonds: [...bonds.entries()],
     campN, weather: {...weather}, rel: {...rel}, slaverRazed: !slaverCamp,
     townState: towns.map(t => ({warWithI: t.warWith ? towns.indexOf(t.warWith) : -1,
-      warDay: t.warDay||0, plague: t.plague||0, plagueCd: t.plagueCd||0, sacked: t.sacked||0, uprising: !!t.uprising,
+      warDay: t.warDay||0, plague: t.plague||0, plagueCd: t.plagueCd||0, sacked: t.sacked||0, sackKind: t.sackKind||null, uprising: !!t.uprising,
       stock: {...(t.stock||{})}, leaderSeats: t.leaderSeats||0, playerRuled: !!t.playerRuled, settlerT: t.settlerT||0,
       order: t.order ?? 55, pacts: {...(t.pacts||{})}, petitions: (t.petitions||[]).map(p=>({k:p.k, txt:p.txt, opts:p.opts, expires:p.expires, filed:!!p.filed})),
       feastCd: t.feastCd||0, rebelDay: t.rebelDay||0, promise: t.promise ? {...t.promise} : null,
@@ -43804,6 +45275,11 @@ function snapshot(){
       caravanOut: t.caravanOut ? {...t.caravanOut, dest: {...t.caravanOut.dest}} : null})),
     contractN,
     explored: packExplored(),
+    /* WHICH WAYS DOWN YOU HAVE FOUND. The stairs themselves are worldgen and come back off the
+       seed, so only the knowledge needs carrying — and it cannot be derived from `explored`,
+       which has no floor dimension and would hand you every shaft under ground you had merely
+       walked over. One index per stair you have actually stood at. */
+    stairsSeen: stairs.filter(st => st.seen).map(st => st.y * W + st.x),
     nodeUses: [...nodeUses.entries()],
     townWalls: towns.map(t => t.walls.map(w => ({x:w.x, y:w.y, hp:w.hp}))),
     squadGroups: squadGroups.map(g => ({name:g.name, open:g.open})),
@@ -43954,7 +45430,13 @@ function restore(d){
      builds, or another seed), NONE of the coords line up, every one of them reads as "this
      wall was destroyed", and the town gets unbuilt. A save must never be able to raze a town
      it doesn't recognise — so only prune when most of what the SAVE claims is actually here. */
-  const applyWalls = (ring, base, saved) => {
+  /* `decked` is towns only. A town wall tile is also a `decks` floor — the rampart archers
+     stand on — and a breach now takes that floor with it, so a load has to put it back or an
+     intact save restored after a siege comes back with the stone standing and no walk on top
+     of it. There is no `baseDecks` to rebuild from, which is why this is done here rather than
+     alongside the `blocked` reset. The bastion and the guild pass `false`: their rings were
+     never decked, and adding one would hand them an upper floor that does not exist. */
+  const applyWalls = (ring, base, saved, decked) => {
     if(!ring || !base || !base.length) return;
     /* Start from the world as it was GENERATED, not from whatever is left of the ring in
        memory. This is the whole fix: `blocked` has just been reset to baseBlocked, so every
@@ -43963,7 +45445,7 @@ function restore(d){
        out the same as the first — the old code only ever spliced, so damage accumulated
        across loads and never came back. */
     ring.length = 0;
-    for(const w of base) ring.push({...w});
+    for(const w of base){ ring.push({...w}); if(decked) decks.add(bkey(w.x, w.y, 1)); }
     /* null means the save has no wall data at all (it predates the field) — keep the ring we
        just rebuilt. An EMPTY array is different: it means this town was recorded with its
        ring flat, and that has to be honoured. */
@@ -43985,11 +45467,12 @@ function restore(d){
       const sw = savedAt.get(w.x + ',' + w.y);
       if(!sw){
         blocked.delete(bkey(w.x, w.y));
+        if(decked) decks.delete(bkey(w.x, w.y, 1));
         ring.splice(ring.indexOf(w), 1);
       } else w.hp = sw.hp;
     }
   };
-  towns.forEach((t, ti) => applyWalls(t.walls, baseTownWalls[ti], d.townWalls ? (d.townWalls[ti] || []) : null));
+  towns.forEach((t, ti) => applyWalls(t.walls, baseTownWalls[ti], d.townWalls ? (d.townWalls[ti] || []) : null, true));
   if(bastion) applyWalls(bastion.walls, baseBastionWalls, d.bastionWalls || null);
   if(guild) applyWalls(guild.walls, baseGuildWalls, d.guildWalls || null);
   middens.length = 0;
@@ -44319,6 +45802,10 @@ function restore(d){
   });
   risenN = d.risenN || 0;
   if(d.explored) unpackExplored(d.explored);
+  if(Array.isArray(d.stairsSeen)){
+    const known = new Set(d.stairsSeen);
+    for(const st of stairs) if(known.has(st.y * W + st.x)) st.seen = true;
+  }
   camps.length = 0;
   if(d.camps){
     for(const sc of d.camps){
@@ -44341,6 +45828,9 @@ function restore(d){
     const ts = d.townState[i]; if(!ts) return;
     t.warWith = ts.warWithI >= 0 ? towns[ts.warWithI] : null;
     t.warDay = ts.warDay; t.plague = ts.plague; t.plagueCd = ts.plagueCd||0; t.sacked = ts.sacked; t.uprising = ts.uprising;
+    /* a save written before the two kinds were told apart has a ruin with no name for it; a
+       burnt town is the older of the two and the one that save is far more likely to hold */
+    t.sackKind = ts.sackKind || (ts.sacked > 0 ? 'torch' : null);
     if(ts.stock) t.stock = {...ts.stock};
     t.leaderSeats = ts.leaderSeats || 0;
     t.playerRuled = !!ts.playerRuled; t.settlerT = ts.settlerT || 0;
@@ -45771,10 +47261,34 @@ function applyCreation(race, gift, origin, sub){
       if(clear) placeStructure(type, tx, ty);
     }
 
-    /* fill the yard: everything a rite could want */
-    const seed = {mats:400, wood:300, stone:300, copper:150, iron_ore:120, coal:120,
-      c_ingot:80, iron:80, vflesh:120, remains:200, fabric:120, meat:80, fruit:120,
-      bandage:20, tome:6, crown:1, hide:40, w_rkat:2, pack_l:2};
+    /* ---------- FILL THE YARD: EVERYTHING A RITE COULD WANT, AND IT WAS NOT ----------
+       "it looks like that start is missing some key materials (copper something, ingots or
+        ore, I can't recall.) ... Also a higher number of materials and stuff all around."
+       Copper and ingots were in fact here — 150 and 80 — so the recollection was off, but the
+       instinct was right and worse than remembered. Audited every ingredient named by any
+       `BUILD_TYPES` cost or any `RECIPES` cost against what the yard actually held: of 22, NINE
+       were absent entirely, and three buildings could not be raised at all.
+         · LEAD, which is the Desalination Plant and the Heavy Aetheric Lance
+         · SUNDERED MARROW, which is the Wayline Circle
+         · AETHER CELLS, which are what the Lance fires
+         · BRINE, SALT and FRESH WATER — the entire water chain arrived after this start was
+           last touched, and a testbed that cannot run a salt pan cannot test one
+         · RUM and CASK RUM, the same story for the still and the taproom
+         · LEVIATHAN HIDE
+       The rule for this list is now mechanical rather than remembered: if something in the game
+       asks for an ingredient, the Court holds a working quantity of it. `tools/court.js` checks
+       exactly that, so the next thing added to the tech tree fails a claim here instead of being
+       discovered missing in play a month later.
+       AND MORE OF EVERYTHING. These are roughly doubled: a testbed exists to be spent from
+       without the spending becoming the test. */
+    const seed = {mats:900, wood:700, stone:700, copper:400, iron_ore:300, coal:300,
+      c_ingot:200, iron:200, vflesh:300, remains:500, fabric:300, meat:200, fruit:300,
+      bandage:60, tome:14, crown:1, hide:120, w_rkat:4, pack_l:4,
+      /* the nine that were not here at all */
+      lead:90, sunder:12, aether_cell:16, brine:200, salt:200, water:200,
+      rum:80, rum_cask:40, hide_lev:24,
+      /* and the paperwork, so the reading side of the tree can be exercised too */
+      formula_t:6, formula_w:6, sch_desal:1};
     for(const k of Object.keys(seed)) storeItem(k, seed[k], me);
 
     /* the court itself */
@@ -45797,6 +47311,61 @@ function applyCreation(race, gift, origin, sub){
       const h = mk(q, {atk:10, def:10, tough:10, ath:6, medic:14, magic:35,
         gift:'dark', crafting:35, smithing:30, labor:30, farming:25});
       h.name = 'Adept ' + h.name;
+    }
+
+    /* ---------- AND THE FACES, BECAUSE A TESTBED IS FOR LOOKING AT THINGS ----------
+       "I also would like to have two liches — the deathless, plus an ascended Lyonart so I can
+        preview/test his model. Having Lyre, Saga, and Czarina would also be helpful."
+       Four sculpted heads that otherwise take a campaign apiece to stand in front of. The
+       ascended Lyonart is the hard one and the reason for the rest: `LICHFACE` maps his face to
+       `lyonlich`, and that mapping only ever fires on a body that is BOTH `face: 'lyonart'` and
+       `lich` — a combination the game produces exactly once, at the end of a questline, which
+       is a long way to walk to check whether a head sits right on a neck.
+       Every one of them is built from the same numbers the real spawn uses rather than from
+       numbers invented here, so what you are looking at is the body the game makes. */
+    {
+      const at = (dx, dy) => findOpenNear(Math.round(p.x + dx), Math.round(p.y + dy), 5);
+
+      /* THE SECOND LICH. His own head, not the robe: see the note on `robedLich` — a named
+         face that names its own ascended head keeps its body and changes only what is above it. */
+      const q1 = at(-3, -3);
+      const ly = makeChar("Lyonart d'Alagadda", 'player', q1.x, q1.y,
+        {atk:14, def:13, tough:11, ath:6, medic:5, magic:52, gift:'dark',
+         weapon:'w_kat', armor:'a_lea', blades:22, labor:2, crafting:6});
+      ly.face = 'lyonart'; ly.house = 'alagadda'; ly.conviction = 'ambitious';
+      ly.lich = true; ly.undead = true; ly.hunger = 100;
+      if(ly.att) ly.att.dark = 3;
+      ly.blood = ly.maxBlood; ly.shortTag = 'LY';
+      chars.push(ly);
+
+      /* his sister, off her own spawn — living, a divine caster, and the only one of the four
+         who can close a tear */
+      const q2 = at(3, -3);
+      const lyre = makeChar("Lyre d'Alagadda", 'player', q2.x, q2.y,
+        {atk:22, def:26, tough:20, ath:8, medic:40, magic:52, gift:'divine', armr:20,
+         weapon:'w_kat', armor:'a_lea'});
+      lyre.face = 'lyre'; lyre.house = 'alagadda';
+      lyre.conviction = 'compassion';
+      lyre.blood = 150; lyre.maxBlood = 150; lyre.shortTag = 'LR';
+      chars.push(lyre);
+
+      /* the godkiller and the one who walked out with him, both Hollows, both off their own
+         origin's numbers. `hollowTier` is a fact about the body and has to come with them or
+         the thing on screen is an ordinary man in his armour. */
+      const q3 = at(-3, 3);
+      const saga = makeChar('Saga Wordsworth', 'player', q3.x, q3.y,
+        {atk:26, def:23, tough:18, ath:11, medic:2, magic:26, gift:'dust', race:'hollow',
+         hollowTier:1, weapon:'w_kat', armor:'a_pla', blades:37, armr:28});
+      saga.face = 'saga'; saga.conviction = 'ambitious'; saga.shortTag = 'SG';
+      chars.push(saga);
+
+      const q4 = at(3, 3);
+      const cz = makeChar('Czarina', 'player', q4.x, q4.y,
+        {atk:22, def:25, tough:21, ath:10, medic:9, magic:6, race:'hollow', sex:'f',
+         hollowTier:1, weapon:'w_rkat', armor:'a_pla', blades:31, armr:30, martial:14,
+         labor:3, crafting:3, farming:0});
+      cz.face = 'czarina'; cz.conviction = 'loyal'; cz.regard = 40; cz.shortTag = 'CZ';
+      chars.push(cz);
     }
 
     cats = 20000;

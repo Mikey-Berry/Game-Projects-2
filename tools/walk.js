@@ -161,15 +161,27 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     for (let i = 0; i < chars.length && pick.length < 100; i += Math.max(1, (chars.length / 140) | 0)) {
       if (chars[i].state === 'ok') pick.push(chars[i]);
     }
-    let checked = 0, disagree = 0, foundSomething = 0;
+    let checked = 0, disagree = 0, foundSomething = 0, frozenOnly = 0, unexplained = 0;
+    const lost = [];
     const bad = [];
+    /* ---------- AND THE OLD SIDE IS RESTRICTED TO WHAT THE GRID IS FOR ----------
+       This claim read red for a long time and it was the claim that was wrong, not the sweep.
+       `regridAll` files a body only `if(c.state === 'ok' && !bodyFrozen(c))` — a storey with
+       nobody of yours on it is FROZEN and deliberately absent from the grid, which is most of
+       the point of having one. The roster scan reproduced here had no such clause, so it was
+       asking a different question: measured, 22 of 100 pairs disagreed and **all 22 of them
+       were frozen bodies, with 0 unexplained**. Comparing a sweep of the live world against a
+       scan of the whole world can only ever fail.
+       So the old side is restricted to what the grid is defined to hold, and the exclusion
+       itself becomes its own claim below rather than noise in this one. */
+    const live = (o) => o.state === 'ok' && !(typeof bodyFrozen === 'function' && bodyFrozen(o));
     for (const w of pick) {
       for (const c of [pick[(pick.indexOf(w) + 7) % pick.length]]) {
         if (c === w) continue;
         checked++;
-        /* the old code, verbatim */
-        const oldOn = chars.filter(o => o.state === 'ok' && o.target === w && hostile(c, o) && dist(o.x, o.y, w.x, w.y) < 9);
-        const oldNear = chars.filter(o => o.state === 'ok' && hostile(c, o) && dist(o.x, o.y, w.x, w.y) < 5);
+        /* the old code, verbatim but for the freeze the grid already applies */
+        const oldOn = chars.filter(o => live(o) && o.target === w && hostile(c, o) && dist(o.x, o.y, w.x, w.y) < 9);
+        const oldNear = chars.filter(o => live(o) && hostile(c, o) && dist(o.x, o.y, w.x, w.y) < 5);
         /* the new sweep, verbatim */
         const newOn = [], newNear = [];
         for (const o of charsNear(w.x, w.y, 9).slice()) {
@@ -188,14 +200,79 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           disagree++;
           if (bad.length < 3) bad.push({ oldOn: oldOn.length, newOn: newOn.length, oldNear: oldNear.length, newNear: newNearAll.length });
         }
+        /* and the exclusion, counted as itself: an UNRESTRICTED scan may only ever differ by
+           bodies the freeze holds. Anything else is the grid losing somebody, which is the
+           fault this whole claim exists to catch. */
+        const rawNear = chars.filter(o => o.state === 'ok' && hostile(c, o) && dist(o.x, o.y, w.x, w.y) < 5);
+        const extra = rawNear.filter(o => !newNearAll.includes(o) && !newOn.includes(o));
+        /* ITS OWN COUNTER AND ITS OWN LIST. Sharing `bad` with the claim above meant three
+           ordinary disagreements could fill it first and a real loss would go unrecorded —
+           a claim that cannot fail is not a claim. */
+        if (extra.length && extra.every(o => typeof bodyFrozen === 'function' && bodyFrozen(o))) frozenOnly++;
+        else if (extra.length) {
+          unexplained++;
+          if (lost.length < 3) lost.push(extra.slice(0, 3).map(o => `${o.name} f${o.floor || 0} at ${dist(o.x, o.y, w.x, w.y).toFixed(1)}`).join(' ; '));
+        }
       }
     }
-    return { checked, disagree, foundSomething, bad };
+    return { checked, disagree, foundSomething, frozenOnly, unexplained, lost, bad };
   });
   R.andTheGridFindsWhatTheRosterFound = !same ? '!! NOTHING TO MEASURE — no spatial grid'
     : (same.checked > 40 && same.disagree === 0 && same.foundSomething > 0)
     ? `the grid sweep and the roster scan agree on every one of ${same.checked} ward/guard pairs drawn from across the world, ${same.foundSomething} of which had somebody to find`
     : `!! THE GRID SWEEP FOUND A DIFFERENT SET (${JSON.stringify(same)})`;
+  /* the exclusion, said out loud. It is the whole reason the sweep is cheap and it is the one
+     way a "faster" grid could quietly start losing bodies that matter. */
+  R.andTheOnlyThingItLeavesOutIsAFrozenStorey = !same ? '!! NOTHING TO MEASURE — no spatial grid'
+    : same.unexplained
+    ? `!! THE GRID LOST ${same.unexplained} BODY/BODIES THAT WERE NOT FROZEN (${JSON.stringify(same.lost)})`
+    : `${same.frozenOnly} of ${same.checked} pairs had a body the whole-roster scan sees and the grid does not, and every one of them was on a storey nobody of yours is standing on`;
+
+  /* ---- AND NOT THROUGH THE FLOOR ----
+     `dist` is two-dimensional, so a body standing directly under the ward is at distance zero
+     from it. `nearestEnemy` refuses a body on another storey and this sweep did not — it was
+     covered by accident, because the grid holds nothing on a frozen storey and a storey with
+     nobody of yours on it is frozen. Staged rather than sampled, because the live world does
+     not reliably produce the case: 10 cross-storey pairs inside nine tiles and 0 of 53 guard
+     picks landing on one. A guard that charges something under its feet is the failure. */
+  const throughFloor = await p.evaluate(() => {
+    const pl = player().filter(c => c.state === 'ok');
+    if (pl.length < 2) return null;
+    const ward = pl[0], guard = pl[1];
+    ward.floor = 0; guard.floor = 0;
+    guard.x = ward.x + 1.2; guard.y = ward.y;
+    /* a hostile on the storey below, on the ward's own tile, and NOT frozen — which is what
+       having one of yours down there buys it */
+    const q = findOpenNear(Math.round(ward.x), Math.round(ward.y), 4);
+    const foe = makeChar('Cellar Thing', 'bandit', q.x, q.y, { atk: 12, def: 10, tough: 12 });
+    foe.state = 'ok'; foe.floor = -1; foe.provoked = true;
+    chars.push(foe);
+    const mine = makeChar('Down There', 'player', q.x, q.y, { atk: 10, def: 10, tough: 10 });
+    mine.state = 'ok'; mine.floor = -1;
+    chars.push(mine);
+    update(1 / 30);
+    const seen = charsNear(ward.x, ward.y, 9).some(o => o === foe);
+    /* ---------- DRIVEN, NOT RE-IMPLEMENTED ----------
+       A first cut of this copied the guard's threat loop into the harness, floor test and all,
+       so it refused the body below whatever the game did — a claim that cannot fail. The real
+       block is the thing under test, so the guard is given the ward and the world is stepped,
+       and what is read back is the target the game chose. */
+    clearOrders(guard);
+    guard.guardTarget = ward; guard.target = null; guard.targetManual = false;
+    for (let i = 0; i < 12; i++) update(1 / 30);
+    const out = { inGrid: seen, pickedTheCellarThing: guard.target === foe, hostile: hostile(guard, foe),
+                  chose: guard.target ? guard.target.name : 'nothing',
+                  d: +dist(foe.x, foe.y, ward.x, ward.y).toFixed(2) };
+    guard.guardTarget = null; guard.target = null;
+    for (const x of [foe, mine]) { const i = chars.indexOf(x); if (i >= 0) chars.splice(i, 1); }
+    return out;
+  });
+  R.andAGuardDoesNotStepInThroughTheFloor = !throughFloor ? '!! NOTHING TO MEASURE — not enough player bodies to stage a ward and a guard'
+    : !throughFloor.hostile ? '!! NOTHING TO MEASURE — the staged body was not hostile to the guard'
+    : !throughFloor.inGrid ? '!! NOTHING TO MEASURE — the grid never handed the body below back, so no floor test was exercised'
+    : !throughFloor.pickedTheCellarThing
+    ? `a hostile standing ${throughFloor.d} tiles from the ward but one storey down is handed back by the grid and refused by the real guard block — it chose ${throughFloor.chose}`
+    : `!! A GUARD PICKED A THREAT ON ANOTHER STOREY AS A THREAT TO ITS WARD (${JSON.stringify(throughFloor)})`;
 
   /* ---- 5. AND A GUARD STILL STEPS IN, AND STILL LETS GO ----
      The behaviour either side of the rewrite, driven. The second half is the `includes` that

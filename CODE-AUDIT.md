@@ -6,7 +6,8 @@ inefficiencies. Reading every line also turned up ten real bugs, and those come 
 
 This replaces the audit of 2026-09-17, which is in git at `30223c9:CODE-AUDIT.md`. §8 says what
 that audit got right and what it missed. §9 checks this branch against PR 39, which was open at
-the same time: one silent break if the two are merged naively, and the order to merge them in.
+the same time: one silent break if the two are merged naively. PR 39 has since been merged
+(9e92e86), and this branch merged it back in with the resolution §9 describes.
 
 Every number here comes from the file or from the running game, not from memory, and the
 appendix says how to re-run each one. Items marked **fixed** are in this branch and checked by a
@@ -388,8 +389,8 @@ Either way, `watchers.js` should stop claiming they talk until they do.
 
 ### 5.2 Hollowmere breaks the light budget — **fixed by PR 39**
 
-PR 39 turns these lamps into ordinary town fires, and this finding closes once that merges
-(§9). The original finding:
+PR 39 (now merged) turned these lamps into ordinary town fires, so this finding is closed. The
+original finding:
 
 The torch-pool block, *"THREE FIRES, AND NEVER A FOURTH"*, budgets the scene at three point
 lights. Every light adds a per-fragment loop to every Lambert shader. The Palefrond comment in
@@ -573,7 +574,9 @@ preamble.
 PR 39 (`claude/undercroft-forage-court`: the undercroft, forage and march order, the Court
 start, town lights, sieges, ruins, the plague bell, the cart search) branched from the same
 `30223c9` and was still open while this review was done. I trial-merged it into this branch in
-a scratch worktree.
+a scratch worktree before either landed. PR 39 was merged first (9e92e86). This branch then
+merged `main` using exactly the resolution below, and the resolved game file is byte-identical
+to the one the trial run tested.
 
 **Textual conflicts: five, all in the game file, all resolvable.**
 
@@ -627,9 +630,8 @@ removed (§1.6), and nothing else, and the red goes green.
   PR 39 already used in `storeys.js`: stage past every town. It is green on PR 39 alone and on
   the merge. It belongs in the merge commit, because the file does not exist on this branch.
 
-**Recommended order:** merge PR 39 first. It is older and larger, and the resolution above has
-been checked against it. Then merge `main` into this branch with that resolution (the five hunks, `hi`, and the
-`marchorder.js` staging); it is a merge commit, not a rebase. Doing it the other way round means editing PR 39's branch.
+**Order, as done:** PR 39 merged first. `main` was then merged into this branch as a merge
+commit, not a rebase, carrying the five hunks, `hi`, and the `marchorder.js` staging.
 
 ---
 
