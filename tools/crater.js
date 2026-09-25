@@ -26,10 +26,12 @@
  *  11. the capital's footings stand in the bowl and a colonnade round the middle; nothing
  *      within twenty-four tiles of the centre but the colonnade, and every cache can be walked to
  *  12. the caches are there, and the one in the colonnade is the richest
- *  13. the Custodian stands at the middle, a Messenger, at peace with what the crater keeps
- *  14. the Second Fracture opens the Door at the bottom of the bowl, and the Custodian is gone
+ *  13. the Guardian at the Gate stands at the middle, a Messenger, at peace with what the
+ *      crater keeps
+ *  14. the Second Fracture opens the Door at the bottom of the bowl, and the Guardian is gone
  *      rather than dead
- *  15. killed first, it stays dead, and something larger notices
+ *  15. killed first, it stays dead, something larger notices, and the sky comes on faster:
+ *      the Fracture lurches at once and its daily rate goes up for the rest of the run
  *  16. the roads go round it: every town is on one network, no road comes inside the approach,
  *      and a road between towns on opposite sides follows the ring (both seeds)
  *  17. and so does everybody on the world's business: a caravaneer and a soldier sent across
@@ -312,37 +314,40 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           ? `${cc.length} caches in the crater, and the one in the colonnade is the richest (${heart.loot.cats} coin, ${heart.loot.items.formula_p} preserved formulae, ${heart.loot.items.codex} codices)`
           : `!! ${cc.length} CACHES; THE COLONNADE'S IS ${heart ? (richest === heart ? 'RICHEST' : 'NOT THE RICHEST') : 'MISSING'}`;
       }
-      /* ---- 13 to 15. the Custodian and the Door ---- */
+      /* ---- 13 to 15. the Guardian at the Gate and the Door ---- */
       {
-        const cu = chars.find(c => c.bossKey === 'custodian' && c.state !== 'dead');
+        const cu = chars.find(c => c.bossKey === 'guardian' && c.state !== 'dead');
         const bits = [];
         if (!cu) bits.push('nobody stands at the middle');
         else {
-          if (craterD(cu.x, cu.y) > 10) bits.push(`the Custodian stands ${craterD(cu.x, cu.y).toFixed(0)} from the middle`);
-          if (cu.gauntKind !== 'messenger') bits.push('the Custodian is not a Messenger');
+          if (craterD(cu.x, cu.y) > 10) bits.push(`the Guardian stands ${craterD(cu.x, cu.y).toFixed(0)} from the middle`);
+          if (cu.gauntKind !== 'messenger') bits.push('the Guardian is not a Messenger');
+          if (cu.name !== 'The Guardian at the Gate') bits.push(`it is called ${cu.name}`);
           const kept = chars.filter(c => (c.craterOwn === 'glass' || c.craterOwn === 'bowl' || c.craterOwn === 'messenger') && c.state !== 'dead');
           if (kept.some(g => hostile(cu, g))) bits.push('it is at war with the crater\'s own');
         }
-        R.theCustodianStands = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
-          : `the Custodian, a Messenger with ${cu.maxBlood} blood, stands ${craterD(cu.x, cu.y).toFixed(0)} tiles from the middle at peace with everything the crater keeps`;
+        R.theGuardianStands = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : `the Guardian at the Gate, a Messenger with ${cu.maxBlood} blood, stands ${craterD(cu.x, cu.y).toFixed(0)} tiles from the middle at peace with everything the crater keeps`;
         /* the Door */
         const ev0 = events.length;
         const d = openTheDoor();
-        const gone = !chars.some(c => c.bossKey === 'custodian' && c.state !== 'dead');
+        const gone = !chars.some(c => c.bossKey === 'guardian' && c.state !== 'dead');
         const said = events.slice(ev0).map(e => e.text || '').join(' ');
-        R.theDoorOpensInTheBowl = d && dist(d.x, d.y, CRATER.x, CRATER.y) < 1 && gone && !bossSlain.custodian && /Custodian is gone/.test(said) && broodAlive()
-          ? 'at the Second Fracture the Door opens at the bottom of the bowl with the Brood in it, and the Custodian is gone from it, not killed'
-          : `!! THE DOOR OPENED AT ${d ? Math.round(d.x) + ',' + Math.round(d.y) : 'NOWHERE'} (CUSTODIAN ${gone ? 'gone' : 'still there'}, SLAIN ${!!bossSlain.custodian}, BROOD ${!!broodAlive()})`;
+        R.theDoorOpensInTheBowl = d && dist(d.x, d.y, CRATER.x, CRATER.y) < 1 && gone && !bossSlain.guardian && /Guardian at the Gate is gone/.test(said) && broodAlive()
+          ? 'at the Second Fracture the Door opens at the bottom of the bowl with the Brood in it, and the Guardian is gone from it, not killed'
+          : `!! THE DOOR OPENED AT ${d ? Math.round(d.x) + ',' + Math.round(d.y) : 'NOWHERE'} (GUARDIAN ${gone ? 'gone' : 'still there'}, SLAIN ${!!bossSlain.guardian}, BROOD ${!!broodAlive()})`;
         /* killed first */
-        const c2 = spawnCustodian();
-        if (!c2) R.killedItStaysDead = '!! NO SECOND CUSTODIAN COULD BE STOOD UP TO KILL';
+        const c2 = spawnGuardian();
+        if (!c2) R.killedItStaysDead = '!! NO SECOND GUARDIAN COULD BE STOOD UP TO KILL';
         else {
-          const n0 = noticed || 0;
+          const n0 = noticed || 0, f0 = fracture, a0 = fractureAccel();
           kill(c2, player()[0]);
-          const again = spawnCustodian();
-          R.killedItStaysDead = bossSlain.custodian && (noticed || 0) > n0 && !again
-            ? `killed, it goes in the ledger, the Attention rises by ${((noticed || 0) - n0).toFixed(1)}, and it does not come back`
-            : `!! KILLED: LEDGER ${!!bossSlain.custodian}, ATTENTION ${n0} -> ${noticed}, BACK AGAIN ${!!again}`;
+          const again = spawnGuardian();
+          const lurch = fracture - f0, rate = fractureAccel() - a0;
+          R.killedItStaysDead = bossSlain.guardian && (noticed || 0) > n0 && !again && Math.abs(lurch - GATE_LURCH) < 1e-6 && Math.abs(rate - GATE_RATE) < 1e-6
+            ? `killed, it goes in the ledger, the Attention rises by ${((noticed || 0) - n0).toFixed(1)}, the Fracture lurches ${lurch.toFixed(1)} and runs ${rate.toFixed(2)} a day faster, and it does not come back`
+            : `!! KILLED: LEDGER ${!!bossSlain.guardian}, ATTENTION ${n0} -> ${noticed}, FRACTURE +${lurch.toFixed(2)} (WANT ${GATE_LURCH}), RATE +${rate.toFixed(2)} (WANT ${GATE_RATE}), BACK AGAIN ${!!again}`;
+          fracture = f0; fractureStage = fractureStageOf(f0);
         }
       }
       /* ---- 17. travellers go round ---- */

@@ -460,6 +460,16 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
+### 5.11 The crater filled the world's Messenger ceiling — **fixed 2026-09-25**
+
+The yard's Messenger and the Attention's are capped at two in the world, counted over every
+living Messenger and Herald. The crater stands four (three in the bowl and the Guardian), so
+from the crater's second phase (9025dc8) on, the yard never got its Messenger and the
+Attention could never send one. `purge.js` caught it: *andSomethingMovesIntoTheYard* has read
+`!! GUESTS: 0 before day 45, 0 after` since that commit. But `purge.js` was not in the targeted
+sets I ran for the crater, so it went unseen until the Messenger work. The crater's own are not
+counted now (`messengersAbroad`), `purge.js` is green again, and `seams.js` claim 8 checks it.
+
 ### 5.10 The road builder dropped roads — **fixed 2026-09-25**
 
 Found on the full world map after the crater moved two towns off the middle: 5 roads where
@@ -485,6 +495,10 @@ none of them `nightborn`. Measured on day one of the default seed, before the cr
 against a cap of 3. So `living.length >= cap` is always true, and this spawner never runs.
 Whatever the nights do now, they do it through the tears, the blood moon and the sites. The
 crater's 27 Watchers change nothing about that, because the cap was already exceeded.
+
+Everything this spawner can send is dead with it: the ordinary night Watchers, the hunt that
+comes for you from tier 2, the Larder-Kin, the shrikes, the Eye flights, and the Attention's
+Messenger (the only Messenger that comes for you rather than with the Order).
 
 The likely intent is to count only the night's own arrivals on the surface
 (`c.nightborn && (c.floor || 0) === 0`). That would switch the spawner on and make every night

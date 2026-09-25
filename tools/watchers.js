@@ -157,9 +157,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const ord = spawnGaunt('messenger', gx + 2, gy); ord.__probe = true;
       ord.learnMult = 0;
       const plain = spawnGaunt('gaunt', gx + 4, gy); plain.__probe = true;
-      R.itIsAWatcher = m.faction === 'gaunt' && m.gauntKind === 'messenger' && CULL_FOES.gaunt === 'watchers'
-        ? 'it counts as a Watcher for the cull and the bounty board'
-        : `!! IT IS NOT A WATCHER (faction ${m.faction}, kind ${m.gauntKind})`;
+      /* A DIFFERENT STOCK. This used to assert the opposite, that a Messenger counts as a Watcher
+         for the cull. The bible says they "should never be written as a gaunt variant", and the
+         ruling that followed gave the ones abroad a faction of their own beside the Order. The
+         crater's own are handed back to `gaunt` there, and `crater.js` holds that half. */
+      R.itIsAWatcher = m.faction === 'messenger' && m.gauntKind === 'messenger' && !CULL_FOES.messenger &&
+                       hostile(m, plain) && !hostile(m, { faction: 'purge' })
+        ? 'abroad it is its own faction, not a Watcher for the cull or the bounty board: it fights the Watchers and stands beside the Order'
+        : `!! IT IS STILL A GAUNT VARIANT (faction ${m.faction}, kind ${m.gauntKind}, fights a Watcher ${hostile(m, plain)})`;
       R.itIsNotUnmadeByDawn = m.nightborn === false
         ? 'and the dawn does not collect it, so there is time for it to become something'
         : '!! IT IS NIGHTBORN — it is deleted before it can learn anything';

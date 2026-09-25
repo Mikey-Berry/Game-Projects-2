@@ -30,18 +30,18 @@ Ranked by how much lore weight each carries against what it costs to close.
    the Messengers' tongue. A few lines of code fix it. It is the same finding as
    `CODE-AUDIT.md` §5.1, seen from the lore side.
 2. **Mother's seal promises a mechanic that does not exist** (§2.1) — **closed 2026-09-25,
-   lines pending approval**. She tells you only one of hers can open it, but anybody could
+   the second scene is written out in full for your approval**. She tells you only one of hers can open it, but anybody could
    force it, and her scene stopped at the door. The bible calls what she knows "the scene at
    the bottom of that cave, and nothing else in the setting carries more". The door is hers
    now, and the second scene is drafted in §2.1.
-3. **The Church has no voice** (§3.1) — **closed 2026-09-25, lines pending approval**. The
+3. **The Church has no voice** (§3.1) — **closed 2026-09-25, lines approved**. The
    bible says the gap between what the Church teaches and what is true "*is* the setting's
    engine". In the game only the true side was ever spoken. Paladins, the Inquisitor and Vey
    now speak the Church's side.
 4. **Half the conviction reactions never fire** (§1.2) — **closed 2026-09-25**. The bible
    says the compassionate hate a sack, the ambitious resent retreat and the inquisitive care
    about formulae. None of those events was ever raised. All six fire now, and the player can
-   sack a town (design flagged for review in §1.2).
+   sack a town, for half of its stores (§1.2).
 5. **The largest unbuilt pieces:** the Last Scholar, the kingdom's crater, and the tablets of
    the Deep (§4). The bible already marks them unbuilt. They are listed so the list is
    complete. **The crater is built** (§4): the place, the danger, and the Door at the bottom of it.
@@ -105,6 +105,7 @@ All six fire as of 2026-09-25. `tools/seams.js` claims 3 and 5 check them. Every
   could not target a stranger before, so the targeting was opened to anybody who is not
   undead, a beast, a gaunt, or hostile. Once a day per person, and nothing for a body that
   was already whole, so a townsman is not a regard farm. Compassionate +0.45 at weight 0.5.
+  **Approved 2026-09-25.**
 - **`mercy`:** TURN THEM LOOSE on a prisoner in your own cell. Cruel −1.20. **This needed a
   bug fix first:** the right-click on your own prisoner was claimed by the foe branch, which
   fires on any visible bandit, slaver or hostile. Every body you can seize is one of those,
@@ -113,15 +114,16 @@ All six fire as of 2026-09-25. `tools/seams.js` claims 3 and 5 check them. Every
   foe to a plain right-click; ctrl still forces an attack.
 - **`sack`:** the player can now sack a town. See below. Compassionate −3.00, Cruel +2.20.
 
-**The sack, for your review.** The open question was whether the player gains a sack, or
-whether `sack` means "a sack you could have stopped". I built the first; if you want the
-second instead, it is a one-line move of the `deed` call. How it works:
+**The sack, as ruled on 2026-09-25.** The open question was whether the player gains a sack,
+or whether `sack` means "a sack you could have stopped". It is the first, with the haul capped
+at half the town's stores. How it works:
 
 - **Where:** the flag of a town whose seat is empty (the same test as CLAIM) offers
   **PUT *TOWN* TO THE TORCH** beside **CLAIM *TOWN* FOR YOURSELF**. You must stand within
   3 tiles of the flag, as for CLAIM. A town that is already sacked does not offer it.
-- **What happens:** everything in the town's stores goes into the wagon (179 items from
-  Dustport in the harness). The town is left `sacked = 5`, `sackKind = 'torch'`, exactly as a
+- **What happens:** half of each line of the town's stores, rounded down, goes into the
+  wagon, and the rest burns (81 from Dustport in the harness; a line of one burns whole). The
+  log says how much was carried and how much burned. The town is left `sacked = 5`, `sackKind = 'torch'`, exactly as a
   warband's sack leaves it, so it burns, chars and drops its roofs the same way. After five
   days the watch comes back, as for any sack.
 - **The cost:** that town's standing drops by 400 (to the −300 floor), every other town's drops
@@ -165,11 +167,34 @@ never raised. Casting in a town costs nothing with the law. `raising` and `walkd
 raised, so necromancy specifically is policed, but alchemy in general is not. Hollowmere's
 exemption for `formula` is unreachable for the same reason.
 
-### 1.4 Sanctified Ash
+### 1.4 Sanctified Ash — **options put to you 2026-09-25**
 
 Breaking a shrine yields it. Its description promises that "an alchemist has other uses". No
 recipe or rite consumes it. The bible's §18 asks whether a shrine stone is a small
 Philosopher Stone, and Sanctified Ash is the obvious place for an answer to land.
+
+The options, each with the answer it gives to the §18 question:
+
+1. **Anointing** (*no: it is the blessed gift, stored*). Work a measure into one of your dead
+   and for a day the consecrated ground does not diminish it: it takes, hits and calls as it
+   would anywhere. A shrine's own ash walks your dead through the next shrine. It needs a
+   rite and nothing else new, since shrines already diminish the dead by ground.
+2. **A sink for the closing** (*no, but it is the same power*). The Door rite takes ash as an
+   optional reagent that cuts the work: breaking the faithful's stones is how a necromancer
+   does the job the Church thinks it is doing. Late, and it gives the ash a price late.
+3. **Burned at the bench** (*yes, a very small one*). Spend a measure for a burst of research,
+   and pay for it in Attention, because it is a tap on the source like any other. One line in
+   the research code and one in `bumpNotice`.
+4. **A Messenger can smell it** (*no, and they know what it is*). Carrying ash reads to a
+   Messenger abroad the way ATTENDED does. A cost for any of the above rather than a use.
+5. **A law, once** (*yes, and it is what a Stone is for*). Enough ash (say twelve measures)
+   makes one Philosopher's working: rewrite one rule of one place for good, such as a town that
+   no longer diminishes the dead, or a tear that cannot open. The biggest of these, and the
+   one that commits the bible.
+
+Recommended: 1 as the everyday use, with 4 as its cost. That is cheap, it loops through
+systems that exist, and it answers §18 as "something the faithful mistook" without spending
+the Philosopher Stone.
 
 ---
 
@@ -285,7 +310,7 @@ invitations. This is `CODE-AUDIT.md` §5.4. It is a story seam more than a bible
 
 ## 3. Built, but only one layer of it
 
-### 3.1 The Church Teaches: no mouth — **closed, lines pending your approval**
+### 3.1 The Church Teaches: no mouth — **closed, lines approved 2026-09-25**
 
 Closed on 2026-09-25. `tools/seams.js` claim 7 checks it. On the build before, a right-click on
 a Paladin at peace with you became a move order, and the Inquisitor and Vey opened the
@@ -298,7 +323,7 @@ townsfolk tree.
   from TALK on the neutral menu. Vey in the Bastion, with one extra option. A Paladin hunting
   you is still a foe, and the Watcher in the yard is still silent.
 
-**The lines, drafted for your approval.** The greeting depends on who is speaking:
+**The lines, approved as written.** The greeting depends on who is speaking:
 
 - **Vey:** "You are standing in the Bastion because I have not yet decided otherwise. Say what
   you came to say."
@@ -323,7 +348,7 @@ townsfolk tree.
 | A tear closes for the blessed art and the profane one alike. It is the same well. | Inquisitive | That is a Scholar's sentence, and you should not say it near a Paladin. The Light suffers the profane to work so that the profane can be found. You have it backwards, and you have it backwards out loud. |
 | What does the Order want with me? | Vey only | Nothing yet. You are a name in a ledger with nothing written beside it. Keep it that way. I would rather not learn how you fight. |
 
-Notes for your review:
+Notes:
 
 - **No effects.** Nothing in the tree moves rep, wrath or bounty. It is a voice, not a mechanic.
   If you want the dark-gift or Scholar options to carry risk, that is a separate call.
@@ -357,7 +382,37 @@ So the player hears the answer and never the caricature it answers.
 **Close it:** a `purge` talk tree (Paladin, Inquisitor, Grand Marshal Vey) written in the
 Church layer. It fits the machinery that already exists (`openDiscourse` and `TALK_TREES`).
 
-### 3.2 The Messengers
+### 3.2 The Messengers — **faction closed 2026-09-25**
+
+Your ruling: in the crater they allow nothing close, the Order included; anywhere else they are
+their own faction, beside the Paladins, and there are more of them late. `tools/seams.js` claim
+8 checks it; on the build before, a Messenger stood up abroad was faction `gaunt`.
+
+- **Abroad, `faction: 'messenger'`.** `spawnGaunt` makes every Messenger and Herald one. At
+  peace with the Order. At war with the Watchers (the gaunt clause stays as the bible wants
+  it), the Kept, and the walking dead, including neutral dead. They hunt a living one of yours
+  when the Order would (the dead near you, or your name), and on one reading of their own: once
+  the Attention is ATTENDED, whatever the Order thinks. Killing one raises the Order's wrath.
+  They are not a Watcher for a cull contract and the warding light does not turn them.
+- **In the crater, the crater's own.** The bowl's three and the Guardian are handed back to
+  `gaunt`: at peace with the crater's Watchers, and at war with the Order and with a Messenger
+  from abroad alike.
+- **Late in the clock, more.** The world's ceiling is 2, then 3 at THE WATCHERS WAKE, then 4 at
+  the Second Fracture. Patrols carry one from THE WATCHERS WAKE on (12% a patrol, 36% by the
+  end); hunts go from 22% to 52%. The Attention's roll goes from 1 in 67 to 1 in 25, but it
+  sits inside the night spawner that `CODE-AUDIT.md` §5.9 found dead, so it does nothing until
+  that is fixed.
+- **One that comes to look.** A Messenger the Attention sends walks up to whoever drew it. If it
+  has a quarrel with any of yours it hunts them. If not, it looks, turns, and walks to the
+  Bastion yard.
+- **A bug fixed on the way:** the crater's four counted against the world's ceiling of two,
+  so since the crater was built the yard and the Attention could never stand a Messenger up.
+  They are not counted now.
+
+Still open: **their job has no expression.** Nothing about a Messenger responds to the Door or
+the tears. Logged in §7.
+
+The original finding:
 
 This is mostly built, and well. Messengers learn (`learnMult`). They carry weapons of fire and
 light that cannot be looted. After day 45 one stands in the Bastion yard, and on hunts they
@@ -373,12 +428,35 @@ There are two gaps against the bible:
   asleep, and "closing the Door is a job you do for them". Nothing about a Messenger
   responds to the Door, the tears or the Second Fracture clock.
 
-### 3.3 The vocabulary that encodes the speaker
+### 3.3 The vocabulary that encodes the speaker — **brainstorm put to you 2026-09-25**
 
 The bible §3 gives three words for Mother by speaker: *Priest* (the purebloods), *Conduit*
 (the Golden Age's notes) and *Battery* (for us). None appears in play. "Kept Priest" is a
 caste of the Kept, not a word for her. *The Eldest* appears only in comments. This is cheap to
 close: it lives in item text, such as a Golden-Age note that says "conduit".
+
+The rule for the brainstorm: each word appears in the hand that would use it, a few times at
+most, and nothing explains it. A player who reads three different words for one thing in three
+different places does the rest. *Battery* never appears, per the bible. The options:
+
+1. **The formulae's margins** (Golden Age, *conduit*). A second sentence on the Preserved
+   Formula, in another hand: *"Draw from the conduit, not past it."* The Worn Formula: every page
+   has the word for the source scraped out but one, and that one says *conduit*.
+2. **The Kept's altars** (the purebloods, *Priest*). Looking at a `deepAltar` gives one line: the
+   carving shows a figure the others face, and every panel calls her the same thing. This is the
+   thin end of the Tablets of the Deep (§4).
+3. **A ledger in the crater** (Golden Age, *conduit*). One new item, in the colonnade cache only:
+   a Chancellery yield ledger. *"Conduit yield down a third since the winter. The Chancellery
+   asks whether the conduit can be encouraged."* It sells, and it is worth nothing to a bench.
+4. **The Codex** (the Church before the Fracture). The Transmutation Codex has no description.
+   It could get one that names the source once, as the bible's §12 says it does. This touches
+   the Codex/Doctrine drift in §6, so it wants your call on that first.
+5. **The Heralds' brackets** (*the Eldest*). The crater's barks are bracketed impressions. One
+   more: *"(it faces the middle the way you would face something asleep that must stay asleep)"*.
+   It is not the word itself, but it is the only honest way for a Messenger to say it.
+
+Recommended: 1 and 3 first. Both are Golden Age text in places the player already reads, and the
+ledger gives the crater's best cache a voice.
 
 ---
 
@@ -393,7 +471,7 @@ and zero player-facing strings.
 | **Tohu & Bohu, the Voidborn Twins** (§6) | Absent. Their whole hook, stasis for as long as the Last Scholar lives, depends on the Scholar existing. |
 | **Philosopher Stones** (§15) | Absent. §1.4's Sanctified Ash is the natural door. |
 | **Tablets of the Deep; the temple art that "points upward"** (§2, §15) | Absent. The Kept have altars (`deepAltars`) and no depictions. The only tablet in the code is the wax-tablet case on Lyre's model. |
-| **The kingdom's crater** (§16): "should be the largest landmark in the world", and the natural site of the Door | **Built, 2026-09-25, in three phases.** **The place:** at the dead centre of every world, with the world placed around it, in four rings: the approach (ash, dead trees leaning away from the middle, the Order's posts, bones), the glass (fused ground, standing slabs with shadows burned onto them), the rim (a wall with four breaches), and the bowl with a veil of light over it. **The danger:** the glass and the bowl are held day and night by Watchers the dawn does not take; three Messengers stand at peace with them; what is killed grows back out of sight; at night telegraphed strikes of light come down on whoever is in the glass. **The reason:** the capital's footings across the bowl, a colonnade round the middle, seven caches, and **the Custodian**, a Messenger boss at the middle until the Second Fracture. Then it is gone and the Door opens there, so closing the Door is an expedition into the crater. The roads go round it on a ring of fixed waypoints outside the approach, and so does anybody travelling on the world's business: caravans, pilgrims, escorts and armies. `tools/crater.js` checks all 17 claims. **For your review:** killing the Custodian before the Fracture raises the Attention by 8. Whether it should cost more (say, Fracture progress) is your call. |
+| **The kingdom's crater** (§16): "should be the largest landmark in the world", and the natural site of the Door | **Built, 2026-09-25, in three phases.** **The place:** at the dead centre of every world, with the world placed around it, in four rings: the approach (ash, dead trees leaning away from the middle, the Order's posts, bones), the glass (fused ground, standing slabs with shadows burned onto them), the rim (a wall with four breaches), and the bowl with a veil of light over it. **The danger:** the glass and the bowl are held day and night by Watchers the dawn does not take; three Messengers stand at peace with them; what is killed grows back out of sight; at night telegraphed strikes of light come down on whoever is in the glass. **The reason:** the capital's footings across the bowl, a colonnade round the middle, seven caches, and **the Guardian at the Gate**, a Messenger boss at the middle until the Second Fracture. Then it is gone and the Door opens there, so closing the Door is an expedition into the crater. The roads go round it on a ring of fixed waypoints outside the approach, and so does anybody travelling on the world's business: caravans, pilgrims, escorts and armies. `tools/crater.js` checks all 17 claims. **Ruled 2026-09-25:** killing the Guardian before the Fracture raises the Attention by 8, moves the Fracture on 8 at once (about fourteen days of calendar), and adds 0.15 a day to its rate for the rest of the run (the calendar is 0.56). It was called the Custodian until then. |
 | **Good Kami** (§6, §12) | Half built. The kami stone at Fallowend consecrates a charm, and the town is `kami: true`. Missing: the rites the bible lists (dirty water at a crossroads, dust not swept past a threshold at night, a dead name spoken into the wind) and the curse clause, *"you do not improvise with something that says yes"*. |
 | **Old Har-Mageddon** (§6) | Never named in play. The Coil gestures at him (*"The wars are not the end. The wars are the appetite."*). The Paladin myth that sets him against Kami is absent. The bible says to keep this thin, so this is the lowest priority here. |
 | **Lunar events, "several exist"** (§10) | Only the blood moon. The "eldritch moon" is held open in §18. |
@@ -456,6 +534,42 @@ them should move.
   story, but right now the bible does not know them.
 - **The conviction list.** Bible §14 lists seven convictions and includes Cold. The code has
   eight, and **Loyal** is missing from the bible.
+
+---
+
+## 7. Logged for later
+
+Put down on 2026-09-25 so none of it is lost. Nothing here is started.
+
+**Lore, needing a ruling before code**
+
+- The bible drift in §6: the Codex and the Doctrine, where Mother is, "my brother", Dust from
+  her, Loyal missing from the convictions.
+- The Last Scholar, and Tohu & Bohu behind him.
+- The Tablets of the Deep (§3.3 option 2 is their thin end).
+- The Good Kami rites and the curse clause.
+- More lunar events.
+- The pureblood line.
+- Homunculi attracting souls.
+- The chimera's tie to Mother.
+- The Divine art's depth cost.
+- The Dust art's illusory wall.
+- The Hollow Citadel's purpose.
+- The Messengers' job: nothing about them responds to the Door, the tears or the clock (§3.2).
+
+**Game and code**
+
+- The night spawner is dead (`CODE-AUDIT.md` §5.9). It also carries the Attention's
+  Messengers, larders and Eye flights.
+- The Dame's *"do not come back"* is never enforced (§2.2).
+- The playtest cheats are visible in Options.
+- Per-step lookups of one-of-a-kind objects cost 11% of a sim step.
+- A forage band may leave the inner part of its circle unswept. A suspicion, not confirmed.
+- After you have played the crater: ruin density, cache loot and strike rate. Visible waystones
+  at the ring's waypoints, and a scavengers' waystation at the edge of the approach.
+- Town spacing: a rule keeping every town within about 450 tiles of another (Ironscar).
+- The deploy preview has not been checked since the crater.
+- A full-suite run before #40 merges. Not run without your say-so.
 
 ---
 

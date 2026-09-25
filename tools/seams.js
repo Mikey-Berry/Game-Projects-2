@@ -17,12 +17,16 @@
  *      crime CRIMES has always named; the blessed art is not, and Hollowmere does not care
  *   5. the rest of the conviction table is heard: a captive taken back from a captor (rescued),
  *      a stranger mended (heal), a prisoner turned loose (mercy), and a town with an empty seat
- *      put to the torch from its own flag (sack). All four were weighted and none was fired
+ *      put to the torch from its own flag (sack: half of each store into the wagon, the rest
+ *      burned). All four were weighted and none was fired
  *   6. Mother's seal is hers: her door is not forced by a shoulder and holds against a Hollow
  *      still riding; a finished one puts a hand on it, it opens, and the scene behind it is said.
  *      Her lines promised this and the door was an ordinary barred door
  *   7. the Church speaks in its own layer: a Paladin at peace, the Inquisitor, and Vey open the
  *      Order's conversation (the Light, the Original Purge, the pyre) instead of the townsfolk's
+ *   8. the Messengers abroad are their own faction beside the Order, and the crater's own hold
+ *      the crater against everybody; there are more of them late in the clock, and one that
+ *      comes to look at a living one of yours goes to stand with the Order
  *
  * Anything starting '!!' fails the build.
  *
@@ -325,7 +329,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     cells.splice(cells.indexOf(cell), 1); pBuilds.splice(nb);
     for (let i = chars.length - 1; i >= 0; i--) if (chars[i] === pris) chars.splice(i, 1);
     const t = towns.find(t2 => !t2.playerRuled && !(t2.sacked > 0) && !t2.def.undeadFriendly && t2.leader &&
-      Object.values(t2.stock || {}).some(v => v >= 1));
+      Object.values(t2.stock || {}).some(v => v >= 2));
     if (!t) { R.noTown = true; return R; }
     const f = townFlagPos(t);
     for (const o of chars) if (o.state !== 'dead' && o.faction !== 'player' && dist(o.x, o.y, f.x, f.y) < 2.5) o.x += 6;
@@ -360,6 +364,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     R.sack.burnt = t.sacked === 5 && t.sackKind === 'torch';
     R.sack.carried = Object.values(stash).reduce((a2, v) => a2 + (Number(v) || 0), 0) - S.stash;
     R.sack.others = towns.every((o, i) => o === t || o.rep <= S.rep[i]);
+    /* the wagon takes half of each line, rounded down, and never more */
+    R.sack.half = Object.entries(S.stock).reduce((a2, [k, v]) => a2 + (ITEMS[k] ? Math.floor(Math.floor(v || 0) / 2) : 0), 0);
+    R.sack.left = Object.keys(t.stock || {}).length;
     /* and put it back: the sack is the last thing this file stages, but a claim added after
        it should not inherit a burning town */
     t.sacked = 0; t.sackKind = null; t.stock = S.stock; t.leader.charId = S.seat;
@@ -386,12 +393,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     else {
       if (!f5.sack.burnt) bits.push(`${f5.sack.town} was not left sacked and burning`);
       if (!(f5.sack.carried > 0)) bits.push(`nothing from ${f5.sack.town}'s stores reached the wagon`);
+      else if (f5.sack.carried !== f5.sack.half) bits.push(`the wagon took ${f5.sack.carried} of ${f5.sack.town}'s stores, where half of each line is ${f5.sack.half}`);
+      if (f5.sack.left) bits.push(`${f5.sack.left} lines of ${f5.sack.town}'s stores did not burn`);
       if (!f5.sack.others) bits.push('the other towns did not hear of it');
       if (!(f5.sack.compassion < -1) || !(f5.sack.cruel > 1)) bits.push(`the sack moved the Compassionate by ${dn(f5.sack.compassion)} and the Cruel by ${dn(f5.sack.cruel)}`);
     }
     out.theDeedsAreDone = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
       : `a captive taken back moves the Loyal (${dn(f5.byUs.loyal)}), a stranger mended moves the Compassionate (${dn(f5.healOnce.compassion)}, once a day, not for a whole body), ` +
-        `a prisoner turned loose cools the Cruel (${dn(f5.mercy.cruel)}), and ${f5.sack.town} put to the torch from its flag burns, fills the wagon (${f5.sack.carried}), ` +
+        `a prisoner turned loose cools the Cruel (${dn(f5.mercy.cruel)}), and ${f5.sack.town} put to the torch from its flag burns, fills the wagon with half its stores (${f5.sack.carried}) and burns the rest, ` +
         `and turns the Compassionate (${dn(f5.sack.compassion)}) and warms the Cruel (${dn(f5.sack.cruel)})`;
   }
 
@@ -601,6 +610,104 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       : `a Paladin at peace answers a plain right-click in the Order's own words: the Light without end, the Original Purge, and a pyre lit with His own fire; ` +
         `the Inquisitor speaks it from under the white banner${x.veyTree ? ', and Vey from his hall' : ''}`;
   }
+
+  /* ---- 8. the Messengers abroad are their own faction, beside the Order ----
+     Asked of real bodies: one stood up the way the Attention stands one up, a Paladin, a Watcher,
+     a risen body of yours and a living one well away from it, and the crater's own. Then the
+     look-and-leave, driven through `physics`, and the late-clock numbers at three stages. */
+  Object.assign(out, await p.evaluate(() => {
+    const R = {};
+    if (typeof messengersAbroad !== 'function') {
+      /* the build before: say what a Messenger abroad was, rather than dying on the helper */
+      const p1 = player().find(o => o.state === 'ok');
+      const m0 = spawnGaunt('messenger', p1.x + 40, p1.y), f0 = m0.faction;
+      chars.splice(chars.indexOf(m0), 1);
+      R.theMessengersAbroad = `!! A MESSENGER STOOD UP ABROAD IS FACTION ${String(f0).toUpperCase()}, AND NOTHING TELLS THE CRATER'S OWN FROM THE WORLD'S`;
+      return R;
+    }
+    const was = { noticed, noticeTier, fractureStage, day, purgeWrath };
+    const bits = [];
+    const p0 = player().find(o => o.state === 'ok');
+    const at = (dx, dy) => findOpenNear(p0.x + dx, p0.y + dy, 3);
+    const probe = (c) => { c.__probe = true; return c; };
+    const abroad0 = messengersAbroad();
+    const craterOnes = chars.filter(c => messengerKind(c) && c.craterOwn && c.state !== 'dead');
+    const q = at(40, 0);
+    const m = probe(spawnGaunt('messenger', q.x, q.y));
+    const pal = chars.find(o => o.faction === 'purge' && o.state === 'ok' && !o.gauntKind && !o.neutral && !o.bossKey);
+    const qw = at(44, 0);
+    const wat = probe(spawnGaunt('gaunt', qw.x, qw.y));
+    const qr = at(0, 40);
+    const risen = probe(makeChar('Risen', 'player', qr.x, qr.y, { atk: 10, def: 10, tough: 40 })); risen.undead = true; chars.push(risen);
+    const ql = at(-40, 0);
+    const alive = probe(makeChar('Walker', 'player', ql.x, ql.y, { atk: 10, def: 10, tough: 40 })); chars.push(alive);
+    rebuildCharGrid();
+    purgeWrath = 0; noticeTier = 0;
+    if (m.faction !== 'messenger') bits.push(`one stood up abroad is faction ${m.faction}`);
+    if (pal && hostile(m, pal)) bits.push('it fights the Paladins');
+    if (!hostile(m, wat)) bits.push('it is at peace with a Watcher abroad');
+    if (!hostile(m, risen)) bits.push('it leaves the walking dead alone');
+    const clean = !hostile(m, alive) && !(pal && hostile(pal, alive));
+    if (!clean) bits.push('it (or the Order) is already hunting a living body of yours with no dead near it and no name');
+    noticeTier = 2;
+    const attended = hostile(m, alive), palAttended = !!(pal && hostile(pal, alive));
+    if (!attended) bits.push('ATTENDED, and it still leaves the one who drew it alone');
+    if (palAttended) bits.push('the Order reads the Attention as well, which is the Messengers\' reading and not theirs');
+    noticeTier = 0;
+    /* the crater's own */
+    const cm = craterOnes.find(c => c.craterOwn === 'messenger');
+    const cg = chars.find(c => (c.craterOwn === 'glass' || c.craterOwn === 'bowl') && c.state !== 'dead');
+    if (!cm) bits.push('no Messenger in the crater to ask');
+    else {
+      if (cm.faction !== 'gaunt') bits.push(`the crater's own are faction ${cm.faction}`);
+      if (pal && !hostile(cm, pal)) bits.push('the crater\'s own let the Order close');
+      if (cg && hostile(cm, cg)) bits.push('the crater\'s own fight its Watchers');
+      if (!hostile(cm, m)) bits.push('the crater\'s own let a Messenger from abroad close');
+    }
+    if (craterOnes.length >= 2 && abroad0 >= messengerCap()) bits.push(`the ${craterOnes.length} in the crater fill the world's ceiling (${abroad0} of ${messengerCap()} counted abroad)`);
+    /* the late clock */
+    const late = [];
+    for (const st of [0, 3, 5]) { fractureStage = st; day = 60; late.push({ st, cap: messengerCap(), patrol: messengerMarches(false), hunt: messengerMarches(true) }); }
+    fractureStage = was.fractureStage;
+    const [e0, e3, e5] = late;
+    if (!(e0.cap === 2 && e3.cap === 3 && e5.cap === 4)) bits.push(`the ceiling is ${e0.cap}/${e3.cap}/${e5.cap} at stages 0/3/5`);
+    if (!(e0.patrol === 0 && e3.patrol > 0 && e5.patrol > e3.patrol)) bits.push(`a patrol carries one at ${e0.patrol}/${e3.patrol}/${e5.patrol}`);
+    if (!(e5.hunt > e0.hunt)) bits.push(`a hunt carries one no more often late (${e0.hunt} -> ${e5.hunt})`);
+    /* comes to look, and goes to the Order */
+    /* with no dead of yours anywhere: a Messenger hunts the nearest body it has a quarrel with,
+       wherever it is, so the risen probe is laid down for this half */
+    risen.undead = false;
+    const quarrel = player().filter(o => o.state !== 'dead' && hostile(m, o)).map(o => o.name);
+    const qa = at(-34, 0);
+    const look = probe(spawnGaunt('herald', qa.x, qa.y)); look.hunt = true; look.target = null;
+    rebuildCharGrid();
+    for (let i = 0; i < 4 && look.hunt; i++) physics(look, 0.1);
+    const leftForOrder = !look.hunt && look.guard && bastion && dist(look.guard.x, look.guard.y, bastion.x, bastion.y) < 14;
+    if (quarrel.length) bits.push(`with no dead of yours about it still has a quarrel with ${quarrel.join(', ')}`);
+    else if (!leftForOrder) bits.push(`having looked at a living body of yours it ${look.hunt ? 'is still hunting' : 'went somewhere other than the Bastion yard'}`);
+    risen.undead = true;
+    const qb = at(4, 40);
+    const hunter = probe(spawnGaunt('messenger', qb.x, qb.y)); hunter.hunt = true; hunter.target = null;
+    rebuildCharGrid();
+    for (let i = 0; i < 4; i++) physics(hunter, 0.1);
+    if (!hunter.hunt) bits.push('near a risen body of yours it went to the Order instead of hunting');
+    /* and killing one is a quarrel with the Order */
+    const w0 = purgeWrath;
+    kill(m, alive);
+    if (!(purgeWrath > w0)) bits.push('killing one does not move the Order\'s wrath');
+    /* put it all back */
+    for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+    if (typeof corpses !== 'undefined') for (let i = corpses.length - 1; i >= 0; i--) if (corpses[i].__probe) corpses.splice(i, 1);
+    if (typeof downFolk !== 'undefined') for (let i = downFolk.length - 1; i >= 0; i--) if (downFolk[i].__probe) downFolk.splice(i, 1);
+    noticed = was.noticed; noticeTier = was.noticeTier; fractureStage = was.fractureStage; day = was.day; purgeWrath = was.purgeWrath;
+    rebuildCharGrid();
+    R.theMessengersAbroad = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+      : `abroad a Messenger is its own faction: at peace with the Order, at war with the Watchers and the walking dead, and hunting a living one of yours only once the Attention is ATTENDED (the Order does not read that). ` +
+        `The crater's ${craterOnes.length} are the crater's, hold it against the Order and a Messenger from abroad alike, and are not counted against the world's ceiling. ` +
+        `The ceiling is 2, 3, 4 at stages 0, 3 and 5; a patrol carries one from stage 3 (${e3.patrol.toFixed(2)}, then ${e5.patrol.toFixed(2)}) and a hunt more often late (${e0.hunt.toFixed(2)} to ${e5.hunt.toFixed(2)}). ` +
+        `One that comes to look at a living body of yours walks to the Bastion yard; one near your dead keeps hunting; killing one raises the Order's wrath`;
+    return R;
+  }));
 
   const bad = Object.values(out).filter(v => typeof v === 'string' && v.startsWith('!!'));
   for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(24) + ' ' + v);

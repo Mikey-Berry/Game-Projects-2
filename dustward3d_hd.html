@@ -6053,32 +6053,74 @@ function questionTick(){
    one takes up residence in the Bastion yard and stands there. Still capped at two Messengers
    in the world; still announced, because a Watcher inside the Order's own walls is the fact
    the Purge exists to make impossible. */
-function bastionGuestTick(){
-  if(!bastion || day <= 45) return;
-  if(chars.some(c => c.bastionGuest && c.state !== 'dead')) return;
-  if(chars.filter(o => (o.gauntKind === 'messenger' || o.gauntKind === 'herald') && o.state !== 'dead').length >= 2) return;
-  if(rnd() > 0.14) return;
-  /* ---------- IN THE YARD, WHICH IS THE WHOLE OF WHAT IT IS ----------
-     "It stands in the yard where the Order drills and none of them will cross in front of it."
-     A five-tile jitter on top of sixty random darts in a radius-5 box can put it well past the
-     compound, and `purge.js` asks for under fourteen from the centre because a Watcher in a
-     field outside is not the scene. Ringed outward from the middle of the yard instead. */
-  let q = null;
-  outerGuest:
+/* ---------- THE MESSENGERS ABROAD ----------
+   The bible is plain that a Messenger is not a gaunt variant and needs a faction of its own,
+   and the ruling was plainer still. In the crater they hold the crater against everything, the
+   Order included, at peace with the Watchers there. Anywhere else they are their own faction
+   and they stand beside the Paladins. So `spawnGaunt` makes a Messenger `faction: 'messenger'`,
+   and the crater's own are handed back to `gaunt` where they are stood up (`craterSpawn`, the
+   restock, the Guardian).
+   Abroad they want what the Order wants: the walking dead, and your people once the Order
+   reads you (`hostile`, the Order's clause). And one thing of their own, because they are the
+   ones keeping him under: once the Attention is ATTENDED they know what you have been drawing
+   on, whatever the Order thinks of you. The Watchers do not take sides, so abroad a Messenger
+   and a Watcher fight.
+   Late in the clock there are more of them. The ceiling rises at THE WATCHERS WAKE and again at
+   the Second Fracture, and the Order's columns carry them more often, patrols included. The
+   crater's own never count against the ceiling. They were never abroad, and counting them
+   meant the yard and the Attention could not stand a Messenger up at all once the crater was
+   built: it holds four. */
+function messengerKind(c){ return c.gauntKind === 'messenger' || c.gauntKind === 'herald'; }
+function messengersAbroad(){
+  let n = 0;
+  for(const o of chars) if(messengerKind(o) && o.state !== 'dead' && !o.craterOwn) n++;
+  return n;
+}
+function messengerCap(){ return 2 + (fractureStage >= 3 ? 1 : 0) + (fractureStage >= 5 ? 1 : 0); }
+/* the chance that one walks with a column the Bastion sends out: a hunt after day 45, and late
+   in the clock a patrol too */
+function messengerMarches(hunt){
+  if(hunt) return day > 45 ? 0.22 + 0.1 * Math.max(0, fractureStage - 2) : 0;
+  return fractureStage >= 3 ? 0.12 * (fractureStage - 2) : 0;
+}
+/* ---------- IN THE YARD, WHICH IS THE WHOLE OF WHAT IT IS ----------
+   "It stands in the yard where the Order drills and none of them will cross in front of it."
+   A five-tile jitter on top of sixty random darts in a radius-5 box can put it well past the
+   compound, and `purge.js` asks for under fourteen from the centre because a Watcher in a
+   field outside is not the scene. Ringed outward from the middle of the yard instead, and past
+   any post another Messenger already stands on. */
+function bastionYardSpot(){
+  const taken = chars.filter(o => messengerKind(o) && o.guard && o.state !== 'dead' && !o.craterOwn).map(o => o.guard);
   for(let ring = 2; ring <= 8; ring++){
     for(let dy = -ring; dy <= ring; dy++) for(let dx = -ring; dx <= ring; dx++){
       if(Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
       const gx2 = Math.round(bastion.x) + dx, gy2 = Math.round(bastion.y) + dy;
       if(gx2 < 2 || gy2 < 2 || gx2 >= W - 2 || gy2 >= H - 2) continue;
       if(isBlocked(gx2 + 0.5, gy2 + 0.5)) continue;
-      q = {x: gx2 + 0.5, y: gy2 + 0.5};
-      break outerGuest;
+      const q = {x: gx2 + 0.5, y: gy2 + 0.5};
+      if(taken.some(g => dist(g.x, g.y, q.x, q.y) < 1.5)) continue;
+      return q;
     }
   }
-  if(!q) q = {x: bastion.x, y: bastion.y};
+  return {x: bastion.x, y: bastion.y};
+}
+/* a Messenger that came to look at your people and found none it would fight goes to stand
+   with the Order. It does not wait about. It has seen what it came to see. */
+function messengerToTheOrder(c){
+  c.hunt = null;
+  c.guard = bastion ? bastionYardSpot() : {x: c.x, y: c.y};
+  if(bastion && visAt(c.x, c.y) === 2)
+    log('The thing that came out of the dark looks at your people for a long moment. Then it turns and walks towards the Bastion.', '');
+}
+function bastionGuestTick(){
+  if(!bastion || day <= 45) return;
+  if(chars.some(c => c.bastionGuest && c.state !== 'dead')) return;
+  if(messengersAbroad() >= messengerCap()) return;
+  if(rnd() > 0.14) return;
+  const q = bastionYardSpot();
   const m = spawnGaunt('messenger', q.x, q.y);
   if(!m) return;
-  m.faction = 'purge'; m.nightborn = false; m.bastionGuest = true;
+  m.nightborn = false; m.bastionGuest = true;
   m.guard = {x: q.x, y: q.y};
   worldEvent('purge', bastion.x, bastion.y,
     'Something is living inside the Bastion. It stands in the yard where the Order drills and none of them will cross in front of it.');
@@ -6191,16 +6233,17 @@ function spawnPurge(hunt){
      you cannot, rather than slipped quietly into the spawn. Late only, and never on the
      ordinary patrols: this is what a hunt looks like after the Bastion has stopped being
      careful about what it takes help from. */
-  if(hunt && day > 45 && rnd() < 0.22){
+  const late = messengerMarches(hunt);
+  if(late > 0 && messengersAbroad() < messengerCap() && rnd() < late){
     const p2 = findOpenNear(x, y, 4);
     const m = spawnGaunt('messenger', p2.x, p2.y);
-    m.faction = 'purge';                 /* it is marching WITH them, not at them */
-    m.squad = sq;
+    m.squad = sq;                        /* its own faction, marching WITH them, not at them */
     m.nightborn = false;
     log('There is something walking with the Paladins. It is a head taller than any of them, ' +
         'it carries a bar of light, and none of them will look at it.', 'bad');
-    worldEvent('purge', p2.x, p2.y,
-      'A Bastion hunt went out with something in its column that was not a man, and the Confessor riding at the front did not appear to have been consulted.');
+    worldEvent('purge', p2.x, p2.y, hunt
+      ? 'A Bastion hunt went out with something in its column that was not a man, and the Confessor riding at the front did not appear to have been consulted.'
+      : 'A Bastion patrol went out with something walking in it that was not a man. Nobody in the column would say what it was, and nobody asked them twice.');
   }
   log(hunt ? 'The Bastion has marked your squad. Hunters ride out.' : 'A Paladin patrol sets out from the Bastion.', hunt ? 'bad' : '');
 }
@@ -6223,8 +6266,9 @@ const BOSS_BARKS = {
      of a hall, and what comes out of it is weather. */
   wyrm: ['*the air over it goes hot*', '*a sound like a quarry falling in*', '*it draws a very long breath*'],
   /* the Messengers' tongue: nobody understands it, and the brackets are all anybody can say */
-  custodian: ['SHEM ARAK. SHEM ARAK ORU.', '(it is not looking at you. it has never stopped looking at the middle.)',
-              'KA-ORU NETH. ANAK.', '(the words arrive before it has opened anything to say them with)'],
+  guardian: ['SHEM ARAK. SHEM ARAK ORU.', '(it is not looking at you. it has never stopped looking at the middle.)',
+             'KA-ORU NETH. ANAK.', '(the words arrive before it has opened anything to say them with)',
+             '(the light over the bowl turns when it turns, and faces every way at once)'],
 };
 function bossSpot(minTown, minStart){
   for(let tries=0; tries<6000; tries++){
@@ -11129,7 +11173,7 @@ function kill(c, by){
   if(c.state==='dead') return;
   /* the ledger is written here, not inferred from a body that will be gone in two days */
   if(c.bossKey && !bossSlain[c.bossKey]) bossSlain[c.bossKey] = day;
-  if(c.bossKey === 'custodian') custodianFalls(c);
+  if(c.bossKey === 'guardian') guardianFalls(c);
   /* a risen that has done the work is a candidate for a name */
   if(by && by.undead && by.crafted) by.kills = (by.kills || 0) + 1;
   /* ---------- COMMANDING THE DEAD SHARPENS THE CRAFT — WHEN THEY ARE COMMANDED ----------
@@ -11213,7 +11257,7 @@ function kill(c, by){
     log('The Red Baroness is dead. Every town raises a glass to you. (+25 standing everywhere)', 'good');
   }
   if(c.bossKey && by && by.faction==='player') log(`${c.name} has fallen.`, 'good');
-  if(by && by.faction==='player' && c.faction==='purge'){
+  if(by && by.faction==='player' && (c.faction==='purge' || c.faction==='messenger')){
     purgeWrath++;
     /* the hunt could land in the middle of the fight that earned it — wrath keeps its count
        and the hunt comes when the ground is quiet enough for it to mean something */
@@ -13349,9 +13393,9 @@ function pierceNeutral(n, o){
   /* AND A NEUTRAL HEAP OF THE DEAD IS STILL THE DEAD. Asked from the beast's side because
      that is the only side this function is ever asked from — `hostile` calls it for whichever
      of the pair is neutral — and one rule here settles the quarrel in both directions. */
-  if(walksAsDead(n) && (o.faction==='purge' || o.faction==='exile')) return true;
+  if(walksAsDead(n) && (o.faction==='purge' || o.faction==='messenger' || o.faction==='exile')) return true;
   if(n.faction==='exile') return walksAsDead(o);                         /* Ash hunts the dead she can see */
-  if(n.undead) return o.faction==='purge' || o.faction==='exile';        /* the dead and their hunters */
+  if(n.undead) return o.faction==='purge' || o.faction==='messenger' || o.faction==='exile';   /* the dead and their hunters */
 
   return false;
 }
@@ -13457,11 +13501,14 @@ function hostile(a, b){
   if(a.neutral && a.provoked && b.faction==='player') return true;
   if(b.neutral && b.provoked && a.faction==='player') return true;
   if(a.faction==='wild' || b.faction==='wild') return true;
-  /* purge squads hunt the walking dead — and necromancers, once known */
-  if(a.faction==='purge' || b.faction==='purge'){
-    const p = a.faction==='purge' ? b : a;
+  /* purge squads hunt the walking dead — and necromancers, once known. The Messengers abroad
+     stand on the same side of it, and read one thing the Order cannot: the Attention. */
+  const pa = a.faction==='purge' || a.faction==='messenger', pb = b.faction==='purge' || b.faction==='messenger';
+  if(pa || pb){
+    if(pa && pb) return false;
+    const s = pa ? a : b, p = pa ? b : a;
     if(walksAsDead(p)) return true;
-    if(p.faction==='player') return purgeReads(p);      /* see WHAT THE ORDER SEES, above */
+    if(p.faction==='player') return purgeReads(p) || (s.faction==='messenger' && noticeTier >= 2);   /* see WHAT THE ORDER SEES, above */
     if(p.faction==='town' && p.homeTown && p.homeTown.def.undeadFriendly) return true;
     return false;
   }
@@ -14225,7 +14272,7 @@ function landmarkNear(x, y){
   for(const b2 of pBuilds){ const d = dist(b2.x, b2.y, x, y) * 1.4; if(d < bd){ bd = d; best = {name: 'the camp', x: b2.x, y: b2.y}; } }
   return bd < 70 ? best : null;
 }
-const CMD_FOE_NAME = {bandit:'Bandits', slaver:'Slavers', cannibal:'Cannibals', purge:'The Purge',
+const CMD_FOE_NAME = {bandit:'Bandits', slaver:'Slavers', cannibal:'Cannibals', purge:'The Purge', messenger:'Messengers',
                       gaunt:'Watchers', wild:'Beasts', warband:'A warband', town:'Townsfolk', redoubt:'A garrison'};
 function contactCall(cdr){
   const m = cdr.cmd;
@@ -15971,6 +16018,20 @@ function physics(c, dt){
       .sort((a,b2)=>dist(a.x,a.y,c.x,c.y)-dist(b2.x,b2.y,c.x,c.y))[0];
     if(aim){ travel(c, aim.x, aim.y, dt, 2.0); return; }
   }
+  /* A MESSENGER COMES TO LOOK. It walks up to whoever drew the Attention and hunts only the
+     ones it has a quarrel with. Finding none of yours it would fight, it goes to the Order. */
+  if(c.faction === 'messenger' && c.hunt && !c.target){
+    let aim = null, ad = 1e9, near = null, nd = 1e9;
+    for(const o of player()){
+      if(o.state === 'dead') continue;
+      const d = dist(o.x, o.y, c.x, c.y);
+      if(d < nd){ nd = d; near = o; }
+      if(d < ad && hostile(c, o)){ ad = d; aim = o; }
+    }
+    if(aim){ travel(c, aim.x, aim.y, dt, 2.0); return; }
+    if(near && nd > 12){ travel(c, near.x, near.y, dt, 2.0); return; }
+    messengerToTheOrder(c);
+  }
   /* flee timer: survival overrides work */
   if(c.fleeT > 0){
     c.fleeT -= dt;
@@ -17465,12 +17526,18 @@ function eldritchTide(){
    same reason — it was the loop that made a loud player's clock run out early on top of
    everything else the loudness was already buying them. */
 function fractureAccel(){
-  return noticeTier >= 3 ? 0.25 : 0;
+  /* and the one thing that was holding the middle, if somebody killed it */
+  return (noticeTier >= 3 ? 0.25 : 0) + (bossSlain.guardian ? GATE_RATE : 0);
 }
 function advanceFracture(days){
   if(fracture >= 100) return;
+  pushFracture((100 / FRACTURE_DAYS + fractureAccel()) * days);
+}
+/* the clock moved by anything, a day or a lurch: every stage crossed is told, in order */
+function pushFracture(by){
+  if(fracture >= 100 || !(by > 0)) return;
   const before = fractureStage;
-  fracture = Math.min(100, fracture + (100 / FRACTURE_DAYS + fractureAccel()) * days);
+  fracture = Math.min(100, fracture + by);
   fractureStage = fractureStageOf(fracture);
   if(fractureStage > before){
     for(let k = before + 1; k <= fractureStage; k++){
@@ -17863,9 +17930,9 @@ function openTheDoor(){
      This used to open at the oldest standing tear, or anywhere past the fences. The lore bible
      has always said the kingdom's crater is the natural site for it, and there is a crater now:
      the Door opens at the bottom of the bowl, inside the colonnade, and closing it is an
-     expedition through the worst ground in the world. The Custodian that stood there is gone. */
+     expedition through the worst ground in the world. The Guardian that stood there is gone. */
   const x = CRATER.x, y = CRATER.y;
-  custodianWithdraws();
+  guardianWithdraws();
   theDoor = {x, y, r: 14, seal: 0, work: 0, opened: day, fed: 0};
   log('THE SKY HAS OPENED. Not a tear — a door, at the bottom of the crater, and it is standing wide. Whatever has been watching the fences is not watching any more.', 'bad');
   worldEvent('door', x, y, 'The sky has opened over the crater at the middle of the world. Not a tear this time. A door, and it is standing wide.');
@@ -18988,6 +19055,7 @@ function spawnGaunt(kind, x, y){
        learns cannot be `nightborn`, or it is unmade before it has learned anything. */
     c.nightborn = false;
     c.minded = true;
+    c.faction = 'messenger';       /* a different stock; see THE MESSENGERS ABROAD. The crater's own are handed back */
     c.learnMult = kind === 'herald' ? 1.9 : 1.6;
     c.clawWt = 'burn';             /* fire and light: unlootable because there is nothing to loot */
     c.autoFight = true;
@@ -19715,6 +19783,7 @@ function craterSpawn(ring, kind){
   g.nightborn = false; g.floor = 0;
   g.guard = {x: g.x, y: g.y};
   g.craterOwn = ring;
+  g.faction = 'gaunt';               /* the crater's own hold it against everything, at peace with the Watchers */
   return g;
 }
 function craterMessenger(){
@@ -19722,37 +19791,43 @@ function craterMessenger(){
   g.craterOwn = 'messenger';
   return g;
 }
-/* ---------- THE CUSTODIAN ----------
+/* ---------- THE GUARDIAN AT THE GATE ----------
    A Messenger larger and older than the three in the bowl, standing at the middle of it, over
    the place the rite was worked. It is the crater's reason until the Second Fracture: when the
    Door opens it is not there any more, and the Door is the thing at the bottom of the bowl.
-   Killing it first is allowed and costs what it costs: the thing that was standing over the
-   wound is not standing over it, and something far larger notices. */
-function spawnCustodian(){
-  if(bossSlain.custodian || fractureOpen()) return null;
+   The name is the oldest one for the job: something set at the gate to keep the way, with a
+   light that turns every way, which is what the strikes over the glass are.
+   Killing it first is allowed and costs what it costs. Nothing is keeping the way, something
+   far larger notices (Attention), and the sky comes on faster: a lurch at once and a quicker
+   clock for the rest of the run (`fractureAccel`). It was the one thing holding the middle. */
+const GATE_LURCH = 8;             /* Fracture points the moment it falls: about fourteen days of calendar */
+const GATE_RATE = 0.15;           /* and per day after, on top of the calendar's 0.56 */
+function spawnGuardian(){
+  if(bossSlain.guardian || fractureOpen()) return null;
   const q = {x: CRATER.x + 3, y: CRATER.y + 3};
   const c = spawnGaunt('messenger', q.x, q.y);
-  c.name = 'The Custodian'; c.bossKey = 'custodian'; c.craterOwn = 'custodian';
+  c.name = 'The Guardian at the Gate'; c.bossKey = 'guardian'; c.craterOwn = 'guardian'; c.faction = 'gaunt';
   c.nightborn = false; c.floor = 0; c.big = 1.9;
   c.stats.atk = 48; c.stats.def = 44; c.stats.tough = 60; c.stats.ath = 12;
   c.clawDmg = 26; c.blood = c.maxBlood = 420;
   c.guard = {x: CRATER.x + 3, y: CRATER.y + 3};
-  c.barks = [...BOSS_BARKS.custodian];
+  c.barks = [...BOSS_BARKS.guardian];
   return c;
 }
-function custodianFalls(c){
+function guardianFalls(c){
   bumpNotice(8);
-  const text = 'Something that stood over the middle of the world has been put down. Everybody who was out after dark last night says the sky looked back at them, and none of them can say what they mean by that.';
+  const text = 'Something that stood at the gate in the middle of the world has been put down. Everybody who was out after dark last night says the sky looked back at them, and none of them can say what they mean by that.';
   worldEvent('boss', CRATER.x, CRATER.y, text);
-  log('THE CUSTODIAN IS DOWN. Whatever it was standing over, nothing is standing over it now.', 'bad');
+  log('THE GUARDIAN AT THE GATE IS DOWN. Nothing is keeping the way now, and the sky has noticed.', 'bad');
+  pushFracture(GATE_LURCH);
 }
 /* at the Second Fracture: it goes, and it does not walk out */
-function custodianWithdraws(){
-  const c = chars.find(o => o.bossKey === 'custodian' && o.state !== 'dead');
+function guardianWithdraws(){
+  const c = chars.find(o => o.bossKey === 'guardian' && o.state !== 'dead');
   if(!c) return;
   addSpecks(c.x, c.y, '#f4f0ff', 24);
   chars.splice(chars.indexOf(c), 1);
-  worldEvent('door', CRATER.x, CRATER.y, 'The Custodian is gone from the bowl. It did not leave the crater; it is simply not in it. Where it stood, the Door is open.');
+  worldEvent('door', CRATER.x, CRATER.y, 'The Guardian at the Gate is gone from the bowl. It did not leave the crater; it is simply not in it. Where it stood, the Door is open.');
 }
 /* the hours: what the crater has lost, it grows back, but never where one of yours can see it */
 function craterDangerTick(dh){
@@ -19771,7 +19846,7 @@ function craterDangerTick(dh){
     const q = craterSpot(CRATER_POP.bowl.r0, CRATER_POP.bowl.r1);
     if(unseen(q)){
       const g = spawnGaunt(rnd() < 0.34 ? 'herald' : 'messenger', q.x, q.y);
-      g.nightborn = false; g.floor = 0; g.guard = {x: g.x, y: g.y}; g.craterOwn = 'messenger';
+      g.nightborn = false; g.floor = 0; g.guard = {x: g.x, y: g.y}; g.craterOwn = 'messenger'; g.faction = 'gaunt';
     }
   }
 }
@@ -20376,7 +20451,8 @@ function gauntTick(dh){
      only hostile body in the world with `learnMult`, so what makes it frightening is the
      campaign it has had, and one introduced late is only a stat line. Two is the ceiling: a
      world with a dozen of these growing in it is a different game. */
-  if(roll > 0.985 && chars.filter(o => (o.gauntKind === 'messenger' || o.gauntKind === 'herald') && o.state !== 'dead').length < 2){
+  /* and later in the clock, more often: one in sixty-seven at first, one in twenty-five at the end */
+  if(roll > 0.985 - 0.005 * fractureStage && messengersAbroad() < messengerCap()){
     const m = spawnGaunt(rnd() < 0.35 ? 'herald' : 'messenger', x, y);
     m.hunt = anchor;
     if(dist(m.x, m.y, anchor.x, anchor.y) < 34 && visAt(m.x, m.y) === 2)
@@ -28092,7 +28168,7 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
     for(let i = 0; i < CRATER_MESSENGERS; i++) craterMessenger();
     /* THE CACHES. What the capital kept, and what the flash did not reach: the richest in the
        world after the warren vaults, because nothing else is this hard to reach. Three in the
-       ruined blocks, one in the colonnade under the Custodian, three at the foot of a slab. */
+       ruined blocks, one in the colonnade under the Guardian, three at the foot of a slab. */
     for(const v of CRATER_RUINS.vaults){
       const heart = v.kind === 'heart';
       chests.push({x: v.x, y: v.y, opened: false, vault: true, floor: 0, crater: true, loot: {cats: heart ? ri(900, 1600) : ri(300, 700), items: {
@@ -28106,7 +28182,7 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
       chests.push({x, y, opened: false, floor: 0, crater: true, loot: {cats: ri(120, 320), items: {
         formula_w: ri(1, 2), tome: 1, ...(rnd() < 0.4 ? {gold_bar: 1} : {})}}});
     }
-    spawnCustodian();
+    spawnGuardian();
   } finally { seed = pocket; }
 })();
 /* THE WARRENS USED TO BE SEEDED HERE, at the feet of the mountains, before the lattice
@@ -32367,6 +32443,7 @@ function factionColor(c){
   if(c.faction==='guild') return '#7a6a52';
   if(c.faction==='wild') return '#7a5a2e';
   if(c.faction==='purge' || c.faction==='exile') return '#e8e2d0';
+  if(c.faction==='messenger') return '#f4f0ff';   /* the light they carry, and nothing dyed */
   if(c.faction==='slaver') return '#8a5a6a';
   if(c.faction==='redoubt') return c.construct ? '#8a9098' : '#c8c0a8';
   if(c.faction==='gaunt') return '#7d5a95';   /* a colour that does not belong here */
@@ -44712,19 +44789,26 @@ function claimTown(t, by){
    other thing you can do with a broken hall. The stores go into the wagon and the town is
    left the way a host leaves one: `sacked` and `sackKind = 'torch'`, which is what the ruin
    drawing reads, so it burns, chars and lets its roofs down exactly as a sacked town does.
-   Nobody is killed by the menu; what burns is the stock. And everybody hears about it. */
+   Nobody is killed by the menu; what burns is the stock. And everybody hears about it.
+   HALF OF IT, AT MOST. A town's whole store in one wagon made a sack the best trade in the
+   game, so the wagon takes half of each line, rounded down, and the rest goes up with the
+   roofs. A torch is a waste, and the haul should say so. */
 function sackTown(t, by){
   if(!claimable(t)){ log('The seat is not empty. Break it first.', 'bad'); return; }
   if(t.sacked > 0){ log(`There is nothing left in ${t.name} to burn.`, 'bad'); return; }
-  let n = 0;
-  for(const [k, v] of Object.entries(t.stock || {})){ const q = Math.floor(v || 0); if(q > 0 && ITEMS[k]){ addItem(k, q); n += q; } }
+  let n = 0, lost = 0;
+  for(const [k, v] of Object.entries(t.stock || {})){
+    const all = Math.floor(v || 0), q = Math.floor(all / 2);
+    if(q > 0 && ITEMS[k]){ addItem(k, q); n += q; }
+    lost += all - (q > 0 && ITEMS[k] ? q : 0);
+  }
   t.stock = {};
   t.sacked = 5; t.sackKind = 'torch';
   dropRep(t, 400);
   for(const o of towns) if(o !== t) dropRep(o, 25);
-  const text = `${by.name} put ${t.name} to the torch. What was in its stores is in a wagon now, and what was not is ash.`;
+  const text = `${by.name} put ${t.name} to the torch. Half of what was in its stores is in a wagon now, and the rest is ash.`;
   log(text, 'bad');
-  if(n) log(`${n} things carried out of ${t.name}.`, '');
+  if(n) log(`${n} things carried out of ${t.name}${lost ? `, and ${lost} burned with it` : ''}.`, '');
   worldEvent('sack', t.x, t.y, text);
   deed('sack', 1, t);
   refreshTop(); refreshInv();
@@ -46683,6 +46767,7 @@ function restore(d){
   for(const k in placesSeen) delete placesSeen[k];
   Object.assign(favors, d.favors || {});
   Object.assign(bossSlain, d.bossSlain || {});
+  if(bossSlain.custodian){ bossSlain.guardian = bossSlain.guardian || bossSlain.custodian; delete bossSlain.custodian; }
   Object.assign(legendsGiven, d.legendsGiven || {});
   Object.assign(placesSeen, d.placesSeen || {});
   blackReceipt.stage = d.blackReceipt || 0;
@@ -46876,6 +46961,12 @@ function restore(d){
     c.devoted = !!s.devoted; c.leaving = s.leaving || null; c.boundTold = !!s.boundTold;
     c.doorborn = !!s.doorborn; c.doorWork = !!s.doorWork;
     c.neutral = !!s.neutral; c.provoked = !!s.provoked; c.bossKey = s.bossKey || null; c.dropItems = s.dropItems || null;
+    /* IT WAS CALLED THE CUSTODIAN in the first v21 builds; renamed, key and all */
+    if(c.bossKey === 'custodian'){ c.bossKey = 'guardian'; c.name = 'The Guardian at the Gate'; }
+    if(c.craterOwn === 'custodian') c.craterOwn = 'guardian';
+    /* and a Messenger abroad from before they had a faction: the yard's and the columns' were
+       `purge`, the Attention's were `gaunt` */
+    if(messengerKind(c) && !c.craterOwn && (c.faction === 'purge' || c.faction === 'gaunt')) c.faction = 'messenger';
     c.scholar = !!s.scholar; c.quest = s.quest || null; c.questsDone = s.questsDone || 0; c.offered = !!s.offered;
     c.immortal = s.immortal || null; c.vesselPattern = s.vesselPattern || null; c.demilich = !!s.demilich; c.hireMark = (s.hireMark ?? null);
     c.deepKin = s.deepKin || null; c.lightShy = !!s.lightShy; c.hallId = (s.hallId ?? null);
