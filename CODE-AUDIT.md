@@ -5,7 +5,8 @@ branched from `main` at 30223c9. I was asked to look for needless repetition, de
 inefficiencies. Reading every line also turned up ten real bugs, and those come first.
 
 This replaces the audit of 2026-09-17, which is in git at `30223c9:CODE-AUDIT.md`. §8 says what
-that audit got right and what it missed.
+that audit got right and what it missed. §9 checks this branch against PR 39, which was open at
+the same time: one silent break if the two are merged naively, and the order to merge them in.
 
 Every number here comes from the file or from the running game, not from memory, and the
 appendix says how to re-run each one. Items marked **fixed** are in this branch and checked by a
@@ -96,7 +97,12 @@ a comment saying why it has to be there.
 - **`hostUpkeep`** charged each bound body's remains from the wagon's `stash.remains` only.
   `depositInv` puts remains in storage bins, so a player who kept them in a Reliquary watched a
   risen come apart with 40 remains on the shelf. The fix: if the stash is short, top it up from
-  bins and packs with `campTake`, the function every other cost already uses.
+  bins and packs with `campTake`, the function every other cost already uses. The top-up
+  takes whole remains, so with a fractional bill it overpays. The first version of this fix
+  left the difference in the wagon: 0.50 remains in the cart of a player who keeps every one
+  of them in a Reliquary. PR 39's gate searches the cart and counts any `stash[k] > 0` as
+  grave-goods (§9), so the overpayment now goes back to a bin. `review.js` #3 also asserts
+  that the wagon is still empty.
 - **`craftUndead`** checked it could afford the bill against the stash only
   (`Object.keys(bill).every(k => stash[k] >= bill[k])`), but paid with `campTake`, which draws
   from stash, bins and pockets. With the materials in a Reliquary, the Circle said *"Missing
@@ -380,7 +386,10 @@ The two options:
 
 Either way, `watchers.js` should stop claiming they talk until they do.
 
-### 5.2 Hollowmere breaks the light budget
+### 5.2 Hollowmere breaks the light budget — **fixed by PR 39**
+
+PR 39 turns these lamps into ordinary town fires, and this finding closes once that merges
+(§9). The original finding:
 
 The torch-pool block, *"THREE FIRES, AND NEVER A FOURTH"*, budgets the scene at three point
 lights. Every light adds a per-fragment loop to every Lambert shader. The Palefrond comment in
@@ -544,6 +553,54 @@ preamble.
 - **Its CSS check** reported one unused class and missed two undefined variables and a stray
   brace. It checked classes against markup, but not variables against definitions, and not
   whether the stylesheet parsed.
+
+---
+
+## 9. Cross-check with PR 39
+
+PR 39 (`claude/undercroft-forage-court`: the undercroft, forage and march order, the Court
+start, town lights, sieges, ruins, the plague bell, the cart search) branched from the same
+`30223c9` and was still open while this review was done. I trial-merged it into this branch in
+a scratch worktree.
+
+**Textual conflicts: five, all in the game file, all resolvable.**
+
+| where | resolution |
+|---|---|
+| `theStop` | PR 39's new line (`'Hold the cart. Sheet off.'`), without the dead `AU.open &&` guard |
+| warren routing (three hunks) | PR 39's `carveRun` and doorstep carving. The `routed`/`straight` counters and `U.warrenRouted`/`U.warrenStraight` stay deleted: no game code or harness on either branch reads them, and after the merge `straight` would be declared and never incremented. |
+| after `syncUndercroft` | both: this branch's `yoursBelow()` and PR 39's `DOORGLOW` materials |
+
+**One semantic conflict, which git merges silently.** This branch deleted
+`hi = Math.max(st.from, st.to)` from `syncStairs`, because nothing read it. PR 39's new
+descent-mouth code in the same function reads `hi`. A plain merge is a `ReferenceError` in
+`syncStairs` the first time it draws. The fix is to restore the declaration. ESLint's
+`no-undef` over the merged file found it. I also checked the other locals this branch removed,
+by AST, against the merged file: none is used by PR 39, and none of their names is shadowed by
+a top-level variable that would hide a dangling reference. None of the removed fields
+(`pref`, `morale`, `patrolPost`, …) is read by PR 39's code or harnesses. PR 39 adds no new
+`-100` standing clamps.
+
+**One interaction between the two branches' fixes.** §1.3's upkeep top-up could leave a
+fraction of a remains in the wagon, and PR 39's cart search counts any remains in the wagon as
+grave-goods. Together, they would have searched the cart of exactly the player who keeps
+remains at home to keep the cart clean, which is the choice PR 39 says it preserves. Fixed on
+this branch (§1.3): red on the previous commit, green now.
+
+**What PR 39 settles here.** §5.2 (Hollowmere's four `PointLight`s): they become ordinary
+town fires.
+
+**What PR 39 adds that this review would flag.** None of this is blocking:
+
+- `rounds` (written, never read) and `czp` (never used).
+- Five guards on names that always exist: `typeof tileAt`, `typeof AU`,
+  `typeof refreshBuildBar`, `typeof weather` and `AU.bell &&`.
+
+A one-commit tidy after the merge covers them.
+
+**Recommended order:** merge PR 39 first. It is older and larger, and the resolution above has
+been checked against it. Then merge `main` into this branch with that resolution; it is a merge
+commit, not a rebase. Doing it the other way round means editing PR 39's branch.
 
 ---
 
