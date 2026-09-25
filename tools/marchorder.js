@@ -101,14 +101,52 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? `${melee.length} blades and ${bows.length} bows under one captain — a composition, so the ranks have somewhere to go`
         : `!! THE BAND IS NOT OF TWO KINDS (${melee.length} MELEE, ${bows.length} RANGED)`;
       giveCommand(cdr, band, 'forage', { x: HOME.x + 40, y: HOME.y }, 48);
-      step(90);
-      /* the heading the column is actually walking, taken from where it has got to */
-      const hx = cdr.x - HOME.x, hy = cdr.y - HOME.y;
-      const L = Math.hypot(hx, hy) || 1;
-      const ux = hx / L, uy = hy / L;
-      const along = (o) => (o.x - cdr.x) * ux + (o.y - cdr.y) * uy;   /* + is ahead of the captain */
-      const mAvg = melee.filter(o => o.state === 'ok').reduce((a, o) => a + along(o), 0) / Math.max(1, melee.filter(o => o.state === 'ok').length);
-      const rAvg = bows.filter(o => o.state === 'ok').reduce((a, o) => a + along(o), 0) / Math.max(1, bows.filter(o => o.state === 'ok').length);
+      /* ---------- AHEAD OF HIM WHILE THE COLUMN IS MARCHING ----------
+         This used to take one snapshot at ninety seconds and measure along HOME → captain, "the
+         heading the column is actually walking, taken from where it has got to". A forage
+         sweep does not walk away from home in a line: it walks at the nearest ground nobody has
+         seen, and it turns. The snapshot passed whenever the last leg happened to point away
+         from home. When a change elsewhere moved the world's dice (2026-09-25: Marrow Ticks
+         that can get back up), the last leg pointed back, and blades that were ahead of him
+         along the way he was going read as fifteen tiles behind.
+         Averaging over the whole march is wrong the other way: across a turn the ranks are
+         still re-forming, and that is not disorder.
+         So this measures along the heading the game forms the ranks on (`bandHeading`), and
+         only on a steady leg: sampled every 1.5 seconds, counted when the heading has held for
+         the last 4.5. At least five such moments are required, and the bar has not moved. The
+         build before the march order has no `bandHeading`; there the captain's own velocity
+         stands in, so the harness still runs, and reads red, on it.
+         AND AT THE GAME'S OWN STEP. The rest of this file steps a quarter-second at a time,
+         which is fine for what a band decides and wrong for how fast it walks. Bodies walk a
+         path from tile centre to tile centre, and a body that can finish its node in one update
+         snaps to it and loses the rest of that update's move. At 0.25s the captain (0.64 a
+         step) and a blade (0.8) both take exactly two updates a tile, 2.0 tiles a second each,
+         so the fifth off his pace that builds the column does not exist here. At 1/30s it
+         does. */
+      step(20, SIM_DT);
+      const hdNow = (prev) => {
+        if (typeof bandHeading === 'function') return bandHeading(cdr);
+        const dx = cdr.x - prev.x, dy = cdr.y - prev.y, d = Math.hypot(dx, dy) || 1;
+        return { x: dx / d, y: dy / d };
+      };
+      let mSum = 0, rSum = 0, n = 0, pos = { x: cdr.x, y: cdr.y };
+      const hist = [];
+      for (let i = 0; i < 46; i++) {
+        step(1.5, SIM_DT);
+        const hd = hdNow(pos); pos = { x: cdr.x, y: cdr.y };
+        hist.push(hd);
+        if (hist.length < 4) continue;
+        const h0 = hist[hist.length - 4];
+        if (hd.x * h0.x + hd.y * h0.y < 0.95) continue;     /* turned in the last 4.5s: still forming */
+        const along = (o) => (o.x - cdr.x) * hd.x + (o.y - cdr.y) * hd.y;   /* + is ahead of the captain */
+        const mOk = melee.filter(o => o.state === 'ok'), rOk = bows.filter(o => o.state === 'ok');
+        if (!mOk.length || !rOk.length) continue;
+        mSum += mOk.reduce((a, o) => a + along(o), 0) / mOk.length;
+        rSum += rOk.reduce((a, o) => a + along(o), 0) / rOk.length;
+        n++;
+      }
+      const L = Math.hypot(cdr.x - HOME.x, cdr.y - HOME.y);
+      const mAvg = n >= 5 ? mSum / n : 0, rAvg = n >= 5 ? rSum / n : 0;
       marchRanks = { mAvg, rAvg, walked: L };
       O._march = `walked ${L.toFixed(0)} tiles out; ahead of the captain: blades ${mAvg.toFixed(1)}, bows ${rAvg.toFixed(1)}`;
       O.andTheColumnMarchesInItsOwnOrder = (L > 8 && mAvg > rAvg + 0.5 && rAvg > 0.5)
