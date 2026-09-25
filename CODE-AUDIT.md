@@ -460,6 +460,22 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
+### 5.10 The road builder dropped roads — **fixed 2026-09-25**
+
+Found on the full world map after the crater moved two towns off the middle: 5 roads where
+there had been 8, and Greenrest, the start, with none.
+- A town pair was marked linked *before* its path was tried, and pathing between two gates
+  can fail one way and succeed the other. So one failed attempt locked out the reverse, which
+  would have worked.
+- The pathfinder's 7,000-step cap gave up on any road over about 700 tiles.
+- Nothing checked that every town ended up on the network.
+
+Now each road is tried both ways and walked in legs of at most 90 tiles with a load-time
+budget, and any town still off the network is joined to the nearest one on it. On five seeds
+there is one network every time (9 or 10 roads), and none of it comes inside the crater's
+approach. Travellers between towns the roads do not join directly now string roads together
+(`routeVia`) instead of walking a straight line.
+
 ### 5.9 The night never sends anything — **found 2026-09-25, your call**
 
 `gauntTick` spawns the night's Watchers near your people, up to a cap of

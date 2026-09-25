@@ -30,6 +30,11 @@
  *  14. the Second Fracture opens the Door at the bottom of the bowl, and the Custodian is gone
  *      rather than dead
  *  15. killed first, it stays dead, and something larger notices
+ *  16. the roads go round it: every town is on one network, no road comes inside the approach,
+ *      and a road between towns on opposite sides follows the ring (both seeds)
+ *  17. and so does everybody on the world's business: a caravaneer and a soldier sent across
+ *      the map walk the ring and arrive, a trip between towns the roads do not join directly is
+ *      strung together from roads, and one of yours sent the same way goes where they are sent
  *
  * Anything starting '!!' fails the build.
  *
@@ -79,13 +84,28 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       if (roads) bits.push(`${roads} trade roads run through the glass`);
       const strays = chars.filter(c => (c.floor || 0) === 0 && !c.craterOwn && within(c.x, c.y, R.glass)).map(c => c.name);
       if (strays.length) bits.push(`${strays.length} bodies left in the glass (${strays.slice(0, 3).join(', ')})`);
+      /* 16. the roads */
+      let roadNote = '';
+      if (typeof craterRingNodes !== 'undefined') {
+        const lab = towns.map((_, i) => i); const find = (i) => lab[i] === i ? i : (lab[i] = find(lab[i]));
+        for (const rt of tradeRoutes) lab[find(rt.aI)] = find(rt.bI);
+        const islands = towns.filter((_, i) => find(i) !== find(0)).map(t => t.name);
+        if (islands.length) bits.push(`${islands.join(', ')} ${islands.length > 1 ? 'are' : 'is'} off the road network`);
+        const inside = tradeRoutes.filter(rt => rt.wps.some(w => within(w.x, w.y, R.approach))).length;
+        if (inside) bits.push(`${inside} roads come inside the approach`);
+        const gate = t => ({ x: t.x, y: t.y + (t.def.wall ? t.def.wall.r + 2 : 4) });
+        const across = tradeRoutes.filter(rt => craterCrosses(gate(towns[rt.aI]).x, gate(towns[rt.aI]).y, gate(towns[rt.bI]).x, gate(towns[rt.bI]).y, CRATER_AVOID_R));
+        const onRing = across.filter(rt => rt.wps.some(w => Math.abs(craterD(w.x, w.y) - CRATER_RING_R) < 20));
+        if (onRing.length < across.length) bits.push(`${across.length - onRing.length} roads across the crater do not follow the ring`);
+        roadNote = `; all ${towns.length} towns are on one network of ${tradeRoutes.length} roads, none inside the approach, ${across.length} of them round the ring`;
+      } else bits.push('there is no ring to route round in this build');
       const nearest = Math.min(...towns.map(t => craterD(t.x, t.y)));
-      return { bits, nearest: Math.round(nearest), roads: tradeRoutes.length };
+      return { bits, nearest: Math.round(nearest), roads: tradeRoutes.length, roadNote };
     });
     const tag = seed ? `seed ${seed}` : 'the default seed';
     if (r.none) { out['builtAround' + (seed || '')] = '!! THERE IS NO CRATER IN THIS BUILD'; await p.close(); continue; }
     out[seed ? 'builtAroundSeed1' : 'builtAround'] = r.bits.length ? `!! ${tag.toUpperCase()}: ${r.bits.join('; ').toUpperCase()}`
-      : `on ${tag} it is at the dead centre, the nearest town is ${r.nearest} tiles out, nothing named or walled stands in the approach or the glass, and none of the ${r.roads} trade roads crosses it`;
+      : `on ${tag} it is at the dead centre, the nearest town is ${r.nearest} tiles out, nothing named or walled stands in the approach or the glass${r.roadNote}`;
     if (seed) { await p.close(); continue; }
 
     /* ---- 3 to 7, on the default world ---- */
@@ -325,6 +345,39 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
             : `!! KILLED: LEDGER ${!!bossSlain.custodian}, ATTENTION ${n0} -> ${noticed}, BACK AGAIN ${!!again}`;
         }
       }
+      /* ---- 17. travellers go round ---- */
+      if (typeof craterShuns !== 'undefined') {
+        const trip = (name, faction) => {
+          const a = 0.9, sx = C.x + Math.cos(a) * 300, sy = C.y + Math.sin(a) * 300;
+          const gx = C.x - Math.cos(a) * 300, gy = C.y - Math.sin(a) * 300;
+          const s0 = findOpenNear(sx, sy, 6), g0 = findOpenNear(gx, gy, 6);
+          const c = makeChar(name, faction, s0.x, s0.y, { atk: 10, def: 10, tough: 60, ath: 6 });
+          c.__probe = true; c.noFight = true; chars.push(c);
+          let minD = 1e9, arrived = false, i = 0;
+          for (; i < 16000 && !arrived; i++) { arrived = travel(c, g0.x, g0.y, 1 / 30, 1.5); minD = Math.min(minD, craterD(c.x, c.y)); }
+          chars.splice(chars.indexOf(c), 1);
+          return { minD, arrived, secs: i / 30 };
+        };
+        const cara = trip('Caravaneer', 'town'), sold = trip('Soldier', 'warband'), mine = trip('Sent', 'player');
+        /* and a trip the roads do not make in one */
+        let via = null;
+        for (let i = 0; i < towns.length && !via; i++) for (let j = 0; j < towns.length && !via; j++) {
+          if (i === j || routeFor(towns[i], towns[j])) continue;
+          const rt = routeVia(towns[i], towns[j]);
+          if (rt) via = { from: towns[i].name, to: towns[j].name, hops: rt.hops, minD: Math.min(...rt.wps.map(w => craterD(w.x, w.y))) };
+        }
+        const bits = [];
+        for (const [who, t] of [['a caravaneer', cara], ['a soldier', sold]]) {
+          if (!t.arrived) bits.push(`${who} sent across the map did not arrive in ${Math.round(t.secs)}s`);
+          if (t.minD < C.approach) bits.push(`${who} came within ${Math.round(t.minD)} of the middle`);
+        }
+        if (!(mine.minD < C.approach)) bits.push(`one of yours sent straight across kept out too (${Math.round(mine.minD)})`);
+        if (via && via.minD < C.approach) bits.push(`the way from ${via.from} to ${via.to} comes within ${Math.round(via.minD)}`);
+        R.travellersGoRound = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : `sent across the map, a caravaneer and a soldier walk the ring and arrive (${Math.round(cara.secs)}s and ${Math.round(sold.secs)}s, never nearer than ${Math.round(Math.min(cara.minD, sold.minD))} to the middle)` +
+            `${via ? `; ${via.from} to ${via.to} is strung together from ${via.hops} roads and keeps ${Math.round(via.minD)} out` : ''}` +
+            `; one of yours sent the same way walks in to ${Math.round(mine.minD)}, because you sent them`;
+      } else R.travellersGoRound = '!! NOBODY IN THIS BUILD KNOWS TO GO ROUND';
       /* ---- 7. an old save ---- */
       {
         const lines = [];

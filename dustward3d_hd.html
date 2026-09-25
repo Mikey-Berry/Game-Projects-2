@@ -777,6 +777,58 @@ function craterRuinTiles(){
   }
   return out;
 }
+/* ---------- THE LONG WAY ROUND ----------
+   Nobody who has a choice walks through the crater. The roads go round it and so does anybody
+   travelling on the world's business, on a RING of twenty-four fixed waypoints thirty tiles
+   outside the approach: the roads are built along it, and a caravan, a pilgrim or an army whose
+   straight line would cross the approach walks it instead, node to node, the shorter way round,
+   until the line to where it is going is clear. Fixed nodes rather than a point recomputed each
+   step, so a traveller's goal holds still and its pathing does not churn; snapped to open ground
+   the first time they are asked for, which is the road builder, at load. */
+const CRATER_RING_R = CRATER.approach + 30, CRATER_RING_N = 24;
+const CRATER_AVOID_R = CRATER.approach + 10;
+let _craterRingNodes = null;
+function craterRingNodes(){
+  if(_craterRingNodes) return _craterRingNodes;
+  const out = [];
+  for(let i = 0; i < CRATER_RING_N; i++){
+    const a0 = i / CRATER_RING_N * Math.PI * 2;
+    let p = null;
+    for(const dr of [0, 4, -4, 8, 12, 16, 20, 26]){
+      for(const da of [0, 0.02, -0.02, 0.04, -0.04]){
+        const r = CRATER_RING_R + dr, x = CRATER.x + Math.cos(a0 + da) * r, y = CRATER.y + Math.sin(a0 + da) * r;
+        if(!isBlocked(x, y) && tileAt(x, y) !== 3){ p = {x, y, a: a0 + da, i}; break; }
+      }
+      if(p) break;
+    }
+    out.push(p || {x: CRATER.x + Math.cos(a0) * CRATER_RING_R, y: CRATER.y + Math.sin(a0) * CRATER_RING_R, a: a0, i});
+  }
+  return (_craterRingNodes = out);
+}
+/* does the straight walk from a to b pass within r of the middle */
+function craterCrosses(ax, ay, bx, by, r){
+  const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1;
+  const t = clamp(((CRATER.x - ax) * dx + (CRATER.y - ay) * dy) / L2, 0, 1);
+  return dist(ax + dx * t, ay + dy * t, CRATER.x, CRATER.y) < r;
+}
+/* the next ring node to walk at from x,y, going round the shorter way toward gx,gy: from far
+   out, the one nearest the tangent; on the ring, the next one ahead */
+function craterRingStep(x, y, gx, gy){
+  const nodes = craterRingNodes(), a0 = craterAng(x, y);
+  const wrap = (v) => { while(v > Math.PI) v -= Math.PI * 2; while(v < -Math.PI) v += Math.PI * 2; return v; };
+  const dir = wrap(craterAng(gx, gy) - a0) >= 0 ? 1 : -1;
+  const d0 = craterD(x, y);
+  const tan = d0 > CRATER_RING_R + 4 ? Math.acos(clamp(CRATER_RING_R / d0, -1, 1)) : 0;
+  const want = a0 + dir * Math.max(tan, 0.2);
+  let best = nodes[0], bd = 1e9;
+  for(const n of nodes){ const e = Math.abs(wrap(n.a - want)); if(e < bd){ bd = e; best = n; } }
+  return best;
+}
+/* who keeps out: anybody on the world's business. Your own people go where you send them, and
+   what lives in the crater does not need telling where it lives */
+function craterShuns(c){
+  return c.faction !== 'player' && !c.craterOwn && !c.gauntKind && !c.doorborn && (c.floor || 0) === 0;
+}
 /* is any part of a w-by-h rectangle at x,y within r of the centre — the question a town, the
    Bastion or the Guild asks before it lays out a plan */
 function craterNear(x, y, w, h, r){
@@ -8472,7 +8524,7 @@ function spawnDrifter(){
     {atk:6, def:8, tough:8, ath:7, weapon: rnd()<0.3 ? 'w_club' : null, armor: rnd()<0.4 ? 'a_rag' : null,
      race: rnd() < 0.12 ? 'scaleborn' : rnd() < 0.06 ? 'homunculus' : 'human'});
   d.loot = ri(15, 90);
-  const rt = routeFor(from, to);
+  const rt = routeVia(from, to);
   d.pilgrimage = {dest: to, waitT: 0, wps: rt ? rt.wps : null, wi: 0};
   chars.push(d);
   return d;
@@ -8487,34 +8539,125 @@ function routeFor(fromT, toT){
 }
 (function computeTradeRoutes(){
   const gate = t => ({x: t.x, y: t.y + (t.def.wall ? t.def.wall.r + 2 : 4)});
-  const linked = new Set();
-  /* EVERY ROAD GOES THE LONG WAY ROUND. The rim is not stamped yet (it is carved with the
-     heights, much later), so the glass is sealed for the length of this function and opened
-     again after: a route is a thing people walk, and nobody walks through that. */
+  /* ---------- THE ROADS, AND WHAT WAS WRONG WITH THEM ----------
+     Three faults, measured on the default seed once the crater had pushed Ironscar and
+     Fallowend off the middle of the map: 5 roads where there had been 8, and GREENREST, the
+     start, with none at all.
+       · A pair was marked linked BEFORE its path was tried. Pathing between two gates can fail
+         one way and succeed the other (Dustport to Greenrest fails, Greenrest to Dustport does
+         not), and the failed first attempt locked the reverse out.
+       · The unit pathfinder caps its search at 7,000 steps, which is right for a body that has
+         to decide this frame and wrong for a road over seven hundred tiles long.
+       · Nothing asked whether every town ended up on the network, so a town far from its two
+         nearest neighbours could be left an island.
+     Now: a road is tried both ways and only counts once it exists; it is walked in legs of at
+     most ninety tiles, each with a budget worth spending once, at load; and after the nearest
+     neighbours are joined, any town still off the network is joined to its nearest town that is
+     on it. And a road whose straight line would cross the crater's approach goes round, on the
+     ring (`craterRingNodes`), which is sealed off for the length of this function besides. */
   const seal = [];
-  for(let y = Math.floor(CRATER.y - CRATER.glass); y <= CRATER.y + CRATER.glass; y++)
-    for(let x = Math.floor(CRATER.x - CRATER.glass); x <= CRATER.x + CRATER.glass; x++){
-      if(craterD(x + 0.5, y + 0.5) >= CRATER.glass) continue;
+  for(let y = Math.floor(CRATER.y - CRATER.approach); y <= CRATER.y + CRATER.approach; y++)
+    for(let x = Math.floor(CRATER.x - CRATER.approach); x <= CRATER.x + CRATER.approach; x++){
+      if(craterD(x + 0.5, y + 0.5) >= CRATER.approach) continue;
       const k = bkey(x, y, 0);
       if(!blocked.has(k)){ blocked.add(k); seal.push(k); }
     }
-  for(let i=0;i<towns.length;i++){
-    const near = towns.map((t,j)=>({j, d: dist(t.x,t.y,towns[i].x,towns[i].y)}))
-      .filter(o => o.j !== i).sort((a,b)=>a.d-b.d).slice(0, 2);
-    for(const {j} of near){
-      const key = Math.min(i,j)+'|'+Math.max(i,j);
-      if(linked.has(key)) continue;
-      linked.add(key);
-      const ga = gate(towns[i]), gb = gate(towns[j]);
-      const path = findPath(ga.x, ga.y, gb.x, gb.y);
-      if(!path || path.length < 4) continue;
-      const wps = path.filter((_,k) => k % 6 === 0);
-      wps.push(path[path.length-1]);
-      tradeRoutes.push({aI:i, bI:j, wps});
+  /* the nearest open tile to a point, by a fixed spiral: no dice */
+  const openAt = (x, y) => {
+    if(!isBlocked(x, y) && tileAt(x, y) !== 3) return {x, y};
+    for(let r = 1; r <= 12; r++) for(let a = 0; a < 16; a++){
+      const px = x + Math.cos(a / 16 * Math.PI * 2) * r, py = y + Math.sin(a / 16 * Math.PI * 2) * r;
+      if(!isBlocked(px, py) && tileAt(px, py) !== 3) return {x: px, y: py};
     }
+    return {x, y};
+  };
+  const roadBetween = (ga, gb) => {
+    const ctrl = [ga];
+    let p = ga;
+    for(let guard = 0; guard < CRATER_RING_N + 2 && craterCrosses(p.x, p.y, gb.x, gb.y, CRATER_AVOID_R); guard++){
+      p = craterRingStep(p.x, p.y, gb.x, gb.y);
+      ctrl.push(p);
+    }
+    ctrl.push(gb);
+    const pts = [ctrl[0]];
+    for(let i = 1; i < ctrl.length; i++){
+      const a = ctrl[i - 1], b = ctrl[i], n = Math.ceil(dist(a.x, a.y, b.x, b.y) / 90);
+      for(let k = 1; k < n; k++) pts.push(openAt(lerp(a.x, b.x, k / n), lerp(a.y, b.y, k / n)));
+      pts.push(b);
+    }
+    const path = [];
+    for(let i = 1; i < pts.length; i++){
+      const leg = findPath(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y, 0, 60000);
+      if(!leg) return null;
+      path.push(...leg);
+    }
+    return path;
+  };
+  const linked = new Set();
+  const link = (i, j) => {
+    const key = Math.min(i, j) + '|' + Math.max(i, j);
+    if(linked.has(key)) return true;
+    const ga = gate(towns[i]), gb = gate(towns[j]);
+    let path = roadBetween(ga, gb);
+    if(!path || path.length < 4){
+      path = roadBetween(gb, ga);
+      if(path) path = path.reverse();
+    }
+    if(!path || path.length < 4) return false;
+    linked.add(key);
+    const wps = path.filter((_, k) => k % 6 === 0);
+    wps.push(path[path.length - 1]);
+    tradeRoutes.push({aI: i, bI: j, wps});
+    return true;
+  };
+  for(let i = 0; i < towns.length; i++){
+    const near = towns.map((t, j) => ({j, d: dist(t.x, t.y, towns[i].x, towns[i].y)}))
+      .filter(o => o.j !== i).sort((a, b) => a.d - b.d).slice(0, 2);
+    for(const {j} of near) link(i, j);
+  }
+  /* and nobody is left an island: join the network's pieces, nearest pair first */
+  for(let guard = 0; guard < towns.length; guard++){
+    const lab = towns.map((_, i) => i);
+    const find = (i) => lab[i] === i ? i : (lab[i] = find(lab[i]));
+    for(const r of tradeRoutes) lab[find(r.aI)] = find(r.bI);
+    const pairs = [];
+    for(let i = 0; i < towns.length; i++) for(let j = i + 1; j < towns.length; j++)
+      if(find(i) !== find(j)) pairs.push([dist(towns[i].x, towns[i].y, towns[j].x, towns[j].y), i, j]);
+    if(!pairs.length) break;
+    pairs.sort((a, b) => a[0] - b[0]);
+    if(!pairs.some(([, i, j]) => link(i, j))) break;
   }
   for(const k of seal) blocked.delete(k);
 })();
+/* ---------- AND A TRIP BETWEEN TOWNS THE ROADS DO NOT JOIN DIRECTLY ----------
+   `routeFor` answers for a single road, and everybody who travels used to take `null` from it to
+   mean "walk straight there" — across the crater, if it lay between. This walks the network
+   instead, fewest roads first, and strings the roads together. `routeFor` itself still means
+   one road, because a bought map reveals the roads a town runs, not the whole network. */
+function routeVia(fromT, toT){
+  const direct = routeFor(fromT, toT);
+  if(direct) return direct;
+  const i0 = towns.indexOf(fromT), i1 = towns.indexOf(toT);
+  if(i0 < 0 || i1 < 0) return null;
+  const prev = new Map([[i0, -1]]), q = [i0];
+  while(q.length){
+    const i = q.shift();
+    if(i === i1) break;
+    for(const r of tradeRoutes){
+      const j = r.aI === i ? r.bI : r.bI === i ? r.aI : -1;
+      if(j < 0 || prev.has(j)) continue;
+      prev.set(j, i); q.push(j);
+    }
+  }
+  if(!prev.has(i1)) return null;
+  const hops = [];
+  for(let k = i1; k !== i0; k = prev.get(k)) hops.push(k);
+  hops.reverse();
+  const wps = [];
+  let at = fromT;
+  for(const j of hops){ wps.push(...routeFor(at, towns[j]).wps); at = towns[j]; }
+  return {wps, aI: i0, bI: i1, hops: hops.length};
+}
 for(let i=0;i<6;i++) spawnDrifter();
 /* ---------- AND NOBODY STARTS THE GAME STANDING IN A YARD THEY CANNOT GET INTO ----------
    `estateEvict` already exists and already does exactly the right thing — it puts any stranger
@@ -8658,7 +8801,7 @@ function spawnCaravan(){
   tr.mobileVendor = true;
   const conn = towns.filter(t => t !== a && routeFor(a, t));
   const dest = conn.length ? pick(conn) : pick(towns.filter(t => t !== a));
-  const rt = routeFor(a, dest);
+  const rt = routeVia(a, dest);
   tr.caravan = {dest, waitT:0, wps: rt ? rt.wps : null, wi: 0};
   tr.loot = ri(300, 800);
   chars.push(tr);
@@ -13515,7 +13658,7 @@ function ai(c, dt){
       if(c.caravan.satchel) for(const id of c.caravan.satchel){ const e = eventById(id); if(e) townLearns(d, e); }
       c.caravan.satchel = d.known ? Object.keys(d.known).map(Number) : [];
       c.caravan.dest = nextCaravanDest(d);
-      const rt = routeFor(d, c.caravan.dest);
+      const rt = routeVia(d, c.caravan.dest);
       c.caravan.wps = rt ? rt.wps : null; c.caravan.wi = 0;
       c.caravan.waitT = 20 + rnd()*20;
       return;
@@ -13849,7 +13992,7 @@ function takeContract(t, j){
     w.vip = true; w.neutral = true; w.civT = 999;
     w.escortTo = j.toTown; w.escortId = j.id;
     j.wardId = w.id;
-    const rt = routeFor(t, to);
+    const rt = routeVia(t, to);
     j.wps = rt ? rt.wps.map(p => ({x: p.x, y: p.y})) : null;
     j.wi = 0;
     log(`${w.name} shoulders a bag and starts for ${to.name}. Keep them breathing — right-click them to set a bodyguard.`, 'good');
@@ -15111,10 +15254,12 @@ function stepToward(c, tx, ty, dt){
   return dist(c.x,c.y,tx,ty) < 0.1;
 }
 /* A* on the tile grid, octile heuristic, no corner cutting */
-function findPath(sx, sy, gx, gy, pf = 0){
+function findPath(sx, sy, gx, gy, pf = 0, cap = 0){
   sx|=0; sy|=0; gx|=0; gy|=0;
-  /* the search budget scales with the trip: a short goal fails fast instead of flooding the map */
-  const expCap = Math.min(7000, 400 + Math.max(Math.abs(gx-sx), Math.abs(gy-sy))**2 * 10);
+  /* the search budget scales with the trip: a short goal fails fast instead of flooding the map.
+     `cap` overrides it for the one caller that runs once, at load, and can afford to look hard:
+     the road builder */
+  const expCap = cap || Math.min(7000, 400 + Math.max(Math.abs(gx-sx), Math.abs(gy-sy))**2 * 10);
   const pass = (x,y) => !isBlocked(x + 0.5, y + 0.5, pf);
   if(!pass(gx,gy)){
     let found = false;
@@ -15262,6 +15407,22 @@ function travel(c, x, y, dt, arrive=0.15){
     c.detour.t -= dt;
     if(c.detour.t <= 0 || dist(c.x, c.y, c.detour.x, c.detour.y) < 1.4) c.detour = null;
     else { tx = c.detour.x; ty = c.detour.y; }
+  }
+  /* ---------- AND NOBODY CROSSES THE CRATER WHO DID NOT MEAN TO ----------
+     A trip across the map is walked in straight forty-tile legs, and the straight line from one
+     side of the world to the other goes through the middle of it. For anybody on the world's
+     business (see `craterShuns`) whose line to the goal crosses the approach, the goal walked
+     at becomes the next node of the ring round it. Not when the goal itself is inside, because
+     then going in is the point; and not from inside the glass, where the only thing to do is
+     leave. A body already in the approach turns for the ring if its line would take it through
+     the glass. */
+  if(craterShuns(c)){
+    const md = craterD(c.x, c.y);
+    if(md > CRATER.glass + 5 && craterD(tx, ty) > CRATER_AVOID_R &&
+       craterCrosses(c.x, c.y, tx, ty, md > CRATER_AVOID_R ? CRATER_AVOID_R : CRATER.glass + 10)){
+      const n = craterRingStep(c.x, c.y, tx, ty);
+      tx = n.x; ty = n.y;
+    }
   }
   c.repathT -= dt;
   if(c.pathFailAnyT > 0) c.pathFailAnyT -= dt;
@@ -26593,7 +26754,7 @@ function update(dt){
       pg.waitT = 30 + rnd()*60;
       const from = pg.dest;
       pg.dest = pick(towns.filter(t => t !== pg.dest));
-      const rt = routeFor(from, pg.dest);
+      const rt = routeVia(from, pg.dest);
       pg.wps = rt ? rt.wps : null; pg.wi = 0;
       if(rnd() < 0.4) say(c, pick(DRIFTER_BARKS));
     } else if(!c.moveTarget && !c.target && !c.fleeT){
@@ -27632,8 +27793,9 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
   }
   /* the biggest regions become the tallest peaks; cap how many so the map still breathes */
   regions.sort((a,b) => b.cells.length - a.cells.length);
+  let taken = 0;           /* massifs chosen, raised or not: see the ring, below */
   for(const reg of regions){
-    if(mountains.length >= 14) break;
+    if(taken >= 14) break;
     const r = Math.max(6, Math.sqrt(reg.cells.length / Math.PI));
     /* a massif must not sit on a town, the Bastion, or the start — its cliffs would wall
        people into or out of their own homes. Skip any region whose centre is too close. */
@@ -27644,6 +27806,14 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
     const clearCrater = craterD(cx, cy) > CRATER.glass + r * 1.4 + 10;   /* no cliff across the rim */
     if(!clearTown || !clearStart || !clearBastion || !clearCrater) continue;
     const peak = 5.5 + Math.min(9, r * 0.5) + rnd() * 3;
+    taken++;
+    /* ---------- AND NONE ON THE ROAD ROUND IT ----------
+       A massif across the ring would put a cliff under the waypoints the roads and every
+       traveller walk round the crater on. It is still CHOSEN, draw and all, and still counts
+       toward the fourteen, and then simply not raised: turned away before its roll, the world's
+       stream moved for everything after the mountains and a harness rode the difference
+       (`command.js`). Its ground stays rock-coloured and walkable, which is what it was. */
+    if(craterD(cx, cy) < CRATER_RING_R + r * 1.4 + 12) continue;
     mountains.push({x: cx, y: cy, r, peak});
   }
   /* ---------- AND ONE SEAT SITS IN A BOWL, ON PURPOSE ----------
