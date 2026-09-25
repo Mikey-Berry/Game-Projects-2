@@ -13,6 +13,8 @@
  *   3. the convictions hear two deeds the lore says they care about: a formula recovered under
  *      study warms the inquisitive, and a band breaking off a fight cools the ambitious. Both
  *      kinds were in the weights table and no call site ever emitted them
+ *   4. working a profane formula (Dark, Destruction) in sight of a Church town's watch is the
+ *      crime CRIMES has always named; the blessed art is not, and Hollowmere does not care
  *
  * Anything starting '!!' fails the build.
  *
@@ -152,6 +154,49 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       else if (!(afterRetreat < -0.5)) bits.push(`a band breaking off moved an Ambitious companion by ${afterRetreat.toFixed(2)}`);
       R.theConvictionsHearIt = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
         : `a Worn Formula studied warms the Inquisitive (+${afterFormula.toFixed(2)}), a Tome moves nobody, and a band breaking off cools the Ambitious (${afterRetreat.toFixed(2)})`;
+      for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+    }
+    /* ---- 4. the profane gift is a crime inside the walls ---- */
+    {
+      /* a caster with every art, stood beside the watch in a Church town and in Hollowmere */
+      const church = towns.find(t => !t.def.undeadFriendly && !t.playerRuled && chars.some(o => o.homeTown === t && o.faction === 'town' && o.state === 'ok'));
+      const mere = towns.find(t => t.def.undeadFriendly);
+      const castIn = (t, cast) => {
+        const w = chars.find(o => o.homeTown === t && o.faction === 'town' && o.state === 'ok' && !o.civ) ||
+                  chars.find(o => o.homeTown === t && o.faction === 'town' && o.state === 'ok');
+        const q = findOpenNear(Math.round(w.x) + 2, Math.round(w.y), 3);
+        const c = makeChar('Caster', 'player', q.x, q.y, { atk: 6, def: 30, tough: 90, magic: 60 });
+        c.__probe = true; c.floor = w.floor || 0; c.mana = 999; c.castCd = 0;
+        c.att = { divine: 3, destruction: 3, dark: 3, dust: 3 };
+        chars.push(c); rebuildCharGrid();
+        const foe = makeChar('Rat', 'wild', q.x + 3, q.y, { atk: 1, def: 1, tough: 5 });
+        foe.__probe = true; foe.beast = true; foe.floor = c.floor; chars.push(foe); rebuildCharGrid();
+        const b0 = t.bounty || 0;
+        t._formulaAt = null;               /* each art is asked on its own; the hour is asked below */
+        cast(c, foe);
+        const got = (t.bounty || 0) - b0;
+        chars.splice(chars.indexOf(c), 1); if (chars.includes(foe)) chars.splice(chars.indexOf(foe), 1);
+        t.bounty = b0; t.wanted = b0 > 0;
+        return got;
+      };
+      if (!church) R.theProfaneGiftIsACrime = '!! NO CHURCH TOWN WITH A WATCH TO TEST IN';
+      else {
+        const fire = castIn(church, (c, f) => castFirebolt(c, f));
+        const dark = castIn(church, (c, f) => castDarkbolt(c, f));
+        const heal = castIn(church, (c) => castHeal(c, c));
+        const inMere = mere ? castIn(mere, (c, f) => castFirebolt(c, f)) : 0;
+        /* and one fight is one charge: a second bolt inside the hour adds nothing */
+        const twice = castIn(church, (c, f) => { castFirebolt(c, f); c.castCd = 0; c.mana = 999; castFirebolt(c, f); });
+        const want = CRIMES.formula.bounty;
+        const bits = [];
+        if (fire < want) bits.push(`a firebolt in ${church.name} added ${fire} bounty`);
+        if (dark < want) bits.push(`a darkbolt in ${church.name} added ${dark}`);
+        if (heal) bits.push(`a heal (the blessed art) added ${heal}`);
+        if (inMere) bits.push(`a firebolt in ${mere.name} added ${inMere}`);
+        if (twice !== want) bits.push(`two firebolts inside the hour added ${twice}, not one charge of ${want}`);
+        R.theProfaneGiftIsACrime = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : `fire or the dark worked in sight of ${church.name}'s watch costs ${want} bounty each; the blessed art costs nothing, a second bolt inside the hour is the same charge, and ${mere ? mere.name : 'Hollowmere'} does not care`;
+      }
       for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
     }
     return R;

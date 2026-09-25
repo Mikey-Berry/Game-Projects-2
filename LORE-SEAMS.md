@@ -110,7 +110,15 @@ history either, so these were written and never wired, not lost later.
 for warbands, but not for you. So either the player gains a sack, or `sack` should be read as
 "a sack you could have stopped".
 
-### 1.3 The profane gift is never a crime
+### 1.3 The profane gift is never a crime — **closed**
+
+Closed on 2026-09-25, per your ruling: profane arts only. A Dark or Destruction working by one of
+yours, inside a town's walls and in sight of its watch, raises `CRIMES.formula` (bounty 260).
+The raising spells keep their own, worse `raising` charge and are not billed twice. Divine
+(the blessed art) and Dust are not crimes, and Hollowmere does not care. The watch books it
+once per town per game hour, not once per bolt, so one street fight is one charge.
+`tools/seams.js` claim 4 checks it: before, a firebolt or darkbolt added 0 bounty. The original
+finding:
 
 The bible (§12) says the Church "burns the profane gift". `CRIMES.formula` exists: bounty
 260, labelled *"working a formula inside the walls"*. It is the only crime of the ten that is
