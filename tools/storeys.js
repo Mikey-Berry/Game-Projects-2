@@ -63,11 +63,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        passed, for a reason that has nothing to do with floors: underground there was nobody to
        target, on the surface there was. The staging has to be empty out past every targeting
        radius in play, or the pair is measuring ambient population instead of storeys. */
-    const open = (r0, clear) => {
-      for (let r = r0; r < r0 + 60; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    /* ---------- AND AWAY FROM ANY TOWN, BECAUSE TOWNSFOLK WALK ----------
+       A clearance is a snapshot and the trial runs four hundred ticks. Thirty tiles of empty
+       ground still failed, because a townswoman called Verity strolled into the Maw's reach
+       and it spent the whole control fighting her — the Maw is the only one of these five
+       hostile to townsfolk, which is why it is the only pair that ever suffers this. So the
+       spot has to be out in the waste, not merely empty at the moment it is chosen. */
+    const open = (r0, clear, townGap) => {
+      const far = (x, y) => !townGap || (typeof towns === 'undefined') ||
+        towns.every(t => dist(t.x, t.y, x, y) > townGap);
+      for (let r = r0; r < r0 + 200; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
         const x = Math.floor(home.x) + dx + 0.5, y = Math.floor(home.y) + dy + 0.5;
         if (x < 4 || y < 4 || x >= W - 4 || y >= H - 4) continue;
+        if (!far(x, y)) continue;
         if (!isBlocked(x, y, 0) && !charsNear(x, y, clear || 14).length) return { x, y };
       }
       return null;
@@ -96,27 +105,43 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       v.state = 'down'; v.downT = 40; v.blood = 40;
       const pred = makePred(spot, predFloor);
       rebuildCharGrid();
+      let fought = null;
       for (let i = 0; i < 400; i++) {
         rebuildCharGrid();
         for (const c of chars) if (c.state !== 'dead') { ai(c, 0.05); physics(c, 0.05); }
+        /* what it did INSTEAD, recorded as it happens — a target picked up and dropped again
+           inside four hundred ticks is invisible to a check at the end */
+        if (!fought && pred.target && pred.target !== v) fought = pred.target.name;
         if (took(pred, v)) break;
       }
       const got = took(pred, v);
       wipe();
-      return got;
+      return { got, fought };
     };
 
     const pair = (label, makePred, took, note) => {
       guard([label], () => {
-        const spot = open(10);
+        /* ---------- AND THE STAGING HAS TO BE EMPTY, MEASURED RATHER THAN HOPED ----------
+           The note at the top of this file already says a predator that finds something to
+           FIGHT never reaches the branch under test, and fourteen tiles of clearance turned
+           out not to be enough: the world moved, the spot landed eleven tiles from GREENREST,
+           and the Maw locked onto a townsman named Quill Ruck and stood there for four hundred
+           ticks. The harness then reported that taking a meal "no longer works at all", which
+           is a true sentence about nothing.
+           Two changes. The clearance goes to thirty, which is past every targeting radius in
+           this file. And the trial REPORTS whether the predator picked a fight, so a distracted
+           run says so instead of blaming the mechanic. */
+        const spot = open(10, 30, 90) || open(10, 30, 50) || open(10, 22) || open(10);
         if (!spot) { R[label] = '!! NO OPEN GROUND'; return; }
-        const through = trial(spot, -1, 0, makePred, took);   /* predator one storey down */
-        const beside  = trial(spot,  0, 0, makePred, took);   /* predator on the same floor */
-        R[label] = (!through && beside)
+        const through = trial(spot, -1, 0, makePred, took);
+        const beside  = trial(spot,  0, 0, makePred, took);
+        R[label] = (!through.got && beside.got)
           ? `${note} — not through a floor, still works beside them`
-          : through
+          : through.got
             ? `!! ${note.toUpperCase()} REACHES THROUGH A FLOOR (one storey down, same tile)`
-            : `!! ${note.toUpperCase()} NO LONGER WORKS AT ALL — the same-floor control failed too`;
+            : beside.fought
+              ? `!! NOTHING TO MEASURE — the ${note} predator spent the same-floor control fighting ${beside.fought} instead of eating`
+              : `!! ${note.toUpperCase()} NO LONGER WORKS AT ALL — the same-floor control failed too`;
       });
     };
 
