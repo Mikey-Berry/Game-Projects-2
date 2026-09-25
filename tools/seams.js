@@ -18,6 +18,9 @@
  *   5. the rest of the conviction table is heard: a captive taken back from a captor (rescued),
  *      a stranger mended (heal), a prisoner turned loose (mercy), and a town with an empty seat
  *      put to the torch from its own flag (sack). All four were weighted and none was fired
+ *   6. Mother's seal is hers: her door is not forced by a shoulder and holds against a Hollow
+ *      still riding; a finished one puts a hand on it, it opens, and the scene behind it is said.
+ *      Her lines promised this and the door was an ordinary barred door
  *
  * Anything starting '!!' fails the build.
  *
@@ -233,7 +236,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* right-click a point, press the entry whose words match; the menu's labels come back
        when there is no such entry, so a red says what WAS offered */
     window.__rclick = (x, y, want) => {
-      const q = w2s(x, y, groundY(x, y) + 0.05);
+      const q = w2s(x, y, groundY(x, y) + floorY(activeFloor) + 0.05);   /* on the storey in view */
       if (!q) return '(no projection)';
       document.getElementById('game').dispatchEvent(new MouseEvent('mousedown', {
         clientX: q.x, clientY: q.y, button: 2, buttons: 2, bubbles: true, cancelable: true }));
@@ -367,6 +370,133 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       : `a captive taken back moves the Loyal (${dn(f5.byUs.loyal)}), a stranger mended moves the Compassionate (${dn(f5.healOnce.compassion)}, once a day, not for a whole body), ` +
         `a prisoner turned loose cools the Cruel (${dn(f5.mercy.cruel)}), and ${f5.sack.town} put to the torch from its flag burns, fills the wagon (${f5.sack.carried}), ` +
         `and turns the Compassionate (${dn(f5.sack.compassion)}) and warms the Cruel (${dn(f5.sack.cruel)})`;
+  }
+
+  /* ---- 6. Mother's seal answers one of hers, and nobody else ----
+     Underground, so the eye has to arrive: `activeFloor` follows the selection and the storey
+     lift lerps inside `render`, which runs paused. Frames until it stops moving (cave.js). */
+  const settle = async () => {
+    let last = null;
+    for (let i = 0; i < 120; i++) {
+      await frame();
+      const y = await p.evaluate(() => camFY);
+      if (last !== null && Math.abs(y - last) < 0.002 && i > 6) break;
+      last = y;
+    }
+  };
+  const six = await p.evaluate(() => {
+    const R = {};
+    const cv = motherCave(), dr = cv && cv.doors.find(d => d.vault);
+    if (!dr) { R.none = true; return R; }
+    mother.spoken = false; mother.found = false; mother.toldPrice = false;
+    if ('opened' in mother) mother.opened = false;
+    const at = (name, race, tier) => {
+      const c = makeChar(name, 'player', dr.x + 0.5 + 1.8, dr.y + 0.5, { atk: 20, def: 30, tough: 90, labor: 20 });
+      c.__probe = true; c.floor = dr.f || 0; c.race = race; c.hollowTier = tier; c.noFight = true;
+      chars.push(c); return c;
+    };
+    window.__six = { dr, cv, stranger: at('Stranger', 'human', 0), rider: at('Rider', 'hollow', 1), whole: at('Whole', 'hollow', 2) };
+    /* only the one under test is in the party, so her first scene reads the right body */
+    for (const k of ['rider', 'whole']) window.__six[k].faction = 'wild';
+    rebuildCharGrid();
+    selected = [window.__six.stranger];
+    __aim(dr.x + 0.5, dr.y + 0.5); activeFloor = dr.f || 0;
+    return R;
+  });
+  if (!six.none) {
+    await settle();
+    Object.assign(six, await p.evaluate(() => {
+      const R = {};
+      const { dr } = window.__six;
+      R.strangerMenu = __rclick(dr.x + 0.5, dr.y + 0.5, /^\(NO SUCH ENTRY\)$/);
+      /* the shoulder, directly: an order to force her door, as a save from before would carry */
+      const s0 = window.__six.stranger;
+      s0.forcing = { x: dr.x, y: dr.y, f: dr.f || 0, t: 0 };
+      for (let i = 0; i < 40 && s0.forcing; i++) forceTick(s0, 0.5);
+      R.forcedOpen = !!dr.open;
+      if (dr.open) { dr.barred = true; setDoor(dr, false); }
+      /* and every other vault door still gives to a shoulder */
+      const other = doors.find(d => d.vault && d !== dr && d.barred && !d.open);
+      if (other) {
+        s0.forcing = { x: other.x, y: other.y, f: other.f || 0, t: 0 };
+        const x0 = s0.x, y0 = s0.y, f0 = s0.floor;
+        s0.x = other.x + 0.5; s0.y = other.y + 0.5; s0.floor = other.f || 0;
+        for (let i = 0; i < 40 && s0.forcing; i++) forceTick(s0, 0.5);
+        R.otherForced = !!other.open;
+        other.barred = true; setDoor(other, false);
+        s0.x = x0; s0.y = y0; s0.floor = f0;
+      }
+      /* a rider: one of hers, not finished */
+      const { rider, whole, stranger } = window.__six;
+      stranger.faction = 'wild'; rider.faction = 'player';
+      selected = [rider];
+      return R;
+    }));
+    await frame(); await frame();
+    Object.assign(six, await p.evaluate(() => {
+      const R = {};
+      const { dr, rider, whole } = window.__six;
+      R.riderMenu = __rclick(dr.x + 0.5, dr.y + 0.5, /^\(NO SUCH ENTRY\)$/);
+      rider.faction = 'wild'; whole.faction = 'player';
+      selected = [whole];
+      return R;
+    }));
+    await frame(); await frame();
+    Object.assign(six, await p.evaluate(() => {
+      const R = {};
+      const { dr } = window.__six;
+      const lines = [];
+      const _log = log; log = (t, k) => { lines.push(String(t)); return _log(t, k); };
+      try { R.wholeMenu = __rclick(dr.x + 0.5, dr.y + 0.5, /HAND ON THE SEAL$/); } finally { log = _log; }
+      R.said = lines.join(' | ');
+      R.opened = !!mother.opened && !!dr.open && !dr.barred;
+      const th = threads.find(t => t.key === 'mother');
+      R.threadDone = !!(th && th.done);
+      /* and a reload keeps it */
+      const snap = snapshot();
+      mother.opened = false;
+      restore(snap);
+      R.kept = mother.opened === true;
+      /* a save from before, with her bar already broken by a shoulder: one of hers finished,
+         standing in the room, hears the same scene */
+      {
+        const cv = motherCave(), d2 = cv.doors.find(d => d.vault);
+        mother.opened = false; mother.spoken = true; d2.barred = false; setDoor(d2, true);
+        /* a fresh body: the reload above rebuilt `chars`, and the probes with it */
+        const w2 = makeChar('Whole', 'player', cv.vault.x, cv.vault.y, { atk: 20, def: 30, tough: 90 });
+        w2.__probe = true; w2.floor = cv.vault.f; w2.race = 'hollow'; w2.hollowTier = 2; w2.noFight = true; chars.push(w2);
+        const l2 = [];
+        const _log2 = log; log = (t, k) => { l2.push(String(t)); return _log2(t, k); };
+        try { _mthT = 0; motherTick(3); } finally { log = _log2; }
+        R.brokenDoor = mother.opened && /THE CELL/.test(l2.join(' ')) && /Llammialith/.test(l2.join(' '));
+      }
+      for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+      selected = [];
+      return R;
+    }));
+  }
+  {
+    const x = six, bits = [];
+    const said = x.said || '';
+    if (x.none) bits.push('there is no Mother in this world to test with');
+    else {
+      if (/FORCE IT/.test(x.strangerMenu || '')) bits.push(`her door offers a stranger FORCE IT (${x.strangerMenu})`);
+      else if (!/DOES NOT ANSWER/.test(x.strangerMenu || '')) bits.push(`her door's menu for a stranger reads "${x.strangerMenu}"`);
+      if (x.forcedOpen) bits.push('a shoulder forced her door open');
+      if (x.otherForced === false) bits.push('another vault door no longer gives to a shoulder');
+      if (/FORCE IT|HAND ON THE SEAL/.test(x.riderMenu || '') || !/RIDER/.test(x.riderMenu || '')) bits.push(`to a Hollow still riding her door offers "${x.riderMenu}"`);
+      if (x.wholeMenu) bits.push(`a finished Hollow at her door is offered no hand on the seal (${x.wholeMenu})`);
+      else {
+        if (!x.opened) bits.push('the hand on the seal did not open it');
+        if (!/COME IN/.test(said) || !/Malathuun/.test(said) || !/Llammialith/.test(said)) bits.push(`the second scene was not said (${said.slice(0, 100)})`);
+        if (!x.threadDone) bits.push('her thread was not closed');
+        if (!x.kept) bits.push('a reload forgot the door was opened');
+        if (!x.brokenDoor) bits.push('with her bar already broken (an old save), a finished Hollow in the room heard nothing');
+      }
+    }
+    out.herSealIsHers = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+      : `her door answers nobody with a shoulder (${x.strangerMenu}) while every other vault still forces, holds against a rider, and opens to a finished Hollow's hand on the seal: ` +
+        `the second scene is said, her thread closes, a reload keeps it, and a door an old save already broke still gives the scene to one of hers in the room${x.otherForced === undefined ? ' (no other vault to compare)' : ''}`;
   }
 
   const bad = Object.values(out).filter(v => typeof v === 'string' && v.startsWith('!!'));

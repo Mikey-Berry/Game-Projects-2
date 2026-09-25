@@ -29,10 +29,11 @@ Ranked by how much lore weight each carries against what it costs to close.
    as shipped canon: Verity's thesis, the redoubt garrison, the whole night-ecology table and
    the Messengers' tongue. A few lines of code fix it. It is the same finding as
    `CODE-AUDIT.md` §5.1, seen from the lore side.
-2. **Mother's seal promises a mechanic that does not exist** (§2.1). She tells you only one of
-   hers can open it, but anybody can force it, and her scene stops at the door. The bible
-   calls what she knows "the scene at the bottom of that cave, and nothing else in the setting
-   carries more".
+2. **Mother's seal promises a mechanic that does not exist** (§2.1) — **closed 2026-09-25,
+   lines pending approval**. She tells you only one of hers can open it, but anybody could
+   force it, and her scene stopped at the door. The bible calls what she knows "the scene at
+   the bottom of that cave, and nothing else in the setting carries more". The door is hers
+   now, and the second scene is drafted in §2.1.
 3. **The Church has no voice** (§3.1). The bible says the gap between what the Church teaches
    and what is true "*is* the setting's engine". In the game only the true side is ever spoken.
 4. **Half the conviction reactions never fire** (§1.2) — **closed 2026-09-25**. The bible
@@ -172,7 +173,69 @@ Philosopher Stone, and Sanctified Ash is the obvious place for an answer to land
 
 ## 2. The game's own text promises a mechanic
 
-### 2.1 Mother's seal
+### 2.1 Mother's seal — **closed, lines pending your approval**
+
+Closed on 2026-09-25. `tools/seams.js` claim 6 checks it, driving her door through the real
+underground right-click; the build before showed FORCE IT to everybody.
+
+- **The door is hers.** Her vault door no longer offers FORCE IT. To a party with no Hollow it
+  reads **(THE SEAL DOES NOT ANSWER)**. To a Hollow still riding (tier below 2) it reads
+  **(THE SEAL KNOWS A RIDER. IT HOLDS AGAINST ONE)**. A forcing order already under way in an
+  old save is refused. Every other vault door still gives to a shoulder.
+- **One of hers, finished, opens it.** A Hollow through the Nascent Rite (`hollowTier >= 2`)
+  standing within 2.5 tiles of the door gets **A HAND ON THE SEAL**. The door opens, `mother.opened` is
+  set and saved, the second scene is said, and her thread closes. If she has not spoken yet,
+  her first scene runs first.
+- **Old saves:** if a shoulder already broke her bar, a finished Hollow standing in her room
+  hears the same scene, with its own opening line.
+- **The thread** now says what the door wants in the Hollow branch, since it is the one door
+  in the game that is not forced.
+- Her vault's chest and the Deep Warden are unchanged, so for anybody else that vault's loot is
+  now out of reach. It is one vault of about forty-five.
+
+**The second scene, drafted for your approval.** It carries the bible's §6 *"the thing she
+knows"* and nothing from §4: nothing about what is on the throne, the Messengers, or what ended
+the first civilisation. The man is never named, and his age and survival are not explained.
+It uses her true name once, which the bible marks provisional, so it is a single line to change.
+
+> THE SEAL. *(name)* puts a hand flat on the weld, and eleven names deep of golden-age alloy lets
+> go at once, like a held breath. It only ever held against a rider.
+
+1. COME IN. Nobody has said that to anybody in this room in nine hundred years. I wanted to hear
+   how it sounds.
+2. You want to know what you are. You are a piece of me, cut off with my leave, and you are owed
+   the reason I gave it.
+3. A man came down here while the kingdom was still drinking me. He had the old face, the one my
+   first congregation wore before any of your people went up into the light. I had not seen it
+   in a very long time.
+4. He told me what the alchemists upstairs were about to do, and that they would not survive
+   it. He asked for pieces of me to make hunters with, and he told me what the hunters would be
+   for. Nobody had asked me for anything since my congregation. They had only taken.
+5. I said yes. To the people who built this cell. I would say it again, and I would like you to
+   understand that it was not forgiveness.
+6. It worked. You are why anybody is left up there. And when the sky came open, something else
+   woke into the fire: one of my own kind, who had never been found and never been drained and
+   had done nothing to anybody.
+7. Malathuun. My pieces put it down. I felt every one of them do it, from in here. I did not try
+   to stop them. I have had nine generations in this room to decide whether that is the worst
+   thing I have done.
+8. That is the whole of it. The man knows half, and your people know none of it. I am the only
+   one who watched both halves.
+9. The ones who built this room wrote a number on the door instead of a name. My name is
+   Llammialith. I have given it to very few. You are the first of mine to come back whole enough
+   to carry it.
+10. Go up. I am not going anywhere. But somebody knows now, and it is one of mine, and that is
+    more than I had an hour ago.
+
+Lines worth your eye in particular:
+
+- **Line 3** tells the player the man was a pureblood ("the old face"). That is `[★]` canon in
+  §11, not author-only, but it is the first time play would carry it.
+- **Line 7** has her choosing not to stop them. The bible says she watched; whether she could
+  have intervened is not written anywhere.
+- **Line 9** leaves the serial number as "a number" because its format is still an open question.
+
+The original finding:
 
 What is built is good. Mother is placed in a warren vault. She notices a Hollow, or anybody
 with the dust art, walking her warren. She speaks when you reach her door, reading the world: your

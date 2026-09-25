@@ -20545,6 +20545,13 @@ function forceTick(c, dt){
   if(!F) return false;
   const dr = doorAt(F.x, F.y, F.f);
   if(!dr || dr.open || !dr.barred){ c.forcing = null; return false; }
+  /* not hers. Nothing with a shoulder opens her door; the menu no longer offers it, and this
+     catches an order that was already under way in a save from before */
+  if(dr === motherDoor()){
+    c.forcing = null;
+    log('The bar does not move. It is not that kind of door, and nothing on this side of it is the key.', 'bad');
+    return false;
+  }
   if(dist(c.x, c.y, F.x + 0.5, F.y + 0.5) > 1.9){ travel(c, F.x + 0.5, F.y + 0.5, dt, 0.5); return true; }
   c._working = 0.5;
   F.t += dt * (1 + (c.stats.labor + c.stats.atk) * 0.012);
@@ -43124,6 +43131,21 @@ cv.addEventListener('mousedown', e => {
             }
             setDoor(dr, false); log('The door swings shut.', '');
           }});
+        } else if(dr.barred && dr === motherDoor()){
+          /* HER DOOR IS NOT FORCED. It is welded against a rider and it answers one of hers,
+             finished, and nobody else: see `motherOpens`. */
+          const key = movers.find(motherKey);
+          if(key){
+            items.push({label:`${key.name.toUpperCase()}: A HAND ON THE SEAL`, fn:()=>{
+              if((key.floor || 0) !== (dr.f || 0) || dist(key.x, key.y, dr.x + 0.5, dr.y + 0.5) > 2.5){
+                log('Stand at the seal.', 'bad'); return;
+              }
+              motherOpens(key);
+            }});
+          } else {
+            const rider = movers.some(m => m.race === 'hollow');
+            items.push({label: rider ? '(THE SEAL KNOWS A RIDER. IT HOLDS AGAINST ONE)' : '(THE SEAL DOES NOT ANSWER)', fn:()=>{}});
+          }
         } else if(dr.barred){
           const hand = movers.filter(m => m.state === 'ok').sort((a,b2) => (b2.stats.labor + b2.stats.atk) - (a.stats.labor + a.stats.atk))[0];
           items.push({label:'FORCE IT', fn:()=>{
@@ -45488,7 +45510,8 @@ function snapshot(){
        still READ on load, as the one signal that tells an old save's Saga run from an old
        save's everybody-else. */
     mother: {caveId: mother.caveId, found: mother.found, sought: mother.sought,
-             spoken: mother.spoken, reads: mother.reads, toldPrice: mother.toldPrice, stirred: mother.stirred},
+             spoken: mother.spoken, reads: mother.reads, toldPrice: mother.toldPrice, stirred: mother.stirred,
+             opened: mother.opened},
     shrines: shrines.map(sh => ({broken: !!sh.broken, hp: Math.round(sh.hp), reT: sh.reT || 0})),
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       /* how much pitch is left in a post. Without this every post in the world came back
@@ -45558,6 +45581,7 @@ function restore(d){
     mother.sought = !!d.mother.sought || !!d.mother.on;
     mother.stirred = !!d.mother.stirred;
     mother.reads = d.mother.reads || 0; mother.toldPrice = !!d.mother.toldPrice;
+    mother.opened = !!d.mother.opened;
   }
   /* a shrine you broke stays broken, and the clock on it keeps running */
   if(d.shrines) for(let i = 0; i < shrines.length && i < d.shrines.length; i++){
@@ -46803,7 +46827,7 @@ function sisterTick(){
    one whose mouth hashes highest. Deterministic for a seed, unguessable without reading this
    comment, and it consumes nothing. Resolved lazily, so a save that already names a cave keeps
    the one it was played with. */
-const mother = {caveId:-1, sought:false, found:false, spoken:false, reads:0, toldPrice:false, stirred:false};
+const mother = {caveId:-1, sought:false, found:false, spoken:false, reads:0, toldPrice:false, stirred:false, opened:false};
 function motherCaveId(){
   if(mother.caveId >= 0) return mother.caveId;
   if(!caves.length) return -1;
@@ -46819,6 +46843,15 @@ function motherCaveId(){
 function motherCave(){
   const id = motherCaveId();
   return id < 0 ? null : caves.find(v => v.id === id);
+}
+/* her door is her warren's vault door, so it is derived with the cell and costs no die either */
+function motherDoor(){
+  const cv = motherCave();
+  return cv ? cv.doors.find(d => d.vault) || null : null;
+}
+/* the only key the weld was ever cut for: one of hers, through the Nascent Rite */
+function motherKey(c){
+  return !!c && c.state === 'ok' && c.race === 'hollow' && (c.hollowTier || 0) >= 2;
 }
 /* SAGA'S START IS A POINTER, NOT A KEY. It opens the thread and tells the world something walked
    out of a redoubt; it does not decide whether she is down there. */
@@ -46881,6 +46914,7 @@ function listenForMother(){
   }
   mother.reads++;
   if(!cv){ say(c, 'Nothing. She is not under this world.'); return; }
+  if(mother.opened){ say(c, 'The door is open and she is still in there. She was never the one who could leave.'); return; }
   if(mother.spoken){ say(c, 'She is where I left her. She is not going anywhere.'); return; }
   const below = (c.floor || 0) < 0;
   const d = dist(c.x, c.y, cv.mouth.x, cv.mouth.y);
@@ -46941,12 +46975,22 @@ function listenForMother(){
    the price, and the price is named out loud the moment she speaks. */
 let _mthT = 0;
 function motherTick(dt){
-  if(mother.spoken) return;
+  if(mother.opened) return;
   if((_mthT -= dt) > 0) return;
   _mthT = 2;
   const cv = motherCave();
   if(!cv || !cv.vault) return;
   const v = cv.vault;
+  /* A DOOR SOMEBODY ALREADY BROKE. A save from before the seal was a seal may have her bar
+     forced and her room walked through. The scene is not lost with it: one of hers, finished,
+     standing in the room is the same as a hand on the weld. */
+  if(mother.spoken){
+    const dr = motherDoor();
+    if(!dr || !dr.open) return;
+    const k = player().find(c => motherKey(c) && (c.floor || 0) === v.f && dist(c.x, c.y, v.x, v.y) < 5);
+    if(k) motherOpens(k);
+    return;
+  }
   /* ---------- SHE NOTICES YOU BEFORE YOU NOTICE HER ----------
      The discovery path for everybody who did not start as Saga and never thought to press Q.
      An ear she can reach — a Hollow, or somebody who works the art that was taken off her —
@@ -46965,11 +47009,49 @@ function motherTick(dt){
   }
   const near = player().find(c => c.state === 'ok' && (c.floor || 0) === v.f && dist(c.x, c.y, v.x, v.y) < 9);
   if(!near) return;
+  motherWakes(near);
+}
+function motherWakes(near){
+  const cv = motherCave();
   mother.found = true; mother.spoken = true; mother.sought = true;
   sawPlace('mother');
   worldEvent('mother', cv.mouth.x, cv.mouth.y,
     'At the bottom of a cave under the mountains there is a door the golden age welded shut from the outside, and something behind it is awake and has been the whole time.');
   motherSpeaks(near);
+}
+/* ---------- AND THE DOOR, OPENED BY THE ONLY HAND IT ANSWERS ----------
+   Her first scene has promised this since it was written: the weld holds against a rider and
+   against nobody else, "bring one of hers — a Hollow, awake — and it is a different door", and
+   to one who is finished, "put your hand on it". It was an ordinary barred door, forced by any
+   shoulder in six seconds, and the scene stopped at it.
+   Behind it is the thing the setting says only she knows: she let a man cut pieces off her to
+   save the people who had caged her, and those pieces killed one of her own kind, who had done
+   nothing. Nothing here says what is on the throne. That is not hers to say (the lore bible's
+   author-canon section), and she does not. */
+function motherOpens(c){
+  if(mother.opened) return;
+  if(!mother.spoken) motherWakes(c);
+  const dr = motherDoor();
+  const wasShut = !!(dr && !dr.open);
+  mother.opened = true;
+  if(dr){ dr.barred = false; setDoor(dr, true); }
+  log(wasShut
+    ? `THE SEAL. ${c.name} puts a hand flat on the weld, and eleven names deep of golden-age alloy lets go at once, like a held breath. It only ever held against a rider.`
+    : `THE CELL. Somebody broke the bar on this door and walked through, and she let them. ${c.name} is the first to walk in who is hers.`, 'good');
+  const lines = [
+    'COME IN. Nobody has said that to anybody in this room in nine hundred years. I wanted to hear how it sounds.',
+    'You want to know what you are. You are a piece of me, cut off with my leave, and you are owed the reason I gave it.',
+    'A man came down here while the kingdom was still drinking me. He had the old face, the one my first congregation wore before any of your people went up into the light. I had not seen it in a very long time.',
+    'He told me what the alchemists upstairs were about to do, and that they would not survive it. He asked for pieces of me to make hunters with, and he told me what the hunters would be for. Nobody had asked me for anything since my congregation. They had only taken.',
+    'I said yes. To the people who built this cell. I would say it again, and I would like you to understand that it was not forgiveness.',
+    'It worked. You are why anybody is left up there. And when the sky came open, something else woke into the fire: one of my own kind, who had never been found and never been drained and had done nothing to anybody.',
+    'Malathuun. My pieces put it down. I felt every one of them do it, from in here. I did not try to stop them. I have had nine generations in this room to decide whether that is the worst thing I have done.',
+    'That is the whole of it. The man knows half, and your people know none of it. I am the only one who watched both halves.',
+    'The ones who built this room wrote a number on the door instead of a name. My name is Llammialith. I have given it to very few. You are the first of mine to come back whole enough to carry it.',
+    'Go up. I am not going anywhere. But somebody knows now, and it is one of mine, and that is more than I had an hour ago.',
+  ];
+  for(const l of lines) log('SHE SAYS: "' + l + '"', 'good');
+  threadDone('mother', 'Opened. She told one of hers the whole of it, and her name.');
 }
 function motherSpeaks(c){
   /* What she says is read off the world, not off a quest step. She has been listening to it
@@ -47033,6 +47115,14 @@ function motherSpeaks(c){
     mother.toldPrice = true;
     log('THE PRICE IS NAMED: the Nascent Rite, at your circle. It burns the gift — the dust art you found her WITH — and gives the rider the whole body. That is what the seal weighs.', 'good');
   }
+  /* and the thread says what the door wants, since it is the one door in the game that is not forced */
+  const dr = motherDoor();
+  threadSet('mother', 'Looking for Mother', tier >= 2
+      ? 'Found. The seal answers one of hers who is finished, and that is you. Put a hand on it.'
+      : 'Found. The seal holds against a rider, and one of hers who is still riding cannot lift it.',
+    {hint: tier >= 2 ? 'Stand at the barred door with the Hollow and right-click it.'
+                     : 'The Nascent Rite at your circle, then come back to the door.',
+     mark: dr ? {x: dr.x + 0.5, y: dr.y + 0.5} : {x: c.x, y: c.y}});
   deed('found_mother', 1);
 }
 const ORIGINS = {
@@ -47245,7 +47335,7 @@ function applyCreation(race, gift, origin, sub){
      "already spoken to" from the run before it. The cell itself is NOT cleared: it is derived
      from the world, and the world has not changed. */
   mother.sought = false; mother.found = false; mother.spoken = false;
-  mother.reads = 0; mother.toldPrice = false; mother.stirred = false;
+  mother.reads = 0; mother.toldPrice = false; mother.stirred = false; mother.opened = false;
   stash.mats = 0; stash.w_rkat = 0;
   /* the chosen line rides along with the race on every body this start makes, unless the
      origin names one of its own (Saga is a Hollow whatever the picker said) */
