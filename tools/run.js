@@ -47,7 +47,7 @@ const ALL = [
   'threads.js', 'beasts.js', 'wyrm.js', 'curse.js', 'siege.js', 'warwall.js', 'scars.js', 'pest.js', 'cart.js', 'guild.js', 'purge.js', 'watchers.js', 'lieu.js', 'steeped.js', 'wanderers.js', 'survive.js', 'melee.js', 'press.js', 'patrol.js', 'pace.js', 'spiral.js', 'flank.js', 'kiting.js', 'lich.js', 'voices.js', 'pain.js', 'heads.js',
   'kit.js', 'slots.js', 'kitted.js', 'kitdoll.js', 'wepsoak.js', 'races.js', 'names.js', 'kin.js', 'kin2.js', 'lineage.js', 'cradle.js', 'livery.js', 'mimics.js', 'pins.js', 'mobile.js', 'start.js', 'touch.js', 'terrain.js', 'axes.js',
   'civics.js', 'grafts.js', 'maws.js', 'wards.js', 'husk.js', 'storeys.js', 'reliquary.js', 'frames.js', 'trades.js', 'hollow.js', 'vat.js', 'doppel.js', 'fallen.js', 'roads.js',
-  'review.js', 'seams.js',
+  'review.js', 'seams.js', 'crater.js',
 ];
 /* THE EDIT LOOP SET. Not "the fast ones" — the ones that would notice a broken build at all:
    the boot check, a save round trip, a fight, and the two broadest world probes. Cheap enough

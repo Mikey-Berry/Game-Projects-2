@@ -651,6 +651,88 @@ function fbm(x,y,o){ let v=0, amp=.5, f=1;
 function dist(ax,ay,bx,by){ const dx=ax-bx, dy=ay-by; return Math.sqrt(dx*dx + dy*dy); }
 function clamp(v,a,b){ return v<a?a:v>b?b:v; }
 
+/* ============================================================ THE CRATER
+   "He did not wake. He was disturbed, and he shifted — the equivalent of rolling over in sleep.
+    That alone annihilated the kingdom at the centre in brilliant light, tore the fabric of
+    reality, and opened a path between the material and the immaterial that has never closed."
+   The lore bible has said since it was written that this is the largest landmark in the world,
+   and there was nothing there. It is at the dead centre of the map, in every world, and it is
+   decided FIRST: everything else in worldgen is placed around it, never the other way round.
+   FOUR RINGS, and the danger reads before anything attacks you:
+     the APPROACH  ash where the scrub was; every dead tree leans away from the middle; the
+                   Order's posts, and the last things people left
+     the GLASS     the ground fused white; masonry half-melted; the shadows of people burned
+                   onto stone; the dust falls here instead of drifting
+     the RIM       a lip you can climb, and an inner wall you cannot, except at the breaches
+     the BOWL      the floor of what was the capital, and the wound at the bottom of it
+   NO DICE. The centre is fixed, the breaches are hashed off the seed the world was asked for,
+   and the rim's wobble is noise; nothing here draws from `rnd()`. */
+const CRATER = {x: W/2, y: H/2, bowl: 74, rim: 80, crest: 83, glass: 130, approach: 200};
+const CRATER_SEED = seed;
+const CRATER_BREACH_W = 0.09;               /* radians either side of a breach's centre: ~9 tiles of pass at the rim */
+const CRATER_BREACHES = [0, 1, 2, 3].map(i =>
+  i * Math.PI / 2 + (hash2(CRATER_SEED & 0xffff, 101 + i) - 0.5) * 0.9 + hash2(CRATER_SEED >>> 16, 7) * Math.PI * 2);
+function craterD(x, y){ return dist(x, y, CRATER.x, CRATER.y); }
+function craterAng(x, y){ return Math.atan2(y - CRATER.y, x - CRATER.x); }
+/* which ring a point is in, or null outside the approach */
+function craterRing(x, y){
+  const d = craterD(x, y);
+  return d < CRATER.bowl ? 'bowl' : d < CRATER.crest + 2 ? 'rim' : d < CRATER.glass ? 'glass' : d < CRATER.approach ? 'approach' : null;
+}
+/* the rim is not a circle: +-3 tiles of wander, read off noise around the ring so it closes */
+function craterWobble(a){ return (vnoise(Math.cos(a) * 2.2 + 20, Math.sin(a) * 2.2 + 20) - 0.5) * 6; }
+/* 1 at the middle of a breach, falling to 0 at its edges, 0 everywhere else on the ring */
+function craterBreachAt(a){
+  for(const b of CRATER_BREACHES){
+    const d = Math.abs((((a - b) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI);
+    if(d < CRATER_BREACH_W) return 1 - d / CRATER_BREACH_W;
+  }
+  return 0;
+}
+/* THE PROFILE, outward from the floor: a flat bowl, an inner wall five tiles wide that a body
+   cannot climb, a crest, and a long outer lip falling away into the ejecta. At a breach the
+   wall becomes a ramp twenty-eight tiles long and the crest is notched down. The floor is held
+   clear of the water plane (which paints everything under -0.14), so the bowl is sunk by the
+   rim standing up around it rather than by digging under the sea. */
+function craterHeight(h0, d, a){
+  if(d >= CRATER.approach) return h0;
+  const R = CRATER.rim + craterWobble(a), br = craterBreachAt(a);
+  const crest = 6.5 - br * 2.9, lipOut = R + 14;
+  if(d > lipOut) return h0 + 2.4 * smooth(clamp((CRATER.approach - d) / (CRATER.approach - lipOut), 0, 1));
+  if(d > R + 3) return h0 + lerp(crest, 2.4, smooth((d - R - 3) / (lipOut - R - 3)));
+  if(d > R) return h0 + crest;
+  const floor = 0.12 + h0 * 0.3;
+  const wallW = lerp(5, 28, br);
+  if(d > R - wallW) return lerp(floor, h0 + crest, smooth((d - (R - wallW)) / wallW));
+  return floor;
+}
+/* the inner wall, as tiles a body cannot cross: a band just inside the crest, all the way round
+   except where a breach opens it */
+function craterWallTile(x, y){
+  const d = craterD(x + 0.5, y + 0.5);
+  if(d > CRATER.rim + 4 || d < CRATER.rim - 9) return false;
+  const a = craterAng(x + 0.5, y + 0.5), R = CRATER.rim + craterWobble(a);
+  return d > R - 5.5 && d < R + 0.5 && craterBreachAt(a) < 0.35;
+}
+/* THE STANDING SLABS in the glass: golden-age masonry the flash did not knock down, each with a
+   shadow burned onto the face that was turned to the light. Laid on a golden-angle spiral with
+   a hashed jitter, so they are the same in every world and spend nothing. Each blocks its tile. */
+const CRATER_SLABS = (() => {
+  const out = [], N = 74;
+  for(let i = 0; i < N; i++){
+    const a = i * 2.39996 + hash2(i, 911) * 0.4;
+    const d = CRATER.crest + 8 + (CRATER.glass - CRATER.crest - 18) * ((i + hash2(i, 913)) / N);
+    out.push({x: CRATER.x + Math.cos(a) * d, y: CRATER.y + Math.sin(a) * d, a, w: 0.9 + hash2(i, 915) * 0.9, h: 1.6 + hash2(i, 917) * 1.4});
+  }
+  return out;
+})();
+/* is any part of a w-by-h rectangle at x,y within r of the centre — the question a town, the
+   Bastion or the Guild asks before it lays out a plan */
+function craterNear(x, y, w, h, r){
+  const nx = clamp(CRATER.x, x, x + w), ny = clamp(CRATER.y, y, y + h);
+  return dist(nx, ny, CRATER.x, CRATER.y) < r;
+}
+
 /* ============================================================ TERRAIN
    0 grass 1 sand 2 rock 3 water 4 dry grass */
 const terr = new Uint8Array(W*H);
@@ -698,6 +780,11 @@ for(let y=0;y<H;y++) for(let x=0;x<W;x++){
   else if(m < .42) t = 1;
   else if(m < .52) t = 4;
   else t = 0;
+  /* THE CRATER HAS NO ROCK AND NO WATER IN IT. Rock here would be raised into a massif, and a
+     cliff grown out of noise across the rim would seal a breach; the glass is dust through. */
+  { const cd = craterD(x, y);
+    if(cd < CRATER.glass + 24 && (t === 2 || t === 3)) t = 1;
+    if(cd < CRATER.glass) t = 1; }
   terr[y*W+x] = t;
 }
 /* ---------- AND WHAT KIND OF WATER IT IS, MEASURED IN TILES FROM THE SHORE ----------
@@ -964,6 +1051,18 @@ function rawDecorAt(x,y){
     return (o2 && hash2(x*3+7, y*3+13) > 0.62) ? o2 : null;
   }
   
+  /* ---------- AND NOTHING GROWS IN THE GLASS ----------
+     The bowl is bare. The glass keeps a fused boulder here and there, and nothing living; the
+     approach keeps its trees, and the renderer draws them dead and leaning away. A square
+     reject first: this runs for every tile the renderer and the pathing touch. */
+  {
+    const dx = x - CRATER.x, dy = y - CRATER.y;
+    if(Math.abs(dx) < CRATER.glass && Math.abs(dy) < CRATER.glass){
+      const d2 = dx*dx + dy*dy;
+      if(d2 < CRATER.glass * CRATER.glass)
+        return (d2 > CRATER.crest * CRATER.crest && hash2(x*3+7, y*3+13) > 0.996) ? 'rock' : null;
+    }
+  }
   /* ---------- NOTHING WILD GROWS INSIDE A TOWN ----------
      This used to clear a flat fifteen tiles around the centre, and the walls run to
      twenty-seven — so every walled town had a ring of trees, boulders and ore outcrops
@@ -1905,6 +2004,9 @@ function cellHpFor(t){
   return Math.round(CELL_HP * walled * (0.7 + order / 140));
 }
 function areaClear(x,y,w,h){
+  /* NOBODY BUILDS WITHIN SIGHT OF IT. Every caller is a whole plan (a town, the Bastion, the
+     Guild yard), and the approach is the ring the world has learned to leave alone. */
+  if(craterNear(x, y, w, h, CRATER.approach + 8)) return false;
   for(let j=y-1;j<y+h+1;j++) for(let i=x-1;i<x+w+1;i++){
     const t = tileAt(i,j);
     if(t===3) return false;
@@ -5585,6 +5687,7 @@ function rollChestLoot(){
   while(ruins.length < 8 && tries++ < 8000){
     const x = ri(12, W-12), y = ri(12, H-12);
     if(tileAt(x,y) === 3) continue;
+    if(craterD(x, y) < CRATER.glass + 10) continue;      /* the capital's ruins are the crater's own */
     if(towns.some(t => dist(t.x,t.y,x,y) < 22)) continue;
     if(bastion && dist(bastion.x,bastion.y,x,y) < 16) continue;
     if(ruins.some(r => dist(r.x,r.y,x,y) < 26)) continue;
@@ -5654,6 +5757,7 @@ function razeSlaverCamp(){
   while(!slaverCamp && tries++ < 6000){
     const x = ri(15, W-15), y = ri(15, H-15);
     if(tileAt(x,y) === 3) continue;
+    if(craterD(x, y) < CRATER.approach + 10) continue;    /* slavers want roads, not that */
     if(towns.some(t => dist(t.x,t.y,x,y) < 35)) continue;
     if(bastion && dist(bastion.x,bastion.y,x,y) < 25) continue;
     if(ruins.some(r => dist(r.x,r.y,x,y) < 20)) continue;
@@ -6020,6 +6124,7 @@ function bossSpot(minTown, minStart){
   for(let tries=0; tries<6000; tries++){
     const x = ri(15, W-15), y = ri(15, H-15);
     if(tileAt(x,y)===3 || isBlocked(x,y)) continue;
+    if(craterD(x, y) < CRATER.glass + 12) continue;        /* the crater keeps its own, see CRATER */
     if(towns.some(t => dist(t.x,t.y,x,y) < minTown)) continue;
     if(dist(startTown.x, startTown.y, x, y) < minStart) continue;
     if(bastion && dist(bastion.x, bastion.y, x, y) < 20) continue;
@@ -6029,10 +6134,12 @@ function bossSpot(minTown, minStart){
   for(let tries=0; tries<2000; tries++){
     const x = ri(15, W-15), y = ri(15, H-15);
     if(tileAt(x,y)===3 || isBlocked(x,y)) continue;
+    if(craterD(x, y) < CRATER.glass + 12) continue;
     if(towns.some(t => dist(t.x,t.y,x,y) < minTown*0.6)) continue;
     return {x, y};
   }
-  return {x: W/2, y: H/2};
+  /* the last resort used to be the middle of the map, which is now the one place it cannot be */
+  return {x: CRATER.x, y: CRATER.y + CRATER.approach + 20};
 }
 /* ---------- the other two paths ----------
    Three branches of the golden age went looking for immortality. The Dark found lichdom —
@@ -8327,6 +8434,16 @@ function routeFor(fromT, toT){
 (function computeTradeRoutes(){
   const gate = t => ({x: t.x, y: t.y + (t.def.wall ? t.def.wall.r + 2 : 4)});
   const linked = new Set();
+  /* EVERY ROAD GOES THE LONG WAY ROUND. The rim is not stamped yet (it is carved with the
+     heights, much later), so the glass is sealed for the length of this function and opened
+     again after: a route is a thing people walk, and nobody walks through that. */
+  const seal = [];
+  for(let y = Math.floor(CRATER.y - CRATER.glass); y <= CRATER.y + CRATER.glass; y++)
+    for(let x = Math.floor(CRATER.x - CRATER.glass); x <= CRATER.x + CRATER.glass; x++){
+      if(craterD(x + 0.5, y + 0.5) >= CRATER.glass) continue;
+      const k = bkey(x, y, 0);
+      if(!blocked.has(k)){ blocked.add(k); seal.push(k); }
+    }
   for(let i=0;i<towns.length;i++){
     const near = towns.map((t,j)=>({j, d: dist(t.x,t.y,towns[i].x,towns[i].y)}))
       .filter(o => o.j !== i).sort((a,b)=>a.d-b.d).slice(0, 2);
@@ -8342,6 +8459,7 @@ function routeFor(fromT, toT){
       tradeRoutes.push({aI:i, bI:j, wps});
     }
   }
+  for(const k of seal) blocked.delete(k);
 })();
 for(let i=0;i<6;i++) spawnDrifter();
 /* ---------- AND NOBODY STARTS THE GAME STANDING IN A YARD THEY CANNOT GET INTO ----------
@@ -24797,6 +24915,7 @@ function update(dt){
   rescueTick(dt);             /* and whether anyone is coming for what you took */
   lyreTick(dt);            /* and whether anyone has walked out far enough to find her */
   motherTick(dt);             /* and whether anyone has gone far enough DOWN to find her */
+  craterTick(dt);             /* and whether anyone has walked in toward the middle of the world */
   closingTick(dt);            /* and whether anybody has read the codex sitting in the stores */
   commandTick(dt);            /* and what the bands you sent out are doing about it */
   cryTick(dt);                /* and whether anyone in one of your yards is shouting for help */
@@ -27087,6 +27206,38 @@ for(const [hy, sp2] of [[1.6, 0.010], [2.8, 0.017]]){
   p.rotation.x = -Math.PI/2; p.position.set(W/2, hy, H/2); p.renderOrder = 5;
   scene.add(p);
 }
+/* ---------- THE VEIL OVER THE BOWL ----------
+   Where the path between the material and the immaterial "has never closed": a standing shimmer
+   over the middle of the bowl, three crossed sheets of pale light that ignore the fog, so the
+   thing is on the skyline from well out in the approach before the ground has said anything.
+   Additive and unlit; it breathes slowly in `updateSky`. */
+const craterVeil = (() => {
+  const cv2 = document.createElement('canvas'); cv2.width = 64; cv2.height = 256;
+  const g = cv2.getContext('2d');
+  const up = g.createLinearGradient(0, 256, 0, 0);
+  up.addColorStop(0, 'rgba(238,232,255,0)'); up.addColorStop(0.06, 'rgba(238,232,255,0.34)');
+  up.addColorStop(0.3, 'rgba(214,204,244,0.16)'); up.addColorStop(1, 'rgba(200,190,236,0)');
+  g.fillStyle = up; g.fillRect(0, 0, 64, 256);
+  g.globalCompositeOperation = 'destination-in';
+  const side = g.createLinearGradient(0, 0, 64, 0);
+  side.addColorStop(0, 'rgba(0,0,0,0)'); side.addColorStop(0.5, 'rgba(0,0,0,1)'); side.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = side; g.fillRect(0, 0, 64, 256);
+  const mat2 = new THREE.MeshBasicMaterial({map: new THREE.CanvasTexture(cv2), transparent: true, depthWrite: false,
+    blending: THREE.AdditiveBlending, fog: false, side: THREE.DoubleSide, opacity: 0.6});
+  const grp = new THREE.Group();
+  for(let i = 0; i < 6; i++){
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(22 + (i % 2) * 12, 78), mat2);
+    m.rotation.y = i * Math.PI / 6;
+    m.position.set(0, 39.1, 0);
+    m.renderOrder = 6;
+    grp.add(m);
+  }
+  grp.position.set(CRATER.x, 0, CRATER.y);
+  scene.add(grp);
+  return {grp, mat: mat2};
+})();
+/* the sky over the crater: a sick pale by day, a bruise by night */
+const craterSky = {day: new THREE.Color(0xb4b09a), night: new THREE.Color(0x1c1426), c: new THREE.Color()};
 const townFlags = [];   /* {t, pole, cloth} — cloth recolors when the town changes hands */
 /* (night windows built after the terrain exists — see below) */
 const windowMat = new THREE.MeshBasicMaterial({color:0xffb45e, transparent:true, opacity:0});
@@ -27101,6 +27252,23 @@ function updateSky(){
   const stormK = weather.storm > 0 ? 0.4 : 1;
   scene.fog.near = (30 + dayness*18) * stormK;
   scene.fog.far = (96 + dayness*70) * stormK;
+  /* ---------- AND THE AIR OVER THE CRATER IS WRONG ----------
+     From forty tiles outside the approach inward, the sky and the fog lean toward a colour of
+     their own and the fog draws in: it is the first thing that changes, before the ground does. */
+  {
+    const cd = craterD(camX, camY), R1 = CRATER.approach + 40;
+    const k = cd < R1 ? smooth(clamp((R1 - cd) / (R1 - CRATER.glass), 0, 1)) : 0;
+    if(k > 0){
+      craterSky.c.copy(craterSky.night).lerp(craterSky.day, dayness);
+      scene.background.lerp(craterSky.c, k * 0.55);
+      scene.fog.color.lerp(craterSky.c, k * 0.6);
+      scene.fog.near *= 1 - k * 0.2; scene.fog.far *= 1 - k * 0.12;
+    }
+    const now = performance.now() * 0.001;
+    craterVeil.grp.visible = activeFloor >= 0;
+    craterVeil.mat.opacity = (0.42 + (1 - dayness) * 0.35) * (0.8 + 0.2 * Math.sin(now * 0.6) * Math.sin(now * 0.23 + 1.3));
+    craterVeil.grp.rotation.y = now * 0.03;
+  }
   const ang = (t-6)/13*Math.PI;
   const sx = Math.cos(ang), sy = Math.max(0.02, Math.sin(ang));
   sun.intensity = dayness * 1.25;
@@ -27245,7 +27413,8 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
     const clearTown = !towns.some(t => dist(t.x, t.y, cx, cy) < r * 1.4 + 20);
     const clearStart = !startTown || dist(startTown.x, startTown.y, cx, cy) > r * 1.4 + 24;
     const clearBastion = !bastion || dist(bastion.x, bastion.y, cx, cy) > r * 1.4 + 18;
-    if(!clearTown || !clearStart || !clearBastion) continue;
+    const clearCrater = craterD(cx, cy) > CRATER.glass + r * 1.4 + 10;   /* no cliff across the rim */
+    if(!clearTown || !clearStart || !clearBastion || !clearCrater) continue;
     const peak = 5.5 + Math.min(9, r * 0.5) + rnd() * 3;
     mountains.push({x: cx, y: cy, r, peak});
   }
@@ -27401,6 +27570,27 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
       }
     }
   }
+  /* ---------- THE CRATER, CUT INTO THE HEIGHTS ----------
+     After the massifs (none of which is allowed near it) and before the height bound is taken,
+     so the cursor ray knows how tall the rim stands. The wall goes into `baseBlocked` too: it
+     is the world as generated, and `restore` rebuilds `blocked` from that. */
+  {
+    const C = CRATER, R0 = C.approach;
+    for(let vy = Math.max(0, Math.floor(C.y - R0)); vy <= Math.min(H, Math.ceil(C.y + R0)); vy++)
+    for(let vx = Math.max(0, Math.floor(C.x - R0)); vx <= Math.min(W, Math.ceil(C.x + R0)); vx++){
+      const d = craterD(vx, vy);
+      if(d >= R0) continue;
+      const k = vy*(W+1)+vx;
+      HV[k] = craterHeight(HV[k], d, craterAng(vx, vy));
+    }
+    for(let y = Math.floor(C.y - C.rim - 6); y <= C.y + C.rim + 6; y++)
+    for(let x = Math.floor(C.x - C.rim - 6); x <= C.x + C.rim + 6; x++){
+      if(!craterWallTile(x, y)) continue;
+      const k = bkey(x, y, 0);
+      blocked.add(k); baseBlocked.add(k);
+    }
+    for(const sl of CRATER_SLABS){ const k = bkey(Math.floor(sl.x), Math.floor(sl.y), 0); blocked.add(k); baseBlocked.add(k); }
+  }
   _terrMaxY = 0;
   for(let i=0; i<HV.length; i++) if(HV[i] > _terrMaxY) _terrMaxY = HV[i];
 
@@ -27465,6 +27655,31 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
       blocked.delete(k);
       baseBlocked.delete(k);
     }
+  }
+})();
+/* ---------- AND NOTHING THE WORLD PLACED IS STANDING IN THE GLASS ----------
+   The named, the walled and the dangerous are kept out where they are chosen — see `bossSpot`,
+   `areaClear`, the ruins, the slavers. This is the net under all of them: a body some other
+   spawner dropped inside the glass is walked straight back out along its own bearing, to open
+   ground past the edge. A deterministic walk, not `findOpenNear`, so it spends no dice; and a
+   move rather than a deletion, because the body may be somebody a quest is waiting on. */
+(function clearTheCrater(){
+  for(const c of chars){
+    if((c.floor || 0) !== 0 || c.craterOwn) continue;
+    const d = craterD(c.x, c.y);
+    if(d >= CRATER.glass) continue;
+    const a = craterAng(c.x, c.y);
+    let to = null;
+    for(let r = CRATER.glass + 6 + hash2(c.id || 1, 77) * 10; r < CRATER.glass + 60 && !to; r += 1.5){
+      for(const da of [0, 0.05, -0.05, 0.1, -0.1]){
+        const x = CRATER.x + Math.cos(a + da) * r, y = CRATER.y + Math.sin(a + da) * r;
+        if(!isBlocked(x, y) && tileAt(x, y) !== 3){ to = {x, y}; break; }
+      }
+    }
+    if(!to) continue;
+    const dx = to.x - c.x, dy = to.y - c.y;
+    c.x = to.x; c.y = to.y;
+    for(const key of ['guard', 'post', 'home']) if(c[key] && typeof c[key].x === 'number' && craterD(c[key].x, c[key].y) < CRATER.glass){ c[key] = {x: c[key].x + dx, y: c[key].y + dy}; }
   }
 })();
 /* THE WARRENS USED TO BE SEEDED HERE, at the feet of the mountains, before the lattice
@@ -27635,6 +27850,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
      you are standing is not under you in any sense that matters. */
   for(const h of U.halls){
     if(h.f !== UNDER) continue;                 /* the sky only reaches the first storey */
+    if(craterD(h.x, h.y) < CRATER.glass + 8) continue;   /* and no hatch opens in the glass */
     let sp = null;
     for(let tries = 0; tries < 30 && !sp; tries++){
       const q = findOpenNear(clamp(h.x + ri(-5, 5), 4, W-5), clamp(h.y + ri(-5, 5), 4, H-5), 6);
@@ -28520,6 +28736,36 @@ function heightAt(wx, wy){
     sandDry:[196,176,138], sandWet:[124,102,78], bed:  [96,82,64],
   };
   const mix = (a,b,k) => [a[0]+(b[0]-a[0])*k, a[1]+(b[1]-a[1])*k, a[2]+(b[2]-a[2])*k];
+  /* ---------- THE CRATER'S GROUND, RING BY RING ----------
+     The APPROACH goes to ash: the dust keeps its hue out at the edge and loses it inward, and
+     the rays the blast threw out cross it in long spokes. The GLASS is fused and pale, cracked
+     radially and rippled in rings where it cooled. The RIM is scorched rock. The BOWL is the
+     dark glass of the capital's floor, split by fissures, with a pale burn at the very middle. */
+  const CR = {ash:[112,108,102], ash2:[92,88,84], glass:[212,210,200], glassG:[184,194,190], crack:[120,118,112],
+              scorch:[66,60,56], floor:[46,43,48], floor2:[58,54,62], fissure:[118,104,140], burn:[228,224,236]};
+  const frac1 = (v) => v - Math.floor(v);
+  const craterPaint = (col, d, a, slope, nMid, nFine) => {
+    const ray = vnoise(Math.cos(a) * 26 + 40, Math.sin(a) * 26 + 40);       /* spokes: constant along a bearing */
+    if(d > CRATER.glass){
+      const k = smooth(clamp((CRATER.approach - d) / (CRATER.approach - CRATER.glass), 0, 1));
+      let c2 = mix(col, mix(CR.ash, CR.ash2, clamp(nMid * 1.4 - 0.2, 0, 1)), 0.4 + k * 0.55);
+      if(ray > 0.62) c2 = mix(c2, CR.glass, (ray - 0.62) * 1.6 * k);
+      return c2;
+    }
+    if(d > CRATER.crest + 2){
+      let c2 = mix(CR.glass, CR.glassG, clamp((nMid - 0.3) * 1.5, 0, 1));
+      c2 = mix(c2, CR.ash, clamp((d - (CRATER.glass - 14)) / 14, 0, 1) * 0.6);   /* the edge of the glass is still ash */
+      if(Math.abs(frac1(a * 48 / Math.PI + nMid * 3) - 0.5) < 0.035) c2 = mix(c2, CR.crack, 0.75);   /* radial cracks */
+      c2 = mix(c2, CR.crack, (0.5 + 0.5 * Math.sin(d * 0.85 + nMid * 4)) * 0.12);                      /* where it cooled in rings */
+      if(nFine > 0.9) c2 = mix(c2, [236, 236, 230], 0.5);
+      return c2;
+    }
+    if(d > CRATER.rim - 8 || slope > 0.5) return mix(CR.scorch, col, 0.12);
+    let c2 = mix(CR.floor, CR.floor2, clamp(nMid * 1.6 - 0.3, 0, 1));
+    if(Math.abs(frac1(a * 22 / Math.PI + nMid * 2.4) - 0.5) < 0.03 && d > 10) c2 = mix(c2, CR.fissure, 0.55);
+    if(d < 16) c2 = mix(c2, CR.burn, smooth(clamp((16 - d) / 16, 0, 1)) * 0.8);
+    return c2;
+  };
   /* noise lattices at tile resolution — the frequencies live at 9+ tiles, so nothing is lost */
   const NL = W + 2;
   const nBigT = new Float32Array(NL * (H + 2)), nMidT = new Float32Array(NL * (H + 2));
@@ -28571,6 +28817,10 @@ function heightAt(wx, wy){
         if(h < 0.12 && slope < 0.08 && nBig < 0.45)
           col = mix(col, C.salt, clamp((0.45-nBig)*3, 0, 1) * clamp((0.12-h)*8, 0, 1));
         if(nMid > 0.66) col = mix(col, C.scrub, clamp((nMid-0.66)*2.4, 0, 0.8));
+      }
+      if(Math.abs(wx - CRATER.x) < CRATER.approach && Math.abs(wy - CRATER.y) < CRATER.approach){
+        const cd = craterD(wx, wy);
+        if(cd < CRATER.approach) col = craterPaint(col, cd, craterAng(wx, wy), slope, nMid, nFine);
       }
       const g2 = 0.92 + nFine*0.16;
       const o = (py*SPLAT + px) * 4;
@@ -29281,14 +29531,18 @@ function vscaleOf(c){
 
 /* ---------- instanced decor ---------- */
 {
-  const trees=[], oasisTrees=[], rocks=[], shrubs=[], cveins=[], iveins=[];
+  const trees=[], oasisTrees=[], deadTrees=[], rocks=[], charRocks=[], shrubs=[], cveins=[], iveins=[];
+  const gr = towns.find(t2 => t2.def.key === 'greenrest');
   for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
     const d = rawDecorAt(x,y);   /* build every node, then hide the spent ones — so regrowth can restore them */
     if(d==='tree'){
-      const gr = towns.find(t2 => t2.def.key === 'greenrest');
-      ((gr && dist(gr.x, gr.y, x, y) < 26) ? oasisTrees : trees).push([x+0.5, y+0.5]);
+      /* dead inside the approach, and thinning out to living over thirty tiles past it, so the
+         edge of the dead ground is a fraying and not a line somebody drew */
+      const cd = craterD(x + 0.5, y + 0.5);
+      const dead = cd < CRATER.approach || (cd < CRATER.approach + 30 && hash2(x*13, y*17) < (CRATER.approach + 30 - cd) / 30);
+      (dead ? deadTrees : (gr && dist(gr.x, gr.y, x, y) < 26) ? oasisTrees : trees).push([x+0.5, y+0.5]);
     }
-    else if(d==='rock') rocks.push([x+0.5, y+0.5]);
+    else if(d==='rock') (craterD(x + 0.5, y + 0.5) < CRATER.approach ? charRocks : rocks).push([x+0.5, y+0.5]);
     else if(d==='shrub') shrubs.push([x+0.5, y+0.5]);
     else if(d==='cvein') cveins.push([x+0.5, y+0.5]);
     else if(d==='ivein') iveins.push([x+0.5, y+0.5]);
@@ -29328,14 +29582,14 @@ function vscaleOf(c){
     }
     return cg;
   };
-  const addInst = (list, geo, col, yOff, scaleFn, trackable) => {
+  const addInst = (list, geo, col, yOff, scaleFn, trackable, orient) => {
     const buckets = new Map();
     for(const p of list){
       const k = (((p[1]/DECOR_CH)|0) << 8) | ((p[0]/DECOR_CH)|0);
       let a = buckets.get(k); if(!a) buckets.set(k, a = []);
       a.push(p);
     }
-    const material = mat(col), cgeo = chunkGeoFor(geo);
+    const material = (col && col.isMaterial) ? col : mat(col), cgeo = chunkGeoFor(geo);
     for(const [k, sub] of buckets){
       const cx = ((k & 255) + 0.5) * DECOR_CH, cz = ((k >> 8) + 0.5) * DECOR_CH;
       const im = new THREE.InstancedMesh(cgeo, material, sub.length);
@@ -29346,8 +29600,9 @@ function vscaleOf(c){
       sub.forEach((p, i) => {
         const s = scaleFn ? scaleFn(p) : 1;
         dummy.position.set(p[0] - cx, groundY(p[0],p[1]) + yOff*s, p[1] - cz);
-        dummy.rotation.y = hash2(p[0]*31, p[1]*17) * Math.PI*2;
+        dummy.rotation.set(0, hash2(p[0]*31, p[1]*17) * Math.PI*2, 0);
         dummy.scale.setScalar(s);
+        if(orient) orient(p, dummy);        /* last, so it may set its own turn, lift or scale */
         dummy.updateMatrix();
         const tx = Math.floor(p[0]), ty = Math.floor(p[1]);
         const unexplored = vis[ty*W + tx] === 0;
@@ -29386,6 +29641,8 @@ function vscaleOf(c){
   addInst(oasisTrees, new THREE.CylinderGeometry(0.07, 0.13, 0.9, 5), '#3a2c1c', 0.45, treeScale, true);
   addInst(oasisTrees, new THREE.ConeGeometry(0.65, 1.6, 6), '#2f4a26', 1.5, treeScale, true);
   addInst(rocks, new THREE.DodecahedronGeometry(NODE_LOOK.rock.baseSz, 0), NODE_LOOK.rock.base, 0.25, p => 0.7 + hash2(p[0]*3,p[1]*3)*0.8, true);
+  /* and the stone nearer the crater was in the flash: the same stone, blackened on the side that faced it */
+  addInst(charRocks, new THREE.DodecahedronGeometry(NODE_LOOK.rock.baseSz, 0), '#4d4845', 0.25, p => 0.7 + hash2(p[0]*3,p[1]*3)*0.8, true);
   addInst(shrubs, new THREE.SphereGeometry(0.32, 5, 4), '#5d5640', 0.25, null, false);
   /* ore outcrops: green-crusted copper, rust-crusted iron. Colours and sizes live in
      NODE_LOOK — see the note there for why iron's used to be a secret. */
@@ -29394,6 +29651,161 @@ function vscaleOf(c){
     const L = NODE_LOOK[k];
     addInst(list, new THREE.DodecahedronGeometry(L.baseSz, 0), L.base, 0.22, veinScale, true);
     addInst(list, new THREE.OctahedronGeometry(L.crustSz, 0), L.crust, 0.44, veinScale, true);
+  }
+  /* ---------- THE CRATER, DRESSED ----------
+     Everything here is instanced through `addInst`, so it is culled by chunk and stays under the
+     fog until somebody has seen it, like any tree. All of it is placed off `hash2` and the
+     crater's own geometry: the renderer spends no dice. */
+  {
+    const C = CRATER;
+    const outward = (p) => { const dx = p[0] - C.x, dz = p[1] - C.y, l = Math.hypot(dx, dz) || 1; return [dx / l, dz / l]; };
+    const _ax = new THREE.Vector3(), _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion();
+    /* a small merge: every piece is a primitive, so position + normal is all the lighting needs */
+    const merged = (parts) => {
+      const P = [], N = [];
+      for(const [g0, m4] of parts){
+        const g = g0.index ? g0.toNonIndexed() : g0;
+        g.applyMatrix4(m4);
+        P.push(...g.attributes.position.array); N.push(...g.attributes.normal.array);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+      g.computeBoundingSphere();
+      return g;
+    };
+    const M = (x, y, z, rx, ry, rz) => new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(rx || 0, ry || 0, rz || 0)).setPosition(x, y, z);
+    /* 1. THE DEAD, LEANING AWAY. The approach keeps its trees and they are husks now, bare and
+          ash-grey, every one tipped away from the middle — the nearer, the further over. The
+          ground itself points at the crater before a player has seen anything else. */
+    const deadGeo = merged([
+      [new THREE.CylinderGeometry(0.05, 0.11, 1.7, 5), M(0, 0.85, 0)],
+      [new THREE.CylinderGeometry(0.025, 0.05, 0.7, 4), M(0.16, 1.15, 0, 0, 0, -0.9)],
+      [new THREE.CylinderGeometry(0.02, 0.04, 0.5, 4), M(-0.12, 1.4, 0.04, 0.3, 0, 0.8)],
+    ]);
+    addInst(deadTrees, deadGeo, '#5f5a53', 0, treeScale, true, (p, dm) => {
+      const [ox, oz] = outward(p);
+      const k = clamp((C.approach - craterD(p[0], p[1])) / (C.approach - C.glass), 0, 1);
+      _ax.set(oz, 0, -ox).normalize();
+      _qa.setFromAxisAngle(_ax, 0.06 + k * 0.58 + hash2(p[0]*7, p[1]*3) * 0.1);
+      _qb.setFromAxisAngle(_ax.set(0, 1, 0), hash2(p[0]*31, p[1]*17) * Math.PI * 2);
+      dm.quaternion.copy(_qa).multiply(_qb);
+    });
+    /* 2. THE ORDER'S POSTS, at the edge of the approach: a pole, a bar, a strip of white cloth,
+          every ten degrees. The Church marks the ground it will not walk on. A cairn at every
+          other one, which is what pilgrims leave where they turned back. */
+    const posts = [], cairns = [];
+    for(let i = 0; i < 36; i++){
+      const a = i / 36 * Math.PI * 2 + hash2(CRATER_SEED & 0xfff, i) * 0.05;
+      const r = C.approach - 6 + (hash2(i, 51) - 0.5) * 3;
+      const x = C.x + Math.cos(a) * r, y = C.y + Math.sin(a) * r;
+      if(isBlocked(x, y) || tileAt(x, y) === 3) continue;
+      posts.push([x, y]);
+      if(i % 2 === 0) cairns.push([x + Math.cos(a + 1.3) * 1.1, y + Math.sin(a + 1.3) * 1.1]);
+    }
+    const postGeo = merged([
+      [new THREE.BoxGeometry(0.12, 2.6, 0.12), M(0, 1.3, 0)],
+      [new THREE.BoxGeometry(1.0, 0.09, 0.09), M(0, 2.2, 0)],
+    ]);
+    const clothGeo = merged([[new THREE.BoxGeometry(0.34, 0.9, 0.02), M(0.36, 1.72, 0, 0, 0, 0.06)]]);
+    const facePost = (p, dm) => { const [ox, oz] = outward(p); dm.rotation.set(0, Math.atan2(ox, oz) + Math.PI / 2, 0); };
+    addInst(posts, postGeo, '#4e4034', 0, null, false, facePost);
+    addInst(posts, clothGeo, '#d9d2c2', 0, null, false, facePost);
+    const cairnGeo = merged([
+      [new THREE.DodecahedronGeometry(0.34, 0), M(0, 0.26, 0)],
+      [new THREE.DodecahedronGeometry(0.25, 0), M(0.04, 0.66, 0.02)],
+      [new THREE.DodecahedronGeometry(0.16, 0), M(-0.02, 0.95, 0)],
+    ]);
+    addInst(cairns, cairnGeo, '#7c766c', 0, null, false);
+    /* 3. THE SLABS, and the shadows on them. Masonry the flash did not knock flat, leaning away
+          from where it came from, and on the face that was turned to the light, a person: the
+          stone around them was bleached and where they stood it was not. */
+    const silTex = (() => {
+      const cv2 = document.createElement('canvas'); cv2.width = 64; cv2.height = 160;
+      const g = cv2.getContext('2d');
+      g.filter = 'blur(2px)';
+      g.fillStyle = '#000';
+      g.beginPath(); g.ellipse(32, 20, 10, 12, 0, 0, Math.PI * 2); g.fill();          /* the head */
+      g.beginPath(); g.moveTo(19, 36); g.lineTo(45, 36); g.lineTo(42, 98); g.lineTo(22, 98); g.closePath(); g.fill();
+      g.save(); g.translate(20, 40); g.rotate(0.28); g.fillRect(-8, 0, 8, 48); g.restore();   /* an arm at the side */
+      g.save(); g.translate(44, 40); g.rotate(-2.5); g.fillRect(-4, 0, 8, 38); g.restore();  /* and one up, too late */
+      g.fillRect(22, 96, 9, 60); g.fillRect(33, 96, 9, 58);
+      const t = new THREE.CanvasTexture(cv2);
+      return t;
+    })();
+    const silMat = new THREE.MeshBasicMaterial({map: silTex, color: 0x1c1816, transparent: true, opacity: 0.82,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2});
+    const slabs = CRATER_SLABS.map(sl => [sl.x, sl.y, sl]);
+    const slabGeo = new THREE.BoxGeometry(1, 1, 0.42);
+    const slabOrient = (p, dm) => {
+      const [ox, oz] = outward(p), sl = p[2];
+      _ax.set(oz, 0, -ox).normalize();
+      _qa.setFromAxisAngle(_ax, 0.08 + hash2(p[0]*5, p[1]*5) * 0.12);
+      _qb.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.atan2(-ox, -oz));
+      dm.quaternion.copy(_qa).multiply(_qb);
+      dm.scale.set(sl.w, sl.h, 1);
+    };
+    addInst(slabs, slabGeo, '#b9b3a6', 0, null, false, (p, dm) => { slabOrient(p, dm); dm.position.y += p[2].h / 2; });
+    const slabSil = CRATER_SLABS.map(sl => { const ox = Math.cos(sl.a), oz = Math.sin(sl.a); return [sl.x - ox * 0.23, sl.y - oz * 0.23, sl]; });
+    addInst(slabSil, new THREE.PlaneGeometry(0.62, 1.55), silMat, 0.85, null, false, (p, dm) => {
+      const ox = Math.cos(p[2].a), oz = Math.sin(p[2].a);
+      dm.rotation.set(0, Math.atan2(-ox, -oz), 0);
+    });
+    /* 4. AND ON THE GROUND. Where there was no wall, the shadow fell on the glass itself, and
+          every one of them points AWAY from the middle: feet toward the light, head away. */
+    const ground = [];
+    for(let i = 0; i < 190; i++){
+      const a = i * 2.39996 * 1.618 + hash2(i, 931) * 0.6;
+      const d = C.crest + 5 + (C.glass - C.crest - 10) * hash2(i, 933);
+      const x = C.x + Math.cos(a) * d, y = C.y + Math.sin(a) * d;
+      if(isBlocked(x, y)) continue;
+      ground.push([x, y]);
+    }
+    const flatSil = new THREE.PlaneGeometry(1.05, 2.6);   /* a shadow is longer than the one who cast it */
+    flatSil.rotateX(-Math.PI / 2);        /* flat, head toward -z */
+    flatSil.translate(0, 0, -1.3);        /* and the feet at the point itself */
+    addInst(ground, flatSil, silMat, 0.04, p => 0.85 + hash2(p[0]*9, p[1]*9) * 0.3, false, (p, dm) => {
+      const [ox, oz] = outward(p);
+      dm.rotation.set(0, Math.atan2(-ox, -oz), 0);
+    });
+    /* 6. AND THE ONES WHO WENT IN AFTER. Bones in the approach, thicker toward the glass, every
+          one of them lying with its head toward the middle: they were walking in. Nobody has
+          cleared them, because nobody comes out here to clear anything. */
+    const bones = [];
+    for(let i = 0; i < 420; i++){
+      const a = hash2(i, 951) * Math.PI * 2;
+      const u = Math.pow(hash2(i, 953), 1.8);                  /* thicker toward the inner edge */
+      const d = C.glass + 4 + (C.approach - C.glass - 10) * u;
+      const x = C.x + Math.cos(a) * d, y = C.y + Math.sin(a) * d;
+      if(isBlocked(x, y) || tileAt(x, y) === 3) continue;
+      bones.push([x, y]);
+    }
+    const boneGeo = merged([
+      [new THREE.SphereGeometry(0.16, 6, 5), M(0, 0.1, -0.78)],                         /* the skull */
+      [new THREE.BoxGeometry(0.07, 0.05, 0.9), M(0, 0.05, -0.2)],                        /* the spine */
+      [new THREE.BoxGeometry(0.46, 0.04, 0.05), M(0, 0.07, -0.5)],
+      [new THREE.BoxGeometry(0.42, 0.04, 0.05), M(0, 0.07, -0.38)],
+      [new THREE.BoxGeometry(0.36, 0.04, 0.05), M(0, 0.07, -0.26)],
+      [new THREE.BoxGeometry(0.06, 0.05, 0.62), M(0.12, 0.04, 0.46, 0, 0.18, 0)],        /* the legs */
+      [new THREE.BoxGeometry(0.06, 0.05, 0.62), M(-0.1, 0.04, 0.44, 0, -0.1, 0)],
+    ]);
+    addInst(bones, boneGeo, '#d6cdb8', 0, p => 0.9 + hash2(p[0]*11, p[1]*5) * 0.25, false, (p, dm) => {
+      const [ox, oz] = outward(p);
+      dm.rotation.set(0, Math.atan2(ox, oz) + (hash2(p[0]*3, p[1]*7) - 0.5) * 0.6, 0);   /* head (-z) toward the middle */
+    });
+    /* 5. GLASS, IN SHARDS. The ground did not only fuse, it burst: pale splinters stand up out of
+          the glass ring and lie scattered on the bowl floor. */
+    const shards = [];
+    for(let i = 0; i < 620; i++){
+      const a = hash2(i, 941) * Math.PI * 2;
+      const d = 6 + (C.glass - 6) * Math.sqrt(hash2(i, 943));
+      const x = C.x + Math.cos(a) * d, y = C.y + Math.sin(a) * d;
+      if(isBlocked(x, y)) continue;
+      shards.push([x, y]);
+    }
+    addInst(shards, new THREE.OctahedronGeometry(0.22, 0), '#dcdcd2', 0.05, p => 0.5 + hash2(p[0]*13, p[1]*7) * 1.3, false, (p, dm) => {
+      dm.rotation.set(hash2(p[0]*3, p[1]) * 1.2 - 0.6, hash2(p[0], p[1]*3) * Math.PI * 2, hash2(p[0]*5, p[1]*2) * 1.2 - 0.6);
+    });
   }
   /* Hide anything already worked out. Only a node with a nodeUses entry can be depleted, so walk
      nodeUses, not every instance. (It is empty this early, since a save is restored after the
@@ -38376,21 +38788,26 @@ function renderOverlay(rdt){
 const dustMotes = [];
 function updateDust(rdt){
   const span = camDist * 1.4;
-  const moteCap = weather.storm > 0 ? 130 : 36;
+  /* "Understate the apocalypse. The dust is not ash, not soil, not anything, and it is still
+     falling." Everywhere else it blows along the ground. Over the glass it comes DOWN, and there
+     is more of it, and it has no wind in it. */
+  const falling = activeFloor >= 0 && craterD(camX, camY) < CRATER.glass;
+  const moteCap = weather.storm > 0 ? 130 : falling ? 120 : 36;
   while(dustMotes.length < moteCap){
     dustMotes.push({
       /* vrnd, not rnd: this runs inside render() at frame rate — see the note on vrnd */
       x: camX + (vrnd()-0.5)*span, y: camY + (vrnd()-0.5)*span,
-      h: 0.3 + vrnd()*2.2, life: 3 + vrnd()*4, t: 0,
-      vx: 0.6 + vrnd()*0.8, vy: (vrnd()-0.5)*0.3,
+      h: falling ? 2.5 + vrnd()*5 : 0.3 + vrnd()*2.2, life: 3 + vrnd()*4, t: 0,
+      vx: falling ? (vrnd()-0.5)*0.12 : 0.6 + vrnd()*0.8, vy: (vrnd()-0.5)*(falling ? 0.1 : 0.3),
+      fall: falling ? 0.45 + vrnd()*0.5 : 0,
     });
   }
   for(let i=dustMotes.length-1; i>=0; i--){
     const m = dustMotes[i];
     m.t += rdt;
     m.x += m.vx*rdt; m.y += m.vy*rdt;
-    m.h += Math.sin(m.t*2 + m.x)*0.15*rdt;
-    if(m.t >= m.life || Math.abs(m.x-camX) > span || Math.abs(m.y-camY) > span) dustMotes.splice(i,1);
+    m.h += Math.sin(m.t*2 + m.x)*0.15*rdt - m.fall*rdt;
+    if(m.t >= m.life || m.h < 0 || Math.abs(m.x-camX) > span || Math.abs(m.y-camY) > span) dustMotes.splice(i,1);
   }
 }
 function drawDust(){
@@ -38398,9 +38815,9 @@ function drawDust(){
     if(!visAt(m.x, m.y)) continue;
     const p = w2s(m.x, m.y, m.h);
     if(!p) continue;
-    const a = Math.sin(m.t/m.life*Math.PI) * 0.35;
+    const a = Math.sin(m.t/m.life*Math.PI) * (m.fall ? 0.5 : 0.35);
     cx.globalAlpha = a;
-    cx.fillStyle = '#d8c8a0';
+    cx.fillStyle = m.fall ? '#e8e4dc' : '#d8c8a0';
     cx.fillRect(p.x, p.y, 2, 2);
   }
   cx.globalAlpha = 1;
@@ -38503,6 +38920,10 @@ const mmBase = document.createElement('canvas'); mmBase.width=128; mmBase.height
     {
       const _k = Math.floor(y*H/128)*W + Math.floor(x*W/128);
       g.fillStyle = brim[_k] ? BRIM_COLS[brim[_k]] : TILE_COLS[terr[_k]];
+      /* and the crater, ring by ring, so the map says what the ground says */
+      const cd = craterD((x + 0.5) * W / 128, (y + 0.5) * H / 128);
+      if(cd < CRATER.approach) g.fillStyle = cd < CRATER.rim - 6 ? '#2e2b31' : cd < CRATER.crest + 2 ? '#4a4440'
+                                           : cd < CRATER.glass ? '#c9c6ba' : '#6e6a64';
     }
     g.fillRect(x,y,1,1);
   }
@@ -45505,7 +45926,7 @@ function snapshot(){
     pilgrimDestI: c.pilgrimage ? towns.indexOf(c.pilgrimage.dest) : -1,
   });
   return {
-    v:20, cats, bloodMoon, bloodMoonLast, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields, phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
+    v:21, cats, bloodMoon, bloodMoonLast, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields, phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen}, hiresPaid: {...hiresPaid},
@@ -45613,7 +46034,9 @@ function snapshot(){
   };
 }
 function restore(d){
-  if(!d || (d.v||0) < 20){ log('That save predates the map expansion (v20). It can no longer be loaded.', 'bad'); return; }
+  /* v21 IS THE CRATER. The world is built around the middle of the map now, so every town, road
+     and cave in a save made before it stands somewhere the ground no longer agrees with. */
+  if(!d || (d.v||0) < 21){ log(`That save predates ${(d && (d.v||0) >= 20) ? 'the crater at the middle of the world (v21)' : 'the map expansion (v20)'}. It can no longer be loaded.`, 'bad'); return; }
   chars.length = 0; corpses.length = 0; particles.length = 0; projectiles.length = 0;
   pBuilds.length = 0;
   blocked.clear(); for(const k of baseBlocked) blocked.add(k);
@@ -47056,6 +47479,42 @@ function listenForMother(){
         : 'A better ear for the dust art would give the reading a bearing. Train dust, or listen with a Hollow.');
   if(!dir && acu < 3 && mother.reads === 2)
     log('The reading is blunt. A better ear for the dust art would give it a direction.', '');
+}
+/* ---------- WALKING IN ----------
+   The crater tells you what it is in the order you meet it, once each: the ash, the glass, the
+   lip, the floor. Read off where your people are standing every two seconds, and recorded in
+   `placesSeen` so a reload does not tell you twice. The first line opens a thread with the
+   middle marked, because the thing the world is built around should be a place you can go. */
+const CRATER_LINES = {
+  approach: ['The ground has gone grey out here, and every dead tree is leaning the same way: away from something further in.',
+             'Posts in a ring, with white rags on them. The Order marks the ground it will not walk on, and pilgrims have left cairns where they turned back.'],
+  glass:    ['THE GLASS. The ground was melted once and set again, and there are shadows on it with nobody left to cast them.',
+             'The dust does not blow here. It comes down, and it does not stop.'],
+  rim:      ['The lip of it. Below is the floor of the capital, and something stands over the middle of it that the eye will not stay on.'],
+  bowl:     ['You are standing where the kingdom was. Nothing down here is the right colour.'],
+};
+let _crT = 0;
+function craterTick(dt){
+  if((_crT -= dt) > 0) return;
+  _crT = 2;
+  const order = ['approach', 'glass', 'rim', 'bowl'];
+  let deepest = -1, who = null;
+  for(const c of player()){
+    if(c.state === 'dead' || (c.floor || 0) !== 0) continue;
+    const i = order.indexOf(craterRing(c.x, c.y));
+    if(i > deepest){ deepest = i; who = c; }
+  }
+  for(let i = 0; i <= deepest; i++){
+    const tag = 'crater_' + order[i];
+    if(placesSeen[tag]) continue;
+    sawPlace(tag);
+    for(const l of CRATER_LINES[order[i]]) log(l, i >= 1 ? 'bad' : '');
+    if(i === 0){
+      threadSet('crater', 'The crater', 'There is a crater at the middle of the world, and the waste around it has been left alone for a reason.',
+        {hint: 'The inner wall is sheer except at a few breaches. Find one, and go carefully.', mark: {x: CRATER.x, y: CRATER.y}});
+      if(who) say(who, pick(['Something happened here. Something big.', 'Nobody lives out this way. I can see why.', 'The trees are all pointing the same way.']));
+    }
+  }
 }
 /* She is not a boss and there is nothing here to kill. She is a voice behind a seal that was
    built by people who knew exactly what they had. Reaching her is the leg; opening her is
