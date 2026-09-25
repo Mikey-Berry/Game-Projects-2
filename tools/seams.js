@@ -320,7 +320,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const f = townFlagPos(t);
     for (const o of chars) if (o.state !== 'dead' && o.faction !== 'player' && dist(o.x, o.y, f.x, f.y) < 2.5) o.x += 6;
     const mover = chars.find(o => o.name === 'Keeper');
-    const mq = findOpenNear(Math.round(f.x) + 2, Math.round(f.y), 2);
+    /* within reach of the flag, and placed without dice: `findOpenNear` is sixty random darts,
+       and on a world where the stream sits a few draws over it put the keeper past the three
+       tiles the menu asks for, and the torch was refused with "Stand at the flag" */
+    let mq = null;
+    for (const r of [2, 2.5, 1.5, 2.8]) {
+      for (let a = 0; a < 16 && !mq; a++) {
+        const x = f.x + Math.cos(a / 16 * Math.PI * 2) * r, y = f.y + Math.sin(a / 16 * Math.PI * 2) * r;
+        if (!isBlocked(x, y, 0)) mq = { x, y };
+      }
+      if (mq) break;
+    }
+    mq = mq || { x: f.x + 2, y: f.y };
     mover.x = mq.x; mover.y = mq.y; mover.floor = 0; selected = [mover]; rebuildCharGrid();
     window.__sack = { t, f, seat: t.leader.charId, rep: towns.map(o => o.rep), stock: Object.assign({}, t.stock),
       stash: Object.values(stash).reduce((a2, v) => a2 + (Number(v) || 0), 0) };

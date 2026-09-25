@@ -18,6 +18,11 @@
  *   5. the air changes: the fog over the crater is not the fog outside it, and the veil stands
  *   6. walking in says what it is, once each and in order, and opens a thread that points there
  *   7. a save from before the crater is refused, and says why
+ *   8. the glass and the bowl are held, day and night: the crater's Watchers are placed, are not
+ *      unmade at dawn, and the Messengers stand in the bowl at peace with the rest of them
+ *   9. what is killed grows back, and never within sight of one of yours
+ *  10. the light comes back at night: strikes are telegraphed, land on and around whoever of
+ *      yours is in the glass, burn what they land on, and spare the Watchers; none by day
  *
  * Anything starting '!!' fails the build.
  *
@@ -179,6 +184,82 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         R.walkingIn = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
           : `walking in says the approach, the glass, the lip and the floor once each and in that order, and "The crater" goes in the journal marked at the middle`;
       }
+      /* ---- 8. held, day and night ---- */
+      {
+        const own = (k) => chars.filter(c => c.craterOwn === k && c.state !== 'dead');
+        const g0 = own('glass'), b0 = own('bowl'), m0 = own('messenger');
+        const bits = [];
+        if (typeof CRATER_POP === 'undefined') bits.push('nothing lives in the crater in this build');
+        else {
+          if (g0.length < CRATER_POP.glass.want) bits.push(`${g0.length} of ${CRATER_POP.glass.want} hold the glass`);
+          if (b0.length < CRATER_POP.bowl.want) bits.push(`${b0.length} of ${CRATER_POP.bowl.want} hold the bowl`);
+          if (m0.length < CRATER_MESSENGERS) bits.push(`${m0.length} Messengers`);
+          const off = [...g0, ...b0, ...m0].filter(c => { const r = craterRing(c.x, c.y); return c.craterOwn === 'glass' ? r !== 'glass' : r !== 'bowl'; });
+          if (off.length) bits.push(`${off.length} stand outside their ring`);
+          if (m0.some(m => !/Messenger/.test(m.name))) bits.push('a "Messenger" is not one');
+          const peace = m0.every(m => [...g0, ...b0].every(g => !hostile(m, g)));
+          if (!peace) bits.push('the Messengers are at war with the crater\'s Watchers');
+          /* and the dawn */
+          hour = 5.9; gauntDawn && gauntDawn();
+          const g1 = own('glass').length + own('bowl').length + own('messenger').length;
+          if (g1 < g0.length + b0.length + m0.length) bits.push(`the dawn took ${g0.length + b0.length + m0.length - g1} of them`);
+        }
+        R.theCraterIsHeld = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : `${g0.length} Watchers hold the glass and ${b0.length} the bowl, with ${m0.length} Messengers at peace among them, and the dawn takes none of them`;
+      }
+      /* ---- 9. it grows back, unseen ---- */
+      if (typeof CRATER_POP !== 'undefined') {
+        const me = player()[0];
+        const kill = (k) => { for (const c of chars) if (c.craterOwn === k && c.state !== 'dead') { c.state = 'dead'; } };
+        kill('glass');
+        /* one of yours stands in the glass; everything regrown must be out of their sight */
+        me.x = CRATER.x + 105; me.y = CRATER.y; me.floor = 0;
+        for (let i = 0; i < 400; i++) craterDangerTick(0.5);
+        const regrown = chars.filter(c => c.craterOwn === 'glass' && c.state !== 'dead');
+        const seen = regrown.filter(c => dist(c.x, c.y, me.x, me.y) < 36).length;
+        R.itGrowsBack = regrown.length >= CRATER_POP.glass.want && !seen
+          ? `a cleared glass regrows to ${regrown.length} over two hundred hours, and none of them inside thirty-six tiles of the one of yours standing in it`
+          : `!! THE CLEARED GLASS REGREW ${regrown.length} OF ${CRATER_POP.glass.want}, ${seen} OF THEM IN SIGHT`;
+      } else R.itGrowsBack = '!! NOTHING TO REGROW IN THIS BUILD';
+      /* ---- 10. the light at night ---- */
+      if (typeof strikeTick !== 'undefined') {
+        const me = player()[0];
+        for (const c of chars) if (c.craterOwn && c.state !== 'dead') c.state = 'dead';   /* nothing else hurting anybody */
+        const hp = (o) => PARTS.reduce((a, k) => a + o.parts[k].hp, 0);
+        me.x = CRATER.x + 105; me.y = CRATER.y; me.floor = 0; me.state = 'ok';
+        for (const k of PARTS) { me.parts[k].hp = me.parts[k].max; me.parts[k].bleed = 0; }
+        me.blood = me.maxBlood;
+        const g = spawnGaunt('gaunt', me.x + 0.5, me.y); g.nightborn = false; g.noFight = true; g.x = me.x + 0.5; g.y = me.y; g.floor = 0;
+        const gHp0 = hp(g);
+        /* by day, nothing */
+        hour = 12; craterStrikes.length = 0; _strikeT = 0;
+        for (let i = 0; i < 300; i++) { strikeTick(1 / 30); me.x = CRATER.x + 105; me.y = CRATER.y; }
+        const byDay = craterStrikes.length;
+        /* by night: stand still for twenty seconds */
+        hour = 23; _strikeT = 0;
+        const hp0 = hp(me);
+        let warned = 0, landed = 0, near = 0;
+        const seenStrikes = new Set();
+        for (let i = 0; i < 600; i++) {
+          strikeTick(1 / 30);
+          for (const st of craterStrikes) {
+            if (!seenStrikes.has(st)) { seenStrikes.add(st); warned++; if (dist(st.x, st.y, me.x, me.y) < 8) near++; }
+            if (st.hit && !st._counted) { st._counted = true; landed++; }
+          }
+          me.x = CRATER.x + 105; me.y = CRATER.y; g.x = me.x + 0.5; g.y = me.y;
+          if (me.state === 'dead') break;
+        }
+        const took = hp0 - hp(me), gTook = gHp0 - hp(g);
+        const bits = [];
+        if (byDay) bits.push(`${byDay} strikes by day`);
+        if (!warned) bits.push('no strike came in twenty seconds of night');
+        if (warned && near < warned) bits.push(`${warned - near} strikes landed away from the one standing there`);
+        if (!(took > 0)) bits.push('nothing burned the one standing in the glass');
+        if (gTook > 0) bits.push(`the light burned the Watcher beside them (${gTook.toFixed(0)})`);
+        R.theLightComesBack = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : `none by day; at night ${warned} strikes in twenty seconds, each ringed on the glass for ${STRIKE_WARN}s before it lands, all within eight tiles of the one standing there, who lost ${took.toFixed(0)} across the body, while the Watcher beside them lost nothing`;
+        chars.splice(chars.indexOf(g), 1);
+      } else R.theLightComesBack = '!! NO LIGHT COMES DOWN IN THIS BUILD';
       /* ---- 7. an old save ---- */
       {
         const lines = [];

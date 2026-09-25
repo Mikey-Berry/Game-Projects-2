@@ -19465,6 +19465,103 @@ function corpseSiteTick(wdt){
     }
   }
 }
+/* ============================================================ WHAT LIVES IN THE CRATER
+   Three layers, and they deepen as you go in. The APPROACH is the warning: nothing new lives
+   there. The GLASS is held by Watchers that the dawn does not unmake — gaunts and stalkers, and
+   the shrikes that hunt them. The BOWL holds the worse of them, and the Messengers: the ones
+   who hold the Eldest under, standing at the place he was knocked on. They are faction `gaunt`
+   out here, and so at peace with everything else the crater keeps; they are a fight for you,
+   not for each other.
+   And at NIGHT, the light comes back: telegraphed strikes, a ring on the glass and then a
+   column out of the sky, on and around whoever of yours is standing in the glass or the bowl.
+   They burn anyone they land on, the dead included. They do not touch the Watchers.
+   Everything spawned here carries `craterOwn`, which is what the restock counts and what the
+   clearing pass at worldgen leaves alone. It is saved. */
+const CRATER_POP = {
+  glass: {want: 14, kinds: ['gaunt', 'stalker', 'gaunt', 'shrike', 'stalker'], r0: CRATER.crest + 6, r1: CRATER.glass - 4},
+  bowl:  {want: 10, kinds: ['choir', 'maw', 'shrike', 'gaunt', 'stalker'],   r0: 10, r1: CRATER.rim - 12},
+};
+const CRATER_MESSENGERS = 3;
+/* a point in a ring that a body can stand on, off the world's own stream */
+function craterSpot(r0, r1){
+  for(let tries = 0; tries < 30; tries++){
+    const a = rnd() * Math.PI * 2, d = r0 + rnd() * (r1 - r0);
+    const x = CRATER.x + Math.cos(a) * d, y = CRATER.y + Math.sin(a) * d;
+    if(!isBlocked(x, y)) return {x, y};
+  }
+  return {x: CRATER.x + r0 + 1, y: CRATER.y};
+}
+function craterSpawn(ring, kind){
+  const P = CRATER_POP[ring] || CRATER_POP.bowl;
+  const q = craterSpot(P.r0, P.r1);
+  const g = spawnGaunt(kind || pick(P.kinds), q.x, q.y);
+  g.nightborn = false; g.floor = 0;
+  g.guard = {x: g.x, y: g.y};
+  g.craterOwn = ring;
+  return g;
+}
+function craterMessenger(){
+  const g = craterSpawn('bowl', rnd() < 0.34 ? 'herald' : 'messenger');
+  g.craterOwn = 'messenger';
+  return g;
+}
+/* the hours: what the crater has lost, it grows back, but never where one of yours can see it */
+function craterDangerTick(dh){
+  const pop = {glass: 0, bowl: 0, messenger: 0};
+  for(const c of chars) if(c.craterOwn && c.state !== 'dead' && pop[c.craterOwn] !== undefined) pop[c.craterOwn]++;
+  const unseen = (q) => !player().some(o => o.state !== 'dead' && dist(o.x, o.y, q.x, q.y) < 36);
+  for(const ring of ['glass', 'bowl']){
+    const P = CRATER_POP[ring];
+    if(pop[ring] >= P.want || rnd() >= dh * 0.08 * (P.want - pop[ring])) continue;
+    const q = craterSpot(P.r0, P.r1);
+    if(!unseen(q)) continue;
+    const g = spawnGaunt(pick(P.kinds), q.x, q.y);
+    g.nightborn = false; g.floor = 0; g.guard = {x: g.x, y: g.y}; g.craterOwn = ring;
+  }
+  if(pop.messenger < CRATER_MESSENGERS && rnd() < dh * 0.012){
+    const q = craterSpot(CRATER_POP.bowl.r0, CRATER_POP.bowl.r1);
+    if(unseen(q)){
+      const g = spawnGaunt(rnd() < 0.34 ? 'herald' : 'messenger', q.x, q.y);
+      g.nightborn = false; g.floor = 0; g.guard = {x: g.x, y: g.y}; g.craterOwn = 'messenger';
+    }
+  }
+}
+/* ---------- THE LIGHT COMES BACK AT NIGHT ----------
+   `t` counts the warning down; at zero it lands, and the column stays up a moment after (`hit`
+   and `t` counting the afterglow) for the renderer. Seconds, on the sim clock, so pausing holds
+   the ring exactly where it was. The deeper you are, the more often it comes. */
+const craterStrikes = [];          /* {x, y, t, hit} */
+const STRIKE_WARN = 1.8, STRIKE_R = 2.4;
+let _strikeT = 0;
+function strikeTick(dt){
+  for(let i = craterStrikes.length - 1; i >= 0; i--){
+    const st = craterStrikes[i];
+    st.t -= dt;
+    if(!st.hit && st.t <= 0){ st.hit = true; st.t = 0.7; craterStrike(st); }
+    else if(st.hit && st.t <= 0) craterStrikes.splice(i, 1);
+  }
+  if(!isNight()) return;
+  if((_strikeT -= dt) > 0) return;
+  const inside = player().filter(c => c.state !== 'dead' && (c.floor || 0) === 0 && craterD(c.x, c.y) < CRATER.glass);
+  if(!inside.length){ _strikeT = 3; return; }
+  const deep = inside.some(c => craterD(c.x, c.y) < CRATER.bowl);
+  _strikeT = deep ? 1.2 + rnd() * 2.0 : 2.6 + rnd() * 3.6;
+  const who = pick(inside);
+  const a = rnd() * Math.PI * 2, r = rnd() < 0.45 ? rnd() * 1.2 : 1.6 + rnd() * 6;
+  craterStrikes.push({x: who.x + Math.cos(a) * r, y: who.y + Math.sin(a) * r, t: STRIKE_WARN, hit: false});
+}
+function craterStrike(st){
+  for(const o of chars){
+    if(o.state === 'dead' || (o.floor || 0) !== 0 || o.gauntKind || o.faction === 'gaunt') continue;
+    const d = dist(o.x, o.y, st.x, st.y);
+    if(d > STRIKE_R) continue;
+    applyDamage(null, o, pickPart(), (d < 1 ? 34 : 20) + rnd() * 10, 'holy', true);
+    updateState(o, true);
+  }
+  addFlame(st.x, st.y, 10, 1.4);
+  addSpecks(st.x, st.y, '#f4f0ff', 14);
+  if(craterD(camX, camY) < CRATER.approach) AU.lance(st.x, st.y);
+}
 /* ---------- THE SIXFOLD ----------
    Something that came through whole, or grew here from what fell. Six limbs, each with
    too many joints, arched over a body that hangs beneath them like a lantern. It does
@@ -19966,6 +20063,7 @@ function gauntTick(dh){
   inquestTick();
   coilTick();
   corpseSiteTick(dh);
+  craterDangerTick(dh);
   choirTick(dh);
   cairnTick(dh * HOUR_SEC);   /* it eats on real seconds, not game hours */
   broodTick(dh * HOUR_SEC);   /* and the thing in the door heals on the hours the door has stood */
@@ -24916,6 +25014,7 @@ function update(dt){
   lyreTick(dt);            /* and whether anyone has walked out far enough to find her */
   motherTick(dt);             /* and whether anyone has gone far enough DOWN to find her */
   craterTick(dt);             /* and whether anyone has walked in toward the middle of the world */
+  strikeTick(dt);             /* and whether the light is coming down on anybody in the glass */
   closingTick(dt);            /* and whether anybody has read the codex sitting in the stores */
   commandTick(dt);            /* and what the bands you sent out are doing about it */
   cryTick(dt);                /* and whether anyone in one of your yards is shouting for help */
@@ -27236,6 +27335,47 @@ const craterVeil = (() => {
   scene.add(grp);
   return {grp, mat: mat2};
 })();
+/* ---------- THE STRIKES, DRAWN ----------
+   A ring on the glass that tightens and flickers through the warning, then a column of light
+   out of the sky and a burn on the ground, fading over the afterglow. A pool of eight, which is
+   more than the tick ever has in the air at once. Reads `craterStrikes` and nothing else. */
+const strikeFx = (() => {
+  const pool = [];
+  for(let i = 0; i < 8; i++){
+    const add = (geo, op) => new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color: 0xece6ff, transparent: true, opacity: op,
+      depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false}));
+    const g = new THREE.Group();
+    const ring = add(new THREE.RingGeometry(STRIKE_R - 0.35, STRIKE_R, 40), 0.5); ring.rotation.x = -Math.PI / 2;
+    const core = add(new THREE.CircleGeometry(STRIKE_R, 32), 0.1); core.rotation.x = -Math.PI / 2; core.position.y = 0.01;
+    const beam = add(new THREE.CylinderGeometry(0.75, 1.15, 70, 14, 1, true), 0.9); beam.position.y = 35;
+    g.add(ring); g.add(core); g.add(beam);
+    g.visible = false; g.renderOrder = 7;
+    scene.add(g);
+    pool.push({g, ring, core, beam});
+  }
+  return pool;
+})();
+function syncStrikes(){
+  const now = performance.now() * 0.001;
+  for(let i = 0; i < strikeFx.length; i++){
+    const P = strikeFx[i], st = craterStrikes[i];
+    if(!st || activeFloor < 0){ P.g.visible = false; continue; }
+    P.g.visible = true;
+    P.g.position.set(st.x, groundY(st.x, st.y) + 0.06, st.y);
+    if(!st.hit){
+      const u = 1 - clamp(st.t / STRIKE_WARN, 0, 1);
+      P.ring.material.opacity = 0.2 + 0.6 * u * (0.65 + 0.35 * Math.sin(now * 28));
+      P.ring.scale.setScalar(1.3 - 0.3 * u);
+      P.core.material.opacity = 0.14 * u;
+      P.beam.visible = false;
+    } else {
+      const u = clamp(st.t / 0.7, 0, 1);
+      P.ring.scale.setScalar(1);
+      P.beam.visible = true; P.beam.material.opacity = 0.95 * u;
+      P.ring.material.opacity = 0.7 * u; P.core.material.opacity = 0.75 * u;
+    }
+  }
+}
 /* the sky over the crater: a sick pale by day, a bruise by night */
 const craterSky = {day: new THREE.Color(0xb4b09a), night: new THREE.Color(0x1c1426), c: new THREE.Color()};
 const townFlags = [];   /* {t, pole, cloth} — cloth recolors when the town changes hands */
@@ -27681,6 +27821,17 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
     c.x = to.x; c.y = to.y;
     for(const key of ['guard', 'post', 'home']) if(c[key] && typeof c[key].x === 'number' && craterD(c[key].x, c[key].y) < CRATER.glass){ c[key] = {x: c[key].x + dx, y: c[key].y + dy}; }
   }
+})();
+/* ---------- AND THEN WHAT LIVES THERE ----------
+   The crater's first population, placed after the wall is stamped so no post lands inside it.
+   IN A POCKET: the world's stream is put back exactly where it was afterwards, so the worldgen
+   that runs after this (the undercroft, the warrens, the legends) draws what it drew before. */
+(function populateTheCrater(){
+  const pocket = seed;
+  try {
+    for(const ring of ['glass', 'bowl']) for(let i = 0; i < CRATER_POP[ring].want; i++) craterSpawn(ring);
+    for(let i = 0; i < CRATER_MESSENGERS; i++) craterMessenger();
+  } finally { seed = pocket; }
 })();
 /* THE WARRENS USED TO BE SEEDED HERE, at the feet of the mountains, before the lattice
    existed. They are cut into the lattice now — see `seedWarrens` after `digUndercroft`, which
@@ -38891,6 +39042,7 @@ function render(){
   camera.lookAt(camSX, focusY, camSY);
   updateSky();
   syncTorchLights();      /* and the three fires nearest the camera, if the camera is under the world */
+  syncStrikes();          /* and the light coming down on the glass */
   water.position.y = -0.22 + Math.sin(now*0.001)*0.03;
   syncPBuilds(); syncBlueprints(); syncSundered(); syncWells(); syncPyres(); syncBastion(); syncChests(); syncBeds(); syncTownWalls(); syncTownScar(); syncCamps(); syncSlaverCamp(); syncRoofs(); syncVertical(); syncRifts(); syncStairs(); syncUndercroft(); syncRedoubts();
   if(fogDirty) redrawFog();
@@ -45870,7 +46022,7 @@ function snapshot(){
        burnt mantle and its ember, the Bone Knight came back thin, the archer came back
        thick. Saving one string fixes the whole roster. */
     kin:c.kin||null,
-    clawDmg:c.clawDmg, clawWt:c.clawWt||null, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, eatsDead:!!c.eatsDead, storied:!!c.storied,
+    clawDmg:c.clawDmg, clawWt:c.clawWt||null, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, craterOwn:c.craterOwn||null, eatsDead:!!c.eatsDead, storied:!!c.storied,
     servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, lamp:!!c.lamp, harvestBonus:c.harvestBonus??null, corpseWorth:c.corpseWorth??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, sweep:c.sweep?{...c.sweep}:null, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, boundTold:!!c.boundTold,
     /* WHAT THEY HAVE HAD. Saved because it is a LIMIT, and a limit you can wash off by
@@ -46366,7 +46518,7 @@ function restore(d){
       const cv = caves.find(x => x.id === c.caveId);
       if(cv && cv.rooms) c.homeRoom = cv.rooms.find(rm => rm.id === s.roomId) || c.homeRoom;
     } c.floor = s.floor || 0; c.captured = !!s.captured;
-    c.clawDmg = s.clawDmg || 0; c.clawWt = s.clawWt || null; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.eatsDead = !!s.eatsDead; c.storied = !!s.storied;
+    c.clawDmg = s.clawDmg || 0; c.clawWt = s.clawWt || null; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.craterOwn = s.craterOwn || null; c.eatsDead = !!s.eatsDead; c.storied = !!s.storied;
     c.structMult = s.structMult || 1; c.shortTag = s.shortTag || '';
     /* `|| 1` IS WRONG FOR A PROPPED BODY. Old Bones and Mass Reanimation both set
        `bindWeight = 0` — nothing about them is carried in anybody's head — and `0 || 1` puts

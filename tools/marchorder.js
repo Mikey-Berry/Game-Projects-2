@@ -88,6 +88,24 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     const me = player()[0];
     const HOME = { x: me.x, y: me.y };
+    /* ---------- OPEN WASTE, FOUND ONCE ----------
+       Past every town (see block 3 for why a town's gate is the world's dice) and clear of the
+       crater's approach, where the Watchers and the light are the crater's own business. Two
+       spots, sixty tiles apart, so the fight in block 2 leaves nothing on block 3's ground. */
+    const findWaste = (avoid) => {
+      for (let r = 40; r < 240; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const x = Math.floor(HOME.x) + dx + 0.5, y = Math.floor(HOME.y) + dy + 0.5;
+        if (x < 40 || y < 40 || x >= W - 40 || y >= H - 40) continue;
+        if (!towns.every(t => dist(t.x, t.y, x, y) > 70)) continue;
+        if (typeof CRATER !== 'undefined' && craterD(x, y) < CRATER.approach + 30) continue;
+        if (avoid && dist(avoid.x, avoid.y, x, y) < 60) continue;
+        if (isBlocked(x, y, 0) || isBlocked(x + 20, y, 0)) continue;
+        return { x, y };
+      }
+      return null;
+    };
+    const WASTE = findWaste(null), WASTE2 = findWaste(WASTE);
 
     /* ================= 1. THE ORDER OF MARCH, WITH NOTHING IN THE WAY ================= */
     let marchRanks = null;
@@ -159,7 +177,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     /* ================= 2. AND WHO MEETS THE ENEMY FIRST ================= */
     guard(['_engage', 'theCaptainIsNotTheFirstThingTheEnemyMeets'], () => {
-      const band = raise({ x: HOME.x, y: HOME.y + 6 });
+      /* out in the waste too: at the gate, the raiders met the town's watch before the band */
+      const band = raise(WASTE2 || { x: HOME.x, y: HOME.y + 6 });
       const cdr = band[0];
       const melee = band.filter(o => o !== cdr && !isRanged(o));
       /* a line of foes off to one side, close enough to be the thing the band is looking at */
@@ -224,15 +243,6 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          down, and the three claims below report a homecoming the town ended first. The review
          of 2026-09-24 removed one daily `rnd()` draw and turned exactly that over. Same cure as
          `storeys.js`: stage past every town. */
-      let WASTE = null;
-      for (let r = 40; r < 240 && !WASTE; r++) for (let dy = -r; dy <= r && !WASTE; dy++) for (let dx = -r; dx <= r; dx++) {
-        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-        const x = Math.floor(HOME.x) + dx + 0.5, y = Math.floor(HOME.y) + dy + 0.5;
-        if (x < 40 || y < 40 || x >= W - 40 || y >= H - 40) continue;
-        if (!towns.every(t => dist(t.x, t.y, x, y) > 70)) continue;
-        if (isBlocked(x, y, 0) || isBlocked(x + 20, y, 0)) continue;
-        WASTE = { x, y }; break;
-      }
       const band = raise(WASTE || { x: HOME.x, y: HOME.y - 6 });
       const cdr = band[0];
       const START = { x: cdr.x, y: cdr.y };

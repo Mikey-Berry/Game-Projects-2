@@ -460,6 +460,20 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
+### 5.9 The night never sends anything — **found 2026-09-25, your call**
+
+`gauntTick` spawns the night's Watchers near your people, up to a cap of
+`3 + tier*2 + wrath/60` (six times that under a blood moon). The count it checks against is
+**every living gaunt-faction body in the world**, and the depths alone hold hundreds of them,
+none of them `nightborn`. Measured on day one of the default seed, before the crater: 443
+against a cap of 3. So `living.length >= cap` is always true, and this spawner never runs.
+Whatever the nights do now, they do it through the tears, the blood moon and the sites. The
+crater's 27 Watchers change nothing about that, because the cap was already exceeded.
+
+The likely intent is to count only the night's own arrivals on the surface
+(`c.nightborn && (c.floor || 0) === 0`). That would switch the spawner on and make every night
+noticeably more dangerous, so it is left for you to decide.
+
 ### 5.8 Write-only fields the harnesses read
 
 `bogWarden`, `pitGuard`, `billeted` and `pitFighter` are written by the game and read only by
