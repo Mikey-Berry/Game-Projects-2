@@ -84,7 +84,14 @@ same `barkCd` cooldown when a player body is near. `tools/watchers.js` asserts t
 Messengers "talk". Today that is true only in the sense that they own lines. It should
 assert that a line is *said*.
 
-### 1.2 Convictions that are weighed and never fired
+### 1.2 Convictions that are weighed and never fired — **two of six closed**
+
+`formula` and `retreat` fire as of 2026-09-25. A formula that comes apart under study at the
+bench is a deed, scaled by what it held: Tattered 0.47, Worn 0.8, Preserved 1.6. A tome does not
+count. A commanded band breaking off a fight is a retreat, once per break-off; the leash turning
+it home is not. `tools/seams.js` claim 3 checks both: 0.00 before on both, +1.60 for the
+Inquisitive and −1.40 for the Ambitious after. `sack`, `heal`, `rescued` and `mercy` are still
+open, because each needs a decision about what the deed *is*. The original finding:
 
 `deed(kind)` moves every companion's regard by their conviction's weight for `kind`. The
 table weighs six kinds that **no call site ever emits**. `git log -S` finds no call in the

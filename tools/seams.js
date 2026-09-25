@@ -10,6 +10,9 @@
  *   2. the small ones stand: an Eye of Ainzopha'ar (22 blood), a Shoalling (18) and a Marrow Tick
  *      (40) are up when made, go down when bled, and get back up. The down and rise lines were
  *      absolute (40 and 50 blood), so the first two lay on the ground from their first tick
+ *   3. the convictions hear two deeds the lore says they care about: a formula recovered under
+ *      study warms the inquisitive, and a band breaking off a fight cools the ambitious. Both
+ *      kinds were in the weights table and no call site ever emitted them
  *
  * Anything starting '!!' fails the build.
  *
@@ -109,6 +112,46 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.theSmallOnesStand = up0.length ? `!! ${up0.join('; ').toUpperCase()} ON ITS FIRST TICK`
         : fell.length || rose.length ? `!! ${[...fell, ...rose].join('; ').toUpperCase()}`
         : `an Eye (22 blood), a Shoalling (18) and a Marrow Tick (40) stand when made, go down when bled under 40% of themselves, and get back up past half`;
+      for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+    }
+    /* ---- 3. formula and retreat are deeds ---- */
+    {
+      const me = player()[0];
+      const listen = (conv) => { me.conviction = conv; me.regard = 0; me.undead = false; return () => me.regard || 0; };
+      /* a formula comes apart under study. The rate is stubbed: whether the bench is staffed is
+         not the claim, the completion is. */
+      const sr = window.studyRate;
+      window.studyRate = () => 1;
+      let r = listen('scholar');
+      research.study = { docs: ['formula_w'], left: 0.0001 };
+      researchTick(1);
+      const afterFormula = r();
+      r = listen('scholar');
+      research.study = { docs: ['tome'], left: 0.0001 };
+      researchTick(1);
+      const afterTome = r();
+      research.study = null;
+      window.studyRate = sr;
+      /* a band breaks off: its captain is cut under the break-off line, and the real update runs */
+      const q = findOpenNear(Math.round(me.x) + 20, Math.round(me.y) - 20, 8);
+      const band = [];
+      for (let i = 0; i < 4; i++) {
+        const c = makeChar('Band ' + i, 'player', q.x + i, q.y, { atk: 16, def: 14, tough: 14, ath: 7 });
+        c.__probe = true; c.conviction = 'cold'; chars.push(c); band.push(c);
+      }
+      giveCommand(band[0], band, 'forage', { x: q.x, y: q.y }, 20);
+      r = listen('ambitious');
+      band[0].blood = band[0].maxBlood * 0.40;
+      let broke = false;
+      for (let i = 0; i < 40 && !broke; i++) { step(0.25); broke = !!(band[0].cmd && band[0].cmd.phase === 'home') || !band[0].cmd; }
+      const afterRetreat = r();
+      const bits = [];
+      if (!(afterFormula > 0.5)) bits.push(`a Worn Formula studied moved an Inquisitive companion by ${afterFormula.toFixed(2)}`);
+      if (Math.abs(afterTome) > 0.001) bits.push(`a Tome moved them by ${afterTome.toFixed(2)} (a tome is not a formula)`);
+      if (!broke) bits.push('the band never broke off, so there was no retreat to hear');
+      else if (!(afterRetreat < -0.5)) bits.push(`a band breaking off moved an Ambitious companion by ${afterRetreat.toFixed(2)}`);
+      R.theConvictionsHearIt = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+        : `a Worn Formula studied warms the Inquisitive (+${afterFormula.toFixed(2)}), a Tome moves nobody, and a band breaking off cools the Ambitious (${afterRetreat.toFixed(2)})`;
       for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
     }
     return R;
