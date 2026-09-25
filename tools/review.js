@@ -203,7 +203,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(30) + ' ' + v);
   for (const e of errs) console.log('  ' + e);
   console.log('');
-  console.log(bad.length || errs.length ? `THE REVIEW'S BUGS ARE BACK (${bad.length + errs.length})`
+  /* the failing line starts with '***' so `run.js`, which only echoes lines that start with
+     '***' or '!!', says WHICH ones came back rather than printing a bare cross */
+  const which = Object.keys(out).filter(k => typeof out[k] === 'string' && out[k].startsWith('!!'));
+  console.log(bad.length || errs.length ? `*** THE REVIEW'S BUGS ARE BACK (${bad.length + errs.length}): ${[...which, ...errs.map(() => 'pageerror')].join(', ')} ***`
                                         : 'EVERY BUG THE REVIEW FOUND STAYS FIXED');
   await b.close();
   process.exit(bad.length || errs.length ? 1 : 0);

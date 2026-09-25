@@ -512,10 +512,22 @@ touching the source.
 
 ## 7. Checked and found sound
 
-- **The full suite.** *In progress.* 30223c9 passed 60 of 60 before I stopped it to free the
-  machine; it is kept only to classify any red on this branch. On this branch the full `run.js`
-  run (166 harnesses, `review.js` included) is still going, with 14 of 14 green and none red
-  so far. This line will be updated when it finishes.
+- **The full suite: 164 of 166**, on this branch's first commit (3d12b35), in 8,926 s. Two reds,
+  both explained, both green now:
+  - **`command.js`** was deterministic and green on 30223c9. It was not the forage order: the
+    band's spot comes from `findOpenNear`, which draws `rnd()`, and deleting the old pauper
+    spawner (§1.6) removed one draw a day. That put the far chest's fixed bearing in the sea.
+    Putting back that one draw and nothing else turned it green, which proves the cause. The
+    harness now tries the four ways out and is green on both builds.
+  - **`review.js`** ran last. By then it carried the wagon assertion added for §9, and the
+    build under test predated that fix. `run.js` printed a bare ✗, because it only echoes
+    lines starting with `***` or `!!`. `review.js` now ends a red with a `***` line that names
+    what came back (`theReliquaryFeedsTheHost`, on that build). It is green on the current
+    source.
+
+  The only game change since that run is §1.3's overpayment going back to a bin. `review.js`,
+  `upkeep.js` and `reliquary.js` cover it, and all three are green. The baseline (30223c9)
+  passed the 60 harnesses it reached before I stopped it to free the machine.
 - **Determinism.** `Math.random` appears 11 times, all inside the audio module `AU`.
 - **Hygiene.** No `var`, `console.log`, `TODO`/`FIXME`/`HACK`, `debugger`, `eval`,
   `new Function` or `window[…]` dispatch. The last one is why the reachability pass is sound.

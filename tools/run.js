@@ -32,7 +32,7 @@
  *
  *   node tools/run.js                 all harnesses, serially (what `npm run check` does)
  *   node tools/run.js --fast          the broad-coverage subset, for the edit loop
- *   node tools/run.js --only a.js,b.js
+ *   node tools/run.js --only=a.js,b.js   (with the '=': a space falls through to the whole list)
  *   node tools/run.js --jobs 4        UNRELIABLE — see above
  */
 const { spawn } = require('child_process');
