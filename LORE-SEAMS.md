@@ -35,9 +35,10 @@ Ranked by how much lore weight each carries against what it costs to close.
    carries more".
 3. **The Church has no voice** (§3.1). The bible says the gap between what the Church teaches
    and what is true "*is* the setting's engine". In the game only the true side is ever spoken.
-4. **Half the conviction reactions never fire** (§1.2). The bible says the compassionate hate
-   a sack, the ambitious resent retreat and the inquisitive care about formulae. None of those
-   events is ever raised.
+4. **Half the conviction reactions never fire** (§1.2) — **closed 2026-09-25**. The bible
+   says the compassionate hate a sack, the ambitious resent retreat and the inquisitive care
+   about formulae. None of those events was ever raised. All six fire now, and the player can
+   sack a town (design flagged for review in §1.2).
 5. **The largest unbuilt pieces:** the Last Scholar, the kingdom's crater, and the tablets of
    the Deep (§4). The bible already marks them unbuilt. They are listed so the list is
    complete.
@@ -84,14 +85,50 @@ same `barkCd` cooldown when a player body is near. `tools/watchers.js` asserts t
 Messengers "talk". Today that is true only in the sense that they own lines. It should
 assert that a line is *said*.
 
-### 1.2 Convictions that are weighed and never fired — **two of six closed**
+### 1.2 Convictions that are weighed and never fired — **closed**
 
-`formula` and `retreat` fire as of 2026-09-25. A formula that comes apart under study at the
-bench is a deed, scaled by what it held: Tattered 0.47, Worn 0.8, Preserved 1.6. A tome does not
-count. A commanded band breaking off a fight is a retreat, once per break-off; the leash turning
-it home is not. `tools/seams.js` claim 3 checks both: 0.00 before on both, +1.60 for the
-Inquisitive and −1.40 for the Ambitious after. `sack`, `heal`, `rescued` and `mercy` are still
-open, because each needs a decision about what the deed *is*. The original finding:
+All six fire as of 2026-09-25. `tools/seams.js` claims 3 and 5 check them. Every one read
+0.00 on the build before its fix.
+
+- **`formula`:** a formula that comes apart under study at the bench, scaled by what it held
+  (Tattered 0.47, Worn 0.8, Preserved 1.6). A tome does not count. Inquisitive +1.60 for a Worn
+  Formula.
+- **`retreat`:** a commanded band breaking off a fight, once per break-off. The leash turning
+  it home is not a retreat. Ambitious −1.40.
+- **`rescued`:** something dragging one of yours off is killed by one of yours, or you free a
+  captive from the slavers' lines. A captor that dies of anything else (a gaunt, the cold) is
+  not a rescue. Loyal +3.00.
+- **`heal`:** a heal cast on a hurt stranger (a townsman, a drifter, a prisoner). The heal
+  could not target a stranger before, so the targeting was opened to anybody who is not
+  undead, a beast, a gaunt, or hostile. Once a day per person, and nothing for a body that
+  was already whole, so a townsman is not a regard farm. Compassionate +0.45 at weight 0.5.
+- **`mercy`:** TURN THEM LOOSE on a prisoner in your own cell. Cruel −1.20. **This needed a
+  bug fix first:** the right-click on your own prisoner was claimed by the foe branch, which
+  fires on any visible bandit, slaver or hostile. Every body you can seize is one of those,
+  so the click ordered the crew to beat the prisoner. RANSOM, BREAK TO SERVICE, SELL and
+  TURN THEM LOOSE could not be reached for anybody. A prisoner in your cell is no longer a
+  foe to a plain right-click; ctrl still forces an attack.
+- **`sack`:** the player can now sack a town. See below. Compassionate −3.00, Cruel +2.20.
+
+**The sack, for your review.** The open question was whether the player gains a sack, or
+whether `sack` means "a sack you could have stopped". I built the first; if you want the
+second instead, it is a one-line move of the `deed` call. How it works:
+
+- **Where:** the flag of a town whose seat is empty (the same test as CLAIM) offers
+  **PUT *TOWN* TO THE TORCH** beside **CLAIM *TOWN* FOR YOURSELF**. You must stand within
+  3 tiles of the flag, as for CLAIM. A town that is already sacked does not offer it.
+- **What happens:** everything in the town's stores goes into the wagon (179 items from
+  Dustport in the harness). The town is left `sacked = 5`, `sackKind = 'torch'`, exactly as a
+  warband's sack leaves it, so it burns, chars and drops its roofs the same way. After five
+  days the watch comes back, as for any sack.
+- **The cost:** that town's standing drops by 400 (to the −300 floor), every other town's drops
+  by 25, there is a world event, and the deed carries fame `k 9.0, r −12.0`. Conquest is
+  `k 8, r −5` and lichdom is `k 12, r −14`.
+- **Deliberately not done:** the menu kills nobody. A warband's sack kills a quarter of the
+  civilians on a roll. I left that out because a menu entry that kills people off-screen is
+  a bigger decision than this seam. What burns is the stock.
+
+The original finding:
 
 `deed(kind)` moves every companion's regard by their conviction's weight for `kind`. The
 table weighs six kinds that **no call site ever emits**. `git log -S` finds no call in the
@@ -106,9 +143,8 @@ history either, so these were written and never wired, not lost later.
 | `rescued` | Loyal +3.0, the biggest positive weight Loyal has | — |
 | `mercy` | Cruel −1.2 | — |
 
-`sack` is the one to think about. The player cannot sack a town. PR 39 makes sieges break walls
-for warbands, but not for you. So either the player gains a sack, or `sack` should be read as
-"a sack you could have stopped".
+`sack` was the one to think about. The player could not sack a town. PR 39 makes sieges break
+walls for warbands, but not for you.
 
 ### 1.3 The profane gift is never a crime — **closed**
 

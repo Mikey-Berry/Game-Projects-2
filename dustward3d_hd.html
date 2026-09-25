@@ -4372,6 +4372,7 @@ const FAME_DEEDS = {
   found_sister:{k: 1.0, r:  1.0},   found_mother:{k: 1.0, r:  1.0},
   /* the things that make a different kind of name */
   conquer:     {k: 8.0, r: -5.0},   lich:        {k: 12.0, r:-14.0},
+  sack:        {k: 9.0, r:-12.0},
   civkill:     {k: 1.5, r: -4.0},   slave_sold:  {k: 1.5, r: -5.0},
   purge_killed:{k: 2.0, r: -2.0},   raise:       {k: 0.6, r: -1.5},
   recruit_prisoner:{k: 0.6, r:-1.5},ransom:      {k: 1.0, r: -1.0},
@@ -10918,7 +10919,13 @@ function kill(c, by){
   }
   if(c.nascent && c.faction==='player'){ nascentDeath(c, by); return; }   /* death is a dream. This is the waking. */
   if(c.immortal==='transmute' && c.faction==='player'){ shedHusk(c); return; }   /* the etching holds */
-  if(c.drag){ c.drag.captured = false; c.drag = null; }
+  /* ONE OF OURS, BROUGHT BACK. `rescued` is the Loyal's heaviest weight (+3.0) and nothing
+     ever fired it. Something dragging one of yours off is stopped by one of yours: that is
+     the rescue, and it counts. (A gaunt killing the Maw does not.) */
+  if(c.drag){
+    if(c.drag.faction === 'player' && c.drag.state !== 'dead' && by && by.faction === 'player') deed('rescued', 1);
+    c.drag.captured = false; c.drag = null;
+  }
   if(c.gnaw) c.gnaw = null;
   c.state = 'dead'; clearOrders(c);
   /* A WHISP DOES NOT DIE, IT GOES OUT — and it takes the reaction it was holding with it.
@@ -21967,6 +21974,9 @@ function castHeal(c, ally){
     addSpecks(t.x, t.y-0.6, '#e8f0c8', 6);
     updateState(t, false);
   };
+  /* was there anything to mend — asked before the mend, so healing a whole body is not a deed */
+  const hurt = ally.state === 'down' || ally.sick > 0 || ally.blood < ally.maxBlood - 1 ||
+    PARTS.some(k => !ally.parts[k].severed && ally.parts[k].hp < ally.parts[k].max);
   if(ally.sick > 0){ ally.sick = 0; log('The fever lifts.', 'good'); }
   /* ---------- AND THE ONE THING THAT ANSWERS THE TOOTH ----------
      "Requires alchemy (a healing spell) to fully treat the wound. Otherwise, the limb falls
@@ -21993,6 +22003,15 @@ function castHeal(c, ally){
     }
   }
   spendCast(c, 'heal');
+  /* ---------- AND MENDING A STRANGER IS A DEED ----------
+     `heal` has been in the Compassionate's weights (+0.9) since the table was written, and
+     nothing fired it. Mending one of your own is looking after your kit; mending somebody with
+     no claim on you is the thing the compassionate notice. Once a day a person, so a wounded
+     townsman is not a regard farm. */
+  if(c.faction === 'player' && ally.faction !== 'player' && hurt && ally._healDay !== day){
+    ally._healDay = day;
+    deed('heal', 0.5, ally.homeTown || null);
+  }
 }
 /* ============================================================ THE CORPSE ECONOMY
    A body used to last two game days and then cease to exist. At HOUR_SEC 8 that is six real
@@ -22554,7 +22573,10 @@ function resolveCastAt(c, key, wx, wy){
       if(o.state==='dead') continue;
       const friendly = o.faction===c.faction;
       const searable = o.undead && hostile(c, o);   /* holy light burns the hostile dead */
-      if(!friendly && !searable) continue;
+      /* and a stranger: a townsman, a drifter, a prisoner. Not a beast, not the dead, and not
+         anybody who is trying to kill you */
+      const stranger = !o.undead && !o.beast && !o.gauntKind && o.faction !== c.faction && !hostile(c, o);
+      if(!friendly && !searable && !stranger) continue;
       const d = dist(o.x,o.y,wx,wy);
       if(d < ad){ ad = d; ally = o; }
     }
@@ -42618,11 +42640,18 @@ cv.addEventListener('mousedown', e => {
         const ft = ftR;
         if(ft && !ft.playerRuled && movers.length){
           const items = [];
-          if(claimable(ft)) items.push({label:`CLAIM ${ft.name.toUpperCase()} FOR YOURSELF`, fn:()=>{
-            const m0 = movers[0];
-            if(dist(m0.x, m0.y, wx, wy) > 3){ log('Stand at the flag to claim it.', 'bad'); return; }
-            claimTown(ft, m0);
-          }});
+          if(claimable(ft)){
+            items.push({label:`CLAIM ${ft.name.toUpperCase()} FOR YOURSELF`, fn:()=>{
+              const m0 = movers[0];
+              if(dist(m0.x, m0.y, wx, wy) > 3){ log('Stand at the flag to claim it.', 'bad'); return; }
+              claimTown(ft, m0);
+            }});
+            if(!(ft.sacked > 0)) items.push({label:`PUT ${ft.name.toUpperCase()} TO THE TORCH`, fn:()=>{
+              const m0 = movers[0];
+              if(dist(m0.x, m0.y, wx, wy) > 3){ log('Stand at the flag to do it.', 'bad'); return; }
+              sackTown(ft, m0);
+            }});
+          }
           else {
             /* THE SEAT IS TAKEN — BY SOMEBODY YOU CAN TALK TO. This used to be a dead menu
                entry and nothing else, which read as "the game will not let you interact with
@@ -42801,7 +42830,13 @@ cv.addEventListener('mousedown', e => {
        already thrown every downed body away. So the sequence in play was: knock it down, and
        then right-clicking it does nothing at all. No menu, no order, no attack. It reads as
        an invulnerable animal, and it was really a branch guarded against itself. */
+    /* AND NOT ONE OF YOUR PRISONERS. Everybody you can seize is somebody this branch claims —
+       a bandit, a slaver, a hostile — and a body in a cell keeps its faction, so a right-click
+       on your own prisoner sent the crew in to beat them and RANSOM / BREAK TO SERVICE / SELL /
+       TURN THEM LOOSE, further down, could not be reached for any of them. Ctrl still means
+       force-attack, on a prisoner as on anyone. */
     const foe = corpseFirst ? null : chars.find(c => c.state!=='dead' && c.faction!=='player' && visAt(c.x,c.y)===2 && bodyHit(c, wx, wy, 0.9) &&
+      !(c.prisoner && c.jailedAt && c.jailedAt.kind === 'player' && !e.ctrlKey) &&
       (e.ctrlKey || c.faction==='bandit' || c.faction==='wild' || c.faction==='slaver' ||
        hostile(movers[0], c) || c.neutral));
     if(foe){
@@ -42919,7 +42954,10 @@ cv.addEventListener('mousedown', e => {
       ];
       if(slaverCamp) opts.push({label:`SELL TO THE CAMP  (+${Math.round(val*0.75)}g)`, fn:()=>sellPrisoner(pris)});
       opts.push({label:'TURN THEM LOOSE', fn:()=>{ prisonerRelease(pris, 'free'); pris.fleeT = 14;
-        log(`${pris.name} is let go. They run, and they remember.`, ''); }});
+        log(`${pris.name} is let go. They run, and they remember.`, '');
+        /* the Cruel's own bark has been asking about this since it was written — "You let them
+           go. Why did you let them go?" — and `mercy` was in their weights with nothing firing it */
+        deed('mercy', 1, pris.homeTown || null); }});
       opts.push({label:'LEAVE THEM', fn:()=>{}});
       showCtxMenu(e.clientX, e.clientY, opts);
       return;
@@ -42933,6 +42971,7 @@ cv.addEventListener('mousedown', e => {
       if(dragger) dragger.drag = null;
       cap.captured = false;
       log(`${cap.name} was freed.`, 'good');
+      deed('rescued', 1);
       return;
     }
     /* wounded / downed ally? -> best living medic goes */
@@ -43769,6 +43808,30 @@ function claimTown(t, by){
   worldEvent('conquest', t.x, t.y, text);
   deed('conquer', 1, t);              /* the squad has opinions about this */
   refreshTop();
+}
+/* ---------- OR PUT IT TO THE TORCH ----------
+   The conviction table has weighed `sack` since it was written — the Compassionate -3.0, the
+   Cruel +2.2, five more — and the lore says the compassionate hate a sacked town and the cruel
+   enjoy it, but a sack was only ever something a warband did to somebody else. This is the
+   other thing you can do with a broken hall. The stores go into the wagon and the town is
+   left the way a host leaves one: `sacked` and `sackKind = 'torch'`, which is what the ruin
+   drawing reads, so it burns, chars and lets its roofs down exactly as a sacked town does.
+   Nobody is killed by the menu; what burns is the stock. And everybody hears about it. */
+function sackTown(t, by){
+  if(!claimable(t)){ log('The seat is not empty. Break it first.', 'bad'); return; }
+  if(t.sacked > 0){ log(`There is nothing left in ${t.name} to burn.`, 'bad'); return; }
+  let n = 0;
+  for(const [k, v] of Object.entries(t.stock || {})){ const q = Math.floor(v || 0); if(q > 0 && ITEMS[k]){ addItem(k, q); n += q; } }
+  t.stock = {};
+  t.sacked = 5; t.sackKind = 'torch';
+  dropRep(t, 400);
+  for(const o of towns) if(o !== t) dropRep(o, 25);
+  const text = `${by.name} put ${t.name} to the torch. What was in its stores is in a wagon now, and what was not is ash.`;
+  log(text, 'bad');
+  if(n) log(`${n} things carried out of ${t.name}.`, '');
+  worldEvent('sack', t.x, t.y, text);
+  deed('sack', 1, t);
+  refreshTop(); refreshInv();
 }
 /* ---------- audience: politics you can put your hands on ---------- */
 function audienceOdds(kind, L, t){

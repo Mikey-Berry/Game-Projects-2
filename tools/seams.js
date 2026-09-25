@@ -15,6 +15,9 @@
  *      kinds were in the weights table and no call site ever emitted them
  *   4. working a profane formula (Dark, Destruction) in sight of a Church town's watch is the
  *      crime CRIMES has always named; the blessed art is not, and Hollowmere does not care
+ *   5. the rest of the conviction table is heard: a captive taken back from a captor (rescued),
+ *      a stranger mended (heal), a prisoner turned loose (mercy), and a town with an empty seat
+ *      put to the torch from its own flag (sack). All four were weighted and none was fired
  *
  * Anything starting '!!' fails the build.
  *
@@ -201,6 +204,170 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     }
     return R;
   });
+
+  /* ---- 5. the rest of the deeds: rescued, heal, mercy, sack ----
+     Two of these exist only inside the right-click handler, so they are driven the way
+     aid.js drives one: stage, let the camera settle over real frames, click the body or the
+     flag, and press the menu entry by its words. The other two are called where play calls
+     them: a captor killed by one of ours, and a heal cast at a point on the ground. */
+  const frame = () => p.evaluate(() => new Promise(r => requestAnimationFrame(() => r())));
+  await p.evaluate(() => {
+    const me = player()[0];
+    /* a council that only listens, one of each conviction these deeds should move */
+    const council = {};
+    ['compassion', 'cruel', 'loyal'].forEach((k, i) => {
+      const q = findOpenNear(Math.round(me.x) - 30 + i * 2, Math.round(me.y) - 30, 6);
+      const c = makeChar('Council ' + k, 'player', q.x, q.y, { atk: 4, def: 40, tough: 90 });
+      c.__probe = true; c.conviction = k; c.regard = 0; c.noFight = true; chars.push(c); council[k] = c;
+    });
+    window.__hear = (fn) => {
+      for (const c of Object.values(council)) c.regard = 0;
+      const got = fn();
+      return Object.assign(Object.fromEntries(Object.entries(council).map(([k, c]) => [k, c.regard || 0])), { got });
+    };
+    window.__aim = (x, y) => {
+      camX = camSX = x; camY = camSY = y;
+      camDist = camDistTarget = 16; camPitch = camPitchT = 0.62; camYaw = camYawT = 0.4;
+      camFollow = false; activeFloor = 0;
+    };
+    /* right-click a point, press the entry whose words match; the menu's labels come back
+       when there is no such entry, so a red says what WAS offered */
+    window.__rclick = (x, y, want) => {
+      const q = w2s(x, y, groundY(x, y) + 0.05);
+      if (!q) return '(no projection)';
+      document.getElementById('game').dispatchEvent(new MouseEvent('mousedown', {
+        clientX: q.x, clientY: q.y, button: 2, buttons: 2, bubbles: true, cancelable: true }));
+      if (!want) return null;
+      const el = document.getElementById('ctxmenu');
+      if (!el || getComputedStyle(el).display === 'none') {
+        const m = selected[0], tg = m && (m.target || m.moveTarget);
+        return `(no menu${tg ? `: the click sent ${m.name} at ${tg.name || 'the ground'}` : ''})`;
+      }
+      const btns = [...el.querySelectorAll('button')];
+      const btn = btns.find(x2 => want.test(x2.textContent));
+      if (btn) { btn.click(); return null; }
+      el.style.display = 'none';
+      return btns.map(x2 => x2.textContent).join(' | ');
+    };
+  });
+  const five = await p.evaluate(() => {
+    const R = {};
+    const me = player()[0];
+    /* RESCUED: something drags one of yours off and one of yours stops it. Killed by nobody
+       (a gaunt, a fall) it is not a rescue. */
+    const q = findOpenNear(Math.round(me.x) - 20, Math.round(me.y) + 20, 8);
+    const taken = (dx) => {
+      const v = makeChar('Taken', 'player', q.x + dx, q.y, { atk: 4, def: 4, tough: 20 });
+      const m = makeChar('Slaver', 'slaver', q.x + dx + 1, q.y, { atk: 4, def: 4, tough: 20 });
+      v.__probe = m.__probe = true; chars.push(v, m);
+      v.state = 'down'; v.captured = true; m.drag = v;
+      return { v, m };
+    };
+    const a = taken(0), b = taken(4);
+    R.byUs = __hear(() => { kill(a.m, me); return !a.v.captured; });
+    R.byNobody = __hear(() => { kill(b.m, null); return !b.v.captured; });
+    /* HEAL: cast at a hurt townsman on open ground. Once a day a person, and a whole body is
+       not mended, so neither of those is a deed */
+    const hq = findOpenNear(Math.round(me.x) + 20, Math.round(me.y) + 25, 8);
+    const medic = makeChar('Medic', 'player', hq.x, hq.y, { atk: 4, def: 30, tough: 90, magic: 10 });
+    medic.__probe = true; medic.att = { divine: 3 }; chars.push(medic);
+    const hurt = makeChar('Stranger', 'town', hq.x + 2, hq.y, { atk: 4, def: 4, tough: 20 });
+    const whole = makeChar('Whole', 'town', hq.x, hq.y + 2, { atk: 4, def: 4, tough: 20 });
+    hurt.__probe = whole.__probe = true; chars.push(hurt, whole); rebuildCharGrid();
+    const wound = () => { for (const k of PARTS) hurt.parts[k].hp = Math.min(hurt.parts[k].hp, hurt.parts[k].max * 0.5); };
+    const hp = (o) => PARTS.reduce((a2, k) => a2 + o.parts[k].hp, 0);
+    const cast = (o) => { medic.mana = 999; medic.castCd = 0; const hp0 = hp(o); resolveCastAt(medic, 'heal', o.x, o.y); return hp(o) > hp0; };
+    wound(); R.healOnce = __hear(() => cast(hurt));
+    wound(); R.healAgain = __hear(() => cast(hurt));
+    R.healWhole = __hear(() => cast(whole));
+    for (let i = corpses.length - 1; i >= 0; i--) if (corpses[i].__probe) corpses.splice(i, 1);
+    for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe && !/^Council/.test(chars[i].name)) chars.splice(i, 1);
+    rebuildCharGrid();
+
+    /* MERCY: a prisoner in your own cell, turned loose from the menu on their body */
+    const cq = findOpenNear(Math.round(me.x) + 25, Math.round(me.y) - 25, 8);
+    const nb = pBuilds.length;
+    placeStructure('cell', cq.x, cq.y);
+    const cell = cells[cells.length - 1];
+    const pris = makeChar('Held', 'bandit', cell.x, cell.y, { atk: 10, def: 10, tough: 20 });
+    pris.__probe = true; pris.state = 'ok'; chars.push(pris);
+    stripKit(pris); jail(pris, cell, 0); pris.prisoner = true; rebuildCharGrid();
+    const mover = makeChar('Keeper', 'player', cell.x + 3, cell.y + 3, { atk: 10, def: 30, tough: 90 });
+    mover.__probe = true; chars.push(mover); selected = [mover];
+    window.__mercy = { pris, cell, nb };
+    __aim(pris.x, pris.y);
+    return R;
+  });
+  await frame(); await frame(); await frame();
+  Object.assign(five, await p.evaluate(() => {
+    const R = {};
+    const { pris, cell, nb } = window.__mercy;
+    R.mercy = __hear(() => __rclick(pris.x, pris.y, /^TURN THEM LOOSE/));
+    R.mercy.loose = !pris.jailedAt;
+    /* clear the cell away, and stage the sack: a town whose seat is empty and whose stores
+       are not, the flag at the hall door, and one of yours standing two strides off it */
+    if (pris.jailedAt) { pris.jailedAt = null; }
+    cells.splice(cells.indexOf(cell), 1); pBuilds.splice(nb);
+    for (let i = chars.length - 1; i >= 0; i--) if (chars[i] === pris) chars.splice(i, 1);
+    const t = towns.find(t2 => !t2.playerRuled && !(t2.sacked > 0) && !t2.def.undeadFriendly && t2.leader &&
+      Object.values(t2.stock || {}).some(v => v >= 1));
+    if (!t) { R.noTown = true; return R; }
+    const f = townFlagPos(t);
+    for (const o of chars) if (o.state !== 'dead' && o.faction !== 'player' && dist(o.x, o.y, f.x, f.y) < 2.5) o.x += 6;
+    const mover = chars.find(o => o.name === 'Keeper');
+    const mq = findOpenNear(Math.round(f.x) + 2, Math.round(f.y), 2);
+    mover.x = mq.x; mover.y = mq.y; mover.floor = 0; selected = [mover]; rebuildCharGrid();
+    window.__sack = { t, f, seat: t.leader.charId, rep: towns.map(o => o.rep), stock: Object.assign({}, t.stock),
+      stash: Object.values(stash).reduce((a2, v) => a2 + (Number(v) || 0), 0) };
+    t.leader.charId = -1;                       /* the seat is empty: whoever sat it is gone */
+    __aim(f.x, f.y);
+    return R;
+  }));
+  await frame(); await frame(); await frame();
+  Object.assign(five, await p.evaluate(() => {
+    const R = {};
+    const S = window.__sack;
+    if (!S) return R;
+    const { t, f } = S;
+    R.sack = __hear(() => __rclick(f.x, f.y, /TO THE TORCH$/));
+    R.sack.town = t.name;
+    R.sack.burnt = t.sacked === 5 && t.sackKind === 'torch';
+    R.sack.carried = Object.values(stash).reduce((a2, v) => a2 + (Number(v) || 0), 0) - S.stash;
+    R.sack.others = towns.every((o, i) => o === t || o.rep <= S.rep[i]);
+    /* and put it back: the sack is the last thing this file stages, but a claim added after
+       it should not inherit a burning town */
+    t.sacked = 0; t.sackKind = null; t.stock = S.stock; t.leader.charId = S.seat;
+    towns.forEach((o, i) => { o.rep = S.rep[i]; });
+    for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+    selected = [];
+    return R;
+  }));
+  {
+    const f5 = five, bits = [];
+    const dn = (x) => (x >= 0 ? '+' : '') + x.toFixed(2);
+    if (!f5.byUs.got) bits.push('killing the slaver did not let the captive go');
+    if (!(f5.byUs.loyal > 1)) bits.push(`a captive saved by one of yours moved the Loyal by ${dn(f5.byUs.loyal)}`);
+    if (Math.abs(f5.byNobody.loyal) > 0.001) bits.push(`a captor dying of nothing moved the Loyal by ${dn(f5.byNobody.loyal)}`);
+    if (!f5.healOnce.got) bits.push('a heal cast at a hurt townsman mended nothing (the spell found no one there)');
+    else if (!(f5.healOnce.compassion > 0.2)) bits.push(`mending a stranger moved the Compassionate by ${dn(f5.healOnce.compassion)}`);
+    if (Math.abs(f5.healAgain.compassion) > 0.001) bits.push(`mending the same stranger twice in a day moved them again (${dn(f5.healAgain.compassion)})`);
+    if (Math.abs(f5.healWhole.compassion) > 0.001) bits.push(`a heal on a whole body moved them by ${dn(f5.healWhole.compassion)}`);
+    if (f5.mercy.got) bits.push(`the prisoner's menu has no TURN THEM LOOSE (${f5.mercy.got})`);
+    else if (!f5.mercy.loose) bits.push('TURN THEM LOOSE left the prisoner in the cell');
+    else if (!(f5.mercy.cruel < -0.5)) bits.push(`turning a prisoner loose moved the Cruel by ${dn(f5.mercy.cruel)}`);
+    if (f5.noTown) bits.push('no town with a seat and stores to stage the sack in');
+    else if (f5.sack.got) bits.push(`the flag of an empty seat offers no torch (${f5.sack.got})`);
+    else {
+      if (!f5.sack.burnt) bits.push(`${f5.sack.town} was not left sacked and burning`);
+      if (!(f5.sack.carried > 0)) bits.push(`nothing from ${f5.sack.town}'s stores reached the wagon`);
+      if (!f5.sack.others) bits.push('the other towns did not hear of it');
+      if (!(f5.sack.compassion < -1) || !(f5.sack.cruel > 1)) bits.push(`the sack moved the Compassionate by ${dn(f5.sack.compassion)} and the Cruel by ${dn(f5.sack.cruel)}`);
+    }
+    out.theDeedsAreDone = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+      : `a captive taken back moves the Loyal (${dn(f5.byUs.loyal)}), a stranger mended moves the Compassionate (${dn(f5.healOnce.compassion)}, once a day, not for a whole body), ` +
+        `a prisoner turned loose cools the Cruel (${dn(f5.mercy.cruel)}), and ${f5.sack.town} put to the torch from its flag burns, fills the wagon (${f5.sack.carried}), ` +
+        `and turns the Compassionate (${dn(f5.sack.compassion)}) and warms the Cruel (${dn(f5.sack.cruel)})`;
+  }
 
   const bad = Object.values(out).filter(v => typeof v === 'string' && v.startsWith('!!'));
   for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(24) + ' ' + v);
