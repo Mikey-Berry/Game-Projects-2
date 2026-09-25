@@ -610,9 +610,26 @@ town fires.
 
 A one-commit tidy after the merge covers them.
 
+**The merged build, run.** I ran 30 harnesses against the resolved merge: all 12 of PR 39's new
+ones, plus every harness covering code both branches touched. The first run passed 28. The two
+reds were both staging that met a world where the dice fall differently. Neither is a defect in
+the game, and both were proved the same way: put back the one daily `rnd()` draw this branch
+removed (§1.6), and nothing else, and the red goes green.
+
+- **`review.js` (`aWaylineOpens`).** On the merged world a townsman stands on the stone.
+  Right-clicking a body wins over the building under it, so the click opened "KAEL NORWOOD".
+  The harness now moves bystanders off the stone first. Fixed on this branch; green on both
+  builds.
+- **`marchorder.js` (PR 39's own).** The round-trip block stages six tiles off the start,
+  beside GREENREST. On the merged world the town has turned hostile by then, the band spends
+  the errand fighting townsfolk, and six of eight go down. Two other guesses were tried and
+  ruled out first: staunching the captain's bleeds, and feeding the band. The fix is the one
+  PR 39 already used in `storeys.js`: stage past every town. It is green on PR 39 alone and on
+  the merge. It belongs in the merge commit, because the file does not exist on this branch.
+
 **Recommended order:** merge PR 39 first. It is older and larger, and the resolution above has
-been checked against it. Then merge `main` into this branch with that resolution; it is a merge
-commit, not a rebase. Doing it the other way round means editing PR 39's branch.
+been checked against it. Then merge `main` into this branch with that resolution (the five hunks, `hi`, and the
+`marchorder.js` staging); it is a merge commit, not a rebase. Doing it the other way round means editing PR 39's branch.
 
 ---
 

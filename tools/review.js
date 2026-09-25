@@ -71,6 +71,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       placeStructure('way', Math.floor(me.x) + 40, Math.floor(me.y) + 3);
       selected = [me]; activeFloor = 0; camX = A.x + 1; camY = A.y + 1; camFollow = false;
       await wait(500);
+      /* NOBODY STANDING ON THE STONE. Right-clicking a body wins over the building under it, as
+         it should, so a townsman who happens to be on the spot turns this into a conversation.
+         On PR 39's world one was (the click opened "KAEL NORWOOD"), and the claim read as a
+         broken wayline. */
+      for (const o of chars) if (o !== me && o.state !== 'dead' && dist(o.x, o.y, A.x + A.w / 2, A.y + A.h / 2) < 2.5) { o.x += 9; o.moveTarget = null; }
+      if (typeof rebuildCharGrid === 'function') rebuildCharGrid();
       me.moveTarget = null;
       rclick(A.x + A.w / 2, A.y + A.h / 2);
       await wait(60);
