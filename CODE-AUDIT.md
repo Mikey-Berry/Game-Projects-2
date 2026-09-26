@@ -512,7 +512,9 @@ lasts, the full pool was the whole story. The changes:
 
 - **Ranged:** the `ranged` skill a shooter trains with every arrow did nothing but steer strays.
   It now adds to the weight of the shot (0.6% a point), the pace (0.4%), and the aim: the miss
-  chance falls 0.3% a point, to a floor of 6%. The Marrow Archer has a ranged skill of its own.
+  chance falls 0.3% a point, to a floor of 6%. The Marrow Archer has a fixed ranged skill of 24,
+  not one that climbs with its maker's magic: `host.js` holds its damage flat across the magic
+  ladder on purpose, and the first cut of this (6 + half the caster's magic) broke that.
 - **The firebolt** climbs at 0.6 a point of magic past 30 instead of 0.9, takes 1.6s to recover
   instead of 1.4, and can now take whoever is tangled with its target, as an arrow can (24%,
   less with magic, never under 5%). It still never misses and still ignores 30% of armour. Embers
