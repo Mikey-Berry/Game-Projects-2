@@ -246,6 +246,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const band = raise(WASTE || { x: HOME.x, y: HOME.y - 6 });
       const cdr = band[0];
       const START = { x: cdr.x, y: cdr.y };
+      /* ---------- AND NOT IN THE NIGHT'S WAY EITHER ----------
+         This block walks the band through three and a half game days in the open, and since the
+         night spawner was fixed (CODE-AUDIT §5.9) the dark sends things at anybody out there.
+         Two of them reached this band on the way home, it fought them short of the spot, and
+         the claim below read 5.6 tiles. The homecoming is what is under test, not the night, so
+         what the night sends is sent back as it arrives. */
+      const stepHere = (secs) => { step(secs); for (let j = chars.length - 1; j >= 0; j--) if (chars[j].nightSpawn) chars.splice(j, 1); };
       giveCommand(cdr, band, 'forage', { x: cdr.x + 20, y: cdr.y }, 44);
       /* ---------- A REAL ENGAGEMENT, NOT A FLAG ----------
          The first cut laid corpses on the ground and set `m.fights` by hand, which stages the
@@ -275,20 +282,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          `kill` is the game's own death, so these leave real corpses with real pockets. */
       let met = 0;
       for (let i = 0; i < 40; i++) {
-        step(2);
+        stepHere(2);
         if (cdr.cmd && cdr.cmd.fights) { met = 1; break; }
       }
       cdr.blood = cdr.maxBlood * 0.40;                   /* cut, the way a captain is after one */
       for (const f of raiders) if (f.state !== 'dead') kill(f, cdr);
       /* long enough to walk twenty tiles and strip four bodies and a chest */
       const left = () => raiders.filter(f => f.state === 'dead' && !f.looted).length + (ch.opened ? 0 : 1);
-      for (let i = 0; i < 30 && cdr.cmd && left(); i++) step(10);
+      for (let i = 0; i < 30 && cdr.cmd && left(); i++) stepHere(10);
       /* AND THEN SENT HOME, rather than waited out. A forage errand ends when every tile of its
          circle has been walked, which is six tours of open waste and most of a game week — the
          homecoming is what is under test here, not the errand's patience, and a band left to
          bleed for ten game-hours with a cut captain dies on the walk. Last tour, turn for home. */
       if (cdr.cmd) { cdr.cmd.tours = FORAGE_TOURS; cdr.cmd.phase = 'home'; }
-      for (let i = 0; i < 40 && cdr.cmd; i++) step(10);
+      for (let i = 0; i < 40 && cdr.cmd; i++) stepHere(10);
       const fell = raiders.filter(f => f.state === 'dead');
       const unstripped = fell.filter(f => !f.looted).length;
       const leftBehind = unstripped + (ch.opened ? 0 : 1);

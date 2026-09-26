@@ -30,10 +30,11 @@ Ranked by how much lore weight each carries against what it costs to close.
    the Messengers' tongue. A few lines of code fix it. It is the same finding as
    `CODE-AUDIT.md` §5.1, seen from the lore side.
 2. **Mother's seal promises a mechanic that does not exist** (§2.1) — **closed 2026-09-25,
-   the second scene is written out in full for your approval**. She tells you only one of hers can open it, but anybody could
-   force it, and her scene stopped at the door. The bible calls what she knows "the scene at
-   the bottom of that cave, and nothing else in the setting carries more". The door is hers
-   now, and the second scene is drafted in §2.1.
+   the scene approved 2026-09-26** with three changes: the Deep Warden stands down, no "my
+   brother", and the scene pages through the window a line at a time. She tells you only one
+   of hers can open it, but anybody could force it, and her scene stopped at the door. The
+   bible calls what she knows "the scene at the bottom of that cave, and nothing else in the
+   setting carries more". The door is hers now, and the second scene is in §2.1.
 3. **The Church has no voice** (§3.1) — **closed 2026-09-25, lines approved**. The
    bible says the gap between what the Church teaches and what is true "*is* the setting's
    engine". In the game only the true side was ever spoken. Paladins, the Inquisitor and Vey
@@ -167,7 +168,25 @@ never raised. Casting in a town costs nothing with the law. `raising` and `walkd
 raised, so necromancy specifically is policed, but alchemy in general is not. Hollowmere's
 exemption for `formula` is unreachable for the same reason.
 
-### 1.4 Sanctified Ash — **options put to you 2026-09-25**
+### 1.4 Sanctified Ash — **closed 2026-09-26**
+
+Your ruling: shrine stones are minor Philosopher Stones, and crushing one gives the ash. Whole,
+the stone is read at the bench for insight. Crushed, it is a reagent that helps the Door rite
+without being needed for it, since it is hard to get. `tools/seams.js` claim 10 checks it; on
+the build before, a broken shrine gave ash and nothing used it.
+
+- **Breaking a shrine gives a Shrine Stone** (`s_stone`), whole. It used to be 2 to 4 measures
+  of ash and 12 insight on the spot; both are in the stone now, and you choose.
+- **At the bench it reads like a formula**, for 20 insight (44 hours at one scholar), through
+  the same STUDY ALL. It does not count as a recovered formula for the Inquisitive.
+- **CRUSH** (in the wagon and in anybody's pack) turns it into 3 measures of Sanctified Ash.
+- **The ash carries the Door's hold.** While the hold still has work in it, the rite burns a
+  measure at a time from the camp's stores, and each one runs the hold at 1.5x for 2.5 game
+  hours. The seal's price is unchanged, and the rite lands the same without any.
+- **The bible:** §18's open question is answered by this ruling. It is worth folding into the
+  bible's §15 (Philosopher Stones) when you next revise it.
+
+The options that were put to you:
 
 Breaking a shrine yields it. Its description promises that "an alchemist has other uses". No
 recipe or rite consumes it. The bible's §18 asks whether a shrine stone is a small
@@ -192,15 +211,13 @@ The options, each with the answer it gives to the §18 question:
    no longer diminishes the dead, or a tear that cannot open. The biggest of these, and the
    one that commits the bible.
 
-Recommended: 1 as the everyday use, with 4 as its cost. That is cheap, it loops through
-systems that exist, and it answers §18 as "something the faithful mistook" without spending
-the Philosopher Stone.
+I recommended 1 with 4 as its cost; you chose a version of 3 and 2 instead.
 
 ---
 
 ## 2. The game's own text promises a mechanic
 
-### 2.1 Mother's seal — **closed, lines pending your approval**
+### 2.1 Mother's seal — **closed; the scene approved 2026-09-26, with three changes**
 
 Closed on 2026-09-25. `tools/seams.js` claim 6 checks it, driving her door through the real
 underground right-click; the build before showed FORCE IT to everybody.
@@ -220,7 +237,25 @@ underground right-click; the build before showed FORCE IT to everybody.
 - Her vault's chest and the Deep Warden are unchanged, so for anybody else that vault's loot is
   now out of reach. It is one vault of about forty-five.
 
-**The second scene, drafted for your approval.** It carries the bible's §6 *"the thing she
+**Your three changes (2026-09-26):**
+
+- **The Deep Warden stands down.** Every warren vault has one over its chest, so "COME IN" was
+  followed by an automaton with an Aether Lance attacking the one she let in. When her door
+  opens to one of hers, her Warden stops fighting your people (`stoodDown`, saved). It takes
+  it up again, for good, if one of yours strikes it. She says one new line, second, after
+  COME IN, while it stands: *"Mind the thing by the chest. It was built to keep me, and it
+  has never once understood that I was not the one leaving."*
+- **No "my brother".** Her first scene's corpse-site line now reads *"You have stood on one of
+  my kind. They cut it apart and sold the pieces by weight. They kept me because a corpse is a
+  windfall and a prisoner is an income."* That matches line 6 of the second scene and the
+  bible, which gives them no kinship.
+- **A line at a time.** Both scenes page through the window: GO ON (or space, or enter) for the
+  next line, LEAVE at the end. Each line goes to the log as it is shown. Closing early sends
+  the rest to the log, so nothing is lost. The journal is updated when the scene ends, so it
+  no longer says she gave her name before she has said it. When one of hers opens the seal
+  before she has spoken, the first scene runs straight into the second in one window.
+
+**The second scene, as approved.** It carries the bible's §6 *"the thing she
 knows"* and nothing from §4: nothing about what is on the throne, the Messengers, or what ended
 the first civilisation. The man is never named, and his age and survival are not explained.
 It uses her true name once, which the bible marks provisional, so it is a single line to change.
@@ -428,7 +463,19 @@ There are two gaps against the bible:
   asleep, and "closing the Door is a job you do for them". Nothing about a Messenger
   responds to the Door, the tears or the Second Fracture clock.
 
-### 3.3 The vocabulary that encodes the speaker — **brainstorm put to you 2026-09-25**
+### 3.3 The vocabulary that encodes the speaker — **options 1 and 3 built 2026-09-26**
+
+You picked 1 and 3; `tools/seams.js` claim 9 checks both, and that no item says "Battery".
+
+- **The formulae.** The Worn Formula: *"The word for where the power comes from has been scraped
+  off every page but one, and on that one it says conduit."* The Preserved Formula: *"In the
+  margin, in another hand: draw from the conduit, not past it."*
+- **The Chancellery Ledger** (`c_ledger`), in the colonnade cache at the bottom of the crater and
+  nowhere else: *"A golden-age yield ledger in board covers, columns of figures in a clerk's
+  hand. The last entry: 'Conduit yield down a third since the winter. The Chancellery asks
+  whether the conduit can be encouraged.'"* It sells for 260 and teaches nothing.
+
+The brainstorm:
 
 The bible §3 gives three words for Mother by speaker: *Priest* (the purebloods), *Conduit*
 (the Golden Age's notes) and *Battery* (for us). None appears in play. "Kept Priest" is a
@@ -469,7 +516,7 @@ and zero player-facing strings.
 |---|---|
 | **The Last Scholar** (§11), "the largest unbuilt figure in the setting" | Absent. Nobody in play refers to him, including Mother. |
 | **Tohu & Bohu, the Voidborn Twins** (§6) | Absent. Their whole hook, stasis for as long as the Last Scholar lives, depends on the Scholar existing. |
-| **Philosopher Stones** (§15) | Absent. §1.4's Sanctified Ash is the natural door. |
+| **Philosopher Stones** (§15) | **Minor ones built, 2026-09-26:** every shrine's stone is one (§1.4). The great ones, "one wrote the law that holds the Twins", are still absent. |
 | **Tablets of the Deep; the temple art that "points upward"** (§2, §15) | Absent. The Kept have altars (`deepAltars`) and no depictions. The only tablet in the code is the wax-tablet case on Lyre's model. |
 | **The kingdom's crater** (§16): "should be the largest landmark in the world", and the natural site of the Door | **Built, 2026-09-25, in three phases.** **The place:** at the dead centre of every world, with the world placed around it, in four rings: the approach (ash, dead trees leaning away from the middle, the Order's posts, bones), the glass (fused ground, standing slabs with shadows burned onto them), the rim (a wall with four breaches), and the bowl with a veil of light over it. **The danger:** the glass and the bowl are held day and night by Watchers the dawn does not take; three Messengers stand at peace with them; what is killed grows back out of sight; at night telegraphed strikes of light come down on whoever is in the glass. **The reason:** the capital's footings across the bowl, a colonnade round the middle, seven caches, and **the Guardian at the Gate**, a Messenger boss at the middle until the Second Fracture. Then it is gone and the Door opens there, so closing the Door is an expedition into the crater. The roads go round it on a ring of fixed waypoints outside the approach, and so does anybody travelling on the world's business: caravans, pilgrims, escorts and armies. `tools/crater.js` checks all 17 claims. **Ruled 2026-09-25:** killing the Guardian before the Fracture raises the Attention by 8, moves the Fracture on 8 at once (about fourteen days of calendar), and adds 0.15 a day to its rate for the rest of the run (the calendar is 0.56). It was called the Custodian until then. |
 | **Good Kami** (§6, §12) | Half built. The kami stone at Fallowend consecrates a charm, and the town is `kami: true`. Missing: the rites the bible lists (dirty water at a crossroads, dust not swept past a threshold at night, a dead name spoken into the wind) and the curse clause, *"you do not improvise with something that says yes"*. |
@@ -524,14 +571,14 @@ them should move.
 - **Where Mother is.** The bible (§6, §12, §16) puts her "in a cell at the bottom of a sealed
   redoubt". In code she is behind a vault at the bottom of a warren, "a cave under the
   mountains".
-- **Mother and Malathuun.** In code she says *"You have stood on my brother. They cut him apart
-  and sold the pieces by weight."* The bible makes Malathuun another Old One and a bystander,
-  with no kinship to her.
+- **Mother and Malathuun** — **settled 2026-09-26, the bible's way.** She said *"You have stood on
+  my brother."* The bible makes Malathuun another Old One and a bystander, with no kinship to
+  her. She now says *"one of my kind"*.
 - **Mother and the Dust art.** In code she says *"You work the dust art. That came out of
   me."* The bible's §7 does not tie Dust to her.
 
-  These two may be deliberate code-side canon worth folding into the bible. They sharpen the
-  story, but right now the bible does not know them.
+  This one may be deliberate code-side canon worth folding into the bible. It sharpens the
+  story, but right now the bible does not know it.
 - **The conviction list.** Bible §14 lists seven convictions and includes Cold. The code has
   eight, and **Loyal** is missing from the bible.
 
@@ -543,8 +590,8 @@ Put down on 2026-09-25 so none of it is lost. Nothing here is started.
 
 **Lore, needing a ruling before code**
 
-- The bible drift in §6: the Codex and the Doctrine, where Mother is, "my brother", Dust from
-  her, Loyal missing from the convictions.
+- The bible drift in §6: the Codex and the Doctrine, where Mother is, Dust from her, Loyal
+  missing from the convictions.
 - The Last Scholar, and Tohu & Bohu behind him.
 - The Tablets of the Deep (§3.3 option 2 is their thin end).
 - The Good Kami rites and the curse clause.
@@ -559,8 +606,6 @@ Put down on 2026-09-25 so none of it is lost. Nothing here is started.
 
 **Game and code**
 
-- The night spawner is dead (`CODE-AUDIT.md` §5.9). It also carries the Attention's
-  Messengers, larders and Eye flights.
 - The Dame's *"do not come back"* is never enforced (§2.2).
 - The playtest cheats are visible in Options.
 - Per-step lookups of one-of-a-kind objects cost 11% of a sim step.

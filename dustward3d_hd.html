@@ -1407,16 +1407,34 @@ const ITEMS = {
   formula_t:{name:'Tattered Formula',  base:350,  type:'formula', rp:5,
     desc:'A golden-age working, mostly rot. Five points of insight survive the mildew.'},
   formula_w:{name:'Worn Formula',      base:900,  type:'formula', rp:15,
-    desc:'Legible, mostly. Somebody died carrying this and it shows.'},
+    desc:'Legible, mostly. Somebody died carrying this and it shows. The word for where the power comes from has been scraped off every page but one, and on that one it says conduit.'},
   doctrine:{name:'The First Doctrine', base:0, type:'quest',
     desc:'A pre-Fracture Church text, never burned because nobody dared. It names the source of the blessed gift and the profane one. It names them once, because they are the same name.'},
   sunder:  {name:'Sundered Marrow', base:1600, type:'mat',
     desc:'A piece of something that was killed during the Fracture and refuses to finish dying. The richest reagent in the world. It is faintly warm.'},
   formula_p:{name:'Preserved Formula', base:2400, type:'formula', rp:40,
-    desc:'Sealed in wax before the sky opened. The hand that wrote it knew things nobody knows now.'},
+    desc:'Sealed in wax before the sky opened. The hand that wrote it knew things nobody knows now. In the margin, in another hand: draw from the conduit, not past it.'},
   remains: {name:'Mortal Remains',base:30,  type:'trade'},
+  /* ---------- THE WORDS ENCODE THE SPEAKER ----------
+     The lore bible gives three words for Mother by who is talking: Priest (the purebloods),
+     Conduit (the golden age's own notes) and Battery (the flat modern reading, which nobody in
+     the world says). The golden age's word lives in its paper: the two formulae above, and this,
+     which is found in one place only, the colonnade cache at the bottom of the crater. It sells
+     and it teaches nothing. Nothing anywhere explains the word. */
+  c_ledger:{name:'Chancellery Ledger', base:260, type:'trade',
+    desc:'A golden-age yield ledger in board covers, columns of figures in a clerk\'s hand. The last entry: "Conduit yield down a third since the winter. The Chancellery asks whether the conduit can be encouraged."'},
+  /* ---------- A SHRINE STONE IS A SMALL PHILOSOPHER'S STONE ----------
+     The lore bible left it open (§18) whether a shrine stone is a minor Philosopher Stone or
+     something the faithful mistook for one. Ruled 2026-09-26: it is one. Breaking a shrine gives
+     you the stone, whole, and there are two things to do with it. Put it on the bench and it
+     is read like a formula (FORMULA_KEYS), which spends it for insight. Or CRUSH it, and it is
+     three measures of Sanctified Ash, which the closing rite at the Door will burn to hold
+     faster (`workTheDoor`). Useful there, never needed there: the seal's own price is unchanged,
+     and stones only come from desecration. */
+  s_stone: {name:'Shrine Stone', base:900, type:'stone', rp:20, crush:{s_ash: 3},
+    desc:'The heart of a shrine, broken out of its setting: a small philosopher\'s stone, and warm. The faithful kept something in it. Study it at the bench for what it holds, or crush it for the ash.'},
   s_ash:   {name:'Sanctified Ash', base:340, type:'mat',
-    desc:'What is left of a shrine stone once the thing inside it has been let out. Warm, and it will not go cold. Whatever the faithful were keeping under there, an alchemist has other uses for'},
+    desc:'What is left of a shrine stone once it has been crushed. Warm, and it will not go cold. Burned into the closing rite at the Door, it carries the hold for a while.'},
   crown:   {name:'Sunken Crown',  base:2500,type:'trade'},
   hide_lev:{name:'Leviathan Hide',base:150, type:'trade'},
   w_kingsfang:{name:'Kingsfang',  base:5000,type:'weapon', dmg:34, wt:'cut'},
@@ -11040,6 +11058,10 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
   /* `provoked` is a grudge held against YOU specifically — so only your own deliberate blow
      may set it. A stray cleave, a splash, or a bandit's arrow is not a declaration of war,
      and anyone still holding a quest for you gets one warning before the door closes. */
+  if(d.stoodDown && !d.provoked && a && a.faction === 'player' && !incid){
+    d.provoked = true;
+    log(`${d.name} remembers what it was built for.`, 'bad');
+  }
   if(d.neutral && !d.provoked && a && a.faction === 'player' && !incid){
     if(d.questGive && !d.questDone && !d.warned){
       d.warned = true;
@@ -12400,7 +12422,7 @@ function researchNext(){
     log(`The benches are waiting on ${TECHS[head].name}: it wants ${why}.`, 'bad');
   }
 }
-const FORMULA_KEYS = ['formula_t','formula_w','formula_p'];
+const FORMULA_KEYS = ['formula_t','formula_w','formula_p','s_stone'];   /* a shrine stone reads like one */
 /* ---------- FAVOR, AND WHERE IT LIVES ----------
    This used to ask `chars.some(c => c.questGive === kind && c.questDone)` — that is, it read
    the favor off the immortal's body. The corpse reaper takes dead bodies out of `chars` two
@@ -13457,7 +13479,11 @@ function hostile(a, b){
     return o.faction === 'player' && !!(arena && arena.bout);
   }
   /* the redoubt garrison has one order, nine generations old, and it is still following it */
-  if(a.faction === 'redoubt' || b.faction === 'redoubt') return true;
+  if(a.faction === 'redoubt' || b.faction === 'redoubt'){
+    /* except Mother's Deep Warden, stood down for your people once one of hers opened her door */
+    const r = a.faction === 'redoubt' ? a : b, o = r === a ? b : a;
+    return !(r.stoodDown && !r.provoked && o.faction === 'player');
+  }
   /* ---------- THE KEPT AND THE GAUNTS ----------
      Asked above every other rule in this function, including the gaunts' own, because it is
      the one enmity in the world that has a reason older than the Fracture behind it. If the
@@ -17923,6 +17949,8 @@ let theDoor = null;              /* the primary tear. There is only ever one. */
 let ruin = false;                /* every seat has fallen and the world belongs to it */
 const DOOR_SEAL_COST = {vflesh:60, iron:40, remains:80};
 const DOOR_WORK = 240;           /* seconds of sustained rite, at magic 0 */
+const DOOR_ASH_H = 2.5;          /* game hours one measure of Sanctified Ash carries the hold */
+const DOOR_ASH_PACE = 1.5;       /* and how much faster it goes while it burns */
 function fractureOpen(){ return fracture >= 100; }
 function openTheDoor(){
   if(theDoor) return theDoor;
@@ -18108,7 +18136,14 @@ function workTheDoor(c, dt){
   if(!travel(c, d.x, d.y, dt, 3.0)) return true;
   if(c.mana < 2){ if(rnd() < dt*0.2) log(`${c.name} has nothing left to give the rite.`, 'bad'); return true; }
   c.mana -= dt * 2.0;
-  d.work += dt * (1 + c.stats.magic * 0.04);
+  /* SANCTIFIED ASH, if the camp has any: a measure at a time, burned only while the hold still
+     has work in it, each one carrying it at half again the pace for a couple of hours. Never
+     needed: the rite lands without it, and the seal's price is the same either way. */
+  if(d.work < DOOR_WORK && !(nowH() < (d.ashUntil || 0)) && campHas('s_ash') >= 1 && campSpend({s_ash: 1})){
+    d.ashUntil = nowH() + DOOR_ASH_H; d.ashBurnt = (d.ashBurnt || 0) + 1;
+    if(d.ashBurnt === 1) log('The ash goes into the rite, and the hold comes faster while it burns.', 'good');
+  }
+  d.work += dt * (1 + c.stats.magic * 0.04) * (nowH() < (d.ashUntil || 0) ? DOOR_ASH_PACE : 1);
   if(rnd() < dt * 4) addSpecks(d.x + (rnd()-0.5)*6, d.y + (rnd()-0.5)*6, '#d8c8ff', 3);
   if(d.work >= DOOR_WORK){
     /* ---- THE ONE RULE ----
@@ -19086,7 +19121,9 @@ function spawnGaunt(kind, x, y){
    The cost the note warned about is `charsNear`, and it is affordable: a flight is four to
    seven bodies against a world that boots with six hundred and thirty-three. */
 function spawnEyeFlight(x, y, n){
-  const flight = {id: ++squadN, lair: {x, y, r: 14}};
+  /* the anchor is what the wander code writes a lair's next spot into; without one the first
+     flight to wander threw, which nobody saw while the night spawner was dead (CODE-AUDIT §5.9) */
+  const flight = {id: ++squadN, lair: {x, y, r: 14}, anchor: {x, y}};
   const made = [];
   n = n || ri(4, 7);
   for(let i = 0; i < n; i++){
@@ -20392,7 +20429,16 @@ function gauntTick(dh){
   cairnTick(dh * HOUR_SEC);   /* it eats on real seconds, not game hours */
   broodTick(dh * HOUR_SEC);   /* and the thing in the door heals on the hours the door has stood */
   if(!isNight() && !rifts.length) return;   /* a tear makes its own night */
-  const living = chars.filter(c => c.faction === 'gaunt' && c.state !== 'dead');
+  /* ---------- THE NIGHT'S OWN, AND NOBODY ELSE'S ----------
+     This counted every living gaunt in the world against a cap of three-and-up, and the depths
+     alone hold hundreds, none of them the night's: 443 against 3 on day one. So the spawner
+     never sent anything, and neither did anything that lives in it (the hunt from tier 2, the
+     Larder-Kin, the shrikes, the Eye flights, the Attention's Messenger). CODE-AUDIT §5.9.
+     It counts what it sent now: `nightSpawn`, set on everything below and saved. The depths,
+     the sites, the tears' own garrisons and the crater each keep their own numbers. A
+     Larder-Kin is not taken by the dawn, so it holds its place in the count until it is killed,
+     which is what stops them piling up night on night. */
+  const living = chars.filter(c => c.nightSpawn && c.state !== 'dead');
   const tier = eldritchTide();
   const cap = (3 + tier * 2 + Math.floor(purgeWrath / 60)) * (bloodMoon && isNight() ? 6 : 1);
   if(living.length >= cap) return;
@@ -20440,7 +20486,7 @@ function gauntTick(dh){
   if(tier >= 2 && roll < 0.08){
     const flight = spawnEyeFlight(x, y);
     if(flight.length){
-      for(const e of flight) if(tier >= 2 || bloodMoon) e.hunt = anchor;
+      for(const e of flight){ e.nightSpawn = true; if(tier >= 2 || bloodMoon) e.hunt = anchor; }
       if(dist(flight[0].x, flight[0].y, anchor.x, anchor.y) < 34 && visAt(flight[0].x, flight[0].y) === 2)
         log(`Lights are coming up out of the dark, and they are looking at you. ${flight.length} of them.`, 'bad');
       return flight[0];
@@ -20454,7 +20500,7 @@ function gauntTick(dh){
   /* and later in the clock, more often: one in sixty-seven at first, one in twenty-five at the end */
   if(roll > 0.985 - 0.005 * fractureStage && messengersAbroad() < messengerCap()){
     const m = spawnGaunt(rnd() < 0.35 ? 'herald' : 'messenger', x, y);
-    m.hunt = anchor;
+    m.hunt = anchor; m.nightSpawn = true;
     if(dist(m.x, m.y, anchor.x, anchor.y) < 34 && visAt(m.x, m.y) === 2)
       log(`Something out there is talking. It is not talking to you, and none of it is words.`, 'bad');
     else worldEvent('attention', m.x, m.y,
@@ -20465,6 +20511,7 @@ function gauntTick(dh){
              : (tier >= 2 && roll < 0.30) ? 'shrike'
              : roll < 0.50 ? 'maw' : roll < 0.75 ? 'stalker' : 'gaunt';
   const g = spawnGaunt(kind, x, y);
+  g.nightSpawn = true;
   if(kind === 'larder'){
     /* it keeps a place well away from the lamps, and it goes back to the same one */
     let m = middens.find(mm => dist(mm.x, mm.y, x, y) < 60);
@@ -20685,11 +20732,11 @@ function destroyStructure(st){
   if(st.kind==='shrine'){
     const sh = st.ref, t = sh.town;
     sh.broken = true; sh.reT = RECONSECRATE_DAYS; sh.hp = 0;
-    /* the alchemist's share of it */
-    const ash = ri(2, 4);
-    addItem('s_ash', ash);
-    research.rp = (research.rp || 0) + 12;
-    log(`The shrine stone at ${t ? t.name : 'the waste'} is broken open. ${ash} measures of sanctified ash, and the ground goes quiet.`, 'good');
+    /* the alchemist's share of it: the stone itself, whole (see `s_stone`). It used to be two to
+       four measures of ash and twelve insight on the spot; both are in the stone now, and you
+       choose which you want out of it. */
+    addItem('s_stone', 1);
+    log(`The shrine at ${t ? t.name : 'the waste'} is broken open, and its stone comes out whole and warm. The ground goes quiet.`, 'good');
     if(t){
       /* they will rebuild, and until they do the town is workable */
       t.dread = clamp((t.dread || 0) + 14, 0, 100);
@@ -28173,6 +28220,7 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
       const heart = v.kind === 'heart';
       chests.push({x: v.x, y: v.y, opened: false, vault: true, floor: 0, crater: true, loot: {cats: heart ? ri(900, 1600) : ri(300, 700), items: {
         formula_p: heart ? ri(2, 3) : ri(1, 2), codex: heart ? 2 : (rnd() < 0.5 ? 1 : 0), tome: ri(1, 3), gold_bar: ri(1, 3),
+        ...(heart ? {c_ledger: 1} : {}),
         ...(rnd() < (heart ? 0.8 : 0.3) ? {aether_cell: ri(1, 3)} : {}), ...(heart && rnd() < 0.5 ? {w_lance: 1} : {}),
         ...(rnd() < 0.35 ? {t_lens: 1} : {}), ...(rnd() < 0.35 ? {t_phial: 1} : {})}}});
     }
@@ -41558,6 +41606,15 @@ function applyStashFold(){
 function toggleStash(){ opts.stash = !opts.stash; saveOpts(); applyStashFold(); if(opts.stash) refreshInv(); }
 { const t = $('invtitle'); if(t) t.onclick = toggleStash; }
 applyStashFold();
+/* crushing a stone: what it holds is in `crush`, and it goes where the stone was */
+function crushItem(k, c){
+  const it = ITEMS[k]; if(!it || !it.crush) return false;
+  if(c){ if(!invTake(c, k)) return false; for(const [o, n] of Object.entries(it.crush)) invAdd(c, o, n); }
+  else { if(!takeItem(k)) return false; for(const [o, n] of Object.entries(it.crush)) addItem(o, n); }
+  const got = Object.entries(it.crush).map(([o, n]) => `${n} measures of ${ITEMS[o].name.toLowerCase()}`).join(' and ');
+  log(`The ${it.name.toLowerCase()} gives way under the hammer: ${got}, still warm.`, 'good');
+  return true;
+}
 function refreshInv(){
   /* nothing to draw into a panel nobody can see, and the wagon can be forty rows long */
   if(stashFolded()) return;
@@ -41590,6 +41647,7 @@ function refreshInv(){
     if(GOLEM_FEED[k] && eatsMetal(selected[0])) btns = `<button data-feed="${k}">FEED THE ETCHINGS · +${GOLEM_FEED[k]}</button>`;
     if(it.type==='pros') btns = `<button data-pros="${k}">ATTACH</button>`;
     if(it.type==='tome') btns = `<button data-read="${k}">READ</button>`;
+    if(it.crush) btns = `<button data-crush="${k}" title="Crush it for what it holds">CRUSH</button>`;
     if(bins().some(bn => binAccepts(bn, k))) btns += `<button data-stow="${k}" title="Send to camp stores (shift ×10)">STOW</button>`;
     row.innerHTML = `<span>${it.name} ×${stash[k]}</span><span>${btns}</span>`;
     b.appendChild(row);
@@ -41614,6 +41672,9 @@ function refreshInv(){
   b.querySelectorAll('[data-eq]').forEach(btn => btn.onclick = () => {
     const c = selected[0]; if(!c){ log('Select someone first.'); return; }
     equipFromStash(c, btn.dataset.eq);
+  });
+  b.querySelectorAll('[data-crush]').forEach(btn => btn.onclick = () => {
+    if(crushItem(btn.dataset.crush)) refreshInv();
   });
   b.querySelectorAll('[data-eat]').forEach(btn => btn.onclick = () => {
     const c = selected[0]; if(!c) return;
@@ -41680,6 +41741,7 @@ function openModal(title, sub){
      dozen ways to shut a modal in this file and exactly one way to open one, so the flag is
      owned here — a ring that outlived its window would otherwise hang on the ground forever. */
   ctxCircle = null;
+  if(talkScene && !_sceneOpening) sceneClose(false);   /* another window over a scene: its lines go to the log */
   $('modaltitle').textContent = title; $('modalsub').textContent = sub;
   $('modal').style.display = 'flex'; modalOpen = true; paused = true; syncPauseBtn();
   /* AND IT OPENS AT THE TOP. `#modalbody` is one element reused by every window in the game,
@@ -41690,12 +41752,70 @@ function openModal(title, sub){
   AU.open();
 }
 $('modalclose').onclick = () => {
+  if(talkScene) sceneClose(false);
   $('modal').style.display='none'; modalOpen = false;
   /* Backing out of a contraband stop with the X is walking away from the guard, which is a
      choice — but the flag that says "a stop is open" has to come down either way, or no
      search ever happens again for the rest of the run. */
   if(_stopOpen) _stopOpen = false;
 };
+/* ---------- A SCENE, ONE LINE AT A TIME ----------
+   "The whole scene arrives as a wall of log lines at once." Mother's scenes were a dozen
+   `log` calls in a row, so the most important thing anybody says in the game landed as a block
+   of scroll the player had to go back and find. A scene is the modal now, a line at a time:
+   GO ON (or space, or enter) for the next, and each line goes to the log as it is shown, so the
+   log is still the record. Nothing can be lost by closing early. The X, escape, or another
+   window opening over it sends the lines not yet shown to the log in order.
+   A scene opened while one is showing is added to the end of it, which is how her first scene
+   runs straight into the second when one of hers opens the seal before she has spoken.
+   `{text, say, kind}`: `say` is speech (the log carries it as SHE SAYS), anything else is
+   narration. `then` runs when the scene is over, however it ends: the journal is told what
+   happened after the player has heard it, not while the first line is still on screen. */
+let talkScene = null, _sceneOpening = false;
+function sceneOpen(title, sub, beats, then){
+  if(talkScene && modalOpen && $('modal').style.display !== 'none'){
+    talkScene.beats.push(...beats); if(then) talkScene.then.push(then); drawScene(); return;
+  }
+  if(talkScene) sceneClose(false);
+  _sceneOpening = true;
+  try { openModal(title, sub); } finally { _sceneOpening = false; }
+  talkScene = {beats: [...beats], i: 0, then: then ? [then] : []};
+  sceneNext();
+}
+function sceneLog(b){ log(b.say ? 'SHE SAYS: "' + b.text + '"' : b.text, b.kind || ''); }
+function sceneNext(){
+  if(!talkScene) return;
+  if(talkScene.i < talkScene.beats.length) sceneLog(talkScene.beats[talkScene.i++]);
+  drawScene();
+}
+function sceneClose(hide = true){
+  if(!talkScene) return;
+  const sc = talkScene; talkScene = null;
+  while(sc.i < sc.beats.length) sceneLog(sc.beats[sc.i++]);
+  for(const f of sc.then) f();
+  if(hide){ $('modal').style.display = 'none'; modalOpen = false; syncPauseBtn(); }
+}
+function drawScene(){
+  if(!talkScene) return;
+  const body = $('modalbody');
+  body.innerHTML = '';
+  for(let k = 0; k < talkScene.i; k++){
+    const b = talkScene.beats[k], el = document.createElement('div');
+    el.style.cssText = b.say
+      ? 'font-size:13px;line-height:1.65;color:var(--bone);margin:0 0 10px;padding:2px 0 2px 10px;border-left:2px solid var(--warn)'
+      : 'font-size:12px;line-height:1.6;color:var(--dust);font-style:italic;margin:0 0 10px';
+    if(k < talkScene.i - 1) el.style.opacity = '0.55';     /* what has been said stays, quieter */
+    el.textContent = b.say ? '"' + b.text + '"' : b.text;
+    body.appendChild(el);
+  }
+  const more = talkScene.i < talkScene.beats.length;
+  const bt = document.createElement('button');
+  bt.textContent = more ? 'GO ON' : 'LEAVE';
+  bt.style.cssText = 'display:block;margin-top:4px;padding:6px 16px;font-size:11px;letter-spacing:1px';
+  bt.onclick = () => { if(talkScene && talkScene.i < talkScene.beats.length) sceneNext(); else sceneClose(); };
+  body.appendChild(bt);
+  body.scrollTop = body.scrollHeight;
+}
 /* every button in the game clicks, without every button having to remember to. Delegated in
    the capture phase so it still fires for handlers that stop propagation on their way out. */
 document.addEventListener('click', e => {
@@ -41814,6 +41934,7 @@ function openInventory(c){
         invTake(c, k); render(); refreshCharPanel();
       });
       if(it.type==='tome') mk('READ', () => { if(c.undead){ log('The risen cannot read.','bad'); return; } invTake(c,k); readBook(c,k); render(); refreshCharPanel(); });
+      if(it.crush) mk('CRUSH', () => { if(crushItem(k, c)){ render(); refreshCharPanel(); } });
       mkBulk('GIVE', 'hand it to the nearest of yours', (n) => {
         const to = nearestSquadmate(c); if(!to){ log('No squadmate within reach.','bad'); return; }
         const moved = giveItem(c, to, k, n) === false ? 0 : n;
@@ -42924,6 +43045,12 @@ addEventListener('keydown', e => {
     if(el && !e.ctrlKey && !e.metaKey &&
        (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
   }
+  /* a scene takes space and enter for the next line, before either can do anything else */
+  if(talkScene && modalOpen && (e.key === ' ' || e.key === 'Enter')){
+    e.preventDefault();
+    if(talkScene.i < talkScene.beats.length) sceneNext(); else sceneClose();
+    return;
+  }
   if(e.key === 'F9'){ e.preventDefault(); toggleSeeAll(); opts.seeAll = debugSeeAll; saveOpts(); return; }
   if(e.key === 'F10'){ e.preventDefault(); opts.fps = !opts.fps; saveOpts(); return; }
   if(e.key==='Alt'){ altHeld = true; e.preventDefault(); }
@@ -42974,6 +43101,7 @@ addEventListener('keydown', e => {
     /* Esc backs out of anything modal, including the build menu (which used to need B again) */
     if(buildMode){ buildMode = null; buildAnchor = null; refreshBuildBar && refreshBuildBar(); }
     castMode = null; attackArmed(false); guardMode = false;
+    if(talkScene) sceneClose(false);
     hideCtxMenu(); $('modal').style.display='none'; modalOpen=false;
   }
 });
@@ -45256,6 +45384,7 @@ function talkTitleOf(t){
 }
 function closeTalk(){
   talkState = null;
+  if(talkScene) sceneClose(false);
   document.getElementById('modal').style.display = 'none';
   modalOpen = false;
   syncPauseBtn();
@@ -46402,7 +46531,7 @@ function snapshot(){
        burnt mantle and its ember, the Bone Knight came back thin, the archer came back
        thick. Saving one string fixes the whole roster. */
     kin:c.kin||null,
-    clawDmg:c.clawDmg, clawWt:c.clawWt||null, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, craterOwn:c.craterOwn||null, eatsDead:!!c.eatsDead, storied:!!c.storied,
+    clawDmg:c.clawDmg, clawWt:c.clawWt||null, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, craterOwn:c.craterOwn||null, nightSpawn:!!c.nightSpawn, eatsDead:!!c.eatsDead, storied:!!c.storied,
     servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, lamp:!!c.lamp, harvestBonus:c.harvestBonus??null, corpseWorth:c.corpseWorth??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, sweep:c.sweep?{...c.sweep}:null, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, boundTold:!!c.boundTold,
     /* WHAT THEY HAVE HAD. Saved because it is a LIMIT, and a limit you can wash off by
@@ -46445,7 +46574,7 @@ function snapshot(){
     vip: !!c.vip, escortTo: c.escortTo ?? null, escortId: c.escortId || 0, attendant: !!c.attendant,
     lieutenant: !!c.lieutenant, lieuSince: (c.lieuSince ?? null), civ: !!c.civ, merc: !!c.merc,
     guildHire: !!c.guildHire, guildLicensed: !!c.guildLicensed, guildmaster: !!c.guildmaster, wage: c.wage||0,
-    heretic: !!c.heretic, burnDay: c.burnDay||0, bastionGuest: !!c.bastionGuest,
+    heretic: !!c.heretic, burnDay: c.burnDay||0, bastionGuest: !!c.bastionGuest, stoodDown: !!c.stoodDown,
     inv: {...c.inv}, pack: c.pack, mule: !!c.mule, fleeOnHit: !!c.fleeOnHit,
     eater: !!c.eater, warF: c.warF, warT: c.warT, campId: c.campId, rebelOf: c.rebelOf,
     sick: c.sick||0, armyEnds: c.armyEnds||0, trade: c.trade||null, tradeSkill: c.tradeSkill||0, guildFolk: !!c.guildFolk,
@@ -46899,7 +47028,7 @@ function restore(d){
       const cv = caves.find(x => x.id === c.caveId);
       if(cv && cv.rooms) c.homeRoom = cv.rooms.find(rm => rm.id === s.roomId) || c.homeRoom;
     } c.floor = s.floor || 0; c.captured = !!s.captured;
-    c.clawDmg = s.clawDmg || 0; c.clawWt = s.clawWt || null; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.craterOwn = s.craterOwn || null; c.eatsDead = !!s.eatsDead; c.storied = !!s.storied;
+    c.clawDmg = s.clawDmg || 0; c.clawWt = s.clawWt || null; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.craterOwn = s.craterOwn || null; c.nightSpawn = !!s.nightSpawn; c.eatsDead = !!s.eatsDead; c.storied = !!s.storied;
     c.structMult = s.structMult || 1; c.shortTag = s.shortTag || '';
     /* `|| 1` IS WRONG FOR A PROPPED BODY. Old Bones and Mass Reanimation both set
        `bindWeight = 0` — nothing about them is carried in anybody's head — and `0 || 1` puts
@@ -46994,7 +47123,7 @@ function restore(d){
     c.npcNecro = !!s.npcNecro; c.lieutenant = !!s.lieutenant; c.civ = !!s.civ; c.merc = !!s.merc;
     c.lieuSince = (s.lieuSince ?? null);
     c.guildHire = !!s.guildHire; c.guildLicensed = !!s.guildLicensed; c.guildmaster = !!s.guildmaster; c.wage = s.wage || 0;
-    c.heretic = !!s.heretic; c.burnDay = s.burnDay || 0; c.bastionGuest = !!s.bastionGuest;
+    c.heretic = !!s.heretic; c.burnDay = s.burnDay || 0; c.bastionGuest = !!s.bastionGuest; c.stoodDown = !!s.stoodDown;
     c.vip = !!s.vip; c.escortTo = s.escortTo ?? null; c.escortId = s.escortId || 0; c.attendant = !!s.attendant;
     c.inv = s.inv || {}; c.pack = s.pack || null; c.mule = !!s.mule; c.fleeOnHit = !!s.fleeOnHit;
     c.eater = !!s.eater; c.warF = s.warF ?? -1; c.warT = s.warT ?? -1;
@@ -48120,11 +48249,20 @@ function motherOpens(c){
   const wasShut = !!(dr && !dr.open);
   mother.opened = true;
   if(dr){ dr.barred = false; setDoor(dr, true); }
-  log(wasShut
+  /* ---------- AND WHAT THEY LEFT TO KEEP HER STANDS DOWN ----------
+     Every warren vault has a Deep Warden over its chest, hers included, so "COME IN" was
+     followed by a golden-age automaton with an Aether Lance going for the one she let in. It
+     stands down for your people once her door has opened to one of hers, and stays down until
+     one of yours strikes it (`stoodDown`, saved; see the redoubt clause in `hostile`). */
+  const cv = motherCave();
+  const warden = cv && chars.find(o => o.caveId === cv.id && o.name === 'The Deep Warden' && o.state !== 'dead');
+  if(warden){ warden.stoodDown = true; warden.provoked = false; warden.target = null; }
+  const beats = [{kind: 'good', text: wasShut
     ? `THE SEAL. ${c.name} puts a hand flat on the weld, and eleven names deep of golden-age alloy lets go at once, like a held breath. It only ever held against a rider.`
-    : `THE CELL. Somebody broke the bar on this door and walked through, and she let them. ${c.name} is the first to walk in who is hers.`, 'good');
+    : `THE CELL. Somebody broke the bar on this door and walked through, and she let them. ${c.name} is the first to walk in who is hers.`}];
   const lines = [
     'COME IN. Nobody has said that to anybody in this room in nine hundred years. I wanted to hear how it sounds.',
+    ...(warden ? ['Mind the thing by the chest. It was built to keep me, and it has never once understood that I was not the one leaving.'] : []),
     'You want to know what you are. You are a piece of me, cut off with my leave, and you are owed the reason I gave it.',
     'A man came down here while the kingdom was still drinking me. He had the old face, the one my first congregation wore before any of your people went up into the light. I had not seen it in a very long time.',
     'He told me what the alchemists upstairs were about to do, and that they would not survive it. He asked for pieces of me to make hunters with, and he told me what the hunters would be for. Nobody had asked me for anything since my congregation. They had only taken.',
@@ -48135,8 +48273,9 @@ function motherOpens(c){
     'The ones who built this room wrote a number on the door instead of a name. My name is Llammialith. I have given it to very few. You are the first of mine to come back whole enough to carry it.',
     'Go up. I am not going anywhere. But somebody knows now, and it is one of mine, and that is more than I had an hour ago.',
   ];
-  for(const l of lines) log('SHE SAYS: "' + l + '"', 'good');
-  threadDone('mother', 'Opened. She told one of hers the whole of it, and her name.');
+  for(const l of lines) beats.push({say: true, kind: 'good', text: l});
+  sceneOpen('BEHIND THE SEAL', 'The bottom of the warren', beats,
+    () => threadDone('mother', 'Opened. She told one of hers the whole of it, and her name.'));
 }
 function motherSpeaks(c){
   /* What she says is read off the world, not off a quest step. She has been listening to it
@@ -48146,7 +48285,7 @@ function motherSpeaks(c){
   const tier = me.hollowTier || 0;
   const kin = Object.keys(bossSlain).length;
   const dustMastery = attOf(me, 'dust');
-  log('THE SEAL. A slab of golden-age alloy, welded from the outside, with eleven signatures cut into it. It is warm.', 'good');
+  const beats = [{kind: 'good', text: 'THE SEAL. A slab of golden-age alloy, welded from the outside, with eleven signatures cut into it. It is warm.'}];
   /* ---------- AND SOMETIMES IT IS A STRANGER AT THE DOOR ----------
      The whole of this scene used to assume a Hollow, because the only way to reach it was to
      have started as one. She exists in every world now, so the party that breaks her vault open
@@ -48166,16 +48305,17 @@ function motherSpeaks(c){
     if(dustMastery >= 2 || c.gift === 'dust')
       lines2.push('You work the dust art. That came out of me. Out of ME — a woman under a mountain, on a table, awake for it. Every time you fold the light you are spending a piece of me. Do it anyway. It is spent.');
     if(placesSeen.corpse)
-      lines2.push('You have stood on my brother. They cut him apart and sold the pieces by weight. They kept me because a corpse is a windfall and a prisoner is an income.');
+      lines2.push('You have stood on one of my kind. They cut it apart and sold the pieces by weight. They kept me because a corpse is a windfall and a prisoner is an income.');
     if(kin >= 3) lines2.push('Things have been dying out there in a pattern. That was you. I have no view on it. I have been in here a long time.');
     if(noticeTier >= 2) lines2.push('Something has been watching you come down. Not me. I have been watched for nine hundred years and I know the difference.');
     lines2.push('The weld is eleven names deep and it was never built to hold against YOU. It holds against a rider. So there is nothing here for you to do and nothing here for you to take, and you may tell anybody you like that I am down here. Nobody has ever come.');
-    for(const l of lines2) log('SHE SAYS: "' + l + '"', '');
-    log('THE SEAL DOES NOT ANSWER. It was welded against something you are not. Bring one of hers — a Hollow, awake — and it is a different door.', '');
-    threadSet('mother', 'Looking for Mother',
+    for(const l of lines2) beats.push({say: true, text: l});
+    beats.push({text: 'THE SEAL DOES NOT ANSWER. It was welded against something you are not. Bring one of hers — a Hollow, awake — and it is a different door.'});
+    const at = {x: c.x, y: c.y};
+    sceneOpen('THE SEAL', 'The bottom of the warren', beats, () => threadSet('mother', 'Looking for Mother',
       'Found. She is behind a golden-age seal at the bottom of a warren, and it does not answer to anybody who is not one of hers.',
       {hint: 'The weld holds against a rider, not against you. A Hollow taken through the Nascent Rite at your circle is what the door weighs.',
-       mark: {x: c.x, y: c.y}});
+       mark: at}));
     deed('found_mother', 1);
     return;
   }
@@ -48192,22 +48332,25 @@ function motherSpeaks(c){
   if(kin >= 3) lines.push('Things have been dying out there in a pattern. That was you. Good. They made you for that and it is the one honest thing they did.');
   if(noticeTier >= 2) lines.push('Something has been watching you come down. Not me. I have been watched for nine hundred years and I know the difference.');
   if(bossSlain.sixfold) lines.push('You put down the sixfold thing. It came through the same hole I am behind. It did not come through whole. Neither did you.');
-  if(placesSeen.corpse) lines.push('You have stood on my brother. They cut him apart and sold the pieces by weight. They kept me because a corpse is a windfall and a prisoner is an income.');
+  if(placesSeen.corpse) lines.push('You have stood on one of my kind. They cut it apart and sold the pieces by weight. They kept me because a corpse is a windfall and a prisoner is an income.');
   lines.push(tier >= 2 ? 'The weld is eleven names deep. You will find that you outweigh all of them.' :
     'The way through is not a key and it is not a blade. Give the rider the whole of what you are — the gift, and everything you were saving it for. Come back as a thing and not a passenger.');
-  for(const l of lines) log('SHE SAYS: "' + l + '"', tier >= 2 ? 'good' : '');
+  for(const l of lines) beats.push({say: true, kind: tier >= 2 ? 'good' : '', text: l});
   if(tier < 2 && !mother.toldPrice){
     mother.toldPrice = true;
-    log('THE PRICE IS NAMED: the Nascent Rite, at your circle. It burns the gift — the dust art you found her WITH — and gives the rider the whole body. That is what the seal weighs.', 'good');
+    beats.push({kind: 'good', text: 'THE PRICE IS NAMED: the Nascent Rite, at your circle. It burns the gift — the dust art you found her WITH — and gives the rider the whole body. That is what the seal weighs.'});
   }
   /* and the thread says what the door wants, since it is the one door in the game that is not forced */
   const dr = motherDoor();
-  threadSet('mother', 'Looking for Mother', tier >= 2
-      ? 'Found. The seal answers one of hers who is finished, and that is you. Put a hand on it.'
-      : 'Found. The seal holds against a rider, and one of hers who is still riding cannot lift it.',
-    {hint: tier >= 2 ? 'Stand at the barred door with the Hollow and right-click it.'
-                     : 'The Nascent Rite at your circle, then come back to the door.',
-     mark: dr ? {x: dr.x + 0.5, y: dr.y + 0.5} : {x: c.x, y: c.y}});
+  const at = dr ? {x: dr.x + 0.5, y: dr.y + 0.5} : {x: c.x, y: c.y};
+  sceneOpen('THE SEAL', 'The bottom of the warren', beats, () => {
+    threadSet('mother', 'Looking for Mother', tier >= 2
+        ? 'Found. The seal answers one of hers who is finished, and that is you. Put a hand on it.'
+        : 'Found. The seal holds against a rider, and one of hers who is still riding cannot lift it.',
+      {hint: tier >= 2 ? 'Stand at the barred door with the Hollow and right-click it.'
+                       : 'The Nascent Rite at your circle, then come back to the door.',
+       mark: at});
+  });
   deed('found_mother', 1);
 }
 const ORIGINS = {

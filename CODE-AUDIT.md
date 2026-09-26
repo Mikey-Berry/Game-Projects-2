@@ -486,7 +486,7 @@ there is one network every time (9 or 10 roads), and none of it comes inside the
 approach. Travellers between towns the roads do not join directly now string roads together
 (`routeVia`) instead of walking a straight line.
 
-### 5.9 The night never sends anything — **found 2026-09-25, your call**
+### 5.9 The night never sends anything — **fixed 2026-09-26**
 
 `gauntTick` spawns the night's Watchers near your people, up to a cap of
 `3 + tier*2 + wrath/60` (six times that under a blood moon). The count it checks against is
@@ -500,9 +500,26 @@ Everything this spawner can send is dead with it: the ordinary night Watchers, t
 comes for you from tier 2, the Larder-Kin, the shrikes, the Eye flights, and the Attention's
 Messenger (the only Messenger that comes for you rather than with the Order).
 
-The likely intent is to count only the night's own arrivals on the surface
-(`c.nightborn && (c.floor || 0) === 0`). That would switch the spawner on and make every night
-noticeably more dangerous, so it is left for you to decide.
+**The fix, on your go-ahead:** the cap counts only what this spawner sent. Everything it
+stands up carries `nightSpawn` (saved), and the count is those still alive. The depths, the
+sites, the tears' own garrisons and the crater keep their own numbers. A Larder-Kin is not
+taken by the dawn, so it holds its place in the count until it is killed, which stops them
+piling up night after night. I chose this over dropping the cap: under a blood moon the draw
+is fourteen times the usual, and with no cap a single night would bring in dozens.
+
+Measured on the default seed:
+
+- **The first three nights, the party standing at the start:** 7 arrivals, at most 3 at once,
+  and no damage to the party. The old build sent none.
+- **Late in the clock (Fracture at 85), a fresh three-person party in the waste, two nights:**
+  one run brought 17 (11 of them Eyes) and wiped the party; another brought 9, including a
+  Messenger, and cost 13 blood. The old build sent none.
+
+**And a crash nobody could have seen:** an Eye flight's squad had a lair and no anchor, so the
+first flight to wander threw in `ai` (`a.x` of undefined). Eye flights only ever came from this
+spawner, so it never ran. The flight has an anchor now. `review.js` claim 11 checks the
+spawner sends something with 471 gaunts elsewhere in the world, stays inside its cap, and that
+a wandering flight does not throw. It sent nothing on the build before.
 
 ### 5.8 Write-only fields the harnesses read
 

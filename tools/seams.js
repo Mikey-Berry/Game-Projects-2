@@ -20,13 +20,19 @@
  *      put to the torch from its own flag (sack: half of each store into the wagon, the rest
  *      burned). All four were weighted and none was fired
  *   6. Mother's seal is hers: her door is not forced by a shoulder and holds against a Hollow
- *      still riding; a finished one puts a hand on it, it opens, and the scene behind it is said.
+ *      still riding; a finished one puts a hand on it, it opens, and the scene behind it is said,
+ *      a line at a time in the window, while the Deep Warden over her chest stands down.
  *      Her lines promised this and the door was an ordinary barred door
  *   7. the Church speaks in its own layer: a Paladin at peace, the Inquisitor, and Vey open the
  *      Order's conversation (the Light, the Original Purge, the pyre) instead of the townsfolk's
  *   8. the Messengers abroad are their own faction beside the Order, and the crater's own hold
  *      the crater against everybody; there are more of them late in the clock, and one that
  *      comes to look at a living one of yours goes to stand with the Order
+ *   9. the words encode the speaker: the golden age's paper says "conduit" (two formulae and a
+ *      ledger that is in the colonnade cache and nowhere else), and no item says "Battery"
+ *  10. a shrine stone is a small philosopher's stone: breaking a shrine gives the stone, the
+ *      bench reads it for insight, CRUSH makes it ash, and ash carries the Door's hold faster
+ *      without being needed for it
  *
  * Anything starting '!!' fails the build.
  *
@@ -476,11 +482,30 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     await frame(); await frame();
     Object.assign(six, await p.evaluate(() => {
       const R = {};
-      const { dr } = window.__six;
+      const { dr, cv } = window.__six;
       const lines = [];
+      /* she has been stood on: the corpse-site line is in her first scene, without kinship */
+      const sawCorpse = !!placesSeen.corpse; placesSeen.corpse = placesSeen.corpse || Math.max(1, day);
+      const warden = chars.find(o => o.caveId === cv.id && o.name === 'The Deep Warden' && o.state !== 'dead');
+      R.wardenBefore = warden ? hostile(warden, window.__six.whole) : null;
       const _log = log; log = (t, k) => { lines.push(String(t)); return _log(t, k); };
-      try { R.wholeMenu = __rclick(dr.x + 0.5, dr.y + 0.5, /HAND ON THE SEAL$/); } finally { log = _log; }
+      try {
+        R.wholeMenu = __rclick(dr.x + 0.5, dr.y + 0.5, /HAND ON THE SEAL$/);
+        /* A LINE AT A TIME, through the window's own button, the way a player reads it */
+        /* the scene's own lines, not the news of it or the journal */
+        const ofScene = () => lines.filter(l => /^SHE SAYS|^THE SEAL\.|^THE CELL\./.test(l));
+        R.firstShown = ofScene().length; R.firstLines = ofScene().slice(0, 4).join(' || ');
+        R.modalUp = modalOpen && document.getElementById('modal').style.display !== 'none';
+        let pages = 0, btn = null;
+        const button = () => [...document.querySelectorAll('#modalbody button')].find(x => /^(GO ON|LEAVE)$/.test(x.textContent));
+        while ((btn = button()) && btn.textContent === 'GO ON' && pages < 60) { btn.click(); pages++; }
+        R.pages = pages;
+        if (btn) btn.click();                  /* LEAVE */
+        R.closed = !modalOpen && (typeof talkScene === 'undefined' || !talkScene);
+      } finally { log = _log; if (!sawCorpse) delete placesSeen.corpse; }
       R.said = lines.join(' | ');
+      R.wardenAfter = warden ? hostile(warden, window.__six.whole) : null;
+      if (warden) { warden.provoked = true; R.wardenStruck = hostile(warden, window.__six.whole); warden.provoked = false; }
       R.opened = !!mother.opened && !!dr.open && !dr.barred;
       const th = threads.find(t => t.key === 'mother');
       R.threadDone = !!(th && th.done);
@@ -489,6 +514,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       mother.opened = false;
       restore(snap);
       R.kept = mother.opened === true;
+      R.wardenKept = !warden || chars.some(o => o.caveId === cv.id && o.name === 'The Deep Warden' && o.stoodDown);
       /* a save from before, with her bar already broken by a shoulder: one of hers finished,
          standing in the room, hears the same scene */
       {
@@ -499,7 +525,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         w2.__probe = true; w2.floor = cv.vault.f; w2.race = 'hollow'; w2.hollowTier = 2; w2.noFight = true; chars.push(w2);
         const l2 = [];
         const _log2 = log; log = (t, k) => { l2.push(String(t)); return _log2(t, k); };
-        try { _mthT = 0; motherTick(3); } finally { log = _log2; }
+        try { _mthT = 0; motherTick(3); if (typeof sceneClose === 'function') sceneClose(); } finally { log = _log2; }
         R.brokenDoor = mother.opened && /THE CELL/.test(l2.join(' ')) && /Llammialith/.test(l2.join(' '));
       }
       for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
@@ -521,6 +547,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       else {
         if (!x.opened) bits.push('the hand on the seal did not open it');
         if (!/COME IN/.test(said) || !/Malathuun/.test(said) || !/Llammialith/.test(said)) bits.push(`the second scene was not said (${said.slice(0, 100)})`);
+        if (/brother/.test(said) || !/one of my kind\. They cut it apart/.test(said)) bits.push('her first scene still calls the one on the corpse site her brother, or does not speak of it');
+        if (!x.modalUp || x.firstShown > 1) bits.push(`the scene arrived as ${x.firstShown} log lines at once${x.modalUp ? '' : ' with no window'} (${x.firstLines})`);
+        else if (!(x.pages >= 10) || !x.closed) bits.push(`the window paged ${x.pages} times and ${x.closed ? 'closed' : 'did not close'}`);
+        if (x.wardenBefore === false) bits.push('the Deep Warden was at peace with the party before the seal opened');
+        if (x.wardenAfter) bits.push('the Deep Warden still fights the one she let in');
+        if (x.wardenStruck === false) bits.push('struck, the Deep Warden stays stood down');
+        if (!x.wardenKept) bits.push('a reload forgot the Warden stood down');
         if (!x.threadDone) bits.push('her thread was not closed');
         if (!x.kept) bits.push('a reload forgot the door was opened');
         if (!x.brokenDoor) bits.push('with her bar already broken (an old save), a finished Hollow in the room heard nothing');
@@ -528,7 +561,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     }
     out.herSealIsHers = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
       : `her door answers nobody with a shoulder (${x.strangerMenu}) while every other vault still forces, holds against a rider, and opens to a finished Hollow's hand on the seal: ` +
-        `the second scene is said, her thread closes, a reload keeps it, and a door an old save already broke still gives the scene to one of hers in the room${x.otherForced === undefined ? ' (no other vault to compare)' : ''}`;
+        `the second scene is said a line at a time in the window (${x.pages + 1} lines, GO ON to LEAVE), her first scene speaks of the corpse site without kinship, ` +
+        `the Deep Warden stands down for the one she let in until it is struck, her thread closes, a reload keeps it all, and a door an old save already broke still gives the scene to one of hers in the room${x.otherForced === undefined ? ' (no other vault to compare)' : ''}`;
   }
 
   /* ---- 7. the Church speaks in its own layer ----
@@ -706,6 +740,86 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         `The crater's ${craterOnes.length} are the crater's, hold it against the Order and a Messenger from abroad alike, and are not counted against the world's ceiling. ` +
         `The ceiling is 2, 3, 4 at stages 0, 3 and 5; a patrol carries one from stage 3 (${e3.patrol.toFixed(2)}, then ${e5.patrol.toFixed(2)}) and a hunt more often late (${e0.hunt.toFixed(2)} to ${e5.hunt.toFixed(2)}). ` +
         `One that comes to look at a living body of yours walks to the Bastion yard; one near your dead keeps hunting; killing one raises the Order's wrath`;
+    return R;
+  }));
+
+  /* ---- 9 and 10. the words, and the stone ---- */
+  Object.assign(out, await p.evaluate(() => {
+    const R = {};
+    {
+      const bits = [];
+      if (!/conduit/i.test((ITEMS.formula_p || {}).desc || '')) bits.push('the Preserved Formula does not say conduit');
+      if (!/conduit/i.test((ITEMS.formula_w || {}).desc || '')) bits.push('the Worn Formula does not say conduit');
+      const ledger = ITEMS.c_ledger;
+      const heart = chests.find(c => c.crater && c.vault && dist(c.x, c.y, CRATER.x, CRATER.y) < 14);
+      const holding = chests.filter(c => c.loot && c.loot.items && c.loot.items.c_ledger);
+      if (!ledger || !/conduit/i.test(ledger.desc || '')) bits.push('there is no golden-age ledger that says conduit');
+      else if (holding.length !== 1 || holding[0] !== heart) bits.push(`${holding.length} chests hold the ledger${holding.length === 1 ? ', and not the colonnade\'s' : ''}`);
+      const text = Object.values(ITEMS).map(i => (i.name || '') + ' ' + (i.desc || '')).join(' ');
+      if (/\bbattery\b/i.test(text)) bits.push('an item says Battery');
+      R.theWordsEncodeTheSpeaker = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+        : 'the golden age\'s paper says "conduit": a Worn Formula, a Preserved Formula\'s margin, and a Chancellery ledger found in the colonnade cache and no other; no item anywhere says "Battery"';
+    }
+    {
+      const bits = [];
+      const st0 = Object.assign({}, stash), rp0 = research.rp;
+      const sh = shrines.find(x => !x.broken && x.town);
+      if (!sh) bits.push('no standing shrine to break');
+      else {
+        const strut = structAt(sh.bx + 1, sh.by + 1);
+        strut.hp = 1; destroyStructure(strut);
+        const gotStone = (stash.s_stone || 0) - (st0.s_stone || 0), gotAsh = (stash.s_ash || 0) - (st0.s_ash || 0);
+        if (gotStone !== 1) bits.push(`breaking a shrine gave ${gotStone} stones`);
+        if (gotAsh) bits.push(`breaking a shrine gave ${gotAsh} ash straight off`);
+        R.rpOnBreak = research.rp - rp0;
+        /* the bench offers it for reading, through the window */
+        openResearch();
+        const benchText = (document.getElementById('modalbody') || {}).textContent || '';
+        const reads = /Shrine Stone/.test(benchText) && [...document.querySelectorAll('#modalbody button')].some(b => b.textContent === 'STUDY ALL');
+        closeTalk();
+        const study = ITEMS.s_stone ? beginReading(['s_stone']) : null;
+        if (!reads) bits.push('the bench does not offer the stone for study');
+        if (!((ITEMS.s_stone || {}).rp > 0) || !study) bits.push('the stone holds no insight');
+        /* CRUSH, from the wagon's own button */
+        opts.stash = true; if (typeof applyStashFold === 'function') applyStashFold(); refreshInv();
+        const cb = document.querySelector('#invbody [data-crush="s_stone"]');
+        const a0 = stash.s_ash || 0, s0 = stash.s_stone || 0;
+        if (!cb) bits.push('the wagon offers no CRUSH on the stone');
+        else {
+          cb.click();
+          if (!((stash.s_stone || 0) === s0 - 1 && (stash.s_ash || 0) === a0 + 3)) bits.push(`CRUSH left ${stash.s_stone || 0} stones and ${stash.s_ash || 0} ash (from ${s0} and ${a0})`);
+        }
+        /* the Door's hold, with and without: a stand-in door right here, so nothing opens the sky */
+        const q = findOpenNear(sh.x + 30, sh.y + 30, 4);
+        const w = makeChar('Holder', 'player', q.x, q.y, { atk: 10, def: 10, tough: 40, magic: 0 });
+        w.__probe = true; w.gift = 'divine'; w.mana = 999; chars.push(w);
+        const doorWas = theDoor;
+        const run = (ash) => {
+          theDoor = { x: w.x, y: w.y, r: 14, seal: 0, work: 0, opened: day, fed: 0 };
+          const keep = stash.s_ash || 0;
+          stash.s_ash = ash; if (!ash) delete stash.s_ash;
+          for (let i = 0; i < 40; i++) { w.mana = 999; workTheDoor(w, 0.25); }
+          const got = { work: theDoor.work, burnt: theDoor.ashBurnt || 0 };
+          stash.s_ash = keep; if (!keep) delete stash.s_ash;
+          return got;
+        };
+        const bare = run(0), ashed = run(2);
+        theDoor = doorWas;
+        for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+        if (!(bare.work > 0)) bits.push('without ash the hold does not move');
+        if (!(ashed.burnt >= 1 && ashed.work > bare.work * 1.3)) bits.push(`with ash the hold went ${ashed.work.toFixed(1)} against ${bare.work.toFixed(1)} bare, burning ${ashed.burnt}`);
+        R.hold = { bare: bare.work, ashed: ashed.work, burnt: ashed.burnt };
+        /* put the world back */
+        sh.broken = false; sh.hp = sh.maxHp; sh.reT = 0;
+        for (const k of Object.keys(stash)) if (!(k in st0)) delete stash[k];
+        Object.assign(stash, st0); research.rp = rp0;
+        refreshInv();
+      }
+      R.theStoneIsAStone = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+        : `a broken shrine gives its stone whole (no ash, ${R.rpOnBreak} insight on the spot); the bench offers it to read for ${ITEMS.s_stone.rp} insight; ` +
+          `CRUSH in the wagon makes it 3 measures of ash; and ash burned into the Door's hold carries it ${(R.hold.ashed / R.hold.bare).toFixed(2)}x as far over the same ten seconds, while the hold still moves without any`;
+      delete R.rpOnBreak; delete R.hold;
+    }
     return R;
   }));
 

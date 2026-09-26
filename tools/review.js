@@ -15,6 +15,9 @@
  *   8. resizing the window threw away the PIXEL RATIO cap
  *   9. ctrl+right-click on a workbench put a mindless risen on CRAFT
  *  10. the Aldercott deal was not saved, so its one-time gift could be taken again
+ *  11. the night sent nothing: its cap counted every gaunt in the world, the depths' hundreds
+ *      included, against a cap of three (found 2026-09-25, CODE-AUDIT §5.9). And the first Eye
+ *      flight to wander threw, which nobody saw while the spawner was dead
  *
  * Anything starting '!!' fails the build.
  *
@@ -201,6 +204,47 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           ? 'the Dame\'s deal and the watch it sets both come back from a save, so her gift cannot be taken twice'
           : `!! THE DEAL CAME BACK AS ${estate.deal} (watched ${estate.watched})`;
       }
+    }
+    /* ---- 11. the night sends something, and only the night's own count against it ----
+       Out in the waste on the first night, far from any lamp. The world already holds hundreds
+       of gaunts underground and in the sites; none of them are the night's. */
+    {
+      const party = player().filter(c => c.state === 'ok');
+      const was = party.map(c => ({ c, x: c.x, y: c.y, f: c.floor }));
+      const hour0 = hour, blood0 = bloodMoon;
+      let q = null;
+      for (let t = 0; t < 400 && !q; t++) {
+        const x = 80 + ((t * 977) % (W - 160)), y = 80 + ((t * 613) % (H - 160));
+        if (nearestTownDist(x, y) > 70 && (typeof craterD !== 'function' || craterD(x, y) > 240) && !isBlocked(x, y) && tileAt(x, y) !== 3) q = { x, y };
+      }
+      party.forEach((c, i) => { c.x = q.x + i; c.y = q.y; c.floor = 0; c.moveTarget = null; });
+      rebuildCharGrid();
+      hour = 23; bloodMoon = false;
+      const worldGaunts = chars.filter(c => c.faction === 'gaunt' && c.state !== 'dead').length;
+      /* the cap is fractional (the tide is), and the spawner stops once the count reaches it, so
+         the most it ever holds is the cap rounded up; tier 2 and up, a flight of Eyes can land
+         on top of that in one go, which is the flight's own rule */
+      const tier = eldritchTide(), cap = Math.ceil(3 + tier * 2 + Math.floor(purgeWrath / 60)) + (tier >= 2 ? 7 : 0);
+      const mine = () => chars.filter(c => c.nightSpawn && c.state !== 'dead');
+      let sent = 0, over = 0, threw = null;
+      try {
+        for (let i = 0; i < 400; i++) {
+          gauntTick(0.5);
+          sent = mine().length;
+          if (sent > cap) over = Math.max(over, sent);
+          /* and a flight that wanders does not throw: the wander code is driven directly */
+          for (const e of mine()) if (e.squad && e.squad.lair) { e.wanderT = 0; e.target = null; ai(e, 0.25); }
+          if (sent >= cap && i > 40) break;
+        }
+      } catch (err) { threw = String(err && err.message || err).slice(0, 80); }
+      R.theNightSendsSomething = threw ? `!! THE NIGHT'S OWN THREW: ${threw}`
+        : sent > 0 && !over
+        ? `on the first night in the waste the dark sends ${sent} (the cap is ${cap}), while ${worldGaunts} gaunts elsewhere in the world count for none of it`
+        : `!! THE NIGHT SENT ${sent} WITH ${worldGaunts} GAUNTS ELSEWHERE IN THE WORLD${over ? ` AND WENT PAST ITS CAP OF ${cap} TO ${over}` : ''}`;
+      for (let i = chars.length - 1; i >= 0; i--) if (chars[i].nightSpawn) chars.splice(i, 1);
+      for (const w of was) { w.c.x = w.x; w.c.y = w.y; w.c.floor = w.f; }
+      hour = hour0; bloodMoon = blood0;
+      rebuildCharGrid();
     }
     return R;
   });
