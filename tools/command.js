@@ -163,7 +163,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const q = reachableNear(at.x + dx, at.y + dy, 9);
         return q && { x: q.x, y: q.y, opened: false, loot: { cats: 100, items: {} } };
       };
-      const c1 = cp(9, 5), c2 = cp(-7, -9), far = cp(90, 0);
+      /* THE FAR ONE ONLY HAS TO BE FAR, AND SOMEWHERE A BAND COULD WALK. Ninety tiles due east
+         was a fixed bearing, and where it lands depends on where `at` lands, which depends on
+         how many `rnd()` calls the world has made by now. Removing one dead daily draw (the old
+         Hollowmere pauper spawner, 2026-09-24) moved `at` and put that point in the sea with no
+         reachable ground within nine rings, so the block reported NOTHING TO MEASURE about a
+         forage order nothing was wrong with. Restoring the draw alone turned it green again.
+         Any of the four ways out is ninety tiles outside a 22-tile order. */
+      const c1 = cp(9, 5), c2 = cp(-7, -9), far = cp(90, 0) || cp(-90, 0) || cp(0, 90) || cp(0, -90);
       if (!c1 || !c2 || !far) {
         R.foundTheChests = '!! NOTHING TO MEASURE — no reachable ground near the band to stand a chest on';
       } else {
@@ -263,6 +270,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           band[k].state = 'down';
           for (let t = 0; t < 8 && brokeAt === null; t++) {
             step(1);
+            /* the judgement is about the band on the floor, not about whatever else walks up:
+               anything hostile that comes near is taken off, so the count of the fallen is the
+               count this staging set. It turned over on the world's dice (2026-09-26), when the
+               ranged skill started setting a shooter's pace, with nothing about a captain changed. */
+            for (let j = chars.length - 1; j >= 0; j--) { const o = chars[j];
+              if (o.state !== 'dead' && !band.includes(o) && (o.nightSpawn || (hostile(cdr, o) && dist(o.x, o.y, cdr.x, cdr.y) < 40))) chars.splice(j, 1); }
             if (!cdr.cmd || cdr.cmd.phase === 'home') brokeAt = k;
           }
         }

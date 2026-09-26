@@ -305,12 +305,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const offHoly = mitigate(zed, 100, 'cut', 0, null);
     R.deadSufferOnHoly = onHoly > offHoly * 1.2 ? 'take ' + Math.round(100 * (onHoly / offHoly - 1)) + '% more' : 'NO PENALTY';
 
-    /* break it: ash, and the ground goes quiet */
-    const ashBefore = stash.s_ash || 0;
+    /* break it: its stone (a small philosopher's stone, crushed for ash), and the ground goes quiet */
+    const ashBefore = stash.s_stone || 0;
     const strut = structAt(sh.bx + 1, sh.by + 1);
     R.shrineStrikeable = strut && strut.kind === 'shrine' ? 'can be struck' : 'NOT STRIKEABLE';
     if (strut) { strut.hp = 1; destroyStructure(strut); }
-    R.ashGained = (stash.s_ash || 0) > ashBefore ? '+' + ((stash.s_ash || 0) - ashBefore) + ' sanctified ash' : 'NO ASH';
+    R.ashGained = (stash.s_stone || 0) > ashBefore ? '+' + ((stash.s_stone || 0) - ashBefore) + ' shrine stone' : 'NO STONE';
     R.groundUnhallowed = !consecratedAt(sh.x + 2, sh.y) ? 'ground opened' : 'STILL HALLOWED';
 
     /* --- 11d. WANTED: recognised on sight, settled for coin, and it decays --- */

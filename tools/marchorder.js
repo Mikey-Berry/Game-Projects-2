@@ -88,6 +88,24 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     const me = player()[0];
     const HOME = { x: me.x, y: me.y };
+    /* ---------- OPEN WASTE, FOUND ONCE ----------
+       Past every town (see block 3 for why a town's gate is the world's dice) and clear of the
+       crater's approach, where the Watchers and the light are the crater's own business. Two
+       spots, sixty tiles apart, so the fight in block 2 leaves nothing on block 3's ground. */
+    const findWaste = (avoid) => {
+      for (let r = 40; r < 240; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const x = Math.floor(HOME.x) + dx + 0.5, y = Math.floor(HOME.y) + dy + 0.5;
+        if (x < 40 || y < 40 || x >= W - 40 || y >= H - 40) continue;
+        if (!towns.every(t => dist(t.x, t.y, x, y) > 70)) continue;
+        if (typeof CRATER !== 'undefined' && craterD(x, y) < CRATER.approach + 30) continue;
+        if (avoid && dist(avoid.x, avoid.y, x, y) < 60) continue;
+        if (isBlocked(x, y, 0) || isBlocked(x + 20, y, 0)) continue;
+        return { x, y };
+      }
+      return null;
+    };
+    const WASTE = findWaste(null), WASTE2 = findWaste(WASTE);
 
     /* ================= 1. THE ORDER OF MARCH, WITH NOTHING IN THE WAY ================= */
     let marchRanks = null;
@@ -101,14 +119,66 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? `${melee.length} blades and ${bows.length} bows under one captain — a composition, so the ranks have somewhere to go`
         : `!! THE BAND IS NOT OF TWO KINDS (${melee.length} MELEE, ${bows.length} RANGED)`;
       giveCommand(cdr, band, 'forage', { x: HOME.x + 40, y: HOME.y }, 48);
-      step(90);
-      /* the heading the column is actually walking, taken from where it has got to */
-      const hx = cdr.x - HOME.x, hy = cdr.y - HOME.y;
-      const L = Math.hypot(hx, hy) || 1;
-      const ux = hx / L, uy = hy / L;
-      const along = (o) => (o.x - cdr.x) * ux + (o.y - cdr.y) * uy;   /* + is ahead of the captain */
-      const mAvg = melee.filter(o => o.state === 'ok').reduce((a, o) => a + along(o), 0) / Math.max(1, melee.filter(o => o.state === 'ok').length);
-      const rAvg = bows.filter(o => o.state === 'ok').reduce((a, o) => a + along(o), 0) / Math.max(1, bows.filter(o => o.state === 'ok').length);
+      /* ---------- AHEAD OF HIM WHILE THE COLUMN IS MARCHING ----------
+         This used to take one snapshot at ninety seconds and measure along HOME → captain, "the
+         heading the column is actually walking, taken from where it has got to". A forage
+         sweep does not walk away from home in a line: it walks at the nearest ground nobody has
+         seen, and it turns. The snapshot passed whenever the last leg happened to point away
+         from home. When a change elsewhere moved the world's dice (2026-09-25: Marrow Ticks
+         that can get back up), the last leg pointed back, and blades that were ahead of him
+         along the way he was going read as fifteen tiles behind.
+         Averaging over the whole march is wrong the other way: across a turn the ranks are
+         still re-forming, and that is not disorder.
+         So this measures along the heading the game forms the ranks on (`bandHeading`), and
+         only on a steady leg: sampled every 1.5 seconds, counted when the heading has held for
+         the last 4.5. At least five such moments are required, and the bar has not moved. The
+         build before the march order has no `bandHeading`; there the captain's own velocity
+         stands in, so the harness still runs, and reads red, on it.
+         AND AT THE GAME'S OWN STEP. The rest of this file steps a quarter-second at a time,
+         which is fine for what a band decides and wrong for how fast it walks. Bodies walk a
+         path from tile centre to tile centre, and a body that can finish its node in one update
+         snaps to it and loses the rest of that update's move. At 0.25s the captain (0.64 a
+         step) and a blade (0.8) both take exactly two updates a tile, 2.0 tiles a second each,
+         so the fifth off his pace that builds the column does not exist here. At 1/30s it
+         does. */
+      step(20, SIM_DT);
+      const hdNow = (prev) => {
+        if (typeof bandHeading === 'function') return bandHeading(cdr);
+        const dx = cdr.x - prev.x, dy = cdr.y - prev.y, d = Math.hypot(dx, dy) || 1;
+        return { x: dx / d, y: dy / d };
+      };
+      let mSum = 0, rSum = 0, n = 0, pos = { x: cdr.x, y: cdr.y };
+      const hist = [];
+      /* ---------- AND NOTHING ELSE ON THE ROAD ----------
+         What this measures is how the band walks, not what it meets. Anything hostile that
+         wanders into it makes the bows stop and shoot, and a shooter stopped to loose is a
+         shooter at the captain's heel; so the formation claim read whatever the world's dice
+         put on the road that day. It turned over when the ranged skill started setting a
+         shooter's pace (2026-09-26), with nothing about the march changed. Cleared as it comes,
+         the same way the round trip below keeps the night off it. */
+      /* and nobody else in the way at all: townsfolk crossing the column push the ranks about
+         exactly as a fight does, and where they stand is the world's dice too */
+      const inBand = new Set([cdr, ...melee, ...bows]);
+      const clearRoad = () => { for (let j = chars.length - 1; j >= 0; j--) { const o = chars[j];
+        if (o.state === 'dead' || inBand.has(o)) continue;
+        const d = dist(o.x, o.y, cdr.x, cdr.y);
+        if (o.nightSpawn || (hostile(cdr, o) && d < 40) || (o.faction !== 'player' && d < 25)) chars.splice(j, 1); } };
+      for (let i = 0; i < 46; i++) {
+        step(1.5, SIM_DT); clearRoad();
+        const hd = hdNow(pos); pos = { x: cdr.x, y: cdr.y };
+        hist.push(hd);
+        if (hist.length < 4) continue;
+        const h0 = hist[hist.length - 4];
+        if (hd.x * h0.x + hd.y * h0.y < 0.95) continue;     /* turned in the last 4.5s: still forming */
+        const along = (o) => (o.x - cdr.x) * hd.x + (o.y - cdr.y) * hd.y;   /* + is ahead of the captain */
+        const mOk = melee.filter(o => o.state === 'ok'), rOk = bows.filter(o => o.state === 'ok');
+        if (!mOk.length || !rOk.length) continue;
+        mSum += mOk.reduce((a, o) => a + along(o), 0) / mOk.length;
+        rSum += rOk.reduce((a, o) => a + along(o), 0) / rOk.length;
+        n++;
+      }
+      const L = Math.hypot(cdr.x - HOME.x, cdr.y - HOME.y);
+      const mAvg = n >= 5 ? mSum / n : 0, rAvg = n >= 5 ? rSum / n : 0;
       marchRanks = { mAvg, rAvg, walked: L };
       O._march = `walked ${L.toFixed(0)} tiles out; ahead of the captain: blades ${mAvg.toFixed(1)}, bows ${rAvg.toFixed(1)}`;
       O.andTheColumnMarchesInItsOwnOrder = (L > 8 && mAvg > rAvg + 0.5 && rAvg > 0.5)
@@ -121,7 +191,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
 
     /* ================= 2. AND WHO MEETS THE ENEMY FIRST ================= */
     guard(['_engage', 'theCaptainIsNotTheFirstThingTheEnemyMeets'], () => {
-      const band = raise({ x: HOME.x, y: HOME.y + 6 });
+      /* out in the waste too: at the gate, the raiders met the town's watch before the band */
+      const band = raise(WASTE2 || { x: HOME.x, y: HOME.y + 6 });
       const cdr = band[0];
       const melee = band.filter(o => o !== cdr && !isRanged(o));
       /* a line of foes off to one side, close enough to be the thing the band is looking at */
@@ -179,9 +250,23 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     let homeRec = null;
     guard(['_after', 'aBandThatFoughtStripsTheGroundBeforeItComesIn', 'andItComesBackToTheSpotItLeftFrom', '_report', 'andItSaysWhatItDid'], () => {
       const startN = corpses.length, chestN = chests.length;
-      const band = raise({ x: HOME.x, y: HOME.y - 6 });
+      /* ---------- OUT IN THE WASTE, NOT AT A TOWN'S GATE ----------
+         Six tiles off the start is beside GREENREST, and by this block two others have spent
+         days of game time. Whether the town has turned on you by then is the world's dice: on
+         the losing side the band spends the errand fighting the townsfolk, six of eight go
+         down, and the three claims below report a homecoming the town ended first. The review
+         of 2026-09-24 removed one daily `rnd()` draw and turned exactly that over. Same cure as
+         `storeys.js`: stage past every town. */
+      const band = raise(WASTE || { x: HOME.x, y: HOME.y - 6 });
       const cdr = band[0];
       const START = { x: cdr.x, y: cdr.y };
+      /* ---------- AND NOT IN THE NIGHT'S WAY EITHER ----------
+         This block walks the band through three and a half game days in the open, and since the
+         night spawner was fixed (CODE-AUDIT §5.9) the dark sends things at anybody out there.
+         Two of them reached this band on the way home, it fought them short of the spot, and
+         the claim below read 5.6 tiles. The homecoming is what is under test, not the night, so
+         what the night sends is sent back as it arrives. */
+      const stepHere = (secs) => { step(secs); for (let j = chars.length - 1; j >= 0; j--) if (chars[j].nightSpawn) chars.splice(j, 1); };
       giveCommand(cdr, band, 'forage', { x: cdr.x + 20, y: cdr.y }, 44);
       /* ---------- A REAL ENGAGEMENT, NOT A FLAG ----------
          The first cut laid corpses on the ground and set `m.fights` by hand, which stages the
@@ -211,20 +296,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          `kill` is the game's own death, so these leave real corpses with real pockets. */
       let met = 0;
       for (let i = 0; i < 40; i++) {
-        step(2);
+        stepHere(2);
         if (cdr.cmd && cdr.cmd.fights) { met = 1; break; }
       }
       cdr.blood = cdr.maxBlood * 0.40;                   /* cut, the way a captain is after one */
       for (const f of raiders) if (f.state !== 'dead') kill(f, cdr);
       /* long enough to walk twenty tiles and strip four bodies and a chest */
       const left = () => raiders.filter(f => f.state === 'dead' && !f.looted).length + (ch.opened ? 0 : 1);
-      for (let i = 0; i < 30 && cdr.cmd && left(); i++) step(10);
+      for (let i = 0; i < 30 && cdr.cmd && left(); i++) stepHere(10);
       /* AND THEN SENT HOME, rather than waited out. A forage errand ends when every tile of its
          circle has been walked, which is six tours of open waste and most of a game week — the
          homecoming is what is under test here, not the errand's patience, and a band left to
          bleed for ten game-hours with a cut captain dies on the walk. Last tour, turn for home. */
       if (cdr.cmd) { cdr.cmd.tours = FORAGE_TOURS; cdr.cmd.phase = 'home'; }
-      for (let i = 0; i < 40 && cdr.cmd; i++) step(10);
+      for (let i = 0; i < 40 && cdr.cmd; i++) stepHere(10);
       const fell = raiders.filter(f => f.state === 'dead');
       const unstripped = fell.filter(f => !f.looted).length;
       const leftBehind = unstripped + (ch.opened ? 0 : 1);

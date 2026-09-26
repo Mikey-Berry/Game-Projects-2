@@ -144,6 +144,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       /* THE ONE RULE. Drive the real workTheDoor with a real caster and a finished hold. */
       const caster = player().find(o => o.state === 'ok') || player()[0];
       caster.gift = caster.gift || 'dark';
+      /* and back where they stood, after: the Door opens at the bottom of the crater now, and a
+         caster left there has the next block binding its risen beside the Brood */
+      const casterWas = { x: caster.x, y: caster.y };
       caster.x = theDoor.x; caster.y = theDoor.y;
       caster.mana = 999;
       for (const k of Object.keys(DOOR_SEAL_COST)) stash[k] = (stash[k] || 0) + 999;
@@ -173,6 +176,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.broodDown = !theDoor
         ? 'and with it down, the same hold shuts the sky'
         : '!! THE RITE STILL WILL NOT LAND WITH THE BROOD DEAD';
+      caster.x = casterWas.x; caster.y = casterWas.y;
     }
 
     /* ============================================================ 3. THE BENCH */

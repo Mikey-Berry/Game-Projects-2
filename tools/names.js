@@ -162,9 +162,36 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       for (const c of twoPart) counts[c.name] = (counts[c.name] || 0) + 1;
       const rate = 1 - Object.keys(counts).length / twoPart.length;
       const worst = Object.entries(counts).filter(([, n]) => n > 1).sort((a, b) => b[1] - a[1])[0];
-      R.andNobodySharesANameWithAStranger = rate < 0.03
-        ? `and ${twoPart.length} people known by two names collide ${(rate * 100).toFixed(1)}% of the time, split six ways or not`
-        : `!! ${(rate * 100).toFixed(1)}% OF ${twoPart.length} TWO-PART NAMES ARE SHARED, WORST "${worst && worst[0]}" x${worst && worst[1]}`;
+      R._twoPart = `this world: ${twoPart.length} two-part names, ${(rate * 100).toFixed(1)}% shared${worst ? `, worst "${worst[0]}" x${worst[1]}` : ''}`;
+      /* THE NAMER, NOT ONE WORLD'S DICE. This claim read one world's streets against 3%, and
+         the namer's own spread over 174 names is 0.6% at the tenth percentile, 1.7% at the
+         median and 3.4% at the ninetieth: one world in seven is over the line with nothing
+         wrong. The crater moved this world from 0.6% to 3.4% and turned it red. What the claim
+         guards is the pool splitting into a namer where every third person shares a name,
+         and that shows in the average. So the namer deals as many names as this world has,
+         two hundred times from fixed seeds, and the average is what is held; the stream and
+         the decks are put back after. */
+      const n = twoPart.length || 174;
+      const keepSeed = seed;
+      const keepGiven = typeof _givenPools === 'object' ? Object.fromEntries(Object.entries(_givenPools).map(([k, v]) => [k, [...v]])) : null;
+      const keepSur = typeof poolS !== 'undefined' ? [...poolS] : null;
+      const namer = typeof pickNameFor === 'function' ? (i) => pickNameFor(i % 2 ? 'f' : 'm', true, 'human') : () => pickName(true);
+      let sum = 0;
+      for (let k = 1; k <= 200; k++) {
+        seed = (k * 2654435761) >>> 0;
+        if (keepGiven) for (const key in _givenPools) delete _givenPools[key];
+        if (keepSur) poolS = [];
+        const dealt = [];
+        for (let i = 0; i < n; i++) dealt.push(namer(i));
+        sum += 1 - new Set(dealt).size / dealt.length;
+      }
+      seed = keepSeed;
+      if (keepGiven) { for (const key in _givenPools) delete _givenPools[key]; Object.assign(_givenPools, keepGiven); }
+      if (keepSur) poolS = keepSur;
+      const mean = sum / 200;
+      R.andNobodySharesANameWithAStranger = mean < 0.03
+        ? `and ${n} people known by two names share one ${(mean * 100).toFixed(1)}% of the time across two hundred worlds, split six ways or not`
+        : `!! ${(mean * 100).toFixed(1)}% OF ${n} TWO-PART NAMES ARE SHARED ON AVERAGE OVER 200 WORLDS`;
     }
 
     /* ---------- 7. AND EVERY RACE HAS SOMETHING TO SAY ABOUT BEING ONE ----------

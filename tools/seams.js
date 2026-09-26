@@ -1,0 +1,835 @@
+#!/usr/bin/env node
+/* THE LORE SEAMS, CLOSED ONE AT A TIME.
+ *
+ * LORE-SEAMS.md lists the places where the lore says something and the game has no equivalent.
+ * Each claim here is one seam that has been closed, staged the way a player would meet it and
+ * measured on the running game, and each was red on the build before the fix.
+ *
+ *   1. every kind of body with authored barks says one when somebody is near enough to hear
+ *      (53 lines were set on bodies and never spoken)
+ *   2. the small ones stand: an Eye of Ainzopha'ar (22 blood), a Shoalling (18) and a Marrow Tick
+ *      (40) are up when made, go down when bled, and get back up. The down and rise lines were
+ *      absolute (40 and 50 blood), so the first two lay on the ground from their first tick
+ *   3. the convictions hear two deeds the lore says they care about: a formula recovered under
+ *      study warms the inquisitive, and a band breaking off a fight cools the ambitious. Both
+ *      kinds were in the weights table and no call site ever emitted them
+ *   4. working a profane formula (Dark, Destruction) in sight of a Church town's watch is the
+ *      crime CRIMES has always named; the blessed art is not, and Hollowmere does not care
+ *   5. the rest of the conviction table is heard: a captive taken back from a captor (rescued),
+ *      a stranger mended (heal), a prisoner turned loose (mercy), and a town with an empty seat
+ *      put to the torch from its own flag (sack: half of each store into the wagon, the rest
+ *      burned). All four were weighted and none was fired
+ *   6. Mother's seal is hers: her door is not forced by a shoulder and holds against a Hollow
+ *      still riding; a finished one puts a hand on it, it opens, and the scene behind it is said,
+ *      a line at a time in the window, while the Deep Warden over her chest stands down.
+ *      Her lines promised this and the door was an ordinary barred door
+ *   7. the Church speaks in its own layer: a Paladin at peace, the Inquisitor, and Vey open the
+ *      Order's conversation (the Light, the Original Purge, the pyre) instead of the townsfolk's
+ *   8. the Messengers abroad are their own faction beside the Order, and the crater's own hold
+ *      the crater against everybody; there are more of them late in the clock, and one that
+ *      comes to look at a living one of yours goes to stand with the Order
+ *   9. the words encode the speaker: the golden age's paper says "conduit" (two formulae and a
+ *      ledger that is in the colonnade cache and nowhere else), and no item says "Battery"
+ *  10. a shrine stone is a small philosopher's stone: breaking a shrine gives the stone, the
+ *      bench reads it for insight, CRUSH makes it ash, and ash carries the Door's hold faster
+ *      without being needed for it
+ *
+ * Anything starting '!!' fails the build.
+ *
+ *   node tools/seams.js [game.html]
+ */
+const { chromium } = require('playwright');
+const path = require('path');
+const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__dirname, a)) : path.join(__dirname, 'game.html'));
+
+(async () => {
+  const b = await chromium.launch({
+    executablePath: process.env.DUSTWARD_CHROME || undefined,
+    args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--disable-gpu-sandbox', '--no-sandbox'],
+  });
+  const p = await b.newPage({ viewport: { width: 1000, height: 700 } });
+  const errs = [];
+  p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 160)));
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
+  await p.waitForSelector('#btn-start', { state: 'attached', timeout: 60000 });
+  await p.waitForTimeout(1500);
+  await p.evaluate(() => document.getElementById('btn-start').click());
+  await p.waitForTimeout(2500);
+
+  const out = await p.evaluate(() => {
+    const R = {};
+    paused = true;
+    const step = (secs, dt = 0.25) => { for (let i = 0; i < secs / dt; i++) update(dt); };
+
+    /* ---- 1. the barks are said ---- */
+    {
+      /* one of every kind that owns lines: whatever the world already holds (the garrison, the
+         immortals, the Archivist, the Kept, the thing in the rock), plus one of each GAUNTS row
+         with a `bark:`, because gaunts are made at night and this is the first morning */
+      const kindOf = (c) => c.gauntKind || c.deepKin || (c.redoubtId != null ? 'garrison' : null) || c.name;
+      const pickOne = new Map();
+      for (const c of chars) if (c.state === 'ok' && c.barks && c.barks.length && !pickOne.has(kindOf(c))) pickOne.set(kindOf(c), c);
+      const me = player()[0];
+      for (const [k, g] of Object.entries(GAUNTS)) {
+        if (!g.bark || pickOne.has(k)) continue;
+        const q = findOpenNear(Math.round(me.x) + 30, Math.round(me.y) + 30, 10);
+        const c = spawnGaunt(k, q.x, q.y);
+        if (c) { c.__probe = true; c.nightborn = false; pickOne.set(k, c); }
+      }
+      const kinds = [...pickOne.keys()];
+      const silent = [], said = [];
+      for (const [k, c] of pickOne) {
+        /* a listener at arm's length, on the speaker's own storey; and nothing else talking */
+        const ear = makeChar('Listener', 'player', c.x + 2, c.y, { atk: 1, def: 40, tough: 90 });
+        ear.floor = c.floor || 0; ear.__probe = true; ear.noFight = true; chars.push(ear);
+        for (const o of chars) o.bubble = null;
+        /* ONE VOICE AT A TIME, BY DESIGN. Only one ambient line may be said anywhere every five
+           seconds, so a Kept congregation, or a Maw on the same storey, speaking first is the
+           limiter working, not the one under test failing. Hush the rest for the window. */
+        const hush = chars.filter(o => o !== c && o.barks && o.barks.length);
+        for (const o of hush) { o._cdWas = o.barkCd; o.barkCd = 1e9; }
+        c.barkCd = 0; c.target = null;
+        if (typeof _ambientBarkT !== 'undefined') _ambientBarkT = 0;   /* absent on the build before */
+        let heard = null;
+        for (let i = 0; i < 12 && !heard; i++) {
+          step(0.25);
+          if (c.bubble && c.barks.includes(c.bubble.text)) heard = c.bubble.text;
+          c.x = ear.x - 2; c.y = ear.y;                                  /* hold it in earshot */
+        }
+        (heard ? said : silent).push(heard ? `${k}: "${heard}"` : k);
+        for (const o of hush) { o.barkCd = o._cdWas; delete o._cdWas; }
+        chars.splice(chars.indexOf(ear), 1);
+      }
+      R.theBarksAreSaid = !kinds.length ? '!! NOTHING IN THE WORLD OWNS A BARK TO TEST WITH'
+        : !silent.length
+          ? `all ${kinds.length} kinds with authored lines say one when somebody is near: ${said.slice(0, 4).join(' · ')}${said.length > 4 ? ' …' : ''}`
+          : `!! ${silent.length} OF ${kinds.length} KINDS OWN LINES AND NEVER SAY ONE: ${silent.join(', ')}`;
+      for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+    }
+    /* ---- 2. the small ones stand ---- */
+    {
+      const me = player()[0];
+      const at = (dx) => findOpenNear(Math.round(me.x) + 40 + dx, Math.round(me.y) + 20, 8);
+      const q1 = at(0), q2 = at(6), q3 = at(12);
+      const eye = spawnGaunt('eye', q1.x, q1.y); eye.nightborn = false;
+      const shoal = (() => { const n0 = chars.length; spawnShoal(q2.x, q2.y, 0); return chars.slice(n0); })();
+      const sh = shoal[0];
+      const tick = makeChar('Marrow Tick', 'wild', q3.x, q3.y, {atk:14, def:20, tough:6, ath:16});
+      tick.beast = true; tick.big = 0.62; tick.kin = 'tick'; tick.blood = 40; tick.maxBlood = 40; chars.push(tick);
+      const trio = [['an Eye', eye], ['a Shoalling', sh], ['a Marrow Tick', tick]];
+      for (const [, c] of trio) c.__probe = true;
+      for (const c of shoal) c.__probe = true;
+      step(1);
+      const up0 = trio.filter(([, c]) => c.state !== 'ok').map(([n, c]) => `${n} (${c.maxBlood} blood) is ${c.state}`);
+      /* bled under 40% of its own pool, then brought back over half of it */
+      const fell = [], rose = [];
+      for (const [n, c] of trio) {
+        c.blood = c.maxBlood * 0.3; updateState(c);
+        if (c.state !== 'down') fell.push(`${n} did not go down at 30% (${c.state})`);
+        c.blood = c.maxBlood * 0.9; updateState(c);
+        if (c.state !== 'ok') rose.push(`${n} did not get up at 90% (${c.state})`);
+      }
+      R.theSmallOnesStand = up0.length ? `!! ${up0.join('; ').toUpperCase()} ON ITS FIRST TICK`
+        : fell.length || rose.length ? `!! ${[...fell, ...rose].join('; ').toUpperCase()}`
+        : `an Eye (22 blood), a Shoalling (18) and a Marrow Tick (40) stand when made, go down when bled under 40% of themselves, and get back up past half`;
+      for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+    }
+    /* ---- 3. formula and retreat are deeds ---- */
+    {
+      const me = player()[0];
+      const listen = (conv) => { me.conviction = conv; me.regard = 0; me.undead = false; return () => me.regard || 0; };
+      /* a formula comes apart under study. The rate is stubbed: whether the bench is staffed is
+         not the claim, the completion is. */
+      const sr = window.studyRate;
+      window.studyRate = () => 1;
+      let r = listen('scholar');
+      research.study = { docs: ['formula_w'], left: 0.0001 };
+      researchTick(1);
+      const afterFormula = r();
+      r = listen('scholar');
+      research.study = { docs: ['tome'], left: 0.0001 };
+      researchTick(1);
+      const afterTome = r();
+      research.study = null;
+      window.studyRate = sr;
+      /* a band breaks off: its captain is cut under the break-off line, and the real update runs */
+      const q = findOpenNear(Math.round(me.x) + 20, Math.round(me.y) - 20, 8);
+      const band = [];
+      for (let i = 0; i < 4; i++) {
+        const c = makeChar('Band ' + i, 'player', q.x + i, q.y, { atk: 16, def: 14, tough: 14, ath: 7 });
+        c.__probe = true; c.conviction = 'cold'; chars.push(c); band.push(c);
+      }
+      giveCommand(band[0], band, 'forage', { x: q.x, y: q.y }, 20);
+      r = listen('ambitious');
+      band[0].blood = band[0].maxBlood * 0.40;
+      let broke = false;
+      for (let i = 0; i < 40 && !broke; i++) { step(0.25); broke = !!(band[0].cmd && band[0].cmd.phase === 'home') || !band[0].cmd; }
+      const afterRetreat = r();
+      const bits = [];
+      if (!(afterFormula > 0.5)) bits.push(`a Worn Formula studied moved an Inquisitive companion by ${afterFormula.toFixed(2)}`);
+      if (Math.abs(afterTome) > 0.001) bits.push(`a Tome moved them by ${afterTome.toFixed(2)} (a tome is not a formula)`);
+      if (!broke) bits.push('the band never broke off, so there was no retreat to hear');
+      else if (!(afterRetreat < -0.5)) bits.push(`a band breaking off moved an Ambitious companion by ${afterRetreat.toFixed(2)}`);
+      R.theConvictionsHearIt = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+        : `a Worn Formula studied warms the Inquisitive (+${afterFormula.toFixed(2)}), a Tome moves nobody, and a band breaking off cools the Ambitious (${afterRetreat.toFixed(2)})`;
+      for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+    }
+    /* ---- 4. the profane gift is a crime inside the walls ---- */
+    {
+      /* a caster with every art, stood beside the watch in a Church town and in Hollowmere */
+      const church = towns.find(t => !t.def.undeadFriendly && !t.playerRuled && chars.some(o => o.homeTown === t && o.faction === 'town' && o.state === 'ok'));
+      const mere = towns.find(t => t.def.undeadFriendly);
+      const castIn = (t, cast) => {
+        const w = chars.find(o => o.homeTown === t && o.faction === 'town' && o.state === 'ok' && !o.civ) ||
+                  chars.find(o => o.homeTown === t && o.faction === 'town' && o.state === 'ok');
+        /* beside the watch AND in its sight, placed without dice: `findOpenNear` is random darts,
+           and on the draw where it landed behind a house the watch saw nothing and booked nothing */
+        let q = null;
+        for (const r of [2, 3, 2.5, 4]) {
+          for (let a = 0; a < 16 && !q; a++) {
+            const x = w.x + Math.cos(a / 16 * Math.PI * 2) * r, y = w.y + Math.sin(a / 16 * Math.PI * 2) * r;
+            if (!isBlocked(x, y, w.floor || 0) && !losBlocked(w.x, w.y, x, y, w.floor || 0)) q = { x, y };
+          }
+          if (q) break;
+        }
+        q = q || findOpenNear(Math.round(w.x) + 2, Math.round(w.y), 3);
+        const c = makeChar('Caster', 'player', q.x, q.y, { atk: 6, def: 30, tough: 90, magic: 60 });
+        c.__probe = true; c.floor = w.floor || 0; c.mana = 999; c.castCd = 0;
+        c.att = { divine: 3, destruction: 3, dark: 3, dust: 3 };
+        chars.push(c); rebuildCharGrid();
+        const foe = makeChar('Rat', 'wild', q.x + 3, q.y, { atk: 1, def: 1, tough: 5 });
+        foe.__probe = true; foe.beast = true; foe.floor = c.floor; chars.push(foe); rebuildCharGrid();
+        const b0 = t.bounty || 0;
+        t._formulaAt = null;               /* each art is asked on its own; the hour is asked below */
+        cast(c, foe);
+        const got = (t.bounty || 0) - b0;
+        chars.splice(chars.indexOf(c), 1); if (chars.includes(foe)) chars.splice(chars.indexOf(foe), 1);
+        t.bounty = b0; t.wanted = b0 > 0;
+        return got;
+      };
+      if (!church) R.theProfaneGiftIsACrime = '!! NO CHURCH TOWN WITH A WATCH TO TEST IN';
+      else {
+        const fire = castIn(church, (c, f) => castFirebolt(c, f));
+        const dark = castIn(church, (c, f) => castDarkbolt(c, f));
+        const heal = castIn(church, (c) => castHeal(c, c));
+        const inMere = mere ? castIn(mere, (c, f) => castFirebolt(c, f)) : 0;
+        /* and one fight is one charge: a second bolt inside the hour adds nothing */
+        const twice = castIn(church, (c, f) => { castFirebolt(c, f); c.castCd = 0; c.mana = 999; castFirebolt(c, f); });
+        const want = CRIMES.formula.bounty;
+        const bits = [];
+        if (fire < want) bits.push(`a firebolt in ${church.name} added ${fire} bounty`);
+        if (dark < want) bits.push(`a darkbolt in ${church.name} added ${dark}`);
+        if (heal) bits.push(`a heal (the blessed art) added ${heal}`);
+        if (inMere) bits.push(`a firebolt in ${mere.name} added ${inMere}`);
+        if (twice !== want) bits.push(`two firebolts inside the hour added ${twice}, not one charge of ${want}`);
+        R.theProfaneGiftIsACrime = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : `fire or the dark worked in sight of ${church.name}'s watch costs ${want} bounty each; the blessed art costs nothing, a second bolt inside the hour is the same charge, and ${mere ? mere.name : 'Hollowmere'} does not care`;
+      }
+      for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+    }
+    return R;
+  });
+
+  /* ---- 5. the rest of the deeds: rescued, heal, mercy, sack ----
+     Two of these exist only inside the right-click handler, so they are driven the way
+     aid.js drives one: stage, let the camera settle over real frames, click the body or the
+     flag, and press the menu entry by its words. The other two are called where play calls
+     them: a captor killed by one of ours, and a heal cast at a point on the ground. */
+  const frame = () => p.evaluate(() => new Promise(r => requestAnimationFrame(() => r())));
+  await p.evaluate(() => {
+    const me = player()[0];
+    /* a council that only listens, one of each conviction these deeds should move */
+    const council = {};
+    ['compassion', 'cruel', 'loyal'].forEach((k, i) => {
+      const q = findOpenNear(Math.round(me.x) - 30 + i * 2, Math.round(me.y) - 30, 6);
+      const c = makeChar('Council ' + k, 'player', q.x, q.y, { atk: 4, def: 40, tough: 90 });
+      c.__probe = true; c.conviction = k; c.regard = 0; c.noFight = true; chars.push(c); council[k] = c;
+    });
+    window.__hear = (fn) => {
+      for (const c of Object.values(council)) c.regard = 0;
+      const got = fn();
+      return Object.assign(Object.fromEntries(Object.entries(council).map(([k, c]) => [k, c.regard || 0])), { got });
+    };
+    window.__aim = (x, y) => {
+      camX = camSX = x; camY = camSY = y;
+      camDist = camDistTarget = 16; camPitch = camPitchT = 0.62; camYaw = camYawT = 0.4;
+      camFollow = false; activeFloor = 0;
+    };
+    /* right-click a point, press the entry whose words match; the menu's labels come back
+       when there is no such entry, so a red says what WAS offered */
+    window.__rclick = (x, y, want) => {
+      const q = w2s(x, y, groundY(x, y) + floorY(activeFloor) + 0.05);   /* on the storey in view */
+      if (!q) return '(no projection)';
+      document.getElementById('game').dispatchEvent(new MouseEvent('mousedown', {
+        clientX: q.x, clientY: q.y, button: 2, buttons: 2, bubbles: true, cancelable: true }));
+      if (!want) return null;
+      const el = document.getElementById('ctxmenu');
+      if (!el || getComputedStyle(el).display === 'none') {
+        const m = selected[0], tg = m && (m.target || m.moveTarget);
+        return `(no menu${tg ? `: the click sent ${m.name} at ${tg.name || 'the ground'}` : ''})`;
+      }
+      const btns = [...el.querySelectorAll('button')];
+      const btn = btns.find(x2 => want.test(x2.textContent));
+      if (btn) { btn.click(); return null; }
+      el.style.display = 'none';
+      return btns.map(x2 => x2.textContent).join(' | ');
+    };
+  });
+  const five = await p.evaluate(() => {
+    const R = {};
+    const me = player()[0];
+    /* RESCUED: something drags one of yours off and one of yours stops it. Killed by nobody
+       (a gaunt, a fall) it is not a rescue. */
+    const q = findOpenNear(Math.round(me.x) - 20, Math.round(me.y) + 20, 8);
+    const taken = (dx) => {
+      const v = makeChar('Taken', 'player', q.x + dx, q.y, { atk: 4, def: 4, tough: 20 });
+      const m = makeChar('Slaver', 'slaver', q.x + dx + 1, q.y, { atk: 4, def: 4, tough: 20 });
+      v.__probe = m.__probe = true; chars.push(v, m);
+      v.state = 'down'; v.captured = true; m.drag = v;
+      return { v, m };
+    };
+    const a = taken(0), b = taken(4);
+    R.byUs = __hear(() => { kill(a.m, me); return !a.v.captured; });
+    R.byNobody = __hear(() => { kill(b.m, null); return !b.v.captured; });
+    /* HEAL: cast at a hurt townsman on open ground. Once a day a person, and a whole body is
+       not mended, so neither of those is a deed */
+    const hq = findOpenNear(Math.round(me.x) + 20, Math.round(me.y) + 25, 8);
+    const medic = makeChar('Medic', 'player', hq.x, hq.y, { atk: 4, def: 30, tough: 90, magic: 10 });
+    medic.__probe = true; medic.att = { divine: 3 }; chars.push(medic);
+    const hurt = makeChar('Stranger', 'town', hq.x + 2, hq.y, { atk: 4, def: 4, tough: 20 });
+    const whole = makeChar('Whole', 'town', hq.x, hq.y + 2, { atk: 4, def: 4, tough: 20 });
+    hurt.__probe = whole.__probe = true; chars.push(hurt, whole); rebuildCharGrid();
+    const wound = () => { for (const k of PARTS) hurt.parts[k].hp = Math.min(hurt.parts[k].hp, hurt.parts[k].max * 0.5); };
+    const hp = (o) => PARTS.reduce((a2, k) => a2 + o.parts[k].hp, 0);
+    const cast = (o) => { medic.mana = 999; medic.castCd = 0; const hp0 = hp(o); resolveCastAt(medic, 'heal', o.x, o.y); return hp(o) > hp0; };
+    wound(); R.healOnce = __hear(() => cast(hurt));
+    wound(); R.healAgain = __hear(() => cast(hurt));
+    R.healWhole = __hear(() => cast(whole));
+    for (let i = corpses.length - 1; i >= 0; i--) if (corpses[i].__probe) corpses.splice(i, 1);
+    for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe && !/^Council/.test(chars[i].name)) chars.splice(i, 1);
+    rebuildCharGrid();
+
+    /* MERCY: a prisoner in your own cell, turned loose from the menu on their body */
+    const cq = findOpenNear(Math.round(me.x) + 25, Math.round(me.y) - 25, 8);
+    const nb = pBuilds.length;
+    placeStructure('cell', cq.x, cq.y);
+    const cell = cells[cells.length - 1];
+    const pris = makeChar('Held', 'bandit', cell.x, cell.y, { atk: 10, def: 10, tough: 20 });
+    pris.__probe = true; pris.state = 'ok'; chars.push(pris);
+    stripKit(pris); jail(pris, cell, 0); pris.prisoner = true; rebuildCharGrid();
+    const mover = makeChar('Keeper', 'player', cell.x + 3, cell.y + 3, { atk: 10, def: 30, tough: 90 });
+    mover.__probe = true; chars.push(mover); selected = [mover];
+    window.__mercy = { pris, cell, nb };
+    __aim(pris.x, pris.y);
+    return R;
+  });
+  await frame(); await frame(); await frame();
+  Object.assign(five, await p.evaluate(() => {
+    const R = {};
+    const { pris, cell, nb } = window.__mercy;
+    R.mercy = __hear(() => __rclick(pris.x, pris.y, /^TURN THEM LOOSE/));
+    R.mercy.loose = !pris.jailedAt;
+    /* clear the cell away, and stage the sack: a town whose seat is empty and whose stores
+       are not, the flag at the hall door, and one of yours standing two strides off it */
+    if (pris.jailedAt) { pris.jailedAt = null; }
+    cells.splice(cells.indexOf(cell), 1); pBuilds.splice(nb);
+    for (let i = chars.length - 1; i >= 0; i--) if (chars[i] === pris) chars.splice(i, 1);
+    const t = towns.find(t2 => !t2.playerRuled && !(t2.sacked > 0) && !t2.def.undeadFriendly && t2.leader &&
+      Object.values(t2.stock || {}).some(v => v >= 2));
+    if (!t) { R.noTown = true; return R; }
+    const f = townFlagPos(t);
+    for (const o of chars) if (o.state !== 'dead' && o.faction !== 'player' && dist(o.x, o.y, f.x, f.y) < 2.5) o.x += 6;
+    const mover = chars.find(o => o.name === 'Keeper');
+    /* within reach of the flag, and placed without dice: `findOpenNear` is sixty random darts,
+       and on a world where the stream sits a few draws over it put the keeper past the three
+       tiles the menu asks for, and the torch was refused with "Stand at the flag" */
+    let mq = null;
+    for (const r of [2, 2.5, 1.5, 2.8]) {
+      for (let a = 0; a < 16 && !mq; a++) {
+        const x = f.x + Math.cos(a / 16 * Math.PI * 2) * r, y = f.y + Math.sin(a / 16 * Math.PI * 2) * r;
+        if (!isBlocked(x, y, 0)) mq = { x, y };
+      }
+      if (mq) break;
+    }
+    mq = mq || { x: f.x + 2, y: f.y };
+    mover.x = mq.x; mover.y = mq.y; mover.floor = 0; selected = [mover]; rebuildCharGrid();
+    window.__sack = { t, f, seat: t.leader.charId, rep: towns.map(o => o.rep), stock: Object.assign({}, t.stock),
+      stash: Object.values(stash).reduce((a2, v) => a2 + (Number(v) || 0), 0) };
+    t.leader.charId = -1;                       /* the seat is empty: whoever sat it is gone */
+    __aim(f.x, f.y);
+    return R;
+  }));
+  await frame(); await frame(); await frame();
+  Object.assign(five, await p.evaluate(() => {
+    const R = {};
+    const S = window.__sack;
+    if (!S) return R;
+    const { t, f } = S;
+    R.sack = __hear(() => __rclick(f.x, f.y, /TO THE TORCH$/));
+    R.sack.town = t.name;
+    R.sack.burnt = t.sacked === 5 && t.sackKind === 'torch';
+    R.sack.carried = Object.values(stash).reduce((a2, v) => a2 + (Number(v) || 0), 0) - S.stash;
+    R.sack.others = towns.every((o, i) => o === t || o.rep <= S.rep[i]);
+    /* the wagon takes half of each line, rounded down, and never more */
+    R.sack.half = Object.entries(S.stock).reduce((a2, [k, v]) => a2 + (ITEMS[k] ? Math.floor(Math.floor(v || 0) / 2) : 0), 0);
+    R.sack.left = Object.keys(t.stock || {}).length;
+    /* and put it back: the sack is the last thing this file stages, but a claim added after
+       it should not inherit a burning town */
+    t.sacked = 0; t.sackKind = null; t.stock = S.stock; t.leader.charId = S.seat;
+    towns.forEach((o, i) => { o.rep = S.rep[i]; });
+    for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+    selected = [];
+    return R;
+  }));
+  {
+    const f5 = five, bits = [];
+    const dn = (x) => (x >= 0 ? '+' : '') + x.toFixed(2);
+    if (!f5.byUs.got) bits.push('killing the slaver did not let the captive go');
+    if (!(f5.byUs.loyal > 1)) bits.push(`a captive saved by one of yours moved the Loyal by ${dn(f5.byUs.loyal)}`);
+    if (Math.abs(f5.byNobody.loyal) > 0.001) bits.push(`a captor dying of nothing moved the Loyal by ${dn(f5.byNobody.loyal)}`);
+    if (!f5.healOnce.got) bits.push('a heal cast at a hurt townsman mended nothing (the spell found no one there)');
+    else if (!(f5.healOnce.compassion > 0.2)) bits.push(`mending a stranger moved the Compassionate by ${dn(f5.healOnce.compassion)}`);
+    if (Math.abs(f5.healAgain.compassion) > 0.001) bits.push(`mending the same stranger twice in a day moved them again (${dn(f5.healAgain.compassion)})`);
+    if (Math.abs(f5.healWhole.compassion) > 0.001) bits.push(`a heal on a whole body moved them by ${dn(f5.healWhole.compassion)}`);
+    if (f5.mercy.got) bits.push(`the prisoner's menu has no TURN THEM LOOSE (${f5.mercy.got})`);
+    else if (!f5.mercy.loose) bits.push('TURN THEM LOOSE left the prisoner in the cell');
+    else if (!(f5.mercy.cruel < -0.5)) bits.push(`turning a prisoner loose moved the Cruel by ${dn(f5.mercy.cruel)}`);
+    if (f5.noTown) bits.push('no town with a seat and stores to stage the sack in');
+    else if (f5.sack.got) bits.push(`the flag of an empty seat offers no torch (${f5.sack.got})`);
+    else {
+      if (!f5.sack.burnt) bits.push(`${f5.sack.town} was not left sacked and burning`);
+      if (!(f5.sack.carried > 0)) bits.push(`nothing from ${f5.sack.town}'s stores reached the wagon`);
+      else if (f5.sack.carried !== f5.sack.half) bits.push(`the wagon took ${f5.sack.carried} of ${f5.sack.town}'s stores, where half of each line is ${f5.sack.half}`);
+      if (f5.sack.left) bits.push(`${f5.sack.left} lines of ${f5.sack.town}'s stores did not burn`);
+      if (!f5.sack.others) bits.push('the other towns did not hear of it');
+      if (!(f5.sack.compassion < -1) || !(f5.sack.cruel > 1)) bits.push(`the sack moved the Compassionate by ${dn(f5.sack.compassion)} and the Cruel by ${dn(f5.sack.cruel)}`);
+    }
+    out.theDeedsAreDone = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+      : `a captive taken back moves the Loyal (${dn(f5.byUs.loyal)}), a stranger mended moves the Compassionate (${dn(f5.healOnce.compassion)}, once a day, not for a whole body), ` +
+        `a prisoner turned loose cools the Cruel (${dn(f5.mercy.cruel)}), and ${f5.sack.town} put to the torch from its flag burns, fills the wagon with half its stores (${f5.sack.carried}) and burns the rest, ` +
+        `and turns the Compassionate (${dn(f5.sack.compassion)}) and warms the Cruel (${dn(f5.sack.cruel)})`;
+  }
+
+  /* ---- 6. Mother's seal answers one of hers, and nobody else ----
+     Underground, so the eye has to arrive: `activeFloor` follows the selection and the storey
+     lift lerps inside `render`, which runs paused. Frames until it stops moving (cave.js). */
+  const settle = async () => {
+    let last = null;
+    for (let i = 0; i < 120; i++) {
+      await frame();
+      const y = await p.evaluate(() => camFY);
+      if (last !== null && Math.abs(y - last) < 0.002 && i > 6) break;
+      last = y;
+    }
+  };
+  const six = await p.evaluate(() => {
+    const R = {};
+    const cv = motherCave(), dr = cv && cv.doors.find(d => d.vault);
+    if (!dr) { R.none = true; return R; }
+    mother.spoken = false; mother.found = false; mother.toldPrice = false;
+    if ('opened' in mother) mother.opened = false;
+    const at = (name, race, tier) => {
+      const c = makeChar(name, 'player', dr.x + 0.5 + 1.8, dr.y + 0.5, { atk: 20, def: 30, tough: 90, labor: 20 });
+      c.__probe = true; c.floor = dr.f || 0; c.race = race; c.hollowTier = tier; c.noFight = true;
+      chars.push(c); return c;
+    };
+    window.__six = { dr, cv, stranger: at('Stranger', 'human', 0), rider: at('Rider', 'hollow', 1), whole: at('Whole', 'hollow', 2) };
+    /* only the one under test is in the party, so her first scene reads the right body */
+    for (const k of ['rider', 'whole']) window.__six[k].faction = 'wild';
+    rebuildCharGrid();
+    selected = [window.__six.stranger];
+    __aim(dr.x + 0.5, dr.y + 0.5); activeFloor = dr.f || 0;
+    return R;
+  });
+  if (!six.none) {
+    await settle();
+    Object.assign(six, await p.evaluate(() => {
+      const R = {};
+      const { dr } = window.__six;
+      R.strangerMenu = __rclick(dr.x + 0.5, dr.y + 0.5, /^\(NO SUCH ENTRY\)$/);
+      /* the shoulder, directly: an order to force her door, as a save from before would carry */
+      const s0 = window.__six.stranger;
+      s0.forcing = { x: dr.x, y: dr.y, f: dr.f || 0, t: 0 };
+      for (let i = 0; i < 40 && s0.forcing; i++) forceTick(s0, 0.5);
+      R.forcedOpen = !!dr.open;
+      if (dr.open) { dr.barred = true; setDoor(dr, false); }
+      /* and every other vault door still gives to a shoulder */
+      const other = doors.find(d => d.vault && d !== dr && d.barred && !d.open);
+      if (other) {
+        s0.forcing = { x: other.x, y: other.y, f: other.f || 0, t: 0 };
+        const x0 = s0.x, y0 = s0.y, f0 = s0.floor;
+        s0.x = other.x + 0.5; s0.y = other.y + 0.5; s0.floor = other.f || 0;
+        for (let i = 0; i < 40 && s0.forcing; i++) forceTick(s0, 0.5);
+        R.otherForced = !!other.open;
+        other.barred = true; setDoor(other, false);
+        s0.x = x0; s0.y = y0; s0.floor = f0;
+      }
+      /* a rider: one of hers, not finished */
+      const { rider, whole, stranger } = window.__six;
+      stranger.faction = 'wild'; rider.faction = 'player';
+      selected = [rider];
+      return R;
+    }));
+    await frame(); await frame();
+    Object.assign(six, await p.evaluate(() => {
+      const R = {};
+      const { dr, rider, whole } = window.__six;
+      R.riderMenu = __rclick(dr.x + 0.5, dr.y + 0.5, /^\(NO SUCH ENTRY\)$/);
+      rider.faction = 'wild'; whole.faction = 'player';
+      selected = [whole];
+      return R;
+    }));
+    await frame(); await frame();
+    Object.assign(six, await p.evaluate(() => {
+      const R = {};
+      const { dr, cv } = window.__six;
+      const lines = [];
+      /* she has been stood on: the corpse-site line is in her first scene, without kinship */
+      const sawCorpse = !!placesSeen.corpse; placesSeen.corpse = placesSeen.corpse || Math.max(1, day);
+      const warden = chars.find(o => o.caveId === cv.id && o.name === 'The Deep Warden' && o.state !== 'dead');
+      R.wardenBefore = warden ? hostile(warden, window.__six.whole) : null;
+      const _log = log; log = (t, k) => { lines.push(String(t)); return _log(t, k); };
+      try {
+        R.wholeMenu = __rclick(dr.x + 0.5, dr.y + 0.5, /HAND ON THE SEAL$/);
+        /* A LINE AT A TIME, through the window's own button, the way a player reads it */
+        /* the scene's own lines, not the news of it or the journal */
+        const ofScene = () => lines.filter(l => /^SHE SAYS|^THE SEAL\.|^THE CELL\./.test(l));
+        R.firstShown = ofScene().length; R.firstLines = ofScene().slice(0, 4).join(' || ');
+        R.modalUp = modalOpen && document.getElementById('modal').style.display !== 'none';
+        let pages = 0, btn = null;
+        const button = () => [...document.querySelectorAll('#modalbody button')].find(x => /^(GO ON|LEAVE)$/.test(x.textContent));
+        while ((btn = button()) && btn.textContent === 'GO ON' && pages < 60) { btn.click(); pages++; }
+        R.pages = pages;
+        if (btn) btn.click();                  /* LEAVE */
+        R.closed = !modalOpen && (typeof talkScene === 'undefined' || !talkScene);
+      } finally { log = _log; if (!sawCorpse) delete placesSeen.corpse; }
+      R.said = lines.join(' | ');
+      R.wardenAfter = warden ? hostile(warden, window.__six.whole) : null;
+      if (warden) { warden.provoked = true; R.wardenStruck = hostile(warden, window.__six.whole); warden.provoked = false; }
+      R.opened = !!mother.opened && !!dr.open && !dr.barred;
+      const th = threads.find(t => t.key === 'mother');
+      R.threadDone = !!(th && th.done);
+      /* and a reload keeps it */
+      const snap = snapshot();
+      mother.opened = false;
+      restore(snap);
+      R.kept = mother.opened === true;
+      R.wardenKept = !warden || chars.some(o => o.caveId === cv.id && o.name === 'The Deep Warden' && o.stoodDown);
+      /* a save from before, with her bar already broken by a shoulder: one of hers finished,
+         standing in the room, hears the same scene */
+      {
+        const cv = motherCave(), d2 = cv.doors.find(d => d.vault);
+        mother.opened = false; mother.spoken = true; d2.barred = false; setDoor(d2, true);
+        /* a fresh body: the reload above rebuilt `chars`, and the probes with it */
+        const w2 = makeChar('Whole', 'player', cv.vault.x, cv.vault.y, { atk: 20, def: 30, tough: 90 });
+        w2.__probe = true; w2.floor = cv.vault.f; w2.race = 'hollow'; w2.hollowTier = 2; w2.noFight = true; chars.push(w2);
+        const l2 = [];
+        const _log2 = log; log = (t, k) => { l2.push(String(t)); return _log2(t, k); };
+        try { _mthT = 0; motherTick(3); if (typeof sceneClose === 'function') sceneClose(); } finally { log = _log2; }
+        R.brokenDoor = mother.opened && /THE CELL/.test(l2.join(' ')) && /Llammialith/.test(l2.join(' '));
+      }
+      for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+      selected = [];
+      return R;
+    }));
+  }
+  {
+    const x = six, bits = [];
+    const said = x.said || '';
+    if (x.none) bits.push('there is no Mother in this world to test with');
+    else {
+      if (/FORCE IT/.test(x.strangerMenu || '')) bits.push(`her door offers a stranger FORCE IT (${x.strangerMenu})`);
+      else if (!/DOES NOT ANSWER/.test(x.strangerMenu || '')) bits.push(`her door's menu for a stranger reads "${x.strangerMenu}"`);
+      if (x.forcedOpen) bits.push('a shoulder forced her door open');
+      if (x.otherForced === false) bits.push('another vault door no longer gives to a shoulder');
+      if (/FORCE IT|HAND ON THE SEAL/.test(x.riderMenu || '') || !/RIDER/.test(x.riderMenu || '')) bits.push(`to a Hollow still riding her door offers "${x.riderMenu}"`);
+      if (x.wholeMenu) bits.push(`a finished Hollow at her door is offered no hand on the seal (${x.wholeMenu})`);
+      else {
+        if (!x.opened) bits.push('the hand on the seal did not open it');
+        if (!/COME IN/.test(said) || !/Malathuun/.test(said) || !/Llammialith/.test(said)) bits.push(`the second scene was not said (${said.slice(0, 100)})`);
+        if (/brother/.test(said) || !/one of my kind\. They cut it apart/.test(said)) bits.push('her first scene still calls the one on the corpse site her brother, or does not speak of it');
+        if (!x.modalUp || x.firstShown > 1) bits.push(`the scene arrived as ${x.firstShown} log lines at once${x.modalUp ? '' : ' with no window'} (${x.firstLines})`);
+        else if (!(x.pages >= 10) || !x.closed) bits.push(`the window paged ${x.pages} times and ${x.closed ? 'closed' : 'did not close'}`);
+        if (x.wardenBefore === false) bits.push('the Deep Warden was at peace with the party before the seal opened');
+        if (x.wardenAfter) bits.push('the Deep Warden still fights the one she let in');
+        if (x.wardenStruck === false) bits.push('struck, the Deep Warden stays stood down');
+        if (!x.wardenKept) bits.push('a reload forgot the Warden stood down');
+        if (!x.threadDone) bits.push('her thread was not closed');
+        if (!x.kept) bits.push('a reload forgot the door was opened');
+        if (!x.brokenDoor) bits.push('with her bar already broken (an old save), a finished Hollow in the room heard nothing');
+      }
+    }
+    out.herSealIsHers = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+      : `her door answers nobody with a shoulder (${x.strangerMenu}) while every other vault still forces, holds against a rider, and opens to a finished Hollow's hand on the seal: ` +
+        `the second scene is said a line at a time in the window (${x.pages + 1} lines, GO ON to LEAVE), her first scene speaks of the corpse site without kinship, ` +
+        `the Deep Warden stands down for the one she let in until it is struck, her thread closes, a reload keeps it all, and a door an old save already broke still gives the scene to one of hers in the room${x.otherForced === undefined ? ' (no other vault to compare)' : ''}`;
+  }
+
+  /* ---- 7. the Church speaks in its own layer ----
+     A Paladin at peace with you, clicked the way a player clicks anybody; the Inquisitor under
+     the white banner, through the TALK on the neutral menu; and Vey, asked directly. */
+  const talkText = () => (document.getElementById('modalbody') || {}).textContent || '';
+  const seven = await p.evaluate(() => {
+    const R = {};
+    const pal = chars.find(o => o.faction === 'purge' && o.state === 'ok' && !o.gauntKind && !o.neutral && !o.bossKey && /^Paladin/.test(o.name));
+    if (!pal) { R.none = true; return R; }
+    const m = makeChar('Pilgrim', 'player', pal.x + 2.2, pal.y, { atk: 10, def: 30, tough: 90 });
+    m.__probe = true; m.floor = pal.floor || 0; chars.push(m);
+    const iq = makeChar('Inquisitor', 'purge', pal.x - 2.6, pal.y + 2.6, { atk: 20, def: 20, tough: 30, magic: 12 });
+    iq.__probe = true; iq.inquisitor = true; iq.neutral = true; iq.floor = pal.floor || 0; chars.push(iq);
+    rebuildCharGrid();
+    computeVision();                     /* the pilgrim's own eyes: a click only finds who can be seen */
+    selected = [m]; if (typeof closeTalk === 'function') closeTalk();
+    window.__seven = { pal, iq, m };
+    __aim(pal.x, pal.y); activeFloor = pal.floor || 0;
+    R.hostile = hostile(m, pal);
+    return R;
+  });
+  if (!seven.none) {
+    await settle();
+    Object.assign(seven, await p.evaluate(() => {
+      const R = {};
+      const { pal } = window.__seven;
+      R.palClick = __rclick(pal.x, pal.y, /^TALK$/);
+      R.palTree = talkState ? talkState.key : null;
+      return R;
+    }));
+    seven.palRoot = await p.evaluate(talkText);
+    /* walk it: two of the doctrine's branches, by the buttons the player presses */
+    const press = (re) => p.evaluate((src) => {
+      const re2 = new RegExp(src);
+      const b = [...document.querySelectorAll('#modalbody button')].find(x => re2.test(x.textContent));
+      if (!b) return false; b.click(); return true;
+    }, re.source);
+    seven.pressedPurge = await press(/^Why is your order called the Purge\?/);
+    seven.purgeNode = await p.evaluate(talkText);
+    await p.evaluate(() => { closeTalk(); talkTo(window.__seven.pal); });
+    seven.pressedPyre = (await press(/^Why burn them\?/)) && (await press(/^With fire from the blessed gift/));
+    seven.fireNode = await p.evaluate(talkText);
+    Object.assign(seven, await p.evaluate(() => {
+      const R = {};
+      closeTalk();
+      const { iq } = window.__seven;
+      R.iqClick = __rclick(iq.x, iq.y, /^TALK$/);
+      R.iqTree = talkState ? talkState.key : null;
+      R.iqRoot = (document.getElementById('modalbody') || {}).textContent || '';
+      closeTalk();
+      const vey = chars.find(o => o.bossKey === 'marshal' && o.state === 'ok');
+      if (vey) {
+        talkTo(vey);
+        R.veyTree = talkState ? talkState.key : null;
+        R.veyRoot = (document.getElementById('modalbody') || {}).textContent || '';
+        closeTalk();
+      }
+      for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+      selected = [];
+      return R;
+    }));
+  }
+  {
+    const x = seven, bits = [];
+    if (x.none) bits.push('no Paladin in this world to talk to');
+    else if (x.hostile) bits.push('the staged Paladin is hunting the probe, so the claim cannot be asked');
+    else {
+      if (x.palTree !== 'purge') bits.push(`a right-click on a Paladin at peace opened ${x.palTree ? `the "${x.palTree}" tree` : 'nothing'} (${x.palClick || 'no menu'})`);
+      else {
+        if (!/Walk in the Light/.test(x.palRoot)) bits.push(`the Paladin's greeting is not the Order's (${x.palRoot.slice(0, 60)})`);
+        if (!x.pressedPurge || !/Original Purge/.test(x.purgeNode)) bits.push('asked why the Order is the Purge, nobody says the Original Purge');
+        if (!x.pressedPyre || !/His own fire/.test(x.fireNode)) bits.push('asked what lights the pyre, nobody says His own fire');
+      }
+      if (x.iqTree !== 'purge' || !/The Order speaks before it burns/.test(x.iqRoot || '')) bits.push(`the Inquisitor's TALK opened ${x.iqTree || 'nothing'} (${x.iqClick || ''})`);
+      if (x.veyTree !== undefined && (x.veyTree !== 'purge' || !/What does the Order want with me/.test(x.veyRoot || ''))) bits.push(`Vey opened ${x.veyTree || 'nothing'}`);
+    }
+    out.theChurchSpeaks = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+      : `a Paladin at peace answers a plain right-click in the Order's own words: the Light without end, the Original Purge, and a pyre lit with His own fire; ` +
+        `the Inquisitor speaks it from under the white banner${x.veyTree ? ', and Vey from his hall' : ''}`;
+  }
+
+  /* ---- 8. the Messengers abroad are their own faction, beside the Order ----
+     Asked of real bodies: one stood up the way the Attention stands one up, a Paladin, a Watcher,
+     a risen body of yours and a living one well away from it, and the crater's own. Then the
+     look-and-leave, driven through `physics`, and the late-clock numbers at three stages. */
+  Object.assign(out, await p.evaluate(() => {
+    const R = {};
+    if (typeof messengersAbroad !== 'function') {
+      /* the build before: say what a Messenger abroad was, rather than dying on the helper */
+      const p1 = player().find(o => o.state === 'ok');
+      const m0 = spawnGaunt('messenger', p1.x + 40, p1.y), f0 = m0.faction;
+      chars.splice(chars.indexOf(m0), 1);
+      R.theMessengersAbroad = `!! A MESSENGER STOOD UP ABROAD IS FACTION ${String(f0).toUpperCase()}, AND NOTHING TELLS THE CRATER'S OWN FROM THE WORLD'S`;
+      return R;
+    }
+    const was = { noticed, noticeTier, fractureStage, day, purgeWrath };
+    const bits = [];
+    const p0 = player().find(o => o.state === 'ok');
+    const at = (dx, dy) => findOpenNear(p0.x + dx, p0.y + dy, 3);
+    const probe = (c) => { c.__probe = true; return c; };
+    const abroad0 = messengersAbroad();
+    const craterOnes = chars.filter(c => messengerKind(c) && c.craterOwn && c.state !== 'dead');
+    const q = at(40, 0);
+    const m = probe(spawnGaunt('messenger', q.x, q.y));
+    const pal = chars.find(o => o.faction === 'purge' && o.state === 'ok' && !o.gauntKind && !o.neutral && !o.bossKey);
+    const qw = at(44, 0);
+    const wat = probe(spawnGaunt('gaunt', qw.x, qw.y));
+    const qr = at(0, 40);
+    const risen = probe(makeChar('Risen', 'player', qr.x, qr.y, { atk: 10, def: 10, tough: 40 })); risen.undead = true; chars.push(risen);
+    const ql = at(-40, 0);
+    const alive = probe(makeChar('Walker', 'player', ql.x, ql.y, { atk: 10, def: 10, tough: 40 })); chars.push(alive);
+    rebuildCharGrid();
+    purgeWrath = 0; noticeTier = 0;
+    if (m.faction !== 'messenger') bits.push(`one stood up abroad is faction ${m.faction}`);
+    if (pal && hostile(m, pal)) bits.push('it fights the Paladins');
+    if (!hostile(m, wat)) bits.push('it is at peace with a Watcher abroad');
+    if (!hostile(m, risen)) bits.push('it leaves the walking dead alone');
+    const clean = !hostile(m, alive) && !(pal && hostile(pal, alive));
+    if (!clean) bits.push('it (or the Order) is already hunting a living body of yours with no dead near it and no name');
+    noticeTier = 2;
+    const attended = hostile(m, alive), palAttended = !!(pal && hostile(pal, alive));
+    if (!attended) bits.push('ATTENDED, and it still leaves the one who drew it alone');
+    if (palAttended) bits.push('the Order reads the Attention as well, which is the Messengers\' reading and not theirs');
+    noticeTier = 0;
+    /* the crater's own */
+    const cm = craterOnes.find(c => c.craterOwn === 'messenger');
+    const cg = chars.find(c => (c.craterOwn === 'glass' || c.craterOwn === 'bowl') && c.state !== 'dead');
+    if (!cm) bits.push('no Messenger in the crater to ask');
+    else {
+      if (cm.faction !== 'gaunt') bits.push(`the crater's own are faction ${cm.faction}`);
+      if (pal && !hostile(cm, pal)) bits.push('the crater\'s own let the Order close');
+      if (cg && hostile(cm, cg)) bits.push('the crater\'s own fight its Watchers');
+      if (!hostile(cm, m)) bits.push('the crater\'s own let a Messenger from abroad close');
+    }
+    if (craterOnes.length >= 2 && abroad0 >= messengerCap()) bits.push(`the ${craterOnes.length} in the crater fill the world's ceiling (${abroad0} of ${messengerCap()} counted abroad)`);
+    /* the late clock */
+    const late = [];
+    for (const st of [0, 3, 5]) { fractureStage = st; day = 60; late.push({ st, cap: messengerCap(), patrol: messengerMarches(false), hunt: messengerMarches(true) }); }
+    fractureStage = was.fractureStage;
+    const [e0, e3, e5] = late;
+    if (!(e0.cap === 2 && e3.cap === 3 && e5.cap === 4)) bits.push(`the ceiling is ${e0.cap}/${e3.cap}/${e5.cap} at stages 0/3/5`);
+    if (!(e0.patrol === 0 && e3.patrol > 0 && e5.patrol > e3.patrol)) bits.push(`a patrol carries one at ${e0.patrol}/${e3.patrol}/${e5.patrol}`);
+    if (!(e5.hunt > e0.hunt)) bits.push(`a hunt carries one no more often late (${e0.hunt} -> ${e5.hunt})`);
+    /* comes to look, and goes to the Order */
+    /* with no dead of yours anywhere: a Messenger hunts the nearest body it has a quarrel with,
+       wherever it is, so the risen probe is laid down for this half */
+    risen.undead = false;
+    const quarrel = player().filter(o => o.state !== 'dead' && hostile(m, o)).map(o => o.name);
+    const qa = at(-34, 0);
+    const look = probe(spawnGaunt('herald', qa.x, qa.y)); look.hunt = true; look.target = null;
+    rebuildCharGrid();
+    for (let i = 0; i < 4 && look.hunt; i++) physics(look, 0.1);
+    const leftForOrder = !look.hunt && look.guard && bastion && dist(look.guard.x, look.guard.y, bastion.x, bastion.y) < 14;
+    if (quarrel.length) bits.push(`with no dead of yours about it still has a quarrel with ${quarrel.join(', ')}`);
+    else if (!leftForOrder) bits.push(`having looked at a living body of yours it ${look.hunt ? 'is still hunting' : 'went somewhere other than the Bastion yard'}`);
+    risen.undead = true;
+    const qb = at(4, 40);
+    const hunter = probe(spawnGaunt('messenger', qb.x, qb.y)); hunter.hunt = true; hunter.target = null;
+    rebuildCharGrid();
+    for (let i = 0; i < 4; i++) physics(hunter, 0.1);
+    if (!hunter.hunt) bits.push('near a risen body of yours it went to the Order instead of hunting');
+    /* and killing one is a quarrel with the Order */
+    const w0 = purgeWrath;
+    kill(m, alive);
+    if (!(purgeWrath > w0)) bits.push('killing one does not move the Order\'s wrath');
+    /* put it all back */
+    for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+    if (typeof corpses !== 'undefined') for (let i = corpses.length - 1; i >= 0; i--) if (corpses[i].__probe) corpses.splice(i, 1);
+    if (typeof downFolk !== 'undefined') for (let i = downFolk.length - 1; i >= 0; i--) if (downFolk[i].__probe) downFolk.splice(i, 1);
+    noticed = was.noticed; noticeTier = was.noticeTier; fractureStage = was.fractureStage; day = was.day; purgeWrath = was.purgeWrath;
+    rebuildCharGrid();
+    R.theMessengersAbroad = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+      : `abroad a Messenger is its own faction: at peace with the Order, at war with the Watchers and the walking dead, and hunting a living one of yours only once the Attention is ATTENDED (the Order does not read that). ` +
+        `The crater's ${craterOnes.length} are the crater's, hold it against the Order and a Messenger from abroad alike, and are not counted against the world's ceiling. ` +
+        `The ceiling is 2, 3, 4 at stages 0, 3 and 5; a patrol carries one from stage 3 (${e3.patrol.toFixed(2)}, then ${e5.patrol.toFixed(2)}) and a hunt more often late (${e0.hunt.toFixed(2)} to ${e5.hunt.toFixed(2)}). ` +
+        `One that comes to look at a living body of yours walks to the Bastion yard; one near your dead keeps hunting; killing one raises the Order's wrath`;
+    return R;
+  }));
+
+  /* ---- 9 and 10. the words, and the stone ---- */
+  Object.assign(out, await p.evaluate(() => {
+    const R = {};
+    {
+      const bits = [];
+      if (!/conduit/i.test((ITEMS.formula_p || {}).desc || '')) bits.push('the Preserved Formula does not say conduit');
+      if (!/conduit/i.test((ITEMS.formula_w || {}).desc || '')) bits.push('the Worn Formula does not say conduit');
+      const ledger = ITEMS.c_ledger;
+      const heart = chests.find(c => c.crater && c.vault && dist(c.x, c.y, CRATER.x, CRATER.y) < 14);
+      const holding = chests.filter(c => c.loot && c.loot.items && c.loot.items.c_ledger);
+      if (!ledger || !/conduit/i.test(ledger.desc || '')) bits.push('there is no golden-age ledger that says conduit');
+      else if (holding.length !== 1 || holding[0] !== heart) bits.push(`${holding.length} chests hold the ledger${holding.length === 1 ? ', and not the colonnade\'s' : ''}`);
+      const text = Object.values(ITEMS).map(i => (i.name || '') + ' ' + (i.desc || '')).join(' ');
+      if (/\bbattery\b/i.test(text)) bits.push('an item says Battery');
+      R.theWordsEncodeTheSpeaker = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+        : 'the golden age\'s paper says "conduit": a Worn Formula, a Preserved Formula\'s margin, and a Chancellery ledger found in the colonnade cache and no other; no item anywhere says "Battery"';
+    }
+    {
+      const bits = [];
+      const st0 = Object.assign({}, stash), rp0 = research.rp;
+      const sh = shrines.find(x => !x.broken && x.town);
+      if (!sh) bits.push('no standing shrine to break');
+      else {
+        const strut = structAt(sh.bx + 1, sh.by + 1);
+        strut.hp = 1; destroyStructure(strut);
+        const gotStone = (stash.s_stone || 0) - (st0.s_stone || 0), gotAsh = (stash.s_ash || 0) - (st0.s_ash || 0);
+        if (gotStone !== 1) bits.push(`breaking a shrine gave ${gotStone} stones`);
+        if (gotAsh) bits.push(`breaking a shrine gave ${gotAsh} ash straight off`);
+        R.rpOnBreak = research.rp - rp0;
+        /* the bench offers it for reading, through the window */
+        openResearch();
+        const benchText = (document.getElementById('modalbody') || {}).textContent || '';
+        const reads = /Shrine Stone/.test(benchText) && [...document.querySelectorAll('#modalbody button')].some(b => b.textContent === 'STUDY ALL');
+        closeTalk();
+        const study = ITEMS.s_stone ? beginReading(['s_stone']) : null;
+        if (!reads) bits.push('the bench does not offer the stone for study');
+        if (!((ITEMS.s_stone || {}).rp > 0) || !study) bits.push('the stone holds no insight');
+        /* CRUSH, from the wagon's own button */
+        opts.stash = true; if (typeof applyStashFold === 'function') applyStashFold(); refreshInv();
+        const cb = document.querySelector('#invbody [data-crush="s_stone"]');
+        const a0 = stash.s_ash || 0, s0 = stash.s_stone || 0;
+        if (!cb) bits.push('the wagon offers no CRUSH on the stone');
+        else {
+          cb.click();
+          if (!((stash.s_stone || 0) === s0 - 1 && (stash.s_ash || 0) === a0 + 3)) bits.push(`CRUSH left ${stash.s_stone || 0} stones and ${stash.s_ash || 0} ash (from ${s0} and ${a0})`);
+        }
+        /* the Door's hold, with and without: a stand-in door right here, so nothing opens the sky */
+        const q = findOpenNear(sh.x + 30, sh.y + 30, 4);
+        const w = makeChar('Holder', 'player', q.x, q.y, { atk: 10, def: 10, tough: 40, magic: 0 });
+        w.__probe = true; w.gift = 'divine'; w.mana = 999; chars.push(w);
+        const doorWas = theDoor;
+        const run = (ash) => {
+          theDoor = { x: w.x, y: w.y, r: 14, seal: 0, work: 0, opened: day, fed: 0 };
+          const keep = stash.s_ash || 0;
+          stash.s_ash = ash; if (!ash) delete stash.s_ash;
+          for (let i = 0; i < 40; i++) { w.mana = 999; workTheDoor(w, 0.25); }
+          const got = { work: theDoor.work, burnt: theDoor.ashBurnt || 0 };
+          stash.s_ash = keep; if (!keep) delete stash.s_ash;
+          return got;
+        };
+        const bare = run(0), ashed = run(2);
+        theDoor = doorWas;
+        for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+        if (!(bare.work > 0)) bits.push('without ash the hold does not move');
+        if (!(ashed.burnt >= 1 && ashed.work > bare.work * 1.3)) bits.push(`with ash the hold went ${ashed.work.toFixed(1)} against ${bare.work.toFixed(1)} bare, burning ${ashed.burnt}`);
+        R.hold = { bare: bare.work, ashed: ashed.work, burnt: ashed.burnt };
+        /* put the world back */
+        sh.broken = false; sh.hp = sh.maxHp; sh.reT = 0;
+        for (const k of Object.keys(stash)) if (!(k in st0)) delete stash[k];
+        Object.assign(stash, st0); research.rp = rp0;
+        refreshInv();
+      }
+      R.theStoneIsAStone = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+        : `a broken shrine gives its stone whole (no ash, ${R.rpOnBreak} insight on the spot); the bench offers it to read for ${ITEMS.s_stone.rp} insight; ` +
+          `CRUSH in the wagon makes it 3 measures of ash; and ash burned into the Door's hold carries it ${(R.hold.ashed / R.hold.bare).toFixed(2)}x as far over the same ten seconds, while the hold still moves without any`;
+      delete R.rpOnBreak; delete R.hold;
+    }
+    return R;
+  }));
+
+  const bad = Object.values(out).filter(v => typeof v === 'string' && v.startsWith('!!'));
+  for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(24) + ' ' + v);
+  for (const e of errs) console.log('  ' + e);
+  console.log('');
+  const which = Object.keys(out).filter(k => typeof out[k] === 'string' && out[k].startsWith('!!'));
+  console.log(bad.length || errs.length ? `*** A SEAM IS OPEN AGAIN (${bad.length + errs.length}): ${[...which, ...errs.map(() => 'pageerror')].join(', ')} ***`
+                                        : 'THE CLOSED SEAMS STAY CLOSED');
+  await b.close();
+  process.exit(bad.length || errs.length ? 1 : 0);
+})();

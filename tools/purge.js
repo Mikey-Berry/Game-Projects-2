@@ -164,9 +164,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       let after = 0;
       for (let i = 0; i < 200 && !after; i++) { bastionGuestTick(); after = chars.filter(c => c.bastionGuest && c.state !== 'dead').length; }
       const guest = chars.find(c => c.bastionGuest);
-      R.andSomethingMovesIntoTheYard = (early === 0 && after === 1 && guest && guest.faction === 'purge' &&
+      /* its own faction, beside the Order and not in it (LORE-SEAMS §3.2) */
+      R.andSomethingMovesIntoTheYard = (early === 0 && after === 1 && guest && guest.faction === 'messenger' &&
+                                        !hostile(guest, chars.find(c => c.faction === 'purge' && c.state !== 'dead') || guest) &&
                                         dist(guest.x, guest.y, bastion.x, bastion.y) < 14)
-        ? 'and after day 45 a Watcher takes up residence in the Bastion yard — a place you can go and look at'
+        ? 'and after day 45 a Messenger takes up residence in the Bastion yard, its own faction and at peace with the Order — a place you can go and look at'
         : `!! GUESTS: ${early} before day 45, ${after} after (faction ${guest && guest.faction})`;
     });
 

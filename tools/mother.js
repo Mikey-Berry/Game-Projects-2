@@ -157,6 +157,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const lines = [];
       const _log = log; log = (t, k) => { lines.push(String(t)); return _log(t, k); };
       for(let i = 0; i < 4 && !mother.spoken; i++) motherTick(3);
+      if(typeof sceneClose === 'function') sceneClose();   /* the scene pages; the rest of it to the log */
       log = _log;
       const said = lines.join(' | ');
       R.theDoorIsADoor = mother.spoken && mother.found && /THE SEAL/.test(said)
@@ -177,6 +178,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const lines = [];
       const _log = log; log = (t, k) => { lines.push(String(t)); return _log(t, k); };
       for(let i = 0; i < 4 && !mother.spoken; i++) motherTick(3);
+      if(typeof sceneClose === 'function') sceneClose();   /* the scene pages; the rest of it to the log */
       log = _log;
       const said = lines.join(' | ');
       R.oneOfHers = /CHILD/.test(said) && /THE PRICE IS NAMED/.test(said)
