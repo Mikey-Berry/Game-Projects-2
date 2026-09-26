@@ -526,6 +526,13 @@ dug into the first civilisation's tunnels, and at the bottom of one of them is M
 - **Osric & Wenna** — Hollowmere gravekeepers who compete with you for corpses.
 - **The Last Scholar `[★]`** — §11. Not yet in the code, and the largest unbuilt figure in the setting.
 - **Mother · Llammialith `[★]`** — §6. Alive, redundant, and the only being who knows the whole of it.
+- **The old king `[★]` `[C]`** — the kingdom's last king. He was at the middle of the rite when it
+  worked, and he was not annihilated with his capital: he went through, toward the throne, and he
+  has hung on the far side for nine generations. **Author-canon: he is Alagadda's Hanged King.
+  Nobody in the world calls him that**; outwardly he is only ever *the old king*. When the sky
+  opens he hangs in the mouth of the Door on a rope of light, and he is the last thing the closing
+  rite has to bring down. He believes the rite was done correctly, and he is right. His court
+  (four, one per Art) is sketched in `LORE-SEAMS.md` §8.3 and is `[?]` until ruled on.
 
 **Verity, rewritten `[★]`.** **She ascended after the Fracture, not before** — ninety years ago,
 four generations back, not an ancient. She was a Scholar, and her tragedy is that **she succeeded.**
@@ -618,6 +625,12 @@ tunnels, and one holds her), **the Deep** (the first civilisation's world, layer
 everything), **the sundered ground** (Malathuun's corpse-fields), **the middens**, **the Coil's
 stone** (on no map), and **the deep waste** — where the night comes from.
 
+**The three grounds `[C]`.** **The salt flats** round Saltmere, where the crust cures whatever lies
+down on it. **The rust barrens** round Ironscar, red with the machines the Fracture war left, some
+of which still sit up. **The vat bog** round the deep redoubt, where what the vats grew went into
+the ground and kept growing: quickflesh blooms, and pools that still put out half-poured things
+asking for the tender. The living wade it; the dead do not notice it.
+
 **Unbuilt and wanted `[?]`:** the kingdom's crater. It was annihilated at the centre in brilliant
 light and should be the largest landmark in the world. It is also where the rite was performed,
 which makes it the obvious place for the Door to open.
@@ -659,7 +672,8 @@ Flagged, unresolved, safe to revisit. Keep dependent dialogue thin.
 | What ended the first civilisation | **The most load-bearing open question in the setting.** Everything the Last Scholar does is an attempt to stop it happening to humanity, and he thinks it is happening again. |
 | The Last Scholar's immortality | **Deliberately never explained.** The legends this character is built on work because nobody produces the mechanism. |
 | How Mother's parasites work | Moral shape settled — cut from her, and she allowed it. The biology is undefined and is on the shelf for its own pass. |
-| The Ossuary King as the last king | Scholar rumour and unconfirmed knowledge only. Legacy boss; the door reopens if he is reworked. |
+| The Ossuary King as the last king | Scholar rumour and unconfirmed knowledge only. Legacy boss; the door reopens if he is reworked. The old king now exists `[C]`; whether the Ossuary King is the husk he left behind is proposed in `LORE-SEAMS.md` §8.3 and unruled. |
+| The old king's court | Four, one per Art, sketched in `LORE-SEAMS.md` §8.3. Not built. |
 | The kingdom's crater | Unbuilt. Should be the largest landmark in the world, and the natural site for the Door. |
 | What the Church knew | It existed before the Fracture, alongside the kingdom. Whether it blessed the rite is unwritten, and it is where the closely-guarded secret came from. |
 | Good Kami's placement | Candidate: the one of Mother's kin who did not leave. |

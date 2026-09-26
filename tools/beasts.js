@@ -169,13 +169,21 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? `two limbs off drops the seal from ${full[k0]} to ${cut[k0]} ${ITEMS[k0].name}`
         : `!! SEVERING LIMBS DOES NOT NARROW THE DOOR (${full[k0]} vs ${cut[k0]})`;
 
-      /* and once it is down the rite lands */
+      /* and once it is down the rite lands. SINCE THE OLD KING (tools/oldking.js), with one more
+         step: the hold with the Brood dead brings him down the rope first, and the Door stays
+         open until he is put down too. Builds without him land on the first pass, as before. */
       kill(br, caster);
       theDoor.work = DOOR_WORK;
       workTheDoor(caster, 1 / 30);
-      R.broodDown = !theDoor
-        ? 'and with it down, the same hold shuts the sky'
-        : '!! THE RITE STILL WILL NOT LAND WITH THE BROOD DEAD';
+      let kingStep = '';
+      if (typeof oldKingAlive === 'function' && theDoor) {
+        const k = oldKingAlive();
+        kingStep = k ? ' (after the old king came down and was put down)' : ' (THE OLD KING NEVER CAME)';
+        if (k) { kill(k, caster); theDoor.work = DOOR_WORK; workTheDoor(caster, 1 / 30); }
+      }
+      R.broodDown = !theDoor && !/NEVER/.test(kingStep)
+        ? `and with it down, the same hold shuts the sky${kingStep}`
+        : `!! THE RITE STILL WILL NOT LAND WITH THE BROOD DEAD${kingStep}`;
       caster.x = casterWas.x; caster.y = casterWas.y;
     }
 

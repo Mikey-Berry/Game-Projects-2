@@ -1318,7 +1318,7 @@ const KG = {wood:2, stone:3, copper:2, iron_ore:3.5, c_ingot:1.5, iron:2.5, coal
   /* the legendaries. A stave is a stick, a tooth is a tooth, and the coat from the Pouring is
      the heaviest thing anybody in this world has ever put on. */
   w_stave:2, w_tooth:3, a_widow:2, a_eleventh:8, a_habit:3,
-  h_circlet:1, k_twelfth:1.5, k_strider:2, k_gaunt:1.5,
+  h_circlet:1, h_oldcrown:1, k_twelfth:1.5, k_strider:2, k_gaunt:1.5,
   t_signet:0.2, t_splinter:0.3, t_salmortis:0.3,
   w_lance:3, w_sever:3, aether_cell:0.3, salt:1, a_carap:5, codex:1, lead:4, gold_bar:2, formula_t:0.3, formula_w:0.3, formula_p:0.3, sunder:2, doctrine:0.5,
   a_rag:1, a_lea:3, a_pla:6, a_lev:3, a_shroud:1, a_baroness:5, a_marshal:6, pack_s:1.5, pack_l:3};
@@ -1584,6 +1584,10 @@ const ITEMS = {
   h_circlet:{name:'The Circlet of the Pouring', base:16000, type:'head', def:.08, legend:true,
     widen:true,
     desc:'Eleven signatures around the inner band, and a twelfth space left blank. Every branch opens one tier further — a specialist can master an art that was never theirs.'},
+  /* off the old king, once, in the Door. Not a legendary (the twelve are a ledger of their own);
+     just the one crown in the world with nothing written in it. */
+  h_oldcrown:{name:"The Old King's Crown", base:12000, type:'head', def:.07,
+    desc:'Lighter than it looks, and warm on the inside of the band as if somebody took it off a moment ago. Nothing is engraved in it at all.'},
 
   /* ---------- CLOAK ---------- */
   k_twelfth:{name:'Shroud of the Twelfth', base:14000, type:'cloak', def:.04, legend:true,
@@ -1893,7 +1897,7 @@ for(const k of Object.keys(ITEMS)){
      down when its owner has been lying out, the price scales, and the mesh tints. Trinkets do
      NOT — a Masterwork Guild Marker is not a thing, and the ones worth having are singular. */
   if(!['weapon', 'armor', 'head', 'cloak'].includes(it.type)) continue;
-  if(['w_kingsfang','w_pyre','a_baroness','a_marshal','a_shroud','h_crest'].includes(k)) continue; /* uniques stay unique */
+  if(['w_kingsfang','w_pyre','a_baroness','a_marshal','a_shroud','h_crest','h_oldcrown'].includes(k)) continue; /* uniques stay unique */
   BASE_GEAR.push(k);
   for(const t of ['c','f','m']){
     const T = TIERS[t];
@@ -11361,6 +11365,7 @@ function kill(c, by){
   /* the ledger is written here, not inferred from a body that will be gone in two days */
   if(c.bossKey && !bossSlain[c.bossKey]) bossSlain[c.bossKey] = day;
   if(c.bossKey === 'guardian') guardianFalls(c);
+  if(c.bossKey === 'oldking') oldKingFalls(c);
   /* a risen that has done the work is a candidate for a name */
   if(by && by.undead && by.crafted) by.kills = (by.kills || 0) + 1;
   /* ---------- COMMANDING THE DEAD SHARPENS THE CRAFT — WHEN THEY ARE COMMANDED ----------
@@ -18226,6 +18231,7 @@ function openTheDoor(){
   worldEvent('door', x, y, 'The sky has opened over the crater at the middle of the world. Not a tear this time. A door, and it is standing wide.');
   AU.news();
   spawnBrood();
+  log('There is a figure hanging in the mouth of it, a long way up, on a rope of light. It wears a crown.', 'bad');
   return theDoor;
 }
 /* ============================================================ BROOD-OF-THE-DOOR
@@ -18299,6 +18305,135 @@ function broodTick(dt){
     }
     if(rnd() < 0.3) addSpecks(b.x, b.y + 1.2, '#6a4a7a', 3);
   }
+}
+/* ============================================================ THE OLD KING
+   INTERNALLY THE HANGED KING; OUTWARDLY ONLY EVER "THE OLD KING". The kingdom's last king was at
+   the middle of the rite when it worked, and he was not annihilated with his capital: he went
+   through, toward the throne, and he has been hanging on the far side of it for nine
+   generations. When the sky opens he is in the mouth of the Door, a long way up, on a rope of
+   light, wearing a crown. Nobody in the world says who he is. He says it himself, badly.
+
+   THE SAME ONE RULE AS THE BROOD, one step further. The Brood holds the Door open from beneath;
+   the king is what it hangs from. The hold runs to a hundred and the Door will not take it
+   while either of them is there: put the Brood down, finish the hold, and the rite's own pull
+   brings him down the rope and stands him up in the Door. Put HIM down, and the rite lands.
+   Nothing new to learn, no new cost: the closing rite as it was, with its last page turned.
+
+   He is `gaunt` by faction and nothing else of theirs: what comes out of the Door does not turn
+   on the man hanging in it, and nothing else in the world is his. `doorborn`, so shutting the
+   Door unmakes him if anything ever does it with him still standing. */
+const OLDKING_BLOOD = 1250;
+const NOOSE_EVERY = [5.5, 3.6];    /* seconds between nooses, before and after he is half gone */
+const NOOSE_HOLD = 2.4;            /* how long it holds what it catches off its feet */
+/* what he says from up there, one line at a time, to whoever is close enough to hear it */
+const OLDKING_HANGING = [
+  'Is the capital still there? I cannot see it for the light.',
+  'We did it correctly. Write that down somewhere. We did it correctly.',
+  'I can see all of you from up here. It is a long way down.',
+  'My alchemists said the rope would hold. It has held.',
+  'Kneel. No. Stand. Nobody kneels any more. I saw.',
+  'Nine generations. I counted every one of them. It passes the time.',
+];
+/* and what he says once he is standing in it */
+const OLDKING_STANDING = ['I held a kingdom. I can hold a door.',
+  'You are finishing our work. You understand that. You are finishing it.',
+  'Do not look at the crown. Everyone looks at the crown.'];
+function oldKingAlive(){
+  return theDoor ? (chars.find(c => c.bossKey === 'oldking' && c.state !== 'dead') || null) : null;
+}
+function oldKingComesDown(d){
+  d.kingDown = true;
+  /* he steps out to the Door's south edge: the veil over the bowl stands at the very middle, and a
+     king standing inside it is a king nobody can see */
+  const q = findOpenNear(Math.round(d.x), Math.round(d.y + d.r * 0.65), 3);
+  const k = makeChar('The Old King', 'gaunt', q.x, q.y, {atk:52, def:40, tough:70, ath:6, magic:60, armr:24});
+  k.bossKey = 'oldking';
+  k.doorborn = true; k.nightborn = false;
+  k.big = 1.45; k.taunt = true;
+  k.blood = OLDKING_BLOOD; k.maxBlood = OLDKING_BLOOD;
+  k.guard = {x: q.x, y: q.y};
+  k.weapon = 'w_kingsfang';               /* the name was always a boast about somebody */
+  k.head = 'h_oldcrown';
+  k.dropItems = {codex: 1, formula_p: 2};
+  k.barks = OLDKING_STANDING;
+  k.kingPhase = 0;
+  chars.push(k);
+  addSpecks(q.x, q.y + 1.5, '#f4e8c0', 40);
+  say(k, 'There. Now we are the same height.');
+  log('The hold is done, and the Door gives, and something comes down out of it. The rope pays out of the light, slowly, and the old king stands up in the Door as if he had been waiting to be asked.', 'bad');
+  log('The rite will not land while he stands in it.', 'bad');
+  worldEvent('door', q.x, q.y, 'The man hanging in the Door over the crater has come down. People who saw it say he walked out of the light like somebody late for his own court.');
+  threadSet('rite', 'The closing rite',
+    'The hold is done and the old king has come down into the Door. It will not close while he stands in it.',
+    {hint: 'He does not leave the Door. Keep your people moving: what he drops round their necks lifts them clean off their feet.'});
+  return k;
+}
+/* who he can reach: anybody of yours, or anybody at all who is fighting what came out of the Door */
+function oldKingFoes(k){
+  return chars.filter(o => o.state === 'ok' && !(o.floor || 0) && o.faction !== 'gaunt' && !o.gauntKind
+    && dist(o.x, o.y, k.x, k.y) < 16 && hostile(k, o));
+}
+let _kingSayT = 20;
+function oldKingTick(dt){
+  const d = theDoor;
+  if(!d) return;
+  /* ---- UP THERE: he talks, now and then, to whoever is near enough to hear ---- */
+  if(!d.kingDown){
+    if((_kingSayT -= dt) > 0) return;
+    _kingSayT = 55;
+    if(!player().some(o => o.state !== 'dead' && dist(o.x, o.y, d.x, d.y) < 70)) return;
+    const i = (d.kingSaid || 0) % OLDKING_HANGING.length;
+    d.kingSaid = (d.kingSaid || 0) + 1;
+    log(`The old king, from the Door: "${OLDKING_HANGING[i]}"`, '');
+    addFloat(d.x, d.y - 3, OLDKING_HANGING[i].toUpperCase().slice(0, 42), '#f4e8c0');
+    return;
+  }
+  const k = oldKingAlive();
+  if(!k) return;
+  /* ---- AND DOWN HERE: he does not leave the Door ---- */
+  if(dist(k.x, k.y, d.x, d.y) > d.r + 4){ k.target = null; k.targetManual = false; k.moveTarget = {x: d.x, y: d.y}; }
+  if(k.state !== 'ok') return;
+  if(!k.kingPhase && k.blood < k.maxBlood * 0.5){
+    k.kingPhase = 1;
+    say(k, 'Shorter, then.');
+    log('The old king takes up the slack in his own rope. What he drops round a neck now comes down faster.', 'bad');
+  }
+  /* THE NOOSE. A ring of light at someone's feet, the same warning the crater's columns give,
+     and then it closes: whoever is in it is lifted off the ground and held there, hurt and
+     useless, for a couple of seconds. It is his, and it does not burn — it hangs. */
+  k._nooseT = (k._nooseT ?? 2) - dt;
+  if(k._nooseT > 0) return;
+  k._nooseT = NOOSE_EVERY[k.kingPhase ? 1 : 0];
+  const foes = oldKingFoes(k);
+  if(!foes.length) return;
+  const who = foes[(rnd() * foes.length) | 0];
+  craterStrikes.push({x: who.x, y: who.y, t: STRIKE_WARN, hit: false, noose: true});
+}
+function oldKingFalls(c){
+  log('The old king goes down in the Door, and whatever his rope was tied to on the far side lets go of it. There is nothing left in the Door now but the Door.', 'good');
+  worldEvent('boss', c.x, c.y, 'The man who came down out of the Door over the crater has been put down. Nobody who saw it can agree on how old he looked.');
+  if(theDoor) threadSet('rite', 'The closing rite',
+    'The old king is down. Nothing is standing in the Door any more: hold the rite and it lands.',
+    {hint: 'Right-click the Door with every gifted body you have. It will want its price when it gives.'});
+}
+/* the noose landing: called from `craterStrike`, which owns the column's timing */
+function nooseStrike(st){
+  for(const o of chars){
+    if(o.state === 'dead' || (o.floor || 0) !== 0 || o.gauntKind || o.faction === 'gaunt') continue;
+    if(dist(o.x, o.y, st.x, st.y) > STRIKE_R) continue;
+    o.staggerT = Math.max(o.staggerT || 0, NOOSE_HOLD);
+    o.hangT = NOOSE_HOLD; _hung.add(o);
+    o.windup = null; o.path = null;
+    applyDamage(null, o, 'head', 14 + rnd() * 8, 'blunt', true);
+    updateState(o, true);
+  }
+  addSpecks(st.x, st.y + 1.2, '#f4e8c0', 16);
+}
+/* the ones held up: counted down on the sim clock so a pause holds them where they are */
+const _hung = new Set();
+function hangTick(dt){
+  if(!_hung.size) return;
+  for(const o of _hung){ o.hangT = Math.max(0, (o.hangT || 0) - dt); if(!o.hangT) _hung.delete(o); }
 }
 /* ============================================================ THE CLOSING RITE
    The door can be shut. It has always been able to be shut: somebody with a gift stands in it
@@ -18375,7 +18510,9 @@ function closingDoorThread(){
       ? `The door is open and you do not know what to do about it. A scholar knows; a Golden-Age codex knows better.`
       : br
       ? `The door is open and Brood-of-the-Door is standing in it — the rite cannot land while it does. The hold is ${pct}%, ${off} of 4 limbs are off it, and the seal is down to ${cost}.`
-      : `The door is open. The hold is ${pct}% of the way through, and it will want ${cost} when it gives.`,
+      : oldKingAlive()
+      ? `The old king has come down into the Door and is standing in it. The rite will not land until he is put down. It will want ${cost} when it gives.`
+      : `The door is open${theDoor.kingDown ? '' : ', and the old king is still hanging in it'}. The hold is ${pct}% of the way through, and it will want ${cost} when it gives.`,
     {hint: closing.known ? 'Right-click the door with every gifted body you have. They have to stay on it.'
                       : 'Ask a scholar about the stillness, then find a codex.', quiet: true});
 }
@@ -18423,6 +18560,11 @@ function workTheDoor(c, dt){
         {hint: 'It never leaves the door. Every limb you take off it narrows the door and cheapens the seal.'});
       return true;
     }
+    /* ---- AND WHAT THE DOOR HANGS FROM ----
+       With the Brood down, the finished hold pulls on the Door, and what comes down the rope is
+       the old king. He has to be put down too before it will close. */
+    if(!d.kingDown){ oldKingComesDown(d); d.work = DOOR_WORK; return true; }
+    if(oldKingAlive()){ d.work = DOOR_WORK; return true; }
     const cost = doorSealCost();
     const paid = sealStock(cost);
     if(!paid && !canAfford(cost)){
@@ -20238,6 +20380,7 @@ function strikeTick(dt){
   craterStrikes.push({x: who.x + Math.cos(a) * r, y: who.y + Math.sin(a) * r, t: STRIKE_WARN, hit: false});
 }
 function craterStrike(st){
+  if(st.noose){ nooseStrike(st); return; }
   for(const o of chars){
     if(o.state === 'dead' || (o.floor || 0) !== 0 || o.gauntKind || o.faction === 'gaunt') continue;
     const d = dist(o.x, o.y, st.x, st.y);
@@ -25914,6 +26057,8 @@ function update(dt){
   strikeTick(dt);             /* and whether the light is coming down on anybody in the glass */
   guardianTick(dt);           /* and whether the thing at the middle is calling it down on you */
   biomeTick(dt);              /* the flats, the rust and the bog: who walked in, what woke, what keeps */
+  oldKingTick(dt);            /* the man in the Door: talking from up there, or hanging people down here */
+  hangTick(dt);
   closingTick(dt);            /* and whether anybody has read the codex sitting in the stores */
   commandTick(dt);            /* and what the bands you sent out are doing about it */
   cryTick(dt);                /* and whether anyone in one of your yards is shouting for help */
@@ -28271,6 +28416,9 @@ function syncStrikes(){
     if(!st || activeFloor < 0){ P.g.visible = false; continue; }
     P.g.visible = true;
     P.g.position.set(st.x, groundY(st.x, st.y) + 0.06, st.y);
+    /* the old king's noose is his own colour, so a player can tell whose it is before it lands */
+    const hue = st.noose ? 0xf4d890 : 0xece6ff;
+    if(P.ring.material.color.getHex() !== hue) for(const m of [P.ring, P.core, P.beam]) m.material.color.setHex(hue);
     if(!st.hit){
       const u = 1 - clamp(st.t / STRIKE_WARN, 0, 1);
       P.ring.material.opacity = 0.2 + 0.6 * u * (0.65 + 0.35 * Math.sin(now * 28));
@@ -28284,6 +28432,42 @@ function syncStrikes(){
       P.ring.material.opacity = 0.7 * u; P.core.material.opacity = 0.75 * u;
     }
   }
+}
+/* ---------- THE OLD KING, HANGING ----------
+   Boxes, like everything else built for one place in the world: a man in regalia hanging by the
+   neck from a rope of light, turned slowly by nothing, a long way above the Door. Not a body in
+   `chars` while he hangs, so nothing can target, crowd, loot or raise him until he comes down.
+   Drawn only once the Door is somewhere you have seen. */
+const hangedKingFx = (() => {
+  const g = new THREE.Group();
+  const lam = (c) => new THREE.MeshLambertMaterial({color: c});
+  const bx = (w, h, d, c, x, y, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lam(c)); m.position.set(x, y, z); g.add(m); return m; };
+  const glow = (geo) => new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color: 0xf4e8c0, transparent: true, opacity: 0.85,
+    depthWrite: false, blending: THREE.AdditiveBlending, fog: false}));
+  bx(0.34, 0.34, 0.34, '#b8a894', 0.04, -0.32, 0.03).rotation.z = 0.35;       /* the head, gone over to one side */
+  bx(0.40, 0.07, 0.40, '#b08a3a', 0.07, -0.13, 0.03).rotation.z = 0.35;       /* and the crown on it */
+  for(let i = 0; i < 5; i++){ const a2 = i / 5 * Math.PI * 2; bx(0.06, 0.16, 0.06, '#d4a848', 0.07 + Math.cos(a2) * 0.17, -0.03, 0.03 + Math.sin(a2) * 0.17).rotation.z = 0.35; }
+  bx(0.92, 0.12, 0.44, '#b08a5a', 0, -0.62, 0);                               /* the mantle */
+  bx(0.62, 0.80, 0.36, '#7a4a5e', 0, -1.02, 0);                               /* regalia, faded to the colour of old wine */
+  bx(0.72, 1.10, 0.42, '#5e3a4c', 0, -1.95, 0);                               /* the robe, hanging straight */
+  for(const sx of [-1, 1]) bx(0.16, 0.92, 0.16, '#7a4a5e', sx * 0.42, -1.10, 0);
+  for(const sx of [-1, 1]) bx(0.14, 0.10, 0.28, '#1e1a1e', sx * 0.14, -2.56, 0.05);
+  const rope = glow(new THREE.CylinderGeometry(0.05, 0.05, 44, 6, 1, true)); rope.position.y = 22; g.add(rope);
+  const knot = glow(new THREE.TorusGeometry(0.2, 0.045, 6, 14)); knot.rotation.x = Math.PI / 2; knot.position.y = -0.1; g.add(knot);
+  g.scale.setScalar(1.8);
+  g.visible = false;
+  scene.add(g);
+  return g;
+})();
+function syncHangedKing(now){
+  const d = theDoor;
+  const show = !!d && !d.kingDown && activeFloor >= 0 && (debugSeeAll || visAt(d.x, d.y) > 0);
+  hangedKingFx.visible = show;
+  if(!show) return;
+  const t = now * 0.001;
+  /* over the south edge of the Door, in front of the veil, where he will come down */
+  hangedKingFx.position.set(d.x, groundY(d.x, d.y) + 11, d.y + d.r * 0.65);
+  hangedKingFx.rotation.set(0, t * 0.05, Math.sin(t * 0.35) * 0.05);
 }
 /* the sky over the crater: a sick pale by day, a bruise by night */
 const craterSky = {day: new THREE.Color(0xb4b09a), night: new THREE.Color(0x1c1426), c: new THREE.Color()};
@@ -33179,6 +33363,9 @@ function factionColor(c){
   if(c.faction==='messenger') return '#f4f0ff';   /* the light they carry, and nothing dyed */
   if(c.faction==='slaver') return '#8a5a6a';
   if(c.faction==='redoubt') return c.construct ? '#8a9098' : '#c8c0a8';
+  /* the old king is gaunt by allegiance and not by make: regalia faded to old wine, which is also
+     the one colour that does not vanish into the purple glass he stands on */
+  if(c.bossKey==='oldking') return '#9a5a4a';
   if(c.faction==='gaunt') return '#7d5a95';   /* a colour that does not belong here */
   /* ---------- AND THE COLOUR OF SOMETHING THAT HAS NEVER NEEDED ONE ----------
      Without this the Kept fell through to the default at the bottom of the chain and came out
@@ -38121,6 +38308,13 @@ function buildCharMesh(c){
           const a2 = i / 8 * Math.PI * 2;
           obox(0.055, 0.11, 0.055, '#d8ccb0', Math.cos(a2) * 0.20, 0.36, Math.sin(a2) * 0.20, e.headG);
         }
+      } else if(hk === 'h_oldcrown'){
+        /* a band, and five points on it: the one silhouette in the game everybody can read */
+        obox(0.40, 0.07, 0.40, '#b08a3a', 0, 0.36, 0, e.headG);
+        for(let i = 0; i < 5; i++){
+          const a2 = i / 5 * Math.PI * 2;
+          obox(0.06, 0.16, 0.06, '#d4a848', Math.cos(a2) * 0.18, 0.46, Math.sin(a2) * 0.18, e.headG);
+        }
       }
     }
     /* AND A CLOAK IS A SILHOUETTE, which is the entire argument for the slot: at playing
@@ -38313,6 +38507,8 @@ function syncChars(dt){
     /* driven back: the slide trails the blow rather than snapping with it */
     if(c.shoveT > 0){ const k = (c.shoveT/(c.shoveDur||0.22))*(c.shoveK||0.30); px += c.shoveDX*k; pz += c.shoveDY*k; }
     e.g.position.set(px, gy, pz);
+    /* held up by the old king's noose: lifted fast, held, and dropped at the end of it */
+    if(c.hangT > 0) e.g.position.y += 1.1 * Math.min(1, (NOOSE_HOLD - c.hangT) * 4) * Math.min(1, c.hangT * 4);
     const ageScale = (!c.undead && !c.beast && c.age < 16) ? 0.55 + (c.age/16)*0.45 : 1;
     const bs = (c.big || 1) * vscaleOf(c) * ageScale;
     e.g.scale.set(bs * (e.baseSX||1), bs * (e.baseSY||1), bs * (e.baseSX||1));
@@ -40148,6 +40344,7 @@ function render(){
   const rdt = Math.min(0.05, (now - lastRenderT)/1000);
   lastRenderT = now;
   syncRaising(now);
+  syncHangedKing(now);
   tickBubbles(rdt);
   camDist = lerp(camDist, camDistTarget, Math.min(1, rdt*6));
   camYaw += (camYawT - camYaw) * Math.min(1, rdt*8);

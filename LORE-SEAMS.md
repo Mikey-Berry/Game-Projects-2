@@ -608,7 +608,6 @@ Put down on 2026-09-25 so none of it is lost. Nothing here is started.
 
 - The Dame's *"do not come back"* is never enforced (§2.2).
 - The playtest cheats are visible in Options.
-- Per-step lookups of one-of-a-kind objects cost 11% of a sim step.
 - A forage band may leave the inner part of its circle unswept, and leave members behind at the
   close. **Reproduced 2026-09-26:** `command.js` read "BAND LEFT BEHIND (19) | MISSED A CHEST
   (0/1)" and, on another world path, "BAND LEFT BEHIND (55)", whenever the world's stream was
@@ -618,13 +617,127 @@ Put down on 2026-09-25 so none of it is lost. Nothing here is started.
   draw-call saving left.
 - A bigger map (2048 measured: 521 MB heap against 304, 14 ms a step against 12, Greenrest's
   layout needs two fixes; 2880 is a gigabyte). Waiting on your call, and on more towns to fill it.
-- Brainstorms put to you 2026-09-26: new biomes with alchemical hooks, and the old king (the
-  Hanged King direction) as what comes through the Door.
+- The other five biomes from the 2026-09-26 brainstorm (sulphur vents, quicksilver fens, the
+  nigredo ashwood, albedo chalk, the oases). Three are built (§8.1).
+- The old king's court: sketched in §8.3 for your call.
 - After you have played the crater: ruin density, cache loot and strike rate. Visible waystones
   at the ring's waypoints, and a scavengers' waystation at the edge of the approach.
 - Town spacing: a rule keeping every town within about 450 tiles of another (Ironscar).
 - The deploy preview has not been checked since the crater.
-- A full-suite run before #40 merges. Not run without your say-so.
+- A second full-suite run once the biomes and the old king have settled (the first, on
+  `d7a5602`, was 178/179 with its one red fixed).
+
+## 8. The three grounds and the old king (2026-09-26)
+
+### 8.1 The salt flats, the rust barrens, the vat bog — **built**
+
+As ruled: three of the eight. Each stands round the thing that made it. The world's random
+stream never hears of them: the masks are laid after worldgen, off noise and the tile hash, and
+what sleeps in them is only spawned when one of yours walks up. A fresh world boots with the
+same chests, sites, buildings and bodies as before. `tools/biomes.js` holds all of it.
+
+| Ground | Where | What it does |
+|---|---|---|
+| **The salt flats** | round Saltmere, about 18,800 tiles | White crust with polygon seams, no trees. **A body that falls on the flats is cured where it lies**: Saltmere's faith as ground, and the one place a necromancer would rather fight. Not brine, though: the dust still takes it on the ordinary clock, and you can still pack one properly to keep it for good. |
+| **The rust barrens** | round Ironscar, about 22,600 tiles | Red ground and dead trees. About 115 half-buried wrecks, which a new **SALVAGE** job strips for iron (five plates each, slow to come back). Eight of the wrecks are **Rusted Automatons** that sit up when one of yours comes within seven tiles, and their frames are salvage too. |
+| **The vat bog** | round the deep redoubt, about 7,000 tiles | Liver-dark peat with pale threads through it. About 70 **quickflesh blooms**, which a new **FORAGE** job cuts for Quickened Flesh (they grow back in days). **The living wade it at 72% of their pace; the dead cross it at full stride.** Six pools each put out two **vat-spawn** when you come close: half-poured, unarmed, asking for the tender. |
+
+Each announces itself once, the first time one of yours walks in, and the minimap draws all three.
+
+Left for later: mirages on the flats, and anything that reads the biomes beyond these rules (weather,
+towns' trade, the Order's patrols).
+
+### 8.2 The old king — **built**
+
+As ruled: the Hanged King, and never called that where a player can read it. Outwardly he is
+only ever **the old king**. In code he is `oldking`, and the comment block is the one place the
+other name appears.
+
+- **Hanging.** When the sky opens he is in the mouth of the Door, a long way up, on a rope of
+  light, wearing a crown. He is not a body while he hangs: nothing can target, raise or loot him.
+  About once a minute, if one of yours is near, he says something from up there:
+  - *"Is the capital still there? I cannot see it for the light."*
+  - *"We did it correctly. Write that down somewhere. We did it correctly."*
+  - *"I can see all of you from up here. It is a long way down."*
+  - *"My alchemists said the rope would hold. It has held."*
+  - *"Kneel. No. Stand. Nobody kneels any more. I saw."*
+  - *"Nine generations. I counted every one of them. It passes the time."*
+- **The rule.** It is the Brood's one rule taken one step further. The Brood holds the Door open
+  from below, and the king is what it hangs from. With the Brood dead, the finished hold does not
+  shut the sky. It pulls him down the rope, and he stands up at the Door's edge (*"There. Now we
+  are the same height."*). The Door will not close while he stands. Put him down and the same hold
+  lands. There is no new cost and nothing new to learn: the rite as it was, with its last page
+  turned. The journal says so at every step.
+- **The fight.** 1,250 blood, with Kingsfang. He never leaves the Door. His own attack is **the
+  noose**: a gold ring at somebody's feet with the crater's warning time, then it closes, and
+  whoever is in it is lifted off the ground, held for 2.4 seconds and hurt. Below half blood he
+  *"takes up the slack"* and the nooses come faster. He is `gaunt` by allegiance only: what comes
+  out of the Door leaves him alone, the crater's light does not burn him, and everybody else is
+  his enemy.
+- **What he leaves.** **The Old King's Crown**, which is *"Lighter than it looks, and warm on the
+  inside of the band as if somebody took it off a moment ago. Nothing is engraved in it at all."*
+  That stands against the Sunken Crown's eleven names. It is not a legendary, because the twelve
+  are a ledger of their own.
+
+`tools/oldking.js` holds all of it. `beasts.js`'s "with the Brood down the rite lands" claim now
+walks through him.
+
+**Not decided, so not built:** whether the Ossuary King is the husk the old king left behind,
+and whether Lyonart is anything to him. Both are in the sketch below as proposals.
+
+### 8.3 The old king's court — **a sketch, for your call**
+
+Four, not eleven, and the eleven stay where the game already put them: they are the Pouring's
+names. **One for each of the Four Arts**, practised as the Golden Age practised them, before
+anything was degraded. That is the court's reason to exist: each is the full version of something
+the player knows only as a remnant. They come through masked. Outwardly they are the old king's
+people; nobody in the world has a word for what they are.
+
+1. **The Chancellor** (Divine, at full: revelation). The Chancellery's own hand, the one who
+   wrote *conduit* in the ledgers (§3.3). Speaks in minutes and procedure, and records
+   everything, including you. Mask: plain white, and no mouth, because the Chancellery minutes;
+   it does not speak. **In a fight:** mends and shields whoever stands beside it, and at close
+   range shows a body enough of the light to blind it, which is the Divine art's depth cost
+   turned outward.
+2. **The Master of the Pouring** (Transmutation, the art Destruction is the wreck of). The one
+   who poured the eleven. The Sigil-Bound's maker, and the one person in the world it would want
+   to speak to. Mask: a smith's face-plate, seamed where it was cast. **In a fight:** turns ground
+   to glass under a body's feet, and pours the dead around it into brief armoured vessels. Its
+   home would be **the rust barrens**, among the machines of the war that followed.
+3. **The Keeper of the Conduit** (Dark, at full). Mother's jailer: the one who held the leash
+   while the siphon ran. The one member of the court whose name Mother would know, and the one
+   she would not say. Mask: long, bone. **In a fight:** raises the crater's dead in numbers
+   nothing in the world can match, which is the point: this is what the player's art was *for*.
+   Its home would be **the vat bog**, round the bunker whose vats it stocked.
+4. **The Unremembered** (Dust, the art that altered reality). Nobody can hold its face in
+   memory, and nobody remembers its name, so no record of it exists. **Proposal:** this is why
+   Dust is the degraded art with no deathless road and no depth left in it. Its only master went
+   through the Door with the king, and took the rest of the art. **In a fight:** raises walls that
+   were never there, and makes one of yours forget what they were ordered to do. Its home would
+   be **the salt flats**, which already want mirages.
+
+**How they arrive (recommended).** One at a time as the Fracture climbs, at its own ground,
+ahead of the Door. Each is a late-game boss at a place: the Master in the barrens, the Keeper
+in the bog, the Unremembered on the flats, and the Chancellor last, in the colonnade, when the
+Door opens. **Each one you put down before the old king comes down takes that art out of his
+fight.** With the whole court alive, he fights with all four. That mirrors the Guardian's cost,
+and it gives the player's endgame preparation a shape that isn't a stockpile.
+
+*The alternative, smaller:* they come through the Door itself as the hold passes 25, 50 and 75%,
+to keep the rope from being cut. That is simpler, but they never meet the world.
+
+**Tie-ins, for you to rule on:**
+- **The Ossuary King as the husk.** The scholars' rumour (lore bible §13) becomes half-true: he
+  is what the old king left behind when he went through. Killing him first would bring the old
+  king down *"lighter than he went up"*, with less blood. That confirms a rumour the bible keeps
+  deliberately open, so it is your call.
+- **Lyonart d'Alagadda.** If the old king has hung in Alagadda for nine generations, the court
+  would know an Alagaddan prince on sight. One line from the Chancellor (*"Highness. You are
+  expected."*) would do more than any exposition. It makes Lyonart's exile something the court
+  noticed, and nothing more is committed.
+- **The licence flag, again.** The masked ambassadors and the Hanged King are SCP ideas (CC BY-SA
+  3.0). Keeping the name internal lowers the exposure. The borrowing is still there if the game
+  ships.
 
 ---
 
