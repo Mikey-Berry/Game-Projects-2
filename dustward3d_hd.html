@@ -6146,7 +6146,7 @@ function bastionGuestTick(){
   AU.news();
 }
 function inquestTick(){
-  const iq = chars.find(c => c.inquisitor && c.state === 'ok');
+  const iq = rareFolk().inq.find(c => c.state === 'ok');
   if(!iq) return;
   if(iq.inquestDone){
     /* the bill is served; they walk home and are gone */
@@ -13013,6 +13013,42 @@ function regridAll(){
     if(c.state === 'ok' && !bodyFrozen(c)) gridFile(c, gridCellOf(c));
   }
 }
+/* ---------- THE RARE ONES, FOUND ONCE A STEP ----------
+   CODE-AUDIT §2.3, open since the 2026-09-17 audit: seven ticks each walked the whole roster,
+   every step, to find one to a few dozen bodies (the inquisitor, the Coil, the choirs, the
+   Sixfold, the corpse sites' own, the crater's own, the night's own). Measured 2026-09-26 on
+   the default world: about 0.4ms of a 2.4ms step, sixteen percent, for questions about a
+   handful of bodies.
+   They are filed in `rebuildCharGrid`, which already walks the roster once a step, so the
+   gathering costs the questions and not a second walk. And again, on its own pass, whenever
+   the roster has changed length since: that is the caution the audit wrote down. A list built
+   at the top of the step would miss a body spawned partway through it (the rift, the Door and
+   the night itself all spawn mid-step), and a harness that pushes a body and calls a tick
+   directly would read the old list. The length catches both. A flag set on a body that was
+   already there (a townsman joining the Coil) is picked up at the next grid pass.
+   Each gathering builds new arrays, so a loop over the old ones is never pulled out from
+   under it. Every reader keeps its own state test: these are who to look at, not who is
+   alive. */
+let _rare = null, _rareLen = -1;
+function rareNew(){ return {inq: [], coil: [], choir: [], six: [], site: [], crater: [], night: []}; }
+function rareFile(r, c){
+  if(c.inquisitor) r.inq.push(c);
+  if(c.coil) r.coil.push(c);
+  if(c.gauntKind){
+    if(c.gauntKind === 'choir') r.choir.push(c);
+    if(c.siteId !== undefined && c.siteId !== null) r.site.push(c);
+  }
+  if(c.bossKey === 'sixfold') r.six.push(c);
+  if(c.craterOwn) r.crater.push(c);
+  if(c.nightSpawn) r.night.push(c);
+}
+function rareFolk(){
+  if(_rare && _rareLen === chars.length) return _rare;
+  const r = rareNew();
+  for(const c of chars) rareFile(r, c);
+  _rare = r; _rareLen = chars.length;
+  return r;
+}
 function rebuildCharGrid(){
   charEpoch++;                    /* a new step: whatever `player()` cached is a step old now */
   /* somebody left the roster since the last pass — see the note above */
@@ -13043,8 +13079,21 @@ function rebuildCharGrid(){
   carriers.length = 0;
   for(const b of pBuilds) if((b.type === 'torchpost' || b.type === 'lampviolet') && (b.fuel || 0) > 0 &&
                              (b.progress === undefined || b.progress >= 1)) litPosts.push(b);
+  const rare = rareNew();
   for(const c of chars){
     charById.set(c.id, c);
+    /* THE RARE ONES, before every gate, whatever state they are in. Inline, for the reason the
+       note at the bottom of this loop gives: a call per body here costs what the filing saves.
+       Same tests as `rareFile`. */
+    if(c.inquisitor) rare.inq.push(c);
+    if(c.coil) rare.coil.push(c);
+    if(c.gauntKind){
+      if(c.gauntKind === 'choir') rare.choir.push(c);
+      if(c.siteId !== undefined && c.siteId !== null) rare.site.push(c);
+    }
+    if(c.bossKey === 'sixfold') rare.six.push(c);
+    if(c.craterOwn) rare.crater.push(c);
+    if(c.nightSpawn) rare.night.push(c);
     /* ---------- AND WHOEVER HAS A BODY OVER THEIR SHOULDER ----------
        Gathered here for the same reason the warders and the charm-bearers above are. The haul
        loop at the bottom of `update` walked all seventeen hundred bodies every step asking
@@ -13131,6 +13180,7 @@ function rebuildCharGrid(){
       gridFile(c, k);
     }
   }
+  _rare = rare; _rareLen = chars.length;
 }
 /* ============================================================ A FROZEN STOREY
    "I wonder if we could completely freeze the lower levels until a squad member actually
@@ -19297,7 +19347,7 @@ let coilN = 0;
 let coilMeetNight = false;
 function coilTick(){
   if(!coilShrine) return;
-  const members = chars.filter(c => c.coil && c.state === 'ok');
+  const members = rareFolk().coil.filter(c => c.state === 'ok');
   if(!members.length) return;
   if(isNight()){
     if(!coilMeetNight && rnd() < 0.25){ coilMeetNight = true; }
@@ -19736,8 +19786,8 @@ function cairnShed(c, dmg){
 }
 /* the corpse-ground notices being picked at */
 function choirTick(wdt){
-  for(const g of chars){
-    if(g.gauntKind !== 'choir' || g.state !== 'ok') continue;
+  for(const g of rareFolk().choir){
+    if(g.state !== 'ok') continue;
     if(player().some(c => c.state !== 'dead' && dist(c.x, c.y, g.x, g.y) < 10))
       bumpNotice(wdt * 0.5);   /* the song is a question, and proximity is an answer */
   }
@@ -19754,8 +19804,8 @@ function corpseSiteTick(wdt){
   let _pop = null;
   if(corpseSites.length){
     _pop = new Map();
-    for(const c of chars){
-      if(c.siteId === undefined || c.siteId === null || c.state === 'dead' || !c.gauntKind) continue;
+    for(const c of rareFolk().site){
+      if(c.state === 'dead') continue;
       _pop.set(c.siteId, (_pop.get(c.siteId) || 0) + 1);
     }
   }
@@ -19869,7 +19919,7 @@ function guardianWithdraws(){
 /* the hours: what the crater has lost, it grows back, but never where one of yours can see it */
 function craterDangerTick(dh){
   const pop = {glass: 0, bowl: 0, messenger: 0};
-  for(const c of chars) if(c.craterOwn && c.state !== 'dead' && pop[c.craterOwn] !== undefined) pop[c.craterOwn]++;
+  for(const c of rareFolk().crater) if(c.state !== 'dead' && pop[c.craterOwn] !== undefined) pop[c.craterOwn]++;
   const unseen = (q) => !player().some(o => o.state !== 'dead' && dist(o.x, o.y, q.x, q.y) < 36);
   for(const ring of ['glass', 'bowl']){
     const P = CRATER_POP[ring];
@@ -20270,8 +20320,8 @@ const SIX_STAMP_R = 3.0;      /* how close is "crowded" */
 const SIX_STAMP_N = 4;        /* and how many of them it takes */
 const SIX_HURL_MIN = 5, SIX_HURL_MAX = 14;
 function sixfoldTick(dt){
-  for(const c of chars){
-    if(c.bossKey !== 'sixfold' || c.state !== 'ok') continue;
+  for(const c of rareFolk().six){
+    if(c.state !== 'ok') continue;
     c._sixT = (c._sixT || 0) - dt;
     /* the stamp lands a beat after it is announced */
     if(c._stampT){
@@ -20438,7 +20488,7 @@ function gauntTick(dh){
      the sites, the tears' own garrisons and the crater each keep their own numbers. A
      Larder-Kin is not taken by the dawn, so it holds its place in the count until it is killed,
      which is what stops them piling up night on night. */
-  const living = chars.filter(c => c.nightSpawn && c.state !== 'dead');
+  const living = rareFolk().night.filter(c => c.state !== 'dead');
   const tier = eldritchTide();
   const cap = (3 + tier * 2 + Math.floor(purgeWrath / 60)) * (bloodMoon && isNight() ? 6 : 1);
   if(living.length >= cap) return;
@@ -27434,7 +27484,13 @@ const scene = new THREE.Scene();
    nothing changes there. */
 function viewW(){ return document.documentElement.clientWidth || innerWidth; }
 function viewH(){ return document.documentElement.clientHeight || innerHeight; }
-const camera = new THREE.PerspectiveCamera(50, viewW()/viewH(), 0.5, 400);
+/* ---------- THE FAR PLANE STOPS WHERE THE DUST DOES ----------
+   It was 400. The distance fog is opaque by 96 at night and 166 at noon (`updateSky`), so at a
+   low camera everything from there out to 400 was drawn and then painted over: 75 to 115 draw
+   calls and 380k to 490k triangles a frame, measured 2026-09-26, for nothing anybody could
+   see. 200 clears the noon fog and the sun and moon sprites (about 187 and 148 out). Looking
+   down, as the camera usually is, the frustum never reached this far and nothing changes. */
+const camera = new THREE.PerspectiveCamera(50, viewW()/viewH(), 0.5, 200);
 let camDist = 28, camDistTarget = 28;
 let camYaw = 0, camYawT = 0;
 let camPitch = 0.95, camPitchT = 0.95;
@@ -37576,6 +37632,21 @@ function buildCharMesh(c){
      wins over a helm, and that is the branch above; this one has nothing left to do. */
   return e;
 }
+/* ---------- THE SHADOW OF A BUCKLE ----------
+   Every part of a rig cast a shadow, and every caster is a second draw call in the shadow
+   pass. An eye, a buckle, a strip of trim leaves no shadow anybody can see at this zoom:
+   110 of them on the 19 bodies in view at the start, 11% of the frame's draw calls, measured
+   2026-09-26. Anything under a hand's size stops casting. The body, the limbs, the armour
+   plates and the weapon all still do. */
+const RIG_SHADOW_MIN = 0.22;
+function trimRigShadows(g){
+  g.traverse(o => {
+    if(!o.isMesh || !o.castShadow) return;
+    const geo = o.geometry;
+    if(!geo.boundingSphere) geo.computeBoundingSphere();
+    if(geo.boundingSphere.radius * Math.max(o.scale.x, o.scale.y, o.scale.z) < RIG_SHADOW_MIN) o.castShadow = false;
+  });
+}
 function syncChars(dt){
   const seen = new Set();
   const all = chars;
@@ -37596,10 +37667,11 @@ function syncChars(dt){
       if(builds >= 8) continue;   /* a body one frame late is a body nobody noticed */
       builds++;
       e = buildCharMesh(c); e.inScene = true; charMeshes.set(c.id, e);
+      trimRigShadows(e.g);
     }
     if(!e.inScene){ scene.add(e.g); e.inScene = true; }
-    if(!c.beast && e.builtArmor !== (c.armor || null)) rebuildArmorLayer(e, c);
-    if(!c.beast && e.builtWeapon !== (c.weapon || null)) rebuildWeapon(e, c);
+    if(!c.beast && e.builtArmor !== (c.armor || null)){ rebuildArmorLayer(e, c); trimRigShadows(e.g); }
+    if(!c.beast && e.builtWeapon !== (c.weapon || null)){ rebuildWeapon(e, c); trimRigShadows(e.g); }
     e.g.visible = true;
     const gy = groundY(c.x, c.y) + floorY(c.floor);
     let px = c.x, pz = c.y;

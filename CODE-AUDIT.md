@@ -236,7 +236,39 @@ checks that (§7).
 | `restore` | loaded `nodeUses` twice (set, hide and show; then clear, set and hide again) | once |
 | render init | asked `nodeDepleted` (so `rawDecorAt`) of every tree, rock and vein on the map, although only a tile in `nodeUses` can be depleted, and `nodeUses` is empty that early | walks `nodeUses` only |
 
-### 2.3 Still open, now measured
+### 2.3 The singleton ticks — **done 2026-09-26**, and a draw-call pass
+
+**The ticks.** The seven roster walks below are one filing inside `rebuildCharGrid`'s existing
+loop (`rareFolk`), inline for the reason that loop's own note gives. They re-gather on their own
+whenever the roster's length changes, which covers the caution below (a body spawned mid-step)
+and harnesses that push a body and call a tick directly. Profiled, 600 steps at `SIM_DT` on
+the default world: `update` 3.33 → 2.84 ms (-15%); the seven ticks ~0.56 → ~0.1 ms, for
++0.06 ms in `rebuildCharGrid`.
+
+**The frame.** A frame here is almost all per-draw-call overhead; the game's own per-frame
+script is under a millisecond. Draw calls at the start, after a few seconds of play:
+
+| view | before | after |
+|---|---|---|
+| default | 1,684 calls, 783k tris | 1,336, 778k |
+| zoomed out | 1,991, 943k | 1,642, 921k |
+| zoomed out, low | 2,109, 1.36M | 1,646, 863k |
+| close, low | 1,800, 1.24M | 1,375, 859k |
+
+- **The far plane** was 400 and the fog is opaque by 96 at night and 166 at noon, so a low
+  camera drew everything out to 400 under the fog. It is 200 now (the sun and moon sprites sit
+  at about 187 and 148).
+- **Shadows from trim.** Every rig part cast, and each caster is a second call in the shadow
+  pass. Parts under 0.22 (eyes, buckles, trim) no longer cast: 110 calls on 19 bodies.
+- **What was not the cost:** objects standing on unexplored ground, which you can see under
+  the fog. Hiding all of them saves 30 to 100 calls a frame, so they are left as they are.
+  Decor on unexplored ground was already hidden per instance.
+- **What is:** a body is 12 meshes (one per animated bone), 14 to 15 with armour and a weapon,
+  and every one draws twice with shadows on. 19 bodies are about 490 calls. One skinned mesh
+  per body would take that to one or two. It is a rig refactor, not a pass, and is the next
+  thing worth doing for the frame.
+
+The original measurement:
 
 A pure `update()` loop on the default 1,688-body world, sampled with CDP. Baseline:
 **7.07 ms/step**.
