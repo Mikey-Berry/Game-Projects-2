@@ -149,8 +149,22 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       };
       let mSum = 0, rSum = 0, n = 0, pos = { x: cdr.x, y: cdr.y };
       const hist = [];
+      /* ---------- AND NOTHING ELSE ON THE ROAD ----------
+         What this measures is how the band walks, not what it meets. Anything hostile that
+         wanders into it makes the bows stop and shoot, and a shooter stopped to loose is a
+         shooter at the captain's heel; so the formation claim read whatever the world's dice
+         put on the road that day. It turned over when the ranged skill started setting a
+         shooter's pace (2026-09-26), with nothing about the march changed. Cleared as it comes,
+         the same way the round trip below keeps the night off it. */
+      /* and nobody else in the way at all: townsfolk crossing the column push the ranks about
+         exactly as a fight does, and where they stand is the world's dice too */
+      const inBand = new Set([cdr, ...melee, ...bows]);
+      const clearRoad = () => { for (let j = chars.length - 1; j >= 0; j--) { const o = chars[j];
+        if (o.state === 'dead' || inBand.has(o)) continue;
+        const d = dist(o.x, o.y, cdr.x, cdr.y);
+        if (o.nightSpawn || (hostile(cdr, o) && d < 40) || (o.faction !== 'player' && d < 25)) chars.splice(j, 1); } };
       for (let i = 0; i < 46; i++) {
-        step(1.5, SIM_DT);
+        step(1.5, SIM_DT); clearRoad();
         const hd = hdNow(pos); pos = { x: cdr.x, y: cdr.y };
         hist.push(hd);
         if (hist.length < 4) continue;

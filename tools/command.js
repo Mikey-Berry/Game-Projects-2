@@ -270,6 +270,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           band[k].state = 'down';
           for (let t = 0; t < 8 && brokeAt === null; t++) {
             step(1);
+            /* the judgement is about the band on the floor, not about whatever else walks up:
+               anything hostile that comes near is taken off, so the count of the fallen is the
+               count this staging set. It turned over on the world's dice (2026-09-26), when the
+               ranged skill started setting a shooter's pace, with nothing about a captain changed. */
+            for (let j = chars.length - 1; j >= 0; j--) { const o = chars[j];
+              if (o.state !== 'dead' && !band.includes(o) && (o.nightSpawn || (hostile(cdr, o) && dist(o.x, o.y, cdr.x, cdr.y) < 40))) chars.splice(j, 1); }
             if (!cdr.cmd || cdr.cmd.phase === 'home') brokeAt = k;
           }
         }

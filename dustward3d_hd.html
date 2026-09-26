@@ -15782,9 +15782,35 @@ function boundForAWeapon(c){
 }
 /* Does this hand actually have work of this kind to do right now? Used to decide whether a
    worker falls through to their SECOND trade instead of standing idle. Cheap checks only. */
+/* ---------- THE EXECUTE JOB ----------
+   "Maybe an 'Execute' job would help clear out enemies. It's just auto-kill and we turn it off
+    when we want to capture someone or something alive. Right now, doing it manually is a pain
+    (especially after a huge fight)."
+   A hand on EXECUTE does, on its own, what the EXECUTE / FINISH IT entry on a downed foe does:
+   picks the nearest one and sets `execTarget`, and the finishing order does the rest. It
+   finishes only bodies it is hostile to (so never a prisoner in your cell, a townsman you are at
+   peace with, or Lyre), on its own storey, within EXEC_R, and never one being carried off, or
+   one somebody of yours has been told to seize or bandage. It waits until nothing on its feet
+   is within EXEC_QUIET, so it cleans up after a fight instead of walking out of one.
+   Turning the job off is the whole of "I want this one alive". */
+const EXEC_R = 18, EXEC_QUIET = 8;
+function execCandidate(c){
+  let best = null, bd = EXEC_R;
+  const f = c.floor || 0;
+  for(const b of downFolk){
+    if(b.state !== 'down' || b === c || (b.floor || 0) !== f) continue;
+    if(b.faction === c.faction || b.captured || b.jailedAt || b.prisoner || b.heldAt) continue;
+    const d = dist(c.x, c.y, b.x, b.y);
+    if(d >= bd || !hostile(c, b)) continue;
+    if(player().some(o => o.seizeTarget === b || o.healTarget === b || (o.execTarget === b && o !== c))) continue;
+    bd = d; best = b;
+  }
+  return best;
+}
 function jobHasWork(c, j){
   if(!j) return false;
   switch(j){
+    case 'execute': return !!execCandidate(c);
     case 'build':  return blueprints.length > 0;
     case 'raise':  return corpses.some(b => b.state === 'dead' && !b.raised) && risenLoad(c) < risenCap(c);
     case 'carrion': return corpses.some(carrionFodder);
@@ -17370,6 +17396,15 @@ function physics(c, dt){
           for(const b of pBuilds) if(wants(b) && dist(c.x,c.y,b.x+1,b.y+1) < 3.2) b.tended = true;
           c._working = 0.5; if(rnd() < dt*0.06) xpGain(c, 'labor', 0.3);
           if(rnd() < dt*0.5) addSpecks(c.x, c.y - 0.6, '#8a5a4a', 2);   /* the work is visible, and unpleasant */
+        }
+      }
+    } else if(ej==='execute'){
+      c.execScanT = (c.execScanT || 0) - dt;
+      if(c.execScanT <= 0){
+        c.execScanT = 1.0;
+        if(!nearestEnemy(c, EXEC_QUIET)){
+          const b = execCandidate(c);
+          if(b) c.execTarget = b;       /* the finishing order, at the top of the next tick, does the rest */
         }
       }
     } else if(ej==='patrol'){
@@ -19894,12 +19929,78 @@ function spawnGuardian(){
   const q = {x: CRATER.x + 3, y: CRATER.y + 3};
   const c = spawnGaunt('messenger', q.x, q.y);
   c.name = 'The Guardian at the Gate'; c.bossKey = 'guardian'; c.craterOwn = 'guardian'; c.faction = 'gaunt';
-  c.nightborn = false; c.floor = 0; c.big = 1.9;
-  c.stats.atk = 48; c.stats.def = 44; c.stats.tough = 60; c.stats.ath = 12;
-  c.clawDmg = 26; c.blood = c.maxBlood = 420;
+  /* ---------- THE SECOND-TO-LAST THING, AND IT SHOULD FIGHT LIKE ONE ----------
+     "For what is essentially the second to last boss, it is quite underwhelming. At the very
+      least it needs some backup, like Eyes of Ainzopha'ar." It was a big Messenger with 420
+     blood standing alone. Now:
+       · THE BODY: 900 blood and a heavier hand, still a Messenger and still learning.
+       · THE EYES: a flight of Eyes keeps station over the colonnade (`craterOwn: 'gateEye'`),
+         and a lost one grows back while nobody of yours is near (`guardianTick`).
+       · THE LIGHT THAT TURNS EVERY WAY: in a fight it calls the crater's strike down on the
+         ones fighting it, day or night, a column every few seconds, telegraphed like the rest.
+       · TWO TURNS: at two thirds and one third of its blood it opens the sky wider — a new flight
+         of Eyes and a ring of light around itself — and the strikes come faster. */
+  c.nightborn = false; c.floor = 0; c.big = 2.1;
+  c.stats.atk = 62; c.stats.def = 56; c.stats.tough = 80; c.stats.ath = 12;
+  c.clawDmg = 34; c.blood = c.maxBlood = 900;
   c.guard = {x: CRATER.x + 3, y: CRATER.y + 3};
   c.barks = [...BOSS_BARKS.guardian];
+  c.gatePhase = 0;
+  /* the Eyes open when somebody first comes near, not at the making of the world: see
+     `guardianTick`. Six more bodies from the first day moved the world's stream under every
+     harness, and nobody far from the crater has any business with them. */
   return c;
+}
+/* a flight of the crater's own over the colonnade, at peace with the Watchers there */
+function guardianEyes(n){
+  const made = spawnEyeFlight(CRATER.x, CRATER.y, n) || [];
+  /* KEEPING STATION, NOT WANDERING: each holds a post like the rest of the crater's own. A flight
+     wanders its lair on the world's dice every few seconds, and six more bodies doing that from
+     the first day moved the whole world's stream under every harness (command and marchorder
+     both turned over on it). A post costs no dice, and it is what "keeps station" means. */
+  for(const e of made){ e.craterOwn = 'gateEye'; e.nightborn = false; e.faction = 'gaunt'; e.floor = 0; e.squad = null; e.guard = {x: e.x, y: e.y}; }
+  return made;
+}
+const GATE_STRIKE_EVERY = [4.5, 3.2, 2.2];   /* seconds between columns, by turn */
+const GATE_REACH = 18;
+function guardianTick(dt){
+  const g = rareFolk().crater.find(o => o.bossKey === 'guardian' && o.state !== 'dead');
+  if(!g) return;
+  /* THE EYES OPEN as the first of yours comes into the approach, and not before */
+  if(!g.eyesUp){
+    if(rareFolk().crater.some(o => o.craterOwn === 'gateEye' && o.state !== 'dead')) g.eyesUp = true;   /* a save that already has them */
+    else if(player().some(o => o.state !== 'dead' && (o.floor || 0) === 0 && craterD(o.x, o.y) < CRATER.approach)){ guardianEyes(6); g.eyesUp = true; }
+  }
+  const foes = player().filter(o => o.state !== 'dead' && (o.floor || 0) === 0 && dist(o.x, o.y, g.x, g.y) < GATE_REACH);
+  /* the eyes grow back, but only where nobody of yours can watch them do it */
+  g._eyeT = (g._eyeT || 0) - dt;
+  if(g._eyeT <= 0){
+    g._eyeT = 30;
+    const eyes = rareFolk().crater.filter(o => o.craterOwn === 'gateEye' && o.state !== 'dead').length;
+    if(g.eyesUp && eyes < 4 && !foes.length && !player().some(o => o.state !== 'dead' && dist(o.x, o.y, CRATER.x, CRATER.y) < 36)) guardianEyes(6 - eyes);
+  }
+  if(!foes.length || g.state !== 'ok') return;
+  /* the turns */
+  const k = g.blood / g.maxBlood;
+  const want = k < 1 / 3 ? 2 : k < 2 / 3 ? 1 : 0;
+  if(want > (g.gatePhase || 0)){
+    g.gatePhase = want;
+    guardianEyes(4);
+    for(let i = 0; i < 8; i++){
+      const a = i / 8 * Math.PI * 2;
+      craterStrikes.push({x: g.x + Math.cos(a) * 5, y: g.y + Math.sin(a) * 5, t: STRIKE_WARN, hit: false});
+    }
+    say(g, want === 1 ? 'SHEM ARAK ORU. ORU. ORU.' : '(every light in the bowl turns to face you at once)');
+    log(want === 1 ? 'The Guardian at the Gate opens its hands, and the sky over the bowl opens with them.'
+                   : 'The Guardian at the Gate is burning from the inside. Everything it is holding up is coming down.', 'bad');
+  }
+  /* the light that turns every way */
+  g._gateT = (g._gateT || 0) - dt;
+  if(g._gateT > 0) return;
+  g._gateT = GATE_STRIKE_EVERY[g.gatePhase || 0];
+  const who = foes[(rnd() * foes.length) | 0];
+  const a = rnd() * Math.PI * 2, r = rnd() < 0.5 ? rnd() * 1.0 : 1.2 + rnd() * 2.5;
+  craterStrikes.push({x: who.x + Math.cos(a) * r, y: who.y + Math.sin(a) * r, t: STRIKE_WARN, hit: false});
 }
 function guardianFalls(c){
   bumpNotice(8);
@@ -20902,7 +21003,13 @@ function fireRanged(c, t, w){
   if(w.lance && !lanceFire(c, w)) { c.atkCd = 1.0; return; }
   AU.shot(c.x, c.y);
   breakVeil(c, 'shoots');
-  c.atkCd = (w.rof || 2.2) / (1 + c.stats.atk*0.012) * (1 + armorPen(c)*0.7);
+  /* ---------- AND THE SKILL OF IT COUNTS ----------
+     "Mages are just vastly superior to basic ranged units." Measured 2026-09-26 over a fifteen
+     second fight, which is about how long one lasts: a destruction mage at magic 40 did 21 to 26
+     a second into leather and plate against 8 to 9 for a crossbow at the same skill, and the
+     `ranged` skill a shooter trains with every arrow did nothing but steer strays. It sets the
+     pace, the weight and the aim of the shot now (the miss is where the arrow lands). */
+  c.atkCd = (w.rof || 2.2) / (1 + c.stats.atk*0.012 + c.stats.ranged*0.004) * (1 + armorPen(c)*0.7);
   /* and the legs are spoken for until it is ready again — see moveSpeed. Set HERE and not at
      the loose, so a lance that comes up dry (above) costs nothing: no shot, no reload. */
   c.reloadT = c.atkCd;
@@ -20920,7 +21027,7 @@ function fireRanged(c, t, w){
   const strayChance = clamp(0.30 - c.stats.ranged * 0.006 + volley * 0.055, 0.03, 0.72);
   if(tangled.length && rnd() < strayChance){ victim = pick(tangled); ff = victim.faction === c.faction; }
   projectiles.push({x:c.x, y:c.y-0.5, target:victim, speed:13, floor:c.floor||0,
-    dmg:w.dmg*(0.8+rnd()*0.4)*(1+c.stats.atk*0.02), caster:c, wt:w.wt || 'pierce',
+    dmg:w.dmg*(0.8+rnd()*0.4)*(1+c.stats.atk*0.02+c.stats.ranged*0.006), caster:c, wt:w.wt || 'pierce',
     ap:w.ap || 0, ff, arrow:true});
   retaliate(t, c);
 }
@@ -22465,10 +22572,27 @@ function spendCast(c, key){
   if(mineToKnow(c)) bumpNotice((isNight() ? 0.34 : 0.13) + Math.max(0, breadth - 1) * 0.06);   /* a wide channel glows in the dark */
   refreshCharPanel();
 }
+/* ---------- A BOLT IS STILL FIRE, AND FIRE DOES NOT CHOOSE ----------
+   The other half of the same measurement. Three things made the gap, and each is brought in:
+   · IT CLIMBED WITHOUT LIMIT: 10 + 0.9 a point of magic, so a mage at 70 threw 73. Past 30 it
+     climbs at 0.6 a point (61 at 70, 43 at 40).
+   · IT CAME TOO FAST: every cast shares a 1.4s recovery. A bolt now takes 1.6.
+   Measured over a fifteen second fight into plate, a mage at magic 40 went from 2.8 times an
+   equally skilled crossbow to about 1.5, and at 70 from 3.1 to about 1.25.
+   · IT NEVER STRAYED. An arrow into a scrum can take whoever is tangled with the target; a bolt
+     could not, so a mage fired into any melee for free. It can now, a little less often than an
+     arrow (the working is aimed), and less the better the caster.
+   It never misses and it still ignores thirty percent of armour: a mage is meant to be the
+   better thing to have, by a margin you can see and not by three times over. */
+function boltDmg(mag){ return 10 + 0.9 * Math.min(mag, 30) + 0.6 * Math.max(0, mag - 30); }
 function castFirebolt(c, foe){
-  projectiles.push({x:c.x, y:c.y-0.5, target:foe, speed:11, floor:c.floor||0, dmg:10 + c.stats.magic*0.9, caster:c, wt:'burn', ap:0.30, bolt:true});
+  let victim = foe, ff = false;
+  const tangled = chars.filter(o => o !== c && o !== foe && o.state === 'ok' && (o.floor || 0) === (foe.floor || 0) && dist(o.x, o.y, foe.x, foe.y) < 1.1);
+  if(tangled.length && rnd() < clamp(0.24 - c.stats.magic * 0.003, 0.05, 0.24)){ victim = pick(tangled); ff = victim.faction === c.faction; }
+  projectiles.push({x:c.x, y:c.y-0.5, target:victim, speed:11, floor:c.floor||0, dmg:boltDmg(c.stats.magic), caster:c, wt:'burn', ap:0.30, bolt:true, ff});
   retaliate(foe, c);
   spendCast(c, 'firebolt');
+  c.castCd = 1.6;
 }
 function castRevive(c, body){
   const ci2 = corpses.indexOf(body); if(ci2 >= 0) corpses.splice(ci2, 1);
@@ -23147,6 +23271,7 @@ function beginMassRaise(c){
   c.riting = true;
   log(`${c.name} opens a general reanimation over ${near} of the dead. They cannot move or defend themselves while it runs.`, 'bad');
   say(c, 'Do not let anything reach me.');
+  addFloat(c.x, c.y - 2.2, 'MASS REANIMATION', '#c9a8ff');
   spendCast(c, 'massraise');
   return true;
 }
@@ -23183,6 +23308,7 @@ function completeMassRaise(){
   startConcentration(c, 'massraise', SPELLS.massraise.concentrate.lock,
                      SPELLS.massraise.concentrate.exclusive, SPELLS.massraise.concentrate.mobile);
   addSpecks(c.x, c.y - 0.5, '#8a6ab5', 30);
+  raiseFxLand();
   log(`${up} of the dead stand up together. ${c.name} will be holding most of that in their head for three days.`, 'good');
   /* one working, one answer to the town, however many bodies got up */
   const t = c.faction === 'player' ? towns.find(t2 => !t2.def.undeadFriendly && !t2.playerRuled && dist(c.x, c.y, t2.x, t2.y) < 16) : null;
@@ -23191,6 +23317,168 @@ function completeMassRaise(){
   refreshSquadBar();
 }
 function massHostOf(c){ return chars.filter(x => x.master === c && x.tempT > 0 && x.state !== 'dead'); }
+/* ============================================================ THE RITE, SEEN
+   "It's hard to tell that the lich is casting anything. There needs to be dramatic flair —
+    leylines, glowing sigils, and a clear indication that something big is about to happen."
+   It was a scatter of violet specks around a figure standing still. Now, for as long as the rite
+   runs, four things are drawn off the rite's own state, and nothing here changes what it does:
+     · A TRANSMUTATION CIRCLE the full size of the working (MASS_RADIUS), draped over the ground
+       vertex by vertex so hills do not cut it: outer and inner rings, a seven-pointed star and a
+       band of script, turning slowly. Its outer ring fills as the work does, so the wait has a
+       length you can read.
+     · LEYLINES from the caster to every body that will get up, one draped ribbon each, pulsing
+       outward. They are the answer to "which of these are corpses" while it matters most.
+     · A COLUMN over the caster that thickens and brightens toward the end.
+     · At the end, a flash across the whole circle and a kick of the camera.
+   All of it is additive and fog-free, and it is one group torn down the moment the rite ends,
+   for any reason. */
+let raiseFx = null;
+function raiseCircleTex(){
+  if(raiseCircleTex._t) return raiseCircleTex._t;
+  const N = 1024, cv2 = document.createElement('canvas'); cv2.width = cv2.height = N;
+  const g = cv2.getContext('2d'), C = N / 2;
+  g.strokeStyle = '#ffffff'; g.fillStyle = '#ffffff'; g.lineCap = 'round';
+  const ring = (r, w) => { g.lineWidth = w; g.beginPath(); g.arc(C, C, r, 0, Math.PI * 2); g.stroke(); };
+  ring(C * 0.97, 10); ring(C * 0.90, 4); ring(C * 0.62, 6); ring(C * 0.56, 3); ring(C * 0.18, 5);
+  /* the star: seven points, every third joined, the one a Golden-Age circle is drawn around */
+  g.lineWidth = 5; g.beginPath();
+  for(let i = 0; i <= 7; i++){ const a = -Math.PI / 2 + (i * 3 % 7) / 7 * Math.PI * 2; const x = C + Math.cos(a) * C * 0.88, y = C + Math.sin(a) * C * 0.88; i ? g.lineTo(x, y) : g.moveTo(x, y); }
+  g.stroke();
+  /* seven small circles at the points, and a spoke to the heart from each */
+  for(let i = 0; i < 7; i++){
+    const a = -Math.PI / 2 + i / 7 * Math.PI * 2, x = C + Math.cos(a) * C * 0.75, y = C + Math.sin(a) * C * 0.75;
+    g.lineWidth = 4; g.beginPath(); g.arc(x, y, C * 0.07, 0, Math.PI * 2); g.stroke();
+    g.lineWidth = 2; g.beginPath(); g.moveTo(C + Math.cos(a) * C * 0.18, C + Math.sin(a) * C * 0.18); g.lineTo(x, y); g.stroke();
+  }
+  /* the band of script between the outer rings: glyphs made of strokes, never letters */
+  const R0 = C * 0.935, n = 84;
+  for(let i = 0; i < n; i++){
+    const a = i / n * Math.PI * 2, h = hash2(i * 13 + 5, 77);
+    g.save(); g.translate(C + Math.cos(a) * R0, C + Math.sin(a) * R0); g.rotate(a + Math.PI / 2);
+    g.lineWidth = 3; g.beginPath();
+    g.moveTo(-6, -8); g.lineTo(-6 + h * 12, 8);
+    if(h > 0.3){ g.moveTo(4, -8); g.lineTo(4, 8); }
+    if(h > 0.6){ g.moveTo(-8, 0); g.lineTo(8, h > 0.8 ? -6 : 6); }
+    g.stroke(); g.restore();
+  }
+  const t = new THREE.CanvasTexture(cv2);
+  return (raiseCircleTex._t = t);
+}
+function drapeDisc(r, seg, x0, z0, lift){
+  const geo = new THREE.PlaneGeometry(r * 2, r * 2, seg, seg);
+  geo.rotateX(-Math.PI / 2);
+  const pos = geo.attributes.position;
+  for(let i = 0; i < pos.count; i++){
+    const x = pos.getX(i) + x0, z = pos.getZ(i) + z0;
+    pos.setY(i, groundY(x, z) + lift);
+  }
+  pos.needsUpdate = true;
+  return geo;
+}
+function raiseFxBuild(r){
+  const c = r.caster, f = c.floor || 0, fy = floorY(f);
+  const grp = new THREE.Group(); grp.position.set(r.x, fy, r.y);
+  const add = (col) => new THREE.MeshBasicMaterial({color: col, transparent: true, opacity: 0, depthWrite: false,
+    blending: THREE.AdditiveBlending, fog: false, side: THREE.DoubleSide});
+  /* the circle, draped: vertex heights are sampled in world space and the group sits at the
+     rite's own point, so the disc is built at the origin and offset by hand */
+  const disc = drapeDisc(MASS_RADIUS, 48, r.x, r.y, 0.07);
+  const circleMat = add(0x8a4be0); circleMat.map = raiseCircleTex();
+  const circle = new THREE.Mesh(disc, circleMat);
+  /* a draped disc cannot turn (the ground under it would turn too), so the script turns on the
+     texture instead: its own matrix, spun about the centre */
+  circleMat.map.center.set(0.5, 0.5);
+  grp.add(circle);
+  /* the progress ring: its sweep is rebuilt as the work climbs */
+  const prog = new THREE.Mesh(new THREE.BufferGeometry(), add(0xc79bff));
+  grp.add(prog);
+  /* the column over the caster */
+  const col = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.4, 16, 20, 1, true), add(0x7d5ab8));
+  col.position.set(0, groundY(r.x, r.y) + 8, 0);
+  grp.add(col);
+  /* the leylines, one draped ribbon a body, merged into a single mesh */
+  const lines = new THREE.Mesh(new THREE.BufferGeometry(), add(0xd9a8ff));
+  grp.add(lines);
+  scene.add(grp);
+  raiseFx = {r, grp, circle, circleMat, prog, col, lines, lastFrac: -1, lastN: -1, flashT: 0};
+  raiseFxLines();
+}
+/* the ribbons: rebuilt when the set of bodies changes (one is dragged off, or burned) */
+function raiseFxLines(){
+  const fx = raiseFx; if(!fx) return;
+  const r = fx.r, c = r.caster;
+  const bodies = corpses.filter(b => massRaisable(c, b));
+  fx.lastN = bodies.length;
+  const P = [], I = [], U = [];
+  const W2 = 0.2, STEPS = 10;
+  for(const b of bodies){
+    const dx = b.x - r.x, dz = b.y - r.y, L = Math.hypot(dx, dz) || 1, nx = -dz / L * W2, nz = dx / L * W2;
+    const base = P.length / 3;
+    for(let k = 0; k <= STEPS; k++){
+      const t = k / STEPS, x = dx * t, z = dz * t, y = groundY(r.x + x, r.y + z) + 0.1;
+      P.push(x + nx, y, z + nz, x - nx, y, z - nz);
+      U.push(t, 0, t, 1);
+      if(k) { const a = base + (k - 1) * 2; I.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(U, 2));
+  geo.setIndex(I);
+  fx.lines.geometry.dispose(); fx.lines.geometry = geo;
+}
+function raiseFxClear(){
+  const fx = raiseFx; if(!fx) return;
+  scene.remove(fx.grp);
+  fx.grp.traverse(o => { if(o.geometry) o.geometry.dispose(); if(o.material){ if(o.material.map === raiseCircleTex._t) o.material.map = null; o.material.dispose(); } });
+  raiseFx = null;
+}
+/* called from `render`: follows the rite, and flashes once when it lands */
+function syncRaising(now){
+  const r = theRaising;
+  if(raiseFx && raiseFx.flashT > 0){
+    const fx = raiseFx; fx.flashT -= 1 / 60;
+    const k = Math.max(0, fx.flashT / 0.9);
+    fx.circleMat.opacity = k; fx.col.material.opacity = k * 0.9; fx.lines.material.opacity = 0; fx.prog.material.opacity = k;
+    fx.col.scale.set(1 + (1 - k) * 3, 1, 1 + (1 - k) * 3);
+    if(fx.flashT <= 0) raiseFxClear();
+    return;
+  }
+  if(!r){ if(raiseFx) raiseFxClear(); return; }
+  if(!raiseFx || raiseFx.r !== r){ raiseFxClear(); raiseFxBuild(r); }
+  const fx = raiseFx, frac = clamp(r.work / MASS_WORK, 0, 1), t = now / 1000;
+  const n = corpses.filter(b => massRaisable(r.caster, b)).length;
+  if(n !== fx.lastN) raiseFxLines();
+  /* it comes up out of nothing over the first seconds, and brightens as the work goes on */
+  const rise = Math.min(1, r.t / 2.5);
+  fx.circleMat.opacity = rise * (0.35 + 0.45 * frac) * (0.85 + 0.15 * Math.sin(t * 3.1));
+  fx.circleMat.map.rotation = t * 0.12;
+  fx.lines.material.opacity = rise * (0.55 + 0.45 * frac) * (0.7 + 0.3 * Math.sin(t * 6 - frac * 4));
+  fx.col.material.opacity = rise * (0.12 + 0.5 * frac * frac);
+  const w = 0.6 + 1.6 * frac;
+  fx.col.scale.set(w, 1, w);
+  fx.col.rotation.y = t * 0.8;
+  if(Math.abs(frac - fx.lastFrac) > 0.005){
+    fx.lastFrac = frac;
+    const g2 = new THREE.RingGeometry(MASS_RADIUS * 0.99, MASS_RADIUS * 1.05, 96, 1, Math.PI / 2, -Math.PI * 2 * Math.max(0.001, frac));
+    g2.rotateX(-Math.PI / 2);
+    const pos = g2.attributes.position;
+    for(let i = 0; i < pos.count; i++) pos.setY(i, groundY(pos.getX(i) + r.x, pos.getZ(i) + r.y) + 0.12);
+    fx.prog.geometry.dispose(); fx.prog.geometry = g2;
+  }
+  fx.prog.material.opacity = rise * 0.9;
+  /* motes lift off the bodies that will rise, more of them as it nears */
+  if(vrnd() < 0.08 + frac * 0.5){
+    const bodies = corpses.filter(b => massRaisable(r.caster, b));
+    if(bodies.length){ const b = bodies[(vrnd() * bodies.length) | 0]; addGlow(b.x, b.y - 0.3, '#b99af0', 3, 1.1); }
+  }
+}
+/* the rite has landed: keep the group a moment longer and burn it out */
+function raiseFxLand(){
+  if(!raiseFx) return;
+  raiseFx.flashT = 0.9;
+  camKick = Math.max(camKick, 0.9); camKickX = 0; camKickY = 0.6;
+}
 function resolveCast(wx, wy){
   const key = castMode.spell;
   /* whoever is still able, in the order you selected them */
@@ -23358,7 +23646,7 @@ function castBlink(c, wx, wy){
 /* ---- EMBERS OF AVARICE: a fire that keeps burning ---- */
 function castEmberRot(c, foe){
   spendCast(c, 'emberrot');
-  const dps = 4 + c.stats.magic * 0.35;
+  const dps = 4 + Math.min(c.stats.magic, 30) * 0.35 + Math.max(0, c.stats.magic - 30) * 0.15;   /* the same bend as the bolt */
   foe.dot = {t: 5, tick: 0.4, dps, src: c};
   addFlame(foe.x, foe.y - 0.4, 16, 1.05);
   log(`${c.name} sets a rot-fire in ${foe.name}.`, c.faction==='player' ? 'good' : 'bad');
@@ -23815,7 +24103,7 @@ function craftUndead(kind, caster, circle, shape){
     u = makeChar('Bone Knight '+risenN, caster.faction, p.x, p.y, {atk:6+m*0.6, def:3+m*0.3, tough:10+m, ath:2, labor:8});
     u.kin = 'brute'; u.clawDmg = 12 + m*0.6; u.blood = 140; u.maxBlood = 140; u.big = 1.4; u.taunt = true;
   } else if(kind==='archer'){
-    u = makeChar('Marrow Archer '+risenN, caster.faction, p.x, p.y, {atk:8+m*0.9, def:4+m*0.4, tough:4+m*0.3, ath:7, labor:4});
+    u = makeChar('Marrow Archer '+risenN, caster.faction, p.x, p.y, {atk:8+m*0.9, def:4+m*0.4, tough:4+m*0.3, ath:7, labor:4, ranged:6+m*0.5});
     u.kin = 'archer'; u.weapon = 'w_sinew'; u.blood = 70; u.maxBlood = 70;
   } else if(kind==='gravecart'){
     /* It fetches. It does not fight, it does not render anything down, and it does not stop.
@@ -23906,8 +24194,11 @@ function craftUndead(kind, caster, circle, shape){
     u.mana = rawMaxMana(u);
   } else if(kind==='mage'){
     /* A SKELETON MAGE keeps the one art it was steeped in and is deaf to the other three. */
+    /* LESS OF ITS MAKER'S ART SETS INTO THE BONE (0.4 of the caster's magic, now 0.28). It is
+       the one caster you can make in a batch, so it is the one the gap mattered most for: at a
+       caster's 40 a Skeleton Mage did 2.8 times a Marrow Archer's damage. */
     u = makeChar('Skeleton Mage '+risenN, caster.faction, p.x, p.y,
-      {atk:4+m*0.2, def:4+m*0.3, tough:5+m*0.3, ath:5, labor:2, magic: 6 + m*0.4});
+      {atk:4+m*0.2, def:4+m*0.3, tough:5+m*0.3, ath:5, labor:2, magic: 5 + m*0.28});
     u.minded = true; u.autoFight = true;
     u.kin = 'mage';                 /* it gets a body of its own, not the generic risen rig */
     u.gift = 'destruction'; u.onlyArt = 'destruction';
@@ -25229,7 +25520,7 @@ function updateProjectiles(dt){
        close to that; a lance bolt at 22 tiles a second is inside a hair of it. */
     if(d < Math.max(0.4, p.speed * dt * 0.75)){
       const loud = p.caster.faction==='player' || p.target.faction==='player';
-      if(p.arrow && rnd() < clamp(0.15 + p.target.stats.def*0.008, 0, 0.4)){
+      if(p.arrow && rnd() < clamp(0.15 + p.target.stats.def*0.008 - ((p.caster.stats && p.caster.stats.ranged) || 0)*0.003, 0.06, 0.4)){
         addFloat(p.target.x, p.target.y-0.9, 'miss', '#9c8a6e');
         AU.whiff(p.target.x, p.target.y, false);
       } else {
@@ -25437,6 +25728,7 @@ function update(dt){
   motherTick(dt);             /* and whether anyone has gone far enough DOWN to find her */
   craterTick(dt);             /* and whether anyone has walked in toward the middle of the world */
   strikeTick(dt);             /* and whether the light is coming down on anybody in the glass */
+  guardianTick(dt);           /* and whether the thing at the middle is calling it down on you */
   closingTick(dt);            /* and whether anybody has read the codex sitting in the stores */
   commandTick(dt);            /* and what the bands you sent out are doing about it */
   cryTick(dt);                /* and whether anyone in one of your yards is shouting for help */
@@ -37632,6 +37924,11 @@ function buildCharMesh(c){
      wins over a helm, and that is the branch above; this one has nothing left to do. */
   return e;
 }
+/* toward its own grey by `k`: the dead keep their value and lose their hue */
+function drainColour(col, k){
+  const g = (col.r + col.g + col.b) / 3;
+  col.r += (g - col.r) * k; col.g += (g - col.g) * k; col.b += (g - col.b) * k;
+}
 /* ---------- THE SHADOW OF A BUCKLE ----------
    Every part of a rig cast a shadow, and every caster is a second draw call in the shadow
    pass. An eye, a buckle, a strip of trim leaves no shadow anybody can see at this zoom:
@@ -38338,8 +38635,16 @@ function syncChars(dt){
     /* dead grey-out + hit flash */
     const dead = c.state==='dead';
     const veiled = c.veilT > 0;
+    /* ---------- DOWN IS NOT DEAD, AND IT SHOULD LOOK IT ----------
+       "It's hard to tell who is simply downed and who is an actual corpse." Both lie flat in the
+       same pose, and after a big fight there are forty of them. A body that still has breath in
+       it now pulses a slow, pale white, the same channel the hit flash uses, so the ones you can
+       still save, take or finish stand out from the field. The dead go the other way: the decay
+       tint below drains their colour as well as darkening it. Not the other way round, because
+       the downed are the few that want a decision and the dead are the many that do not. */
+    const downK = c.state === 'down' ? 0.16 + 0.14 * (0.5 + 0.5 * Math.sin(performance.now() / 420 + c.id)) : 0;
     if(e.armorMats) for(const m of e.armorMats){
-      const k = c.hitT > 0 ? clamp(c.hitT/0.14, 0, 1) : 0;
+      const k = Math.max(downK, c.hitT > 0 ? clamp(c.hitT/0.14, 0, 1) : 0);
       m.emissive.setRGB(k, k, k*0.85);
       if(veiled){ m.opacity = 0.28; m.transparent = true; }
       else if(c.phantom){ m.opacity = 0.82; m.transparent = true; }
@@ -38354,26 +38659,27 @@ function syncChars(dt){
           m.color.multiplyScalar(0.45 * st.tint);
           if(st.k === 'bones') m.color.lerp(new THREE.Color('#cfc7ad'), 0.55);
           else if(st.k === 'spoiled') m.color.lerp(new THREE.Color('#5c5a44'), 0.35);
+          drainColour(m.color, 0.6);
           m._greyStage = st.k; m._greyed = true;
         }
       }
     }
     for(const m of [e.weaponMat, e.shieldMat]){
       if(!m) continue;
-      const k = c.hitT > 0 ? clamp(c.hitT/0.14, 0, 1) : 0;
+      const k = Math.max(downK, c.hitT > 0 ? clamp(c.hitT/0.14, 0, 1) : 0);
       m.emissive.setRGB(k, k, k*0.85);
       if(veiled){ m.opacity = 0.28; m.transparent = true; }
       else if(c.phantom){ m.opacity = 0.82; m.transparent = true; }
       else { m.opacity = 1; m.transparent = false; }
-      if(dead && !m._greyed){ m.color.multiplyScalar(0.45); m._greyed = true; }
+      if(dead && !m._greyed){ m.color.multiplyScalar(0.45); drainColour(m.color, 0.6); m._greyed = true; }
     }
     for(const m of e.mats){
-      const k = c.hitT > 0 ? clamp(c.hitT/0.14, 0, 1) : 0;
+      const k = Math.max(downK, c.hitT > 0 ? clamp(c.hitT/0.14, 0, 1) : 0);
       m.emissive.setRGB(k, k, k*0.85);
       if(veiled){ m.opacity = 0.28; m.transparent = true; }
       else if(c.phantom){ m.opacity = 0.82; m.transparent = true; }
       else { m.opacity = 1; m.transparent = false; }
-      if(dead && !m._greyed){ m.color.multiplyScalar(0.45); m._greyed = true; }
+      if(dead && !m._greyed){ m.color.multiplyScalar(0.45); drainColour(m.color, 0.6); m._greyed = true; }
     }
     /* AND THE SIGILS GO OUT. The Sigil-Bound's own bark is the spec: "THE SIGILS ARE FADING.
        WHEN THE LAST ONE GOES, SO DOES WHAT IS LEFT OF ME." `shedHusk` fires when the vessel
@@ -39504,6 +39810,7 @@ function render(){
   }
   const rdt = Math.min(0.05, (now - lastRenderT)/1000);
   lastRenderT = now;
+  syncRaising(now);
   tickBubbles(rdt);
   camDist = lerp(camDist, camDistTarget, Math.min(1, rdt*6));
   camYaw += (camYawT - camYaw) * Math.min(1, rdt*8);
@@ -40294,7 +40601,7 @@ function refreshCharPanel(){
   jr.innerHTML = '<span style="color:var(--dust);font-size:10px">JOB</span>';
   const JOBS = [
     [null,'NONE'], ['wood','WOOD'], ['stone','STONE'], ['fish','FISH'], ['saltwork','SALTWORK'], ['farm','TEND'],
-    ['build','BUILD'], ['flesh','FLESH'], ['charnel','CHARNEL'], ['raise','RAISE'], ['carrion','HARVEST'], ['bones','BONE HAUL'], ['mine','MINE'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'],
+    ['build','BUILD'], ['flesh','FLESH'], ['charnel','CHARNEL'], ['raise','RAISE'], ['carrion','HARVEST'], ['bones','BONE HAUL'], ['mine','MINE'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'], ['execute','EXECUTE'],
   ];
   /* THE JOB AND 2ND BUTTONS, ONE BUILDER. The primary used to be a hand-copied second version of
      this menu, and this one carried `which === 2 ?` branches for a primary it was never asked
@@ -46646,7 +46953,7 @@ function snapshot(){
     vip: !!c.vip, escortTo: c.escortTo ?? null, escortId: c.escortId || 0, attendant: !!c.attendant,
     lieutenant: !!c.lieutenant, lieuSince: (c.lieuSince ?? null), civ: !!c.civ, merc: !!c.merc,
     guildHire: !!c.guildHire, guildLicensed: !!c.guildLicensed, guildmaster: !!c.guildmaster, wage: c.wage||0,
-    heretic: !!c.heretic, burnDay: c.burnDay||0, bastionGuest: !!c.bastionGuest, stoodDown: !!c.stoodDown,
+    heretic: !!c.heretic, burnDay: c.burnDay||0, bastionGuest: !!c.bastionGuest, stoodDown: !!c.stoodDown, gatePhase: c.gatePhase || 0, eyesUp: !!c.eyesUp,
     inv: {...c.inv}, pack: c.pack, mule: !!c.mule, fleeOnHit: !!c.fleeOnHit,
     eater: !!c.eater, warF: c.warF, warT: c.warT, campId: c.campId, rebelOf: c.rebelOf,
     sick: c.sick||0, armyEnds: c.armyEnds||0, trade: c.trade||null, tradeSkill: c.tradeSkill||0, guildFolk: !!c.guildFolk,
@@ -47195,7 +47502,7 @@ function restore(d){
     c.npcNecro = !!s.npcNecro; c.lieutenant = !!s.lieutenant; c.civ = !!s.civ; c.merc = !!s.merc;
     c.lieuSince = (s.lieuSince ?? null);
     c.guildHire = !!s.guildHire; c.guildLicensed = !!s.guildLicensed; c.guildmaster = !!s.guildmaster; c.wage = s.wage || 0;
-    c.heretic = !!s.heretic; c.burnDay = s.burnDay || 0; c.bastionGuest = !!s.bastionGuest; c.stoodDown = !!s.stoodDown;
+    c.heretic = !!s.heretic; c.burnDay = s.burnDay || 0; c.bastionGuest = !!s.bastionGuest; c.stoodDown = !!s.stoodDown; c.gatePhase = s.gatePhase || 0; c.eyesUp = !!s.eyesUp;
     c.vip = !!s.vip; c.escortTo = s.escortTo ?? null; c.escortId = s.escortId || 0; c.attendant = !!s.attendant;
     c.inv = s.inv || {}; c.pack = s.pack || null; c.mule = !!s.mule; c.fleeOnHit = !!s.fleeOnHit;
     c.eater = !!s.eater; c.warF = s.warF ?? -1; c.warT = s.warT ?? -1;

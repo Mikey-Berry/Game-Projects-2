@@ -32,6 +32,8 @@
  *      rather than dead
  *  15. killed first, it stays dead, something larger notices, and the sky comes on faster:
  *      the Fracture lurches at once and its daily rate goes up for the rest of the run
+ *  (13b) and it fights like the second-to-last thing: 900 blood, a flight of Eyes over it, the
+ *      light called down on whoever is at it, and a turn at two thirds of its blood
  *  16. the roads go round it: every town is on one network, no road comes inside the approach,
  *      and a road between towns on opposite sides follows the ring (both seeds)
  *  17. and so does everybody on the world's business: a caravaneer and a soldier sent across
@@ -323,11 +325,42 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           if (craterD(cu.x, cu.y) > 10) bits.push(`the Guardian stands ${craterD(cu.x, cu.y).toFixed(0)} from the middle`);
           if (cu.gauntKind !== 'messenger') bits.push('the Guardian is not a Messenger');
           if (cu.name !== 'The Guardian at the Gate') bits.push(`it is called ${cu.name}`);
+          /* the Eyes open when one of yours first comes into the approach, not at the making of
+             the world: none before, and a flight once somebody is there */
+          const eyes0 = chars.filter(c => c.craterOwn === 'gateEye' && c.state !== 'dead').length;
+          if (!eyes0 || !cu.eyesUp) {
+            const w = makeChar('Walker', 'player', CRATER.x + CRATER.approach - 20, CRATER.y, { tough: 90 }); w.__probe = true; w.floor = 0; chars.push(w);
+            rebuildCharGrid(); guardianTick(1 / 30);
+            chars.splice(chars.indexOf(w), 1); rebuildCharGrid();
+          }
+          const eyes = chars.filter(c => c.craterOwn === 'gateEye' && c.state !== 'dead');
+          if (eyes0 && !cu.eyesUp) bits.push(`${eyes0} Eyes were over it before anybody came`);
+          if (cu.maxBlood < 900) bits.push(`it has ${cu.maxBlood} blood`);
+          if (eyes.length < 4 || eyes.some(e => hostile(cu, e))) bits.push(`${eyes.length} Eyes keep station over it${eyes.some(e => hostile(cu, e)) ? ', at war with it' : ''}`);
           const kept = chars.filter(c => (c.craterOwn === 'glass' || c.craterOwn === 'bowl' || c.craterOwn === 'messenger') && c.state !== 'dead');
           if (kept.some(g => hostile(cu, g))) bits.push('it is at war with the crater\'s own');
         }
+        /* and it fights like the second-to-last thing: the light comes down on whoever is at it,
+           and at two thirds of its blood the sky opens wider */
+        if (cu) {
+          const q = { x: cu.x + 6, y: cu.y };
+          const f = makeChar('Challenger', 'player', q.x, q.y, { atk: 30, def: 30, tough: 90 }); f.__probe = true; f.noFight = true; chars.push(f);
+          rebuildCharGrid();
+          const s0 = craterStrikes.length; let called = 0;
+          for (let i = 0; i < 30 * 12; i++) { const n0 = craterStrikes.length; guardianTick(1 / 30); strikeTick(1 / 30); if (craterStrikes.length > n0) called += craterStrikes.length - n0; }
+          const e0 = chars.filter(c => c.craterOwn === 'gateEye' && c.state !== 'dead').length;
+          cu.blood = cu.maxBlood * 0.6; guardianTick(1 / 30);
+          const e1 = chars.filter(c => c.craterOwn === 'gateEye' && c.state !== 'dead').length;
+          const turned = cu.gatePhase === 1 && e1 > e0;
+          cu.blood = cu.maxBlood; cu.gatePhase = 0; craterStrikes.length = 0;
+          for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
+          rebuildCharGrid();
+          R.theGuardianFights = called >= 2 && turned
+            ? `with one of yours at it for twelve seconds it calls the light down ${called} times, and at two thirds of its blood it turns: ${e1 - e0} more Eyes and a ring of light`
+            : `!! IN TWELVE SECONDS IT CALLED ${called} STRIKES; AT TWO THIRDS OF ITS BLOOD IT ${turned ? 'TURNED' : 'DID NOT TURN'} (EYES ${e0} -> ${e1})`;
+        }
         R.theGuardianStands = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
-          : `the Guardian at the Gate, a Messenger with ${cu.maxBlood} blood, stands ${craterD(cu.x, cu.y).toFixed(0)} tiles from the middle at peace with everything the crater keeps`;
+          : `the Guardian at the Gate, a Messenger with ${cu.maxBlood} blood and ${chars.filter(c => c.craterOwn === 'gateEye' && c.state !== 'dead').length} Eyes over it, stands ${craterD(cu.x, cu.y).toFixed(0)} tiles from the middle at peace with everything the crater keeps`;
         /* the Door */
         const ev0 = events.length;
         const d = openTheDoor();

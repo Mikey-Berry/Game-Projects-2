@@ -492,6 +492,35 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
+### 5.12 Mages against ranged — **rebalanced 2026-09-26**
+
+Reported: mages "are just vastly superior to basic ranged units". Measured in the sim against a
+stationary target, averaged over eight fifteen-second fights (the length of a real one), with
+the clock held at noon so the night could not join in:
+
+| into plate | before | after |
+|---|---|---|
+| crossbow, atk and ranged 40 | 7.5 | 11.6 |
+| destruction mage, magic 40 | 20.9 | 17.9 (1.54x the crossbow; was 2.8x) |
+| crossbow, atk and ranged 70 | 11.6 | 20.5 |
+| destruction mage, magic 70 | 36.1 | 24.4 (1.19x; was 3.1x) |
+| Marrow Archer, caster magic 40 | 3.5 | 4.4 |
+| Skeleton Mage, caster magic 40 | 10.8 (old stats) | 8.3 (1.9x an archer, for twice the binding) |
+
+Over a minute the mage runs dry and the numbers even out; over the fifteen seconds a fight
+lasts, the full pool was the whole story. The changes:
+
+- **Ranged:** the `ranged` skill a shooter trains with every arrow did nothing but steer strays.
+  It now adds to the weight of the shot (0.6% a point), the pace (0.4%), and the aim: the miss
+  chance falls 0.3% a point, to a floor of 6%. The Marrow Archer has a ranged skill of its own.
+- **The firebolt** climbs at 0.6 a point of magic past 30 instead of 0.9, takes 1.6s to recover
+  instead of 1.4, and can now take whoever is tangled with its target, as an arrow can (24%,
+  less with magic, never under 5%). It still never misses and still ignores 30% of armour. Embers
+  of Avarice bends the same way past 30.
+- **The Skeleton Mage** takes 0.28 of its maker's magic instead of 0.4.
+
+`tools/field.js` claims 4 and 5 hold both halves.
+
 ### 5.11 The crater filled the world's Messenger ceiling — **fixed 2026-09-25**
 
 The yard's Messenger and the Attention's are capped at two in the world, counted over every
