@@ -936,6 +936,51 @@ const TILE_COLS = ['#414d33','#8f7d58','#565049','#26364a','#6b6b45'];
 /* indexed by `brim`: 0 unused, 1 brine, 2 crust, 3 the dead salt */
 const BRIM_COLS = ['', '#2f4a52', '#c9c5b6', '#93938d'];
 function tileAt(x,y){ x|=0; y|=0; if(x<0||y<0||x>=W||y>=H) return 3; return terr[y*W+x]; }
+/* ============================================================ THE BIOMES
+   Three grounds with a reason under them, each round the thing that made it:
+     · THE SALT FLATS round Saltmere. The town was always "on the salt flats", and the flats were
+       never on the map. The crust keeps what falls on it: a body lying out here is cured where it
+       lies, which is Saltmere's own faith, and the one bit of ground a necromancer would rather
+       fight on.
+     · THE RUST BARRENS round Ironscar. The Fracture war was fought with machines and this is
+       where they were left to lie: the ground red with them, wrecks to strip for iron, and here
+       and there one that only looks like a wreck.
+     · THE VAT BOG round the deep redoubt. What the bunker's vats grew went into the ground when
+       nobody came to tend them, and it is still growing: the peat is warm and it is not peat.
+       Quickflesh blooms in it, the living wade and the dead do not, and the pools are not empty.
+
+   CARRIED BESIDE `terr`, NOT IN IT, for the same reason the brim is: every `=== 3` and every
+   terrain test in the file keeps meaning what it meant. A biome is paint, decor and a handful
+   of rules that ask `biomeAt`.
+
+   AND FILLED ONLY ONCE THE WORLD STANDS (`buildBiomes`, just before the ground is drawn). Until
+   then every tile reads 0, so worldgen sees exactly the world it always saw: no draw on the
+   world's stream moves, no town or cave or boss stands anywhere new, and a save loads onto the
+   same ground. Nothing in here rolls a die: the edges are `fbm` and the placings are `hash2`. */
+const BIOME_SALT = 1, BIOME_RUST = 2, BIOME_VAT = 3;
+const BIOMES = {
+  [BIOME_SALT]: {key:'salt', name:'THE SALT FLATS', col:'#d8d2c2',
+    enter:'The ground goes white and stays white. Nothing that lies down out here rots.'},
+  [BIOME_RUST]: {key:'rust', name:'THE RUST BARRENS', col:'#8a4a2e',
+    enter:'The ground is red with what the war left lying in it. Some of it is still sitting up.'},
+  [BIOME_VAT]:  {key:'vat',  name:'THE VAT BOG', col:'#5a3434',
+    enter:'The peat is warm underfoot, and it is not peat. Something in the pools is still being poured.'},
+};
+const biomeId = new Uint8Array(W*H);     /* which ground a tile paints as, out to the fraying edge */
+const biomeK  = new Float32Array(W*H);   /* how deep into it the tile is: 0.5 and over is IN it */
+function biomeAt(x, y){
+  x |= 0; y |= 0;
+  if(x < 0 || y < 0 || x >= W || y >= H) return 0;
+  const i = y*W + x;
+  return biomeK[i] >= 0.5 ? biomeId[i] : 0;
+}
+/* what lies dormant in the ground: rust automatons and the vat pools, placed with the biomes */
+const biomeSleepers = [];
+const sleeperAt = new Map();    /* 'x,y' -> the sleeper lying on that tile */
+const biomeState = {seen: {}, woke: {}};
+/* a rust automaton that has sat up has left its wreck: the fog must not stand it back up */
+function sleeperGone(x, y){ const s = sleeperAt.get(x + ',' + y); return !!s && s.kind === 'automaton' && !!biomeState.woke[s.key]; }
+const VAT_DRAG = 0.72;          /* the living in the bog, against their pace on dry ground */
 
 /* which landmass a tile belongs to. Water is forever; walls are not — so only water
    defines a component, and the map never goes stale. A goal across the sea fails in O(1). */
@@ -1111,8 +1156,11 @@ const NODE_LOOK = {
   cvein: {base:'#4e5a4a', baseSz:0.38, crust:'#5fae86', crustSz:0.20},
   ivein: {base:'#5c3f30', baseSz:0.40, crust:'#c8663a', crustSz:0.24},
 };
-const NODE_CAP = {tree:9, rock:14, cvein:16, ivein:14};
-const NODE_REGROW = {tree:0.55, rock:0.30, cvein:0.22, ivein:0.16};  /* uses recovered per day */
+/* A WRECK IS STRIPPED, NOT GROWN: it gives up a plate a fortnight, so the barrens are a find and
+   not a mine. A BLOOM is the opposite: quickflesh grows back in days, which is what makes the
+   bog worth a road. */
+const NODE_CAP = {tree:9, rock:14, cvein:16, ivein:14, wreck:5, bloom:5};
+const NODE_REGROW = {tree:0.55, rock:0.30, cvein:0.22, ivein:0.16, wreck:0.07, bloom:0.8};  /* uses recovered per day */
 /* ---------- AND HOW LONG A WORKED-OUT ONE STAYS WORKED OUT ----------
    "Trees/rocks that get fully mined or felled do not always disappear from the map.
     Especially trees."
@@ -1132,7 +1180,7 @@ const NODE_REGROW = {tree:0.55, rock:0.30, cvein:0.22, ivein:0.16};  /* uses rec
    with one swing in it — otherwise the next chop puts it straight back in the ground and the
    player sees the flicker all over again.
    The land still heals, which was always the right idea. It just takes long enough to notice. */
-const NODE_DEAD_DAYS = {tree:8, rock:14, cvein:12, ivein:16};
+const NODE_DEAD_DAYS = {tree:8, rock:14, cvein:12, ivein:16, wreck:40, bloom:3};
 const NODE_RETURN = 0.45;      /* what share of its cap a regrown node comes back already used */
 function oreAt(x, y){
   for(const f of oreFields){
@@ -1183,6 +1231,27 @@ function rawDecorAt(x,y){
   const t = terr[y*W+x];
   const ore = oreAt(x,y);
   if(ore && t!==3 && h > .90) return ore;   /* veins outcrop through any dry ground */
+  /* ---------- AND WHAT EACH GROUND GROWS INSTEAD ----------
+     The flats grow nothing but the odd boulder. The barrens keep their trees (drawn dead) and
+     lose the scrub to the wrecks. The bog grows no wood at all, only the blooms. (Sleepers are
+     laid only on tiles this leaves bare — see `buildBiomes`.) Ore still outcrops through all
+     three, above: Ironscar's seam is Ironscar's seam. */
+  const bm = biomeK[y*W+x] >= 0.5 ? biomeId[y*W+x] : 0;
+  if(bm){
+    const h2 = hash2(x*5+11, y*7+3);
+    if(bm === BIOME_SALT) return ((t===1||t===2) && h > .955) ? 'rock' : null;
+    if(bm === BIOME_RUST){
+      if(t !== 2 && h2 > .993) return 'wreck';   /* about a hundred and fifteen across the barrens */
+      if(t===0 && h > .93) return 'tree';
+      if((t===1||t===2) && h > .955) return 'rock';
+      return null;
+    }
+    if(bm === BIOME_VAT){
+      if(t !== 2 && h2 > .99) return 'bloom';     /* about seventy across the bog */
+      if((t===1||t===2) && h > .955) return 'rock';
+      return null;
+    }
+  }
   if(t===0 && h > .93) return 'tree';
   if(t===4 && h > .96) return 'shrub';
   if((t===1||t===2) && h > .955) return 'rock';
@@ -3595,6 +3664,9 @@ function moveSpeedRaw(c){
   /* a skinful in the legs, and the morning after it — see boozeDrag */
   if(c.gritT > 0 || c.hangT > 0) s *= boozeDrag(c);
   if(c.bearing) s *= 0.72;   /* a body over your shoulder — see bearTarget */
+  /* THE BOG HOLDS THE LIVING. The dead do not mind what they wade through, which is the one
+     ground in the world that is theirs to cross faster. */
+  if(!c.undead && !c.floor && biomeAt(c.x, c.y) === BIOME_VAT) s *= VAT_DRAG;
   if(c.carry) s *= 0.8;
   if(c.carryList && c.carryList.length) s *= Math.pow(0.93, c.carryList.length);   /* a laden mule is a slow mule */
   /* A SLOW DRAG, NOT A WALK. The load is the same either way; what a cart buys is that the
@@ -6347,6 +6419,82 @@ function spawnAutomaton(x, y, r){
   if(rnd() < 0.35) c.weapon = 'w_lance';
   chars.push(c);
   return c;
+}
+/* ---------- WHAT SITS UP IN THE RUST ----------
+   The same frame as a redoubt's warden, left out in the weather for nine generations: slower to
+   hurt, emptier-handed (nobody left a lance lying in the barrens), and posted where it lay rather
+   than walking home to a bunker it never had. `biomeOwn` is what makes its wreck salvageable. */
+function spawnRustAutomaton(x, y){
+  const c = makeChar('Rusted Automaton', 'redoubt', x, y,
+    {atk:30, def:32, tough:60, ath:2, magic:1, labor:0, armr:16});
+  c.construct = true; c.beast = true; c.big = 1.3;
+  c.blood = 170; c.maxBlood = 170;
+  c.biomeOwn = 'rust';
+  c.guard = {x, y};
+  c.dropItems = {iron: ri(2, 4)};
+  c.barks = ['...', 'LINE SEVEN. LINE SEVEN. REPORT.', 'Relief is overdue.'];
+  chars.push(c);
+  return c;
+}
+/* ---------- AND WHAT CLIMBS OUT OF THE POOLS ----------
+   Not the redoubt's soldiers. These went into the vats and nobody came back to finish them:
+   half-poured, unarmed, and still asking for the tender. */
+function spawnVatSpawn(x, y){
+  const c = makeChar(pick(['Vat-Spawn', 'Half-Poured', 'Overflow']), 'redoubt', x, y,
+    {atk:20, def:12, tough:20, ath:7, magic:1, labor:0, blades:10});
+  c.race = 'homunculus';
+  c.biomeOwn = 'vat';
+  c.guard = {x, y};
+  c.barks = ['Warm. Warm in here.', 'Not finished. Not finished.', 'Where is the tender? It is past the hour.'];
+  chars.push(c);
+  return c;
+}
+const RUST_WAKE_R = 7, POOL_WAKE_R = 6;
+function wakeSleeper(s){
+  biomeState.woke[s.key] = true;
+  if(s.kind === 'automaton'){
+    spawnRustAutomaton(s.x, s.y);
+    hideNodeInstance(Math.floor(s.x) + ',' + Math.floor(s.y));   /* the slumped frame is up and walking */
+    addSpecks(s.x, s.y, '#8a4a2e', 14);
+    log('One of the wrecks in the rust sits up.', 'bad');
+  } else {
+    spawnVatSpawn(s.x - 0.6, s.y);
+    spawnVatSpawn(s.x + 0.6, s.y + 0.4);
+    addSpecks(s.x, s.y, '#b07078', 18);
+    log('Something climbs out of the pool, and then something else.', 'bad');
+  }
+}
+/* ---------- THE BIOMES, IN PLAY ----------
+   Twice a second: who has walked into which ground for the first time, which sleepers somebody
+   has walked up to, and the flats curing whatever lies on them. */
+let _biomeT = 0;
+function biomeTick(dt){
+  _biomeT -= dt;
+  if(_biomeT > 0) return;
+  _biomeT = 0.5;
+  const mine = player();
+  for(const c of mine){
+    if(c.state !== 'ok' || c.floor) continue;
+    const b = biomeAt(c.x, c.y);
+    if(b && !biomeState.seen[b]){
+      biomeState.seen[b] = true;
+      log(BIOMES[b].enter, '');
+      addFloat(c.x, c.y - 1.2, BIOMES[b].name, '#e8dcc4');
+    }
+  }
+  for(const s of biomeSleepers){
+    if(biomeState.woke[s.key]) continue;
+    const r = s.kind === 'automaton' ? RUST_WAKE_R : POOL_WAKE_R;
+    if(mine.some(c => c.state === 'ok' && !c.floor && Math.abs(c.x - s.x) < r && Math.abs(c.y - s.y) < r && dist(c.x, c.y, s.x, s.y) < r)) wakeSleeper(s);
+  }
+  /* THE FLATS KEEP WHAT DIES ON THEM, at the stage it lay down in. Not brine: see the dust pass. */
+  for(const b of corpses){
+    if(b.salted || b.floor || b.state !== 'dead') continue;
+    if(biomeAt(b.x, b.y) !== BIOME_SALT) continue;
+    const di = decayIndex(b);
+    if(di >= DECAY.length - 1) continue;
+    b.salted = true; b.saltedAt = di; b.saltedBy = 'flats';
+  }
 }
 function spawnCrazedHomunculus(x, y, r){
   const c = makeChar(pick(['Vat-Soldier','Sleepless','Unit ' + ri(100,999)]), 'redoubt', x, y,
@@ -12624,7 +12772,7 @@ const BUILD_JOB = {r_bench:'research', farm:'farm', charnel:'charnel', ossuary:'
                       offered the job that works one */
                    smelter:'craft', kiln:'craft', loom:'craft'};
 const NODE_JOB  = {wood:'wood', stone:'stone', copper:'mine', iron_ore:'mine', fish:'fish',
-                   brine:'saltwork'};
+                   brine:'saltwork', iron:'salvage', vflesh:'forage'};
 /* one line, once a session, pointing at the chord the browser does not steal — see the job
    shortcut in the right-click chain */
 let jobChordHinted = false;
@@ -15869,6 +16017,16 @@ function jobHasWork(c, j){
       }
       return c._mineHas;
     }
+    /* wrecks and blooms are only in their own ground, so they are asked the way ore is */
+    case 'salvage': case 'forage': {
+      const now = day + hour / 24;
+      const k = '_' + j + 'Look';
+      if(c[k] === undefined || now - c[k] > 0.02 || now < c[k]){
+        c[k] = now;
+        c['_' + j + 'Has'] = !!findNode(c, j);
+      }
+      return c['_' + j + 'Has'];
+    }
     default: return true;                                   /* guard, patrol and the rest always apply */
   }
 }
@@ -16244,7 +16402,7 @@ function physics(c, dt){
         c.swingT = 0.8 + rnd() * 0.4;
         if(g.kind === 'wood') AU.chop(c.x, c.y);
         /* dipping brine is as quiet as fishing; everything else is a tool on rock */
-        else if(g.kind !== 'fish' && g.kind !== 'brine') AU.mine(c.x, c.y);
+        else if(g.kind !== 'fish' && g.kind !== 'brine' && g.kind !== 'vflesh') AU.mine(c.x, c.y);
       }
       if(c.gatherT >= 5){
         c.gatherT = 0;
@@ -20857,6 +21015,11 @@ function findNode(c, kind){
       if(kind==='stone' && decorAt(tx,ty)==='rock' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'stone', sx:tx+0.5, sy:ty+0.5};
       if(kind==='copper' && decorAt(tx,ty)==='cvein' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'copper', sx:tx+0.5, sy:ty+0.5};
       if(kind==='iron_ore' && decorAt(tx,ty)==='ivein' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'iron_ore', sx:tx+0.5, sy:ty+0.5};
+      /* THE BARRENS AND THE BOG, each its own trade rather than folded into MINE: Ironscar's
+         own miners work the seam their town exists for, and a wreck at the edge of the scan
+         would have walked them off it. */
+      if(kind==='salvage' && decorAt(tx,ty)==='wreck' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'iron', sx:tx+0.5, sy:ty+0.5};
+      if(kind==='forage' && decorAt(tx,ty)==='bloom' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'vflesh', sx:tx+0.5, sy:ty+0.5};
       /* ---------- AND ONE JOB THAT WORKS EITHER SEAM ----------
          "There is currently no job for mining ore, of any kind. I have to manually order for it
           to be done."
@@ -21537,7 +21700,7 @@ function wispBurst(c){
    carries `golem`. Anything else that happens to be `construct` is somebody's craft, not a
    machine, and is left alone. */
 function isMachineBody(b){
-  return !!b && (!!b.redoubtId || !!b.golem) && !!b.construct;
+  return !!b && (!!b.redoubtId || !!b.golem || b.biomeOwn === 'rust') && !!b.construct;
 }
 /* A Watcher is anything out of the GAUNTS table plus the two that came through the door with
    it. `gauntKind` is set on every one of them at spawn; the faction test catches the strays. */
@@ -22842,12 +23005,13 @@ function decayIndex(c){ return DECAY.indexOf(decayStage(c)); }
 const SALT_PER_BODY = 2;
 function saltBody(c){
   if(!c || c.state !== 'dead') return false;
-  if(c.salted){ log('That one is already cured.', 'bad'); return false; }
+  /* one the flats cured can still be packed properly, which is what takes it off the dust's clock */
+  if(c.salted && c.saltedBy !== 'flats'){ log('That one is already cured.', 'bad'); return false; }
   if(decayIndex(c) >= DECAY.length - 1){ log('There is nothing left on it to cure.', 'bad'); return false; }
   if(!canAfford({salt: SALT_PER_BODY})){ log(`Curing a body takes ${SALT_PER_BODY} Salt.`, 'bad'); return false; }
   campSpend({salt: SALT_PER_BODY});
   c.saltedAt = decayIndex(c);
-  c.salted = true;
+  c.salted = true; c.saltedBy = null;
   log(`${c.name} is packed in brine. It will keep as it is.`, 'good');
   addSpecks(c.x, c.y - 0.3, '#e8e4d4', 12);
   refreshInv();
@@ -25749,6 +25913,7 @@ function update(dt){
   craterTick(dt);             /* and whether anyone has walked in toward the middle of the world */
   strikeTick(dt);             /* and whether the light is coming down on anybody in the glass */
   guardianTick(dt);           /* and whether the thing at the middle is calling it down on you */
+  biomeTick(dt);              /* the flats, the rust and the bog: who walked in, what woke, what keeps */
   closingTick(dt);            /* and whether anybody has read the codex sitting in the stores */
   commandTick(dt);            /* and what the bands you sent out are doing about it */
   cryTick(dt);                /* and whether anyone in one of your yards is shouting for help */
@@ -26751,12 +26916,16 @@ function update(dt){
     }
     /* The dust reclaims what is left, but it takes its time about it now, and bones are the
        last thing to go. A salted body is not on the clock at all. Over the cap the oldest
-       bones go first, so a long violent game cannot fill the ground indefinitely. */
+       bones go first, so a long violent game cannot fill the ground indefinitely.
+       THE FLATS ARE NOT BRINE: a body the salt flats cured keeps its stage but lies in the
+       open, so the dust and the cap still take it. Otherwise one war fought on the flats would
+       fill the ground for good, which is what the cap is for. */
     {
       const now = day + hour/24;
+      const kept = (c) => c.salted && c.saltedBy !== 'flats';
       for(let i=corpses.length-1; i>=0; i--){
         const c = corpses[i];
-        if(c.salted) continue;
+        if(kept(c)) continue;
         const life = (c.faction === 'player' ? BONE_DUST * 1.4 : BONE_DUST);
         if(now - (c.deadAt||0) > life){
           corpses.splice(i,1);
@@ -26764,7 +26933,7 @@ function update(dt){
         }
       }
       if(corpses.length > CORPSE_CAP){
-        const spare = corpses.filter(c => !c.salted).sort((a,b)=>(a.deadAt||0)-(b.deadAt||0));
+        const spare = corpses.filter(c => !kept(c)).sort((a,b)=>(a.deadAt||0)-(b.deadAt||0));
         for(let i = 0; i < corpses.length - CORPSE_CAP && i < spare.length; i++){
           const c = spare[i];
           const k = corpses.indexOf(c); if(k>=0) corpses.splice(k,1);
@@ -29569,6 +29738,80 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
     }
   } finally { seed = pocket; }
 })();
+/* ============================================================ THE BIOMES, LAID
+   Here and not with the terrain: the flats need Saltmere standing, the barrens Ironscar, the bog
+   its bunker, and everything above this line has been built against a world with no biomes in it
+   (see the note at `biomeId`). Nothing below rolls a die. */
+(function buildBiomes(){
+  const salt = towns.find(t => t.def.key === 'saltmere');
+  const iron = towns.find(t => t.def.key === 'ironscar');
+  /* THE BOG'S BUNKER is the deep redoubt, the one with rooms enough for vats. A world without
+     one takes the redoubt furthest from anybody's walls. */
+  const farOf = (r) => Math.min(...towns.map(t => dist(t.x, t.y, r.x, r.y)));
+  const bog = redoubts.find(r => r.deep) || redoubts.slice().sort((a, b) => farOf(b) - farOf(a))[0] || null;
+  const spec = [];
+  if(salt) spec.push({id: BIOME_SALT, x: salt.x, y: salt.y, R: 80, off: 300, home: salt});
+  if(iron) spec.push({id: BIOME_RUST, x: iron.x, y: iron.y, R: 92, off: 600, home: iron});
+  if(bog)  spec.push({id: BIOME_VAT,  x: bog.x,  y: bog.y,  R: 52, off: 900, home: null});
+  const EDGE = 14;
+  /* inside a bunker is not the bog, and a bunker's own floor is not the flats */
+  const inBunker = (x, y) => redoubts.some(r => r.deep
+    ? (x >= r.x0 - 2 && x <= r.x1 + 2 && y >= r.y0 - 2 && y <= r.y1 + 2)
+    : dist(x, y, r.x, r.y) < (r.r || 8) + 2);
+  for(const b of spec){
+    const reach = Math.ceil(b.R * 1.62 + EDGE);
+    const x0 = Math.max(1, Math.floor(b.x - reach)), x1 = Math.min(W - 2, Math.ceil(b.x + reach));
+    const y0 = Math.max(1, Math.floor(b.y - reach)), y1 = Math.min(H - 2, Math.ceil(b.y + reach));
+    for(let y = y0; y <= y1; y++) for(let x = x0; x <= x1; x++){
+      const i = y*W + x;
+      if(terr[i] === 3) continue;
+      if(biomeId[i] && biomeId[i] !== b.id) continue;           /* the first ground laid keeps it */
+      const dr = dist(x, y, b.x, b.y);
+      if(dr > reach) continue;
+      if(craterD(x, y) < CRATER.approach + 6) continue;
+      /* nobody else's town stands in it, and the bog laps nobody's walls at all */
+      if(towns.some(t => t !== b.home && dist(x, y, t.x, t.y) < (t.clearR || 20) + (b.id === BIOME_VAT ? 16 : 8))) continue;
+      if(inBunker(x, y)) continue;
+      /* a ragged edge: the reach itself wanders with the noise, so the ground frays out rather
+         than stopping at a circle somebody drew */
+      const n = fbm(x * 0.03 + b.off, y * 0.03 + b.off, 3);
+      const k = clamp((b.R - dr / (0.62 + n * 0.76)) / EDGE + 0.5, 0, 1);
+      if(k <= 0.02) continue;
+      biomeId[i] = b.id; biomeK[i] = k;
+    }
+  }
+  /* ---------- AND WHAT LIES DORMANT IN THEM ----------
+     Best-hashed bare tiles well inside the ground, kept apart, and never near a town: the rust
+     keeps eight automatons and the bog six pools. They are laid here and woken in play
+     (`biomeTick`), so a fresh world carries not one extra body and the stream never hears of them
+     until somebody walks up. */
+  const lay = (b, kind, n, gap) => {
+    const reach = Math.ceil(b.R * 1.62 + EDGE), cand = [];
+    for(let y = Math.max(2, Math.floor(b.y - reach)); y <= Math.min(H - 3, b.y + reach); y++)
+      for(let x = Math.max(2, Math.floor(b.x - reach)); x <= Math.min(W - 3, b.x + reach); x++){
+        const i = y*W + x;
+        if(biomeId[i] !== b.id || biomeK[i] < 0.8) continue;
+        if(rawDecorAt(x, y) !== null || isBlocked(x + 0.5, y + 0.5)) continue;
+        if(towns.some(t => dist(x, y, t.x, t.y) < (t.clearR || 20) + 18)) continue;
+        cand.push({x, y, h: hash2(x * 13 + 5, y * 11 + 9)});
+      }
+    cand.sort((a, c) => c.h - a.h);
+    const got = [];
+    for(const c of cand){
+      if(got.length >= n) break;
+      if(got.some(p => dist(p.x, p.y, c.x, c.y) < gap)) continue;
+      got.push(c);
+    }
+    for(const p of got){
+      const sl = {kind, x: p.x + 0.5, y: p.y + 0.5, key: kind + ':' + p.x + ',' + p.y};
+      biomeSleepers.push(sl);
+      sleeperAt.set(p.x + ',' + p.y, sl);
+    }
+  };
+  const rust = spec.find(b => b.id === BIOME_RUST), vat = spec.find(b => b.id === BIOME_VAT);
+  if(rust) lay(rust, 'automaton', 8, 16);
+  if(vat)  lay(vat, 'pool', 6, 12);
+})();
 function heightAt(wx, wy){
   const x = clamp(wx, 0, W-0.001), y = clamp(wy, 0, H-0.001);
   const ix = Math.floor(x), iy = Math.floor(y), fx = x-ix, fy = y-iy;
@@ -29685,6 +29928,50 @@ function heightAt(wx, wy){
     if(d < 16) c2 = mix(c2, CR.burn, smooth(clamp((16 - d) / 16, 0, 1)) * 0.8);
     return c2;
   };
+  /* ---------- THE BIOMES' GROUND ----------
+     Laid over whatever the dust would have been, by how deep into the ground a pixel is:
+     `biomeK` sampled between tile centres, so the edge frays over a few tiles instead of
+     stepping. The FLATS are the pans' own white, warmer, broken by the same polygon seams, and
+     the hills in them only dusted. The RUST is red going brown, streaked ochre, pitted dark.
+     The BOG is liver-dark peat with a pink-grey sheen where it pools and pale threads through
+     it, which is the part that is not peat. */
+  /* FAR darker than they look. The splat is read as linear and shown gamma-lifted, so a dark
+     value comes up hard and loses its hue on the way: peat painted peat-brown (49,27,27) rendered
+     a pale pink, and a crust at the pans' white rendered as snow with no seams in it. */
+  const BI = {salt:[164,158,144], salt2:[146,140,128], seam:[66,62,56],
+              rust:[128,58,30], rust2:[92,40,24], ochre:[160,96,44], pit:[44,24,18], ironRock:[104,56,40],
+              peat:[26,12,12], peat2:[36,17,17], sheen:[70,40,48], vein:[110,70,76]};
+  const kAt = (wx, wy) => {
+    const x = clamp(wx - 0.5, 0, W - 1.001), y = clamp(wy - 0.5, 0, H - 1.001);
+    const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+    const i = yi*W + xi;
+    return lerp(lerp(biomeK[i], biomeK[i+1], xf), lerp(biomeK[i+W], biomeK[i+W+1], xf), yf);
+  };
+  const biomePaint = (col, bid, wx, wy, t, slope, nBig, nMid, nFine) => {
+    const k = smooth(clamp((kAt(wx, wy) - 0.12) / 0.7, 0, 1));
+    if(k <= 0) return col;
+    const rocky = t === 2 || slope > 0.5;
+    let c2;
+    if(bid === BIOME_SALT){
+      if(rocky) return mix(col, BI.salt, 0.32 * k);
+      c2 = mix(BI.salt, BI.salt2, clamp((nMid - 0.40) * 2.6, 0, 1));
+      /* the polygon seams brine leaves when it dries: two crossing sets, so they close into cells */
+      if(Math.abs(frac1(nMid * 9 + nBig * 3) - 0.5) < 0.045 || Math.abs(frac1(nMid * 7 - nBig * 5 + 0.3) - 0.5) < 0.035)
+        c2 = mix(c2, BI.seam, 0.65);
+      if(nFine > 0.86) c2 = mix(c2, BI.salt2, 0.5);
+    } else if(bid === BIOME_RUST){
+      if(rocky) return mix(col, BI.ironRock, 0.7 * k);
+      c2 = mix(BI.rust, BI.rust2, clamp((nBig - 0.3) * 2.2, 0, 1));
+      if(nMid > 0.6) c2 = mix(c2, BI.ochre, clamp((nMid - 0.6) * 2.5, 0, 0.7));
+      if(nFine > 0.9) c2 = mix(c2, BI.pit, 0.55);
+    } else {
+      if(rocky) return mix(col, BI.peat2, 0.5 * k);
+      c2 = mix(BI.peat, BI.peat2, clamp((nMid - 0.35) * 2, 0, 1));
+      if(nMid < 0.3) c2 = mix(c2, BI.sheen, clamp((0.3 - nMid) * 4, 0, 0.8));
+      if(Math.abs(frac1(nBig * 14 + nMid * 2) - 0.5) < 0.03) c2 = mix(c2, BI.vein, 0.4);
+    }
+    return mix(col, c2, k);
+  };
   /* noise lattices at tile resolution — the frequencies live at 9+ tiles, so nothing is lost */
   const NL = W + 2;
   const nBigT = new Float32Array(NL * (H + 2)), nMidT = new Float32Array(NL * (H + 2));
@@ -29736,6 +30023,10 @@ function heightAt(wx, wy){
         if(h < 0.12 && slope < 0.08 && nBig < 0.45)
           col = mix(col, C.salt, clamp((0.45-nBig)*3, 0, 1) * clamp((0.12-h)*8, 0, 1));
         if(nMid > 0.66) col = mix(col, C.scrub, clamp((nMid-0.66)*2.4, 0, 0.8));
+      }
+      if(t !== 3){
+        const bid = biomeId[ty*W+tx];
+        if(bid) col = biomePaint(col, bid, wx, wy, t, slope, nBig, nMid, nFine);
       }
       if(Math.abs(wx - CRATER.x) < CRATER.approach && Math.abs(wy - CRATER.y) < CRATER.approach){
         const cd = craterD(wx, wy);
@@ -29891,7 +30182,7 @@ function syncDecorFog(){
   /* one buffer upload per instanced mesh, not one per stone */
   if(touched) for(const im of touched) im.instanceMatrix.needsUpdate = true;
 }
-function nodeDepletedSafe(x, y){ try { return typeof nodeDepleted === 'function' && nodeDepleted(x, y); } catch(e){ return false; } }
+function nodeDepletedSafe(x, y){ try { return sleeperGone(x, y) || (typeof nodeDepleted === 'function' && nodeDepleted(x, y)); } catch(e){ return false; } }
 const fogTex = new THREE.CanvasTexture(fogCanvas);
 fogTex.magFilter = THREE.LinearFilter;
 fogTex.minFilter = THREE.LinearFilter;
@@ -30451,6 +30742,7 @@ function vscaleOf(c){
 /* ---------- instanced decor ---------- */
 {
   const trees=[], oasisTrees=[], deadTrees=[], rocks=[], charRocks=[], shrubs=[], cveins=[], iveins=[];
+  const wrecks=[], blooms=[], slumped=[], pools=[];
   const gr = towns.find(t2 => t2.def.key === 'greenrest');
   for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
     const d = rawDecorAt(x,y);   /* build every node, then hide the spent ones — so regrowth can restore them */
@@ -30458,14 +30750,18 @@ function vscaleOf(c){
       /* dead inside the approach, and thinning out to living over thirty tiles past it, so the
          edge of the dead ground is a fraying and not a line somebody drew */
       const cd = craterD(x + 0.5, y + 0.5);
-      const dead = cd < CRATER.approach || (cd < CRATER.approach + 30 && hash2(x*13, y*17) < (CRATER.approach + 30 - cd) / 30);
+      const dead = cd < CRATER.approach || (cd < CRATER.approach + 30 && hash2(x*13, y*17) < (CRATER.approach + 30 - cd) / 30)
+        || biomeAt(x, y) === BIOME_RUST;   /* nothing living roots in the rust */
       (dead ? deadTrees : (gr && dist(gr.x, gr.y, x, y) < 26) ? oasisTrees : trees).push([x+0.5, y+0.5]);
     }
     else if(d==='rock') (craterD(x + 0.5, y + 0.5) < CRATER.approach ? charRocks : rocks).push([x+0.5, y+0.5]);
     else if(d==='shrub') shrubs.push([x+0.5, y+0.5]);
     else if(d==='cvein') cveins.push([x+0.5, y+0.5]);
     else if(d==='ivein') iveins.push([x+0.5, y+0.5]);
+    else if(d==='wreck') wrecks.push([x+0.5, y+0.5]);
+    else if(d==='bloom') blooms.push([x+0.5, y+0.5]);
   }
+  for(const sl of biomeSleepers) (sl.kind === 'automaton' ? slumped : pools).push([sl.x, sl.y]);
   const dummy = new THREE.Object3D();
   const nodeInstances = new Map();   /* 'x,y' -> [{im, i}, ...] */
   window.decorByTile = new Map();    /* every instance, keyed by tile — the fog's ledger */
@@ -30570,6 +30866,27 @@ function vscaleOf(c){
     const L = NODE_LOOK[k];
     addInst(list, new THREE.DodecahedronGeometry(L.baseSz, 0), L.base, 0.22, veinScale, true);
     addInst(list, new THREE.OctahedronGeometry(L.crustSz, 0), L.crust, 0.44, veinScale, true);
+  }
+  /* ---------- THE BARRENS AND THE BOG, DRESSED ----------
+     A WRECK is a hull half in the ground, a pipe out of it at an angle and a plate come loose.
+     A SLUMPED AUTOMATON is the one wreck that is a body sitting down, and it is tracked so it can
+     stand up and leave. A BLOOM is a low mound of quickflesh with smaller lobes budding off it.
+     A POOL is dark and flat and larger than anything around it. All of it placed off `hash2` and
+     the biomes, so the renderer spends no dice. */
+  {
+    const wreckScale = p => 0.85 + hash2(p[0]*9, p[1]*5)*0.5;
+    addInst(wrecks, new THREE.BoxGeometry(1.05, 0.42, 0.62), '#6e3b24', 0.12, wreckScale, true);
+    addInst(wrecks, new THREE.CylinderGeometry(0.11, 0.11, 0.95, 6).rotateZ(1.05).translate(0.32, 0.25, 0.12), '#5a3424', 0.12, wreckScale, true);
+    addInst(wrecks, new THREE.BoxGeometry(0.62, 0.06, 0.46).rotateX(0.5).translate(-0.42, 0.16, -0.2), '#8a4a2e', 0.12, wreckScale, true);
+    addInst(slumped, new THREE.BoxGeometry(0.58, 0.66, 0.42).rotateX(-0.28), '#5e3a2a', 0.34, null, true);
+    addInst(slumped, new THREE.BoxGeometry(0.32, 0.3, 0.32).rotateX(0.5).translate(0, 0.44, 0.16), '#6a3f2c', 0.34, null, true);
+    addInst(slumped, new THREE.BoxGeometry(0.86, 0.18, 0.44).translate(0, -0.26, 0.34), '#4e3024', 0.34, null, true);
+    const bloomScale = p => 0.75 + hash2(p[0]*7, p[1]*13)*0.6;
+    addInst(blooms, new THREE.SphereGeometry(0.36, 7, 5).scale(1, 0.58, 1), '#a8646c', 0.1, bloomScale, true);
+    addInst(blooms, new THREE.SphereGeometry(0.16, 6, 4).translate(0.3, 0.06, 0.12), '#7a3a44', 0.1, bloomScale, true);
+    addInst(blooms, new THREE.SphereGeometry(0.12, 6, 4).translate(-0.22, 0.04, -0.24), '#c08088', 0.1, bloomScale, true);
+    addInst(pools, new THREE.CircleGeometry(1.25, 16).rotateX(-Math.PI / 2), '#3a1c22', 0.04, null, false);
+    addInst(pools, new THREE.CircleGeometry(0.7, 12).rotateX(-Math.PI / 2).translate(0.2, 0.01, -0.15), '#6a3a44', 0.04, null, false);
   }
   /* ---------- THE CRATER, DRESSED ----------
      Everything here is instanced through `addInst`, so it is culled by chunk and stays under the
@@ -39892,6 +40209,8 @@ const mmBase = document.createElement('canvas'); mmBase.width=128; mmBase.height
     {
       const _k = Math.floor(y*H/128)*W + Math.floor(x*W/128);
       g.fillStyle = brim[_k] ? BRIM_COLS[brim[_k]] : TILE_COLS[terr[_k]];
+      /* and the three grounds, so the map says where the flats, the rust and the bog are */
+      if(terr[_k] !== 3 && biomeK[_k] >= 0.5 && biomeId[_k]) g.fillStyle = BIOMES[biomeId[_k]].col;
       /* and the crater, ring by ring, so the map says what the ground says */
       const cd = craterD((x + 0.5) * W / 128, (y + 0.5) * H / 128);
       if(cd < CRATER.approach) g.fillStyle = cd < CRATER.rim - 6 ? '#2e2b31' : cd < CRATER.crest + 2 ? '#4a4440'
@@ -40621,7 +40940,7 @@ function refreshCharPanel(){
   jr.innerHTML = '<span style="color:var(--dust);font-size:10px">JOB</span>';
   const JOBS = [
     [null,'NONE'], ['wood','WOOD'], ['stone','STONE'], ['fish','FISH'], ['saltwork','SALTWORK'], ['farm','TEND'],
-    ['build','BUILD'], ['flesh','FLESH'], ['charnel','CHARNEL'], ['raise','RAISE'], ['carrion','HARVEST'], ['bones','BONE HAUL'], ['mine','MINE'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'], ['execute','EXECUTE'],
+    ['build','BUILD'], ['flesh','FLESH'], ['charnel','CHARNEL'], ['raise','RAISE'], ['carrion','HARVEST'], ['bones','BONE HAUL'], ['mine','MINE'], ['salvage','SALVAGE'], ['forage','FORAGE'], ['craft','CRAFT'], ['research','STUDY'], ['gunner','GUNNERY'], ['guard','BODYGUARD'], ['patrol','PATROL'], ['execute','EXECUTE'],
   ];
   /* THE JOB AND 2ND BUTTONS, ONE BUILDER. The primary used to be a hand-copied second version of
      this menu, and this one carried `which === 2 ?` branches for a primary it was never asked
@@ -46782,6 +47101,9 @@ function gatherKindAt(wx, wy, f){
   if(dec==='rock' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'stone', sx:tx+0.5, sy:ty+0.5};
   if(dec==='cvein' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'copper', sx:tx+0.5, sy:ty+0.5};
   if(dec==='ivein' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'iron_ore', sx:tx+0.5, sy:ty+0.5};
+  /* a wreck is stripped for its plate, which is worked iron already; a bloom is cut for flesh */
+  if(dec==='wreck' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'iron', sx:tx+0.5, sy:ty+0.5};
+  if(dec==='bloom' && !isBlocked(tx+0.5, ty+0.5)) return {kind:'vflesh', sx:tx+0.5, sy:ty+0.5};
   /* ---------- AND WHAT KIND OF WATER IT IS DECIDES WHAT YOU GET OUT OF IT ----------
      This asked `t===3` and offered FISH, and that was a true sentence about the world right up
      until the world got a coast. All three ocean bands are written to `terr` as 3 so the thirty
@@ -46938,7 +47260,7 @@ function snapshot(){
        and the morning after it. */
     gritT:c.gritT||0, gritWob:c.gritWob||0, drunk:c.drunk||0, drinkCd:c.drinkCd||0, hangT:c.hangT||0, satDay:c.satDay||0,
     protagonist:!!c.protagonist, squadNo:c.squadNo||0, wasOrder:!!c.wasOrder,
-    salted:!!c.salted, saltedAt:c.saltedAt??null, rot:c.rot||null, lieuWear:c.lieuWear||0,
+    salted:!!c.salted, saltedAt:c.saltedAt??null, saltedBy:c.saltedBy||null, biomeOwn:c.biomeOwn||null, rot:c.rot||null, lieuWear:c.lieuWear||0,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
     bindWeight:c.bindWeight, shortTag:c.shortTag, tempT:c.tempT??null, propped:!!c.propped,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
@@ -47081,6 +47403,9 @@ function snapshot(){
              spoken: mother.spoken, reads: mother.reads, toldPrice: mother.toldPrice, stirred: mother.stirred,
              opened: mother.opened},
     shrines: shrines.map(sh => ({broken: !!sh.broken, hp: Math.round(sh.hp), reT: sh.reT || 0})),
+    /* which grounds have been walked into, and which sleepers have already sat up: without the
+       second, every wreck in the rust would lie back down on a reload and wake a second time */
+    biomes: {seen: {...biomeState.seen}, woke: {...biomeState.woke}},
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       /* how much pitch is left in a post. Without this every post in the world came back
          brimming, and an outpost you had let go dark relit itself on a reload. */
@@ -47152,6 +47477,14 @@ function restore(d){
     mother.stirred = !!d.mother.stirred;
     mother.reads = d.mother.reads || 0; mother.toldPrice = !!d.mother.toldPrice;
     mother.opened = !!d.mother.opened;
+  }
+  /* the biomes: a woken sleeper stays up, and its wreck stays gone from the ground */
+  for(const k in biomeState.seen) delete biomeState.seen[k];
+  for(const k in biomeState.woke) delete biomeState.woke[k];
+  if(d.biomes){ Object.assign(biomeState.seen, d.biomes.seen || {}); Object.assign(biomeState.woke, d.biomes.woke || {}); }
+  for(const s2 of biomeSleepers){
+    const k2 = Math.floor(s2.x) + ',' + Math.floor(s2.y);
+    if(s2.kind === 'automaton') (biomeState.woke[s2.key] ? hideNodeInstance : showNodeInstance)(k2);
   }
   /* a shrine you broke stays broken, and the clock on it keeps running */
   if(d.shrines) for(let i = 0; i < shrines.length && i < d.shrines.length; i++){
@@ -47454,7 +47787,7 @@ function restore(d){
        saved swarm turns back into a field of whole men the moment the game is opened again */
     if(s.corpseWorth != null) c.corpseWorth = s.corpseWorth;
     c.shape = s.shape ? {...s.shape} : null; c.shapeName = s.shapeName || null; c.kills = s.kills || 0;
-    c.salted = !!s.salted; c.saltedAt = s.saltedAt ?? null; c.rot = s.rot || null; c.lieuWear = s.lieuWear || 0;
+    c.salted = !!s.salted; c.saltedAt = s.saltedAt ?? null; c.saltedBy = s.saltedBy || null; c.biomeOwn = s.biomeOwn || null; c.rot = s.rot || null; c.lieuWear = s.lieuWear || 0;
     if(s.knit != null) c.knit = s.knit;
     if(s.natArmor) c.natArmor = {...s.natArmor};
     if(s.noise != null) c.noise = s.noise;
