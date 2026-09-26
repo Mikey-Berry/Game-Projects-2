@@ -492,6 +492,31 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
+### 5.13 The corners of every walled town were unwatched — **fixed 2026-09-26**
+
+Found by the full suite: `tongue.js` *andTheWallIsWatchedAllTheWayRound* went red on the crater
+(`502b573`), with 40 crossings at Dustport's far corner drawing 0 stops against the gate's 21.
+The guard posts stood on a circle three inside the wall, but the wall is a square (`inWalls`), so
+each corner sat 10.5 tiles from the nearest post before its ±3 jitter. The search on a crossing
+reaches 12, so whether a corner was watched came down to the jitter. The crater's reshuffle moved
+Dustport's post from 8.6 to 12.0 tiles, and the corner went quiet. Measured, it was never only
+Dustport:
+
+| walled town | nearest post to each corner, before | after | worst wall point, before → after |
+|---|---|---|---|
+| Dustport | 13.4 / 10.9 / 10.6 / 12.7 | 9.9 / 4.6 / 7.6 / 6.4 | 14.8 → 11.2 |
+| Copperhold | 10.3 / 13.5 / 12.7 / 10.9 | 5.0 / 7.9 / 5.0 / 3.6 | 14.9 → 9.3 |
+| Greenrest | 13.7 / 14.9 / 16.0 / 16.3 | 4.0 / 3.5 / 4.0 / 3.6 | 17.7 → 7.5 |
+| Saltmere | 11.4 / 11.9 / 12.4 / 10.0 | 6.8 / 4.9 / 8.8 / 3.1 | 13.7 → 10.1 |
+| Ironscar | 16.3 / 17.0 / 15.0 / 16.3 | 5.9 / 4.1 / 7.7 / 4.4 | 18.4 → 9.0 |
+| Fallowend | 11.7 / 11.1 / 11.1 / 10.9 | 8.9 / 7.6 / 5.4 / 6.1 | 12.9 → 10.0 |
+
+Each post now walks out along its own bearing, by the distance the square extends past the
+circle on that bearing, or as far as the ground is open. Posts on the axes do not move, the
+gate's among them. `findOpenNear` still runs first, so the world stream draws the same numbers:
+chests, sites, buildings and every non-guard body come out byte-identical, and only the guards
+stand somewhere new.
+
 ### 5.12 Mages against ranged — **rebalanced 2026-09-26**
 
 Reported: mages "are just vastly superior to basic ranged units". Measured in the sim against a
