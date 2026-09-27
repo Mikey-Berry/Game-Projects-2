@@ -232,14 +232,26 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        the squad is down a hole. Open waste, well away from any town, so a staged fight is not
        joined by a militia. */
     const waste = () => {
-      for(let y = 20; y < H - 20; y += 6) for(let x = 20; x < W - 20; x += 6){
-        if(isBlocked(x + 0.5, y + 0.5, 0)) continue;
+      /* AWAY FROM THE EDGE, AND WITH GROUND WHERE THE WARM CONTROL STANDS. This scanned from
+         (20, 20) and took the first open tile, which on the 2048 world is by the north-west
+         coast: the warm control put the squad at (x - 30, y - 30), off the map, and the
+         "watched" fight ran cold. */
+      for(let y = 60; y < H - 60; y += 6) for(let x = 60; x < W - 60; x += 6){
+        if(isBlocked(x + 0.5, y + 0.5, 0) || isBlocked(x - 29.5, y - 29.5, 0)) continue;
         if(towns.some(t => dist(t.x, t.y, x, y) < 70)) continue;
         return {x, y};
       }
       return {x: Math.floor(W/2), y: Math.floor(H/2)};
     };
     const squadTo = (x, y, f) => {
+      /* AND NOTHING ELSE NEAR WHERE THEY ARE PARKED. The squad stands in an Undercroft hall with
+         `noFight` for forty-five seconds, and on the 2048 world that hall sometimes has company:
+         the squad died there, the warm control then had nobody on the surface to warm it, and
+         both claims after it read a world with no player in it. Intermittent, because it rode
+         the fight's dice. */
+      for(const o of chars) if(o.faction !== 'player' && o.state !== 'dead' && (o.floor || 0) === f && dist(o.x, o.y, x, y) < 30){
+        o.x = 6; o.y = 6; o.target = null; o.moveTarget = null; o.path = null;
+      }
       for(const u of player()) if(u.state !== 'dead'){
         u.x = x; u.y = y; u.floor = f; u.moveTarget = null; u.target = null; u.path = null; u.noFight = true;
       }
@@ -303,14 +315,26 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        the squad is down a hole. Open waste, well away from any town, so a staged fight is not
        joined by a militia. */
     const waste = () => {
-      for(let y = 20; y < H - 20; y += 6) for(let x = 20; x < W - 20; x += 6){
-        if(isBlocked(x + 0.5, y + 0.5, 0)) continue;
+      /* AWAY FROM THE EDGE, AND WITH GROUND WHERE THE WARM CONTROL STANDS. This scanned from
+         (20, 20) and took the first open tile, which on the 2048 world is by the north-west
+         coast: the warm control put the squad at (x - 30, y - 30), off the map, and the
+         "watched" fight ran cold. */
+      for(let y = 60; y < H - 60; y += 6) for(let x = 60; x < W - 60; x += 6){
+        if(isBlocked(x + 0.5, y + 0.5, 0) || isBlocked(x - 29.5, y - 29.5, 0)) continue;
         if(towns.some(t => dist(t.x, t.y, x, y) < 70)) continue;
         return {x, y};
       }
       return {x: Math.floor(W/2), y: Math.floor(H/2)};
     };
     const squadTo = (x, y, f) => {
+      /* AND NOTHING ELSE NEAR WHERE THEY ARE PARKED. The squad stands in an Undercroft hall with
+         `noFight` for forty-five seconds, and on the 2048 world that hall sometimes has company:
+         the squad died there, the warm control then had nobody on the surface to warm it, and
+         both claims after it read a world with no player in it. Intermittent, because it rode
+         the fight's dice. */
+      for(const o of chars) if(o.faction !== 'player' && o.state !== 'dead' && (o.floor || 0) === f && dist(o.x, o.y, x, y) < 30){
+        o.x = 6; o.y = 6; o.target = null; o.moveTarget = null; o.path = null;
+      }
       for(const u of player()) if(u.state !== 'dead'){
         u.x = x; u.y = y; u.floor = f; u.moveTarget = null; u.target = null; u.path = null; u.noFight = true;
       }
@@ -412,8 +436,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        the depths do not tick at all now, so a fight staged on the Sump is a fight that never
        starts, and this claim read 0 blood either side and said so. */
     const waste = () => {
-      for(let y = 20; y < H - 20; y += 6) for(let x = 20; x < W - 20; x += 6){
-        if(isBlocked(x + 0.5, y + 0.5, 0)) continue;
+      /* AWAY FROM THE EDGE, AND WITH GROUND WHERE THE WARM CONTROL STANDS. This scanned from
+         (20, 20) and took the first open tile, which on the 2048 world is by the north-west
+         coast: the warm control put the squad at (x - 30, y - 30), off the map, and the
+         "watched" fight ran cold. */
+      for(let y = 60; y < H - 60; y += 6) for(let x = 60; x < W - 60; x += 6){
+        if(isBlocked(x + 0.5, y + 0.5, 0) || isBlocked(x - 29.5, y - 29.5, 0)) continue;
         if(towns.some(t => dist(t.x, t.y, x, y) < 70)) continue;
         return {x, y};
       }
@@ -425,6 +453,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     if (!me) return null;
     {
       const DF = DEPTHS[0], hall = undercroft.halls.find(H2 => H2.f === DF);
+      for(const o of chars) if(o.faction !== 'player' && o.state !== 'dead' && (o.floor || 0) === DF && dist(o.x, o.y, hall.x, hall.y) < 30){
+        o.x = 6; o.y = 6; o.target = null; o.moveTarget = null; o.path = null;
+      }
       for(const u of player()) if(u.state !== 'dead'){
         u.x = hall.x; u.y = hall.y; u.floor = DF; u.moveTarget = null; u.target = null; u.path = null; u.noFight = true;
       }
@@ -487,9 +518,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
      printed and never asserted on: this repo has already been burned once by treating a
      hand-timed millisecond as a result, and the only instrument that settled the question in the
      end was `tools/frame.js` sampling real frames. */
-  R.andItIsActuallyCheaper = (cost.physics < 750 && cost.ai < 350)
-    ? `${cost.physics} physics and ${cost.ai} ai calls a step over ${cost.chars} bodies, against 1,099 and 602 before — ${cost.ms}ms a step here, which is colour rather than a claim`
-    : `!! THE WORK DID NOT GO DOWN (${JSON.stringify(cost)})`;
+  /* PER BODY, NOT PER WORLD. The thresholds were 750 and 350 calls a step, set on a world of
+     1,750 bodies; the 2048 world holds 2,900 and read 850 and 380, which is 0.29 and 0.13 a body
+     against the 0.63 and 0.34 the tier was written to cut. The same bar, divided by the roster
+     it was measured on: 750/1750 and 350/1750. */
+  const perP = cost.physics / cost.chars, perA = cost.ai / cost.chars;
+  R.andItIsActuallyCheaper = (perP < 750 / 1750 && perA < 350 / 1750)
+    ? `${cost.physics} physics and ${cost.ai} ai calls a step over ${cost.chars} bodies (${perP.toFixed(2)} and ${perA.toFixed(2)} a body), against 0.63 and 0.34 a body before — ${cost.ms}ms a step here, which is colour rather than a claim`
+    : `!! THE WORK DID NOT GO DOWN (${JSON.stringify(cost)}, ${perP.toFixed(2)} and ${perA.toFixed(2)} a body)`;
 
   console.log('=== THE SLOW CLOCK ===\n');
   for (const [k, v] of Object.entries(R)) console.log('  ' + k.padEnd(30) + v);
