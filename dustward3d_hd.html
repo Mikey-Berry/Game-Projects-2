@@ -3705,6 +3705,11 @@ function paceBands(){
 }
 /* The cap goes on the OUTSIDE so `paceBands` can ask what a body would do unaided without
    asking itself the same question one frame deep. */
+/* the crawl: how far one pull takes the body, and how it lies (see the note in `syncChars`) */
+const CRAWL_PULL = 0.55;
+const CRAWL_PITCH = 1.40;
+/* as a share of a walk: 3.4 tiles a second on two legs is 0.54 on none and 0.85 on one */
+const CRAWL_PACE_NONE = 0.16, CRAWL_PACE_ONE = 0.25;
 function moveSpeed(c){
   const s = moveSpeedRaw(c);
   const p = c._bandPace;
@@ -3792,10 +3797,15 @@ function moveSpeedRaw(c){
   const ll = c.parts['l.leg'], rl = c.parts['r.leg'];
 /* no legs at all is not zero speed — it is a crawl */
 const legFactor = (leg) => leg.severed ? (leg.pros ? prosVal(leg) : 0.16) : leg.hp <= 0 ? .25 : leg.hp < 50 ? .65 : 1;
-  s *= (legFactor(ll) + legFactor(rl)) / 2;
+  /* AND ONE LEG GONE IS A CRAWL TOO. The rig lies the body down the moment either leg is off
+     without a graft, and the pace went on averaging the two legs, so a man with one leg
+     crawled at 58% of a walk: about two tiles a second on his belly. */
+  const lostL = ll.severed && !ll.pros, lostR = rl.severed && !rl.pros;
+  const crawl = lostL || lostR;
+  s *= crawl ? (lostL && lostR ? CRAWL_PACE_NONE : CRAWL_PACE_ONE) : (legFactor(ll) + legFactor(rl)) / 2;
   if(c.blood < 60) s *= .7;
   if(c.hunger <= 0) s *= (c.construct ? .35 : .6);
-  return Math.max(0.5, s);
+  return Math.max(crawl ? 0.3 : 0.5, s);
 }
 /* ---------- WHAT THEY ARE HOLDING ----------
    `c.weapon` is a KEY, and it round-trips through saves. Any key that stops existing —
@@ -26558,6 +26568,9 @@ function applyOpts(){
 let fpsEMA = 60, simMs = 0, renderMs = 0, simStepsEMA = 1;
 function update(dt){
   _inStep = true;          /* the squad list may be cached from here to the last line, and nowhere else */
+  /* where everybody stood before this step, so the draw can put them between the two — see
+     `drawPos` */
+  for(const c of chars){ c._px = c.x; c._py = c.y; }
   rebuildCharGrid();
   paceBands();                /* and a party marches at the pace of whoever is slowest in it */
   reapPhylacteries();
@@ -39446,8 +39459,33 @@ function trimRigShadows(g){
     if(geo.boundingSphere.radius * Math.max(o.scale.x, o.scale.y, o.scale.z) < RIG_SHADOW_MIN) o.castShadow = false;
   });
 }
+/* ---------- THE WORLD THINKS AT THIRTY AND THE SCREEN PAINTS AT SIXTY ----------
+   "A reliquary lich's movement is very... jagged? It's just hard to look at, and isn't smooth
+    at all." Every body moved on the sim's step and was drawn wherever that step left it, so on
+   every second frame nothing had moved. That was a stutter for everybody, and for anything
+   keyed to "is it moving" it was worse: the walk cycle, the lich's float and lean, and the hem
+   all switched on that test, which went true and false on alternate frames. Measured on a lich
+   crossing open ground at 60 fps: its height reversed direction on 217 frames out of 217, by
+   two hundredths each time; a walker's legs on 160.
+   So a body is DRAWN between where the last step found it and where it left it, by how far
+   the clock has got toward the next step, and "moving" is read off that drawn position, which
+   changes every frame. Paused, or before the game starts, it is drawn where it is: a harness
+   stepping `update` by hand sees exactly the positions it always did. A jump of more than
+   three tiles is a teleport (a gate, a cell, a load), and is drawn where it lands. */
+function drawPos(c, k){
+  if(k >= 1 || c._px === undefined) return c;
+  const jx = c.x - c._px, jy = c.y - c._py;
+  if(jx * jx + jy * jy > 9) return c;
+  return {x: c._px + jx * k, y: c._py + jy * k};
+}
+/* the same point for anything drawn over a body: its ring, its bars, its line to a target */
+function drawnAt(c){
+  const e = charMeshes.get(c.id);
+  return (e && e.inScene && e.rx !== undefined) ? {x: e.rx, y: e.rz} : c;
+}
 function syncChars(dt){
   const seen = new Set();
+  const lerpK = (paused || !started) ? 1 : Math.min(1, simAcc / SIM_DT);
   const all = chars;
   let builds = 0;   /* rigs are built the first time they are looked at; cap the burst when a town comes into view */
   for(const c of all){
@@ -39472,8 +39510,10 @@ function syncChars(dt){
     if(!c.beast && e.builtArmor !== (c.armor || null)){ rebuildArmorLayer(e, c); trimRigShadows(e.g); }
     if(!c.beast && e.builtWeapon !== (c.weapon || null)){ rebuildWeapon(e, c); trimRigShadows(e.g); }
     e.g.visible = true;
-    const gy = groundY(c.x, c.y) + floorY(c.floor);
-    let px = c.x, pz = c.y;
+    const dp = drawPos(c, lerpK);
+    e.rx = dp.x; e.rz = dp.y;
+    const gy = groundY(dp.x, dp.y) + floorY(c.floor);
+    let px = dp.x, pz = dp.y;
     if(c.lungeT > 0){ const k = (c.lungeT/(c.lungeDur||0.18))*(c.lungeK||0.35); px += c.lungeDX*k; pz += c.lungeDY*k; }
     /* driven back: the slide trails the blow rather than snapping with it */
     if(c.shoveT > 0){ const k = (c.shoveT/(c.shoveDur||0.22))*(c.shoveK||0.30); px += c.shoveDX*k; pz += c.shoveDY*k; }
@@ -39484,7 +39524,7 @@ function syncChars(dt){
     const bs = (c.big || 1) * vscaleOf(c) * ageScale;
     e.g.scale.set(bs * (e.baseSX||1), bs * (e.baseSY||1), bs * (e.baseSX||1));
     /* facing */
-    const mvx = c.x - e.lastX, mvz = c.y - e.lastY;
+    const mvx = e.rx - e.lastX, mvz = e.rz - e.lastY;
     const moving = Math.abs(mvx) + Math.abs(mvz) > 0.002;
     /* HOW FAST THE LEGS GO. Every walk cycle in here advanced at a flat `dt * 10` no matter
        how fast the body was actually travelling, so a shambling thing at a third of walking
@@ -39509,24 +39549,73 @@ function syncChars(dt){
     while(dr > Math.PI) dr -= Math.PI*2;
     while(dr < -Math.PI) dr += Math.PI*2;
     e.rotY += dr * Math.min(1, dt*10);
-    e.lastX = c.x; e.lastY = c.y;
+    e.lastX = e.rx; e.lastY = e.rz;
     /* ---------- pose state machine ---------- */
     const P = (o, k, v, sp=14) => { o.rotation[k] += (v - o.rotation[k]) * Math.min(1, dt*sp); };
-    /* no legs and no grafts: they drag themselves along on their elbows */
-    const crawling = !c.beast && PARTS.some(k => k.endsWith('leg') && c.parts[k].severed && !c.parts[k].pros);
-    if(crawling && c.state === 'ok'){
-      e.g.position.y -= 0.62;
-      e.g.rotation.x = -1.15;
-      if(e.spine) e.spine.rotation.z = Math.sin(performance.now()/220) * 0.22;
-      continue;
+    /* ---------- NO LEGS: A CRAWL, NOT A SWIM ----------
+       "Humanoids without leg limbs don't really crawl so much as 'swim' through the ground.
+        They move quite fast for not having legs and the animation is just weird."
+       It was the standing body tipped 66 degrees and sunk 0.62 into the ground, so the chest
+       went under the terrain, with a side-to-side wobble on a wall clock and nothing else
+       moving. It never turned either: the yaw was left wherever it was when the leg came off.
+       Now the body lies ON the ground, face down with the head up, and pulls itself along
+       one arm at a time: an arm reaches out ahead, plants, and drags the body up to it while
+       the other comes forward. The cycle runs on GROUND COVERED, like a stride (one pull per
+       CRAWL_PULL tiles), so a slower crawl pulls slower rather than flailing in place. A
+       remaining leg shoves on the opposite beat. The pace is `moveSpeed`'s business. */
+    const crawling = !c.beast && !e.still && PARTS.some(k => k.endsWith('leg') && c.parts[k].severed && !c.parts[k].pros);
+    /* AND IT POSES ONLY THE BODY. This used to `continue` out of the loop, which skipped the
+       limbs-and-gear block below as well: the leg that had come off was never hidden (a
+       legless body dragged both its legs along behind it) and the shield lay flat under its
+       chin. The crawl replaces the pose chain and nothing after it. */
+    const crawlPose = crawling && c.state === 'ok';
+    if(crawlPose){
+      const go = Math.hypot(mvx, mvz);
+      e.crawlPh = (e.crawlPh || 0) + go * (Math.PI / CRAWL_PULL);
+      e.crawlGo = (e.crawlGo || 0) + ((moving ? 1 : 0) - (e.crawlGo || 0)) * Math.min(1, dt * 5);
+      const ph = e.crawlPh, k = e.crawlGo;
+      const fw = Math.sin(e.rotY), fz = Math.cos(e.rotY);
+      /* the rig pivots at its feet, so lying it down puts the chest a body-length ahead of
+         where it is: slide it back so the body is centred on its own position */
+      e.g.position.set(px - fw * 1.05 * bs, gy + (0.012 + Math.abs(Math.sin(ph)) * 0.02 * k) * bs, pz - fz * 1.05 * bs);
+      e.g.rotation.order = 'YXZ';
+      e.g.rotation.set(CRAWL_PITCH, e.rotY, Math.sin(ph) * 0.07 * k);
+      /* AN ARMY CRAWL, because the chest is on the ground. With the shoulder a hand's breadth
+         up, a straight arm pointed any lower than twenty degrees under the horizon goes into
+         the terrain, and the first version (arms swinging down to vertical) put the forearms
+         a third of a tile under it. So the upper arm works between twenty and fifty-five degrees
+         down, and the elbow keeps the forearm LEVEL: flat on the ground while it drags the
+         body up to it, tipped up off the ground while it comes forward for the next hold.
+         Lying face down, `x` of -PI is an arm straight out ahead; `phi` is how far below that. */
+      const armAt = (a) => {
+        /* u runs 0 -> 1 as the arm comes forward off the ground, and 1 -> 0 as it drags */
+        const u = 0.5 - 0.5 * Math.cos(a), phi = 0.95 - u * 0.60;
+        return {x: -Math.PI + phi, el: -phi - Math.max(0, Math.sin(a)) * 0.35};
+      };
+      const L = armAt(ph), R = armAt(ph + Math.PI);
+      const rest = {x: -Math.PI + 0.70, el: -0.70};    /* at rest: forearms flat out in front */
+      const mix = (a, b) => a + (b - a) * k;
+      P(e.armL, 'x', mix(rest.x, L.x), 16); P(e.elbL, 'x', mix(rest.el, L.el), 16);
+      P(e.armR, 'x', mix(rest.x, R.x), 16); P(e.elbR, 'x', mix(rest.el, R.el), 16);
+      P(e.armL, 'z', 0.22, 10); P(e.armR, 'z', -0.22, 10);
+      if(e.spine){ P(e.spine, 'x', 0, 10); P(e.spine, 'y', Math.sin(ph) * 0.14 * k, 10); e.spine.rotation.z = 0; }
+      if(e.headG){ P(e.headG, 'x', -0.95 + (1 - k) * 0.25, 8); P(e.headG, 'y', -Math.sin(ph) * 0.10 * k, 8); }
+      for(const [leg, knee, sgn] of [[e.legL, e.kneeL, 1], [e.legR, e.kneeR, -1]]){
+        if(!leg) continue;
+        P(leg, 'x', (0.10 + Math.max(0, sgn * Math.sin(ph)) * 0.35) * k, 10);
+        if(knee) P(knee, 'x', (0.25 + Math.max(0, -sgn * Math.sin(ph)) * 0.6) * k, 10);
+      }
+    } else {
+      if(e.g.rotation.order !== 'XYZ') e.g.rotation.order = 'XYZ';   /* back up off the ground */
+      e.g.rotation.x = 0;
     }
-    e.g.rotation.x = 0;
     /* THE LOOSE PIECE TURNS, whatever else the body is doing — put here, above the branch
        chain, because it belongs to the rig and not to any one pose. It is the one part of the
        gaunt's silhouette attached to nothing, and a static one reads as a mistake rather than
        as a thing that should not be able to hang there. */
     if(e.shard) e.shard.rotation.y += dt * 0.9;
-    if(c.state==='dead' || c.state==='down' || c.resting){
+    if(crawlPose){ /* posed above */ }
+    else if(c.state==='dead' || c.state==='down' || c.resting){
       /* A GAUNT BUILT ON TWO LEGS FALLS LIKE A PERSON. This read `gauntKind !== 'larder'`,
          which was the only upright one at the time — so the next upright one to be built would
          have lain down sideways like a dog. `e.bipedGaunt` is set by every branch that stands
@@ -39776,7 +39865,10 @@ function syncChars(dt){
         spineY = roll * 0.05;
         headX = -0.04 + drift * 0.02;                      /* the hood stays level, chin down */
         /* the float itself, applied past every joint so nothing else has to know about it */
-        e.lichLift = 0.055 + Math.sin(e.lichT * 1.15) * 0.035 + (moving ? 0.02 : 0);
+        /* eased, not switched: a float that jumps two hundredths the instant it starts moving
+           is the very judder this is meant not to have */
+        e.lichGo = (e.lichGo || 0) + ((moving ? 1 : 0) - (e.lichGo || 0)) * Math.min(1, dt * 3);
+        e.lichLift = 0.055 + Math.sin(e.lichT * 1.15) * 0.035 + e.lichGo * 0.02;
         /* and the phylactery in the chest breathes with it */
         if(e.soulLamp) e.soulLamp.material.emissiveIntensity = 1.3 + Math.sin(e.lichT * 2.1) * 0.5;
       }
@@ -40119,7 +40211,7 @@ function syncChars(dt){
     }
     /* a petitioner still in the rows kneels until it is called: thighs down, shins flat behind it,
        back bent, head down, hands on its knees. Posed after the walk, so nothing above undoes it. */
-    if(c.kneel && c.state === 'ok' && !c.beast && !e.still){
+    if(c.kneel && c.state === 'ok' && !c.beast && !e.still && !crawlPose){
       e.legL.rotation.x = e.legR.rotation.x = -0.12;
       if(e.kneeL){ e.kneeL.rotation.x = e.kneeR.rotation.x = 1.52; }
       e.spine.rotation.x = 0.38;
@@ -40964,7 +41056,8 @@ function renderOverlay(rdt){
   /* attack intent lines */
   for(const c of selected){
     if(c.target && c.target.state==='ok' && onShownFloor(c.target)){
-      const a = w2s(c.x, c.y, groundY(c.x,c.y)+floorY(c.floor)+0.8), b = w2s(c.target.x, c.target.y, groundY(c.target.x,c.target.y)+floorY(c.target.floor)+0.8);
+      const da = drawnAt(c), db = drawnAt(c.target);
+      const a = w2s(da.x, da.y, groundY(da.x,da.y)+floorY(c.floor)+0.8), b = w2s(db.x, db.y, groundY(db.x,db.y)+floorY(c.target.floor)+0.8);
       if(a && b){ cx.strokeStyle='rgba(196,84,58,0.5)'; cx.lineWidth=1; cx.beginPath(); cx.moveTo(a.x,a.y); cx.lineTo(b.x,b.y); cx.stroke(); }
     }
   }
@@ -41084,14 +41177,15 @@ function renderOverlay(rdt){
       if(c.weaponFlame && vrnd() < 0.55) addFlame(c.x + 0.35, c.y - 0.55, 1, 0.38);
       if(c.clawWt === 'burn' && vrnd() < 0.4) addFlame(c.x, c.y - 0.5, 1, 0.45);
     }
-    const hh = (groundY(c.x,c.y) + floorY(c.floor) + 1.9*(c.big||1));
-    const top = w2s(c.x, c.y, hh);
+    const dc = drawnAt(c);
+    const hh = (groundY(dc.x,dc.y) + floorY(c.floor) + 1.9*(c.big||1));
+    const top = w2s(dc.x, dc.y, hh);
     if(!top) continue;
-    const base = w2s(c.x, c.y, groundY(c.x,c.y) + floorY(c.floor) + 0.02);
+    const base = w2s(dc.x, dc.y, groundY(dc.x,dc.y) + floorY(c.floor) + 0.02);
     /* selection ring */
     if(selected.includes(c) && base){
       cx.strokeStyle = '#d4a040'; cx.lineWidth = 1.5;
-      const edge = w2s(c.x+0.55*(c.big||1), c.y, groundY(c.x,c.y) + floorY(c.floor) + 0.02);
+      const edge = w2s(dc.x+0.55*(c.big||1), dc.y, groundY(dc.x,dc.y) + floorY(c.floor) + 0.02);
       const rx = edge ? Math.abs(edge.x-base.x) : 12;
       cx.beginPath(); cx.ellipse(base.x, base.y, rx, rx*0.45, 0, 0, Math.PI*2); cx.stroke();
     }
