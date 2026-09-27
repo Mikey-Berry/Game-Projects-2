@@ -492,7 +492,7 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
-### 5.16 Sundered sites are laid on top of the roads — **raised 2026-09-27; half fixed**
+### 5.16 Sundered sites are laid on top of the roads — **fixed 2026-09-27**
 
 The play note: *"escorts and caravans get caught up in sundered ground sites. The pathing is weird
 around them and enemies also behave strangely... Bodyguard jobs basically shut down around them."*
@@ -503,13 +503,24 @@ next waypoint only within 3 tiles of it. A waypoint inside the bone could never 
 the walker ground against it until the unstuck fallback sent it on detours, and the site's
 animals fought whoever was escorting it.
 
-**Fixed (`wpPassed`):** a caravan, an escort's ward or a pilgrim passes a waypoint that sits on
-blocked ground, or one it has twice failed to reach.
+**Fixed, in two parts:**
+- **`wpPassed`:** a caravan, an escort's ward or a pilgrim passes a waypoint that sits on blocked
+  ground, or one it has twice failed to reach.
+- **`offRoad`:** a site that lands within 45 tiles of a road walks straight away from the nearest
+  waypoint, fanning out past water or rock, to the first ground that passes everything
+  `bossSpot` asks. It stays put if nothing is found inside 90 tiles. On seed 0 the Dustport
+  site goes from 2 tiles off the road to 48; on seed 91 one goes from 33 to 48; seed 7 has none
+  near a road and nothing moves.
 
-**Not yet:** moving the sites themselves 45 tiles off the roads. It works (every site 60+ tiles
-from a road after it), but it shifts world generation, and with it `command.js` and
-`standoff.js` went red. That is being bisected against the §5.14 grace below before either goes
-in.
+**Pushed, not re-rolled.** The first cut drew `bossSpot` again until it landed clear. Every
+extra draw moved everything worldgen places after the sites, and `command.js`, `focus.js` and
+`standoff.js` went red. Bisected: each passed with the re-roll alone and with the §5.14 grace
+alone, and failed with both. `_mowspread.js` over five seeds put the pair inside HEAD's own
+spread (bows 1.93–2.43 against 1.64–3.07), so the fights were not changed. What changed was the
+world round the harnesses' staging ground: `focus.js` clears 60 tiles, and a Deep Warden stood
+87 out. The push costs no `rnd()`, so every other body, chest and camp comes out where it did.
+Checked on that build: `crater`, `sundered`, `sunderpix`, `reach`, `threads`, `command`, `focus`,
+`standoff`, `curse`, `origin`, `sister` and `playnotes`, 12 of 12.
 
 ### 5.15 A band on the march trails its own stations — **ruled 2026-09-27: the captain not leading is enough**
 

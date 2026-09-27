@@ -9028,13 +9028,19 @@ const tradeRoutes = [];   /* {aI, bI, wps:[{x,y},...]} */
    waypoint only once it stood within three tiles of it. A road laid before a sundered site came
    down on top of it put a waypoint inside the monument, where nobody can stand: the walker
    ground against the bone until the unstuck fallback sent it on detours, came back, and did it
-   again, with the site's own animals on it the whole time. The rule for anything that lands on a
-   road: a waypoint on blocked ground is passed, and so is one the walker has twice failed to get
-   to. (Keeping the sites themselves off the roads is CODE-AUDIT §5.16.) */
+   again, with the site's own animals on it the whole time. The sites are now kept off the roads
+   (`offRoad`, in `seedCorpseSites`), and this is the rule underneath for anything else that
+   lands on one: a waypoint on blocked ground is passed, and so is one the walker has twice
+   failed to get to. */
 function wpPassed(c, wp){
   if(dist(c.x, c.y, wp.x, wp.y) < 3) return true;
   if(isBlocked(wp.x, wp.y, 0)) return true;
   return (c.stuckN || 0) >= 2 && dist(c.x, c.y, wp.x, wp.y) < 10;
+}
+/* Waypoints are every sixth tile of the road, so this is the road to within three tiles. */
+function nearRoad(x, y, r){
+  for(const rt of tradeRoutes) for(const w of rt.wps) if(dist(w.x, w.y, x, y) < r) return true;
+  return false;
 }
 
 function routeFor(fromT, toT){
@@ -19987,11 +19993,44 @@ function spawnEyeFlight(x, y, n){
    things that did not exist last year. People hunt the fragments anyway — they are the
    richest reagents in the world, and the dead god does not appear to mind. Appear. */
 const corpseSites = [];
+/* ---------- IN THE DEEP WASTE, WHICH IS OFF THE ROADS ----------
+   The roads are laid first and nothing here ever looked at them: one site came down three tiles
+   from a waypoint on the Dustport road, with its monument across the way and its animals on it
+   (see `wpPassed`). Forty-five tiles clears the ring of bone, the ecology's posts and the
+   distance they will cross to take somebody.
+   PUSHED, NOT RE-ROLLED. The first cut drew `bossSpot` again until it landed clear, and every
+   extra draw moved every body worldgen places after this loop: the whole world downstream of
+   the sites came out different, and three fighting harnesses staged on that ground moved with
+   it. So a site that lands by a road walks straight away from the nearest waypoint, fanning out
+   if that is water or rock, to the first ground that passes everything `bossSpot` asks — and
+   costs no `rnd()` at all. Nothing found inside ninety tiles, and it stays where it fell. */
+const SITE_ROAD = 45;
+function offRoad(p){
+  let w = null, wd = Infinity;
+  for(const rt of tradeRoutes) for(const q of rt.wps){ const d = dist(q.x, q.y, p.x, p.y); if(d < wd){ wd = d; w = q; } }
+  if(!w) return null;
+  const base = Math.atan2(p.y - w.y, p.x - w.x);
+  for(let step = 5; step <= 90; step += 5){
+    for(const off of [0, 0.6, -0.6, 1.2, -1.2, 1.8, -1.8]){
+      const x = Math.round(p.x + Math.cos(base + off) * step), y = Math.round(p.y + Math.sin(base + off) * step);
+      if(x < 15 || y < 15 || x > W - 15 || y > H - 15) continue;
+      if(tileAt(x, y) === 3 || isBlocked(x, y)) continue;
+      if(craterD(x, y) < CRATER.glass + 12) continue;
+      if(towns.some(t => dist(t.x, t.y, x, y) < 50)) continue;
+      if(dist(startTown.x, startTown.y, x, y) < 65) continue;
+      if(bastion && dist(bastion.x, bastion.y, x, y) < 20) continue;
+      if(nearRoad(x, y, SITE_ROAD)) continue;
+      return {x, y};
+    }
+  }
+  return null;
+}
 (function seedCorpseSites(){
   const n = Math.round(ri(4, 5) * AREA_K);
   for(let i = 0; i < n; i++){
-    const p = bossSpot(50, 65);
+    let p = bossSpot(50, 65);
     if(!p) continue;
+    if(nearRoad(p.x, p.y, SITE_ROAD)) p = offRoad(p) || p;
     if(corpseSites.some(s => dist(s.x, s.y, p.x, p.y) < 60)) continue;
     const s = {id: i + 1, x: p.x, y: p.y, r: 12};
     corpseSites.push(s);
