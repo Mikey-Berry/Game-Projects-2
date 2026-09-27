@@ -68,7 +68,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       /* somewhere flat and empty, well clear of any town */
       let ax = 0, ay = 0;
       outer:
-      for (let y = 40; y < 220; y += 3) for (let x = 40; x < 220; x += 3) {
+      /* THE WHOLE MAP, NOT ITS CORNER: 40..220 is sea and coast on the 2048 world */
+      for (let y = 40; y < H - 40; y += 3) for (let x = 40; x < W - 40; x += 3) {
         let clear = true;
         for (let i = 0; i < 8; i++) if (isBlocked(x + i + 0.5, y + 0.5)) { clear = false; break; }
         if (clear && !towns.some(t => Math.abs(t.x - x) < 40 && Math.abs(t.y - y) < 40)) { ax = x; ay = y; break outer; }
