@@ -40173,9 +40173,210 @@ function drawnAt(c){
   const e = charMeshes.get(c.id);
   return (e && e.inScene && e.rx !== undefined) ? {x: e.rx, y: e.rz} : c;
 }
+/* ============================================================ DETAIL BY DISTANCE
+   "Performance (on a desktop PC) is great… early game. Later on, it starts to crater."
+   Measured on a staged late camp (72 of yours, 70 buildings): 1,440 to 1,919 draw calls for 95
+   to 138 bodies in view, about fourteen meshes a body and most of them drawn a second time in
+   the shadow pass, and the frame spent almost all of its time on the per-draw cost. The world
+   on its own does not grow; what grows is what the player builds and raises.
+
+   Ruled 2026-09-27: detail by distance, and a host drawn as one (below). Decided by how tall
+   the body is ON SCREEN, not by tiles, so it follows the zoom and the window:
+     · WHOLE at LOD_FULL_PX and taller — at the default zoom, everything near the middle.
+     · Under it, the parts too small to read are not drawn (claws, glow beads, fine trim), and
+       only the two biggest pieces of the body still cast a shadow.
+     · Under LOD_FAR_PX (zoomed well out, or far up the screen) it is one simple shape in its
+       own colour, with no shadow: a body twenty pixels tall is a box in any case.
+   A part is put out of sight by moving it to layer 1, which the camera and the shadow camera
+   do not draw — NOT by `visible`, which half the rig code already uses to mean something
+   (a severed limb, a shield not raised, a lich's plain body), and which this must never
+   switch back on. The step up in detail waits for a margin (LOD_HYST), so a body at the
+   threshold does not flicker between the two. `LOD_ON` turns all of it off. */
+let LOD_ON = opts.lod !== false;        /* Options: DETAIL BY DISTANCE */
+const LOD_FULL_PX = 56;       /* a body this many pixels tall is drawn whole */
+const LOD_FAR_PX = 22;        /* and under this, as one shape */
+const LOD_HYST = 1.15;
+const LOD_THIN = 0.05;        /* a part whose middle dimension is under this is detail... */
+const LOD_SMALL = 0.13;       /* ...and so is one whose largest is */
+const _lodV = new THREE.Vector3(), _lodB = new THREE.Box3(), _lodInv = new THREE.Matrix4(), _lodRel = new THREE.Matrix4();
+let _impMat = null;
+function lodCollect(e){
+  e.g.updateMatrixWorld(true);
+  _lodInv.copy(e.g.matrixWorld).invert();
+  const parts = [], box = new THREE.Box3();
+  e.g.traverse(o => {
+    if(!o.isMesh || o === e.imp || !o.geometry) return;
+    /* the markers hung off a body are interface, not body, and are never thinned */
+    if(o === e.wardRing || o === e.concMark || o === e.affMark || o.renderOrder >= 10) return;
+    if(o.material && o.material.depthTest === false) return;
+    if(o.userData.cs0 === undefined) o.userData.cs0 = o.castShadow;   /* what it cast before any of this */
+    const g = o.geometry;
+    if(!g.boundingBox) g.computeBoundingBox();
+    _lodRel.multiplyMatrices(_lodInv, o.matrixWorld);
+    _lodB.copy(g.boundingBox).applyMatrix4(_lodRel);
+    const sz = _lodB.getSize(_lodV), d = [sz.x, sz.y, sz.z].sort((a, b) => a - b);
+    const chain = [];
+    for(let q = o; q && q !== e.g; q = q.parent) chain.push(q);
+    parts.push({o, cs: o.userData.cs0, detail: d[1] < LOD_THIN || d[2] < LOD_SMALL, size: d[2] * d[1], chain,
+                n: g.index ? g.index.count : (g.attributes.position ? g.attributes.position.count : 0)});
+    box.union(_lodB);
+  });
+  for(const p of parts.filter(q => q.cs).sort((a, b) => b.size - a.size).slice(0, 2)) p.keep = true;
+  e.lodParts = parts; e.lodBox = box; e.lod = -1;
+  e.lodSig = parts.map(q => q.n).join(',');     /* the rig, part for part: what a batch matches on */
+}
+/* the rig was rebuilt round it (armour, weapon): gather the parts again next frame */
+function lodReset(e){ e.lodParts = null; }
+/* a part the rig itself is showing: every link up to the body is visible */
+function lodShown(p){ for(const q of p.chain) if(!q.visible) return false; return true; }
+/* ONE SHAPE: legs and body as two boxes in one mesh, off the rig's own bounds */
+function lodImpostor(e, c){
+  if(e.imp) return e.imp;
+  if(!_impMat){ _impMat = new THREE.MeshLambertMaterial({vertexColors: true}); _sharedRes.add(_impMat); }
+  const b = e.lodBox, sz = b.getSize(new THREE.Vector3()), ct = b.getCenter(new THREE.Vector3());
+  const body = new THREE.Color(factionColor(c)), legs = body.clone().multiplyScalar(0.62);
+  const boxes = (c.beast || sz.y < sz.z)
+    ? [[sz.x * 0.8, sz.y * 0.9, sz.z * 0.85, ct.x, ct.y, ct.z, body]]
+    : [[sz.x * 0.5, sz.y * 0.45, sz.z * 0.55, ct.x, b.min.y + sz.y * 0.225, ct.z, legs],
+       [sz.x * 0.66, sz.y * 0.55, sz.z * 0.7, ct.x, b.min.y + sz.y * 0.725, ct.z, body]];
+  const bp = BOXG.attributes.position, bn = BOXG.attributes.normal, bi = BOXG.index;
+  const pos = [], nrm = [], col = [], idx = [];
+  for(const [w, h, d, x, y, z, cc] of boxes){
+    const base = pos.length / 3;
+    for(let i = 0; i < bp.count; i++){
+      pos.push(bp.getX(i) * w + x, bp.getY(i) * h + y, bp.getZ(i) * d + z);
+      nrm.push(bn.getX(i), bn.getY(i), bn.getZ(i));
+      col.push(cc.r, cc.g, cc.b);
+    }
+    for(let i = 0; i < bi.count; i++) idx.push(bi.getX(i) + base);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.setIndex(idx);
+  e.imp = new THREE.Mesh(geo, _impMat);
+  e.imp.castShadow = false;
+  e.imp.layers.mask = 2;
+  e.g.add(e.imp);
+  return e.imp;
+}
+function lodApply(e, c){
+  const lv = e.lod;
+  for(const p of e.lodParts){
+    const off = e.batched || lv === 2 || (lv === 1 && p.detail);
+    p.o.layers.mask = off ? 2 : 1;
+    p.o.castShadow = p.cs && (lv === 0 || (lv === 1 && !!p.keep));
+  }
+  if(lv === 2 && !e.batched) lodImpostor(e, c).layers.mask = 1;
+  else if(e.imp) e.imp.layers.mask = 2;
+}
+function lodUpdate(e, c, bs, pxK){
+  if(!e.lodParts) lodCollect(e);
+  let lv = 0;
+  if(LOD_ON){
+    const px = 1.8 * bs * pxK / Math.max(0.5, camera.position.distanceTo(e.g.position));
+    const at = (k) => px >= LOD_FULL_PX * k ? 0 : px >= LOD_FAR_PX * k ? 1 : 2;
+    lv = at(1);
+    if(e.lod >= 0 && lv < e.lod) lv = Math.min(e.lod, at(LOD_HYST));   /* more detail needs the margin */
+  }
+  if(lv !== e.lod){ e.lod = lv; lodApply(e, c); }
+}
+/* ============================================================ A HOST IS DRAWN AS ONE
+   "40 Old Bones would take a handful of draw calls instead of about 560." Ruled: try it.
+   Risen of one kind are the same rig: same code path, same parts in the same order. So a host
+   is drawn from ONE of them (the template) as a set of instanced meshes — one per part — and
+   every member's own posed part is an instance of it, placed by that member's own matrix. Each
+   body is still posed on its own every frame; it is only the drawing that is shared.
+   What it gives up, said plainly: the members wear the template's colours, so the small
+   per-body variation in shade inside one kind of risen is gone while they are batched.
+   Out of the batch, drawn as themselves, whenever it matters: a body that has just been hit
+   (the flash is per body), down, dead, veiled or half-there, one far enough out to be a single
+   shape, and one whose rig does not match the template part for part. A batch starts at
+   BATCH_MIN of a kind in view. `BATCH_ON` turns it off. */
+let BATCH_ON = opts.batch !== false;    /* Options: DRAW A HOST AS ONE */
+const BATCH_MIN = 6;
+const _batches = new Map();
+let _batchedNow = new Set();
+function batchKey(c, e){
+  if(!BATCH_ON || !c.undead || c.lich || c.demilich || c.state !== 'ok') return null;
+  if(c.veilT > 0 || c.phantom || c.hitT > 0 || !e.inScene || !e.g.visible || e.lod === 2 || !e.lodParts) return null;
+  /* NOT the colour key: that carries each body's line and sex, and split a host of forty
+     identical Old Bones into ten batches of one to five. What has to match is what is drawn —
+     the kind, the rot (which sets the bone's colour), the kit, and the rig part for part. */
+  return (c.kin || '') + '|' + (c.rot || '') + '|' + (c.weapon || '') + '|' + (c.armor || '') + '|' + (c.head || '') + '|' + (c.cloak || '') + '|' + e.lodSig;
+}
+function batchDrop(key){
+  const B = _batches.get(key);
+  if(!B) return;
+  for(const im of B.ims){ scene.remove(im); im.dispose(); im.material.dispose(); }
+  _batches.delete(key);
+}
+function batchHosts(){
+  const groups = new Map();
+  for(const e of charMeshes.values()){       /* only what has a rig: a few hundred, not the roster */
+    const c = e.c;
+    if(!c) continue;
+    const k = batchKey(c, e);
+    if(!k) continue;
+    let g = groups.get(k); if(!g){ g = []; groups.set(k, g); }
+    g.push(e);
+  }
+  const now = new Set();
+  for(const [key, list] of groups){
+    let B = _batches.get(key);
+    /* a little slack once formed, so a host at the threshold does not form and break every frame */
+    if(list.length < (B ? BATCH_MIN - 2 : BATCH_MIN)) continue;
+    /* the template must still be a live rig with the same parts: its geometry is what every
+       instance draws. It need not be IN the batch this frame — a template that has just been
+       hit is drawn as itself for the flash, and the batch carries on drawing the rest. */
+    if(B && (charMeshes.get(B.tplId) !== B.tpl || !B.tpl.lodParts || B.tpl.lodSig !== B.sig)){ batchDrop(key); B = null; }
+    if(!B){
+      const tpl = list[0];
+      B = {tpl, tplId: tpl.c.id, sig: tpl.lodSig, cap: 0, ims: []};
+      _batches.set(key, B);
+    }
+    const tp = B.tpl.lodParts;
+    const members = list.filter(e => e.lodParts.length === tp.length && e.lodParts.every((p, i) => p.n === tp[i].n));
+    if(members.length > B.cap){
+      for(const im of B.ims){ scene.remove(im); im.dispose(); im.material.dispose(); }
+      B.cap = Math.max(16, 1 << Math.ceil(Math.log2(members.length)));
+      B.ims = tp.map(p => {
+        const m = p.o.material.clone();
+        /* a lamp stays lit; anything else is cloned with no flash in it, whatever the template
+           happened to be doing when it was copied */
+        const lit = B.tpl.glowMats && B.tpl.glowMats.includes(p.o.material);
+        if(m.emissive && !lit) m.emissive.setRGB(0, 0, 0);
+        const im = new THREE.InstancedMesh(p.o.geometry, m, B.cap);
+        im.frustumCulled = false; im.castShadow = p.cs; im.receiveShadow = p.o.receiveShadow;
+        scene.add(im);
+        return im;
+      });
+    }
+    const n = new Array(tp.length).fill(0);
+    for(const e of members){
+      e.g.updateMatrixWorld(true);
+      for(let i = 0; i < tp.length; i++){
+        const p = e.lodParts[i];
+        if(e.lod === 1 && p.detail) continue;
+        if(!lodShown(p)) continue;
+        B.ims[i].setMatrixAt(n[i]++, p.o.matrixWorld);
+      }
+      now.add(e);
+    }
+    for(let i = 0; i < tp.length; i++){ B.ims[i].count = n[i]; B.ims[i].instanceMatrix.needsUpdate = true; }
+    B.seen = true;
+  }
+  for(const [key, B] of _batches){ if(!B.seen) batchDrop(key); else B.seen = false; }
+  /* in or out of a batch, the body's own parts follow */
+  for(const e of now) if(!e.batched){ e.batched = true; lodApply(e, e.c); }
+  for(const e of _batchedNow) if(!now.has(e) && e.batched){ e.batched = false; if(e.lodParts) lodApply(e, e.c); }
+  _batchedNow = now;
+}
 function syncChars(dt){
   const seen = new Set();
   const lerpK = (paused || !started) ? 1 : Math.min(1, simAcc / SIM_DT);
+  const pxK = viewH() / (2 * Math.tan(camera.fov * Math.PI / 360));   /* pixels per world unit at distance one */
   const all = chars;
   let builds = 0;   /* rigs are built the first time they are looked at; cap the burst when a town comes into view */
   for(const c of all){
@@ -40197,8 +40398,9 @@ function syncChars(dt){
       trimRigShadows(e.g);
     }
     if(!e.inScene){ scene.add(e.g); e.inScene = true; }
-    if(!c.beast && e.builtArmor !== (c.armor || null)){ rebuildArmorLayer(e, c); trimRigShadows(e.g); }
-    if(!c.beast && e.builtWeapon !== (c.weapon || null)){ rebuildWeapon(e, c); trimRigShadows(e.g); }
+    if(!c.beast && e.builtArmor !== (c.armor || null)){ rebuildArmorLayer(e, c); trimRigShadows(e.g); lodReset(e); }
+    if(!c.beast && e.builtWeapon !== (c.weapon || null)){ rebuildWeapon(e, c); trimRigShadows(e.g); lodReset(e); }
+    e.c = c;
     e.g.visible = true;
     const dp = drawPos(c, lerpK);
     e.rx = dp.x; e.rz = dp.y;
@@ -40213,6 +40415,7 @@ function syncChars(dt){
     const ageScale = (!c.undead && !c.beast && c.age < 16) ? 0.55 + (c.age/16)*0.45 : 1;
     const bs = (c.big || 1) * vscaleOf(c) * ageScale;
     e.g.scale.set(bs * (e.baseSX||1), bs * (e.baseSY||1), bs * (e.baseSX||1));
+    lodUpdate(e, c, bs, pxK);             /* see DETAIL BY DISTANCE */
     /* facing */
     const mvx = e.rx - e.lastX, mvz = e.rz - e.lastY;
     const moving = Math.abs(mvx) + Math.abs(mvz) > 0.002;
@@ -41124,6 +41327,7 @@ function syncChars(dt){
        built for them alone, so release the buffers with the reference. */
     if(!seen.has(id)){ if(e.inScene) scene.remove(e.g); disposeTree(e.g); charMeshes.delete(id); }
   }
+  batchHosts();                          /* see A HOST IS DRAWN AS ONE */
 }
 
 /* ---------- projections ---------- */
@@ -45661,6 +45865,10 @@ function openOptions(){
     opts.input = opts.input === 'auto' ? 'touch' : opts.input === 'touch' ? 'mouse' : 'auto';
   });
   row('SHOW FPS & FRAME TIMES', opts.fps ? 'ON' : 'OFF', () => opts.fps = !opts.fps);
+  /* the two render savings, switchable so they can be judged against the overlay above in a
+     real late game: see DETAIL BY DISTANCE and A HOST IS DRAWN AS ONE */
+  row('DETAIL BY DISTANCE', opts.lod !== false ? 'ON' : 'OFF', () => { opts.lod = opts.lod === false; LOD_ON = opts.lod; });
+  row('DRAW A HOST AS ONE (identical risen)', opts.batch !== false ? 'ON' : 'OFF', () => { opts.batch = opts.batch === false; BATCH_ON = opts.batch; });
   /* ---------- A PURSE, FOR TESTING ----------
      "there should be an option (for testing purposes) that gives like 10k gold per click.
      Would be helpful to expedite test runs." Labelled as what it is and sat next to the map

@@ -313,6 +313,47 @@ Others, in rough order of how likely they are to matter in a real game:
 - **`researchTick`** runs every step. Through `benchCrew`, it filters the whole roster per bench
   while research is running. The default world has no research running, so the profile above
   does not show it. Measure it on a mid-game save before deciding.
+### 2.4 The late game: what grows, and two render savings — **done 2026-09-27**
+
+"Performance (on a desktop PC) is great… early game. Later on, it starts to crater."
+
+**What was measured.** Software GL in the sandbox, so milliseconds are relative and counts are
+exact.
+- **The world alone does not grow.** Sixteen days with no player activity (the party died on day
+  8) stayed at 4.6–6.0 ms a sim step. Bodies held at about 2,950 and corpses rose from 12 to 60.
+- **What the player builds does.** A staged late camp (72 of yours, 70 buildings) doubled the
+  sim step to 9–12 ms. It drew 1,440–1,919 calls for 95–138 bodies in view: about fourteen
+  meshes a body, plus shadow-pass draws for the ones near the focus. Almost all of the frame's
+  CPU went on per-draw cost (`uniformMatrix4fv` topped the profile).
+- **The loop caps the sim at four steps a frame** (`steps/frame` in the overlay reads CAPPED),
+  so at high speed a slow step slows the world rather than spiralling.
+
+**Ruled: detail by distance, and a host drawn as one** (`DETAIL BY DISTANCE`, `A HOST IS DRAWN AS
+ONE` in `syncChars`; both are switches in Options):
+- **Detail by distance** is set by the body's height on screen. From 56 px a body is whole. Below
+  that, parts too small to read are dropped (the middle dimension under 0.05, or the largest under
+  0.13) and only the two biggest pieces cast shadows. Below 22 px it is one two-box shape in its
+  own colour. Parts go out of sight on layer 1, never through `visible`, which the rig already uses
+  for severed limbs and the lich's plain body.
+- **A host drawn as one:** undead of one kind (kind, rot, kit and rig part for part) draw as one
+  instanced mesh per part from a template body, each instance placed by that member's own posed
+  part. The price is the template's colours. Anyone hit, down, dead, veiled, phantom or reduced to
+  a single shape is drawn as themselves.
+- **Measured on the same frame (40 Old Bones, a squad of 8, 20 folk; `tools/lod.js`):**
+
+  | zoom | calls, off | detail only | batch only | both |
+  |---|---|---|---|---|
+  | close (11) | 615 | 615 | 228 | 228 |
+  | default (28) | 958 | 946 | 490 | 490 |
+  | far (85) | 1,187 | 382 | 719 | 382 |
+
+  At the default zoom, detail by distance saves little. Most of a rig is not small, and the
+  thinned bodies are already outside the shadow camera. It pays when zoomed out. Batching carries
+  the default zoom. Software GL's frame time barely moves (it is fill-bound), so the real test is a
+  desktop with the frame-time overlay on.
+- **Still open:** merging each body's rig into about five draws, which would help every crowd and
+  not only a host; and the sim side (idle bodies thinking every second or third step, and an
+  incremental `rebuildCharGrid`).
 
 ---
 
