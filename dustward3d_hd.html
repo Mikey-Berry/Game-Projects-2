@@ -7542,6 +7542,23 @@ function openScholar(sc, who){
       };
       mr.appendChild(mb); body.appendChild(mr);
     }
+    /* the art's old master, for whoever standing here carries the art (see THE OLD MASTERS) */
+    for(const [art, u] of Object.entries(masterAskers(sc))){
+      const m = MASTER_OF[art];
+      const ar = document.createElement('div'); ar.className = 'trow';
+      ar.innerHTML = `<span class="tn">${u.name} carries ${m.art}. <span style="color:var(--dust)">A scholar may know where its old master went.</span></span>`;
+      const ab = document.createElement('button'); ab.textContent = 'ASK AFTER THE OLD MASTER';
+      ab.onclick = () => { askAfterMaster(sc, art, u); draw(); };
+      ar.appendChild(ab); body.appendChild(ar);
+    }
+    /* and a quarry a scholar would know about, while a quest is asking (see ASKING AFTER A QUARRY) */
+    for(const o of huntOpts(sc)){
+      const hr = document.createElement('div'); hr.className = 'trow';
+      hr.innerHTML = `<span class="tn">${o.say}</span>`;
+      const hb = document.createElement('button'); hb.textContent = 'ASK';
+      hb.onclick = () => { log(`${sc.name}: "${askAfterQuarry(sc, o.hunt)}"`, ''); draw(); };
+      hr.appendChild(hb); body.appendChild(hr);
+    }
     if(!sc.quest){
       const row = document.createElement('div'); row.className = 'trow';
       row.innerHTML = `<span class="tn" style="color:var(--dust)">They are looking for hands. They pay in gold and, occasionally, in truth.</span>`;
@@ -7614,6 +7631,110 @@ function openScholar(sc, who){
     }
   };
   draw();
+}
+/* ============================================================ THE OLD MASTERS
+   "Finding the immortals is getting tougher with each map expansion. And relying on random
+    rumors is not reliable. Perhaps there can be a separate 'question' to ask for the old masters
+    when speaking with scholars, as they would likely at least know a general direction. (This is
+    one case where there should NOT be a bright quest marker, and general 'west/east of this
+    town, X days' is the ideal balance.) Only those gifted/trained in a certain art can ask this
+    question and begin that questline."
+
+   Each art that has a master has one: the Unclouded for the Divine, the Sigil-Bound for
+   Transmutation (the art Destruction is the wreck of), the Demilich for the Dark. The question
+   is on the scholar's window only while somebody standing there carries the art — born to it
+   or trained to initiate — because a scholar will say this to a colleague and not to a crowd.
+
+   THE ANSWER IS A SENTENCE, NOT A BEARING. It is taken once, off the town nearest the scholar,
+   and it goes into the journal as it was said: no `mark`, so the journal does not work out a
+   fresh heading as you walk (that would be a compass needle with extra steps). Re-asking gives
+   it again from wherever that scholar is standing now, which is the honest way to refine it.
+   The questline itself begins when you ask, or when you walk in on the master without asking —
+   `masterThread` keeps the one journal line in step with the master's own stages either way. */
+const MASTER_OF = {
+  divine:      {boss:'radiant',  title:'The Unclouded',   art:'the Divine'},
+  destruction: {boss:'sigil',    title:'The Sigil-Bound', art:'Destruction'},
+  dark:        {boss:'demilich', title:'The Demilich',    art:'the Dark'},
+  dust:        {boss:null,       title:null,              art:'the dust'},
+};
+/* the first body within earshot that carries each art, born or trained */
+function masterAskers(sc){
+  const out = {};
+  for(const u of player()){
+    if(u.state !== 'ok' || dist(u.x, u.y, sc.x, sc.y) > 8) continue;
+    for(const art in MASTER_OF){
+      if(out[art]) continue;
+      if(u.gift === art || u.giftTwo === art || attOf(u, art) >= 1) out[art] = u;
+    }
+  }
+  return out;
+}
+/* A PLAIN WALKER, TWELVE HOURS ON THE ROAD AND THE REST CAMPED. 3.4 tiles a second is
+   `moveSpeedRaw` with nothing slowing it; a band, a cart or a bad road will make it longer, and
+   a scholar's "three days" is supposed to be the kind of number you pack for, not a timetable.
+   Worked out here and not in a top-level const: HOUR_SEC is declared further down the file. */
+function marchDays(d){
+  const days = d / (3.4 * HOUR_SEC * 12);
+  if(days < 0.4) return 'less than a day on foot';
+  if(days < 0.8) return 'half a day on foot';
+  if(days < 1.3) return 'a day on foot';
+  if(days < 1.8) return 'a day and a half on foot';
+  const n = Math.round(days);
+  return (['', '', 'two', 'three', 'four', 'five', 'six', 'seven'][n] || 'many') + ' days on foot';
+}
+/* ---------- DIRECTIONS AS A PERSON GIVES THEM ----------
+   FROM THIS TOWN, AND BY WAY OF THE ONE NEAREST IT. A heading four days out from here is a
+   wedge of waste a thousand tiles wide at the far end, and nobody gives directions like that
+   anyway: they say how far, and then which town to go by. The second leg is only said when
+   that town is well on the way — it is still a sentence, and there is still no marker.
+   Shared by the scholars' old masters and by everybody asked after a quarry. */
+function directionsFrom(fx, fy, x, y){
+  const shops = towns.filter(t2 => t2.stock);
+  const near = (px, py) => shops.slice().sort((a, b) => dist(a.x, a.y, px, py) - dist(b.x, b.y, px, py))[0];
+  const t = near(fx, fy), t2 = near(x, y);
+  let where = t ? `${compassFrom(t.x, t.y, x, y)} of ${t.name}, ${marchDays(dist(t.x, t.y, x, y))}`
+                : `${compassFrom(fx, fy, x, y)} of here, ${marchDays(dist(fx, fy, x, y))}`;
+  if(t && t2 && t2 !== t && dist(t2.x, t2.y, x, y) < dist(t.x, t.y, x, y) * 0.6)
+    where += ` — ${marchDays(dist(t2.x, t2.y, x, y)).replace(' on foot', '')} ${compassFrom(t2.x, t2.y, x, y)} of ${t2.name}, if you go by way of it`;
+  return where;
+}
+function masterBody(art){
+  const m = MASTER_OF[art];
+  return (m && m.boss) ? chars.find(c => c.bossKey === m.boss) || null : null;
+}
+function askAfterMaster(sc, art, u){
+  const m = MASTER_OF[art];
+  if(!m.boss){
+    log(`${sc.name} looks at ${u.name} for a long moment. "Nobody masters the dust. It masters you, and then it moves on. If there was ever anybody further down that road than you, the road does not remember them."`, '');
+    return;
+  }
+  const c = masterBody(art);
+  if(!c || c.state === 'dead' || bossSlain[m.boss]){
+    log(`"${m.title}? Gone. Somebody saw to it." ${sc.name} does not ask who. "Whatever it knew went with it — you will have to learn the art the slow way, like the rest of us."`, '');
+    return;
+  }
+  const where = directionsFrom(sc.x, sc.y, c.x, c.y);
+  const Where = where.charAt(0).toUpperCase() + where.slice(1);
+  const say =
+      art === 'divine' ? `"The Unclouded. Verity, if she still answers to it. She healed herself young ninety years ago and has not moved on from it since. ${Where}. Go at dusk — she cannot bear the light."`
+    : art === 'dark'   ? `"You want the one who finished. Everybody who carries the Dark wants him, and nobody who finds him comes home pleased. He does not move: a ruin ${where}. He has been talking to an empty room for four hundred years. He will talk to you."`
+    : `"You call it Destruction. It was Transmutation before it was a wreck, and there is one left who did it properly — a man poured into a suit of armour, and the armour held. The Sigil-Bound. Last I heard, ${where}. It walks, so do not treat that as gospel."`;
+  log(`${sc.name}: ${say}`, '');
+  threadSet('master_' + m.boss, m.title, `${sc.name} says: ${where}.`,
+    {hint: 'A scholar\'s word, not a map. Walk the heading and look — ask another scholar on the way to narrow it.'});
+}
+/* one journal line per master, kept in step with the master's own road */
+function masterThread(c){
+  const art = Object.keys(MASTER_OF).find(a => MASTER_OF[a].boss && MASTER_OF[a].boss === c.bossKey);
+  const line = IMMORTAL_LINES[c.questGive];
+  if(!art || !line) return;
+  const key = 'master_' + c.bossKey, at = c.questStage || 0;
+  if(at >= line.stages.length){
+    const t = threadOf(key);
+    if(t && !t.done) threadDone(key, 'The road is walked.');
+    return;
+  }
+  threadSet(key, MASTER_OF[art].title, line.stages[at].hint);
 }
 function spawnImmortals(){
   /* THE RADIANT — Divine. She healed herself young forever and it made her perfect,
@@ -11735,6 +11856,8 @@ function kill(c, by){
   if(c.state==='dead') return;
   /* the ledger is written here, not inferred from a body that will be gone in two days */
   if(c.bossKey && !bossSlain[c.bossKey]) bossSlain[c.bossKey] = day;
+  if(c.bossKey && threadOf('master_' + c.bossKey) && !threadOf('master_' + c.bossKey).done)
+    threadDone('master_' + c.bossKey, 'Dead. Whatever it knew went with it.');
   if(c.bossKey === 'guardian') guardianFalls(c);
   if(c.bossKey === 'oldking') oldKingFalls(c);
   if(c.ossuary) log('The Ossuary King goes down among his petitioners. The crown rolls off him and does not stop for some time.', 'good');
@@ -25685,6 +25808,7 @@ function openImmortal(c){
   const body = $('modalbody');
   const draw = () => {
     body.innerHTML = '';
+    masterThread(c);                 /* the journal line, begun here if no scholar began it */
     const at = c.questStage || 0;
     const finished = at >= total;
     /* how far along the road is */
@@ -47885,6 +48009,91 @@ function openDiscourse(t, key){
   drawTalk();
   return true;
 }
+/* ============================================================ ASKING AFTER A QUARRY
+   "When a quest prompts you to track down/kill a certain NPC, that should open up as a dialogue
+    question to relevant NPCs. For example, when hunting down Sister Ash, paladins or Saltmere
+    natives might have info. (Let's map out any other similar possible interactions to make sure
+    we get them all and none fall through the cracks.)"
+
+   EVERY QUEST IN THE FILE THAT NAMES ONE BODY TO GO AND FIND, and who would know:
+     Sister Ash          Verity's third stage     the Order (she was theirs), Saltmere (she burned there)
+     the Sixfold         the Sigil-Bound's second any town's watch (they see what comes in off the
+                                                  waste), and scholars (it feeds on the Sundered ground)
+     the Ossuary King    the Sigil-Bound's fourth, necromancers (the other practitioners have all
+                         and the Demilich's crown  been once), and Hollowmere (its dead walk to him)
+     the old masters     any of the three roads    scholars, to the gifted (THE OLD MASTERS)
+   and the ones that already had a way in, left as they were: Lyre (the halls), Mother (her own
+   leads), a scholar's bandit camp (a marker since the nest note) and a tear to seal (its bearing
+   in the job row). The Red Baroness, the wyrms, the Grazer, the brood and the Cairn Beast are
+   not asked for by any quest; a quarry added later goes in this table and is asked after
+   everywhere at once.
+
+   THE QUESTION IS THERE ONLY WHILE A QUEST IS ASKING. It is read off the givers' own stages,
+   so it appears the moment Verity says the name and goes the moment the body is down — and the
+   crown stage counts only while there is no crown in the stores. The answer is the scholars'
+   kind (a town, a heading, some days), and it goes into the giver's journal line under the
+   stage it serves. */
+const HUNTS = {
+  ash: {
+    ask: 'Sister Ash. Where would I find her?',
+    knows: (t) => t.faction === 'purge' || homeKeyOf(t) === 'saltmere',
+    said: (t, where) => t.faction === 'purge'
+      ? `Ash. She was ours, and the best of us, and then she was too good at it, and the Order does not keep a blade it cannot sheathe. Last word the Bastion had, she was ${where}. The dead offend her more than they offend us. If you mean to kill her, do not let her pick the ground.`
+      : `Sister Ash. She salted three of ours alive for the way they laid out a grandmother — said the brine was a lie told to the rot. The Wardens let her walk away. Last anybody here saw her smoke, it was ${where}.`,
+  },
+  sixfold: {
+    ask: 'Something with six legs came through a tear. Has anybody seen it?',
+    knows: (t) => isWatch(t) || !!t.scholar,
+    said: (t, where) => t.scholar
+      ? `The Sixfold. It feeds where the ground is Sundered — it came through wanting something that died there, and it has not found it. ${where.charAt(0).toUpperCase() + where.slice(1)}, last I heard. Bring me a piece of it if you can. Any piece.`
+      : `Six legs, jointed wrong? A drover came in off the waste who would not stop shaking. Said it was feeding on the Sundered ground, ${where}. We doubled the night watch and nobody asked why.`,
+    none: 'Nothing like that has come in off the waste. Not yet. They say a thing like that comes through when a tear opens all the way.',
+  },
+  king: {
+    ask: 'A dead king holding court in a ruin. Where?',
+    knows: (t) => !!t.npcNecro || homeKeyOf(t) === 'hollowmere',
+    said: (t, where) => t.npcNecro
+      ? `The King. Every one of us has gone to look at him once, and nobody twice. A ruin ${where}. The dead walk out to him on their own to kneel — you will know you are close when the bones on the road are all facing the same way.`
+      : `Some of ours went out to him. Not dead — well. Not dead when they left. They said he reads names off a band and the names get up. A ruin ${where}. Do not go at night.`,
+  },
+};
+function homeKeyOf(t){
+  const h = t.homeTown || (t.isLeader >= 0 ? towns[t.isLeader] : null);
+  return (h && h.def && h.def.key) || null;
+}
+/* the quarries a giver is asking for right now, each with every giver asking for it */
+function huntsOpen(){
+  const out = new Map();
+  for(const g of immortals){
+    const line = IMMORTAL_LINES[g.questGive];
+    if(!line || g.state === 'dead' || g.questDone) continue;
+    const st = line.stages[g.questStage || 0];
+    if(!st) continue;
+    const boss = (st.kind === 'slay' || st.kind === 'destroy') ? st.boss
+               : (st.need && st.need.crown && campHas('crown') < 1) ? 'king' : null;
+    if(!boss || !HUNTS[boss] || bossSlain[boss]) continue;
+    if(!out.has(boss)) out.set(boss, []);
+    out.get(boss).push({g, st});
+  }
+  return out;
+}
+/* what `t` says when asked after `boss`, and the journal lines it writes */
+function askAfterQuarry(t, boss){
+  const h = HUNTS[boss], q = chars.find(c => c.bossKey === boss && c.state !== 'dead');
+  if(!q) return h.none || 'Nobody has seen anything like that. Not lately.';
+  const where = directionsFrom(t.x, t.y, q.x, q.y);
+  for(const {g, st} of (huntsOpen().get(boss) || [])){
+    const m = Object.values(MASTER_OF).find(x => x.boss === g.bossKey);
+    threadSet('master_' + g.bossKey, m ? m.title : g.name, `${st.hint} ${t.name} says: ${where}.`);
+  }
+  return h.said(t, where);
+}
+/* the rows a talk window offers: one per quarry this person would know about */
+function huntOpts(t){
+  const out = [];
+  for(const boss of huntsOpen().keys()) if(HUNTS[boss].knows(t)) out.push({say: HUNTS[boss].ask, hunt: boss});
+  return out;
+}
 function talkTitleOf(t){
   if(t.isLeader >= 0 && towns[t.isLeader]) return `${towns[t.isLeader].leader.title} of ${towns[t.isLeader].name}`;
   if(isWatch(t)) return t.homeTown ? `Watch of ${t.homeTown.name}` : 'Watch';
@@ -47903,7 +48112,11 @@ function closeTalk(){
 function drawTalk(){
   if(!talkState) return;
   const {t, c, key} = talkState;
-  const node = TALK_TREES[key][talkState.node];
+  /* an answer about a quarry is its own node, made on the spot (see ASKING AFTER A QUARRY) */
+  const node = talkState.node === 'quarry'
+    ? {line: talkState.quarrySaid, opts: [{say:'Something else.', to:'root'}, {say:'That is what I needed.'}]}
+    : TALK_TREES[key][talkState.node];
+  const opts = talkState.node === 'root' ? huntOpts(t).concat(node.opts || []) : (node.opts || []);
   const body = document.getElementById('modalbody');
   body.innerHTML = '';
   /* what they say */
@@ -47927,14 +48140,21 @@ function drawTalk(){
   body.appendChild(who);
 
   let shown = 0;
-  for(const o of (node.opts || [])){
+  for(const o of opts){
     if(!meets(c, o.req)) continue;
     if(o.when && !o.when(t, c)) continue;
     shown++;
     const b = document.createElement('button');
     b.style.cssText = 'display:block;width:100%;text-align:left;margin:3px 0;padding:6px 8px;font-size:11px;line-height:1.45';
     const tag = o.req ? reqTag(o.req) : '';
-    const go = (to) => { if(to && TALK_TREES[key][to]){ talkState.node = to; drawTalk(); } else closeTalk(); };
+    const go = (to) => { if(to && (TALK_TREES[key][to] || to === 'quarry')){ talkState.node = to; drawTalk(); } else closeTalk(); };
+    if(o.hunt){
+      b.textContent = o.say;
+      b.style.borderColor = '#c8a86a';
+      b.onclick = () => { talkState.quarrySaid = askAfterQuarry(t, o.hunt); go('quarry'); };
+      body.appendChild(b);
+      continue;
+    }
     if(o.check){
       /* ---------- THE OPTION THAT MIGHT NOT WORK ----------
          Shown with its odds, because a risk you cannot see the size of is not a decision. Once
@@ -47969,7 +48189,7 @@ function drawTalk(){
   /* A CHECK IS NOT AN EXIT EITHER, and it looked like one: it carries `win`/`lose` rather than
      `to`, so a node whose only ungated line was a persuasion counted as "there is a way out of
      here" and the way out was a coin flip. */
-  if(!shown || !(node.opts || []).some(o => !o.to && !o.req && !o.check)){
+  if(!shown || !opts.some(o => !o.to && !o.req && !o.check && !o.hunt)){
     const b = document.createElement('button');
     b.style.cssText = 'display:block;width:100%;text-align:left;margin:3px 0;padding:6px 8px;font-size:11px';
     b.textContent = 'Say nothing, and go.';
