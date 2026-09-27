@@ -374,7 +374,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.noWeatherDownThere = (deep.sun === 0 && deep.stars === 0 && deep.bg !== up.bg)
         ? `and a dust storm at noon does not reach the undercroft — no sun, no stars, its own dark`
         : `!! UNDERGROUND STILL HAS WEATHER (sun ${deep.sun}, stars ${deep.stars}, bg ${deep.bg.toString(16)} vs ${up.bg.toString(16)})`;
-      R.andTheSkyStillWorksUpTop = (up.sun > 0.5 && night.sun < up.sun && night.bg !== up.bg)
+      /* THE BAR IS "LIT", NOT "AS BRIGHT AS IT WAS". This read `up.sun > 0.5` against a noon
+         sun of 1.25. The day was re-lit on 2026-09-27 as the premise has it — the sun behind the
+         dust, 0.42 at its height, with the sky's flat light carrying the day — and a number
+         set off the old tuning would have called that "the surface lost its sky". What the
+         claim is about is that noon has a sun and midnight does not. */
+      R.andTheSkyStillWorksUpTop = (up.sun > 0.2 && night.sun < up.sun * 0.5 && night.bg !== up.bg)
         ? `while overland noon is still lit (${up.sun}) and midnight is still dark (${night.sun}) — the surface kept its sky`
         : `!! THE SURFACE LOST ITS SKY TOO (noon sun ${up.sun}, midnight sun ${night.sun})`;
     });
