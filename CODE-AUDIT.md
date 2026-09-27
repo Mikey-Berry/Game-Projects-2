@@ -492,7 +492,7 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
-### 5.15 A band on the march trails its own stations — **raised 2026-09-27, not changed; `marchorder.js` is red at 2048**
+### 5.15 A band on the march trails its own stations — **ruled 2026-09-27: the captain not leading is enough**
 
 `marchorder.js` block 1 raises a band at the start, which is inside Greenrest's walls, and
 sends it foraging 40 tiles east, through the wall. On the 1440 world the captain made only 14
@@ -522,9 +522,13 @@ the start staging it fixed the ranks (3.7 and 1.1) but turned block 3's return-t
 red.
 
 **Proposed:** while the band's phase is `out` and the captain is walking, aim each hand at its
-station plus a lead along the heading, and recompute the stations every AI tick. That is #39's
-feature, so it wants your call and its own full-suite run. The harness block should also move
-off the start once the formation is fixed, since the start is inside a town.
+station plus a lead along the heading, and recompute the stations every AI tick.
+
+**Ruled:** "Let's not worry too much about march order right now for bands — as long as the
+commander is NOT in the lead, that's the main thing." `marchorder.js` now asserts exactly that:
+on the steady legs most of the band is ahead of the captain (65% at 2048) and somebody is out
+in front of him (100% of samples). The rank spacing is still printed, as information. The
+proposal above stays on file.
 
 ### 5.14 The unstuck fallback escalates bodies that are walking fine — **raised 2026-09-27, not changed**
 

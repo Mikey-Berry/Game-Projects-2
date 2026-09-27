@@ -148,6 +148,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         return { x: dx / d, y: dy / d };
       };
       let mSum = 0, rSum = 0, n = 0, pos = { x: cdr.x, y: cdr.y };
+      let aheadFrac = 0, notFront = 0;
       const hist = [];
       /* ---------- AND NOTHING ELSE ON THE ROAD ----------
          What this measures is how the band walks, not what it meets. Anything hostile that
@@ -175,16 +176,29 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         if (!mOk.length || !rOk.length) continue;
         mSum += mOk.reduce((a, o) => a + along(o), 0) / mOk.length;
         rSum += rOk.reduce((a, o) => a + along(o), 0) / rOk.length;
+        { const all = [...mOk, ...rOk];
+          aheadFrac += all.filter(o => along(o) > 0.3).length / all.length;
+          if (all.some(o => along(o) > 0.5)) notFront++; }
         n++;
       }
       const L = Math.hypot(cdr.x - HOME.x, cdr.y - HOME.y);
       const mAvg = n >= 5 ? mSum / n : 0, rAvg = n >= 5 ? rSum / n : 0;
       marchRanks = { mAvg, rAvg, walked: L };
-      O._march = `walked ${L.toFixed(0)} tiles out; ahead of the captain: blades ${mAvg.toFixed(1)}, bows ${rAvg.toFixed(1)}`;
-      O.andTheColumnMarchesInItsOwnOrder = (L > 8 && mAvg > rAvg + 0.5 && rAvg > 0.5)
-        ? `the blades march ${mAvg.toFixed(1)} tiles ahead of the captain and the bows ${rAvg.toFixed(1)} — melee, then ranged, then him`
+      const fAhead = n ? aheadFrac / n : 0, fNotFront = n ? notFront / n : 0;
+      O._march = `walked ${L.toFixed(0)} tiles out; ahead of the captain: blades ${mAvg.toFixed(1)}, bows ${rAvg.toFixed(1)}; ` +
+                 `${Math.round(fAhead * 100)}% of the band ahead of him on average, and somebody out in front of him ${Math.round(fNotFront * 100)}% of the time`;
+      /* ---------- WHAT IS ASKED OF THE COLUMN NOW ----------
+         Ruled 2026-09-27: "Let's not worry too much about march order right now for bands — as
+         long as the commander is NOT in the lead, that's the main thing." This held the blades
+         at least half a tile ahead of the bows and the bows half a tile ahead of him, and on
+         open ground at either map size the ranks trail their stations (CODE-AUDIT §5.15), so it
+         read red on a band whose captain was plainly at the back. What is asserted now is the
+         ruling: on the steady legs, most of the band is ahead of him and somebody is nearly
+         always out in front. The spacing is still printed above, as information. */
+      O.andTheColumnMarchesInItsOwnOrder = (L > 8 && n >= 5 && fAhead >= 0.5 && fNotFront >= 0.75)
+        ? `the captain does not lead his own band: on the steady legs ${Math.round(fAhead * 100)}% of it is ahead of him, and somebody is out in front ${Math.round(fNotFront * 100)}% of the time`
         : (L <= 8 ? `!! THE BAND NEVER MARCHED (${L.toFixed(1)} TILES)`
-                  : `!! THE COLUMN HAS NO ORDER — BLADES ${mAvg.toFixed(1)} AHEAD, BOWS ${rAvg.toFixed(1)}, CAPTAIN AT 0`);
+                  : `!! THE CAPTAIN IS LEADING HIS OWN BAND — ${Math.round(fAhead * 100)}% AHEAD OF HIM, SOMEBODY IN FRONT ${Math.round(fNotFront * 100)}% OF THE TIME (${n} steady samples)`);
       standDown(cdr, true);
       for (const o of band) o.state = 'dead';
     });

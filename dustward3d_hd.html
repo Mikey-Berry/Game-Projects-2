@@ -10340,9 +10340,17 @@ function contrabandCheck(){
   cartWho.stoppedDay = day; cartWho.stoppedAt = cartAt.def.key;
   theStop(cartWho, g, cartAt, cart, cart);
 }
+/* ---------- A SEARCH FINDS WHAT A SEARCH FINDS ----------
+   "Getting ALL your mortal remains confiscated from a guard is a seriously feelsbad moment,
+    especially if you're early to mid-game and have harvested a good chunk... There should be a
+    max that they can discover on you per inspection, maybe between 5 to 10."
+   A guard going through a pack at a gate turns up a handful, not the inventory. Rolled once
+   per stop, and it is the most of any one thing they take, off the person or out of the cart. */
+const STOP_FINDS = [5, 10];
 function theStop(c, g, t, found, cart){
   _stopOpen = true;
   const key = found[0], what = CONTRABAND[key];
+  const finds = STOP_FINDS[0] + Math.floor(rnd() * (STOP_FINDS[1] - STOP_FINDS[0] + 1));
   say(g, cart ? 'Hold the cart. Sheet off.' : 'Open the pack.');
   AU.open();
   const odds = talkOdds(c, t, found);
@@ -10376,7 +10384,7 @@ function theStop(c, g, t, found, cart){
   const lost = (line) => {
     say(g, line);
     log(`${g.name} is not having it.`, 'bad');
-    theReckoning(c, g, t, what, cart);
+    theReckoning(c, g, t, what, cart, finds);
   };
   mk('TALK', `${Math.round(odds * 100)}% — your tongue, your standing here, and what they are holding`, () => {
     const ok = rnd() < odds;
@@ -10396,7 +10404,7 @@ function theStop(c, g, t, found, cart){
       } else {
         say(g, 'You think you are the first?');
         log(`${g.name} does not move, and now the street is watching.`, 'bad');
-        theReckoning(c, g, t, what, cart);
+        theReckoning(c, g, t, what, cart, finds);
       }
     });
   }
@@ -10459,17 +10467,18 @@ function theStop(c, g, t, found, cart){
     });
   }
   mk(`BRIBE — ${bribe}g`, cats >= bribe ? 'coin, quietly' : 'you do not have it', () => {
-    if(cats < bribe){ log('You do not have it, and counting it out in front of them made that plain.', 'bad'); theReckoning(c, g, t, what, cart); return; }
+    if(cats < bribe){ log('You do not have it, and counting it out in front of them made that plain.', 'bad'); theReckoning(c, g, t, what, cart, finds); return; }
     cats -= bribe;
     say(g, '...');
     log(`${bribe} gold changes hands and the pack is not opened any further.`, '');
     t.rep = clamp((t.rep || 0) - 2, -300, 100);
     refreshTop();
   });
-  mk('HAND IT OVER', 'lose it, and walk away clean', () => {
-    const n = c.inv[key];
-    delete c.inv[key];
-    log(`${c.name} gives up ${n > 1 ? n + ' of ' + what : what}. ${g.name} takes it without a word.`, '');
+  mk('HAND IT OVER', `lose what they found — no more than ${finds} — and walk away clean`, () => {
+    const have = c.inv[key] || 0, n = Math.min(have, finds);
+    c.inv[key] = have - n; if(c.inv[key] <= 0) delete c.inv[key];
+    log(`${c.name} gives up ${n > 1 ? n + ' of ' + what : what}. ${g.name} takes it without a word` +
+        (have > n ? `, and does not go looking for the rest.` : '.'), '');
     t.rep = clamp((t.rep || 0) - 1, -300, 100);
     refreshInv(); refreshCharPanel();
   });
@@ -10482,15 +10491,16 @@ function theStop(c, g, t, found, cart){
 }
 /* Talking failed. This is the fork the player actually wanted: the cell or the blade, chosen
    rather than arrived at. */
-function theReckoning(c, g, t, what, cart){
+function theReckoning(c, g, t, what, cart, finds){
   _stopOpen = true;
+  finds = finds || STOP_FINDS[1];
   const days = CRIMES.contraband.days;
   /* WHAT THEY FOUND IN THE CART, THEY TAKE. Without this a cart search has no bite at all: you
      go quietly, serve the days, and the wagon is still full of it when you come out. */
   const seize = () => {
     if(!cart) return 0;
     let n = 0;
-    for(const k of cart){ const have = stash[k] || 0; if(have > 0){ takeItem(k, have); n += have; } }
+    for(const k of cart){ const have = stash[k] || 0, take = Math.min(have, finds); if(take > 0){ takeItem(k, take); n += take; } }
     if(n) log(`The watch of ${t.name} empties ${n} of it out of the cart and carts it away themselves.`, 'bad');
     return n;
   };
@@ -10507,12 +10517,32 @@ function theReckoning(c, g, t, what, cart){
     b.onclick = () => { close(); fn(); };
     body.appendChild(b);
   };
-  mk('GO PEACEFULLY', cart ? `${days} days, they keep your kit, and the cart is emptied of it` : `${days} days, and they keep your kit`, () => {
-    crime('contraband', c.x, c.y, c);
+  /* ---------- GOING QUIETLY SETTLES IT ----------
+     "You get a bounty for carrying grave goods into the city... even though you were stopped by
+      an inspection and jailed for it. The person is then beaten in the jail."
+     This called `crime()` and then `jail()`: the crime put a price on the face and set the town
+     WANTED, the sentence did nothing about either, and the watch recognises a wanted face — the
+     one in its own cell included — so it went in and arrested somebody who was already
+     arrested. A body the watch drags in has its account settled at the cell door; one that
+     walks in has earned the same. The standing still drops, the sentence absorbs whatever the
+     town already had against them, and nobody is sent after a prisoner. */
+  mk('GO PEACEFULLY', cart ? `${days} days, they keep your kit, and they take what they found in the cart` : `${days} days, and they keep your kit`, () => {
+    dropRep(t, Math.round(CRIMES.contraband.bounty / 12));
     seize();
+    const owed = t.bounty || 0;
     const cell = freeCell(t);
-    if(cell){ stripKit(c); jail(c, cell, days); log(`${c.name} is taken in without a fight. ${days} days.`, 'bad'); }
-    else { log(`${c.name} submits — and ${t.name} has nowhere to put ${c.sex === 'f' ? 'her' : 'them'}. A fine, and a warning.`, 'bad'); cats = Math.max(0, cats - 150); }
+    if(cell){
+      const d2 = days + Math.round(owed / 80);
+      stripKit(c); jail(c, cell, d2);
+      log(`${c.name} is taken in without a fight. ${d2} days${owed ? ', which settles what ' + t.name + ' already had against them' : ''}.`, 'bad');
+    } else {
+      const fine = 150 + owed;
+      log(`${c.name} submits — and ${t.name} has nowhere to put ${c.sex === 'f' ? 'her' : 'them'}. A fine of ${Math.min(cats, fine)}, and a warning.`, 'bad');
+      cats = Math.max(0, cats - fine);
+    }
+    t.bounty = 0; t.wanted = false;
+    for(const o of chars) if(o.arrestTarget === c) o.arrestTarget = null;
+    refreshTop();
   });
   mk('FIGHT', 'here, now, in their town', () => {
     crime('contraband', c.x, c.y, c);
@@ -15596,16 +15626,35 @@ function raiseAlarm(by, foe){
 }
 /* a stair is a portal, not a slope: stand on it and you are on the other storey */
 let _stairMap = null, _stairMapN = -1;
-function stairAt(x, y){
+/* ---------- TWO FLIGHTS CAN SHARE A TILE ----------
+   "There APPEAR to be multiple storeys but the stairs inside don't work, leading me to assume the
+    upper floors do not actually exist."
+   They exist. The Aldercott house stacks its two flights in one stairwell, ground-to-first and
+   first-to-attic on the same tile, and this map kept ONE stair per tile: the second `set`
+   overwrote the first, so a body on the ground floor stepping into the stairwell was handed the
+   first-to-attic flight, which does not touch the ground floor, and latched on it. The house has
+   had an upstairs since it was built and no way to reach it.
+   So a tile holds a list, and the caller says which storey it is standing on (and, climbing,
+   which way it wants to go). Without a storey the answer is what it always was, the first. */
+function stairAt(x, y, f, want){
   if(_stairMapN !== stairs.length){
     _stairMap = new Map();
-    for(const st of stairs) _stairMap.set(st.y * W + st.x, st);
+    for(const st of stairs){ const k = st.y * W + st.x; const l = _stairMap.get(k); if(l) l.push(st); else _stairMap.set(k, [st]); }
     _stairMapN = stairs.length;
   }
-  return _stairMap.get(Math.floor(y) * W + Math.floor(x)) || null;
+  const list = _stairMap.get(Math.floor(y) * W + Math.floor(x));
+  if(!list) return null;
+  if(f === undefined || f === null || list.length === 1) return list[0];
+  const here = list.filter(st => st.from === f || st.to === f);
+  if(!here.length) return list[0];
+  if(want !== undefined && want !== null && want !== f){
+    const toward = here.find(st => { const o = st.from === f ? st.to : st.from; return want > f ? o > f : o < f; });
+    if(toward) return toward;
+  }
+  return here[0];
 }
 function useStairs(c){
-  const st = stairAt(c.x, c.y);
+  const st = stairAt(c.x, c.y, c.floor || 0, c.wantFloor);
   if(!st){ c.onStair = null; return; }
   /* ---------- DON'T YO-YO ON *THIS* ONE ----------
      Taken from the parallel branch, whose reading of this is better than the one it replaces.
@@ -26406,7 +26455,16 @@ function update(dt){
       const t = c.jailedAt.town, was = c.jailedAt;
       was.holds = 0; c.jailedAt = null;
       returnKit(c);
-      c.x = (t ? t.x : c.x) + 2.5; c.y = (t ? t.y : c.y) + 2.5;
+      /* ---------- OUT INTO THE STREET, NOT INTO THE MIDDLE OF TOWN ----------
+         "Getting released from jail in Greenrest plops you in the center of the Dame's mansion,
+          which you cannot leave." This put a released body at the town's centre plus two and a
+          half, which is the plaza in most towns and the middle of the estate in the one whose
+          centre is a walled house. The well is placed on the plaza, or in the open lane where a
+          centrepiece has the plaza, precisely so it is always public ground; the door out of
+          the gaol leads there. */
+      const q = t ? findOpenNear(t.wellX != null ? t.wellX : t.x, t.wellY != null ? t.wellY : t.y, 1.5) : null;
+      if(q){ c.x = q.x; c.y = q.y; }
+      c.floor = 0;
       if(t){ t.wanted = false; t.bounty = 0; }
       if(c.faction === 'player')
         log(`${c.name} walks out of the cells at ${t ? t.name : 'the gaol'}. Debt paid, kit returned.`, 'good');
@@ -33328,7 +33386,11 @@ const syncRedoubts = makeDynGroup(
         /* PER REDOUBT, not one bitmask for the whole world — the old key could not tell
            "somebody is on floor 1 of THIS complex" from "somebody is on floor 1 of a rampart
            two hundred tiles away", which is exactly the distinction the opacity now turns on */
-        redoubts.map(rd => { const b = redoubtBounds(rd); return occupiedBits(b._bx, b._by, b._bX, b._bY, 1.5); }).join(','),
+        redoubts.map(rd => { const b = redoubtBounds(rd); return occupiedBits(b._bx, b._by, b._bX, b._bY, 1.5); }).join(',') +
+        /* AND THE TWO GATES THIS GROUP DRAWS SHUT. Neither the pit's nor the Aldercott yard's
+           state was in the key, so a gate drawn shut stayed drawn shut after it opened, and one
+           drawn open (the yard's, which was never drawn at all) stayed a hole while it was shut */
+        ':' + (arena && arena.open ? 1 : 0) + (estate && estate.doorOpen ? 1 : 0),
   (g) => {
     /* a midden: a heap of what has been taken. Nothing is built here. */
     for(const m of middens){
@@ -33475,6 +33537,24 @@ const syncRedoubts = makeDynGroup(
       for(const w of estate.walls){
         const y = groundY(w.x + 0.5, w.y + 0.5);
         box(g, 1, 1.8, 1, '#6b5a3c', w.x + 0.5, y + 0.9, w.y + 0.5, true);
+      }
+      /* ---------- AND THE GATE IS DRAWN SHUT WHEN IT IS SHUT ----------
+         "It's actually impossible to open any gate to get in or out of the mansion estate area.
+          The door LOOKS open, but it doesn't let you pass through."
+         The yard gate and the house door are `blocked` until Bellowes lets you in, and nothing
+         was drawn in either: two gaps that read as open doorways and stopped you dead. A shut
+         gate is dark timber in the gap, iron-banded; a shut house door is a slab in the
+         doorway. Both go when `estateAdmit` opens them, and the key above rebuilds this. */
+      if(!estate.doorOpen){
+        for(const q of estate.gate){
+          const y = groundY(q.x + 0.5, q.y + 0.5);
+          box(g, 1, 1.9, 0.34, '#3a2a1a', q.x + 0.5, y + 0.95, q.y + 0.5, true);
+          for(const hy of [0.45, 1.45]) box(g, 1.04, 0.1, 0.4, '#2a2622', q.x + 0.5, y + hy, q.y + 0.5, false);
+        }
+        for(const dx2 of estate.doorTiles){
+          const y = groundY(dx2 + 0.5, estate.doorY + 0.5);
+          box(g, 1, 2.1, 0.3, '#4a3420', dx2 + 0.5, y + 1.05, estate.doorY + 0.5, true);
+        }
       }
       /* and the rows, once the ground has been opened — low mounds of turned earth between the
          trees, which is the only thing about this the player ever sees from outside */
@@ -43375,11 +43455,12 @@ function refreshInv(){
 
 /* ============================================================ TRADE & RECRUIT MODALS */
 let modalOpen = false;
+let invFor = null;         /* whose kit the open window is showing, if the open window is a kit */
 function openModal(title, sub){
   /* CLEARED BY WHATEVER OPENS NEXT, rather than by every path that closes a window. There are a
      dozen ways to shut a modal in this file and exactly one way to open one, so the flag is
      owned here — a ring that outlived its window would otherwise hang on the ground forever. */
-  ctxCircle = null;
+  ctxCircle = null; invFor = null;
   if(talkScene && !_sceneOpening) sceneClose(false);   /* another window over a scene: its lines go to the log */
   $('modaltitle').textContent = title; $('modalsub').textContent = sub;
   $('modal').style.display = 'flex'; modalOpen = true; paused = true; syncPauseBtn();
@@ -43481,7 +43562,8 @@ function refreshStudyBtn(){
   b.title = has ? '' : 'No research bench built.';
 }
 function openInventory(c){
-  openModal('KIT — ' + c.name, 'Click a slot, then something from the wagon. Below: what they are carrying — eat it, hand it over, stash it or drop it. [I] reopens.');
+  openModal('KIT — ' + c.name, 'Click a slot, then something from the wagon. Below: what they are carrying — eat it, hand it over, stash it or drop it. Pick somebody else in the squad bar to see theirs.');
+  invFor = c;
   const body = $('modalbody');
   const hdr = (t) => { const d=document.createElement('div'); d.style.cssText='color:var(--warn);font-size:11px;letter-spacing:1px;margin:10px 0 4px'; d.textContent=t; body.appendChild(d); };
   const empty = () => { const d=document.createElement('div'); d.style.cssText='color:var(--dust)'; d.textContent='Empty.'; body.appendChild(d); };
@@ -45982,7 +46064,7 @@ cv.addEventListener('mousedown', e => {
       return;
     }
     /* right-click a stair: everyone selected takes it, up or down */
-    const stw = stairAt(wx, wy);
+    const stw = stairAt(wx, wy, movers[0] ? (movers[0].floor || 0) : activeFloor);
     if(stw){
       for(const m of movers){
         const mf = m.floor || 0;
@@ -50574,6 +50656,16 @@ function frame(now){
      `classList.toggle` with an explicit force is a no-op when the token is already in the
      desired state, so this costs nothing on the frames where nothing changed. */
   document.body.classList.toggle('modal-up', !!modalOpen);
+  /* ---------- THE KIT SCREEN FOLLOWS WHOEVER YOU PICK ----------
+     "If I open the inventory with Lyonart selected, that menu remains on Lyonart even if I then
+      select Ossian... I need to manually hit I again every time." The squad bar stays live over
+     the window, so a pick changes `selected` underneath it; the window is re-opened on the new
+     first pick (a group's first, which is whoever the bar lists first). Only the kit screen
+     does this: `invFor` is cleared by every other window, because `openModal` owns the flag. */
+  if(invFor){
+    if(!modalOpen) invFor = null;
+    else { const s0 = selected[0]; if(s0 && s0 !== invFor && s0.faction === 'player' && s0.state !== 'dead') openInventory(s0); }
+  }
   const pan = (10 + camDist * 0.45) * dt;
   {
     const [rx, ry] = camRight(), [fx, fy] = camFwd();
