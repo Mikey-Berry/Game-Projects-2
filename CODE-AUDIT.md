@@ -492,6 +492,40 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
+### 5.15 A band on the march trails its own stations — **raised 2026-09-27, not changed; `marchorder.js` is red at 2048**
+
+`marchorder.js` block 1 raises a band at the start, which is inside Greenrest's walls, and
+sends it foraging 40 tiles east, through the wall. On the 1440 world the captain made only 14
+tiles in the measuring window and the ranks had time to settle: blades 4.3 ahead, bows 1.2.
+On the 2048 world he makes 42, the column threads out through the gate, and it reads blades
+−0.3, bows 1.0. So the claim fails.
+
+**Staged on genuinely open ground** (a 100×60 box with under 2% rock or biome), the formation
+trails at both sizes:
+
+| | blades ahead of captain | bows ahead | designed |
+|---|---|---|---|
+| 1440, open ground | 2.3 | 0.5 | about 5.5 and 2 |
+| 2048, open ground | 1.7 | −0.2 | about 5.5 and 2 |
+
+There are no path failures and no blocked stations. The stations are right (blades 4–5 ahead,
+bows 1.5–2.5). The hands are 25% faster than the captain and still sit about 2.2 tiles short of
+them. Two things cause it:
+- A hand re-takes its station only when it is more than 1.5 tiles off, and stops at 0.2. That
+  is a stop-start cycle on a steady march.
+- `bandStations` recomputes on the command tick, so from the hand's side the station jumps in
+  steps rather than walking.
+
+**What I tried and reverted:** a 0.6-tile slack while the station is moving. It changed
+nothing on open ground, because the station is almost never "moving" between recomputes. From
+the start staging it fixed the ranks (3.7 and 1.1) but turned block 3's return-to-home claim
+red.
+
+**Proposed:** while the band's phase is `out` and the captain is walking, aim each hand at its
+station plus a lead along the heading, and recompute the stations every AI tick. That is #39's
+feature, so it wants your call and its own full-suite run. The harness block should also move
+off the start once the formation is fixed, since the start is inside a town.
+
 ### 5.14 The unstuck fallback escalates bodies that are walking fine — **raised 2026-09-27, not changed**
 
 `travelStuck` counts a body as stuck when its straight-line distance to the goal has not
