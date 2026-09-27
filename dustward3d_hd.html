@@ -8622,7 +8622,65 @@ function saltmereBurning(){
    a stranger who has done nothing for the town is a stranger. The talk check is the other way
    in, and it is deliberately not easy: a house with that under its trees does not let people in
    because they were charming. */
-function estateAdmits(){ return !!estate && (estate.admitted || (estate.town.rep || 0) >= ORCHARD_REP); }
+function estateAdmits(){ return !!estate && (estate.admitted || estate.invitedYou || (estate.town.rep || 0) >= ORCHARD_REP); }
+/* ============================================================ THE LAST ORCHARD, TOLD IN ORDER
+   "We need to fix up the Greenrest corpse field quest. It just appears suddenly and without
+    warning. Needs a proper buildup and honestly doesn't need a bunch of corpses in the city to
+    work. Just needs a better questline and dialogue."
+   It did appear from nowhere: the first time anybody with the dark gift walked within eleven
+   tiles of the orchard, twenty bodies stood up out of the ground in the middle of the start town
+   with two lines of log, and the rest of the scene — Bellowes, the Dame, the invitations — was
+   something you found AFTER the answer. It is told the other way round now, in the order a town
+   keeps a secret:
+     1. A LEAD. The gift feels something under the trees and says nothing; or somebody goes up to
+        the house to dine and does not come home. Either opens the thread. Nothing is dug up.
+     2. ASKING. Greenrest's own people, asked where the Dame's guests go, each give a different
+        answer and none of them a straight one. Enough asking and the house hears of it.
+     3. THE INVITATION. Bellowes crosses the square with a card, and this time it has your name
+        on it. The gate is open to you for it — the same gate the missing walked through.
+     4. THE ROWS. The Dame shows you, or you ask for them. What comes up is bone, four
+        generations of it, and it is Mortal Remains in the stash if you take it — and the ones
+        you heard named at the well, still in their good coats. Not twenty corpses in the street.
+   The three things she asks you to be at the end — a friend of the house, a voice in the
+   square, a buyer — are unchanged. */
+const ORCHARD_TITLE = 'The Aldercott orchard';
+function orchardLead(step, quiet){
+  if(!estate) return null;
+  return threadSet('orchard', ORCHARD_TITLE, step,
+    {mark: {x: estate.x, y: estate.y + estate.hh + 2}, quiet: !!quiet,
+     hint: estate.invitedYou ? 'The gate is open to you. Dame Hessa is in the long room.' : 'Ask about the house in Greenrest. Bellowes keeps the gate.'});
+}
+/* what the town says, one question at a time: never a straight answer, and never the same one */
+const ORCHARD_ASKED = [
+  'Copperhold, mostly. The family has friends in Copperhold. It is a great honour to be asked, you know. A great honour.',
+  'I would not know. I have never been asked. My sister was, in the spring, and she wrote from Copperhold. I think it was Copperhold. It did not sound like her.',
+  'You want to be careful asking that here. The watch has new coats this year. The Aldercotts bought them. Everything in this town is something the Aldercotts bought.',
+  'We eat very well in Greenrest. Try the fruit. Everybody who comes here says it is the best fruit they have ever eaten. Everybody.',
+  'Bellowes was in the square this morning asking after a stranger who has been asking questions. I told him I had not seen anybody. I am telling you so that you know.',
+];
+function orchardAsked(){
+  if(!estate) return ORCHARD_ASKED[0];
+  const i = Math.min(estate.asked || 0, ORCHARD_ASKED.length - 1);
+  estate.asked = (estate.asked || 0) + 1;
+  /* two answers that do not add up is enough for the house to hear of it; the gift's lead is
+     worth one of them, because the one who felt the ground does not need to be told twice */
+  if(!estate.invitedYou && !estate.inviteYouAt && !estate.opened && estate.asked + (estate.sensed ? 1 : 0) >= 2)
+    estate.inviteYouAt = day + 1;
+  orchardLead(estate.inviteYouAt
+    ? 'Greenrest will not say where the Dame\'s guests go, and somebody has told the house you have been asking.'
+    : 'Greenrest will not say where the Dame\'s guests go. Every answer is a different town, or no town at all.');
+  return ORCHARD_ASKED[i];
+}
+/* the house returns the interest: a card with your name on it, carried across the square */
+function orchardInviteYou(){
+  if(!estate || estate.invitedYou || !estate.inviteYouAt || day < estate.inviteYouAt) return;
+  const me = player().find(c => c.state === 'ok');
+  if(!me) return;
+  estate.invitedYou = true;
+  log(`Bellowes carries an invitation across the square, and this time he stops in front of ${me.name}. ` +
+      'The Dame would be pleased to receive you at the house this evening.', 'bad');
+  orchardLead('The Aldercott house has asked you to dine. The last people it asked did not come home.');
+}
 /* Bellowes steps aside, and the door is a door again. Idempotent, and it is the ONLY caller
    that clears those tiles — which is what makes "he does not let you in" a fact about the
    world rather than a line of dialogue. */
@@ -8639,20 +8697,30 @@ function estateAdmit(why){
    KNOWS — that is what the gift is, and it would be strange for the one profession built around
    sensing the dead to walk over twenty of them and notice nothing. Anybody else has to be told
    by the Dame, or dig. */
+/* what four generations in the ground comes to: bone, and it is counted as Mortal Remains */
+function orchardBone(){ return estate ? 18 + Math.min(20, estate.graves.length) : 0; }
 function orchardOpen(why){
   if(!estate || estate.opened) return 0;
   estate.opened = true;
+  /* ---------- BONE, AND THE ONES YOU HEARD NAMED ----------
+     Not twenty bodies standing up in the middle of the start town. The old rows are bone —
+     `orchardBone`, and it is yours only if you take it (the Dame's bargain) — and the only
+     bodies are the recent guests, the names the town was pleased for, laid in the newest row.
+     Those are real, in their good coats, and they are what a necromancer came for. */
+  const fresh = (estate.invites || []).slice(-3);
   let n = 0;
-  for(const g of estate.graves){
-    const b = makeChar(pick(['Drifter', 'Nobody', 'A Traveller', 'One of Them']), 'town', g.x, g.y,
-      {atk: ri(6, 14), def: ri(6, 12), tough: ri(6, 12)});
-    b.state = 'dead'; b.deadAt = day - ri(200, 3000) / 24; b.orchardDead = true;
+  for(let i = 0; i < fresh.length; i++){
+    const g = estate.graves[estate.graves.length - 1 - i] || {x: estate.gx + 0.5, y: estate.gy + 0.5};
+    const b = makeChar(fresh[fresh.length - 1 - i].name, 'town', g.x, g.y, {atk: ri(6, 14), def: ri(6, 12), tough: ri(6, 12)});
+    b.state = 'dead'; b.deadAt = fresh[fresh.length - 1 - i].day; b.orchardDead = true;
     chars.push(b); corpses.push(b);
     n++;
   }
   log(why, 'bad');
-  log(`${n} of them, in rows, under the fruit trees — and not one of them whole. ` +
-      `Greenrest has been eating this orchard for four generations, and the orchard has been eating whoever came up the front path.`, 'bad');
+  log(`Rows of them under the fruit trees, four generations deep, and most of it gone to bone.` +
+      (n ? ` In the newest row, ${fresh.map(f => f.name).join(' and ')}, still in their good coats.` : '') +
+      ` Greenrest has been eating this orchard for sixty years, and the orchard has been eating whoever came up the front path.`, 'bad');
+  orchardLead('The rows are open. Dame Hessa wants to know which of three things you are going to be.');
   /* NO `deed` HERE. Finding a thing is not doing a thing, and `deed('graves')` would have been
      a no-op anyway — it is a QUEST kind, not a deed kind, and both ledgers ignore what they do
      not know. What the player does next is already covered: taking the bodies is `raise` and
@@ -8711,6 +8779,7 @@ function estateEvict(){
 function estateInviteTick(){
   if(!estate || estate.town.sacked) return;
   estateEvict();
+  orchardInviteYou();
   /* SAYING IT OUT LOUD BUYS EXACTLY ONE THING. Nobody arrests them and nothing is proved — but
    the house is not going to hand out invitations with somebody standing in the square telling
    people what they are for. It is the smallest possible victory and it is a real one. */
@@ -8736,6 +8805,8 @@ function estateInviteTick(){
       }
       log(`${v.name} of Greenrest went up to the Aldercott house for dinner and has not come home.`,
           estate.opened ? 'bad' : '');
+      /* and that is a lead, for anybody: a name, a house, and a dinner nobody came back from */
+      if(!estate.opened) orchardLead(`${v.name} went up to the Aldercott house to dine and has not come home. Greenrest is pleased for them.`);
       worldEvent('missing', estate.x, estate.y,
         `${v.name} has not been seen in Greenrest since the evening they were asked to dine at the house.`);
     }
@@ -8759,7 +8830,12 @@ function orchardTick(){
     if(c.faction !== 'player' || c.state !== 'ok') continue;
     if(c.gift !== 'dark' && !c.lich) continue;
     if(dist(c.x, c.y, estate.gx, estate.gy) > 11) continue;
-    orchardOpen(`${c.name} stops walking. There is something wrong with the ground here, and ${c.sex === 'f' ? 'she' : 'they'} can feel exactly how much of it there is.`);
+    if(estate.sensed) return;
+    estate.sensed = true;
+    log(`${c.name} stops walking. Under the fruit trees behind the Aldercott house the ground is wrong — deep, and old, and there is a great deal of it. ` +
+        `Nobody in the street has noticed ${c.sex === 'f' ? 'her' : 'them'} stop.`, 'bad');
+    orchardLead('Something is buried under the fruit trees behind the Aldercott house: a great deal of it, and old. Greenrest walks past it every day.');
+    if(!estate.inviteYouAt && (estate.asked || 0) >= 1) estate.inviteYouAt = day + 1;
     return;
   }
 }
@@ -8945,6 +9021,22 @@ function spawnDrifter(){
 }
 /* ---------- trade routes: the roads everyone actually walks ---------- */
 const tradeRoutes = [];   /* {aI, bI, wps:[{x,y},...]} */
+/* ---------- A WAYPOINT YOU CANNOT STAND ON IS PASSED, NOT REACHED ----------
+   "Escorts and caravans get caught up in sundered ground sites. The pathing is weird around
+    them... Bodyguard jobs basically shut down around them."
+   Everything that walks a road — a caravan, an escort's ward, a pilgrim — took the next
+   waypoint only once it stood within three tiles of it. A road laid before a sundered site came
+   down on top of it put a waypoint inside the monument, where nobody can stand: the walker
+   ground against the bone until the unstuck fallback sent it on detours, came back, and did it
+   again, with the site's own animals on it the whole time. The rule for anything that lands on a
+   road: a waypoint on blocked ground is passed, and so is one the walker has twice failed to get
+   to. (Keeping the sites themselves off the roads is CODE-AUDIT §5.16.) */
+function wpPassed(c, wp){
+  if(dist(c.x, c.y, wp.x, wp.y) < 3) return true;
+  if(isBlocked(wp.x, wp.y, 0)) return true;
+  return (c.stuckN || 0) >= 2 && dist(c.x, c.y, wp.x, wp.y) < 10;
+}
+
 function routeFor(fromT, toT){
   const i = towns.indexOf(fromT), j = towns.indexOf(toT);
   const r = tradeRoutes.find(r => (r.aI===i && r.bI===j) || (r.aI===j && r.bI===i));
@@ -14192,7 +14284,7 @@ function ai(c, dt){
       const cv = c.caravan;
       if(cv.wps && cv.wi < cv.wps.length){
         const wp = cv.wps[cv.wi];
-        if(dist(c.x, c.y, wp.x, wp.y) < 3){ cv.wi++; }
+        if(wpPassed(c, wp)){ cv.wi++; }
         else c.moveTarget = {x: wp.x, y: wp.y};
       } else c.moveTarget = {x: d.x, y: d.y + (d.def.wall ? d.def.wall.r + 1 : 9)};
     }
@@ -14591,7 +14683,7 @@ function contractTick(dt){
     if(!w.moveTarget && !w.target && w.fleeT <= 0){
       if(j.wps && j.wi < j.wps.length){
         const wp = j.wps[j.wi];
-        if(dist(w.x, w.y, wp.x, wp.y) < 3) j.wi++;
+        if(wpPassed(w, wp)) j.wi++;
         else w.moveTarget = {x: wp.x, y: wp.y};
       } else w.moveTarget = {x: to.x, y: to.y};
     }
@@ -20568,10 +20660,18 @@ function craterSpot(r0, r1){
   }
   return {x: CRATER.x + r0 + 1, y: CRATER.y};
 }
+/* ---------- WHERE IT WAS ROLLED, NOT SIX TILES OFF IT ----------
+   `craterSpot` already hands back open ground inside the ring. `spawnGaunt` then runs it through
+   `findOpenNear`, which does not try the centre first: it throws a random point up to six tiles
+   off even when the spot it was given is open. So a Watcher rolled at the glass's outer edge
+   could be born, and posted, in the approach (seen on the 2048 world at 130.9 against a ring of
+   130), and a regrown one could be put down inside somebody's sight. Every body the crater makes
+   is set back on the spot that was rolled for it. */
+function craterPlace(g, q){ if(g){ g.x = q.x; g.y = q.y; } return g; }
 function craterSpawn(ring, kind){
   const P = CRATER_POP[ring] || CRATER_POP.bowl;
   const q = craterSpot(P.r0, P.r1);
-  const g = spawnGaunt(kind || pick(P.kinds), q.x, q.y);
+  const g = craterPlace(spawnGaunt(kind || pick(P.kinds), q.x, q.y), q);
   g.nightborn = false; g.floor = 0;
   g.guard = {x: g.x, y: g.y};
   g.craterOwn = ring;
@@ -20691,21 +20791,20 @@ function guardianWithdraws(){
 function craterDangerTick(dh){
   const pop = {glass: 0, bowl: 0, messenger: 0};
   for(const c of rareFolk().crater) if(c.state !== 'dead' && pop[c.craterOwn] !== undefined) pop[c.craterOwn]++;
-  /* thirty-six is sight; the six on top is `spawnGaunt`'s own nudge to open ground, which can
-     carry a body rolled at thirty-seven into view. Seen once on the 2048 world. */
-  const unseen = (q) => !player().some(o => o.state !== 'dead' && dist(o.x, o.y, q.x, q.y) < 36 + 6);
+  /* thirty-six is sight, measured at the spot the body is put down on (`craterPlace`) */
+  const unseen = (q) => !player().some(o => o.state !== 'dead' && dist(o.x, o.y, q.x, q.y) < 36);
   for(const ring of ['glass', 'bowl']){
     const P = CRATER_POP[ring];
     if(pop[ring] >= P.want || rnd() >= dh * 0.08 * (P.want - pop[ring])) continue;
     const q = craterSpot(P.r0, P.r1);
     if(!unseen(q)) continue;
-    const g = spawnGaunt(pick(P.kinds), q.x, q.y);
+    const g = craterPlace(spawnGaunt(pick(P.kinds), q.x, q.y), q);
     g.nightborn = false; g.floor = 0; g.guard = {x: g.x, y: g.y}; g.craterOwn = ring;
   }
   if(pop.messenger < CRATER_MESSENGERS && rnd() < dh * 0.012){
     const q = craterSpot(CRATER_POP.bowl.r0, CRATER_POP.bowl.r1);
     if(unseen(q)){
-      const g = spawnGaunt(rnd() < 0.34 ? 'herald' : 'messenger', q.x, q.y);
+      const g = craterPlace(spawnGaunt(rnd() < 0.34 ? 'herald' : 'messenger', q.x, q.y), q);
       g.nightborn = false; g.floor = 0; g.guard = {x: g.x, y: g.y}; g.craterOwn = 'messenger'; g.faction = 'gaunt';
     }
   }
@@ -27925,7 +28024,7 @@ function update(dt){
     } else if(!c.moveTarget && !c.target && !c.fleeT){
       if(pg.wps && pg.wi < pg.wps.length){
         const wp = pg.wps[pg.wi];
-        if(dist(c.x, c.y, wp.x, wp.y) < 3) pg.wi++;
+        if(wpPassed(c, wp)) pg.wi++;
         else c.moveTarget = {x: wp.x, y: wp.y};
       } else c.moveTarget = {x: pg.dest.x + ri(-3,3), y: pg.dest.y + ri(-3,3)};
     }
@@ -47387,6 +47486,8 @@ const TALK_TREES = {
       line: (t, c) => !estate ? 'Yes?'
         : estate.opened
           ? 'You have seen the rows, then. Sit down. No — you will not sit. Nobody ever sits, after.'
+          : estate.invitedYou
+            ? 'Sit. You have been asking at the well where my guests go, so I thought you had better be one. The soup is very good. Ask me what you came to ask.'
           : estateAdmits()
             ? 'You are the one they talk about at the well. Sit, if you like. What did you want from an old woman with an orchard?'
             : 'I do not know you, and Bellowes let you in, which he will hear about.',
@@ -47418,7 +47519,7 @@ const TALK_TREES = {
     count: {
       line: (t) => {
         const names = (estate && estate.invites.slice(-2).map(i => i.name)) || [];
-        return `Twenty that are still worth counting, and more that are not. Some of them came over that wall meaning us harm. ` +
+        return `Four generations of rows, and most of it gone to bone. Some of them came over that wall meaning us harm. ` +
           `Most of them came up the front path, in their good coat, delighted to have been asked.` +
           (names.length ? ` ${names.join(' was one. ')} was another.` : '') +
           ` Nothing is wasted in this house and nothing ever has been. You may think what you like about the arithmetic. ` +
@@ -47454,6 +47555,7 @@ const TALK_TREES = {
         addItem('fruit', 24); addItem('rum', 3);
         if(estate.town) estate.town.rep = clamp((estate.town.rep || 0) + 8, -300, 100);
         log('The Aldercotts consider you a friend of the house. Greenrest follows the Aldercotts.', 'good');
+        threadDone('orchard', 'You are a friend of the Aldercott house. The fruit is very good.');
       }}],
     },
     /* ---------- TELLING THEM DOES NOT WORK, AND THAT IS THE POINT ----------
@@ -47475,6 +47577,7 @@ const TALK_TREES = {
           log('You say it in the square, at the well, to anybody who will stand still. Greenrest listens politely and goes back to work.', '');
           log('Nobody calls you a liar. That is somehow worse. By evening the watch has been told to keep an eye on you.', 'bad');
           log('The invitations stop while you are in town. It is the only thing that changes.', '');
+          threadDone('orchard', 'You said it in the square. Greenrest listened politely and went back to work.');
         }},
         {say:'No. Not today.'},
       ],
@@ -47486,7 +47589,10 @@ const TALK_TREES = {
         if(!estate || estate.deal) return;
         estate.deal = 'taken';
         orchardOpen('The Dame has the rows opened for you herself, and stands well back while it is done.');
-        log('Twenty bodies, four generations in the ground, and the woman who buried them holding the lamp.', 'good');
+        const bone = orchardBone();
+        addItem('remains', bone);
+        log(`${bone} Mortal Remains out of four generations of rows, and the woman who buried them holding the lamp.`, 'good');
+        threadDone('orchard', 'You took what was under the Aldercott orchard. The Dame held the lamp.');
       }}],
     },
   },
@@ -47500,6 +47606,8 @@ const TALK_TREES = {
         {say:'You know what I am. Say it out loud.', req:{lich:true}, to:'afraid'},
         {say:'They tell stories about me. Which one did you hear?', req:{known:34}, to:'story'},
         {say:'Who is worth knowing in this town?', to:'who'},
+        {say:'The people who dine at the Aldercott house. Where do they go afterwards?',
+         when: (t) => !!estate && t.homeTown === estate.town && !estate.opened && !!threadOf('orchard'), to:'dined'},
         {say:'Is there work going?', to:'work'},
         {say:'You have been staring. Say it or stop.', req:{race:'chimera'}, to:'staring'},
         {say:'Between us — what does this town not say out loud?',
@@ -47540,6 +47648,10 @@ const TALK_TREES = {
         ? `That the seat is thinner than it looks. That half of what leaves here at night is not grain. And that ${t.homeTown.name} will be somebody else's before the year is out, and everyone knows it, and nobody says it.`
         : 'That there is nothing out here worth the walk, and that everyone who says otherwise is selling something.',
       opts: [{say:'You said nothing. I heard nothing.', fn:(t)=>{ if(t.homeTown) t.homeTown.rep = clamp(t.homeTown.rep + 2, -300, 100); }}],
+    },
+    dined: {
+      line: () => orchardAsked(),
+      opts: [{say:'I see.'}, {say:'Thank you. I will not say who told me.'}],
     },
     rebuffed: {
       line: () => pick([
@@ -48435,6 +48547,7 @@ function snapshot(){
                        invites: (estate.invites || []).map(i => ({...i})),
                        pending: estate.pending ? {...estate.pending} : null,
                        nextInvite: estate.nextInvite,
+                       sensed: !!estate.sensed, asked: estate.asked || 0, inviteYouAt: estate.inviteYouAt || 0, invitedYou: !!estate.invitedYou,
                        graves: (estate.graves || []).map(g => ({x: g.x, y: g.y}))} : null,
     rifts: rifts.map(r=>({id:r.id,x:r.x,y:r.y,r:r.r,age:r.age,seal:r.seal,sang:!!r.sang,tearWork:r.tearWork||0,tearWave:r.tearWave})), riftN, drops: drops.map(d => ({x:d.x, y:d.y, items:{...d.items}})), events, eventN, playerKnown, kitOpen, day, hour, uid, risenN, purgeWrath, fame: {...fame}, craftOrders: craftOrders.map(o => ({kind:o.kind, out:o.out, want:o.want, done:o.done})), lastInquestDay, siegeQuietUntil, guildRep, guildWalls: guild ? guild.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [], pyres: pyres.map(q=>({x:q.x, y:q.y, name:q.name, day:q.day, read:q.read||0})), pyreRead: pyreRead ? {...pyreRead} : null, necroSeen: towns.map(t=>t.necroSeen||0), coilHeld: towns.map(t=>!!t.coilHeld), coilShrine, coilExposed, coilStruck, coilN,
     blueprints: blueprints.map(b => ({...b, need: {...b.need}, got: {...b.got}})),
@@ -48758,6 +48871,8 @@ function restore(d){
     estate.invites = (E.invites || []).map(i => ({...i}));
     estate.pending = E.pending ? {...E.pending} : null;
     estate.nextInvite = E.nextInvite ?? estate.nextInvite;
+    /* the orchard's thread, told in order: what was felt, what was asked, and the card */
+    estate.sensed = !!E.sensed; estate.asked = E.asked || 0; estate.inviteYouAt = E.inviteYouAt || 0; estate.invitedYou = !!E.invitedYou;
     if(E.graves && E.graves.length) estate.graves = E.graves.map(g => ({x: g.x, y: g.y}));
     /* the door is a set of `blocked` tiles, so restoring it is opening or shutting them —
        `blocked` was rebuilt from `baseBlocked` above and the doorway is sealed again by

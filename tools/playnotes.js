@@ -15,6 +15,9 @@
  *      makes a few cheap things, and the Rusted Automatons still drop the ingots
  *   7. a bar sells food off the town's shelf, and the shelf runs out
  *   8. a nest you have taken the bounty on is marked on the minimap (and on screen, as a ward is)
+ *   9. the Aldercott orchard is told in order: a lead (the gift, or a guest who did not come
+ *      home), asking around Greenrest, a card from the house with your name on it, and rows that
+ *      give up bone and the few you heard named, not twenty bodies in the middle of town
  *
  * Anything starting '!!' fails the build.
  *
@@ -235,6 +238,50 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         O.theNestIsMarked = (before === 0 && after >= 4 && gone === 0)
           ? `take ${tw.name}'s bounty on ${j.title.replace('BOUNTY: ', '').toLowerCase()} and a red cross goes on the minimap over the camp (${after} pixels), and comes off when the job does`
           : `!! MINIMAP RED OVER THE CAMP: ${before} BEFORE TAKING, ${after} AFTER, ${gone} ONCE THE JOB IS GONE`;
+      }
+    }
+
+    /* ---- 9. the Aldercott orchard is told in order, and it is not twenty bodies in the street ---- */
+    {
+      const E = estate;
+      if (!E) O.theOrchardIsToldInOrder = '!! NO ESTATE IN THIS WORLD';
+      else {
+        const bits = [], seen = [];
+        /* a fresh estate: shut, unsensed, nobody asked */
+        E.opened = false; E.sensed = false; E.asked = 0; E.inviteYouAt = 0; E.invitedYou = false; E.admitted = false; E.deal = null;
+        E.doorOpen = true; E.doorOpen = false;
+        for (let i = threads.length - 1; i >= 0; i--) if (threads[i].key === 'orchard') threads.splice(i, 1);
+        const dead0 = chars.filter(c => c.orchardDead).length;
+        /* 1. the gift walks past the trees */
+        me.gift = 'dark'; me.state = 'ok'; me.floor = 0; me.jailedAt = null;
+        me.x = E.gx + 0.5; me.y = E.gy + 4.5;
+        orchardTick();
+        const t1 = threadOf('orchard');
+        if (!E.sensed || !t1) bits.push('the gift felt nothing, or opened no thread');
+        if (E.opened || chars.filter(c => c.orchardDead).length !== dead0) bits.push('walking past dug the rows up');
+        else seen.push('the gift feels the ground and opens a lead; nothing comes up');
+        /* 2. asking around Greenrest */
+        const a1 = orchardAsked();
+        const due = E.inviteYouAt;
+        if (!due) bits.push('asking with the lead did not reach the house');
+        else seen.push(`asked where the guests go: "${a1.slice(0, 48)}..."`);
+        /* 3. the card comes on the house's own clock */
+        const invBefore = estateAdmits();
+        day = Math.max(day, due); orchardInviteYou();
+        if (invBefore || !E.invitedYou || !estateAdmits()) bits.push(`the invitation did not open the gate (before ${invBefore}, invited ${E.invitedYou})`);
+        else seen.push('the house sends a card with your name on it, and the gate is open to it');
+        const dameLine = TALK_TREES.dame.root.line(null, me);
+        if (!/asking at the well/.test(dameLine)) bits.push('the Dame does not know why you came');
+        /* 4. the bargain: bone, and the few you heard named */
+        E.invites = E.invites && E.invites.length ? E.invites : [{ name: 'Wenna Coyle', day: day - 3 }];
+        const r0 = stash.remains || 0;
+        TALK_TREES.dame.bargain.opts[0].fn(null, me);
+        const bone = (stash.remains || 0) - r0, bodies = chars.filter(c => c.orchardDead).length - dead0;
+        if (!E.opened || bone < 18 || bodies > 3 || bodies < 1) bits.push(`the rows gave ${bone} remains and ${bodies} bodies`);
+        else seen.push(`the rows give ${bone} Mortal Remains and ${bodies} bod${bodies === 1 ? 'y' : 'ies'} (${chars.filter(c => c.orchardDead).slice(-bodies).map(c => c.name).join(', ')})`);
+        if (!threadOf('orchard') || !threadOf('orchard').done) bits.push('the thread did not close on the choice');
+        O.theOrchardIsToldInOrder = bits.length ? '!! ' + bits.join('; ').toUpperCase() : seen.join('; ');
+        stash.remains = r0;
       }
     }
     return O;

@@ -492,6 +492,25 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
+### 5.16 Sundered sites are laid on top of the roads — **raised 2026-09-27; half fixed**
+
+The play note: *"escorts and caravans get caught up in sundered ground sites. The pathing is weird
+around them and enemies also behave strangely... Bodyguard jobs basically shut down around them."*
+The roads are laid before the sundered sites, and site placement never looked at them. On the
+2048 world one site came down **3 tiles** from a waypoint on the Dustport–Ironscar road, with its
+monument across the way and its five to eight animals on it. Everything walking a road took the
+next waypoint only within 3 tiles of it. A waypoint inside the bone could never be reached, so
+the walker ground against it until the unstuck fallback sent it on detours, and the site's
+animals fought whoever was escorting it.
+
+**Fixed (`wpPassed`):** a caravan, an escort's ward or a pilgrim passes a waypoint that sits on
+blocked ground, or one it has twice failed to reach.
+
+**Not yet:** moving the sites themselves 45 tiles off the roads. It works (every site 60+ tiles
+from a road after it), but it shifts world generation, and with it `command.js` and
+`standoff.js` went red. That is being bisected against the §5.14 grace below before either goes
+in.
+
 ### 5.15 A band on the march trails its own stations — **ruled 2026-09-27: the captain not leading is enough**
 
 `marchorder.js` block 1 raises a band at the start, which is inside Greenrest's walls, and

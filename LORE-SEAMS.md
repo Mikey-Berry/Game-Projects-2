@@ -789,6 +789,35 @@ The "one at a place" shape from the sketch, simplified to one Art each:
 
 `tools/kingscourt.js` holds it.
 
+### 8.6 The Aldercott orchard, told in order — **rebuilt 2026-09-27**
+
+The note: *"It just appears suddenly and without warning. Needs a proper buildup and honestly
+doesn't need a bunch of corpses in the city to work."* It did. The first time anybody with the
+Dark gift walked within eleven tiles of the orchard, twenty bodies came up out of the ground in
+the middle of the start town, and Bellowes, the Dame and the invitations came after the answer.
+It is told in the order a town keeps a secret now:
+
+1. **A lead.** The gift feels something under the trees and nothing comes up, or somebody goes
+   up to the house to dine and does not come home. Either one opens the thread *The Aldercott
+   orchard*, marked at the gate.
+2. **Asking.** Greenrest's townsfolk get a new question: *"The people who dine at the Aldercott
+   house. Where do they go afterwards?"* Each answer is different and none of them straight:
+   Copperhold, a sister's letter that did not sound like her, the watch's new coats, the fruit.
+   The last warns you that Bellowes has been asking after a stranger.
+3. **The invitation.** Two answers, or one plus the gift's lead, and the house hears of it. The
+   next day Bellowes crosses the square with a card that has your name on it. The gate is open to
+   the invitation, the same gate the missing walked through. The Dame's first line knows why you
+   came: *"You have been asking at the well where my guests go, so I thought you had better be
+   one."*
+4. **The rows.** Opened by the Dame (*"Show me."*) or by the bargain. They are bone, four
+   generations of it, and the bargain gives it to you as 18–38 Mortal Remains. The only bodies
+   are the last three guests, the names the town was pleased for, laid in the newest row.
+
+The three endings are unchanged: a friend of the house, the square, or the bargain. Each one
+closes the thread. §2.2 (the Dame's *"do not come back"* is not enforced) is still open.
+
+`tools/playnotes.js` claim 9 walks it end to end.
+
 ---
 
 ## Appendix: re-running the counts
