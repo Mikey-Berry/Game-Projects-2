@@ -13635,6 +13635,13 @@ function rebuildCharGrid(){
   const rare = rareNew();
   for(const c of chars){
     charById.set(c.id, c);
+    /* each ward's guards numbered off, once a step, so each can hold its own place in a ring
+       round the ward rather than all of them walking at the ward's own tile (see BODYGUARD) */
+    if(c.guardTarget){
+      const w = c.guardTarget;
+      if(w._gEpoch !== charEpoch){ w._gEpoch = charEpoch; w._gN = 0; }
+      c._gIdx = w._gN++;
+    }
     /* THE RARE ONES, before every gate, whatever state they are in. Inline, for the reason the
        note at the bottom of this loop gives: a call per body here costs what the filing saves.
        Same tests as `rareFile`. */
@@ -17708,8 +17715,23 @@ function physics(c, dt){
         const st = c.bandStation;
         if(st && c.under != null){
           if(dist(c.x, c.y, st.x, st.y) > 1.5) c.moveTarget = {x: st.x, y: st.y};
-        } else if(dw > 2.2){
-          c.moveTarget = {x: w.x, y: w.y};
+        } else {
+          /* ---------- A PLACE IN A RING, NOT THE WARD'S OWN TILE ----------
+             "Large groups set to bodyguard a single person end up pushing them around and
+              crowding too close to them. The biggest offender is summoning a bunch of old bones
+              as a necromancer and seeing yourself get pushed around."
+             Every guard with no band station walked at the ward's own position whenever it was
+             more than 2.2 tiles off, so a dozen Old Bones all converged on the necromancer and
+             the crowd shoved him about. Each guard now holds its own slot in a ring round the
+             ward, spaced by how many are guarding: about a tile of circumference each, never
+             closer than 1.8. A little slack before it moves, so a guard standing near its
+             place does not re-path every step while the ward stands still. */
+          const n = Math.max(1, w._gN || 1), k = c._gIdx || 0;
+          const r = Math.max(1.8, n * 1.05 / (Math.PI * 2));
+          const a = (k / n) * Math.PI * 2 + (w.id % 7) * 0.9;
+          const sx = w.x + Math.cos(a) * r, sy = w.y + Math.sin(a) * r;
+          if(dist(c.x, c.y, sx, sy) > 1.3 && !isBlocked(sx, sy, w.floor || 0)) c.moveTarget = {x: sx, y: sy};
+          else if(dw > r + 1.6) c.moveTarget = {x: w.x, y: w.y};   /* a blocked slot: close up on the ward instead */
         }
       }
     }
