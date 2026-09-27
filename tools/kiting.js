@@ -79,7 +79,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       if (isBlocked(x + 0.5, y + 0.5)) continue;
       if (towns.some(t => dist(t.x, t.y, x, y) < 70)) continue;
       let ok = true;
-      for (let j = -16; j <= 16 && ok; j++) for (let i = -16; i <= 16 && ok; i++)
+      /* AND CLEAR ALL THE WAY DOWN THE COURSE: the runs head for gx - 20 to gx - 40, and a free
+         runner that meets rock at -17 is a free runner capped short, which makes any kiter look
+         cheap. Found on the 2048 world, where the first spot clear for sixteen was not clear for
+         forty-six. */
+      for (let j = -16; j <= 16 && ok; j++) for (let i = -46; i <= 16 && ok; i++)
         if (isBlocked(x + i + 0.5, y + j + 0.5)) ok = false;
       if (ok) { gx = x; gy = y; break outer; }
     }
