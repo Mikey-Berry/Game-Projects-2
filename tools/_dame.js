@@ -7,7 +7,7 @@ const path = require('path');
   const b = await chromium.launch({ args: ['--use-gl=swiftshader','--enable-unsafe-swiftshader','--disable-gpu-sandbox','--no-sandbox'] });
   const p = await b.newPage({ viewport: { width: 500, height: 400 } });
   const errs = []; p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0,200)));
-  await p.goto('file://' + path.join(__dirname, 'game.html'), { waitUntil: 'load' });
+  await p.goto('file://' + path.join(__dirname, 'game.html'), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(2500);
   await p.evaluate(() => document.getElementById('btn-start').click());
   await p.waitForTimeout(4000);

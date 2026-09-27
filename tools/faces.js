@@ -25,7 +25,7 @@ const OUT = process.argv[2] || path.join(__dirname, 'faces.png');
   const p = await b.newPage({ viewport: { width: 1500, height: 470 }, deviceScaleFactor: 2 });
   const errs = [];
   p.on('pageerror', e => errs.push(e.message.slice(0, 200)));
-  await p.goto('file://' + gamePath(process.argv[3]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[3]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   await p.evaluate(() => document.getElementById('btn-start').click());
   await p.waitForTimeout(1500);

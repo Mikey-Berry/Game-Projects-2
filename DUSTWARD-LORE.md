@@ -511,9 +511,14 @@ dug into the first civilisation's tunnels, and at the bottom of one of them is M
 - **The Sigil-Bound** — transmutation immortal in an armour vessel, one of eleven poured, two
   hundred years ago. "Nobody has seen it open" — opening it ends it. He is losing his name and the
   questline is him getting it back. Sex unfixed `[?]`.
-- **The Ossuary King** (m) — dead royalty holding court in a far ruin, who refused to finish. He was
-  at the pouring and signed for it — eleven names and his hand under all of them. Wears the Sunken
-  Crown. See the note below.
+- **The Ossuary King** (m) — **not a king** (rebuilt 2026-09-27). A Golden-Age registrar who
+  countersigned the Pouring: eleven names and his hand under every one. He was meant to be the
+  twelfth, went halfway into the vessel and climbed back out, and what climbed out wears its own
+  bones on the outside, like the house they are kept in. He sits a throne in a far ruin with the
+  dead kneeling in rows before him, petitioners who came to be registered and never left. The
+  folk call him a king for the throne and the crown; the "crown" is the Pouring's register-band,
+  sunk and tarnished (the Sunken Crown). He has **no relation to the old king** `[C]`. See the
+  note below.
 - **Sister Ash** (f) — exiled inquisitor with a pyre-weapon. The light gave her certainty where it
   gave Verity quiet. "I burned my order. Bones burn easier."
 - **Grand Marshal Vey** — holds the Bastion.
@@ -550,11 +555,12 @@ her. **It worked.** Her five requests all read as experiments run by a researche
 condition, and the last is her asking a stranger to stand there while she tries, and fails, to want
 to stop.
 
-> ON THE OSSUARY KING `[★prov]`. That he is the Golden Age's last king — the hand under all eleven
-> names, holding court in the ruin of the kingdom itself — is **a rumour among scholars and
-> unconfirmed knowledge, not established fact.** Write it as something the lettered pass around,
-> never as something the world states. He is a legacy boss from the earliest editions and his
-> current shape will not carry that weight; if he is ever reworked, the door is open.
+> ON THE OSSUARY KING `[C]`, ruled 2026-09-27. The old scholars' rumour made him the Golden
+> Age's last king. **That rumour is retired.** He was reworked from the ground up as a
+> registrar with a throne, and the user ruled him **no relation to the old king**: not the
+> husk, not the heir, not a rumour of either. The twelfth space on the Circlet was his, and he
+> would not sign it (the demilich's line). The folk may still call him a king; nothing in the
+> world treats him as one.
 
 ## 14. Where the player comes in `[C]`
 
@@ -672,7 +678,7 @@ Flagged, unresolved, safe to revisit. Keep dependent dialogue thin.
 | What ended the first civilisation | **The most load-bearing open question in the setting.** Everything the Last Scholar does is an attempt to stop it happening to humanity, and he thinks it is happening again. |
 | The Last Scholar's immortality | **Deliberately never explained.** The legends this character is built on work because nobody produces the mechanism. |
 | How Mother's parasites work | Moral shape settled — cut from her, and she allowed it. The biology is undefined and is on the shelf for its own pass. |
-| The Ossuary King as the last king | Scholar rumour and unconfirmed knowledge only. Legacy boss; the door reopens if he is reworked. The old king now exists `[C]`; whether the Ossuary King is the husk he left behind is proposed in `LORE-SEAMS.md` §8.3 and unruled. |
+| The Ossuary King as the last king | **Ruled 2026-09-27: no.** Reworked as a registrar who would not be the twelfth name. No relation to the old king. The rumour is retired, not kept open. |
 | The old king's court | Four, one per Art, sketched in `LORE-SEAMS.md` §8.3. Not built. |
 | The kingdom's crater | Unbuilt. Should be the largest landmark in the world, and the natural site for the Door. |
 | What the Church knew | It existed before the Fracture, alongside the kingdom. Whether it blessed the rite is unwritten, and it is where the closely-guarded secret came from. |

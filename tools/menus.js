@@ -43,7 +43,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   for (const S of SIZES) {
     const p = await b.newPage({ viewport: { width: S.w, height: S.h } });
     p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
-    await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+    await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
     await p.waitForFunction(() => {
       const bs = document.getElementById('btn-start');
       return bs && typeof chars !== 'undefined' && chars.length > 0;
@@ -132,7 +132,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   /* and it must be visibly a panel, not a shape the colour of the dirt behind it */
   {
     const p = await b.newPage({ viewport: { width: 1024, height: 700 } });
-    await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+    await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
     await p.waitForFunction(() => document.getElementById('btn-start'), null, { timeout: 60000 });
     const look = await p.evaluate(() => {
       const el = document.getElementById('ctxmenu');

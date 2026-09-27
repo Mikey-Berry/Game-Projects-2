@@ -35,7 +35,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const p = await b.newPage({ viewport: { width: 900, height: 700 } });
   const errs = [];
   p.on('pageerror', e => errs.push(e.message.slice(0, 220)));
-  await p.goto('file://' + gamePath(process.argv[3]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[3]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForSelector('#btn-start', { state: 'attached', timeout: 60000 });
   await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(3000);

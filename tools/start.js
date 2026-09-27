@@ -62,7 +62,7 @@ const PHONES = [
     const p = await b.newPage({ viewport: { width: vp.w, height: vp.h }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
     const errs = [];
     p.on('pageerror', e => errs.push(String(e.message).slice(0, 140)));
-    await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+    await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
     await p.waitForTimeout(2500);
 
     /* ---------- WALK THE CREATOR THE WAY A THUMB DOES ----------

@@ -83,7 +83,7 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
     const ctx = await b.newContext({ ...devices['Pixel 5'] });
     const p = await ctx.newPage();
     p.on('pageerror', e => errs.push('PHONE: ' + e.message.slice(0, 160)));
-    await p.goto(url, { waitUntil: 'load' });
+    await p.goto(url, { waitUntil: 'load', timeout: 90000 });
     await p.waitForTimeout(3000);
     await p.evaluate(() => document.getElementById('btn-start').click());
     await p.waitForTimeout(5000);
@@ -466,7 +466,7 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
     });
     const p = await ctx.newPage();
     p.on('pageerror', e => errs.push('LANDSCAPE: ' + e.message.slice(0, 160)));
-    await p.goto(url, { waitUntil: 'load' });
+    await p.goto(url, { waitUntil: 'load', timeout: 90000 });
     await p.waitForTimeout(3000);
     await p.evaluate(() => document.getElementById('btn-start').click());
     await p.waitForTimeout(4000);
@@ -548,7 +548,7 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
     const ctx = await b.newContext({ viewport: { width: 1280, height: 800 } });
     const p = await ctx.newPage();
     p.on('pageerror', e => errs.push('DESKTOP: ' + e.message.slice(0, 160)));
-    await p.goto(url, { waitUntil: 'load' });
+    await p.goto(url, { waitUntil: 'load', timeout: 90000 });
     await p.waitForTimeout(3000);
     await p.evaluate(() => document.getElementById('btn-start').click());
     await p.waitForTimeout(4000);

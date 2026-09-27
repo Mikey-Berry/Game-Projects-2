@@ -41,7 +41,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 240)));
   /* A SEED ARGUMENT, because two of the claims in here are about where worldgen PUT something
      and this repo has now lost time three separate ways to a bar set against one world. */
-  await p.goto('file://' + gamePath(process.argv[2]) + (process.argv[3] ? '?seed=' + process.argv[3] : ''), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]) + (process.argv[3] ? '?seed=' + process.argv[3] : ''), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   await p.evaluate(() => document.getElementById('btn-start').click());
   await p.waitForTimeout(3500);

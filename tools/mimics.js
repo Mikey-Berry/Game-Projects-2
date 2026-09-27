@@ -48,7 +48,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const p = await b.newPage({ viewport: { width: 900, height: 620 } });
   const errs = [];
   p.on('pageerror', e => errs.push(String(e.message).slice(0, 160)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
 
   /* THE PICKER IS DRAWN BEFORE THE WORLD EXISTS, so it is asked about first.

@@ -17,7 +17,7 @@ const label = process.argv[3] || (src || 'game');
   page.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 300)));
   page.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE: ' + m.text().slice(0, 300)); });
 
-  await page.goto('file://' + gamePath(src), { waitUntil: 'load' });
+  await page.goto('file://' + gamePath(src), { waitUntil: 'load', timeout: 90000 });
   await page.waitForTimeout(3000);
   await page.evaluate(() => document.getElementById('btn-start').click());
   await page.waitForTimeout(3000);

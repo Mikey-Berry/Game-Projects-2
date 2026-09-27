@@ -10,7 +10,7 @@ const path = require('path');
   for(let s = 1; s <= N; s++){
     const p = await b.newPage({ viewport: { width: 500, height: 400 } });
     try {
-      await p.goto('file://' + path.join(__dirname, 'game.html') + '?seed=' + s, { waitUntil: 'load' });
+      await p.goto('file://' + path.join(__dirname, 'game.html') + '?seed=' + s, { waitUntil: 'load', timeout: 90000 });
       await p.waitForTimeout(2200);
       await p.evaluate(() => document.getElementById('btn-start').click());
       await p.waitForTimeout(3500);

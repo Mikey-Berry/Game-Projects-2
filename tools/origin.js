@@ -22,7 +22,7 @@ const KEY = process.argv[3] || 'lyonart';
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 220)));
   p.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE: ' + m.text().slice(0, 220)); });
   const URL = 'file://' + gamePath(process.argv[2]);
-  await p.goto(URL, { waitUntil: 'load' });
+  await p.goto(URL, { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   await p.evaluate(() => document.getElementById('btn-start').click());
   await p.waitForTimeout(3000);
@@ -335,7 +335,7 @@ const KEY = process.argv[3] || 'lyonart';
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     if (i > 0) {
-      await p.goto(URL, { waitUntil: 'load' });
+      await p.goto(URL, { waitUntil: 'load', timeout: 90000 });
       await p.waitForTimeout(2500);
       await p.evaluate(() => document.getElementById('btn-start').click());
       await p.waitForTimeout(2500);

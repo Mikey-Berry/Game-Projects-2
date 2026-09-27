@@ -682,8 +682,8 @@ other name appears.
 `tools/oldking.js` holds all of it. `beasts.js`'s "with the Brood down the rite lands" claim now
 walks through him.
 
-**Not decided, so not built:** whether the Ossuary King is the husk the old king left behind,
-and whether Lyonart is anything to him. Both are in the sketch below as proposals.
+**Not decided, so not built:** whether Lyonart is anything to him. It is in the sketch below
+as a proposal. (The Ossuary King was ruled out on 2026-09-27: no relation. See §8.4.)
 
 ### 8.3 The old king's court — **a sketch, for your call**
 
@@ -727,10 +727,7 @@ and it gives the player's endgame preparation a shape that isn't a stockpile.
 to keep the rope from being cut. That is simpler, but they never meet the world.
 
 **Tie-ins, for you to rule on:**
-- **The Ossuary King as the husk.** The scholars' rumour (lore bible §13) becomes half-true: he
-  is what the old king left behind when he went through. Killing him first would bring the old
-  king down *"lighter than he went up"*, with less blood. That confirms a rumour the bible keeps
-  deliberately open, so it is your call.
+- ~~**The Ossuary King as the husk.**~~ Ruled out 2026-09-27: no relation to the old king.
 - **Lyonart d'Alagadda.** If the old king has hung in Alagadda for nine generations, the court
   would know an Alagaddan prince on sight. One line from the Chancellor (*"Highness. You are
   expected."*) would do more than any exposition. It makes Lyonart's exile something the court
@@ -738,6 +735,35 @@ to keep the rope from being cut. That is simpler, but they never meet the world.
 - **The licence flag, again.** The masked ambassadors and the Hanged King are SCP ideas (CC BY-SA
   3.0). Keeping the name internal lowers the exposure. The borrowing is still there if the game
   ships.
+
+### 8.4 The Ossuary King, rebuilt — **built** (2026-09-27)
+
+The brief: a legacy boss, reworked from the ground up, **no relation to the old king**. The
+old shape was a big skeleton with a crown and a stat block. Everything about him is new.
+
+- **Who he is.** A Golden-Age registrar who countersigned the Pouring, with eleven names and
+  his hand under every one. He was meant to be the twelfth, went halfway into the vessel and
+  climbed back out. What climbed out wears its own bones on the outside. The "crown" is the
+  Pouring's register-band. The demilich's line about him now says he would not sign the twelfth
+  space. The scholars' last-king rumour is retired (lore bible §13, §18).
+- **The place.** A throne facing south down two rows of five, backed by a horseshoe of wall
+  stacked with skulls, with a cold teal candle at either hand. The empty places in the rows
+  hold bones bowed to the floor. Four living petitioners kneel in the front places and do not
+  get up until he is struck.
+- **The fight, in three.**
+  - *Enthroned:* he does not leave the chair. Struck, the kneelers stand. Every 7 s he reads a
+    name off the inside of the band, and another petitioner answers it, to six alive.
+  - *The court rises* (60%): he gets up.
+  - *He sheds the cage* (25%): the bone comes off, and the ward with it. He is faster (×1.3),
+    hits harder (claw 46), and the shedding hurts everything within 3.2 tiles. The roll speeds
+    up to every 5 s.
+- **The read.** While the cage is on, `BONE_WARD` scales damage by weapon: blunt ×1.5, holy
+  ×1.2, burn ×0.9, cut ×0.6, pierce ×0.55. Bring a hammer.
+- **Drawn** by `bodyOfTheOssuaryKing`: seated, standing and shed, with the rig rebuilt when
+  the phase changes (`bossPhase` is in `colorKeyOf`). The phase, the ward and the petitioners
+  survive a save.
+
+`tools/ossuary.js` holds it.
 
 ---
 

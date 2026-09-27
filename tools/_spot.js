@@ -3,7 +3,7 @@ const path = require('path');
 (async () => {
   const b = await chromium.launch({ args: ['--use-gl=swiftshader','--enable-unsafe-swiftshader','--disable-gpu-sandbox','--no-sandbox'] });
   const p = await b.newPage({ viewport: { width: 400, height: 300 } });
-  await p.goto('file://' + path.join(__dirname, process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + path.join(__dirname, process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(2500);
   await p.evaluate(() => document.getElementById('btn-start').click());
   await p.waitForTimeout(4500);

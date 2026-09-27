@@ -592,7 +592,14 @@ body.touch #hint{display:none}
 <script>
 "use strict";
 /* ============================================================ CORE */
-const W = 1440, H = 1440;   /* v22 scale — four times the waste between the lights */
+const W = 2048, H = 2048;   /* v23 scale, 2026-09-27: twice the waste again */
+/* ---------- HOW MUCH MORE WORLD THERE IS ----------
+   The seven seats, the redoubts and every named thing stay singular. What is SCATTERED — ruins,
+   wild seams, drifters, camps, the sundered sites — was counted for a map 1440 on a side, and at
+   the same count on twice the land the waste only gets emptier. Those scale by the area; radii
+   that belong to a place's reach (the three grounds) scale by its square root. */
+const AREA_K = (W * H) / (1440 * 1440);
+const AREA_R = Math.sqrt(AREA_K);
 const cv = document.getElementById('game');
 const mmcv = document.getElementById('minimap'), mmcx = mmcv.getContext('2d');
 
@@ -2667,7 +2674,7 @@ function placeTownAt(def, cx0, cy0){
                                 r: copperPit.r + 1, kind: 'cvein', home: 'copperhold', pit: true});
   /* wild seams out in the waste: no one's yet, and worth a war */
   let tries = 0;
-  while(oreFields.length < 7 && tries++ < 4000){
+  while(oreFields.length < Math.round(7 * AREA_K) && tries++ < 4000 * AREA_K){
     const x = ri(25, W-25), y = ri(25, H-25);
     if(tileAt(x,y) === 3) continue;
     if(towns.some(t => dist(t.x, t.y, x, y) < 50)) continue;
@@ -2736,6 +2743,55 @@ const METAL_ARMOR = new Set(['a_pla', 'a_baroness', 'a_marshal', 'a_carap']);
 function makeParts(){
   const p = {};
   for(const k of PARTS) p[k] = {hp:100, max:100, bleed:0, bandaged:false, severed:false, pros:false};
+  return p;
+}
+/* ---------- A BODY AT FULL HEALTH IS NOT WRITTEN DOWN ----------
+   The world grew to 2048 across, the roster to 2,900, and `mobile.js` read the save at 5.9MB,
+   of which 1.7MB was `parts` blocks in which nearly every entry was a fresh part. A saved part
+   keeps only what differs from one: `max` when it is not 100, `hp` when it is not `max`, and a
+   flag or a bleed only when it is set. Any field `makeParts` does not know about is kept
+   whatever it holds, so nothing added later can quietly come back as `undefined`. A body with
+   nothing to say writes no block at all, and `unpackParts` takes a full old-style block as it
+   always did, because a full block is only a pack that left nothing out. */
+const PART_FRESH = {bleed:0, bandaged:false, severed:false, pros:false};
+/* and the same for the stat block, the attunements and their experience: `restore` has always
+   read each of them through a default, so a value equal to that default is not written. The
+   defaults live here so the writer and the reader cannot drift apart. */
+const STAT_BASE = {atk:2, def:2, tough:2, ath:2, medic:2, magic:1, labor:2, armr:1,
+  blades:1, blunt:1, ranged:1, martial:1,
+  smithing:1, crafting:1, farming:1, brewing:1, gunnery:1, study:1};
+const statBaseCha = (race) => (RACES[race] || RACES.human).cha ?? 5;
+function packStats(c){
+  const out = {};
+  for(const k in c.stats){
+    const v = c.stats[k];
+    if(v === (k === 'charisma' ? statBaseCha(c.race) : STAT_BASE[k])) continue;
+    out[k] = v;
+  }
+  return out;
+}
+const attBase = (gift, race) => ({divine:0, destruction:0, dark:0, dust:0, ...((gift && race !== 'chimera') ? {[gift]: 2} : {})});
+const sameFlat = (a, b) => { const ka = Object.keys(a); return ka.length === Object.keys(b).length && ka.every(k => a[k] === b[k]); };
+function packParts(parts){
+  const out = {};
+  for(const k in parts){
+    const p = parts[k], d = {};
+    for(const f in p){
+      const v = p[f];
+      if(f === 'max' ? v === 100 : f === 'hp' ? v === p.max : (f in PART_FRESH && v === PART_FRESH[f])) continue;
+      d[f] = v;
+    }
+    if(Object.keys(d).length) out[k] = d;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+function unpackParts(saved){
+  const p = makeParts();
+  for(const k in (saved || {})){
+    const d = saved[k];
+    p[k] = Object.assign(p[k] || {hp:100, max:100, ...PART_FRESH}, d);
+    if(d.hp === undefined) p[k].hp = p[k].max;
+  }
   return p;
 }
 
@@ -5898,7 +5954,7 @@ function rollChestLoot(){
 }
 (function placeRuins(){
   let tries = 0;
-  while(ruins.length < 8 && tries++ < 8000){
+  while(ruins.length < Math.round(8 * AREA_K) && tries++ < 8000 * AREA_K){
     const x = ri(12, W-12), y = ri(12, H-12);
     if(tileAt(x,y) === 3) continue;
     if(craterD(x, y) < CRATER.glass + 10) continue;      /* the capital's ruins are the crater's own */
@@ -6423,6 +6479,98 @@ function spawnAutomaton(x, y, r){
   if(rnd() < 0.35) c.weapon = 'w_lance';
   chars.push(c);
   return c;
+}
+/* ============================================================ THE OSSUARY KING
+   REBUILT 2026-09-27, and NOT A KING. A Golden-Age registrar who countersigned the Pouring:
+   eleven names, and his hand under every one of them. He was meant to be the twelfth, and the
+   Circlet still carries the blank space where his name would go. He went halfway into the vessel
+   and climbed back out, and what climbed out wears its own bones on the outside, like the house
+   they are kept in. He sits on a throne in a far ruin with a court of the dead in rows in front
+   of him, petitioners who came to be registered and never left. The folk call him a king for
+   the throne and the crown. The crown is the Pouring's register-band, sunk and tarnished. Nothing
+   about him has anything to do with the old king in the Door, and nothing in the game says so.
+
+   THE FIGHT, in three: ENTHRONED, he does not get up. He reads a name off the band and something
+   in the rows stands up to answer it, up to six at a time. Past four tenths gone, THE COURT
+   RISES: he gets off the throne. Past three quarters gone, he SHEDS THE CAGE: the bone he wears
+   breaks off him, which takes the ward with it, and what is inside is faster. The ward is the
+   read: while the cage is on, a hammer breaks it and a blade skates off it. */
+let ossuary = null;                  /* {x, y}: the throne */
+const OSSUARY_BLOOD = 950;
+const BONE_WARD = {blunt: 1.5, cut: 0.6, pierce: 0.55, burn: 0.9, holy: 1.2};
+const OSSUARY_BARKS = ['Petitions are heard at dusk. It is always dusk in here.',
+  'State your name for the register. Everybody does, in the end.',
+  'Eleven names, and my hand under every one. Count them. I have.'];
+/* the wall of the house behind the throne: a horseshoe of stacked skulls round its north side */
+function ossuaryWalls(){
+  const out = [];
+  for(let d = 200; d <= 340; d += 12){
+    const a = d * Math.PI / 180;
+    out.push({x: ossuary.x + Math.cos(a) * 5.6, y: ossuary.y + Math.sin(a) * 5.6, a});
+  }
+  return out;
+}
+/* the rows in front of the throne: two ranks of five, south of it, facing it */
+function ossuarySlot(i){
+  const row = Math.floor(i / 5) % 2, col = i % 5;
+  return {x: ossuary.x + (col - 2) * 1.6, y: ossuary.y + 3.2 + row * 1.8};
+}
+function spawnPetitioner(x, y, king){
+  const c = makeChar('Petitioner', 'exiledead', x, y, {atk:16, def:12, tough:14, ath:5});
+  c.undead = true; c.rot = 'bones'; c.neutral = true; c.hunger = 100;
+  c.petitioner = true; c.follow = null;
+  c.guard = {x, y};
+  c.squad = king && king.squad || null;
+  chars.push(c);
+  return c;
+}
+let _ossuaryK = null;
+function ossuaryKing(){
+  if(_ossuaryK && _ossuaryK.state !== 'dead' && chars.includes(_ossuaryK)) return _ossuaryK;
+  _ossuaryK = chars.find(c => c.ossuary && c.state !== 'dead') || null;
+  return _ossuaryK;
+}
+let _ossuaryT = 0;
+function ossuaryTick(dt){
+  if(!ossuary) return;
+  const k = ossuaryKing();
+  if(!k) return;
+  if((k.bossPhase || 0) === 0){
+    /* ENTHRONED: he is where the throne is, and he does not walk off it */
+    k.speedMult = 0; k.x = ossuary.x; k.y = ossuary.y; k.moveTarget = null;
+  }
+  if(k.state !== 'ok' || !k.provoked) return;
+  const foes = player().filter(o => o.state === 'ok' && !(o.floor || 0) && dist(o.x, o.y, k.x, k.y) < 26);
+  if(!foes.length) return;
+  /* the court stands with him: every kneeler answers the moment he is struck, once */
+  if(!k._courtUp){
+    k._courtUp = true;
+    for(const pt of chars) if(pt.petitioner && pt.state === 'ok'){ pt.provoked = true; pt.kneel = false; }
+  }
+  const k01 = k.blood / k.maxBlood;
+  if((k.bossPhase || 0) === 0 && k01 < 0.6){
+    k.bossPhase = 1; k.speedMult = 1;
+    say(k, 'The court rises.');
+    log('The Ossuary King gets up off his throne. Nobody has seen him do that.', 'bad');
+  }
+  if(k.bossPhase === 1 && k01 < 0.25){
+    k.bossPhase = 2; k.boneWard = false; k.clawDmg = 46; k.speedMult = 1.3;
+    say(k, 'Fine. Without it, then.');
+    log('The cage of bone he wears breaks open and falls off him in pieces. What is inside it is smaller, and faster, and still wearing the crown.', 'bad');
+    addSpecks(k.x, k.y + 1, '#b0a488', 30);
+    for(const o of foes) if(dist(o.x, o.y, k.x, k.y) < 3.2){ applyDamage(k, o, pickPart(), 16 + rnd() * 8, 'cut', true); updateState(o, true); }
+  }
+  /* THE ROLL: a name off the band, and one of the rows stands up to answer it */
+  if((_ossuaryT -= dt) > 0) return;
+  _ossuaryT = k.bossPhase === 2 ? 5 : 7;
+  let up = 0;
+  for(const o of chars) if(o.petitioner && o.state === 'ok') up++;
+  if(up >= 6) return;
+  const q = ossuarySlot((k._rollN = (k._rollN || 0) + 1) + 3);
+  const pt = spawnPetitioner(q.x, q.y, k);
+  pt.provoked = true; pt.target = foes[(rnd() * foes.length) | 0];
+  addSpecks(q.x, q.y + 0.4, '#b0a488', 10);
+  if(!k._rollTold){ k._rollTold = true; log('The Ossuary King reads a name off the inside of his crown. Something in the rows answers to it and stands up.', 'bad'); }
 }
 /* ---------- WHAT SITS UP IN THE RUST ----------
    The same frame as a redoubt's warden, left out in the weather for nine generations: slower to
@@ -7000,7 +7148,22 @@ function placeCave(h){
          Sliding the centre consumes no dice at all: the same chamber is built, stocked from
          the same rolls, one tile further in. Clamped BEFORE the shaft test below, so that test
          still asks about the box that will actually be cut. */
-      const rcx = clamp(scx, 2 + hw, W - 2 - hw), rcy = clamp(scy, 2 + hh, H - 2 - hh);
+      let rcx = clamp(scx, 2 + hw, W - 2 - hw), rcy = clamp(scy, 2 + hh, H - 2 - hh);
+      /* ---------- AND NOT UP AGAINST ITS NEIGHBOUR ----------
+         Two chambers of one ring are rolled at angles the dice pick and nothing kept them apart,
+         so the larger rooms met: on the 2048 world two pairs overlapped outright and one door
+         opened onto a slot one tile wide between its own wall and the next room's, which is the
+         "pencil path" the doorways were widened to get rid of. Slid outward along its own
+         bearing, a tile at a time, until three tiles of floor separate the rings. No dice. */
+      const crowds = (x, y) => {
+        for(const cv of [cave, ...caves]) for(const o of cv.rooms) if(o.f === fl
+          && x - hw - 4 < o.x1 && x + hw + 4 > o.x0 && y - hh - 4 < o.y1 && y + hh + 4 > o.y0) return true;
+        return false;
+      };
+      for(let k = 1; k <= 16 && crowds(rcx, rcy); k++){
+        rcx = clamp(Math.round(sx + Math.cos(a) * (d2 + k)), 2 + hw, W - 2 - hw);
+        rcy = clamp(Math.round(sy + Math.sin(a) * (d2 + k)), 2 + hh, H - 2 - hh);
+      }
       let swallows = false;
       for(const st of stairs){
         if(st.x >= rcx - hw && st.x <= rcx + hw && st.y >= rcy - hh && st.y <= rcy + hh){ swallows = true; break; }
@@ -7504,7 +7667,7 @@ function spawnDemilich(){
   } finally { seed = pocket; }
 }
 (function spawnBosses(){
-  /* The Ossuary King — dead royalty, holding court in a ruin far from the Bastion */
+  /* THE OSSUARY KING — rebuilt 2026-09-27; see OSSUARY at `ossuaryTick` for what he is now */
   let p = bossSpot(30, 60);
   {
     const farRuins = ruins.filter(r => (!bastion || dist(r.x, r.y, bastion.x, bastion.y) > 45) &&
@@ -7514,21 +7677,27 @@ function spawnDemilich(){
     if(farRuin) p = findOpenNear(farRuin.x, farRuin.y, 4);
   }
   squadN++;
-  const kSq = {id:squadN, anchor:{x:p.x, y:p.y}, kind:'boss', lair:{x:p.x, y:p.y, r:7}};
+  const kSq = {id:squadN, anchor:{x:p.x, y:p.y}, kind:'boss', lair:{x:p.x, y:p.y, r:9}};
   const king = makeChar('The Ossuary King', 'exiledead', p.x, p.y,
-    {atk:45, def:45, tough:40, ath:5, magic:20, armr:30, weapon:'w_kingsfang', armor:'a_pla', sex:'m', squad:kSq});
-  king.undead = true; king.neutral = true; king.bossKey = 'king'; king.big = 1.3;
-  king.blood = 300; king.maxBlood = 300; king.hunger = 100;
+    {atk:48, def:44, tough:60, ath:4, magic:40, armr:30, sex:'m', squad:kSq});
+  king.undead = true; king.neutral = true; king.bossKey = 'king'; king.big = 1.5;
+  king.beast = true; king.clawDmg = 34;          /* drawn by his own rig: see `bodyOfTheOssuaryKing` */
+  king.ossuary = true; king.bossPhase = 0; king.boneWard = true;
+  king.blood = OSSUARY_BLOOD; king.maxBlood = OSSUARY_BLOOD; king.hunger = 100;
   king.loot = ri(800, 1500);
   king.bindWeight = 4;
-  king.dropItems = {crown:1, remains:4, tome:2, formula_p:1, formula_w:1};
+  king.guard = {x: p.x, y: p.y};
+  king.dropItems = {crown:1, remains:6, tome:2, formula_p:1, formula_w:1};
+  king.barks = OSSUARY_BARKS;
   chars.push(king);
-  for(let i=0;i<3;i++){
-    const q = findOpenNear(p.x, p.y, 3);
-    const at = makeChar('Grave Attendant', 'exiledead', q.x, q.y,
-      {atk:22, def:20, tough:18, ath:6, weapon:'w_rkat', squad:kSq});
-    at.undead = true; at.neutral = true; at.hunger = 100; at.follow = king;
-    chars.push(at);
+  ossuary = {x: p.x, y: p.y};
+  for(const w of ossuaryWalls()) blocked.add(bkey(Math.floor(w.x), Math.floor(w.y)));
+  /* four already kneeling in front of him, as a court has; the rest of the rows are only bones
+     until he reads a name off the band */
+  for(let i = 0; i < 4; i++){
+    const q = ossuarySlot(i);
+    const pt = spawnPetitioner(q.x, q.y, king);
+    pt.kneel = true;
   }
   /* The Grazer — a leviathan of the wastes, minds its own business */
   p = bossSpot(36, 45);
@@ -8889,7 +9058,7 @@ function routeVia(fromT, toT){
   for(const j of hops){ wps.push(...routeFor(at, towns[j]).wps); at = towns[j]; }
   return {wps, aI: i0, bI: i1, hops: hops.length};
 }
-for(let i=0;i<6;i++) spawnDrifter();
+for(let i=0;i<Math.round(6 * AREA_K);i++) spawnDrifter();
 /* ---------- AND NOBODY STARTS THE GAME STANDING IN A YARD THEY CANNOT GET INTO ----------
    `estateEvict` already exists and already does exactly the right thing — it puts any stranger
    inside the Aldercott walls back out on the street — and it runs on the DAY ROLL-OVER. So a
@@ -11129,6 +11298,8 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
   if(a && d.deepKin) deepProvoke(d, a);
   /* armour and toughness, for every path — melee, arrow, bolt, lance and spell alike */
   if(!raw) dmg = mitigate(d, dmg, wt, ap, a);
+  /* A CAGE OF BONE WORN OUTSIDE (the Ossuary King): a hammer breaks it, a blade skates off it */
+  if(d.boneWard && !raw) dmg *= BONE_WARD[wt] ?? 1;
   /* an awakened parasite remembers what it was bred to kill */
   if(a && a.race==='hollow' && a.hollowTier >= 1 && d.gauntKind) dmg *= 1.35;
   /* how much weapon was behind it. Projectiles and spells come through here too and have
@@ -11366,6 +11537,7 @@ function kill(c, by){
   if(c.bossKey && !bossSlain[c.bossKey]) bossSlain[c.bossKey] = day;
   if(c.bossKey === 'guardian') guardianFalls(c);
   if(c.bossKey === 'oldking') oldKingFalls(c);
+  if(c.ossuary) log('The Ossuary King goes down among his petitioners. The crown rolls off him and does not stop for some time.', 'good');
   /* a risen that has done the work is a candidate for a name */
   if(by && by.undead && by.crafted) by.kills = (by.kills || 0) + 1;
   /* ---------- COMMANDING THE DEAD SHARPENS THE CRAFT — WHEN THEY ARE COMMANDED ----------
@@ -18379,7 +18551,7 @@ function oldKingComesDown(d){
   k.head = 'h_oldcrown';
   k.dropItems = {codex: 1, formula_p: 2};
   k.barks = OLDKING_STANDING;
-  k.kingPhase = 0;
+  k.bossPhase = 0;
   chars.push(k);
   addSpecks(q.x, q.y + 1.5, '#f4e8c0', 40);
   say(k, 'There. Now we are the same height.');
@@ -18416,8 +18588,8 @@ function oldKingTick(dt){
   /* ---- AND DOWN HERE: he does not leave the Door ---- */
   if(dist(k.x, k.y, d.x, d.y) > d.r + 4){ k.target = null; k.targetManual = false; k.moveTarget = {x: d.x, y: d.y}; }
   if(k.state !== 'ok') return;
-  if(!k.kingPhase && k.blood < k.maxBlood * 0.5){
-    k.kingPhase = 1;
+  if(!k.bossPhase && k.blood < k.maxBlood * 0.5){
+    k.bossPhase = 1;
     say(k, 'Shorter, then.');
     log('The old king takes up the slack in his own rope. What he drops round a neck now comes down faster.', 'bad');
   }
@@ -18426,7 +18598,7 @@ function oldKingTick(dt){
      useless, for a couple of seconds. It is his, and it does not burn — it hangs. */
   k._nooseT = (k._nooseT ?? 2) - dt;
   if(k._nooseT > 0) return;
-  k._nooseT = NOOSE_EVERY[k.kingPhase ? 1 : 0];
+  k._nooseT = NOOSE_EVERY[k.bossPhase ? 1 : 0];
   const foes = oldKingFoes(k);
   if(!foes.length) return;
   const who = foes[(rnd() * foes.length) | 0];
@@ -19566,7 +19738,7 @@ function spawnEyeFlight(x, y, n){
    richest reagents in the world, and the dead god does not appear to mind. Appear. */
 const corpseSites = [];
 (function seedCorpseSites(){
-  const n = ri(4, 5);
+  const n = Math.round(ri(4, 5) * AREA_K);
   for(let i = 0; i < n; i++){
     const p = bossSpot(50, 65);
     if(!p) continue;
@@ -20361,7 +20533,9 @@ function guardianWithdraws(){
 function craterDangerTick(dh){
   const pop = {glass: 0, bowl: 0, messenger: 0};
   for(const c of rareFolk().crater) if(c.state !== 'dead' && pop[c.craterOwn] !== undefined) pop[c.craterOwn]++;
-  const unseen = (q) => !player().some(o => o.state !== 'dead' && dist(o.x, o.y, q.x, q.y) < 36);
+  /* thirty-six is sight; the six on top is `spawnGaunt`'s own nudge to open ground, which can
+     carry a body rolled at thirty-seven into view. Seen once on the 2048 world. */
+  const unseen = (q) => !player().some(o => o.state !== 'dead' && dist(o.x, o.y, q.x, q.y) < 36 + 6);
   for(const ring of ['glass', 'bowl']){
     const P = CRATER_POP[ring];
     if(pop[ring] >= P.want || rnd() >= dh * 0.08 * (P.want - pop[ring])) continue;
@@ -25031,8 +25205,8 @@ const IMMORTAL_LINES = {
             'I want to know whether you looked.',
         hint:'Take the Sunken Crown off the Ossuary King and bring it here. He does not want to keep it.',
         done:'He never asks what was written. He asks whether you read it, and you say yes, and that was all of it. ' +
-             '"Eleven names. I am the ninth. He would not sign and they wrote him in regardless, which is ' +
-             'the only reason he is still angry about it." A pause. "Put it back in your pack. It is a key, and you will want it."',
+             '"Eleven names. I am the ninth. The twelfth space was his, and he would not sign it. He has been angry about ' +
+             'that ever since, at everybody but himself." A pause. "Put it back in your pack. It is a key, and you will want it."',
         give: () => { addItem('formula_p', 1); addItem('remains', 10); cats += 2000; },
         giveTxt:'a Preserved Formula, 10 Mortal Remains, 2000 gold — and the crown, back' },
       { kind:'kept',
@@ -26081,6 +26255,7 @@ function update(dt){
   guardianTick(dt);           /* and whether the thing at the middle is calling it down on you */
   biomeTick(dt);              /* the flats, the rust and the bog: who walked in, what woke, what keeps */
   oldKingTick(dt);            /* the man in the Door: talking from up there, or hanging people down here */
+  ossuaryTick(dt);            /* and the registrar on his throne, calling the roll */
   hangTick(dt);
   closingTick(dt);            /* and whether anybody has read the codex sitting in the stores */
   commandTick(dt);            /* and what the bands you sent out are doing about it */
@@ -26808,7 +26983,7 @@ function update(dt){
       }
     }
     /* ---- the world turns: camps, wars, misfortunes ---- */
-    if(camps.length < 6 && rnd() < 0.22){ const nc = spawnCamp(); if(nc){ const kind = nc.fac==='cannibal'?'a den of flesh-eaters':nc.fac==='slaver'?'a slaver camp':'a bandit camp'; worldEvent('camp', nc.x, nc.y, `Word spreads of ${kind} taking root in the wastes. It will grow if left unburned.`); } }
+    if(camps.length < Math.round(6 * AREA_K) && rnd() < 0.22){ const nc = spawnCamp(); if(nc){ const kind = nc.fac==='cannibal'?'a den of flesh-eaters':nc.fac==='slaver'?'a slaver camp':'a bandit camp'; worldEvent('camp', nc.x, nc.y, `Word spreads of ${kind} taking root in the wastes. It will grow if left unburned.`); } }
     for(const camp of [...camps]){
       const alive = campAlive(camp);
       if(alive === 0){ camps.splice(camps.indexOf(camp), 1); continue; }
@@ -27048,7 +27223,7 @@ function update(dt){
     }
     if(!weather.storm && rnd() < 0.06) weather.storm = ri(5, 10);
     /* a new drifter takes to the road now and then */
-    if(chars.filter(c => c.faction==='drifter' && c.state!=='dead').length < 6 && rnd() < 0.4) spawnDrifter();
+    if(chars.filter(c => c.faction==='drifter' && c.state!=='dead').length < Math.round(6 * AREA_K) && rnd() < 0.4) spawnDrifter();
     /* wealth draws raiders: outposts get besieged */
     if(pBuilds.length >= 3 && siegeClear() && rnd() < 0.25){
       siegeSent('raid');
@@ -29966,9 +30141,9 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
   const farOf = (r) => Math.min(...towns.map(t => dist(t.x, t.y, r.x, r.y)));
   const bog = redoubts.find(r => r.deep) || redoubts.slice().sort((a, b) => farOf(b) - farOf(a))[0] || null;
   const spec = [];
-  if(salt) spec.push({id: BIOME_SALT, x: salt.x, y: salt.y, R: 80, off: 300, home: salt});
-  if(iron) spec.push({id: BIOME_RUST, x: iron.x, y: iron.y, R: 92, off: 600, home: iron});
-  if(bog)  spec.push({id: BIOME_VAT,  x: bog.x,  y: bog.y,  R: 52, off: 900, home: null});
+  if(salt) spec.push({id: BIOME_SALT, x: salt.x, y: salt.y, R: 80 * AREA_R, off: 300, home: salt});
+  if(iron) spec.push({id: BIOME_RUST, x: iron.x, y: iron.y, R: 92 * AREA_R, off: 600, home: iron});
+  if(bog)  spec.push({id: BIOME_VAT,  x: bog.x,  y: bog.y,  R: 52 * AREA_R, off: 900, home: null});
   const EDGE = 14;
   /* inside a bunker is not the bog, and a bunker's own floor is not the flats */
   const inBunker = (x, y) => redoubts.some(r => r.deep
@@ -30025,8 +30200,8 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
     }
   };
   const rust = spec.find(b => b.id === BIOME_RUST), vat = spec.find(b => b.id === BIOME_VAT);
-  if(rust) lay(rust, 'automaton', 8, 16);
-  if(vat)  lay(vat, 'pool', 6, 12);
+  if(rust) lay(rust, 'automaton', Math.round(8 * AREA_R), 16);
+  if(vat)  lay(vat, 'pool', Math.round(6 * AREA_R), 12);
 })();
 function heightAt(wx, wy){
   const x = clamp(wx, 0, W-0.001), y = clamp(wy, 0, H-0.001);
@@ -30735,6 +30910,109 @@ function bodyOfTheUnremembered(K, root){
   out.head = face;
   return out;
 }
+/* THE OSSUARY KING (see the note at `ossuaryTick`). Not a king and not a man: a registrar who went
+   halfway into the vessel and came back out wearing the house his bones are kept in. A cage of
+   long bones around the chest, OUTSIDE the grave-cloth; a stole of small skulls on the shoulders;
+   a face of skin dried to leather with a cold candle-light in the sockets; and the Sunken Crown,
+   heavy tarnished bronze gone green, sunk down over the brow. Three shapes, by `bossPhase`:
+   seated on the throne (0), standing (1), and the cage shed (2). Nothing in him is gold and
+   nothing is white, which is the difference from the demilich at a glance. */
+function bodyOfTheOssuaryKing(K, root, c){
+  const out = {swing: [], jit: []};
+  const ph = (c && c.bossPhase) || 0;
+  const bone = '#b0a488', bdk = '#8a7e66', skin = '#5a4a3a', cloth = '#2a2620', bronze = '#6a5a2a', verd = '#4a7a62', lit = '#3a9a8a';
+  const seated = ph === 0, caged = ph < 2;
+  /* the lower body: in the seat, the knees come forward and the shins go down to the floor */
+  let base;
+  if(seated){
+    /* the hips at the seat's own height: he is scaled half again, and the seat top is 0.78 */
+    base = 0.54;
+    for(const sx of [-1, 1]){
+      K.box(0.16, 0.14, 0.52, cloth, sx * 0.14, 0.52, 0.22, root);
+      K.box(0.12, 0.50, 0.12, bdk, sx * 0.14, 0.26, 0.46, root);
+      K.box(0.14, 0.08, 0.24, bdk, sx * 0.14, 0.04, 0.54, root);
+    }
+    K.box(0.58, 0.46, 0.05, cloth, 0, 0.34, 0.50, root);                           /* the cloth over the knees */
+  } else {
+    base = 1.48;
+    K.bone(CONEG, cloth, 0.86, ph === 2 ? 1.30 : 1.50, 0.70, 0, ph === 2 ? 0.80 : 0.75, 0, root);
+    for(let i = 0; i < 7; i++){
+      const a = i / 7 * Math.PI * 2, h = new THREE.Group();
+      h.position.set(Math.cos(a) * 0.36, ph === 2 ? 0.30 : 0.14, Math.sin(a) * 0.30); root.add(h);
+      K.box(0.10, 0.36, 0.03, '#221e1a', 0, -0.10, 0, h);
+      h.rotation.y = -a; h.userData.amp = 0.08; out.swing.push(h);
+    }
+  }
+  /* the body inside: dried, narrow, and in the third shape the whole of what is left */
+  K.box(caged ? 0.44 : 0.34, 0.82, caged ? 0.30 : 0.24, skin, 0, base + 0.40, 0, root);
+  K.box(0.50, 0.16, 0.30, cloth, 0, base + 0.02, 0, root);
+  if(caged){
+    /* THE CAGE: long bones stood round the chest and bound at three heights, outside the cloth */
+    for(let i = 0; i < 10; i++){
+      const a = i / 10 * Math.PI * 2;
+      K.box(0.05, 0.92, 0.05, i % 2 ? bone : bdk, Math.cos(a) * 0.33, base + 0.44, Math.sin(a) * 0.26, root, 0, 0, Math.cos(a) * -0.08);
+    }
+    for(const y of [0.08, 0.44, 0.82]) K.metal(TORG, bdk, 0.68, 0.52, 0.52, 0, base + y, 0, root, Math.PI / 2);
+    K.box(0.14, 0.62, 0.06, bone, 0, base + 0.46, 0.30, root);                          /* the sternum, over the cloth */
+    /* THE STOLE: small skulls round the shoulders, each looking a slightly different way */
+    for(let i = 0; i < 9; i++){
+      const a = (i / 9) * Math.PI * 2;
+      const sk = new THREE.Group(); sk.position.set(Math.cos(a) * 0.36, base + 0.86, Math.sin(a) * 0.30); root.add(sk);
+      sk.rotation.set(0.2, -a + Math.PI / 2 + (i % 3 - 1) * 0.4, (i % 2) * 0.3);
+      K.bone(SPHG, i % 3 ? bone : bdk, 0.16, 0.15, 0.17, 0, 0, 0, sk);
+      for(const ex of [-0.035, 0.035]) K.box(0.03, 0.03, 0.02, '#14100c', ex, 0.0, 0.08, sk);
+    }
+  } else {
+    /* shed: only the bands are left, broken, hanging; and under the cage, what the cage was
+       holding in. The ribs are his own, the skin is gone off the front of them, and whatever
+       reads the names has been lighting him from inside the whole time. */
+    for(let i = 0; i < 3; i++){ const b = new THREE.Group(); b.position.set((i - 1) * 0.16, base + 0.82, 0.14); root.add(b);
+      K.box(0.04, 0.34, 0.04, bdk, 0, -0.17, 0, b); b.userData.amp = 0.2; out.swing.push(b); }
+    for(let r = 0; r < 5; r++){
+      const y = base + 0.18 + r * 0.11;
+      K.box(0.40 - r * 0.02, 0.04, 0.06, bone, 0, y, 0.13, root);
+      if(r < 4) K.glow(BOXG, lit, 0.26 - r * 0.02, 0.025, 0.02, 0, y + 0.055, 0.12, root);
+    }
+    K.box(0.06, 0.58, 0.05, bone, 0, base + 0.42, 0.16, root);                         /* the breastbone, bare */
+  }
+  /* ARMS in bone vambraces: on the armrests while he sits, down at his sides when he stands, and
+     in the right hand a femur for a sceptre with a small skull on the end of it */
+  for(const sx of [-1, 1]){
+    const sh = new THREE.Group(); sh.position.set(sx * 0.32, base + 0.74, 0); root.add(sh);
+    if(seated) sh.rotation.x = -1.1; else if(ph === 2) sh.rotation.set(-0.55, 0, sx * 0.18); else sh.rotation.z = sx * 0.12;
+    K.box(0.12, 0.50, 0.12, bdk, 0, -0.25, 0, sh);
+    const el = new THREE.Group(); el.position.set(0, -0.50, 0); sh.add(el);
+    el.rotation.x = seated ? 1.1 : -0.3;
+    K.box(0.11, 0.48, 0.11, bone, 0, -0.24, 0, el);
+    for(let k2 = 0; k2 < 3; k2++) K.box(0.024, 0.20, 0.024, '#14100c', (k2 - 1) * 0.035, -0.56, 0.02, el);
+    if(sx > 0){
+      const st = new THREE.Group(); st.position.set(0, -0.52, 0.04); el.add(st);
+      st.rotation.x = seated ? -1.2 : 0.2;
+      K.box(0.06, 1.70, 0.06, bone, 0, 0.30, 0, st);
+      K.bone(SPHG, bone, 0.17, 0.16, 0.18, 0, 1.20, 0, st);
+      K.metal(CYLG, bronze, 0.10, 0.05, 0.10, 0, 1.06, 0, st);
+    }
+  }
+  /* THE HEAD, and the crown sunk down over it */
+  const head = new THREE.Group(); head.position.set(0, base + (ph === 2 ? 0.98 : 1.06), ph === 2 ? 0.14 : 0.02); root.add(head);
+  head.rotation.x = seated ? 0.12 : ph === 2 ? 0.30 : 0.05;             /* shed, he stoops into it */
+  K.bone(SPHG, skin, 0.32, 0.38, 0.33, 0, 0, 0, head);
+  K.box(0.22, 0.10, 0.18, '#4a3c2e', 0, -0.17, 0.06, head);                              /* the jaw, drawn tight */
+  for(const sx of [-1, 1]){
+    K.box(0.07, 0.06, 0.04, '#0e0b08', sx * 0.07, 0.00, 0.15, head);
+    K.glow(SPHG, lit, 0.035, 0.035, 0.02, sx * 0.07, 0.00, 0.17, head);
+  }
+  const cr = new THREE.Group(); cr.position.set(ph === 2 ? 0.05 : 0, 0.10, 0); cr.rotation.set(0.10, 0, ph === 2 ? -0.34 : -0.08); head.add(cr);
+  K.metal(CYLG, bronze, 0.38, 0.13, 0.38, 0, 0, 0, cr);
+  for(let k2 = 0; k2 < 4; k2++){
+    const a = k2 / 4 * Math.PI * 2 + 0.4;
+    K.metal(BOXG, bronze, 0.06, 0.10, 0.05, Math.cos(a) * 0.18, 0.10, Math.sin(a) * 0.18, cr);
+    K.box(0.07, 0.04, 0.03, verd, Math.cos(a + 0.6) * 0.19, -0.02, Math.sin(a + 0.6) * 0.19, cr);   /* gone green */
+  }
+  out.head = head;
+  out.sigil = K.glow(CYLG, '#1e5a52', 1.1, 0.01, 1.1, 0, 0.0, 0, root);
+  return out;
+}
 /* who is drawn by which, and how far off the ground each hangs */
 const CAME_THROUGH = {
   oldking:    {build: bodyOfTheOldKing,       ride: 0.36},
@@ -30742,8 +31020,9 @@ const CAME_THROUGH = {
   master:     {build: bodyOfTheMaster,        ride: 0.03},
   keeper:     {build: bodyOfTheKeeper,        ride: 0.08},
   unremembered: {build: bodyOfTheUnremembered, ride: 0.12},
+  ossuary:    {build: bodyOfTheOssuaryKing,   ride: 0.0, grounded: true},
 };
-function cameThroughKey(c){ return c.bossKey === 'oldking' ? 'oldking' : (c.courtKey || null); }
+function cameThroughKey(c){ return c.bossKey === 'oldking' ? 'oldking' : c.ossuary ? 'ossuary' : (c.courtKey || null); }
 /* Anything in here is reused for the life of the run and must survive every teardown.
    Everything else that a rebuild throws away has GPU memory behind it, and dropping the
    reference does NOT release it — three.js needs an explicit dispose(). Without this the
@@ -31333,6 +31612,54 @@ function vscaleOf(c){
     addInst(blooms, new THREE.SphereGeometry(0.12, 6, 4).translate(-0.22, 0.04, -0.24), '#c08088', 0.1, bloomScale, true);
     addInst(pools, new THREE.CircleGeometry(1.25, 16).rotateX(-Math.PI / 2), '#3a1c22', 0.04, null, false);
     addInst(pools, new THREE.CircleGeometry(0.7, 12).rotateX(-Math.PI / 2).translate(0.2, 0.01, -0.15), '#6a3a44', 0.04, null, false);
+  }
+  /* ---------- THE OSSUARY, DRESSED ----------
+     The throne he sits on (facing south, down the rows), the petitioners who are only bones
+     kneeling in the rows, and the house itself behind him: a horseshoe of wall stacked with
+     skulls, with a cold candle at either hand. All `addInst`, so it lies under the fog until
+     somebody has seen it like everything else. */
+  if(ossuary){
+    const O = ossuary, face0 = (p, d) => { d.rotation.set(0, 0, 0); if(p[2]) d.position.y += p[2]; };
+    const at = [[O.x, O.y]];
+    addInst(at, new THREE.BoxGeometry(1.1, 0.78, 0.95), '#6a604e', 0.39, null, false, face0);                 /* the seat */
+    addInst(at, new THREE.BoxGeometry(1.2, 2.2, 0.2).translate(0, 1.1, -0.52), '#5a5242', 0, null, false, face0);   /* the back */
+    for(const sx of [-1, 1]) addInst(at, new THREE.BoxGeometry(0.12, 0.12, 0.95).translate(sx * 0.58, 0.95, 0), '#b0a488', 0, null, false, face0);
+    const sk = [];
+    for(let r = 0; r < 5; r++) for(let k2 = 0; k2 < 4; k2++) sk.push([O.x + (k2 - 1.5) * 0.26, O.y - 0.40, 0.95 + r * 0.30]);
+    for(const dx of [-0.34, 0, 0.34]) sk.push([O.x + dx, O.y - 0.46, 2.35 + (dx ? 0 : 0.14)]);
+    addInst(sk, new THREE.SphereGeometry(0.13, 6, 5), '#b0a488', 0, null, false, face0);
+    const candle = new THREE.MeshBasicMaterial({color: 0x5ab8a8});
+    addInst([[O.x - 0.95, O.y + 0.1], [O.x + 0.95, O.y + 0.1]], new THREE.CylinderGeometry(0.06, 0.07, 0.5, 6).translate(0, 0.25, 0), '#8a7e66', 0, null, false, face0);
+    addInst([[O.x - 0.95, O.y + 0.1], [O.x + 0.95, O.y + 0.1]], new THREE.SphereGeometry(0.07, 6, 4).translate(0, 0.56, 0), candle, 0, null, false, face0);
+    /* the rows: bones kneeling where the living petitioners are not */
+    const knelt = [];
+    for(let i = 4; i < 10; i++){ const q = ossuarySlot(i); knelt.push([q.x, q.y]); }
+    /* drawn as a body, not a marker: shins flat on the floor behind, thighs up, a bent spine with
+       three ribs on it, arms hanging to the knees, and the skull down, toward the throne (-z) */
+    /* bowed all the way: thighs up off flat shins, the back laid forward almost level, both
+       arms straight down to the floor in front, and the skull between them nearly touching it */
+    for(const sx of [-1, 1]){
+      addInst(knelt, new THREE.BoxGeometry(0.07, 0.06, 0.42).translate(sx * 0.10, 0.03, 0.20), '#8a7e66', 0, null, false, face0);
+      addInst(knelt, new THREE.BoxGeometry(0.08, 0.42, 0.08).rotateX(-0.12).translate(sx * 0.10, 0.25, 0), '#b0a488', 0, null, false, face0);
+      addInst(knelt, new THREE.BoxGeometry(0.05, 0.48, 0.05).translate(sx * 0.16, 0.26, -0.50), '#a09478', 0, null, false, face0);
+      addInst(knelt, new THREE.BoxGeometry(0.08, 0.03, 0.10).translate(sx * 0.16, 0.015, -0.54), '#8a7e66', 0, null, false, face0);
+    }
+    addInst(knelt, new THREE.BoxGeometry(0.28, 0.10, 0.14).translate(0, 0.48, 0.02), '#a09478', 0, null, false, face0);
+    addInst(knelt, new THREE.BoxGeometry(0.05, 0.05, 0.50).rotateX(0.18).translate(0, 0.54, -0.24), '#8a7e66', 0, null, false, face0);
+    for(let r = 0; r < 3; r++)
+      addInst(knelt, new THREE.BoxGeometry(0.28 - r * 0.03, 0.12, 0.035).rotateX(0.18).translate(0, 0.48, -0.14 - r * 0.10), '#b0a488', 0, null, false, face0);
+    addInst(knelt, new THREE.SphereGeometry(0.12, 7, 5).scale(1, 1.05, 1.15).translate(0, 0.30, -0.62), '#c0b498', 0, null, false, face0);
+    addInst(knelt, new THREE.BoxGeometry(0.10, 0.05, 0.05).translate(0, 0.22, -0.72), '#14100c', 0, null, false, face0);
+    /* the house: a wall stacked with skulls, round the throne's back */
+    const walls = ossuaryWalls().map(w => [w.x, w.y, 0, w.a]);
+    const tangent = (p, d) => { d.rotation.set(0, -p[3] - Math.PI / 2, 0); };
+    addInst(walls, new THREE.BoxGeometry(1.25, 1.9, 0.45).translate(0, 0.95, 0), '#4e473a', 0, null, false, tangent);
+    const wsk = [];
+    for(const w of ossuaryWalls()) for(let r = 0; r < 3; r++) for(let k2 = -1; k2 <= 1; k2++){
+      const tx = -Math.sin(w.a), ty = Math.cos(w.a);                 /* along the wall */
+      wsk.push([w.x + tx * k2 * 0.36 - Math.cos(w.a) * 0.24, w.y + ty * k2 * 0.36 - Math.sin(w.a) * 0.24, 0.35 + r * 0.52]);
+    }
+    addInst(wsk, new THREE.SphereGeometry(0.15, 6, 5), '#b0a488', 0, null, false, face0);
   }
   /* ---------- THE CRATER, DRESSED ----------
      Everything here is instanced through `addInst`, so it is culled by chunk and stays under the
@@ -33771,7 +34098,7 @@ function colorKeyOf(c){
      whichever got built first in a session handed its rig to the other through the mesh
      cache — which is why the mage's mantle appeared some runs and not others. The beast
      rigs had the same collision: elk, grazer and gravehound are all just `|b`. */
-  return factionColor(c) + '|' + (c.kin||'') + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.head||'') + '|' + (c.cloak||'') + '|' + (c.house||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.wisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.eater?'|E':'') + (c.soulbound?'|B':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.trade||'') + '|' + (c.hollowTier||0) + '|' + (c.vesselPattern||'') + '|' + (c.face||'') + (c.skinShift ? '|F' + c.skinShift : '');
+  return factionColor(c) + '|' + (c.kin||'') + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.head||'') + '|' + (c.cloak||'') + '|' + (c.house||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.wisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.eater?'|E':'') + (c.soulbound?'|B':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.trade||'') + '|' + (c.hollowTier||0) + '|' + (c.vesselPattern||'') + '|' + (c.face||'') + (c.skinShift ? '|F' + c.skinShift : '') + (c.bossPhase ? '|P' + c.bossPhase : '');
 }
 const SKINS = ['#8a5c34', '#6e4426', '#a06c40', '#5a3820', '#96683a'];
 const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0'];
@@ -34836,10 +35163,10 @@ function buildCharMesh(c){
         return mk(geo, m, sx, sy, sz, x, y, z, p);
       },
     };
-    const b = came.build(K, inner);
+    const b = came.build(K, inner, c);
     e.head = b.head; e.jaw = b.jaw || null; e.sigil = b.sigil; e.spineBits = b.swing; e.jitter = b.jit;
     for(const sb of e.spineBits) if(sb.userData.amp === undefined) sb.userData.amp = 0.10;
-    e.floats = true;
+    e.floats = true; e.grounded = !!came.grounded;
   } else if(c.demilich){
     e.still = true;
     const BONE = ['#e8e1c9', '#ded5b8', '#d2c8a8', '#c6bb9a'];   /* sun-bleached, four shades of nothing */
@@ -38908,9 +39235,11 @@ function syncChars(dt){
       e.sigil.visible = true;
       const now = Date.now();
       e.phase += dt * (moving ? 2.4 * gait : 1.1);
-      e.float.position.y = skullRide(c) + Math.sin(e.phase) * 0.07;
-      e.float.rotation.z = Math.sin(now * 0.0007) * 0.06;
-      e.float.rotation.x = (moving ? 0.10 : 0) + Math.sin(now * 0.0009) * 0.03;
+      /* a thing that sits or stands on the ground does not bob: it only breathes */
+      const bob = e.grounded ? 0.012 : 0.07, sway = e.grounded ? 0.008 : 0.06;
+      e.float.position.y = skullRide(c) + Math.sin(e.phase) * bob;
+      e.float.rotation.z = Math.sin(now * 0.0007) * sway;
+      e.float.rotation.x = (moving && !e.grounded ? 0.10 : 0) + Math.sin(now * 0.0009) * sway * 0.5;
       /* the jaw works when it has something to say, and hangs slack when it does not — on the
          one of these three rigs that has a jaw at all */
       const talking = !!c.bubble;
@@ -39426,6 +39755,17 @@ function syncChars(dt){
       /* the lich rides above the ground it is crossing. Applied here, past every joint and
          past the crouch, so a fight pose still sinks it and the float still holds it up. */
       if(e.lichLift) e.g.position.y += e.lichLift;
+    }
+    /* a petitioner still in the rows kneels until it is called: thighs down, shins flat behind it,
+       back bent, head down, hands on its knees. Posed after the walk, so nothing above undoes it. */
+    if(c.kneel && c.state === 'ok' && !c.beast && !e.still){
+      e.legL.rotation.x = e.legR.rotation.x = -0.12;
+      if(e.kneeL){ e.kneeL.rotation.x = e.kneeR.rotation.x = 1.52; }
+      e.spine.rotation.x = 0.38;
+      e.armL.rotation.x = e.armR.rotation.x = -0.45;
+      e.elbL.rotation.x = e.elbR.rotation.x = -0.35;
+      if(e.head) e.head.rotation.x = 0.35;
+      e.g.position.y -= 0.36 * bs;
     }
     /* limbs & gear.
        AND NOTHING THAT HAS NO LIMBS. `!c.beast` was the whole test for "this rig has arms",
@@ -47705,10 +48045,8 @@ function snapshot(){
      `s.construct !== undefined ? !!s.construct : !!(RACES[c.race]||{}).construct`, so a golem
      deliberately saved as not-a-construct would come back a construct if the key vanished. It
      is kept whatever it holds.
-     `parts` is left alone for now, and it is the next lever if this ever creeps back: dropping
-     it needs `restore` to rebuild the block from the RESTORED stats, and it currently calls
-     `makeChar` with empty opts, so the fresh `parts` it would fall back on are sized off tough
-     2 rather than off the body being loaded. */
+     `parts` was the next lever and it has been pulled: see `packParts`, which keeps `max`
+     wherever it is not 100, so nothing is re-derived from the stats on the way back in. */
   const SAVE_KEEP = new Set(['construct']);
   const lean = r => {
     for(const k in r){
@@ -47719,7 +48057,7 @@ function snapshot(){
   };
   const sChar = c => lean({
     id:c.id, name:c.name, faction:c.faction, x:c.x, y:c.y,
-    stats:c.stats, gift:c.gift, mana:c.mana, stance:c.stance, parts:c.parts,
+    stats:packStats(c), gift:c.gift, mana:c.mana, stance:c.stance, parts:packParts(c.parts),
     blood:c.blood, maxBlood:c.maxBlood, hunger:c.hunger,
     weapon:c.weapon, armor:c.armor, head:c.head||null, cloak:c.cloak||null, trinket:c.trinket||null, house:c.house||null, state:c.state, undead:c.undead,
     torchH: c.torchH,   /* how much of the torch is left — a fresh one on every reload is not a resource */
@@ -47777,13 +48115,14 @@ function snapshot(){
        rule exists to prevent — because the crew check runs every frame and would find no crew. */
     haulForId: c.haulFor ? c.haulFor.id : null,
     haulCrewIds: c.haulCrew ? c.haulCrew.map(o => o.id) : null,
-    lich: !!c.lich, face: c.face||null, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, coilSpeaker: !!c.coilSpeaker, pCaravan: c.pCaravan||0, att: c.att||null, attXp: c.attXp||null,
+    lich: !!c.lich, face: c.face||null, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, coilSpeaker: !!c.coilSpeaker, pCaravan: c.pCaravan||0, att: (c.att && !sameFlat(c.att, attBase(c.gift, c.race))) ? c.att : null,
+    attXp: (c.attXp && Object.values(c.attXp).some(v => v)) ? c.attXp : null,
     guardTargetId: c.guardTarget ? c.guardTarget.id : null,
     /* somebody you were paid to keep alive, and who they were walking to */
     vip: !!c.vip, escortTo: c.escortTo ?? null, escortId: c.escortId || 0, attendant: !!c.attendant,
     lieutenant: !!c.lieutenant, lieuSince: (c.lieuSince ?? null), civ: !!c.civ, merc: !!c.merc,
     guildHire: !!c.guildHire, guildLicensed: !!c.guildLicensed, guildmaster: !!c.guildmaster, wage: c.wage||0,
-    heretic: !!c.heretic, burnDay: c.burnDay||0, bastionGuest: !!c.bastionGuest, stoodDown: !!c.stoodDown, gatePhase: c.gatePhase || 0, eyesUp: !!c.eyesUp,
+    heretic: !!c.heretic, burnDay: c.burnDay||0, bastionGuest: !!c.bastionGuest, stoodDown: !!c.stoodDown, gatePhase: c.gatePhase || 0, eyesUp: !!c.eyesUp, bossPhase: c.bossPhase || 0, ossuary: !!c.ossuary, boneWard: !!c.boneWard, courtKey: c.courtKey || null,
     inv: {...c.inv}, pack: c.pack, mule: !!c.mule, fleeOnHit: !!c.fleeOnHit,
     eater: !!c.eater, warF: c.warF, warT: c.warT, campId: c.campId, rebelOf: c.rebelOf,
     sick: c.sick||0, armyEnds: c.armyEnds||0, trade: c.trade||null, tradeSkill: c.tradeSkill||0, guildFolk: !!c.guildFolk,
@@ -47796,7 +48135,7 @@ function snapshot(){
     pilgrimDestI: c.pilgrimage ? towns.indexOf(c.pilgrimage.dest) : -1,
   });
   return {
-    v:21, cats, bloodMoon, bloodMoonLast, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields, phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
+    v:23, cats, bloodMoon, bloodMoonLast, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields, phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen}, hiresPaid: {...hiresPaid},
@@ -47909,7 +48248,7 @@ function snapshot(){
 function restore(d){
   /* v21 IS THE CRATER. The world is built around the middle of the map now, so every town, road
      and cave in a save made before it stands somewhere the ground no longer agrees with. */
-  if(!d || (d.v||0) < 21){ log(`That save predates ${(d && (d.v||0) >= 20) ? 'the crater at the middle of the world (v21)' : 'the map expansion (v20)'}. It can no longer be loaded.`, 'bad'); return; }
+  if(!d || (d.v||0) < 23){ log(`That save predates ${(d && (d.v||0) >= 21) ? 'the world growing to 2048 across (v23)' : (d && (d.v||0) >= 20) ? 'the crater at the middle of the world (v21)' : 'the map expansion (v20)'}. It can no longer be loaded.`, 'bad'); return; }
   chars.length = 0; corpses.length = 0; particles.length = 0; projectiles.length = 0;
   pBuilds.length = 0;
   blocked.clear(); for(const k of baseBlocked) blocked.add(k);
@@ -48208,12 +48547,9 @@ function restore(d){
        restoring bodies with no gunnery and no study at all. Charisma would have been the third.
        The racial base is read for charisma specifically because that half of it is a fact about
        the line and not a thing the body earned. */
-    c.stats = Object.assign({atk:2,def:2,tough:2,ath:2,medic:2,magic:1,labor:2,armr:1,
-      blades:1, blunt:1, ranged:1, martial:1,
-      smithing:1, crafting:1, farming:1, brewing:1, gunnery:1, study:1,
-      charisma:(RACES[s.race] || RACES.human).cha ?? 5}, s.stats);
+    c.stats = Object.assign({...STAT_BASE, charisma: statBaseCha(s.race)}, s.stats);
     c.gift = s.gift; c.mana = s.mana; c.stance = s.stance||'melee';
-    c.parts = s.parts; c.blood = s.blood; c.maxBlood = s.maxBlood; c.hunger = s.hunger;
+    c.parts = unpackParts(s.parts); c.blood = s.blood; c.maxBlood = s.maxBlood; c.hunger = s.hunger;
     /* Drop gear the build no longer knows about, rather than carrying a key that will
        throw the first time anything looks at it. Repairing on load beats guarding forever. */
     c.jailT = s.jailT || 0; c.barsT = s.barsT || 0;
@@ -48343,7 +48679,7 @@ function restore(d){
     c.npcNecro = !!s.npcNecro; c.lieutenant = !!s.lieutenant; c.civ = !!s.civ; c.merc = !!s.merc;
     c.lieuSince = (s.lieuSince ?? null);
     c.guildHire = !!s.guildHire; c.guildLicensed = !!s.guildLicensed; c.guildmaster = !!s.guildmaster; c.wage = s.wage || 0;
-    c.heretic = !!s.heretic; c.burnDay = s.burnDay || 0; c.bastionGuest = !!s.bastionGuest; c.stoodDown = !!s.stoodDown; c.gatePhase = s.gatePhase || 0; c.eyesUp = !!s.eyesUp;
+    c.heretic = !!s.heretic; c.burnDay = s.burnDay || 0; c.bastionGuest = !!s.bastionGuest; c.stoodDown = !!s.stoodDown; c.gatePhase = s.gatePhase || 0; c.eyesUp = !!s.eyesUp; c.bossPhase = s.bossPhase || 0; c.ossuary = !!s.ossuary; c.boneWard = !!s.boneWard; c.courtKey = s.courtKey || null;
     c.vip = !!s.vip; c.escortTo = s.escortTo ?? null; c.escortId = s.escortId || 0; c.attendant = !!s.attendant;
     c.inv = s.inv || {}; c.pack = s.pack || null; c.mule = !!s.mule; c.fleeOnHit = !!s.fleeOnHit;
     c.eater = !!s.eater; c.warF = s.warF ?? -1; c.warT = s.warT ?? -1;

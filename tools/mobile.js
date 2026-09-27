@@ -86,7 +86,7 @@ const PROBE = () => {
     const p = await ctx.newPage();
     const errs = [];
     p.on('pageerror', e => errs.push(e.message.slice(0, 160)));
-    await p.goto(url, { waitUntil: 'load' });
+    await p.goto(url, { waitUntil: 'load', timeout: 90000 });
     await p.waitForTimeout(3000);
     await p.evaluate(() => document.getElementById('btn-start').click());
     await p.waitForTimeout(8000);          /* let syncChars finish building bodies */

@@ -22,7 +22,7 @@ const ROUNDS = +(process.argv[4] || 6), N = +(process.argv[5] || 500);
 
 async function one(b, file) {
   const p = await b.newPage({ viewport: { width: 800, height: 600 } });
-  await p.goto('file://' + file, { waitUntil: 'load' });
+  await p.goto('file://' + file, { waitUntil: 'load', timeout: 90000 });
   await p.waitForSelector('#btn-start', { state: 'attached', timeout: 60000 });
   await p.waitForTimeout(1500);
   await p.evaluate(() => document.getElementById('btn-start').click());

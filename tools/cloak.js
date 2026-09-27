@@ -40,7 +40,7 @@ const arm = async (kind, file) => {
   const p = await b.newPage({ viewport: { width: 900, height: 620 } });
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 160)));
-  await p.goto('file://' + gamePath(file), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(file), { waitUntil: 'load', timeout: 90000 });
   await p.waitForSelector('#btn-start', { state: 'attached', timeout: 60000 });
   await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(2600);

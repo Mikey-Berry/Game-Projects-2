@@ -31,7 +31,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 240)));
   p.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE: ' + m.text().slice(0, 240)); });
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   /* START AND STOP IN THE SAME BREATH. A click followed by a wait lets the world run for
      however many frames the machine manages, which is not a fixed number and drops when a
@@ -427,7 +427,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        and once at 74s throwing, on the same build, while the suite as a whole was running 40%
        slower than its previous pass. Give the document time to open. */
     p2.setDefaultNavigationTimeout(180000);
-    await p2.goto('file://' + gamePath(process.argv[2]) + '?seed=' + (run + 7), { waitUntil: 'load' });
+    await p2.goto('file://' + gamePath(process.argv[2]) + '?seed=' + (run + 7), { waitUntil: 'load', timeout: 90000 });
     await p2.waitForTimeout(2500);
     await p2.evaluate(() => document.getElementById('btn-start').click());
     await p2.waitForTimeout(2500);

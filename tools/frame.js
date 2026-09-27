@@ -49,7 +49,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--disable-gpu-sandbox', '--no-sandbox'],
   });
   const p = await b.newPage({ viewport: { width: VW, height: VH } });
-  await p.goto('file://' + gamePath(file), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(file), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   await p.evaluate(() => document.getElementById('btn-start').click());
   await p.waitForTimeout(4000);

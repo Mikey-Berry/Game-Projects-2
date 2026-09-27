@@ -6,7 +6,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     args: ['--use-gl=swiftshader','--enable-unsafe-swiftshader','--disable-gpu-sandbox','--no-sandbox'] });
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
   const errs=[]; page.on('pageerror', e => errs.push(e.message.slice(0,220)));
-  await page.goto('file://' + gamePath(process.argv[4]), { waitUntil: 'load' });
+  await page.goto('file://' + gamePath(process.argv[4]), { waitUntil: 'load', timeout: 90000 });
   await page.waitForTimeout(3000);
   await page.evaluate(() => document.getElementById('btn-start').click());
   await page.waitForTimeout(800);
