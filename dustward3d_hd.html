@@ -985,6 +985,8 @@ function biomeAt(x, y){
 const biomeSleepers = [];
 const sleeperAt = new Map();    /* 'x,y' -> the sleeper lying on that tile */
 const biomeState = {seen: {}, woke: {}};
+/* where each ground is centred and how far it runs, filled by `buildBiomes`: the court reads it */
+const biomeCentre = {};
 /* a rust automaton that has sat up has left its wreck: the fog must not stand it back up */
 function sleeperGone(x, y){ const s = sleeperAt.get(x + ',' + y); return !!s && s.kind === 'automaton' && !!biomeState.woke[s.key]; }
 const VAT_DRAG = 0.72;          /* the living in the bog, against their pace on dry ground */
@@ -11297,11 +11299,16 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
      this function, and a congregation should not care whether it was a blade or an arrow. */
   if(a && d.deepKin) deepProvoke(d, a);
   /* armour and toughness, for every path — melee, arrow, bolt, lance and spell alike */
-  if(!raw) dmg = mitigate(d, dmg, wt, ap, a);
+  /* THE MASTER'S UNMAKING: whatever it strikes, the armour on it is not there for the blow */
+  const unmade = a && a.courtArts && a.courtArts.includes('transmutation');
+  if(!raw) dmg = mitigate(d, dmg, wt, unmade ? 1 : ap, a);
   /* A CAGE OF BONE WORN OUTSIDE (the Ossuary King): a hammer breaks it, a blade skates off it */
   if(d.boneWard && !raw) dmg *= BONE_WARD[wt] ?? 1;
   /* an awakened parasite remembers what it was bred to kill */
   if(a && a.race==='hollow' && a.hollowTier >= 1 && d.gauntKind) dmg *= 1.35;
+  /* THE KEEPER'S HUNGER: a third of what it takes out of you goes into it */
+  if(a && a !== d && a.courtArts && a.courtArts.includes('dark') && a.state === 'ok' && dmg > 0)
+    a.blood = Math.min(a.maxBlood, a.blood + dmg * 0.33);
   /* how much weapon was behind it. Projectiles and spells come through here too and have
      no heft of their own — they land exactly as they always did. */
   const ahf = a ? heftOf(a) : 1;
@@ -11538,6 +11545,11 @@ function kill(c, by){
   if(c.bossKey === 'guardian') guardianFalls(c);
   if(c.bossKey === 'oldking') oldKingFalls(c);
   if(c.ossuary) log('The Ossuary King goes down among his petitioners. The crown rolls off him and does not stop for some time.', 'good');
+  if(c.courtKey && COURT[c.courtKey]){
+    const art = ART_TELL[COURT[c.courtKey].art];
+    log(`${c.name} goes down, and the mask comes away with nothing behind it.` +
+      (theDoor && theDoor.kingDown ? ` The old king has ${art} in him already.` : ` Whatever comes down out of the Door will come down without ${art}.`), 'good');
+  }
   /* a risen that has done the work is a candidate for a name */
   if(by && by.undead && by.crafted) by.kills = (by.kills || 0) + 1;
   /* ---------- COMMANDING THE DEAD SHARPENS THE CRAFT — WHEN THEY ARE COMMANDED ----------
@@ -18528,8 +18540,79 @@ function spawnCourtier(key, x, y){
   c.nightborn = false; c.doorborn = false;
   c.blood = 700; c.maxBlood = 700;
   c.guard = {x, y};
+  c.courtArts = [D.art];
+  c.dropItems = {codex: 1, formula_p: 1, tome: 1};
   chars.push(c);
   return c;
+}
+/* ---------- WHERE AND WHEN THEY COME THROUGH ----------
+   One at a time as the Fracture climbs, each onto the ground its Art made: the Master of the
+   Pouring onto the rust barrens, the Keeper of the Conduit into the vat bog, the Unremembered out
+   onto the salt flats, and the Chancellor last, into the colonnade, when the Door opens. Any who
+   have not come by then come with it. Each is a boss at a place, and EACH ONE PUT DOWN BEFORE THE
+   OLD KING COMES DOWN IS AN ART HE COMES DOWN WITHOUT (`oldKingComesDown`).
+   THE ARTS, each the Golden Age's own practice of it, carried by the courtier and by the king:
+     divine        — the Chancellor's absolution: he mends while hurt, a little and often
+     transmutation — the Master's unmaking: his blows go through armour as if it were not there
+     dark          — the Keeper's hunger: a third of what he takes out of you goes into him
+     dust          — the Unremembered's fold: in a fight, every so often, eyes slide off him */
+const COURT_AT = {master: 60, keeper: 75, unremembered: 90, chancellor: Infinity};   /* he comes with the Door and not before */
+const COURT_GROUND = {master: 'rust', keeper: 'vat', unremembered: 'salt', chancellor: 'colonnade'};
+const ART_TELL = {divine: "the Chancellor's absolution", transmutation: "the Master's unmaking",
+                  dark: "the Keeper's hunger", dust: "the Unremembered's fold"};
+const COURT_COMES = {
+  master: 'Out on the rust barrens something has sat up that was never lying down there. It is masked, and it is looking at the wrecks as if it made them.',
+  keeper: 'Something has come up out of the vat bog on its own feet. It is masked, and the pools go quiet around it like a congregation.',
+  unremembered: 'There is somebody out on the salt flats. Everyone who has seen them agrees on that much, and on nothing else.',
+  chancellor: 'In the colonnade, under the open Door, somebody masked is standing where a herald stands, waiting to announce the king.',
+};
+const courtCame = {};           /* key -> true once it has come through, whether or not it found ground */
+function courtGround(key){
+  if(COURT_GROUND[key] === 'colonnade') return findOpenNear(Math.round(CRATER.x), Math.round(CRATER.y - 14), 4);
+  const b = biomeCentre[COURT_GROUND[key]]; if(!b) return null;
+  /* well inside the ground and well clear of anybody's walls: Saltmere and Ironscar are the
+     middles of the flats and the barrens, and a courtier is not a raid */
+  const a0 = hash2(b.x | 0, b.y | 0) * Math.PI * 2;
+  for(const rk of [0.6, 0.45, 0.75, 0.3]) for(let i = 0; i < 24; i++){
+    const a = a0 + i / 24 * Math.PI * 2;
+    const x = Math.round(b.x + Math.cos(a) * b.R * rk), y = Math.round(b.y + Math.sin(a) * b.R * rk);
+    if(biomeAt(x, y) !== b.id || isBlocked(x + 0.5, y + 0.5, 0)) continue;
+    if(towns.some(t => dist(x, y, t.x, t.y) < (t.clearR || 20) + 24)) continue;
+    return {x, y};
+  }
+  return null;
+}
+function courtArrives(key){
+  courtCame[key] = true;
+  const q = courtGround(key); if(!q) return null;
+  const c = spawnCourtier(key, q.x + 0.5, q.y + 0.5);
+  addSpecks(c.x, c.y + 1, '#e4c060', 30);
+  log(COURT_COMES[key], 'bad');
+  worldEvent('court', c.x, c.y, COURT_COMES[key]);
+  return c;
+}
+let _courtT = 0;
+function courtTick(dt){
+  if((_courtT -= dt) > 0) return;
+  _courtT = 1;
+  for(const key in COURT) if(!courtCame[key] && (fracture >= COURT_AT[key] || theDoor)) courtArrives(key);
+  /* the two arts that are a clock rather than a blow */
+  for(const c of chars){
+    if(!c.courtArts || c.state !== 'ok') continue;
+    if(c.courtArts.includes('divine') && c.blood < c.maxBlood){
+      if((c._mendT = (c._mendT || 0) + 1) >= 8){
+        c._mendT = 0;
+        c.blood = Math.min(c.maxBlood, c.blood + c.maxBlood * 0.03);
+        addFloat(c.x, c.y - 1.4, 'absolved', '#e4c060');
+      }
+    }
+    if(c.courtArts.includes('dust') && c.target && !(c.veilT > 0)){
+      if((c._foldT = (c._foldT || 0) + 1) >= 12){
+        c._foldT = 0; c.veilT = 3;
+        addSpecks(c.x, c.y + 1, '#c8c4bc', 18);
+      }
+    }
+  }
 }
 function oldKingAlive(){
   return theDoor ? (chars.find(c => c.bossKey === 'oldking' && c.state !== 'dead') || null) : null;
@@ -18552,11 +18635,17 @@ function oldKingComesDown(d){
   k.dropItems = {codex: 1, formula_p: 2};
   k.barks = OLDKING_STANDING;
   k.bossPhase = 0;
+  /* whoever of his court is still standing lends him what they carry; whoever you put down first,
+     he comes down without */
+  k.courtArts = Object.keys(COURT).filter(key => !(('court_' + key) in bossSlain)).map(key => COURT[key].art);
   chars.push(k);
   addSpecks(q.x, q.y + 1.5, '#f4e8c0', 40);
   say(k, 'There. Now we are the same height.');
   log('The hold is done, and the Door gives, and something comes down out of it. The rope pays out of the light, slowly, and the old king stands up in the Door as if he had been waiting to be asked.', 'bad');
   log('The rite will not land while he stands in it.', 'bad');
+  log(k.courtArts.length
+    ? `He comes down carrying what his court still holds for him: ${k.courtArts.map(a => ART_TELL[a]).join(', ')}.`
+    : 'He comes down alone. There is nobody left of his court to hold anything for him.', k.courtArts.length ? 'bad' : 'good');
   worldEvent('door', q.x, q.y, 'The man hanging in the Door over the crater has come down. People who saw it say he walked out of the light like somebody late for his own court.');
   threadSet('rite', 'The closing rite',
     'The hold is done and the old king has come down into the Door. It will not close while he stands in it.',
@@ -26255,6 +26344,7 @@ function update(dt){
   guardianTick(dt);           /* and whether the thing at the middle is calling it down on you */
   biomeTick(dt);              /* the flats, the rust and the bog: who walked in, what woke, what keeps */
   oldKingTick(dt);            /* the man in the Door: talking from up there, or hanging people down here */
+  courtTick(dt);              /* and his court, coming through onto the grounds their Arts made */
   ossuaryTick(dt);            /* and the registrar on his throne, calling the roll */
   hangTick(dt);
   closingTick(dt);            /* and whether anybody has read the codex sitting in the stores */
@@ -30144,6 +30234,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
   if(salt) spec.push({id: BIOME_SALT, x: salt.x, y: salt.y, R: 80 * AREA_R, off: 300, home: salt});
   if(iron) spec.push({id: BIOME_RUST, x: iron.x, y: iron.y, R: 92 * AREA_R, off: 600, home: iron});
   if(bog)  spec.push({id: BIOME_VAT,  x: bog.x,  y: bog.y,  R: 52 * AREA_R, off: 900, home: null});
+  for(const b of spec) biomeCentre[BIOMES[b.id].key] = {id: b.id, x: b.x, y: b.y, R: b.R};
   const EDGE = 14;
   /* inside a bunker is not the bog, and a bunker's own floor is not the flats */
   const inBunker = (x, y) => redoubts.some(r => r.deep
@@ -48122,7 +48213,7 @@ function snapshot(){
     vip: !!c.vip, escortTo: c.escortTo ?? null, escortId: c.escortId || 0, attendant: !!c.attendant,
     lieutenant: !!c.lieutenant, lieuSince: (c.lieuSince ?? null), civ: !!c.civ, merc: !!c.merc,
     guildHire: !!c.guildHire, guildLicensed: !!c.guildLicensed, guildmaster: !!c.guildmaster, wage: c.wage||0,
-    heretic: !!c.heretic, burnDay: c.burnDay||0, bastionGuest: !!c.bastionGuest, stoodDown: !!c.stoodDown, gatePhase: c.gatePhase || 0, eyesUp: !!c.eyesUp, bossPhase: c.bossPhase || 0, ossuary: !!c.ossuary, boneWard: !!c.boneWard, courtKey: c.courtKey || null,
+    heretic: !!c.heretic, burnDay: c.burnDay||0, bastionGuest: !!c.bastionGuest, stoodDown: !!c.stoodDown, gatePhase: c.gatePhase || 0, eyesUp: !!c.eyesUp, bossPhase: c.bossPhase || 0, ossuary: !!c.ossuary, boneWard: !!c.boneWard, courtKey: c.courtKey || null, courtArts: c.courtArts || null,
     inv: {...c.inv}, pack: c.pack, mule: !!c.mule, fleeOnHit: !!c.fleeOnHit,
     eater: !!c.eater, warF: c.warF, warT: c.warT, campId: c.campId, rebelOf: c.rebelOf,
     sick: c.sick||0, armyEnds: c.armyEnds||0, trade: c.trade||null, tradeSkill: c.tradeSkill||0, guildFolk: !!c.guildFolk,
@@ -48233,6 +48324,7 @@ function snapshot(){
     /* which grounds have been walked into, and which sleepers have already sat up: without the
        second, every wreck in the rust would lie back down on a reload and wake a second time */
     biomes: {seen: {...biomeState.seen}, woke: {...biomeState.woke}},
+    courtCame: {...courtCame},
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       /* how much pitch is left in a post. Without this every post in the world came back
          brimming, and an outpost you had let go dark relit itself on a reload. */
@@ -48309,6 +48401,9 @@ function restore(d){
   for(const k in biomeState.seen) delete biomeState.seen[k];
   for(const k in biomeState.woke) delete biomeState.woke[k];
   if(d.biomes){ Object.assign(biomeState.seen, d.biomes.seen || {}); Object.assign(biomeState.woke, d.biomes.woke || {}); }
+  /* who of the old king's court has come through already */
+  for(const k in courtCame) delete courtCame[k];
+  Object.assign(courtCame, d.courtCame || {});
   for(const s2 of biomeSleepers){
     const k2 = Math.floor(s2.x) + ',' + Math.floor(s2.y);
     if(s2.kind === 'automaton') (biomeState.woke[s2.key] ? hideNodeInstance : showNodeInstance)(k2);
@@ -48679,7 +48774,7 @@ function restore(d){
     c.npcNecro = !!s.npcNecro; c.lieutenant = !!s.lieutenant; c.civ = !!s.civ; c.merc = !!s.merc;
     c.lieuSince = (s.lieuSince ?? null);
     c.guildHire = !!s.guildHire; c.guildLicensed = !!s.guildLicensed; c.guildmaster = !!s.guildmaster; c.wage = s.wage || 0;
-    c.heretic = !!s.heretic; c.burnDay = s.burnDay || 0; c.bastionGuest = !!s.bastionGuest; c.stoodDown = !!s.stoodDown; c.gatePhase = s.gatePhase || 0; c.eyesUp = !!s.eyesUp; c.bossPhase = s.bossPhase || 0; c.ossuary = !!s.ossuary; c.boneWard = !!s.boneWard; c.courtKey = s.courtKey || null;
+    c.heretic = !!s.heretic; c.burnDay = s.burnDay || 0; c.bastionGuest = !!s.bastionGuest; c.stoodDown = !!s.stoodDown; c.gatePhase = s.gatePhase || 0; c.eyesUp = !!s.eyesUp; c.bossPhase = s.bossPhase || 0; c.ossuary = !!s.ossuary; c.boneWard = !!s.boneWard; c.courtKey = s.courtKey || null; c.courtArts = s.courtArts || null;
     c.vip = !!s.vip; c.escortTo = s.escortTo ?? null; c.escortId = s.escortId || 0; c.attendant = !!s.attendant;
     c.inv = s.inv || {}; c.pack = s.pack || null; c.mule = !!s.mule; c.fleeOnHit = !!s.fleeOnHit;
     c.eater = !!s.eater; c.warF = s.warF ?? -1; c.warT = s.warT ?? -1;

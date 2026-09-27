@@ -1,22 +1,21 @@
 #!/usr/bin/env node
-/* THE DEATHLESS COURT, WHICH EXISTS TO BE SPENT FROM.
+/* THE OLD KING'S COURT, CHECKED IN PLAY (2026-09-27). Four, one to an Art, each come through
+ * onto the ground that Art made, and each one put down first is an Art the old king comes down
+ * without.
  *
- * "The Deathless Court test start may need updating with some of the new tech, buildings, etc.
- *  At the very least, it looks like that start is missing some key materials... I also would
- *  like to have two liches — the deathless, plus an ascended Lyonart so I can preview/test his
- *  model. Having Lyre, Saga, and Czarina would also be helpful for testing."
+ *   1. nobody of the court is in the world before the Fracture brings them
+ *   2. they come one at a time as it climbs: the Master onto the rust barrens at 60, the Keeper
+ *      into the vat bog at 75, the Unremembered out onto the salt flats at 90, each well clear
+ *      of anybody's walls
+ *   3. the Chancellor comes when the Door opens, into the colonnade under it
+ *   4. each fights with its Art: the Chancellor mends, the Master's blows go through armour, the
+ *      Keeper feeds on what it takes, and eyes slide off the Unremembered in a fight
+ *   5. with the whole court standing the old king would come down with all four; put two down
+ *      first and he comes down with the other two, and the log says which
+ *   6. the court, and what the king carries, survive a save
+ *   7. nothing the player reads calls him the Hanged King
  *
- * A testbed rots silently. Every other start is judged by whether it boots; this one is judged
- * by whether everything in the game can be REACHED from it, and that stops being true the day
- * somebody adds a building without thinking about a start nobody plays.
- *
- * Measured on the control: of the 22 ingredients named by a building cost or a recipe, NINE
- * were absent — lead, sundered marrow, aether cells, brine, salt, water, rum, cask rum and
- * leviathan hide — and three buildings could not be raised at all. The water chain and the rum
- * road had both arrived since the yard was last stocked.
- *
- * So the first claim is mechanical rather than a list: if the game asks for it, the Court has
- * it. The next thing added to the tech tree fails here instead of being found missing in play.
+ * Anything starting '!!' fails the build.
  *
  *   node tools/court.js [game.html]
  */
@@ -25,121 +24,164 @@ const path = require('path');
 const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__dirname, a)) : path.join(__dirname, 'game.html'));
 
 (async () => {
-  const b = await chromium.launch({ executablePath: process.env.DUSTWARD_CHROME || undefined,
-    args: ['--use-gl=swiftshader','--enable-unsafe-swiftshader','--disable-gpu-sandbox','--no-sandbox'] });
-  const errs = [];
+  const b = await chromium.launch({
+    executablePath: process.env.DUSTWARD_CHROME || undefined,
+    args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--disable-gpu-sandbox', '--no-sandbox'],
+  });
   const p = await b.newPage({ viewport: { width: 1000, height: 700 } });
-  p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
+  const errs = [];
+  p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 160)));
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
-  await p.waitForFunction(() => !!document.getElementById('btn-start'), null, { timeout: 60000 });
+  await p.waitForSelector('#btn-start', { state: 'attached', timeout: 60000 });
+  await p.waitForTimeout(1500);
   await p.evaluate(() => document.getElementById('btn-start').click());
-  await p.waitForFunction(() => typeof chars !== 'undefined', null, { timeout: 60000 });
+  await p.waitForTimeout(2500);
 
-  const R = await p.evaluate(() => {
-    const O = {};
-    const guard = (keys, fn) => {
-      try { fn(); } catch (e) { for (const k of keys) if (O[k] === undefined) O[k] = '!! ' + String(e.message).slice(0, 130).toUpperCase(); }
-    };
-    applyCreation('human', 'dark', 'testbed');
-    const mine = () => chars.filter(c => c.faction === 'player' && c.state !== 'dead');
+  const out = await p.evaluate(() => {
+    const R = {};
+    if (typeof courtTick !== 'function') { R.nobodyYet = '!! THERE IS NO COURT IN THIS BUILD'; return R; }
+    paused = true; hour = 12;
+    const heard = [];
+    { const orig = log; log = function (t) { heard.push(String(t)); return orig.apply(this, arguments); }; }
+    const saidNow = (fn) => { const a = heard.length; fn(); return heard.slice(a).join(' '); };
+    const tick = (n) => { for (let i = 0; i < n; i++) { _courtT = 0; courtTick(1); } };
+    const court = () => chars.filter(c => c.courtKey && c.state !== 'dead');
+    const of = (key) => chars.find(c => c.courtKey === key && c.state !== 'dead');
+    const me = player()[0];
+    towns.forEach(t => { t.sacked = 0; t.order = 70; });
 
-    /* ---- 1. EVERY INGREDIENT THE GAME ASKS FOR IS IN THE YARD ----
-       Derived from the game's own tables rather than from a list written here, which is the
-       whole point: a list would have to be remembered, and remembering is what failed. */
-    guard(['theYardHoldsEverythingTheGameAsksFor'], () => {
-      const want = new Set();
-      for (const k of Object.keys(BUILD_TYPES)) for (const c of Object.keys(BUILD_TYPES[k].cost || {})) want.add(c);
-      for (const g of Object.keys(RECIPES)) for (const r of RECIPES[g]) for (const c of Object.keys(r.cost || {})) want.add(c);
-      const missing = [...want].filter(k => campHas(k) === 0).sort();
-      O._asked = `${want.size} ingredients are named by a building cost or a recipe`;
-      O.theYardHoldsEverythingTheGameAsksFor = missing.length === 0
-        ? `every one of the ${want.size} ingredients the game can ask for is in the yard`
-        : `!! THE YARD HAS NONE OF: ${missing.map(k => (ITEMS[k] || {}).name || k).join(', ').toUpperCase()}`;
-    });
+    /* ---- 1. not yet ---- */
+    fracture = 30; fractureStage = fractureStageOf(fracture);
+    tick(1);
+    R.nobodyYet = (court().length === 0 && Object.keys(courtCame).length === 0)
+      ? 'at Fracture 30 there is nobody of the court anywhere in the world'
+      : `!! ${court().length} OF THE COURT ARE ALREADY OUT: ${court().map(c => c.name).join(', ')}`;
 
-    /* ---- 2. AND EVERY BUILDING CAN ACTUALLY BE RAISED ----
-       Holding one of a thing is not the same as holding enough of it, and the Desalination
-       Plant wants ten lead. Asked separately for that reason. */
-    guard(['andEveryBuildingCanBeRaised'], () => {
-      const cant = [];
-      for (const k of Object.keys(BUILD_TYPES)) {
-        const cost = BUILD_TYPES[k].cost || {};
-        for (const c of Object.keys(cost)) if (campHas(c) < cost[c]) { cant.push(`${BUILD_TYPES[k].name} wants ${cost[c]} ${(ITEMS[c] || {}).name || c} and has ${campHas(c)}`); break; }
+    /* ---- 2. as it climbs, each onto its ground ---- */
+    {
+      const bits = [], seen = [];
+      const want = { master: [60, BIOME_RUST, 'rust barrens'], keeper: [75, BIOME_VAT, 'vat bog'], unremembered: [90, BIOME_SALT, 'salt flats'] };
+      for (const [key, [at, bio, where]] of Object.entries(want)) {
+        fracture = at - 1; tick(1);
+        if (of(key)) bits.push(`${key} came before ${at}`);
+        fracture = at;
+        const said = saidNow(() => tick(1));
+        const c = of(key);
+        if (!c) { bits.push(`${key} did not come at ${at}`); continue; }
+        if (biomeAt(c.x, c.y) !== bio) bits.push(`${key} is not on the ${where}`);
+        const near = towns.find(t => dist(c.x, c.y, t.x, t.y) < (t.clearR || 20) + 20);
+        if (near) bits.push(`${key} came through inside ${near.name}`);
+        if (!/masked|somebody out on the salt/i.test(said)) bits.push(`${key} arrived unannounced`);
+        seen.push(`${c.name} (${where}, ${Math.round(dist(c.x, c.y, CRATER.x, CRATER.y))} tiles off the crater)`);
       }
-      O.andEveryBuildingCanBeRaised = cant.length === 0
-        ? `all ${Object.keys(BUILD_TYPES).length} buildings in the game can be raised out of this yard without trading for anything`
-        : `!! CANNOT RAISE: ${cant.join(' | ').toUpperCase()}`;
-    });
+      R.theyComeAsItClimbs = bits.length ? '!! ' + bits.join('; ').toUpperCase()
+        : `one at a time as the Fracture climbs, each onto its own ground and clear of every town: ${seen.join('; ')}`;
+    }
 
-    /* ---- 3. AND EVERY FORMULA IS ALREADY READ ---- */
-    guard(['andTheTreeIsFinished'], () => {
-      const left = Object.keys(TECHS).filter(k => !research.done[k]);
-      O.andTheTreeIsFinished = left.length === 0
-        ? `all ${Object.keys(TECHS).length} formulae are recovered, so nothing here is gated behind reading`
-        : `!! STILL UNREAD: ${left.join(', ').toUpperCase()}`;
-    });
+    /* ---- 3. the Chancellor, with the Door ---- */
+    let d = null;
+    {
+      for (const k of Object.keys(DOOR_SEAL_COST)) stash[k] = (stash[k] || 0) + 999;
+      fracture = 100; fractureStage = fractureStageOf(fracture); ruin = false; theDoor = null;
+      tick(1);
+      const early = of('chancellor');
+      d = openTheDoor();
+      tick(1);
+      const ch = of('chancellor');
+      R.theChancellorComesWithTheDoor = (!early && ch && dist(ch.x, ch.y, CRATER.x, CRATER.y) < 24)
+        ? `not before the Door, and then under it: ${ch.name}, ${dist(ch.x, ch.y, CRATER.x, CRATER.y).toFixed(1)} tiles from the middle, in the colonnade`
+        : `!! EARLY ${!!early}, CHANCELLOR ${!!ch}${ch ? ' AT ' + dist(ch.x, ch.y, CRATER.x, CRATER.y).toFixed(1) : ''}`;
+    }
 
-    /* ---- 4. TWO LICHES, AND THE SECOND ONE WEARS HIS OWN HEAD ----
-       The heart of the request. `LICHFACE` maps `lyonart` to `lyonlich`, and that mapping only
-       fires on a body that is BOTH that face AND a lich — a pairing the game otherwise produces
-       exactly once, at the end of a questline. The claim is not that he is present; it is that
-       the head resolves, because a Lyonart who ascended into the generic robe is the failure
-       this is meant to let you see. */
-    guard(['thereAreTwoLiches', 'andLyonartWearsHisOwnAscendedHead'], () => {
-      const liches = mine().filter(c => c.lich);
-      O._liches = liches.map(c => `${c.name} [${headKeyOf(c) || 'no sculpt'}]`).join(', ');
-      O.thereAreTwoLiches = liches.length >= 2
-        ? `${liches.length} liches stand in the yard — ${liches.map(c => c.name).join(' and ')}`
-        : `!! ONLY ${liches.length} LICH IN THE COURT`;
-      const ly = mine().find(c => c.face === 'lyonart');
-      if (!ly) { O.andLyonartWearsHisOwnAscendedHead = '!! LYONART IS NOT IN THE COURT'; return; }
-      const head = headKeyOf(ly);
-      const robed = typeof robedLich === 'function' ? robedLich(ly) : null;
-      O.andLyonartWearsHisOwnAscendedHead = (ly.lich && head === LICHFACE.lyonart && robed === false)
-        ? `and Lyonart is ascended wearing \`${head}\` — his own head on his own body, not the Deathless robe, which is the pairing the game otherwise makes once at the end of a questline`
-        : `!! LYONART'S ASCENDED HEAD DOES NOT RESOLVE (lich ${ly.lich}, head ${head}, robed ${robed})`;
-    });
-
-    /* ---- 5. AND THE OTHER THREE ARE THE BODIES THE GAME MAKES ----
-       Not just "somebody named Saga". A Hollow without `hollowTier` is an ordinary man in
-       plate, which is precisely the thing you would be previewing wrongly. */
-    guard(['theNamedBodiesAreTheRealOnes'], () => {
-      const bad = [];
-      const want = {
-        'Lyre d\'Alagadda': c => c.face === 'lyre' && !c.undead && c.stats.medic >= 30,
-        'Saga Wordsworth':  c => c.face === 'saga' && c.race === 'hollow' && c.hollowTier >= 1,
-        'Czarina':          c => c.face === 'czarina' && c.race === 'hollow' && c.hollowTier >= 1,
-      };
-      for (const nm of Object.keys(want)) {
-        const c = mine().find(o => o.name === nm);
-        if (!c) { bad.push(`${nm} is absent`); continue; }
-        if (!want[nm](c)) bad.push(`${nm} is present but wrong (face ${c.face}, race ${c.race}, tier ${c.hollowTier})`);
+    /* ---- 4. the arts ---- */
+    {
+      const bits = [], good = [];
+      /* the Chancellor mends */
+      const ch = of('chancellor');
+      if (ch) { ch.blood = ch.maxBlood * 0.5; const b0 = ch.blood; tick(8);
+        if (ch.blood > b0) good.push(`the Chancellor mends ${Math.round(ch.blood - b0)} in eight seconds`); else bits.push('the Chancellor does not mend'); }
+      /* the Master's blows go through armour: the same blow, with and without the art */
+      const ms = of('master');
+      const v = makeChar('Target', 'town', ms ? ms.x + 1 : 5, ms ? ms.y : 5, { tough: 20, armr: 10 });
+      v.armor = 'a_pla'; chars.push(v);
+      const loss = (a, n) => { let t = 0; for (let i = 0; i < n; i++) { v.parts.chest.hp = 100; v.blood = v.maxBlood; v.state = 'ok';
+        applyDamage(a, v, 'chest', 30, 'cut'); t += 100 - v.parts.chest.hp; } return t / n; };
+      if (ms) {
+        const withArt = loss(ms, 20); const keep = ms.courtArts; ms.courtArts = null;
+        const without = loss(ms, 20); ms.courtArts = keep;
+        if (withArt > without * 1.2) good.push(`the Master's blow takes ${withArt.toFixed(1)} through plate, where the same blow without the art takes ${without.toFixed(1)}`);
+        else bits.push(`the master's blow is no worse through plate (${withArt.toFixed(1)} vs ${without.toFixed(1)})`);
       }
-      O._named = mine().filter(c => c.face).map(c => `${c.name}:${c.face}`).join(', ');
-      O.theNamedBodiesAreTheRealOnes = bad.length === 0
-        ? 'Lyre, Saga and Czarina are all in the yard, each built off the numbers its own spawn uses — a Hollow with its tier, not a man in plate'
-        : `!! ${bad.join(' | ').toUpperCase()}`;
-    });
+      /* the Keeper feeds */
+      const kp = of('keeper');
+      if (kp) { kp.blood = kp.maxBlood * 0.5; const b0 = kp.blood; v.parts.chest.hp = 100; v.state = 'ok';
+        applyDamage(kp, v, 'chest', 40, 'cut');
+        if (kp.blood > b0) good.push(`the Keeper takes ${Math.round(kp.blood - b0)} back out of what it did`); else bits.push('the keeper does not feed'); }
+      /* eyes slide off the Unremembered, in a fight */
+      const un = of('unremembered');
+      if (un) { un.veilT = 0; un.target = null; tick(14); const idle = un.veilT > 0;
+        un.target = me; tick(14);
+        if (!idle && un.veilT > 0) good.push(`the Unremembered folds out of sight in a fight (${un.veilT.toFixed(0)}s) and not out of one`);
+        else bits.push(`the unremembered: idle fold ${idle}, fighting fold ${un.veilT}`);
+        un.target = null; un.veilT = 0; }
+      { const i = chars.indexOf(v); if (i >= 0) chars.splice(i, 1); }
+      R.eachFightsWithItsArt = bits.length ? '!! ' + bits.join('; ').toUpperCase() : good.join('; ');
+    }
 
-    /* ---- 6. AND THE COURT IS STILL A COURT ----
-       A guardrail on the rest: adding five named bodies must not have cost the risen. */
-    guard(['theCourtIsStillAHost'], () => {
-      const risen = mine().filter(c => c.undead && !c.lich).length;
-      const living = mine().filter(c => !c.undead).length;
-      O.theCourtIsStillAHost = (risen >= 10 && living >= 2)
-        ? `${risen} risen under the banner and ${living} living hands, because the dead cannot study or work a vat`
-        : `!! THE YARD IS THIN (${risen} risen, ${living} living)`;
-    });
-    return O;
+    /* ---- 5. what the king comes down with ---- */
+    {
+      /* the whole court standing: what he WOULD carry, read off a throwaway door */
+      const d0 = { x: d.x, y: d.y, r: d.r };
+      oldKingComesDown(d0);
+      const k0 = chars.filter(c => c.bossKey === 'oldking').pop();
+      const full = k0 ? [...(k0.courtArts || [])] : [];
+      { const i = chars.indexOf(k0); if (i >= 0) chars.splice(i, 1); }
+      /* now put two of them down first, and bring him down for real */
+      const lost = saidNow(() => { kill(of('master'), me); kill(of('keeper'), me); });
+      const br = broodAlive(); if (br) kill(br, me);
+      me.x = theDoor.x; me.y = theDoor.y; me.mana = 999; me.gift = me.gift || 'dark'; me.stats.magic = 25;
+      theDoor.kingDown = false; theDoor.work = DOOR_WORK;
+      const down = saidNow(() => workTheDoor(me, 1 / 30));
+      const k = oldKingAlive();
+      const arts = k ? (k.courtArts || []) : [];
+      const ok = full.length === 4 && arts.length === 2 && arts.includes('divine') && arts.includes('dust')
+        && /without the Master's unmaking/.test(lost) && /without the Keeper's hunger/.test(lost)
+        && /absolution/.test(down) && /fold/.test(down) && !/unmaking|hunger/.test(down);
+      R.eachOneDownIsAnArtHeLoses = ok
+        ? `with the whole court up he would carry all four; with the Master and the Keeper put down first he comes down with ${arts.join(' and ')}, and the log says so`
+        : `!! FULL ${full.join(',')} — AFTER TWO DOWN ${arts.join(',')} — LOST "${lost.slice(0, 80)}" — DOWN "${down.slice(0, 120)}"`;
+    }
+
+    /* ---- 6. through a save ---- */
+    {
+      const came = Object.keys(courtCame).sort().join(',');
+      restore(JSON.parse(JSON.stringify(snapshot())));
+      const k2 = oldKingAlive();
+      const alive = court().map(c => c.courtKey).sort().join(',');
+      const ok = Object.keys(courtCame).sort().join(',') === came && alive === 'chancellor,unremembered'
+        && k2 && (k2.courtArts || []).length === 2 && court().every(c => c.courtArts && c.courtArts.length === 1);
+      R.itSurvivesASave = ok
+        ? 'a save and a reload keep who has come through, the two still standing with their arts, and the two the king carries'
+        : `!! CAME ${Object.keys(courtCame).join(',')} (WAS ${came}), ALIVE ${alive}, KING ARTS ${k2 && k2.courtArts}`;
+    }
+
+    /* ---- 7. outwardly ---- */
+    {
+      const all = [...Object.values(COURT_COMES), ...Object.values(ART_TELL), ...Object.values(COURT).map(c => c.name), heard.join(' ')].join(' ');
+      R.outwardlyOnlyTheOldKing = !/hanged king/i.test(all)
+        ? 'and nothing a player reads calls him anything but the old king'
+        : '!! "HANGED KING" IS IN PLAYER-FACING TEXT';
+    }
+    return R;
   });
 
-  console.log('=== THE DEATHLESS COURT ===\n');
-  for (const [k, v] of Object.entries(R)) console.log('  ' + k.padEnd(36) + v);
-  const bad = Object.values(R).map(String).filter(v => v.startsWith('!!'));
-  if (errs.length) { console.log(''); errs.slice(0, 4).forEach(e => console.log('  ' + e)); }
-  console.log('\n' + (bad.length || errs.length
-    ? '*** ' + [...bad, ...errs].join('\n*** ')
-    : 'THE COURT IS STOCKED, THE TREE IS READ, AND THE FACES ARE THERE TO LOOK AT'));
+  const bad = Object.values(out).filter(v => typeof v === 'string' && v.startsWith('!!'));
+  for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(32) + ' ' + v);
+  for (const e of errs) console.log('  ' + e);
+  console.log('');
+  const which = Object.keys(out).filter(k => typeof out[k] === 'string' && out[k].startsWith('!!'));
+  console.log(bad.length || errs.length ? `*** THE COURT IS WRONG (${bad.length + errs.length}): ${[...which, ...errs.map(() => 'pageerror')].join(', ')} ***`
+                                        : 'THE COURT COMES THROUGH, AND EACH ONE DOWN IS AN ART HE LOSES');
   await b.close();
-  process.exitCode = (bad.length || errs.length) ? 1 : 0;
+  process.exit(bad.length || errs.length ? 1 : 0);
 })();

@@ -227,7 +227,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          bed" while passing on a slack fallback clause. */
       let ox = 0, oy = 0;
       outerCart:
-      for (let y = 40; y < 220; y += 4) for (let x = 40; x < 220; x += 4) {
+      /* THE WHOLE MAP, NOT ITS CORNER. This read 40..220 on both axes, which was open waste on
+         the 1440 world and is coast and town on the 2048 one. */
+      for (let y = 40; y < H - 40; y += 8) for (let x = 40; x < W - 40; x += 8) {
         if (isBlocked(x + 0.5, y + 0.5)) continue;
         if (towns.some(t => dist(t.x, t.y, x, y) < 60)) continue;
         ox = x; oy = y; break outerCart;

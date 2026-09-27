@@ -685,7 +685,7 @@ walks through him.
 **Not decided, so not built:** whether Lyonart is anything to him. It is in the sketch below
 as a proposal. (The Ossuary King was ruled out on 2026-09-27: no relation. See §8.4.)
 
-### 8.3 The old king's court — **a sketch, for your call**
+### 8.3 The old king's court — **built, first pass** (sketch below; as built in §8.5)
 
 Four, not eleven, and the eleven stay where the game already put them: they are the Pouring's
 names. **One for each of the Four Arts**, practised as the Golden Age practised them, before
@@ -764,6 +764,30 @@ old shape was a big skeleton with a crown and a stat block. Everything about him
   survive a save.
 
 `tools/ossuary.js` holds it.
+
+### 8.5 The court, as built (2026-09-27)
+
+The "one at a place" shape from the sketch, simplified to one Art each:
+
+| Courtier | Art | Comes through | Where | In a fight |
+|---|---|---|---|---|
+| The Master of the Pouring | transmutation | Fracture 60 | the rust barrens | blows ignore armour |
+| The Keeper of the Conduit | dark | Fracture 75 | the vat bog | a third of the damage it deals heals it |
+| The Unremembered | dust | Fracture 90 | the salt flats | in a fight, every 12 s it folds out of sight for 3 s |
+| The Chancellor | divine | when the Door opens | the colonnade, under the Door | mends 3% of its blood every 8 s while hurt |
+
+- Each spawns well inside its ground and at least the town's clear radius plus 24 tiles from
+  any walls, since Saltmere and Ironscar sit at the middles of the flats and the barrens.
+- Anyone not yet through when the Door opens comes with it.
+- **When the old king comes down he carries the Art of every courtier not yet slain.** The log
+  names them, and a courtier's death line says what the king will now come down without.
+- Blood 700, claw 30, big 1.2, and each drops a codex, a formula and a tome.
+- Who has come through (`courtCame`) and what each body carries (`courtArts`) survive a save.
+- **Not built from the sketch:** the Chancellor shielding others and blinding at close range,
+  the Keeper raising the dead, the Master's glass ground. Those are the next pass if the
+  single-Art version plays thin.
+
+`tools/court.js` holds it.
 
 ---
 
