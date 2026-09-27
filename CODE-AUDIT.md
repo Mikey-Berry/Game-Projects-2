@@ -560,7 +560,7 @@ on the steady legs most of the band is ahead of the captain (65% at 2048) and so
 in front of him (100% of samples). The rank spacing is still printed, as information. The
 proposal above stays on file.
 
-### 5.14 The unstuck fallback escalates bodies that are walking fine — **raised 2026-09-27, not changed**
+### 5.14 The unstuck fallback escalates bodies that are walking fine — **raised 2026-09-27; one fix tried and withdrawn**
 
 `travelStuck` counts a body as stuck when its straight-line distance to the goal has not
 shrunk 0.35 tiles in 3 s. That rule is right for the two cases it was written for: a body
@@ -582,6 +582,24 @@ target fell just outside Greenrest's east wall.
 too. The two cases the rule exists for do not move, or have no path, so they still escalate.
 Not done here because it changes every unit's movement, and the first version of this fallback
 broke three fighting harnesses (`press`, `sixfold`, `focus`). It wants its own full-suite run.
+
+**Tried 2026-09-27, and not landed.** Built as a grace of eight checks (24 s) for a body that
+moved a tile or more with a live, unfailed path; past that it escalates as before. It halved the
+count (843 → 401 escalations in the same 300 s, every one left a body with no path) and it
+passes `press`, `sixfold`, `focus`, `standoff`, `unstuck` (a walled-in body still escalates 8
+times in 40 s), `roads` and `kiting`. **It makes bands worse:**
+- `marchorder`: the captain leads (27% of his band ahead of him, somebody in front half the
+  time), and one of the band ends 5 tiles off the spot they left from. Green without it.
+- `command`: red on all three builds carrying it: a forage band missed a chest twice (closest
+  approach 8–13 tiles), and a patrol walked 1 tour where it walks 13–14. Green on every build
+  without it.
+
+The likely reason: "moved a tile" is not "made progress". A band member jostling round a station
+that moves with its captain covers a tile in three seconds without getting anywhere, and the
+grace lets it keep a bad path for twenty-four seconds instead of repathing at six. A better
+test is progress ALONG the path (the walk left to the end of `c.path` shrinking), which a body
+going the long way out of a town has and a jostled one does not. Not attempted: it needs the
+same batch again and, per the note above, a full-suite run.
 
 ### 5.13 The corners of every walled town were unwatched — **fixed 2026-09-26**
 
