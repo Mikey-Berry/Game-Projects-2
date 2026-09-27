@@ -14,6 +14,7 @@
  *   6. a wreck in the rust barrens gives scrap metal, not ingots: it melts down at a poor rate and
  *      makes a few cheap things, and the Rusted Automatons still drop the ingots
  *   7. a bar sells food off the town's shelf, and the shelf runs out
+ *   8. a nest you have taken the bounty on is marked on the minimap (and on screen, as a ward is)
  *
  * Anything starting '!!' fails the build.
  *
@@ -209,6 +210,31 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         O.theBarRunsOut = (got === 3 && left === 0 && dead === true && got2 === 3)
           ? `three dried meat behind ${tw.name}'s counter and a shift-click for ten buys three, empties the shelf, and the button goes dead`
           : `!! BOUGHT ${got} OF 3 (THEN ${got2}), ${left} LEFT, BUTTON DISABLED ${dead}`;
+      }
+    }
+
+    /* ---- 8. a nest you have taken the bounty on is marked on the map ---- */
+    {
+      for (let i = 0; i < 4 && !camps.some(c => campAlive(c) > 0); i++) spawnCamp();
+      const live = camps.filter(c => campAlive(c) > 0);
+      const near = (tw) => Math.min(...live.map(c => dist(c.x, c.y, tw.x, tw.y)));
+      const tw = towns.slice().sort((a, b) => near(a) - near(b))[0];
+      let j = null;
+      for (let i = 0; i < 40 && !j; i++) { const r = rollBoardJob(tw, 'cull'); if (r && r.campId) j = r; }
+      if (!j) O.theNestIsMarked = `!! ${tw.name} NEVER POSTS A NEST BOUNTY, WITH ${live.length} DENS STANDING`;
+      else {
+        tw.board = tw.board || { day, jobs: [] }; tw.board.jobs.push(j);
+        const redAt = () => { renderMinimap(); const cp = camps.find(c => c.id === j.campId);
+          const d = mmcx.getImageData(Math.round(cp.x * 128 / W) - 3, Math.round(cp.y * 128 / H) - 3, 7, 7).data;
+          let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 180 && d[i + 1] < 120 && d[i + 2] < 100) n++; return n; };
+        const before = redAt();
+        takeContract(tw, j);
+        const after = redAt();
+        const i = contracts.indexOf(j); if (i >= 0) contracts.splice(i, 1);
+        const gone = redAt();
+        O.theNestIsMarked = (before === 0 && after >= 4 && gone === 0)
+          ? `take ${tw.name}'s bounty on ${j.title.replace('BOUNTY: ', '').toLowerCase()} and a red cross goes on the minimap over the camp (${after} pixels), and comes off when the job does`
+          : `!! MINIMAP RED OVER THE CAMP: ${before} BEFORE TAKING, ${after} AFTER, ${gone} ONCE THE JOB IS GONE`;
       }
     }
     return O;

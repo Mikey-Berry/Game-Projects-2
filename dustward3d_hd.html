@@ -14388,7 +14388,9 @@ function rollBoardJob(t, kind){
        either. The rule is: close enough to be our business, or nearer to us than to anyone. */
     const near = camps.filter(c => campAlive(c) > 0)
       .map(c => ({c, d: dist(c.x, c.y, t.x, t.y)}))
-      .filter(o => o.d < 400 || towns.every(t2 => t2 === t || dist(t2.x, t2.y, o.c.x, o.c.y) >= o.d))
+      /* 400 was a fifth of the way across a 1440 map; it grows with the map, or on the 2048
+         world half the boards never posted a nest at all */
+      .filter(o => o.d < 400 * AREA_R || towns.every(t2 => t2 === t || dist(t2.x, t2.y, o.c.x, o.c.y) >= o.d))
       .sort((a, b) => a.d - b.d);
     if(near.length){
       const c0 = pick(near.slice(0, 3)).c;
@@ -28502,6 +28504,16 @@ function kickCam(x, y, mag){
 }
 let camFY = 0;                               /* smoothed storey lift */
 function camRight(){ return [Math.cos(camYaw), -Math.sin(camYaw)]; }
+/* which way across the screen a point on the map lies, for an arrow on the rim when the point is
+   too far off to project: the offset from the camera's focus, read off the camera's own right and
+   forward axes, with forward pointing up the screen */
+function rimDir(x, y){
+  const [rx, ry] = camRight(), [fx, fy] = camFwd();
+  const dx = x - camX, dy = y - camY;
+  const sx = dx * rx + dy * ry, sy = -(dx * fx + dy * fy);
+  const l = Math.hypot(sx, sy) || 1;
+  return {x: sx / l * 100, y: sy / l * 100};
+}
 function camFwd(){ return [-Math.sin(camYaw), -Math.cos(camYaw)]; }
 
 /* real seconds, so a line holds for as long at speed 5 as it does paused */
@@ -40825,6 +40837,9 @@ function renderOverlay(rdt){
       if(p){ ax = p.x; ay = p.y; }
       else { const q = w2s(w.x, w.y, groundY(w.x, w.y)); ax = q ? q.x : cxm; ay = q ? q.y : cym; }
       let vx = ax - cxm, vy = ay - cym;
+      /* past the far plane there is no projection at all, which is exactly when an arrow is most
+         wanted: point along the camera's own axes instead */
+      if(Math.hypot(vx, vy) < 1){ const d2 = rimDir(w.x, w.y); vx = d2.x; vy = d2.y; }
       const len = Math.hypot(vx, vy);
       /* dead centre and unprojectable at once means there is no direction to point in */
       if(len < 1){ setFont('bold 12px monospace'); continue; }
@@ -40843,6 +40858,52 @@ function renderOverlay(rdt){
       const tx = clamp(ex - vx / len * 26, 46, viewW() - 46), ty = clamp(ey - vy / len * 20, 20, viewH() - 12);
       cx.fillStyle = '#141008'; cx.fillText(label, tx + 1, ty + 1);
       cx.fillStyle = col;      cx.fillText(label, tx, ty);
+    }
+    setFont('bold 12px monospace');
+  }
+  /* ---------- AND THE NEST YOU WERE PAID TO CLEAR ----------
+     "The bandit nest quests should be marked similar to the escort quests — a distinct marker
+      on the map rather than a general direction." The board still reads out a bearing, which is
+     what the post-writer would say; once you have TAKEN the job the place is marked, the way a
+     ward is: a red cross over the camp when it is on screen, an arrow on the rim with the
+     distance when it is not, and a cross on the minimap above the fog. Red and a cross, not the
+     ward's gold ring, so the two jobs cannot be mistaken for each other. Gone when it is cleared. */
+  for(const j of contracts){
+    if(j.kind !== 'cull' || !j.campId || !j.taken) continue;
+    const cp = camps.find(c2 => c2.id === j.campId);
+    if(!cp || campAlive(cp) === 0) continue;
+    const col = '#d8553a';
+    const p = w2s(cp.x, cp.y, groundY(cp.x, cp.y) + 2.4);
+    const onScreen = p && p.x > 4 && p.x < viewW() - 4 && p.y > 4 && p.y < viewH() - 4;
+    const label = `THE ${String(j.foe || 'bandit').toUpperCase()} NEST`;
+    if(onScreen){
+      cx.strokeStyle = '#141008'; cx.lineWidth = 5;
+      cx.beginPath(); cx.moveTo(p.x - 7, p.y - 7); cx.lineTo(p.x + 7, p.y + 7); cx.moveTo(p.x + 7, p.y - 7); cx.lineTo(p.x - 7, p.y + 7); cx.stroke();
+      cx.strokeStyle = col; cx.lineWidth = 2.5;
+      cx.beginPath(); cx.moveTo(p.x - 7, p.y - 7); cx.lineTo(p.x + 7, p.y + 7); cx.moveTo(p.x + 7, p.y - 7); cx.lineTo(p.x - 7, p.y + 7); cx.stroke();
+      setFont('bold 11px monospace');
+      cx.fillStyle = '#141008'; cx.fillText(label, p.x + 1, p.y - 13);
+      cx.fillStyle = col;      cx.fillText(label, p.x, p.y - 14);
+    } else {
+      const cxm = viewW() / 2, cym = viewH() / 2, pad = 40;
+      const q = p || w2s(cp.x, cp.y, groundY(cp.x, cp.y));
+      let vx = q ? q.x - cxm : 0, vy = q ? q.y - cym : 0;
+      if(Math.hypot(vx, vy) < 1){ const d2 = rimDir(cp.x, cp.y); vx = d2.x; vy = d2.y; }
+      const len = Math.hypot(vx, vy);
+      if(len < 1) continue;
+      const k = Math.min((cxm - pad) / Math.abs(vx || 1e-6), (cym - pad) / Math.abs(vy || 1e-6));
+      const ex = cxm + vx * k, ey = cym + vy * k;
+      cx.save(); cx.translate(ex, ey); cx.rotate(Math.atan2(vy, vx));
+      cx.fillStyle = col;
+      cx.beginPath(); cx.moveTo(11, 0); cx.lineTo(-7, -7); cx.lineTo(-7, 7); cx.fill();
+      cx.restore();
+      setFont('bold 11px monospace');
+      const d0 = player()[0] ? Math.round(dist(player()[0].x, player()[0].y, cp.x, cp.y)) : 0;
+      const lab = `${label}${d0 ? ' ' + d0 : ''}`;
+      const hw = cx.measureText(lab).width / 2 + 8;      /* the label is centred: keep all of it on screen */
+      const tx = clamp(ex - vx / len * 26, hw, viewW() - hw), ty = clamp(ey - vy / len * 20, 20, viewH() - 12);
+      cx.fillStyle = '#141008'; cx.fillText(lab, tx + 1, ty + 1);
+      cx.fillStyle = col;      cx.fillText(lab, tx, ty);
     }
     setFont('bold 12px monospace');
   }
@@ -41407,6 +41468,17 @@ function renderMinimap(){
     mmcx.fillRect(w.x*128/W - 2, w.y*128/H - 2, 4, 4);
     mmcx.strokeStyle = '#141008'; mmcx.lineWidth = 1;
     mmcx.strokeRect(w.x*128/W - 2.5, w.y*128/H - 2.5, 5, 5);
+  }
+  /* and a taken nest bounty, the same way and for the same reason: a red cross over the camp */
+  for(const j of contracts){
+    if(j.kind !== 'cull' || !j.campId || !j.taken) continue;
+    const cp = camps.find(c2 => c2.id === j.campId);
+    if(!cp || campAlive(cp) === 0) continue;
+    const px = cp.x * 128 / W, py = cp.y * 128 / H;
+    for(const [lw, col] of [[3.2, '#141008'], [1.6, '#d8553a']]){
+      mmcx.strokeStyle = col; mmcx.lineWidth = lw;
+      mmcx.beginPath(); mmcx.moveTo(px - 3, py - 3); mmcx.lineTo(px + 3, py + 3); mmcx.moveTo(px + 3, py - 3); mmcx.lineTo(px - 3, py + 3); mmcx.stroke();
+    }
   }
   drawViewCone();
 }
