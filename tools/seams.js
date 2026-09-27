@@ -70,15 +70,27 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const pickOne = new Map();
       for (const c of chars) if (c.state === 'ok' && c.barks && c.barks.length && !pickOne.has(kindOf(c))) pickOne.set(kindOf(c), c);
       const me = player()[0];
+      /* ---------- EACH ONE IS MADE AT ITS OWN TURN ----------
+         They were all spawned here, up front, on one spot by the start town, and then heard one
+         at a time at three seconds apiece. The Eye is twenty-two blood and comes near the end of
+         the list, so it spent about a minute of simulated time standing among the rest of them
+         and the town's watch before anybody listened for it, and whether it was still alive by
+         then depended on what else the world was doing. Red on five runs of six on builds a
+         passing run had already cleared: a claim about barks reading a fight. A gaunt is made
+         now at the moment it is listened to. */
       for (const [k, g] of Object.entries(GAUNTS)) {
         if (!g.bark || pickOne.has(k)) continue;
-        const q = findOpenNear(Math.round(me.x) + 30, Math.round(me.y) + 30, 10);
-        const c = spawnGaunt(k, q.x, q.y);
-        if (c) { c.__probe = true; c.nightborn = false; pickOne.set(k, c); }
+        pickOne.set(k, null);
       }
       const kinds = [...pickOne.keys()];
       const silent = [], said = [];
-      for (const [k, c] of pickOne) {
+      for (let [k, c] of pickOne) {
+        if (!c) {
+          const q = findOpenNear(Math.round(me.x) + 30, Math.round(me.y) + 30, 10);
+          c = spawnGaunt(k, q.x, q.y);
+          if (!c) { silent.push(k + ' (could not be made)'); continue; }
+          c.__probe = true; c.nightborn = false;
+        }
         /* a listener at arm's length, on the speaker's own storey; and nothing else talking */
         const ear = makeChar('Listener', 'player', c.x + 2, c.y, { atk: 1, def: 40, tough: 90 });
         ear.floor = c.floor || 0; ear.__probe = true; ear.noFight = true; chars.push(ear);
@@ -96,7 +108,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           if (c.bubble && c.barks.includes(c.bubble.text)) heard = c.bubble.text;
           c.x = ear.x - 2; c.y = ear.y;                                  /* hold it in earshot */
         }
-        (heard ? said : silent).push(heard ? `${k}: "${heard}"` : k);
+        (heard ? said : silent).push(heard ? `${k}: "${heard}"` : `${k} (${c.state}, ${Math.round(c.blood)} blood, ${dist(c.x, c.y, ear.x, ear.y).toFixed(1)} from the listener)`);
         for (const o of hush) { o.barkCd = o._cdWas; delete o._cdWas; }
         chars.splice(chars.indexOf(ear), 1);
       }
