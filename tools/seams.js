@@ -724,7 +724,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        wherever it is, so the risen probe is laid down for this half */
     risen.undead = false;
     const quarrel = player().filter(o => o.state !== 'dead' && hostile(m, o)).map(o => o.name);
-    const qa = at(-34, 0);
+    /* BESIDE THE WALKER ITSELF, not six tiles off where the walker was asked to stand. Both
+       went through `findOpenNear` from offsets of p0, and on a world where the ground at -40
+       is water or wall the walker lands further out than that — so the herald was more than
+       twelve tiles from every body of yours, kept walking toward the nearest, and the claim
+       went red on some seeds and green on others. It is asked about a body it has LOOKED at. */
+    const qa = [[5, 0], [-5, 0], [0, 5], [0, -5], [4, 4], [-4, -4], [4, -4], [-4, 4]]
+      .map(([dx, dy]) => findOpenNear(alive.x + dx, alive.y + dy, 2))
+      .find(q2 => q2 && dist(q2.x, q2.y, alive.x, alive.y) < 9) || { x: alive.x + 1, y: alive.y };
     const look = probe(spawnGaunt('herald', qa.x, qa.y)); look.hunt = true; look.target = null;
     rebuildCharGrid();
     for (let i = 0; i < 4 && look.hunt; i++) physics(look, 0.1);
