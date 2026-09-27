@@ -11,6 +11,9 @@
  *      Dame's walls
  *   5. the Aldercott yard gate is shut until you are let in and open after; the house's stairs
  *      reach both upper storeys and back (two flights share a stairwell)
+ *   6. a wreck in the rust barrens gives scrap metal, not ingots: it melts down at a poor rate and
+ *      makes a few cheap things, and the Rusted Automatons still drop the ingots
+ *   7. a bar sells food off the town's shelf, and the shelf runs out
  *
  * Anything starting '!!' fails the build.
  *
@@ -164,6 +167,48 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         O.theHouseHasAnUpstairs = (shutBlocks && f1 === 1 && f2 === 2 && f0 === 0 && outAgain)
           ? 'shut, the yard gate stops you; let in, one of yours walks through it, into the house, up to the first floor, up to the attic, and all the way back out'
           : `!! GATE SHUT ${shutBlocks}; REACHED FLOOR ${f1} THEN ${f2}, BACK ON ${f0}, OUT AGAIN ${outAgain}`;
+      }
+    }
+
+    /* ---- 6. a wreck is scrap, not an ingot; the ingots are what you fight the barrens for ---- */
+    {
+      const wreck = { x: 0, y: 0 };
+      let got = null;
+      for (let y = 0; y < H && !got; y += 2) for (let x = 0; x < W && !got; x += 2)
+        if (biomeAt(x, y) === BIOME_RUST && decorAt(x, y) === 'wreck' && !isBlocked(x + 0.5, y + 0.5)) { wreck.x = x; wreck.y = y; got = gatherKindAt(x + 0.5, y + 0.5); }
+      const all = Object.values(RECIPES).flat();
+      const melt = all.find(r => r.out === 'iron' && r.cost.scrap);
+      const uses = all.filter(r => r.cost.scrap && r.out !== 'iron').map(r => ITEMS[r.out] ? ITEMS[r.out].name : r.out);
+      const bot = spawnRustAutomaton(wreck.x + 0.5, wreck.y + 0.5);
+      const drops = bot && bot.dropItems ? Object.keys(bot.dropItems) : [];
+      if (bot) { const i = chars.indexOf(bot); if (i >= 0) chars.splice(i, 1); }
+      O.aWreckIsScrap = (got && got.kind === 'scrap' && ITEMS.scrap && ITEMS.scrap.base * 4 <= ITEMS.iron.base && melt && uses.length && drops.includes('iron'))
+        ? `a wreck gives ${ITEMS.scrap.name} (${ITEMS.scrap.base} against an ingot's ${ITEMS.iron.base}); ${Object.entries(melt.cost).map(([k, v]) => v + ' ' + k).join(' + ')} melts to one ingot, and it also makes ${uses.join(', ')}; a Rusted Automaton still drops ingots`
+        : `!! WRECK GIVES ${got && got.kind}, MELTS ${!!melt}, USES ${uses.join('/')}, AUTOMATON DROPS ${drops.join('/')}`;
+    }
+
+    /* ---- 7. a bar's food comes off the town's shelf, and the shelf runs out ---- */
+    {
+      const v = vendors.find(x => x.vt === 'bar' && x.town);
+      if (!v) O.theBarRunsOut = '!! NO BAR IN THIS WORLD';
+      else {
+        const tw = v.town;
+        tw.stock = tw.stock || {};
+        tw.stock.meat = 3;
+        const cats0 = cats; cats = 99999;
+        const own0 = stash.meat || 0;
+        openVendor(v);
+        const btn = () => document.querySelector('#modalbody [data-buy="meat"]');
+        const ev = new MouseEvent('click', { shiftKey: true, bubbles: true });
+        if (btn()) btn().dispatchEvent(ev);
+        const got = (stash.meat || 0) - own0, left = stockOf(tw, 'meat');
+        const dead = btn() ? btn().disabled : null;
+        if (btn()) btn().dispatchEvent(ev);
+        const got2 = (stash.meat || 0) - own0;
+        shut(); cats = cats0; stash.meat = own0;
+        O.theBarRunsOut = (got === 3 && left === 0 && dead === true && got2 === 3)
+          ? `three dried meat behind ${tw.name}'s counter and a shift-click for ten buys three, empties the shelf, and the button goes dead`
+          : `!! BOUGHT ${got} OF 3 (THEN ${got2}), ${left} LEFT, BUTTON DISABLED ${dead}`;
       }
     }
     return O;

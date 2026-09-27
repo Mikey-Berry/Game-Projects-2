@@ -7,7 +7,8 @@
  *      lies on a bare tile
  *   3. the flats keep what dies on them at the stage it lay down in, and the dust still takes it
  *      in the end, which is the difference from brine
- *   4. a SALVAGE hand strips a wreck for iron; a FORAGE hand cuts a bloom for quickflesh
+ *   4. a SALVAGE hand strips a wreck for scrap (not ingots: ruled 2026-09-27); a FORAGE hand cuts
+ *      a bloom for quickflesh
  *   5. the bog holds the living and not the dead
  *   6. something in the rust sits up when you walk up to it, and stays up through a save;
  *      the pools put out two vat-spawn each
@@ -123,11 +124,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       hand.job = null; hand.gather = null;
       return { ok: had && got >= 3, got, had };
     };
-    const sal = trade('salvage', BIOME_RUST, 'wreck', 'iron');
+    const sal = trade('salvage', BIOME_RUST, 'wreck', 'scrap');
     const fog = trade('forage', BIOME_VAT, 'bloom', 'vflesh');
     R.theRustIsStrippedAndTheBogIsCut = (sal.ok && fog.ok)
-      ? `forty seconds of SALVAGE at a wreck brings in ${sal.got} iron, and of FORAGE at a bloom ${fog.got} quickflesh`
-      : `!! SALVAGE ${sal.got} IRON (WORK ${sal.had}), FORAGE ${fog.got} FLESH (WORK ${fog.had})`;
+      ? `forty seconds of SALVAGE at a wreck brings in ${sal.got} scrap metal, and of FORAGE at a bloom ${fog.got} quickflesh`
+      : `!! SALVAGE ${sal.got} SCRAP (WORK ${sal.had}), FORAGE ${fog.got} FLESH (WORK ${fog.had})`;
 
     /* ---- 5. the bog holds the living ---- */
     {
