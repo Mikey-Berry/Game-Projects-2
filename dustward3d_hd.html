@@ -3027,6 +3027,27 @@ function subOf(c){
   return (t && c.sub && t[c.sub]) || SUB_NONE;
 }
 function subIs(c, key){ return !!c && c.sub === key; }
+/* ---------- A LINE THAT BELONGS TO THE RACE ----------
+   "Risen Chimeras do not always have a chimeric skeleton." They did not, because they were
+   never chimeras of any line: a camp bandit and a warband soldier are built as humans and have
+   their race rolled AFTERWARDS (`c.race = rollNpcRace()`), so a bandit who came up chimera kept
+   the human line `makeChar` had rolled for him. Alive he stood as a plain chimera with no
+   houndkin jaw or ox horns, and raised he stood as the same anonymous human frame as a farmhand,
+   because the chimera skeletons are drawn per line and he had none. Bandits are the commonest
+   thing a necromancer raises.
+   Any body whose line is not one of its race's gets one here, picked off its id by the lines'
+   own weights. NO `rnd()`: the world places everything after these bodies, and a draw here
+   would move all of it. A boss is left alone; it is drawn as itself. */
+function fitLine(c){
+  const t = c && !c.bossKey && SUBRACES[c.race];
+  if(!t || (c.sub && t[c.sub])) return c;
+  const keys = Object.keys(t);
+  let tot = 0; for(const k of keys) tot += (t[k].w || 1);
+  let r = hash2((c.id || 1) * 29 + 5, (c.id || 1) * 11 + 3) * tot;
+  c.sub = keys[keys.length - 1];
+  for(const k of keys){ r -= (t[k].w || 1); if(r <= 0){ c.sub = k; break; } }
+  return c;
+}
 function subLabel(c){ const s = subOf(c); return s.label || (RACES[c.race] || RACES.human).label; }
 /* The same thing in running prose. A chimera's line names itself — 'houndkin' is a whole
    word — but a golem's does not: 'rock' on its own is a stone, so the material keeps the
@@ -6608,7 +6629,7 @@ function spawnRustAutomaton(x, y){
 function spawnVatSpawn(x, y){
   const c = makeChar(pick(['Vat-Spawn', 'Half-Poured', 'Overflow']), 'redoubt', x, y,
     {atk:20, def:12, tough:20, ath:7, magic:1, labor:0, blades:10});
-  c.race = 'homunculus';
+  c.race = 'homunculus'; fitLine(c);
   c.biomeOwn = 'vat';
   c.guard = {x, y};
   c.barks = ['Warm. Warm in here.', 'Not finished. Not finished.', 'Where is the tender? It is past the hour.'];
@@ -6665,7 +6686,7 @@ function biomeTick(dt){
 function spawnCrazedHomunculus(x, y, r){
   const c = makeChar(pick(['Vat-Soldier','Sleepless','Unit ' + ri(100,999)]), 'redoubt', x, y,
     {atk:24, def:22, tough:24, ath:11, magic:1, labor:2, blades:35, ranged:35});
-  c.race = 'homunculus';
+  c.race = 'homunculus'; fitLine(c);
   c.redoubtId = r.id;
   c.weapon = pick(['w_sever', 'w_lance', 'w_nod', 'w_xbow']);
   c.armor = rnd() < 0.4 ? 'a_carap' : 'a_pla';
@@ -9245,7 +9266,7 @@ function campMember(camp){
      weapon: camp.fac==='cannibal' ? (rnd()<0.5 ? 'w_club' : null) : (rnd()<0.4 ? 'w_rkat' : 'w_club'),
      armor: rnd()<0.3 ? 'a_rag' : null, squad: camp.squad});
   if(camp.fac==='cannibal'){ c.eater = true; c.stats.martial = lvl; }
-  c.race = rollNpcRace();
+  c.race = rollNpcRace(); fitLine(c);
   c.campId = camp.id;
   c.loot = ri(20, 120);
   chars.push(c);
@@ -9296,7 +9317,7 @@ function spawnArmy(fromI, target){
       {atk:lvl, def:lvl, tough:lvl*0.9, ath:7, armr:25,
        weapon: i===0 ? 'w_nod' : (rnd()<0.3 ? 'w_xbow' : 'w_kat'),
        armor: i===0 ? 'a_pla' : 'a_lea', squad: sq});
-    c.race = rollNpcRace();
+    c.race = rollNpcRace(); fitLine(c);
     c.captain = isCapt;
     c.warF = fromI;
     c.warT = target.def ? towns.indexOf(target) : -2;   /* -2: marching on a camp */
@@ -21039,7 +21060,7 @@ function spawnWanderers(){
     c.neutral = true;
     c.conviction = w.conviction;
     if(w.gift){ c.gift = w.gift; c.att = {divine:0, destruction:0, dark:0, dust:0}; c.att[w.gift] = 2; c.mana = rawMaxMana(c); }
-    if(w.race){ c.race = w.race; if(w.sub) c.sub = w.sub; }
+    if(w.race){ c.race = w.race; if(w.sub) c.sub = w.sub; fitLine(c); }
     c.blood = c.maxBlood = Math.max(c.maxBlood, 120);
     c.wanderMet = 0;
     chars.push(c);
@@ -22386,6 +22407,7 @@ function carryShape(r, body, rot, m){
   } else {
     r.race = body.race || r.race;
     r.sub  = body.sub  || null;
+    fitLine(r);              /* a corpse from before the fix, raised now, still gets its line */
     r.sex  = body.sex  || r.sex;
     if(body.clawDmg) r.clawDmg = Math.max(3, Math.min(body.clawDmg, 6 + m * 0.9));
   }
@@ -49132,6 +49154,7 @@ function restore(d){
        `race:'scaleborn'`, and there is no version of this where those load as humans. */
     fixRace(s);
     c.race = s.race || 'human'; c.sub = s.sub || null; c.spouse = s.spouse || 0;
+    fitLine(c);              /* the bandits a save already holds, see `fitLine` */
     c.construct = s.construct !== undefined ? !!s.construct : !!(RACES[c.race] || {}).construct;
     c.sex = s.sex || 'm'; c.partner = s.partner || 0; c.grief = s.grief || 0; c.pregnant = s.pregnant || 0; c.lastBorn = s.lastBorn ?? null; c.overdue = s.overdue || 0; c.giftTwo = s.giftTwo || null; c.moonborn = !!s.moonborn; c.strongborn = !!s.strongborn;
     if(c.civ) c.civT = rnd()*10;
