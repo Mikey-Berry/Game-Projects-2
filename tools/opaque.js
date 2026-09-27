@@ -129,12 +129,29 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const bt = BUILD_TYPES.tower;
       const twr = { type: 'tower', x: gx, y: gy, w: bt.w, h: bt.h, floor: 0, hp: 200, maxHp: 200, growth: 0, __probe: true };
       pBuilds.push(twr);
+      /* COUNTED ROUND THE TOWER, NOT ACROSS THE WHOLE SCENE. Between the two frames the sim
+         runs, and on the 2048 world enough else in the scene fades, floats or builds in that
+         the difference came out at -4 with the tower's own deck solid. Only meshes within six
+         tiles of the tower count. */
+      const _wp = new THREE.Vector3();
+      const tcx = gx + bt.w / 2, tcz = gy + bt.h / 2;
+      const glassNear = () => {
+        let glass = 0;
+        scene.traverse(o => {
+          if (!o.material || o.isInstancedMesh) return;
+          o.getWorldPosition(_wp);
+          if (Math.hypot(_wp.x - tcx, _wp.z - tcz) > 6) return;
+          const ms = Array.isArray(o.material) ? o.material : [o.material];
+          for (const m of ms) if (m.opacity !== undefined && m.transparent && m.opacity < 0.95) glass++;
+        });
+        return glass;
+      };
       const twrGlass = async () => {
         await frame();
-        const withIt = glassIn(scene).glass;
+        const withIt = glassNear();
         const i3 = pBuilds.indexOf(twr); pBuilds.splice(i3, 1);
         await frame();
-        const without = glassIn(scene).glass;
+        const without = glassNear();
         pBuilds.push(twr);
         await frame();
         return withIt - without;
