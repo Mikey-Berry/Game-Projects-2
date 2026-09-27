@@ -18338,6 +18338,27 @@ const OLDKING_HANGING = [
 const OLDKING_STANDING = ['I held a kingdom. I can hold a door.',
   'You are finishing our work. You understand that. You are finishing it.',
   'Do not look at the crown. Everyone looks at the crown.'];
+/* ---------- THE COURT ----------
+   Four, one to an Art, each practised the way the Golden Age practised it before anything was
+   degraded. Drawn by `bodyOf...` (WHAT CAME THROUGH, DRAWN). Where and when they come through is
+   `courtTick`; this makes one. */
+const COURT = {
+  chancellor:   {name: 'The Chancellor',             art: 'divine'},
+  master:       {name: 'The Master of the Pouring',  art: 'transmutation'},
+  keeper:       {name: 'The Keeper of the Conduit',  art: 'dark'},
+  unremembered: {name: 'The Unremembered',           art: 'dust'},
+};
+function spawnCourtier(key, x, y){
+  const D = COURT[key]; if(!D) return null;
+  const c = makeChar(D.name, 'gaunt', x, y, {atk:40, def:34, tough:50, ath:5, magic:60, armr:18});
+  c.courtKey = key; c.bossKey = 'court_' + key;
+  c.beast = true; c.clawDmg = 30; c.big = 1.2;
+  c.nightborn = false; c.doorborn = false;
+  c.blood = 700; c.maxBlood = 700;
+  c.guard = {x, y};
+  chars.push(c);
+  return c;
+}
 function oldKingAlive(){
   return theDoor ? (chars.find(c => c.bossKey === 'oldking' && c.state !== 'dead') || null) : null;
 }
@@ -18350,9 +18371,11 @@ function oldKingComesDown(d){
   k.bossKey = 'oldking';
   k.doorborn = true; k.nightborn = false;
   k.big = 1.45; k.taunt = true;
+  /* NOT A MAN ANY MORE (see `bodyOfTheOldKing`): he is drawn by his own rig, and what reaches
+     for you is a hand at the end of an arm with one joint too many, not a sword */
+  k.beast = true; k.clawDmg = 42;
   k.blood = OLDKING_BLOOD; k.maxBlood = OLDKING_BLOOD;
   k.guard = {x: q.x, y: q.y};
-  k.weapon = 'w_kingsfang';               /* the name was always a boast about somebody */
   k.head = 'h_oldcrown';
   k.dropItems = {codex: 1, formula_p: 2};
   k.barks = OLDKING_STANDING;
@@ -28434,40 +28457,49 @@ function syncStrikes(){
   }
 }
 /* ---------- THE OLD KING, HANGING ----------
-   Boxes, like everything else built for one place in the world: a man in regalia hanging by the
-   neck from a rope of light, turned slowly by nothing, a long way above the Door. Not a body in
-   `chars` while he hangs, so nothing can target, crowd, loot or raise him until he comes down.
-   Drawn only once the Door is somewhere you have seen. */
-const hangedKingFx = (() => {
+   The same body the rig draws when he comes down (`bodyOfTheOldKing`), drawn here with plain
+   materials, hung by the neck from a rope of light that goes up out of sight, turned slowly by
+   nothing. Not a body in `chars` while he hangs, so nothing can target, crowd, loot or raise him.
+   Built the first time a Door needs it rather than at load, because the shapes it is made of are
+   declared further down the file. Drawn only once the Door is somewhere you have seen. */
+let hangedKingFx = null;
+function buildHangedKing(){
   const g = new THREE.Group();
-  const lam = (c) => new THREE.MeshLambertMaterial({color: c});
-  const bx = (w, h, d, c, x, y, z) => { const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lam(c)); m.position.set(x, y, z); g.add(m); return m; };
-  const glow = (geo) => new THREE.Mesh(geo, new THREE.MeshBasicMaterial({color: 0xf4e8c0, transparent: true, opacity: 0.85,
-    depthWrite: false, blending: THREE.AdditiveBlending, fog: false}));
-  bx(0.34, 0.34, 0.34, '#b8a894', 0.04, -0.32, 0.03).rotation.z = 0.35;       /* the head, gone over to one side */
-  bx(0.40, 0.07, 0.40, '#b08a3a', 0.07, -0.13, 0.03).rotation.z = 0.35;       /* and the crown on it */
-  for(let i = 0; i < 5; i++){ const a2 = i / 5 * Math.PI * 2; bx(0.06, 0.16, 0.06, '#d4a848', 0.07 + Math.cos(a2) * 0.17, -0.03, 0.03 + Math.sin(a2) * 0.17).rotation.z = 0.35; }
-  bx(0.92, 0.12, 0.44, '#b08a5a', 0, -0.62, 0);                               /* the mantle */
-  bx(0.62, 0.80, 0.36, '#7a4a5e', 0, -1.02, 0);                               /* regalia, faded to the colour of old wine */
-  bx(0.72, 1.10, 0.42, '#5e3a4c', 0, -1.95, 0);                               /* the robe, hanging straight */
-  for(const sx of [-1, 1]) bx(0.16, 0.92, 0.16, '#7a4a5e', sx * 0.42, -1.10, 0);
-  for(const sx of [-1, 1]) bx(0.14, 0.10, 0.28, '#1e1a1e', sx * 0.14, -2.56, 0.05);
-  const rope = glow(new THREE.CylinderGeometry(0.05, 0.05, 44, 6, 1, true)); rope.position.y = 22; g.add(rope);
-  const knot = glow(new THREE.TorusGeometry(0.2, 0.045, 6, 14)); knot.rotation.x = Math.PI / 2; knot.position.y = -0.1; g.add(knot);
-  g.scale.setScalar(1.8);
+  const lam = (col) => new THREE.MeshLambertMaterial({color: col});
+  const lit = (col) => new THREE.MeshBasicMaterial({color: col, fog: false});
+  const put = (geo, mat, sx, sy, sz, x, y, z, p, rx) => { const m = new THREE.Mesh(geo, mat); m.scale.set(sx, sy, sz); m.position.set(x, y, z); if(rx) m.rotation.x = rx; (p || g).add(m); return m; };
+  const K = {
+    box: (w, h, d, col, x, y, z, p, rx, ry, rz) => { const m = put(BOXG, lam(col), w, h, d, x, y, z, p); m.rotation.set(rx || 0, ry || 0, rz || 0); return m; },
+    bone: (geo, col, sx, sy, sz, x, y, z, p, rx) => put(geo, lam(col), sx, sy, sz, x, y, z, p, rx),
+    metal: (geo, col, sx, sy, sz, x, y, z, p, rx) => put(geo, lam(col), sx, sy, sz, x, y, z, p, rx),
+    glow: (geo, col, sx, sy, sz, x, y, z, p, rx) => put(geo, lit(col), sx, sy, sz, x, y, z, p, rx),
+    fade: (geo, col, op, sx, sy, sz, x, y, z, p) => put(geo, lam(col), sx, sy, sz, x, y, z, p),
+  };
+  const b = bodyOfTheOldKing(K, g);
+  b.sigil.visible = false;                                  /* nothing under him to pool on */
+  /* and the rope goes all the way up: straight up from the noose, not out along the broken neck */
+  b.rope.visible = false;
+  K.glow(BOXG, CAME.goldLt, 0.04, 46, 0.04, -0.22, 3.46 + 23, 0.12, g);
+  g.userData.swing = b.swing;
+  g.scale.setScalar(1.45);
   g.visible = false;
   scene.add(g);
   return g;
-})();
+}
 function syncHangedKing(now){
   const d = theDoor;
   const show = !!d && !d.kingDown && activeFloor >= 0 && (debugSeeAll || visAt(d.x, d.y) > 0);
-  hangedKingFx.visible = show;
-  if(!show) return;
+  if(!show){ if(hangedKingFx) hangedKingFx.visible = false; return; }
+  if(!hangedKingFx) hangedKingFx = buildHangedKing();
+  hangedKingFx.visible = true;
   const t = now * 0.001;
-  /* over the south edge of the Door, in front of the veil, where he will come down */
-  hangedKingFx.position.set(d.x, groundY(d.x, d.y) + 11, d.y + d.r * 0.65);
-  hangedKingFx.rotation.set(0, t * 0.05, Math.sin(t * 0.35) * 0.05);
+  /* over the south edge of the Door, in front of the veil, where he will come down: his feet a
+     couple of heights off the glass, which is as high as the camera can see a thing and still
+     show the whole of it */
+  hangedKingFx.position.set(d.x, groundY(d.x, d.y) + 2.6, d.y + d.r * 0.65);
+  hangedKingFx.rotation.set(0, t * 0.05, Math.sin(t * 0.35) * 0.04);
+  const sw = hangedKingFx.userData.swing;
+  for(let i = 0; i < sw.length; i++) sw[i].rotation.x = Math.sin(t * 0.8 - i * 0.6) * 0.06;
 }
 /* the sky over the crater: a sick pale by day, a bruise by night */
 const craterSky = {day: new THREE.Color(0xb4b09a), night: new THREE.Color(0x1c1426), c: new THREE.Color()};
@@ -30482,6 +30514,236 @@ const CONEG = new THREE.ConeGeometry(0.5, 1, 6);            // tapered points: s
 const CYLG  = new THREE.CylinderGeometry(0.5, 0.5, 1, 10);  // bands, rings
 const SPHG  = new THREE.SphereGeometry(0.5, 8, 6);          // low-poly cranium/domes
 const OCTG  = new THREE.OctahedronGeometry(0.5);            // gems
+const TORG  = new THREE.TorusGeometry(0.5, 0.045, 6, 28);    // rings: haloes, collars, the noose
+/* ============================================================ WHAT CAME THROUGH, DRAWN
+   The old king and his court share one rule about their bodies: nothing here is a person any
+   more, and nothing is built at a person's proportions. Each is a builder over a small kit
+   (`box` for baked solid boxes, `bone`/`metal` for shaped solids, `glow` for lit parts, `fade`
+   for the half-there), so the rig in `buildCharMesh` and the old king's hanging prop draw the
+   same body from the same function. Every builder works up from y = 0 at its lowest point and
+   hands back what the animator moves: `swing` sways, `jit` flickers sideways, `sigil` turns. */
+/* the lit colours are set DEEP on purpose: a glow is emissive at 1.7 and a pale one burns out to
+   cream on screen, so an orange that should read as molten is written close to rust */
+const CAME = {flesh: '#6e6874', limb: '#5e5864', dark: '#1e1a20', robe: ['#4a2430', '#3a1c26', '#2e161e'],
+  gold: '#c8a040', goldLt: '#e4c060', light: '#d8a040', rib: '#a89e92'};
+/* THE OLD KING. Nine generations on a rope: too long everywhere, the neck most of all, the feet
+   pointed at the ground they no longer reach, the arms down past the knees and bent the wrong
+   way at a second elbow. No face; a seam of the light he hung in where one was. The crown did
+   not stay on the head. It went in. */
+function bodyOfTheOldKing(K, root){
+  const out = {swing: [], jit: []};
+  const f = CAME.flesh, l = CAME.limb;
+  /* the feet, pointed, one leg longer than the other */
+  for(const [sx, drop] of [[-1, 0.08], [1, 0]]){
+    K.box(0.07, 0.32, 0.10, CAME.dark, sx * 0.10, 0.16 - drop, 0.02, root, 0.12, 0, sx * 0.05);
+    K.box(0.085, 0.64, 0.085, l, sx * 0.10, 0.62 - drop, 0, root);
+    K.box(0.105, 0.62, 0.105, l, sx * 0.10, 1.24 - drop, 0, root);
+  }
+  /* what is left of the robe, in strips, hanging straight down off the hips */
+  for(let i = 0; i < 9; i++){
+    const a = i / 9 * Math.PI * 2, s = new THREE.Group();
+    s.position.set(Math.cos(a) * 0.19, 1.58, Math.sin(a) * 0.15); root.add(s);
+    K.box(0.12, 0.9 + (i % 3) * 0.18, 0.035, CAME.robe[i % 3], 0, -0.5 - (i % 3) * 0.09, 0, s);
+    s.rotation.y = -a; out.swing.push(s);
+  }
+  K.box(0.34, 0.16, 0.22, CAME.robe[1], 0, 1.58, 0, root);                      /* the belt of it */
+  K.box(0.24, 0.52, 0.17, f, 0, 1.88, 0, root);                                   /* a waist too long */
+  /* THE CAGE, OPEN. A back and two sides; in front, ribs with nothing between them, and inside,
+     the light he hung in, still in him. */
+  K.box(0.44, 0.56, 0.06, f, 0, 2.38, -0.10, root);
+  for(const sx of [-1, 1]) K.box(0.05, 0.56, 0.22, f, sx * 0.22, 2.38, 0, root);
+  for(let i = 0; i < 6; i++) for(const sx of [-1, 1])
+    K.box(0.19 - (i % 2) * 0.03, 0.03, 0.05, CAME.rib, sx * 0.12, 2.14 + i * 0.085, 0.11, root, 0, 0, sx * -0.18);   /* split down the middle, and sprung */
+  K.glow(BOXG, CAME.light, 0.30, 0.50, 0.14, 0, 2.38, 0.02, root);
+  K.glow(SPHG, '#f0c060', 0.18, 0.22, 0.10, 0, 2.40, 0.06, root);                  /* the hot middle of it */
+  /* AND A SECOND PAIR, small and wrong, folded up against the open cage like something's
+     forelegs: whatever he is now grew them on the way through */
+  for(const sx of [-1, 1]){
+    const fa = new THREE.Group(); fa.position.set(sx * 0.16, 2.56, 0.14); root.add(fa);
+    fa.rotation.set(0.9, 0, sx * 0.35);
+    K.box(0.04, 0.34, 0.04, CAME.limb, 0, -0.17, 0, fa);
+    const fb = new THREE.Group(); fb.position.set(0, -0.34, 0); fa.add(fb); fb.rotation.x = -2.2;
+    K.box(0.035, 0.30, 0.035, CAME.limb, 0, -0.15, 0, fb);
+    for(let k = 0; k < 3; k++) K.box(0.012, 0.16, 0.012, CAME.dark, (k - 1) * 0.02, -0.36, 0, fb);
+  }
+  /* shoulders hunched up round the ears, the way a hanged man's go */
+  K.box(0.80, 0.14, 0.26, f, 0, 2.70, 0, root, 0, 0, 0.04);
+  /* ARMS: three bones each, not two, and the middle joint bends backward */
+  for(const sx of [-1, 1]){
+    const sh = new THREE.Group(); sh.position.set(sx * 0.42, 2.68, 0); root.add(sh);
+    sh.rotation.z = sx * 0.06;
+    K.box(0.085, 0.92, 0.085, l, 0, -0.46, 0, sh);
+    const el = new THREE.Group(); el.position.set(0, -0.92, 0); sh.add(el); el.rotation.x = -0.32;
+    K.box(0.075, 0.86, 0.075, l, 0, -0.43, 0, el);
+    const el2 = new THREE.Group(); el2.position.set(0, -0.86, 0); el.add(el2); el2.rotation.x = 0.45;
+    K.box(0.065, 0.34, 0.065, l, 0, -0.17, 0, el2);
+    for(let k = 0; k < 4; k++) K.box(0.022, 0.40, 0.022, CAME.dark, (k - 1.5) * 0.035, -0.52, 0.01, el2, 0, 0, (k - 1.5) * 0.08);
+    out.swing.push(sh);
+  }
+  /* THE NECK, the length of a forearm, broken sideways at the top */
+  const neck = new THREE.Group(); neck.position.set(0, 2.76, 0.02); root.add(neck);
+  neck.rotation.z = 0.30; neck.rotation.x = 0.16;
+  K.bone(CYLG, f, 0.10, 0.96, 0.10, 0, 0.48, 0, neck);
+  K.glow(TORG, CAME.goldLt, 0.30, 0.30, 0.30, 0, 0.74, 0, neck, Math.PI / 2);       /* the noose, cinched */
+  out.rope = K.glow(BOXG, CAME.goldLt, 0.035, 0.80, 0.035, 0.03, 1.16, -0.03, neck);   /* its frayed end */
+  /* THE HEAD, lolled over: a long eyeless dome, a seam of light down the front, and a jaw hanging
+     off one hinge. The crown is sunk into the skull and its points come out the other side. */
+  const head = new THREE.Group(); head.position.set(0, 0.98, 0); neck.add(head);
+  head.rotation.z = 0.78; head.rotation.x = 0.22;
+  K.bone(SPHG, '#c8c0b6', 0.42, 0.64, 0.44, 0, 0.22, 0, head);
+  K.glow(BOXG, '#f0c060', 0.045, 0.42, 0.03, 0, 0.16, 0.215, head);             /* where a face was: a seam, lit from inside */
+  const jaw = new THREE.Group(); jaw.position.set(0.02, -0.04, 0.06); head.add(jaw);
+  K.box(0.15, 0.34, 0.14, '#b8b0a4', 0.03, -0.18, 0.02, jaw, 0.55, 0, -0.30);
+  K.metal(CYLG, CAME.gold, 0.43, 0.08, 0.43, 0, 0.38, 0, head, 0.22);
+  for(let k = 0; k < 6; k++){
+    const a = k / 6 * Math.PI * 2;
+    const sp = K.metal(CONEG, k % 2 ? CAME.goldLt : CAME.gold, 0.06, 0.48 + (k % 3) * 0.10, 0.06,
+      Math.cos(a) * 0.18, 0.38 + (k % 2) * 0.06, Math.sin(a) * 0.18, head);
+    sp.rotation.set(Math.sin(a) * 1.05, 0, -Math.cos(a) * 1.05 + (k === 2 ? 2.4 : 0));   /* one driven through, point first */
+  }
+  out.head = head; out.jaw = jaw; out.neck = neck;
+  out.sigil = K.glow(CYLG, CAME.goldLt, 1.0, 0.01, 1.0, 0, -0.36, 0, root);       /* the light pooling under him */
+  return out;
+}
+/* THE CHANCELLOR (Divine, at full). Vestments stacked stiff, a collar that frames nothing, and a
+   mask that is a white oval with no eyes and no mouth: the Chancellery minutes; it does not
+   speak. The book is chained to it. The light over it turns. */
+function bodyOfTheChancellor(K, root){
+  const out = {swing: [], jit: []};
+  K.bone(CONEG, '#e8e2d0', 0.95, 1.70, 0.74, 0, 0.85, 0, root);
+  for(const [y, r] of [[0.28, 0.83], [0.92, 0.50]]) K.metal(CYLG, CAME.gold, r, 0.05, r * 0.78, 0, y, 0, root);
+  K.box(0.46, 0.62, 0.30, '#ddd6c2', 0, 1.80, 0, root);
+  K.box(0.66, 0.40, 0.46, '#f2ecdc', 0, 2.12, -0.06, root);                         /* the collar */
+  K.metal(BOXG, CAME.gold, 0.68, 0.04, 0.48, 0, 2.33, -0.06, root);                  /* its gilt edge */
+  K.bone(SPHG, '#141018', 0.46, 0.54, 0.40, 0, 2.52, -0.04, root);                    /* the hood's dark */
+  const mask = new THREE.Group(); mask.position.set(0, 2.50, 0.20); root.add(mask);
+  K.bone(SPHG, '#f6f3ea', 0.28, 0.40, 0.10, 0, 0, 0, mask);                           /* blank */
+  /* the book, held open in front of it, and the chain from the wrist */
+  for(const sx of [-1, 1]) K.box(0.16, 0.58, 0.16, '#e2dcc8', sx * 0.29, 1.62, 0.16, root, -0.55, 0, 0);
+  const book = new THREE.Group(); book.position.set(0, 1.38, 0.40); root.add(book);
+  K.box(0.60, 0.06, 0.44, '#4a2e1c', 0, 0, 0, book);
+  K.box(0.54, 0.05, 0.40, '#ece2c6', 0, 0.05, 0, book);
+  K.box(0.012, 0.06, 0.40, '#8a7a5a', 0, 0.06, 0, book);
+  for(let i = 0; i < 4; i++){
+    const ln = new THREE.Group(); ln.position.set(0.30, -0.02 - i * 0.10, 0.05); book.add(ln);
+    K.metal(BOXG, '#9a9aa0', 0.04, 0.09, 0.025, 0, -0.04, 0, ln);
+    out.swing.push(ln);
+  }
+  K.glow(TORG, '#d8b050', 0.70, 0.70, 0.70, 0, 2.54, -0.32, root);                  /* the light behind the head */
+  out.sigil = K.glow(TORG, '#d8b050', 0.95, 0.95, 0.95, 0, 3.00, -0.05, root, Math.PI / 2);   /* and the one over it, turning */
+  out.head = mask;
+  return out;
+}
+/* THE MASTER OF THE POURING (Transmutation, the art Destruction is the wreck of). A body cast
+   rather than born: an iron drum with the seams still running, a leather apron, a smith's plate
+   for a face with the pour-line down it, and a crucible held out in one hand, full. */
+function bodyOfTheMaster(K, root){
+  const out = {swing: [], jit: []};
+  const iron = '#3e3a38', seam = '#b8400c';
+  K.metal(CYLG, iron, 1.02, 1.12, 0.82, 0, 0.62, 0, root);
+  for(const y of [0.30, 0.72, 1.08]) K.glow(CYLG, seam, 1.04, 0.028, 0.84, 0, y, 0, root);
+  K.glow(BOXG, seam, 0.03, 1.02, 0.03, 0, 0.62, 0.415, root);
+  K.box(0.80, 1.02, 0.05, '#5a3824', 0, 0.82, 0.44, root);                          /* the apron */
+  K.box(1.14, 0.46, 0.70, '#34302e', 0, 1.40, 0, root);                             /* the shoulders */
+  for(const sx of [-1, 1]) K.metal(SPHG, iron, 0.42, 0.34, 0.42, sx * 0.58, 1.52, 0, root);
+  K.box(0.52, 0.52, 0.42, '#2a2624', 0, 1.88, -0.05, root);                          /* the cowl */
+  const face = new THREE.Group(); face.position.set(0, 1.90, 0.18); root.add(face);
+  K.metal(BOXG, '#5a4a3a', 0.48, 0.60, 0.12, 0, 0, 0, face);                          /* the plate, cast */
+  K.glow(BOXG, '#c86a14', 0.34, 0.04, 0.02, 0, 0.10, 0.07, face);                    /* the slit */
+  /* and the metal still running out of it, down one cheek and off the jaw */
+  K.glow(BOXG, seam, 0.035, 0.22, 0.02, -0.09, -0.02, 0.07, face);
+  K.glow(BOXG, seam, 0.03, 0.12, 0.02, -0.11, -0.20, 0.07, face);
+  for(const [rx, ry] of [[-0.19, 0.24], [0.19, 0.24], [-0.19, -0.24], [0.19, -0.24]]) K.box(0.05, 0.05, 0.04, '#1e1c1a', rx, ry, 0.06, face);
+  K.box(0.30, 0.78, 0.30, '#34302e', -0.70, 1.02, 0.02, root);                       /* the left arm */
+  K.metal(BOXG, iron, 0.38, 0.30, 0.38, -0.70, 0.56, 0.04, root);
+  K.box(0.30, 0.62, 0.30, '#34302e', 0.70, 1.12, 0.14, root, -0.5, 0, 0);            /* the right, held out */
+  K.box(0.06, 0.06, 0.70, '#2a2624', 0.70, 0.88, 0.62, root);                          /* the ladle */
+  K.metal(CYLG, '#2e2a28', 0.36, 0.22, 0.36, 0.70, 0.84, 1.00, root);
+  K.glow(CYLG, '#d88a20', 0.30, 0.02, 0.30, 0.70, 0.95, 1.00, root);                   /* full */
+  for(let i = 0; i < 2; i++){
+    const d = new THREE.Group(); d.position.set(0.62 + i * 0.14, 0.72, 1.02 - i * 0.06); root.add(d);
+    K.glow(BOXG, seam, 0.035, 0.10 + i * 0.06, 0.035, 0, -0.06, 0, d);
+    out.swing.push(d);
+  }
+  out.sigil = K.glow(CYLG, '#8a3008', 1.2, 0.01, 1.2, 0, 0.0, 0, root);
+  out.head = face;
+  return out;
+}
+/* THE KEEPER OF THE CONDUIT (Dark, at full). Mother's jailer. Too tall and too thin, in black to
+   the ground, with a long bone mask like something's skull worn over its own, a violet light
+   deep in the sockets. It still holds the leash. There is nothing on the end of it. */
+function bodyOfTheKeeper(K, root){
+  const out = {swing: [], jit: []};
+  const bone = '#d6ccb2', lit = '#b46cff';
+  K.bone(CONEG, '#17141c', 0.80, 1.95, 0.62, 0, 0.98, 0, root);
+  K.box(0.40, 0.58, 0.26, '#1c1822', 0, 2.08, 0, root);
+  K.bone(SPHG, '#141118', 0.44, 0.52, 0.50, 0, 2.50, -0.02, root);
+  const mask = new THREE.Group(); mask.position.set(0, 2.46, 0.10); root.add(mask);
+  K.box(0.24, 0.24, 0.80, bone, 0, -0.04, 0.32, mask);                                /* the snout */
+  K.box(0.32, 0.10, 0.30, '#e0d6bc', 0, 0.08, 0.06, mask);                            /* the brow */
+  for(const sx of [-1, 1]){
+    K.box(0.08, 0.08, 0.05, '#120e14', sx * 0.10, 0.02, 0.20, mask);
+    K.glow(SPHG, lit, 0.05, 0.05, 0.04, sx * 0.10, 0.02, 0.23, mask);
+  }
+  for(let i = 0; i < 7; i++) K.box(0.03, 0.05, 0.03, '#efe6cc', (i % 2 ? 1 : -1) * 0.09, -0.18, 0.12 + i * 0.09, mask);
+  for(const sx of [-1, 1]){
+    K.box(0.12, 0.92, 0.12, '#1a161e', sx * 0.30, 1.72, 0.05, root);
+    K.box(0.08, 0.26, 0.06, bone, sx * 0.30, 1.15, 0.08, root);
+  }
+  K.glow(OCTG, '#9a5aff', 0.10, 0.14, 0.05, 0, 2.02, 0.15, root);                     /* at the breastbone */
+  /* THE LEASH: link on link down out of the right hand, and an empty collar on the ground */
+  let par = root, px = 0.30, py = 1.02, pz = 0.10;
+  for(let i = 0; i < 6; i++){
+    const ln = new THREE.Group(); ln.position.set(px, py, pz); par.add(ln);
+    K.metal(BOXG, '#6a6470', 0.045, 0.12, 0.03, 0, -0.06, 0, ln);
+    out.swing.push(ln);
+    par = ln; px = 0; py = -0.15; pz = 0.02;
+  }
+  K.metal(TORG, '#6a6470', 0.34, 0.34, 0.34, 0.36, 0.03, 0.32, root, Math.PI / 2);
+  out.sigil = K.glow(CYLG, '#6a3aaa', 1.0, 0.01, 1.0, 0, 0.0, 0, root);
+  out.head = mask;
+  return out;
+}
+/* THE UNREMEMBERED (Dust, the art that altered reality). Nobody can keep hold of what it looks
+   like, so it does not hold still to be looked at: a robed shape in the colour of dust with a
+   smear where the face goes, and two or three of itself standing slightly beside it, never in
+   the same place twice. */
+function bodyOfTheUnremembered(K, root){
+  const out = {swing: [], jit: []};
+  const dun = '#6e6454';
+  const figure = (par, op) => {
+    K.fade(CONEG, dun, op, 0.76, 1.52, 0.60, 0, 0.76, 0, par);
+    K.fade(BOXG, '#7a705e', op, 0.40, 0.50, 0.26, 0, 1.72, 0, par);
+    K.fade(SPHG, '#5e5646', op, 0.36, 0.40, 0.36, 0, 2.06, 0, par);
+    for(let i = 0; i < 5; i++) K.fade(BOXG, '#5a5242', op, 0.10, 0.34, 0.02, Math.cos(i * 1.26) * 0.34, 0.14, Math.sin(i * 1.26) * 0.26, par);   /* the hem, in rags */
+  };
+  figure(root, 1);
+  const face = new THREE.Group(); face.position.set(0, 2.04, 0.15); root.add(face);
+  K.fade(SPHG, '#b0a898', 0.55, 0.26, 0.34, 0.10, 0, 0, 0, face);
+  for(let i = 0; i < 3; i++) K.fade(BOXG, '#c8c0b0', 0.35, 0.44 - i * 0.08, 0.035, 0.02, (i - 1) * 0.02, (i - 1) * 0.08, 0.04, face);
+  for(let i = 0; i < 3; i++){
+    const ghost = new THREE.Group(); ghost.userData.ph = i * 2.1 + 0.4; root.add(ghost);
+    figure(ghost, 0.16);
+    out.jit.push(ghost);
+  }
+  for(let i = 0; i < 5; i++){
+    const m = new THREE.Group(); m.position.set(Math.cos(i * 1.3) * 0.5, 0.6 + i * 0.32, Math.sin(i * 1.3) * 0.5); root.add(m);
+    K.glow(BOXG, '#d8d0c0', 0.03, 0.03, 0.03, 0, 0.06, 0, m);
+    out.swing.push(m);
+  }
+  out.sigil = K.glow(CYLG, '#b0a898', 0.9, 0.01, 0.9, 0, 0.0, 0, root);
+  out.head = face;
+  return out;
+}
+/* who is drawn by which, and how far off the ground each hangs */
+const CAME_THROUGH = {
+  oldking:    {build: bodyOfTheOldKing,       ride: 0.36},
+  chancellor: {build: bodyOfTheChancellor,    ride: 0.10},
+  master:     {build: bodyOfTheMaster,        ride: 0.03},
+  keeper:     {build: bodyOfTheKeeper,        ride: 0.08},
+  unremembered: {build: bodyOfTheUnremembered, ride: 0.12},
+};
+function cameThroughKey(c){ return c.bossKey === 'oldking' ? 'oldking' : (c.courtKey || null); }
 /* Anything in here is reused for the life of the run and must survive every teardown.
    Everything else that a rebuild throws away has GPU memory behind it, and dropping the
    reference does NOT release it — three.js needs an explicit dispose(). Without this the
@@ -34557,7 +34819,28 @@ function buildCharMesh(c){
      view and back has the same bones in the same places, and worldgen's stream never learns
      that anybody looked at him. See the note on `phase` above: this is the same trap.
      The gems are the one lit part of him. Everything else is chalk. */
-  if(c.demilich){
+  const came = cameThroughKey(c) ? CAME_THROUGH[cameThroughKey(c)] : null;
+  if(came){
+    /* THE OLD KING AND HIS COURT: drawn by their own builders (see WHAT CAME THROUGH, DRAWN), on
+       the float group the pose machine bobs, with the body hung at its own height off the ground */
+    e.float = new THREE.Group(); g.add(e.float);
+    const inner = new THREE.Group(); inner.position.y = came.ride - skullRide(c); e.float.add(inner);
+    const K = {
+      box: (w, h, d, col, x, y, z, p, rx, ry, rz) => { const o = obox(w, h, d, col, x, y, z, p); if(rx || ry || rz) o.rotation.set(rx || 0, ry || 0, rz || 0); return o; },
+      bone: (geo, col, sx, sy, sz, x, y, z, p, rx) => mk(geo, ownBone(col), sx, sy, sz, x, y, z, p, rx),
+      metal: (geo, col, sx, sy, sz, x, y, z, p, rx) => mk(geo, ownMetal(col), sx, sy, sz, x, y, z, p, rx),
+      glow: (geo, col, sx, sy, sz, x, y, z, p, rx) => mkGlow(geo, ownGlow(col), sx, sy, sz, x, y, z, p, rx),
+      fade: (geo, col, op, sx, sy, sz, x, y, z, p) => {
+        const m = ownBone(col);
+        if(op < 1){ m.transparent = true; m.opacity = op; m.depthWrite = false; m.userData.keepOpacity = op; }
+        return mk(geo, m, sx, sy, sz, x, y, z, p);
+      },
+    };
+    const b = came.build(K, inner);
+    e.head = b.head; e.jaw = b.jaw || null; e.sigil = b.sigil; e.spineBits = b.swing; e.jitter = b.jit;
+    for(const sb of e.spineBits) if(sb.userData.amp === undefined) sb.userData.amp = 0.10;
+    e.floats = true;
+  } else if(c.demilich){
     e.still = true;
     const BONE = ['#e8e1c9', '#ded5b8', '#d2c8a8', '#c6bb9a'];   /* sun-bleached, four shades of nothing */
     const GOLD = '#d8b048', GOLD_DK = '#9a7a2c', GEM = '#b46cff';
@@ -38632,9 +38915,17 @@ function syncChars(dt){
          one of these three rigs that has a jaw at all */
       const talking = !!c.bubble;
       if(e.jaw) P(e.jaw, 'x', talking ? 0.22 + Math.sin(now * 0.018) * 0.16 : 0.05, 10);
-      for(let i = 0; i < e.spineBits.length; i++)
-        e.spineBits[i].rotation.x = Math.sin(e.phase - i * 0.7) * (0.10 + i * 0.05);
+      for(let i = 0; i < e.spineBits.length; i++){
+        const amp = e.spineBits[i].userData.amp;
+        e.spineBits[i].rotation.x = Math.sin(e.phase - i * 0.7) * (amp !== undefined ? amp : 0.10 + i * 0.05);
+      }
       e.sigil.rotation.y += dt * 0.9;
+      /* what cannot be remembered does not stand in one place to be looked at */
+      if(e.jitter) for(const j of e.jitter){
+        const t = now * 0.001, ph = j.userData.ph || 0;
+        j.position.x = Math.sin(t * 7.3 + ph) * 0.18 + Math.sin(t * 23 + ph * 2) * 0.05;
+        j.position.z = Math.cos(t * 5.1 + ph) * 0.12;
+      }
     } else if(c.beast && !c.construct && !e.bipedGaunt){
       e.g.rotation.set(0, e.rotY, 0);
       if(e.limbs){
@@ -39181,7 +39472,7 @@ function syncChars(dt){
       m.emissive.setRGB(k, k, k*0.85);
       if(veiled){ m.opacity = 0.28; m.transparent = true; }
       else if(c.phantom){ m.opacity = 0.82; m.transparent = true; }
-      else { m.opacity = 1; m.transparent = false; }
+      else { const ko = m.userData.keepOpacity; m.opacity = ko || 1; m.transparent = !!ko; }   /* the half-there stay half there */
       if(c.state==='dead'){
         /* Not a flat grey any more: a body reads its own decay from across the field, and
            re-tints as it goes over, so a battlefield visibly ages. */
@@ -39203,7 +39494,7 @@ function syncChars(dt){
       m.emissive.setRGB(k, k, k*0.85);
       if(veiled){ m.opacity = 0.28; m.transparent = true; }
       else if(c.phantom){ m.opacity = 0.82; m.transparent = true; }
-      else { m.opacity = 1; m.transparent = false; }
+      else { const ko = m.userData.keepOpacity; m.opacity = ko || 1; m.transparent = !!ko; }   /* the half-there stay half there */
       if(dead && !m._greyed){ m.color.multiplyScalar(0.45); drainColour(m.color, 0.6); m._greyed = true; }
     }
     for(const m of e.mats){
@@ -39211,7 +39502,7 @@ function syncChars(dt){
       m.emissive.setRGB(k, k, k*0.85);
       if(veiled){ m.opacity = 0.28; m.transparent = true; }
       else if(c.phantom){ m.opacity = 0.82; m.transparent = true; }
-      else { m.opacity = 1; m.transparent = false; }
+      else { const ko = m.userData.keepOpacity; m.opacity = ko || 1; m.transparent = !!ko; }   /* the half-there stay half there */
       if(dead && !m._greyed){ m.color.multiplyScalar(0.45); drainColour(m.color, 0.6); m._greyed = true; }
     }
     /* AND THE SIGILS GO OUT. The Sigil-Bound's own bark is the spec: "THE SIGILS ARE FADING.
@@ -39248,7 +39539,7 @@ function syncChars(dt){
     if(e.glowMats) for(const m of e.glowMats){
       if(veiled){ m.opacity = 0.28; m.transparent = true; }
       else if(c.phantom){ m.opacity = 0.82; m.transparent = true; }
-      else { m.opacity = 1; m.transparent = false; }
+      else { const ko = m.userData.keepOpacity; m.opacity = ko || 1; m.transparent = !!ko; }   /* the half-there stay half there */
       /* OUT, not dimmed. A tenth of an amber is still amber at this camera, and the point of
          the branch is that a corpse has no lights on it. */
       if(dead && !m._out){ m.emissive.setRGB(0, 0, 0); m.color.multiplyScalar(0.40); m._out = true; }
