@@ -787,7 +787,7 @@ The "one at a place" shape from the sketch, simplified to one Art each:
   the Keeper raising the dead, the Master's glass ground. Those are the next pass if the
   single-Art version plays thin.
 
-`tools/court.js` holds it.
+`tools/kingscourt.js` holds it.
 
 ---
 
