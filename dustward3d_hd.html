@@ -34544,6 +34544,99 @@ const FACES = {
   lyre:    {skin:'#c6b195', eye:'#0b0810', hair:'#f4f1ea', glow:false, body:'#1c1a19'},
 };
 function faceOf(c){ return (c && c.face && FACES[c.face]) || null; }
+/* ---------- PAINTED FACES ----------
+   "Perhaps we need to 'paint' their facial features and other details rather than try to render
+    them with pixels and boxes since this is not working well."
+   A face built from boxes is a face made of right angles, and every attempt at an expressive one
+   (the succubus four times, the named three twice) came out as a mask with windows in it. What a
+   box cannot do is a curve: the round of an eye, the arc of a lash, a highlight. So those are
+   PAINTED — onto a canvas, once per look, and hung on the front of the head as a decal.
+   The decal covers x -0.15..0.15 and y 0.10..0.40 of the head bone, which is the whole front of
+   any head in the game. It carries two maps: the colour, and a glow map that is black except
+   where the face should shine (an iris, a catch-light), so a painted eye can be a lit eye
+   without the rest of the face lighting up with it. Cached by key, so forty succubi with green
+   eyes share one texture. Its material goes in `glowMats`: that keeps the shine off the hit
+   flash, fades it under a veil and puts it out when the body dies, which is the treatment every
+   lit eye in the game already gets. */
+const PAINTED = new Map();
+const FP = {x0: -0.15, y1: 0.40, span: 0.30, px: 256};
+const fpU = (x) => (x - FP.x0) / FP.span * FP.px;
+const fpV = (y) => (FP.y1 - y) / FP.span * FP.px;
+const fpL = (d) => d / FP.span * FP.px;
+function mixHex(a, b, t){ return '#' + new THREE.Color(a).lerp(new THREE.Color(b), t).getHexString(); }
+function facePaint(key, draw){
+  let t = PAINTED.get(key);
+  if(t) return t;
+  const mk = () => { const cv = document.createElement('canvas'); cv.width = cv.height = FP.px; return cv; };
+  const col = mk(), glo = mk();
+  const gx = glo.getContext('2d');
+  gx.fillStyle = '#000'; gx.fillRect(0, 0, FP.px, FP.px);
+  draw(col.getContext('2d'), gx);
+  t = {map: new THREE.CanvasTexture(col), emi: new THREE.CanvasTexture(glo)};
+  t.map.encoding = THREE.sRGBEncoding; t.emi.encoding = THREE.sRGBEncoding;
+  PAINTED.set(key, t);
+  return t;
+}
+let _planeG = null;
+function faceDecal(parent, paint, z, glowMats){
+  if(!_planeG){ _planeG = new THREE.PlaneGeometry(1, 1); _sharedRes.add(_planeG); }
+  const mat = new THREE.MeshLambertMaterial({map: paint.map, emissiveMap: paint.emi, emissive: new THREE.Color(0xffffff),
+    transparent: true, alphaTest: 0.04, depthWrite: false});
+  mat.userData.keepOpacity = 1;
+  const m = new THREE.Mesh(_planeG, mat);
+  m.scale.set(FP.span, FP.span, 1);
+  m.position.set(0, FP.y1 - FP.span / 2, z);
+  parent.add(m); glowMats.push(mat);
+  return m;
+}
+/* AN ANIME EYE: an almond opening, flatter over the top than under it, filled nearly edge to edge
+   by a tall iris that runs dark at the top to light at the bottom, a pupil, a heavy upper lash
+   that runs past the outer corner into a flick, a thin lower lash, and two catch-lights — the
+   big one high, the small one low, on the same side for both eyes, because both eyes are lit by
+   the same light. `o.outer` is which way the outer corner lies on the canvas (-1 or 1). The iris
+   and the lights go on the glow map as well, and that is the shine. */
+function paintAnimeEye(ctx, gx, x, y, w, h, o){
+  const cx = fpU(x), cy = fpV(y), W = fpL(w), Hh = fpL(h);
+  const shape = (c) => {
+    c.beginPath();
+    c.moveTo(cx - W / 2, cy + Hh * 0.04);
+    c.bezierCurveTo(cx - W / 2, cy - Hh * 0.62, cx + W / 2, cy - Hh * 0.62, cx + W / 2, cy + Hh * 0.04);
+    c.bezierCurveTo(cx + W / 2, cy + Hh * 0.62, cx - W / 2, cy + Hh * 0.62, cx - W / 2, cy + Hh * 0.04);
+    c.closePath();
+  };
+  const iris = (c, k) => {
+    const g = c.createLinearGradient(0, cy - Hh * 0.46, 0, cy + Hh * 0.46);
+    g.addColorStop(0, mixHex(o.iris, '#000000', 1 - 0.35 * k));
+    g.addColorStop(0.45, mixHex(o.iris, '#000000', 1 - 0.85 * k));
+    g.addColorStop(1, mixHex(o.irisLo, '#000000', 1 - k));
+    c.fillStyle = g;
+    c.beginPath(); c.ellipse(cx, cy + Hh * 0.05, W * 0.34, Hh * 0.47, 0, 0, Math.PI * 2); c.fill();
+  };
+  ctx.save(); shape(ctx); ctx.fillStyle = o.white; ctx.fill(); ctx.clip();
+  iris(ctx, 1);
+  ctx.strokeStyle = mixHex(o.iris, '#000000', 0.55); ctx.lineWidth = W * 0.05;
+  ctx.beginPath(); ctx.ellipse(cx, cy + Hh * 0.05, W * 0.34, Hh * 0.47, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = o.pupil;
+  ctx.beginPath(); ctx.ellipse(cx, cy - Hh * 0.02, W * 0.13, Hh * 0.24, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  gx.save(); shape(gx); gx.clip(); iris(gx, o.glow); gx.restore();
+  ctx.strokeStyle = o.lash; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.lineWidth = Hh * 0.17;
+  ctx.beginPath();
+  ctx.moveTo(cx - W / 2 - W * 0.05, cy + Hh * 0.02);
+  ctx.bezierCurveTo(cx - W / 2, cy - Hh * 0.66, cx + W / 2, cy - Hh * 0.66, cx + W / 2 + W * 0.05, cy - Hh * 0.02);
+  ctx.stroke();
+  const ox = cx + o.outer * (W / 2 + W * 0.02);
+  ctx.lineWidth = Hh * 0.11;
+  ctx.beginPath(); ctx.moveTo(ox, cy - Hh * 0.08); ctx.lineTo(ox + o.outer * W * 0.24, cy - Hh * 0.36); ctx.stroke();
+  ctx.lineWidth = Hh * 0.05;
+  ctx.beginPath(); ctx.moveTo(cx - W * 0.32, cy + Hh * 0.50); ctx.quadraticCurveTo(cx, cy + Hh * 0.60, cx + W * 0.34, cy + Hh * 0.46); ctx.stroke();
+  for(const c of [ctx, gx]){
+    c.fillStyle = '#ffffff';
+    c.beginPath(); c.ellipse(cx - W * 0.13, cy - Hh * 0.16, W * 0.11, Hh * 0.12, -0.3, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.ellipse(cx + W * 0.13, cy + Hh * 0.22, W * 0.05, Hh * 0.05, 0, 0, Math.PI * 2); c.fill();
+  }
+}
 /* ---------- WEAPONS ----------
    Every weapon in the game used to be the same object: one 0.06 x 0.95 x 0.06 box in
    bone white, hung off the right elbow. A plank, a masterwork katana, a hunting bow and
@@ -37219,9 +37312,9 @@ function buildCharMesh(c){
                  the game, and it comes OFF the face: a side part, the fringe swept away from it
                  across the brow, long lengths falling in front of the shoulders and a fall down
                  the back. The horns come up through it, and the horns are the silhouette.
-               · HER EYES ARE THE TELL, AND ONLY THE IRIS IS LIT. Dark all the way across where a
-                 woman's are white, a lit iris in each, a heavy lash line over them with a flick
-                 at the outer corner that lifts the eye, and brows that rise at the outside.
+               · HER EYES ARE THE TELL: big, painted, and lit (see below). The first cut of this
+                 pass gave her a woman's face — small eyes, brows, a nose — and the note back was
+                 that she is an idealised caricature, so the nose went and the eyes came back big.
                · AND A MOUTH. Dark, and on her own skin. A face without one is a mask, and the
                  point of her is that people decide not to notice what she is, not that she has
                  no face to look at.
@@ -37233,25 +37326,21 @@ function buildCharMesh(c){
           const IRIS = ['#7fd45a', '#ffc94a', '#b47cff', '#4fd6c8', '#ff6a4a'];
           const iris = IRIS[Math.floor(h(53) * IRIS.length) % IRIS.length];
           const lash = darkHide ? '#120c10' : '#181016';
-          const scl = darkHide ? '#2a1e26' : '#1c1419';        /* where a woman's eyes are white */
-          const brow = darkHide ? away('#e4dad0', 0.30) : shade(hairc, 0.60);
           const lip = darkHide ? away('#d27a96', 0.55) : away('#4a1426', 0.62);
           const lipLo = darkHide ? away('#e29ab0', 0.45) : away('#6a2038', 0.55);
-          for(const sx of [-1, 1]){
-            B(0.074, 0.040, 0.02, scl, sx*0.068, 0.262, 0.153, e.headG);                  /* the eye */
-            /* its iris, lit, and lit LOW: at full strength the glow goes past the colour to
-               white and every one of the five irises reads as the same pale square */
-            const ir = mkGlow(BOXG, ownGlow(iris), 0.032, 0.036, 0.02, sx*0.064, 0.261, 0.157, e.headG);
-            ir.material.emissiveIntensity = 0.55;
-            B(0.012, 0.012, 0.02, '#fff6ee', sx*0.056, 0.270, 0.162, e.headG);             /* and the catch-light */
-            B(0.086, 0.020, 0.02, lash, sx*0.068, 0.287, 0.156, e.headG);                 /* the lash line over it */
-            const flick = B(0.034, 0.014, 0.02, lash, sx*0.112, 0.294, 0.156, e.headG);   /* lifted at the corner */
-            flick.rotation.z = sx * 0.50;
-            const br = B(0.082, 0.016, 0.02, brow, sx*0.070, 0.322, 0.156, e.headG);       /* the brow, rising outward */
-            br.rotation.z = sx * 0.22;
-          }
-          B(0.032, 0.058, 0.030, shade(base, 0.93), 0, 0.212, 0.168, e.headG);             /* a small nose */
-          B(0.026, 0.014, 0.018, shade(base, 0.72), 0, 0.184, 0.180, e.headG);
+          /* ---------- AND THE EYES ARE ANIME EYES ----------
+             "The idea is more of an 'anime' style, idealized caricature. So we need to cut the
+              'womanly' face, at least the nose and smaller eyes. Bring back the bigger eyes... go
+              for big shiny anime eyes." Painted, not built (see PAINTED FACES): big almond
+             eyes a third of the face tall, nearly filled by a lit iris, heavy upswept lashes and
+             two catch-lights. No nose, which is the caricature. The mouth is kept as it was. */
+          const paint = facePaint(`succ:${iris}:${darkHide ? 1 : 0}`, (ctx, gx) => {
+            for(const sx of [-1, 1])
+              paintAnimeEye(ctx, gx, sx * 0.066, 0.246, 0.104, 0.118, {
+                iris, irisLo: mixHex(iris, '#ffffff', 0.55), white: '#f7f1f2', pupil: '#12080f',
+                lash, outer: sx, glow: 0.6});
+          });
+          faceDecal(e.headG, paint, 0.162, glowMats);
           const upper = B(0.074, 0.018, 0.02, lip, 0, 0.166, 0.157, e.headG);              /* the mouth */
           upper.rotation.z = 0.05;                                                          /* and the half of a smile */
           B(0.058, 0.016, 0.02, lipLo, 0, 0.151, 0.157, e.headG);
