@@ -492,6 +492,29 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
+### 5.14 The unstuck fallback escalates bodies that are walking fine — **raised 2026-09-27, not changed**
+
+`travelStuck` counts a body as stuck when its straight-line distance to the goal has not
+shrunk 0.35 tiles in 3 s. That rule is right for the two cases it was written for: a body
+held against a wall by a crowd, and a body whose pathfind failed and is walking straight into
+rock. It is wrong for a body walking a good path that leads away from the goal first, such as
+out of a walled town to the gate on the far side. `unstuck.js` found this by accident when its
+target fell just outside Greenrest's east wall.
+
+**Measured on the 2048 world, 300 s of ordinary play:**
+- 843 escalations fired.
+- 380 of them (45%) were bodies with a live path that had moved at least a tile since the last
+  check.
+- 242 got as far as a detour (the third escalation and after, which walks the body to a
+  perpendicular waypoint it was never sent to). 93 of those were bodies walking a good path.
+- By faction: redoubt garrisons 502, town folk 307, guild 20, drifters 9, gaunts 3,
+  caravans 2.
+
+**Proposed:** count "moved at least a tile along a live path since the last check" as progress
+too. The two cases the rule exists for do not move, or have no path, so they still escalate.
+Not done here because it changes every unit's movement, and the first version of this fallback
+broke three fighting harnesses (`press`, `sixfold`, `focus`). It wants its own full-suite run.
+
 ### 5.13 The corners of every walled town were unwatched — **fixed 2026-09-26**
 
 Found by the full suite: `tongue.js` *andTheWallIsWatchedAllTheWayRound* went red on the crater

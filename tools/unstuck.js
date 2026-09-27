@@ -126,8 +126,22 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        the game on detours it did not need, and would look like the pathing getting worse. */
     guard(['butAnOrdinaryWalkIsUntouched', 'andArrivalIsStillArrival'], () => {
       wipe();
-      const me = player()[0];
-      const q = findOpenNear(me.x + 30, me.y + 18, 8);
+      /* IN OPEN COUNTRY, FOR REAL. This walked from the start to `findOpenNear(start + 30, 18)`,
+         and the start is INSIDE Greenrest's walls: whether the target fell inside the east wall
+         or just outside it was a roll of `findOpenNear`, and outside it the walk is a trip round
+         to the gate. That trip escalates under the progress rule, which is a known cost of the
+         rule and not what this claim is about. Stage it where there are no walls to go round. */
+      let ox = 0, oy = 0;
+      outer:
+      for (let y = 60; y < H - 60; y += 7) for (let x = 60; x < W - 60; x += 7) {
+        if (towns.some(t => dist(t.x, t.y, x, y) < 80)) continue;
+        let ok = true;
+        for (let j = -3; j <= 22 && ok; j++) for (let i = -3; i <= 35 && ok; i++)
+          if (isBlocked(x + i + 0.5, y + j + 0.5)) ok = false;
+        if (ok) { ox = x; oy = y; break outer; }
+      }
+      const me = { x: ox, y: oy };
+      const q = { x: ox + 31.5, y: oy + 18.5 };
       const c = body(me.x + 1, me.y + 1);
       const before = UN();
       const got = walk(c, q.x, q.y, 90);
