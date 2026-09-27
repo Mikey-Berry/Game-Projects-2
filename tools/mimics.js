@@ -349,45 +349,37 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
      noise on it. */
   const frames = await p.evaluate(() => {
     const { gx, gy } = window.__G;
-    for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
-    const made = { woman: [], succubus: [] };
-    for (let i = 0; i < 12; i++) {
-      const w = makeChar('W' + i, 'player', gx + (i % 4), gy + Math.floor(i / 4), { race: 'human', sub: 'dustborn', sex: 'f' });
-      const s2 = makeChar('S' + i, 'player', gx + 6 + (i % 4), gy + Math.floor(i / 4), { race: 'mimic', sub: 'succubus' });
-      for (const c of [w, s2]) { c.__probe = true; c.state = 'ok'; if (chars.indexOf(c) < 0) chars.push(c); }
-      made.woman.push(w.id); made.succubus.push(s2.id);
-    }
-    /* render until every one of the twenty-four has a rig — `syncChars` builds eight a frame
-       and spends that budget on the world first */
-    const all = [...made.woman, ...made.succubus];
-    for (let i = 0; i < 80; i++) {
-      if (all.every(id => charMeshes.get(id))) break;
-      try { render(); } catch (e) { return { err: e.message }; }
-    }
-    const mean = (ids, k) => {
-      const v = ids.map(id => (charMeshes.get(id) || {})[k]).filter(x => typeof x === 'number' && x > 0);
-      return v.length ? { n: v.length, m: +(v.reduce((a2, b2) => a2 + b2, 0) / v.length).toFixed(4) } : { n: 0, m: 0 };
-    };
-    /* the shoulder anchors, in the rig's own local units — `SH` is spent placing these */
-    const shoulder = (ids) => {
-      const v = ids.map(id => {
-        const e = charMeshes.get(id);
-        if (!e || !e.armL || !e.armR) return null;
-        return Math.abs(e.armR.position.x - e.armL.position.x);
-      }).filter(x => typeof x === 'number' && x > 0);
-      return v.length ? { n: v.length, m: +(v.reduce((a2, b2) => a2 + b2, 0) / v.length).toFixed(4) } : { n: 0, m: 0 };
-    };
-    return { wx: mean(made.woman, 'baseSX'), wy: mean(made.woman, 'baseSY'),
-             sx: mean(made.succubus, 'baseSX'), sy: mean(made.succubus, 'baseSY'),
-             wsh: shoulder(made.woman), ssh: shoulder(made.succubus) };
+    /* ---------- PAIRED ON ONE ID, SO THE ONLY DIFFERENCE IS THE LINE ----------
+       Every body now rolls a frame (lean, broad, rangy...) and a height jitter OFF ITS ID, and
+       both multiply on top of her own build. Twelve women against twelve succubi made
+       alternately drew even ids against odd ones, and the hash split the frames along that line:
+       the 2048 world's ids read her 1.5% SHORTER than the women, on a build that makes her five
+       percent taller. So each pair is built on the same id — same frame, same jitter — straight
+       through `buildCharMesh`, and what is left between them is exactly what the line says. */
+    const W0 = [], S0 = [];
+    try {
+      for (let i = 0; i < 12; i++) {
+        const w = makeChar('W' + i, 'player', gx + (i % 4), gy + Math.floor(i / 4), { race: 'human', sub: 'dustborn', sex: 'f' });
+        const s2 = makeChar('S' + i, 'player', gx + 6 + (i % 4), gy + Math.floor(i / 4), { race: 'mimic', sub: 'succubus' });
+        s2.id = w.id;
+        for (const [c, out] of [[w, W0], [s2, S0]]) {
+          c.state = 'ok';
+          const e = buildCharMesh(c);
+          out.push({ sy: e.baseSY, sh: (e.armL && e.armR) ? Math.abs(e.armR.position.x - e.armL.position.x) : 0 });
+          disposeTree(e.g);
+        }
+      }
+    } catch (e) { return { err: e.message }; }
+    const m = (a, k) => ({ n: a.length, m: +(a.reduce((t, o) => t + o[k], 0) / a.length).toFixed(4) });
+    return { wy: m(W0, 'sy'), sy: m(S0, 'sy'), wsh: m(W0, 'sh'), ssh: m(S0, 'sh'), wx: { n: W0.length }, sx: { n: S0.length } };
   });
   R._frames = frames.err ? '!! ' + frames.err
-    : `over ${frames.wx.n} of each: a plain woman ${frames.wx.m}x${frames.wy.m} on ${frames.wsh.m} shoulders, ` +
-      `a succubus ${frames.sx.m}x${frames.sy.m} on ${frames.ssh.m}`;
+    : `over ${frames.wx.n} pairs on shared ids: a plain woman ${frames.wy.m} tall on ${frames.wsh.m} shoulders, ` +
+      `a succubus ${frames.sy.m} on ${frames.ssh.m}`;
   R.herFrameIsHerOwn = (!frames.err && frames.wx.n >= 8 && frames.sx.n >= 8 && frames.ssh.n >= 8 &&
                         frames.sy.m > frames.wy.m * 1.02 && frames.ssh.m < frames.wsh.m * 0.97)
     ? `and she is built on a frame of her own — ${((frames.sy.m/frames.wy.m - 1)*100).toFixed(1)}% taller over ` +
-      `${((1 - frames.ssh.m/frames.wsh.m)*100).toFixed(1)}% narrower shoulders than the women beside her, averaged over ${frames.sx.n} of each`
+      `${((1 - frames.ssh.m/frames.wsh.m)*100).toFixed(1)}% narrower shoulders than the women beside her, over ${frames.sx.n} pairs built on the same ids`
     : `!! SHE IS ON THE STOCK FRAME (woman ${frames.wy.m} tall on ${frames.wsh.m} shoulders, succubus ${frames.sy.m} on ${frames.ssh.m}, over ${frames.sx.n} of each)`;
   R.theFallenAndTheMessengerAreKin = rigs.fallen && rigs.fallen.oldGod && rigs.__messenger && rigs.__messenger.oldGod
     ? 'and the Fallen and the Messenger wear the same motif, which is the family they share'
