@@ -11856,6 +11856,7 @@ function kill(c, by){
   if(c.state==='dead') return;
   /* the ledger is written here, not inferred from a body that will be gone in two days */
   if(c.bossKey && !bossSlain[c.bossKey]) bossSlain[c.bossKey] = day;
+  siteSpent(c);                   /* a site's gaunt is one fewer it grows back (WHAT A SITE HAS LEFT TO SPEND) */
   if(c.bossKey && threadOf('master_' + c.bossKey) && !threadOf('master_' + c.bossKey).done)
     threadDone('master_' + c.bossKey, 'Dead. Whatever it knew went with it.');
   if(c.bossKey === 'guardian') guardianFalls(c);
@@ -16431,7 +16432,7 @@ function approachSlot(c, t, dt){
 function clearOrders(c){
   if(concExclusive(c) && !concMobile(c)) endConcentration(c);   /* a rooted light goes out when you move; a lantern travels with you */
   c.target = null; c.moveTarget = null; c.healTarget = null;
-  c.lootTarget = null; c.lootRender = false; c.tradeTarget = null; c.bedTarget = null; c.pickupTarget = null; c.phylTarget = null; c.sealTarget = null; c.tearTarget = null; c.doorWork = false;
+  c.lootTarget = null; c.lootRender = false; c.tradeTarget = null; c.bedTarget = null; c.pickupTarget = null; c.phylTarget = null; c.sealTarget = null; c.tearTarget = null; c.hallowTarget = null; c.doorWork = false;
   c.gather = null; c.attackMove = null; c.healProg = 0; c.gatherT = 0;
   c.chestTarget = null; c.altarTarget = null; c.targetManual = false; c.orderTarget = null; c.fleeT = 0;
   c.talkTarget = null;
@@ -16788,6 +16789,7 @@ function physics(c, dt){
   if(c.doorWork && workTheDoor(c, dt)) return;   /* the door outranks every other thing */
   if(sealTick(c, dt)) return;   /* closing a tear is the only work that outranks a knife */
   if(tearRiteTick(c, dt)) return;   /* and so does the long way round */
+  if(hallowTick(c, dt)) return;     /* ash worked into a Sundered site */
   if(mawFeed(c, dt)) return;   /* the Maw is here for the bodies, not for you */
   /* A ROOM GARRISON holds its chamber — redoubt guards and cave dwellers alike. It will not
      leave the room (or the floor) to chase, so a wandering boss can't lure a whole warren into
@@ -18378,6 +18380,7 @@ function pushFracture(by){
   fracture = Math.min(100, fracture + by);
   fractureStage = fractureStageOf(fracture);
   if(fractureStage > before){
+    sitesFed(fractureStage - before);   /* the sky moving is what the Sundered ground eats */
     for(let k = before + 1; k <= fractureStage; k++){
       const st = FRACTURE_STAGES[k];
       if(!st.tell) continue;
@@ -20829,6 +20832,63 @@ function choirTick(wdt){
       bumpNotice(wdt * 0.5);   /* the song is a question, and proximity is an answer */
   }
 }
+/* ============================================================ WHAT A SITE HAS LEFT TO SPEND
+   "Having gaunts infinitely spawn around them is tough when the sundered ground is near a town."
+   Three of the eight sites on the 2048 world sit ninety to a hundred and twenty tiles from a
+   town — one of them from Greenrest — and a cleared site was back to full strength in a day and
+   a half however many times it was cleared. Ruled 2026-09-27: A, and C with it.
+
+   A — THE GROUND SPENDS WHAT IT GROWS. Every gaunt of a site's that dies lowers what the site
+   grows back to by one (`s.cap`, starting at its `pop`), and never below one, so a site is never
+   left with nothing hunting in it. Each stage of the Fracture crossed gives one back: the sky
+   moving is what feeds it. Clearing a site now LASTS, and the site near a town that the world
+   keeps clearing (the watch, the caravans, you) quietens down on its own. The Marrow Ticks are
+   not touched — they are the site's harvest, and the marrow keeps coming.
+
+   C — HALLOWED GROUND. One measure of Sanctified Ash worked into the ground at the heart of a
+   site (right-click the monument) and nothing is grown back there for fifteen days; working it
+   again adds fifteen more. What is already standing there stays standing until somebody deals
+   with it. It is a use for the ash that is not the Door, and the ash only comes out of a broken
+   shrine, which is the joke: the Church's holy ground, carried off to hold down the dead god's.
+
+   Both ride the save (`sites` in the save). A save from before them has neither, and every site
+   comes back at full strength, which is what it was. */
+const SITE_FLOOR = 1;          /* a site is never grown back to fewer gaunts than this */
+const HALLOW_DAYS = 15;        /* what one measure of ash buys */
+const HALLOW_ASH = 1;
+const HALLOW_WORK = 4;         /* seconds of working it into the ground */
+function siteCap(s){ return s.cap ?? s.pop ?? 3; }
+function siteHallowed(s){ return (s.hallowUntil || 0) > day; }
+function siteSpent(c){
+  if(c.siteId === undefined || c.siteId === null || c.kin === 'tick') return;
+  const s = corpseSites.find(q => q.id === c.siteId);
+  if(!s) return;
+  const was = siteCap(s);
+  s.cap = Math.max(SITE_FLOOR, was - 1);
+  if(s.cap === SITE_FLOOR && was > SITE_FLOOR && player().some(o => o.state !== 'dead' && dist(o.x, o.y, s.x, s.y) < s.r + 20))
+    log('The Sundered ground has spent what it had. Something will always hunt here, but it will not come back in numbers until the sky moves again.', 'good');
+}
+function sitesFed(stages){
+  for(const s of corpseSites) s.cap = Math.min(s.pop ?? 3, siteCap(s) + stages);
+}
+/* the order: walk to the heart of it, and work the ash in */
+function hallowTick(c, dt){
+  const s = c.hallowTarget;
+  if(!s) return false;
+  if(!corpseSites.includes(s) || (c.undead && !c.lich)){ c.hallowTarget = null; c.hallowT = 0; return false; }
+  /* to the foot of the monument, not into it: the bone blocks the middle six tiles or so */
+  if(!travel(c, s.x, s.y, dt, 7.5)){ c.hallowT = 0; return true; }
+  c.hallowT = (c.hallowT || 0) + dt;
+  if(rnd() < dt * 4) addSpecks(s.x + (rnd() - 0.5) * 6, s.y + (rnd() - 0.5) * 6, '#f2e6c4', 2);
+  if(c.hallowT < HALLOW_WORK) return true;
+  c.hallowTarget = null; c.hallowT = 0;
+  if(!campSpend({s_ash: HALLOW_ASH})){ log(`${c.name} reaches for the ash and there is none left.`, 'bad'); return false; }
+  s.hallowUntil = Math.max(s.hallowUntil || 0, day) + HALLOW_DAYS;
+  addSpecks(s.x, s.y, '#f6ecd0', 40);
+  log(`${c.name} works the Sanctified Ash into the ground at the heart of it. The bone goes quiet under their hands. Nothing will be grown back here for ${Math.round(s.hallowUntil - day)} days.`, 'good');
+  refreshInv();
+  return false;
+}
 function corpseSiteTick(wdt){
   /* ---------- ONE PASS FOR ALL THE SITES, NOT ONE PASS EACH ----------
      The restock below needs each site's living population. It read it with
@@ -20871,7 +20931,7 @@ function corpseSiteTick(wdt){
        missing one barely notices. `s.pop` is undefined on a save from before this: fall back to
        the old floor rather than to NaN, which would silently stop every site in an old game
        regrowing and would look exactly like the bug being fixed. */
-    const want = s.pop || 3;
+    const want = siteHallowed(s) ? 0 : siteCap(s);   /* see WHAT A SITE HAS LEFT TO SPEND */
     const pop = _pop.get(s.id) || 0;
     if(pop < want && rnd() < wdt * 0.045 * (want - pop)){
       const q = findOpenNear(s.x + ri(-8, 8), s.y + ri(-8, 8), 5);
@@ -41606,7 +41666,7 @@ function renderOverlay(rdt){
     cx.fillStyle = 'rgba(201,191,168,0.85)';
     setFont('bold 13px monospace');
     cx.textAlign = 'center';
-    cx.fillText('☠ THE SUNDERED GROUND', q.x, q.y);
+    cx.fillText(siteHallowed(s) ? '☠ THE SUNDERED GROUND — HALLOWED' : '☠ THE SUNDERED GROUND', q.x, q.y);
     cx.textAlign = 'start';
   }
   /* phylacteries — a lich waiting in the dark for someone to come back for them */
@@ -47026,6 +47086,21 @@ cv.addEventListener('mousedown', e => {
       log(`${able.length === 1 ? able[0].name + ' goes' : able.length + ' go'} to the door. It wants ${costText(doorSealCost())} at the end of it, and a very long time in between.`, '');
       return;
     }
+    /* right-click the heart of a Sundered site, with ash in the stores: hallow it */
+    const hs = campHas('s_ash') >= HALLOW_ASH ? corpseSites.find(q => dist(q.x, q.y, wx, wy) < 3.5) : null;
+    if(hs){
+      const hand = movers.filter(m => !m.undead || m.lich).sort((a, b2) => dist(a.x, a.y, hs.x, hs.y) - dist(b2.x, b2.y, hs.x, hs.y))[0];
+      const left = siteHallowed(hs) ? Math.round(hs.hallowUntil - day) : 0;
+      showCtxMenu(e.clientX, e.clientY, [
+        {label: `HALLOW THE GROUND — ${HALLOW_ASH} Sanctified Ash: nothing grows back here for ${HALLOW_DAYS} days${left ? ` (${left} left)` : ''}`, fn: () => {
+          if(!hand){ log('The ash wants a living hand to work it in.', 'bad'); return; }
+          clearOrders(hand); hand.hallowTarget = hs; hand.hallowT = 0;
+          log(`${hand.name} takes a measure of Sanctified Ash out to the heart of the Sundered ground.`, '');
+        }},
+        {label: 'LEAVE IT', fn: () => {}},
+      ]);
+      return;
+    }
     /* right-click a tear: send whoever can work a formula to close it */
     const rf = rifts.find(r => dist(r.x, r.y, wx, wy) < r.r * 0.55);
     if(rf){
@@ -49485,6 +49560,7 @@ function snapshot(){
     cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
     threads: threads.map(t => ({key:t.key, title:t.title, step:t.step, hint:t.hint, done:t.done, at:t.at, mark:t.mark || null})),
     cairnIds: cairns.filter(c => c && c.state !== 'dead').map(c => c.id),
+    sites: corpseSites.map(q => ({id: q.id, cap: siteCap(q), hallowUntil: q.hallowUntil || 0})),
     closing: {on: closing.on, told: closing.told, known: closing.known},
     search: {on: search.on, asked: {...search.asked}, found: search.found,
              siteId: search.siteId, leads: search.leads, met: search.met,
@@ -49538,6 +49614,13 @@ function restore(d){
      the quest flags — a thread's wording is written at the moment it is set. */
   threads.length = 0;
   if(d.threads) for(const t of d.threads) threads.push({key:t.key, title:t.title, step:t.step, hint:t.hint || '', done:!!t.done, at:t.at || 1, mark:t.mark || null});
+  /* what each Sundered site has left to grow, and whether it is hallowed (WHAT A SITE HAS LEFT
+     TO SPEND). An older save has neither, and every site comes back at full strength. */
+  for(const q of corpseSites){ q.cap = q.pop ?? 3; q.hallowUntil = 0; }
+  if(d.sites) for(const r of d.sites){
+    const q = corpseSites.find(x => x.id === r.id);
+    if(q){ q.cap = Math.max(SITE_FLOOR, Math.min(q.pop ?? 3, r.cap ?? q.pop ?? 3)); q.hallowUntil = r.hallowUntil || 0; }
+  }
   if(d.closing){ closing.on = !!d.closing.on; closing.told = !!d.closing.told; closing.known = !!d.closing.known; }
   else { closing.on = fractureStage >= 1; closing.told = false; closing.known = false; }
   if(d.search){
