@@ -13587,10 +13587,10 @@ function rareNew(){ return {inq: [], coil: [], choir: [], six: [], site: [], cra
 function rareFile(r, c){
   if(c.inquisitor) r.inq.push(c);
   if(c.coil) r.coil.push(c);
-  if(c.gauntKind){
-    if(c.gauntKind === 'choir') r.choir.push(c);
-    if(c.siteId !== undefined && c.siteId !== null) r.site.push(c);
-  }
+  if(c.gauntKind === 'choir') r.choir.push(c);
+  /* the site's own, whatever they are: its Marrow Ticks are beasts, not gaunts, and the
+     regrowth has to be able to count them (see `corpseSiteTick`) */
+  if(c.siteId !== undefined && c.siteId !== null) r.site.push(c);
   if(c.bossKey === 'sixfold') r.six.push(c);
   if(c.craterOwn) r.crater.push(c);
   if(c.nightSpawn) r.night.push(c);
@@ -13647,10 +13647,8 @@ function rebuildCharGrid(){
        Same tests as `rareFile`. */
     if(c.inquisitor) rare.inq.push(c);
     if(c.coil) rare.coil.push(c);
-    if(c.gauntKind){
-      if(c.gauntKind === 'choir') rare.choir.push(c);
-      if(c.siteId !== undefined && c.siteId !== null) rare.site.push(c);
-    }
+    if(c.gauntKind === 'choir') rare.choir.push(c);
+    if(c.siteId !== undefined && c.siteId !== null) rare.site.push(c);
     if(c.bossKey === 'sixfold') rare.six.push(c);
     if(c.craterOwn) rare.crater.push(c);
     if(c.nightSpawn) rare.night.push(c);
@@ -20371,22 +20369,27 @@ let _coilDay = -1;
       chars.push(st);
     }
   }
-  /* Marrow Ticks: corpse-site scavengers. Small, quick, and worth squashing */
+  /* Marrow Ticks: corpse-site scavengers. Small, quick, and worth squashing. The count is kept
+     on the site (`s.mites`) so the ground can grow them back — see `corpseSiteTick`. */
   for(const s of corpseSites){
     const n = ri(2, 3);
-    for(let k = 0; k < n; k++){
-      const q = findOpenNear(s.x + ri(-9, 9), s.y + ri(-9, 9), 5);
-      const mt = makeChar('Marrow Tick', 'wild', q.x, q.y, {atk:14, def:20, tough:6, ath:16});
-      mt.beast = true; mt.big = 0.62; mt.kin = 'tick';
-      mt.blood = 40; mt.maxBlood = 40;
-      mt.clawDmg = 5;
-      mt.eatsDead = true;      /* they were here for the god; they will settle for you */
-      mt.siteId = s.id;
-      if(rnd() < 0.35) mt.dropItems = {sunder: 1};
-      chars.push(mt);
-    }
+    s.mites = n;
+    for(let k = 0; k < n; k++) spawnMarrowTick(s);
   }
 })();
+/* the same draws, in the same order, as the loop that used to hold them: the world is unchanged */
+function spawnMarrowTick(s){
+  const q = findOpenNear(s.x + ri(-9, 9), s.y + ri(-9, 9), 5);
+  const mt = makeChar('Marrow Tick', 'wild', q.x, q.y, {atk:14, def:20, tough:6, ath:16});
+  mt.beast = true; mt.big = 0.62; mt.kin = 'tick';
+  mt.blood = 40; mt.maxBlood = 40;
+  mt.clawDmg = 5;
+  mt.eatsDead = true;      /* they were here for the god; they will settle for you */
+  mt.siteId = s.id;
+  if(rnd() < 0.35) mt.dropItems = {sunder: 1};
+  chars.push(mt);
+  return mt;
+}
 /* ============================================================ THE CAIRN BEAST
    Nine generations of dust and nobody buries anything properly. What the waste failed to bury
    has found each other, and it has worked out how to walk.
@@ -20712,12 +20715,20 @@ function corpseSiteTick(wdt){
      four sites up: 6,668 element visits a step, second-worst roster scan in the sim, to decide
      something that then does nothing at all on better than 99 wakes in 100.
      Same tally, same `pop` per site, one pass. */
-  let _pop = null;
+  /* ---------- THE TICKS ARE COUNTED ON THEIR OWN ----------
+     "Sundered Ground ecosystems are still broken — I don't see the little guys at all anymore."
+     The Marrow Ticks carry `siteId` like the gaunts, so they were counted in the same tally,
+     and the regrowth only ever made stalkers and gaunts. Every tick that died was replaced
+     by a gaunt. Measured: strip every site on a fresh world and three days later each one is
+     back to its full count of gaunts and has no ticks at all. The two are counted apart now
+     and each grows back toward its own number, so the little ones come back as little ones. */
+  let _pop = null, _mites = null;
   if(corpseSites.length){
-    _pop = new Map();
+    _pop = new Map(); _mites = new Map();
     for(const c of rareFolk().site){
       if(c.state === 'dead') continue;
-      _pop.set(c.siteId, (_pop.get(c.siteId) || 0) + 1);
+      const m = c.kin === 'tick' ? _mites : _pop;
+      m.set(c.siteId, (m.get(c.siteId) || 0) + 1);
     }
   }
   for(const s of corpseSites){
@@ -20745,6 +20756,12 @@ function corpseSiteTick(wdt){
       g.nightborn = false; g.guard = {x: q.x, y: q.y}; g.siteId = s.id;
       _pop.set(s.id, pop + 1);       /* the tally is read once per site, but keep it true anyway */
       if(rnd() < 0.5) g.dropItems = {sunder: 1};
+    }
+    /* and the ticks, which come back quicker than the things that hunt them */
+    const wantM = s.mites || 2, mites = _mites.get(s.id) || 0;
+    if(mites < wantM && rnd() < wdt * 0.09 * (wantM - mites)){
+      spawnMarrowTick(s);
+      _mites.set(s.id, mites + 1);
     }
   }
 }
