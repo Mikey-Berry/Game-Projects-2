@@ -48,6 +48,7 @@ const ALL = [
   'kit.js', 'slots.js', 'kitted.js', 'kitdoll.js', 'wepsoak.js', 'races.js', 'names.js', 'kin.js', 'kin2.js', 'lineage.js', 'cradle.js', 'livery.js', 'mimics.js', 'pins.js', 'mobile.js', 'start.js', 'touch.js', 'terrain.js', 'axes.js',
   'civics.js', 'grafts.js', 'maws.js', 'wards.js', 'husk.js', 'storeys.js', 'reliquary.js', 'frames.js', 'trades.js', 'hollow.js', 'vat.js', 'doppel.js', 'fallen.js', 'roads.js',
   'review.js', 'seams.js', 'crater.js', 'field.js', 'biomes.js', 'oldking.js', 'ossuary.js', 'kingscourt.js', 'playnotes.js',
+  'masters.js', 'unclouded.js', 'hallow.js', 'lod.js', 'origins.js',
 ];
 /* THE EDIT LOOP SET. Not "the fast ones" — the ones that would notice a broken build at all:
    the boot check, a save round trip, a fight, and the two broadest world probes. Cheap enough
