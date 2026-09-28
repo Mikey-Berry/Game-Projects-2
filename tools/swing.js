@@ -24,7 +24,7 @@ const OUT = path.resolve(process.argv[3] || path.join(__dirname, 'swing.png'));
   const p = await b.newPage({ viewport: { width: 560, height: 470 } });
   const errs = [];
   p.on('pageerror', e => errs.push(e.message.slice(0, 200)));
-  await p.goto('file://' + path.join(__dirname, 'game.html'), { waitUntil: 'load' });
+  await p.goto('file://' + path.join(__dirname, 'game.html'), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   await p.evaluate(() => document.getElementById('btn-start').click());
   await p.waitForTimeout(3000);

@@ -119,7 +119,7 @@ a mere conduit, what might be possible against the source itself? Man challenged
 **succeeded**, and a path opened to Ainzopha'ar's throne.
 
 > WHAT THE FRACTURE ACTUALLY WAS. **He did not wake.** He was disturbed, and he shifted — the
-> equivalent of rolling over in sleep. That alone annihilated the kingdom at the centre in
+> equivalent of rolling over in sleep. That alone annihilated the kingdom at its heart in
 > brilliant light, tore the fabric of reality, and opened a path between the material and the
 > immaterial that has never closed. Nobody knows what would happen if he truly woke. Nobody has
 > any intention of finding out. This is why the Messengers exist (§5).
@@ -511,9 +511,14 @@ dug into the first civilisation's tunnels, and at the bottom of one of them is M
 - **The Sigil-Bound** — transmutation immortal in an armour vessel, one of eleven poured, two
   hundred years ago. "Nobody has seen it open" — opening it ends it. He is losing his name and the
   questline is him getting it back. Sex unfixed `[?]`.
-- **The Ossuary King** (m) — dead royalty holding court in a far ruin, who refused to finish. He was
-  at the pouring and signed for it — eleven names and his hand under all of them. Wears the Sunken
-  Crown. See the note below.
+- **The Ossuary King** (m) — **not a king** (rebuilt 2026-09-27). A Golden-Age registrar who
+  countersigned the Pouring: eleven names and his hand under every one. He was meant to be the
+  twelfth, went halfway into the vessel and climbed back out, and what climbed out wears its own
+  bones on the outside, like the house they are kept in. He sits a throne in a far ruin with the
+  dead kneeling in rows before him, petitioners who came to be registered and never left. The
+  folk call him a king for the throne and the crown; the "crown" is the Pouring's register-band,
+  sunk and tarnished (the Sunken Crown). He has **no relation to the old king** `[C]`. See the
+  note below.
 - **Sister Ash** (f) — exiled inquisitor with a pyre-weapon. The light gave her certainty where it
   gave Verity quiet. "I burned my order. Bones burn easier."
 - **Grand Marshal Vey** — holds the Bastion.
@@ -526,6 +531,13 @@ dug into the first civilisation's tunnels, and at the bottom of one of them is M
 - **Osric & Wenna** — Hollowmere gravekeepers who compete with you for corpses.
 - **The Last Scholar `[★]`** — §11. Not yet in the code, and the largest unbuilt figure in the setting.
 - **Mother · Llammialith `[★]`** — §6. Alive, redundant, and the only being who knows the whole of it.
+- **The old king `[★]` `[C]`** — the kingdom's last king. He was at the middle of the rite when it
+  worked, and he was not annihilated with his capital: he went through, toward the throne, and he
+  has hung on the far side for nine generations. **Author-canon: he is Alagadda's Hanged King.
+  Nobody in the world calls him that**; outwardly he is only ever *the old king*. When the sky
+  opens he hangs in the mouth of the Door on a rope of light, and he is the last thing the closing
+  rite has to bring down. He believes the rite was done correctly, and he is right. His court
+  (four, one per Art) is sketched in `LORE-SEAMS.md` §8.3 and is `[?]` until ruled on.
 
 **Verity, rewritten `[★]`.** **She ascended after the Fracture, not before** — ninety years ago,
 four generations back, not an ancient. She was a Scholar, and her tragedy is that **she succeeded.**
@@ -543,11 +555,12 @@ her. **It worked.** Her five requests all read as experiments run by a researche
 condition, and the last is her asking a stranger to stand there while she tries, and fails, to want
 to stop.
 
-> ON THE OSSUARY KING `[★prov]`. That he is the Golden Age's last king — the hand under all eleven
-> names, holding court in the ruin of the kingdom itself — is **a rumour among scholars and
-> unconfirmed knowledge, not established fact.** Write it as something the lettered pass around,
-> never as something the world states. He is a legacy boss from the earliest editions and his
-> current shape will not carry that weight; if he is ever reworked, the door is open.
+> ON THE OSSUARY KING `[C]`, ruled 2026-09-27. The old scholars' rumour made him the Golden
+> Age's last king. **That rumour is retired.** He was reworked from the ground up as a
+> registrar with a throne, and the user ruled him **no relation to the old king**: not the
+> husk, not the heir, not a rumour of either. The twelfth space on the Circlet was his, and he
+> would not sign it (the demilich's line). The folk may still call him a king; nothing in the
+> world treats him as one.
 
 ## 14. Where the player comes in `[C]`
 
@@ -618,9 +631,16 @@ tunnels, and one holds her), **the Deep** (the first civilisation's world, layer
 everything), **the sundered ground** (Malathuun's corpse-fields), **the middens**, **the Coil's
 stone** (on no map), and **the deep waste** — where the night comes from.
 
-**Unbuilt and wanted `[?]`:** the kingdom's crater. It was annihilated at the centre in brilliant
-light and should be the largest landmark in the world. It is also where the rite was performed,
-which makes it the obvious place for the Door to open.
+**The three grounds `[C]`.** **The salt flats** round Saltmere, where the crust cures whatever lies
+down on it. **The rust barrens** round Ironscar, red with the machines the Fracture war left, some
+of which still sit up. **The vat bog** round the deep redoubt, where what the vats grew went into
+the ground and kept growing: quickflesh blooms, and pools that still put out half-poured things
+asking for the tender. The living wade it; the dead do not notice it.
+
+**Built:** the kingdom's crater. Its heart was annihilated in brilliant light, and it is the largest
+landmark in the world: a headland in the north-east standing out into the salt, walled on the
+landward side by a ridge with one gorge through it. It is also where the rite was performed, and
+the Door opens at the bottom of the bowl.
 
 ## 17. Aesthetic key & voice guide `[★]`
 
@@ -659,7 +679,8 @@ Flagged, unresolved, safe to revisit. Keep dependent dialogue thin.
 | What ended the first civilisation | **The most load-bearing open question in the setting.** Everything the Last Scholar does is an attempt to stop it happening to humanity, and he thinks it is happening again. |
 | The Last Scholar's immortality | **Deliberately never explained.** The legends this character is built on work because nobody produces the mechanism. |
 | How Mother's parasites work | Moral shape settled — cut from her, and she allowed it. The biology is undefined and is on the shelf for its own pass. |
-| The Ossuary King as the last king | Scholar rumour and unconfirmed knowledge only. Legacy boss; the door reopens if he is reworked. |
+| The Ossuary King as the last king | **Ruled 2026-09-27: no.** Reworked as a registrar who would not be the twelfth name. No relation to the old king. The rumour is retired, not kept open. |
+| The old king's court | Four, one per Art, sketched in `LORE-SEAMS.md` §8.3. Not built. |
 | The kingdom's crater | Unbuilt. Should be the largest landmark in the world, and the natural site for the Door. |
 | What the Church knew | It existed before the Fracture, alongside the kingdom. Whether it blessed the rite is unwritten, and it is where the closely-guarded secret came from. |
 | Good Kami's placement | Candidate: the one of Mother's kin who did not leave. |

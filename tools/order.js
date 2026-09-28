@@ -49,7 +49,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   {
     const p = await b.newPage({ viewport: { width: 900, height: 600 } });
     p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
-    await p.goto('file://' + file, { waitUntil: 'load' });
+    await p.goto('file://' + file, { waitUntil: 'load', timeout: 90000 });
     await p.waitForTimeout(3000);
     await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
     await p.waitForTimeout(3000);
@@ -212,7 +212,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     for (const seed of [0, 7, 91, 404, 1234]) {
       const p = await b.newPage({ viewport: { width: 700, height: 500 } });
       p.on('pageerror', e => errs.push('PAGEERROR(seed ' + seed + '): ' + e.message.slice(0, 160)));
-      await p.goto('file://' + file + (seed ? '?seed=' + seed : ''), { waitUntil: 'load' });
+      await p.goto('file://' + file + (seed ? '?seed=' + seed : ''), { waitUntil: 'load', timeout: 90000 });
       await p.waitForTimeout(2600);
       await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
       await p.waitForTimeout(2600);

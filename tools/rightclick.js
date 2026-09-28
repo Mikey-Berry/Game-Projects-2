@@ -42,7 +42,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const p = await b.newPage({ viewport: { width: 1100, height: 700 } });
   const errs = [];
   p.on('pageerror', e => errs.push(String(e.message).slice(0, 160)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(3000);
@@ -56,8 +56,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     for (let y = 60; y < H - 60; y += 5) for (let x = 60; x < W - 60; x += 5) {
       if (isBlocked(x + 0.5, y + 0.5)) continue;
       if (towns.some(t => dist(t.x, t.y, x, y) < 70)) continue;
+      /* CLEAR OVER EVERYTHING THE SECTIONS STAND ON, not just round the middle: they stage 20
+         to 40 tiles off it (gy - 20, gy + 40, gx - 20), and on the 2048 world the first spot
+         that was clear for eight tiles was on the north coast, with the escort in the sea. */
       let ok = true;
-      for (let j = -8; j <= 8 && ok; j++) for (let i = -8; i <= 8 && ok; i++)
+      for (let j = -26; j <= 46 && ok; j++) for (let i = -26; i <= 10 && ok; i++)
         if (isBlocked(x + i + 0.5, y + j + 0.5)) ok = false;
       if (ok) { gx = x; gy = y; break outer; }
     }

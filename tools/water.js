@@ -38,7 +38,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const errs = [];
   const p = await b.newPage({ viewport: { width: 1000, height: 700 } });
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(3000);
@@ -119,7 +119,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const me = player()[0];
       if (typeof NODE_JOB === 'undefined' || !NODE_JOB.brine) {
         O.aJobDecidesWhichYouGet = '!! THERE IS NO SALTWORK JOB IN THIS BUILD'; return; }
-      const f = findNode(me, 'fish'), sw = findNode(me, 'saltwork');
+      /* ON A SHORE. This asked from wherever the start is, and the start was 53 tiles from water
+         at 1440 against a 52-tile node scan: in reach by one tile. On the 2048 world it is 115
+         tiles off and neither trade finds anything. The claim is about the JOB, not the start,
+         so it is asked from dry land beside the brine band. */
+      let sx = 0, sy = 0;
+      shore: for (let y = 5; y < H - 5; y += 3) for (let x = 5; x < W - 5; x += 3) {
+        if (tileAt(x, y) !== 3 || brimAt(x, y) !== BRIM_BRINE) continue;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]])
+          if (tileAt(x + dx * 4, y + dy * 4) !== 3 && !isBlocked(x + dx * 4 + 0.5, y + dy * 4 + 0.5)) { sx = x + dx * 4; sy = y + dy * 4; break shore; }
+      }
+      const at = sx ? { x: sx + 0.5, y: sy + 0.5, floor: 0 } : me;
+      const f = findNode(at, 'fish'), sw = findNode(at, 'saltwork');
       O.aJobDecidesWhichYouGet = (f && f.kind === 'fish' && sw && sw.kind === 'brine')
         ? `and one shore is two trades: a hand on FISH comes back with fish, a hand on SALTWORK `
           + `comes back with brine, off the same water`

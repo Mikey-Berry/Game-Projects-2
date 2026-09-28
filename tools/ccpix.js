@@ -26,7 +26,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   for (const view of [{ n: 'desktop', w: 1280, h: 800 }, { n: 'laptop', w: 1024, h: 640 }, { n: 'phone', w: 414, h: 760 }]) {
     const p = await b.newPage({ viewport: { width: view.w, height: view.h }, deviceScaleFactor: 2 });
     p.on('pageerror', e => console.log('  PAGEERROR:', e.message.slice(0, 160)));
-    await p.goto('file://' + gamePath(process.argv[3]), { waitUntil: 'load' });
+    await p.goto('file://' + gamePath(process.argv[3]), { waitUntil: 'load', timeout: 90000 });
     await p.waitForTimeout(2600);
     const m = await p.evaluate(() => {
       const ov = document.getElementById('startoverlay');

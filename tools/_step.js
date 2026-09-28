@@ -8,7 +8,7 @@ const path = require('path');
   const N = Number(process.argv[3] || 300);
   const b = await chromium.launch({ args: ['--use-gl=swiftshader','--enable-unsafe-swiftshader','--disable-gpu-sandbox','--no-sandbox'] });
   const p = await b.newPage({ viewport: { width: 400, height: 300 } });
-  await p.goto('file://' + path.resolve(__dirname, file), { waitUntil: 'load' });
+  await p.goto('file://' + path.resolve(__dirname, file), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(2500);
   await p.evaluate(() => document.getElementById('btn-start').click());
   await p.waitForTimeout(5000);

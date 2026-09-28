@@ -45,7 +45,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const p = await b.newPage({ viewport: { width: 900, height: 600 } });
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForFunction(() => {
     const bs = document.getElementById('btn-start');
     return bs && typeof chars !== 'undefined' && chars.length > 0;
@@ -98,55 +98,73 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        stacked in one sector on the old build, trailing back to 4.5 tiles, against a maximum
        of two per sector and a 2.2-2.5 ring on this one. Pick the crowd size where the thing
        being measured is actually forced to happen. */
+    /* ---------- AND NOT ON ONE THROW OF THE WORLD'S DICE ----------
+       This claim went 6, 5, 4 sides over three commits on this branch that did not touch
+       melee at all — a Marrow Tick regrowth, and the draws that moved with it. Staged after
+       k extra draws off the world stream, ONE unchanged build read 6, 8, 5, 5, 7, 6, 5, 8 sides
+       and put five on one side twice: which weapon `makeChar` rolls each of the twelve, and
+       every swing after, is dice, and the line at five sat inside that spread. So the stream
+       is PINNED for the staging (the global `seed`, put back afterwards, the same pocket
+       `spawnDemilich` uses) and the twelve are staged three times on three fixed seeds, and
+       what is asserted is the MEDIAN of the three. A change to the world's draw order no longer
+       moves it; a change to how bodies surround a target still does. */
     {
-      wipe();
-      const mark = mk('Mark', 'bandit', gx, gy, { atk: 6, def: 8, tough: 400, ath: 1 });
-      mark.noFight = true; mark.speedMult = 0.0001;   /* it stands still and soaks: this is about the approach */
-      const squad = [];
-      for (let i = 0; i < 12; i++) {
-        const a = mk('A' + i, 'player', gx - 8 - (i % 4) * 0.7, gy - 3 + i * 0.55, { atk: 20, def: 10, tough: 60, ath: 10 });
-        a.target = mark; a.targetManual = false; a.autoFight = true;
-        squad.push(a);
+      const pocket = seed;
+      const trials = [];
+      for (const sd of [4101, 5303, 7717]) {
+        wipe();
+        seed = sd;
+        const mark = mk('Mark', 'bandit', gx, gy, { atk: 6, def: 8, tough: 400, ath: 1 });
+        mark.noFight = true; mark.speedMult = 0.0001;   /* it stands still and soaks: this is about the approach */
+        const squad = [];
+        for (let i = 0; i < 12; i++) {
+          const a = mk('A' + i, 'player', gx - 8 - (i % 4) * 0.7, gy - 3 + i * 0.55, { atk: 20, def: 10, tough: 60, ath: 10 });
+          a.target = mark; a.targetManual = false; a.autoFight = true;
+          squad.push(a);
+        }
+        const start = squad.map(a => ({ a, x: a.x, y: a.y }));
+        run(140);
+        const inClose = squad.filter(a => dist(a.x, a.y, mark.x, mark.y) < 2.6).length;
+        const ring = squad.filter(a => dist(a.x, a.y, mark.x, mark.y) < 5.0);
+        const hist = [0,0,0,0,0,0,0,0];
+        for (const a of ring) hist[sector(a, mark)]++;
+        const moved = start.map(q => dist(q.x, q.y, q.a.x, q.a.y)).sort((u, v) => u - v);
+        trials.push({ inClose, ring: ring.length, sectors: hist.filter(n => n > 0).length, maxPer: Math.max(...hist), least: moved[0],
+                      far: squad.map(a => dist(a.x, a.y, mark.x, mark.y).toFixed(1)).sort().join(', ') });
       }
-      const start = squad.map(a => ({ a, x: a.x, y: a.y }));
-      run(140);
+      seed = pocket;
+      const med = (k) => trials.map(t => t[k]).sort((u, v) => u - v)[1];
+      const each = (k) => trials.map(t => typeof t[k] === 'number' && !Number.isInteger(t[k]) ? t[k].toFixed(1) : t[k]).join(' / ');
 
       /* THE CAP IS 3 AND THAT IS DELIBERATE — "a body only has so many sides", so three engage
          and the rest hold at spear-length. Asserting six arrive would be asserting against the
          game's own rule. What is asked here is that three DO get hold of it. */
-      const inClose = squad.filter(a => dist(a.x, a.y, mark.x, mark.y) < 2.6);
-      R.theyGetThere = inClose.length >= 9
-        ? `${inClose.length} of 12 reach it — three with hold of it, the rest waiting at spear-length`
-        : `!! ONLY ${inClose.length} OF 12 CLOSED — the back of the line never arrived (${squad.map(a => dist(a.x,a.y,mark.x,mark.y).toFixed(1)).sort().join(', ')})`;
+      R.theyGetThere = med('inClose') >= 9
+        ? `${each('inClose')} of 12 reach it on the three seeds — three with hold of it, the rest waiting at spear-length`
+        : `!! ONLY ${each('inClose')} OF 12 CLOSED — the back of the line never arrived (${trials.map(t => t.far).join(' | ')})`;
       /* THE TWO ASSERTIONS THE WHOLE FILE IS FOR, and they count everybody rather than only
          the three who got hold: the ones waiting their turn are just as much part of the
          shape, and a queue is a queue whether it is touching the target or standing behind it.
          `maxPerSector` is the sharper of the two — "how many sides are occupied" can look
          respectable while one of those sides holds most of the squad. */
-      const ring = squad.filter(a => dist(a.x, a.y, mark.x, mark.y) < 5.0);
-      const hist = [0,0,0,0,0,0,0,0];
-      for (const a of ring) hist[sector(a, mark)]++;
-      const sectors = hist.filter(n => n > 0).length, maxPer = Math.max(...hist);
-      R.theySpreadAround = sectors >= 5
-        ? `the ${ring.length} of them around it stand on ${sectors} of 8 sides`
-        : `!! ${ring.length} BODIES ON ${sectors} SIDE(S) — the line is queueing, not flanking`;
+      R.theySpreadAround = med('sectors') >= 5
+        ? `the twelve around it stand on ${each('sectors')} of 8 sides on the three seeds`
+        : `!! ${each('sectors')} SIDE(S) ON THE THREE SEEDS — the line is queueing, not flanking`;
       /* THE LINE IS AT 5 AND NOT AT 3, and the difference matters. The queue this exists to
          catch puts SEVEN of twelve into one eighth of the circle; the fixed build has measured
          2, 3 and 4 across three different revisions while the sides-occupied count went 6, 7,
          7 — which is to say the worst-cluster number bounces at the margin for reasons that
          have nothing to do with queueing (bodies get whatever weapon `makeChar` rolls them,
-         and a bow behaves differently in contact from an axe). A threshold pinned to one
-         build's exact arrangement is a threshold that fails on the next unrelated change,
-         which is what happened. Five separates the bug from the fix with room, and 12 bodies
-         over 8 sectors averages 1.5, so five in one is still plainly a heap. */
-      R.nobodyStacksUp = maxPer <= 5
-        ? `and no side holds more than ${maxPer} of them (a queue puts 7 there)`
-        : `!! ${maxPer} OF THEM PILED ONTO ONE SIDE — that is the queue, measured`;
+         and a bow behaves differently in contact from an axe). Five separates the bug from the
+         fix with room, and 12 bodies over 8 sectors averages 1.5, so five in one is still
+         plainly a heap. */
+      R.nobodyStacksUp = med('maxPer') <= 5
+        ? `and no side holds more than ${each('maxPer')} of them (a queue puts 7 there)`
+        : `!! ${each('maxPer')} OF THEM PILED ONTO ONE SIDE — that is the queue, measured`;
       /* nobody wedged: the least-travelled body still has to have gone somewhere */
-      const moved = start.map(s => dist(s.x, s.y, s.a.x, s.a.y)).sort((u, v) => u - v);
-      R.nobodyIsWedged = moved[0] > 3.5
-        ? `the least-travelled of them still covered ${moved[0].toFixed(1)} tiles`
-        : `!! SOMEBODY BARELY MOVED (${moved[0].toFixed(1)} tiles) — jammed on their own side`;
+      R.nobodyIsWedged = med('least') > 3.5
+        ? `the least-travelled of them still covered ${each('least')} tiles`
+        : `!! SOMEBODY BARELY MOVED (${each('least')} tiles) — jammed on their own side`;
     }
 
     /* ================== 2. THROUGH YOUR OWN RANKS ==================

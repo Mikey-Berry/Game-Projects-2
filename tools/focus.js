@@ -31,7 +31,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const p = await b.newPage({ viewport: { width: 900, height: 600 } });
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForSelector('#btn-start', { state: 'attached', timeout: 60000 });
   await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(2600);
@@ -42,7 +42,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const guard = (keys, fn) => {
       try { fn(); } catch (e) { for (const k of keys) if (R[k] === undefined) R[k] = '!! ' + String(e.message).slice(0, 110).toUpperCase(); }
     };
-    const step = (secs, dt = 1 / 30) => { for (let i = 0; i < secs / dt; i++) update(dt); };
+    /* ---------- THE GRID IS REFILED BEFORE THE FIRST STEP, NOT AFTER IT ----------
+       `wipe` splices the last trial's bodies out of `chars` and the new ones are pushed in, but
+       the spatial grid is only refiled inside a step — so on the first step of every trial the
+       scan was reading the LAST trial's bodies. A fresh unit could lock onto one of them and
+       then stand there swinging at it, because a body spliced out alive stayed a valid target.
+       Found 2026-09-28 when the game stopped doing that: `theyFinishTheNearlyDead` had been
+       passing 2-1 with the fourth unit on a ghost, and the battle below had been counting
+       fights where part of the line sat one out. Refiled here, every trial sees only itself. */
+    const step = (secs, dt = 1 / 30) => { rebuildCharGrid(); for (let i = 0; i < secs / dt; i++) update(dt); };
 
     /* ---------- GROUND WITH NOBODY ELSE'S BUSINESS ON IT ----------
        Anything that wanders in joins the fight, and a fight with an extra body in it is a

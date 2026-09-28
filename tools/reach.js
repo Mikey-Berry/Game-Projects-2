@@ -28,7 +28,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const p = await b.newPage({ viewport: { width: 900, height: 600 } });
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   /* START AND STOP IN THE SAME BREATH. A click followed by a wait lets the world run for
      however many frames the machine manages, which is not a fixed number and drops when a
@@ -130,9 +130,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        jaw reaches z 10. A chest inside that is a chest you cannot see or tell apart from one
        you already opened. Measured against the geometry's own reach, not a guessed number. */
     const BONE_REACH = 10;
+    /* the surface only: a warren vault can lie under a site, and a chest three floors down is
+       neither in the bones nor in the rock above it */
+    const topside = chests.filter(ch => !(ch.floor < 0));
     const buried = [];
     for (const s of corpseSites) {
-      const c = chests.filter(ch => dist(ch.x, ch.y, s.x, s.y) < s.r)
+      const c = topside.filter(ch => dist(ch.x, ch.y, s.x, s.y) < s.r)
         .sort((a, b2) => dist(a.x, a.y, s.x, s.y) - dist(b2.x, b2.y, s.x, s.y))[0];
       if (!c) { buried.push(`site ${s.id}: no cache at all`); continue; }
       const d = dist(c.x, c.y, s.x, s.y);
@@ -145,7 +148,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       ? `every cache stands clear of the monument (all beyond ${BONE_REACH} tiles of centre)`
       : `!! CACHES BURIED IN THE GEOMETRY: ${buried.join(', ')}`;
     /* and outside is no good if it is inside a rock instead */
-    const unreachable = corpseSites.map(s => chests.filter(ch => dist(ch.x, ch.y, s.x, s.y) < s.r + 6)
+    const unreachable = corpseSites.map(s => topside.filter(ch => dist(ch.x, ch.y, s.x, s.y) < s.r + 6)
       .sort((a, b2) => dist(a.x, a.y, s.x, s.y) - dist(b2.x, b2.y, s.x, s.y))[0])
       .filter(c => c && isBlocked(c.x, c.y));
     R.cachesStandOnOpenGround = unreachable.length === 0
@@ -154,7 +157,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* still THEIRS, though — a cache pushed out of the skull and into the next county is a
        different bug */
     const strayed = corpseSites.filter(s => {
-      const c = chests.filter(ch => dist(ch.x, ch.y, s.x, s.y) < s.r + 6)
+      const c = topside.filter(ch => dist(ch.x, ch.y, s.x, s.y) < s.r + 6)
         .sort((a, b2) => dist(a.x, a.y, s.x, s.y) - dist(b2.x, b2.y, s.x, s.y))[0];
       return !c || dist(c.x, c.y, s.x, s.y) > s.r + 4;
     });

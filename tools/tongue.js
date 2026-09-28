@@ -30,7 +30,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const p = await b.newPage({ viewport: { width: 900, height: 620 } });
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 160)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForSelector('#btn-start', { state: 'attached', timeout: 60000 });
   await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(2600);
@@ -185,9 +185,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       /* ---------- AND THERE IS NO QUIET CORNER, WHICH IS NOT WHAT I EXPECTED ----------
          The first version of this claim asserted the opposite: that coming over the wall far
          from the gate would be quieter, because that is the better game. Measured, it is simply
-         not this world — Dustport fields eighteen guards standing at radius 19-25 and the
-         nearest one to ANY point on its wall is between two and seven tiles. The far corner
-         produced 22 stops against the gate's 18, which is the same number twice.
+         not this world — Dustport fields eighteen guards, and the far corner produced 22 stops
+         against the gate's 18, which is the same number twice.
+         THAT WAS LUCK, and the crater found it: the posts rode a circle inside a square wall, the
+         corner was 10.5 tiles from its post before the jitter, and a reshuffled world put it at
+         12.0 and silent (0 stops). The posts stand on the square now (CODE-AUDIT.md §5.13), so
+         this claim holds by construction rather than by the dice.
          So the claim is the measurement instead of the hope. It matters because it says what
          the mechanic actually asks of the player: not a route, but what is in the pack and whose
          pack it is — which is the choice the shared stash already offered and which nobody had

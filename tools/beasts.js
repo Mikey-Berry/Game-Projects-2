@@ -32,7 +32,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 240)));
   p.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE: ' + m.text().slice(0, 240)); });
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   await p.evaluate(() => document.getElementById('btn-start').click());
   await p.waitForTimeout(3000);
@@ -144,6 +144,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       /* THE ONE RULE. Drive the real workTheDoor with a real caster and a finished hold. */
       const caster = player().find(o => o.state === 'ok') || player()[0];
       caster.gift = caster.gift || 'dark';
+      /* and back where they stood, after: the Door opens at the bottom of the crater now, and a
+         caster left there has the next block binding its risen beside the Brood */
+      const casterWas = { x: caster.x, y: caster.y };
       caster.x = theDoor.x; caster.y = theDoor.y;
       caster.mana = 999;
       for (const k of Object.keys(DOOR_SEAL_COST)) stash[k] = (stash[k] || 0) + 999;
@@ -166,13 +169,22 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? `two limbs off drops the seal from ${full[k0]} to ${cut[k0]} ${ITEMS[k0].name}`
         : `!! SEVERING LIMBS DOES NOT NARROW THE DOOR (${full[k0]} vs ${cut[k0]})`;
 
-      /* and once it is down the rite lands */
+      /* and once it is down the rite lands. SINCE THE OLD KING (tools/oldking.js), with one more
+         step: the hold with the Brood dead brings him down the rope first, and the Door stays
+         open until he is put down too. Builds without him land on the first pass, as before. */
       kill(br, caster);
       theDoor.work = DOOR_WORK;
       workTheDoor(caster, 1 / 30);
-      R.broodDown = !theDoor
-        ? 'and with it down, the same hold shuts the sky'
-        : '!! THE RITE STILL WILL NOT LAND WITH THE BROOD DEAD';
+      let kingStep = '';
+      if (typeof oldKingAlive === 'function' && theDoor) {
+        const k = oldKingAlive();
+        kingStep = k ? ' (after the old king came down and was put down)' : ' (THE OLD KING NEVER CAME)';
+        if (k) { kill(k, caster); theDoor.work = DOOR_WORK; workTheDoor(caster, 1 / 30); }
+      }
+      R.broodDown = !theDoor && !/NEVER/.test(kingStep)
+        ? `and with it down, the same hold shuts the sky${kingStep}`
+        : `!! THE RITE STILL WILL NOT LAND WITH THE BROOD DEAD${kingStep}`;
+      caster.x = casterWas.x; caster.y = casterWas.y;
     }
 
     /* ============================================================ 3. THE BENCH */
@@ -215,7 +227,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          bed" while passing on a slack fallback clause. */
       let ox = 0, oy = 0;
       outerCart:
-      for (let y = 40; y < 220; y += 4) for (let x = 40; x < 220; x += 4) {
+      /* THE WHOLE MAP, NOT ITS CORNER. This read 40..220 on both axes, which was open waste on
+         the 1440 world and is coast and town on the 2048 one. */
+      for (let y = 40; y < H - 40; y += 8) for (let x = 40; x < W - 40; x += 8) {
         if (isBlocked(x + 0.5, y + 0.5)) continue;
         if (towns.some(t => dist(t.x, t.y, x, y) < 60)) continue;
         ox = x; oy = y; break outerCart;

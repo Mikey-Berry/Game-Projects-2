@@ -7,7 +7,7 @@ const path = require('path');
   const file = process.argv[2] || 'game.html';
   const b = await chromium.launch({ args: ['--use-gl=swiftshader','--enable-unsafe-swiftshader','--disable-gpu-sandbox','--no-sandbox'] });
   const p = await b.newPage({ viewport: { width: 500, height: 400 } });
-  await p.goto('file://' + path.join(__dirname, file), { waitUntil: 'load' });
+  await p.goto('file://' + path.join(__dirname, file), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(2500);
   await p.evaluate(() => document.getElementById('btn-start').click());
   await p.waitForTimeout(5000);

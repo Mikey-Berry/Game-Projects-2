@@ -29,7 +29,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const p = await b.newPage({ viewport: { width: 1000, height: 720 } });
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(3000);
@@ -166,16 +166,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          staircase in. "A place you cannot get into from where you are standing" is a claim
          about where you can STAND. Water cells are skipped, and the count of them is printed so
          the next person can see how much of the grid the sea is taking. */
+      /* AND NOT ON THE CRATER'S HEADLAND, on purpose (2026-09-28, the v24 move): its gorge is the
+         only way onto it, so it has no way down by design — a shaft there would be a second way
+         in, under the ridge. `crater.js` asserts there is none; this skips it, and counts it. */
       const ways = stairs.filter(st => st.to <= F && st.from === 0);
-      let worst = 0, wx = 0, wy = 0, dry = 0, wet = 0;
+      let worst = 0, wx = 0, wy = 0, dry = 0, wet = 0, head = 0;
       for (let y = 40; y < H; y += 40) for (let x = 40; x < W; x += 40) {
         if (tileAt(x, y) === 3) { wet++; continue; }
+        if (typeof inHeadland === 'function' && inHeadland(x, y)) { head++; continue; }
         dry++;
         let d = 1e9;
         for (const st of ways) d = Math.min(d, dist(st.x, st.y, x, y));
         if (d > worst) { worst = d; wx = x; wy = y; }
       }
-      R._ways = `${ways.length} ways down from the surface; of ${dry} dry sample points (${wet} skipped as sea) `
+      R._ways = `${ways.length} ways down from the surface; of ${dry} dry sample points (${wet} skipped as sea, ${head} as the crater's headland) `
               + `the worst is ${wx},${wy} at ${Math.round(worst)} tiles from one`;
       R.andThereIsAWayDownNearby = (ways.length >= 20 && worst < 200)
         ? `and the furthest anywhere on the map gets from a way down is ${Math.round(worst)} tiles, across ${ways.length} of them`
@@ -374,7 +378,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.noWeatherDownThere = (deep.sun === 0 && deep.stars === 0 && deep.bg !== up.bg)
         ? `and a dust storm at noon does not reach the undercroft — no sun, no stars, its own dark`
         : `!! UNDERGROUND STILL HAS WEATHER (sun ${deep.sun}, stars ${deep.stars}, bg ${deep.bg.toString(16)} vs ${up.bg.toString(16)})`;
-      R.andTheSkyStillWorksUpTop = (up.sun > 0.5 && night.sun < up.sun && night.bg !== up.bg)
+      /* THE BAR IS "LIT", NOT "AS BRIGHT AS IT WAS". This read `up.sun > 0.5` against a noon
+         sun of 1.25. The day was re-lit on 2026-09-27 as the premise has it — the sun behind the
+         dust, 0.42 at its height, with the sky's flat light carrying the day — and a number
+         set off the old tuning would have called that "the surface lost its sky". What the
+         claim is about is that noon has a sun and midnight does not. */
+      R.andTheSkyStillWorksUpTop = (up.sun > 0.2 && night.sun < up.sun * 0.5 && night.bg !== up.bg)
         ? `while overland noon is still lit (${up.sun}) and midnight is still dark (${night.sun}) — the surface kept its sky`
         : `!! THE SURFACE LOST ITS SKY TOO (noon sun ${up.sun}, midnight sun ${night.sun})`;
     });

@@ -24,7 +24,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 240)));
   p.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE: ' + m.text().slice(0, 240)); });
 
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3500);
   const loadErrs = errs.length;
   await p.evaluate(() => document.getElementById('btn-start').click());

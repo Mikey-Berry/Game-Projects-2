@@ -22,7 +22,7 @@ const { chromium, devices } = require('playwright');
 const path = require('path');
 const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__dirname, a)) : path.join(__dirname, 'game.html'));
 
-const PROBE = () => {
+const PROBE = async () => {
   const triOf = (o) => {
     const g = o.geometry; if (!g) return 0;
     const idx = g.index ? g.index.count : (g.attributes.position ? g.attributes.position.count : 0);
@@ -48,8 +48,11 @@ const PROBE = () => {
   charMeshes.forEach(e => { built++; e.g.traverse(o => { if (o.isMesh) { charTris += triOf(o); charMeshCount++; } }); });
 
   const info = renderer.info;
-  let saveKB = -1;
-  try { saveKB = Math.round(JSON.stringify(snapshot()).length / 1024); } catch (e) { }
+  /* THE SAVE AS IT IS STORED, NOT AS JSON. `packSaveText` gzips it before it goes into
+     localStorage, and the storage budget is spent on what goes in — measured on the 2560 world,
+     5.0MB of JSON was a few hundred KB stored. The raw figure is still printed, for scale. */
+  let saveKB = -1, rawKB = -1;
+  try { const snap = snapshot(); rawKB = Math.round(JSON.stringify(snap).length / 1024); saveKB = Math.round((await packSaveText(snap)).length / 1024); } catch (e) { }
 
   const vw = innerWidth, vh = innerHeight;
   const panels = [...document.querySelectorAll('.hud,#charpanel,#invpanel,#minimap,#log,#squadbar,#buildbar,#topbar')]
@@ -67,7 +70,7 @@ const PROBE = () => {
     perBody: built ? Math.round(charTris / built) : 0,
     charShare: info.render.triangles ? +(charTris / info.render.triangles * 100).toFixed(1) : 0,
     geoms: info.memory.geometries, textures: info.memory.textures,
-    saveKB, chars: chars.length,
+    saveKB, rawKB, chars: chars.length,
     vw, vh, dpr: devicePixelRatio, dprUsed: renderer.getPixelRatio(),
     offscreen: panels.filter(p => p.off).map(p => p.id),
     tinyTargets: targets.filter(v => v < 44).length, targets: targets.length,
@@ -86,7 +89,7 @@ const PROBE = () => {
     const p = await ctx.newPage();
     const errs = [];
     p.on('pageerror', e => errs.push(e.message.slice(0, 160)));
-    await p.goto(url, { waitUntil: 'load' });
+    await p.goto(url, { waitUntil: 'load', timeout: 90000 });
     await p.waitForTimeout(3000);
     await p.evaluate(() => document.getElementById('btn-start').click());
     await p.waitForTimeout(8000);          /* let syncChars finish building bodies */
@@ -109,7 +112,7 @@ const PROBE = () => {
     console.log(`  characters       ${r.bodies} bodies, ${r.charTris.toLocaleString()} tris (${r.perBody}/body) — ${r.charShare}% of the frame`);
     console.log(`                   ${r.charMeshes} meshes (${r.meshPerBody}/body) — ${r.calls ? Math.round(r.charMeshes / r.calls * 100) : 0}% of the draw calls`);
     console.log(`  memory           ${r.geoms} geometries, ${r.textures} textures`);
-    console.log(`  save             ${r.saveKB} KB` + (r.saveKB > 4096 ? '   *** OVER A 4MB MOBILE BUDGET ***' : r.saveKB > 2048 ? '   (mobile localStorage is ~5MB)' : ''));
+    console.log(`  save             ${r.saveKB} KB stored (${r.rawKB} KB of JSON before packing)` + (r.saveKB > 4096 ? '   *** OVER A 4MB STORAGE BUDGET ***' : r.saveKB > 2048 ? '   (localStorage is ~5MB)' : ''));
     if (label.startsWith('PHONE')) {
       /* The renderer caps its own pixel ratio, so quote the one it USES rather than the one
          the device reports — the first version of this line multiplied by the raw dpr and
@@ -132,7 +135,7 @@ const PROBE = () => {
   const hold = [], open = [];
   if (t > 900000) hold.push(`FRAME IS ${(t / 1000).toFixed(0)}k TRIS — was brought under the ~900k line for a mid handset, and has gone back over`);
   if (desk.r.calls > 2500) hold.push(`${desk.r.calls} DRAW CALLS`);
-  if (ph.saveKB > 4096) hold.push(`SAVE IS ${ph.saveKB}KB — past a mobile storage budget`);
+  if (ph.saveKB > 4096) hold.push(`SAVE IS ${ph.saveKB}KB STORED — past a browser storage budget`);
   if (ph.tinyTargets > ph.targets * 0.5) open.push(`${ph.tinyTargets}/${ph.targets} touch targets under 44px (mobile UI not started)`);
   if (ph.offscreen.length) open.push(`${ph.offscreen.join('/')} renders off-screen at 393px (mobile UI not started)`);
   /* read the real per-body mesh count rather than a number typed in when it was 28 */

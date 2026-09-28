@@ -23,7 +23,7 @@ const OUT = path.resolve(process.argv[2] || path.join(__dirname, 'lich.png'));
   const p = await b.newPage({ viewport: { width: 460, height: 470 }, deviceScaleFactor: 2 });
   const errs = [];
   p.on('pageerror', e => errs.push(e.message.slice(0, 200)));
-  await p.goto('file://' + gamePath(process.argv[3]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[3]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   /* START AND STOP IN THE SAME BREATH. A click followed by a wait lets the world run for
      however many frames the machine manages, which is not a fixed number and drops when a

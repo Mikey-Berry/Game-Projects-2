@@ -49,7 +49,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const p = await b.newPage({ viewport: { width: 900, height: 600 } });
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(3000);
@@ -136,8 +136,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const dirs = new Set(watch.map(w => w.patrolDir));
       const distinct = new Set(angs.map(a => (a === undefined ? 'x' : a.toFixed(3)))).size;
       return (distinct === watch.length && dirs.size === 1 && !angs.includes(undefined))
-        ? `and \`patrolIx\` is finally read: ${distinct} distinct bearings, all going the same way round`
-        : `!! THE INDICES ARE STILL WRITTEN AND NEVER READ (${distinct} distinct bearings, ${dirs.size} direction(s))`;
+        ? `and the bearings are dealt out: ${distinct} distinct bearings, all going the same way round`
+        : `!! THE BEARINGS ARE NOT DEALT OUT (${distinct} distinct bearings, ${dirs.size} direction(s))`;
     })();
 
     /* ---------- SOMEBODY AT THE FAR END ---------- */

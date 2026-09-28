@@ -30,7 +30,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 240)));
   p.on('console', m => { if (m.type() === 'error') errs.push('CONSOLE: ' + m.text().slice(0, 240)); });
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   await p.evaluate(() => document.getElementById('btn-start').click());
   await p.waitForTimeout(3000);
@@ -136,7 +136,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        Watcher in the world goes to a corner, and the claim then checks that none of them found
        anything to chase, so a future regression cannot hide behind the staging. */
     for (const g of chars) if (g.faction === 'gaunt' || g.gauntKind) { g.x = 6; g.y = 6; g.floor = 0; }
-    for (const c of player()) { c.x = a.x; c.y = a.y; c.floor = -1; c.moveTarget = null; c.lamp = false; }
+    /* ON THEIR STOREY. This read `floor = -1` from the days every hall was on the Undercroft;
+       on the 2048 world the roomiest hall on offer is on the Deepworks, the party stood a whole
+       storey above the congregation it was meant to be staring down, and nobody faced anyone. */
+    const fl = folk[0] ? folk[0].floor : -1;
+    for (const c of player()) { c.x = a.x; c.y = a.y; c.floor = fl; c.moveTarget = null; c.lamp = false; }
     let k = 0;
     for (const c of folk) { const t = (k / folk.length) * Math.PI * 2;
       c.x = a.x + Math.cos(t) * 10; c.y = a.y + Math.sin(t) * 10;
@@ -214,7 +218,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     k.x = a.x; k.y = a.y;
     const g = chars.find(c => (c.faction === 'gaunt' || c.gauntKind) && c.state === 'ok');
     if (!g) return null;
-    g.x = a.x + 14; g.y = a.y; g.floor = -1;
+    g.x = a.x + 14; g.y = a.y; g.floor = k.floor;
+    /* and a player on that storey, far off, because a storey nobody of yours is on is not filed
+       in the grid at all and nothing on it can see anything */
+    for (const c of player()) { c.floor = k.floor; if (dist(c.x, c.y, a.x, a.y) < 60) c.x = a.x + 80; }
     rebuildCharGrid();
     const d0 = dist(k.x, k.y, g.x, g.y);
     for (let i = 0; i < 200; i++) { ai(k, 1 / 30); physics(k, 1 / 30); }

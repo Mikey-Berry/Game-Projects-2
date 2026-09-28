@@ -17,10 +17,12 @@
  *      from worldgen would be twenty bodies in every save and every scan of a thing the player
  *      may never find
  *   3. the door is shut at low standing and opens at high, and the talk check is a real third way
- *   4. the gift feels the ground without being told — driven through the real world tick
- *   5. and once it is open the bodies are ORDINARY DEAD, raisable with every tool that already
- *      exists, because the whole point of putting it at the start town is that it is a
- *      necromancer's jackpot rather than a cutscene
+ *   4. the gift feels the ground without being told — driven through the real world tick — and
+ *      what it gets is a LEAD in the journal, not the rows opened on the spot in the start town
+ *   5. and once the Dame opens it, the bodies are the last three the house invited and they are
+ *      ORDINARY DEAD, raisable with every tool that already exists, dead since the day they went
+ *      up the path. The old rows are bone. (Re-staged for "Orchard told in order": this still
+ *      expected twenty bodies to stand up at the gift's first touch, and went red with it.)
  *
  * Anything starting '!!' fails the build.
  *
@@ -38,7 +40,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const p = await b.newPage({ viewport: { width: 1000, height: 700 } });
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 240)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(2500);
@@ -119,17 +121,31 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     me.x = e.gx; me.y = e.gy;
     rebuildCharGrid();
     paused = false;
-    for(let i = 0; i < 60 && !e.opened; i++) update(0.1);
-    R.theGiftKnows = e.opened
-      ? 'a necromancer standing between the rows simply knows, without being told'
-      : '!! THE GIFT WALKED OVER TWENTY BODIES AND FELT NOTHING';
+    for(let i = 0; i < 60 && !e.sensed; i++) update(0.1);
+    /* THE GIFT KNOWS, AND KNOWING IS A LEAD — NOT A FIELD OF BODIES IN THE START TOWN. Since
+       "Orchard told in order" the sense opens the orchard's journal line and nothing else;
+       the rows come up when the house invites you and the Dame shows you them. */
+    R.theGiftKnows = e.sensed && !e.opened && threadOf('orchard')
+      ? 'a necromancer standing by the rows simply knows, without being told — and it is a lead, not an opening'
+      : `!! THE GIFT WALKED OVER THE ROWS AND ${e.sensed ? (e.opened ? 'OPENED THEM ON THE SPOT' : 'WROTE NO LEAD') : 'FELT NOTHING'}`;
     me.gift = wasGift;
 
-    /* ---- 5. AND THEN THEY ARE ORDINARY DEAD ---- */
+    /* ---- 5. AND THEN THEY ARE ORDINARY DEAD ----
+       The last three the house invited, in their good coats, and nobody older: the old rows
+       are bone. Three invitations are staged on the house's own ledger, at the days the town
+       would remember them, and the ground is opened the way the Dame opens it. */
+    for(const [k, ago] of [['Ansel Parr', 30], ['Mirren Vosk', 19], ['Tobiah Crane', 9], ['Ilse Marrow', 6]]){
+      e.graves.push({x: e.gx + (e.taken % 5) * 2 - 4 + 0.5, y: e.gy + Math.floor((e.taken % 20) / 5) * 2 - 3 + 0.5});
+      e.taken++;
+      e.invites.push({name: k, day: Math.floor(day) - ago});
+    }
+    orchardOpen('The Dame has the rows opened for you herself, and stands well back while it is done.');
     const dead = chars.filter(c => c.orchardDead);
-    R.theyAreReal = dead.length === e.graves.length && dead.every(c => c.state === 'dead' && corpses.includes(c))
-      ? `${dead.length} bodies in \`corpses\`, in rows, under the fruit trees`
-      : `!! ${dead.length}/${e.graves.length} CAME UP, ${dead.filter(c => corpses.includes(c)).length} OF THEM IN corpses`;
+    const want = Math.min(3, e.invites.length);
+    R.theyAreReal = dead.length === want && dead.every(c => c.state === 'dead' && corpses.includes(c))
+      && dead.every(c => e.invites.slice(-3).some(v => v.name === c.name))
+      ? `${dead.length} bodies in \`corpses\`, the last three the house invited, in the newest row`
+      : `!! ${dead.length}/${want} CAME UP (${dead.map(c => c.name).join(', ')}), ${dead.filter(c => corpses.includes(c)).length} OF THEM IN corpses`;
     R.theyRaise = dead.length && dead.every(raisableBody)
       ? 'and every one of them takes a binding like any other corpse — no special case, no cutscene'
       : '!! SOME OF THE ORCHARD DEAD WILL NOT TAKE A BINDING';

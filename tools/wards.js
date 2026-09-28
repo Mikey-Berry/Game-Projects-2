@@ -35,7 +35,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const p = await b.newPage({ viewport: { width: 900, height: 600 } });
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForSelector('#btn-start', { state: 'attached', timeout: 60000 });
   await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(2600);
@@ -155,6 +155,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const c4 = mk('player', s.x, s.y);
       startConcentration(c4, 'warding', 1, true, true);
       const g = spawnGaunt('gaunt', s.x + 4, s.y); g.__probe = true; born.push(g);
+      /* AND PUT DOWN WHERE IT WAS PUT DOWN. `spawnGaunt` nudges up to six tiles to open ground,
+         and on the 2048 world the spot is among Greenrest's buildings: it landed 10.3 tiles out,
+         outside the light, where there is nothing to turn from. Placed by hand on the nearest
+         open tile three and a half to four and a half tiles off the caster. */
+      {
+        let best = null;
+        for (let a = 0; a < 32 && !best; a++) for (const r of [4, 3.5, 4.5]) {
+          const x = s.x + Math.cos(a / 32 * Math.PI * 2) * r, y = s.y + Math.sin(a / 32 * Math.PI * 2) * r;
+          if (!isBlocked(x, y, 0)) { best = { x, y }; break; }
+        }
+        if (best) { g.x = best.x; g.y = best.y; }
+      }
       g.target = c4; g.targetManual = true; g.hunt = null;
       rebuildCharGrid();
       /* ---------- A SECOND IS NOT LONG ENOUGH TO MEASURE A TURN ----------

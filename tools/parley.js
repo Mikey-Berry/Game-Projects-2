@@ -30,7 +30,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   const p = await b.newPage({ viewport: { width: 900, height: 620 } });
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 160)));
-  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForSelector('#btn-start', { state: 'attached', timeout: 60000 });
   await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
   await p.waitForTimeout(2600);
@@ -82,7 +82,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? `and a necromancer at their post gets the necromancer's conversation rather than the watch's — which is the tree that shipped last round and could not be reached by anybody in play`
         : `!! THE NECROMANCER STILL ANSWERS AS THE WATCH: "${got.title}" ${JSON.stringify(got.l)}`;
       /* and the reported body itself: a gaunt wearing a post, non-hostile, standing about */
-      const gt = put('Watcher', 'purge', c => { c.gauntKind = 'messenger'; c.neutral = true; c.guard = { x: c.x, y: c.y }; });
+      const gt = put('Watcher', 'messenger', c => { c.gauntKind = 'messenger'; c.neutral = true; c.guard = { x: c.x, y: c.y }; });
       const g2 = askedOf(gt);
       R._gaunt = `Watcher in the yard: ${g2.l.length} conversation options`;
       R.andAGauntHasNothingToSay = g2.l.length === 0

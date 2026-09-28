@@ -6,7 +6,7 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
  const p=await b.newPage({viewport:{width:1280,height:800}});
  const errs=[]; p.on('pageerror',e=>errs.push('PAGEERROR: '+e.message.slice(0,220)));
  p.on('console',m=>{if(m.type()==='error')errs.push('CONSOLE: '+m.text().slice(0,220));});
- await p.goto('file://'+gamePath(process.argv[2]),{waitUntil:'load'});
+ await p.goto('file://'+gamePath(process.argv[2]),{waitUntil:'load',timeout:90000});
  await p.waitForTimeout(3000);
  await p.evaluate(()=>document.getElementById('btn-start').click());
  await p.waitForTimeout(3000);

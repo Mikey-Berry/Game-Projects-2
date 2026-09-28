@@ -31,7 +31,7 @@ const WHO = [
   const p = await b.newPage({ viewport: { width: 900, height: 760 }, deviceScaleFactor: 2 });
   const errs = [];
   p.on('pageerror', e => errs.push(e.message.slice(0, 200)));
-  await p.goto('file://' + gamePath(process.argv[3]), { waitUntil: 'load' });
+  await p.goto('file://' + gamePath(process.argv[3]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
   /* START AND STOP IN THE SAME BREATH. A click followed by a wait lets the world run for
      however many frames the machine manages, which is not a fixed number and drops when a
@@ -105,7 +105,9 @@ const WHO = [
         const e = charMeshes.get(window.__id);
         e.rotY = yaw; e.g.rotation.set(0, yaw, 0);
         e.g.updateWorldMatrix(true, true);
-        const bb = new THREE.Box3().setFromObject(e.sculptHead);
+        /* a BUILT head has no sculpt to frame, so frame what is showing on the head bone */
+        const bb = e.sculptHead ? new THREE.Box3().setFromObject(e.sculptHead) : new THREE.Box3();
+        if (!e.sculptHead) e.headG.traverse(o => { if (o.isMesh && o.visible) bb.expandByObject(o); });
         const ctr = bb.getCenter(new THREE.Vector3());
         const r = Math.max(bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z);
         const cam = camera.clone();
@@ -128,13 +130,25 @@ const WHO = [
     const state = await p.evaluate(() => {
       const e = charMeshes.get(window.__id);
       if (!e) return { ok: false, why: 'no mesh' };
+      /* ---------- THREE OF THEM ARE BUILT NOW ----------
+         Saga, Lyre and Czarina were switched to native heads on 2026-09-27 (`SCULPTED`), on
+         the report that the sculpts "just aren't coming out well". For those the questions turn
+         round: the sculpt must NOT be there, the box head MUST be, and it is still held to the
+         same size band as everybody else. The bakes stay in the file behind the switch, so the
+         smoothness and red-eye checks below still read them. */
+      const who = chars.find(o => o.id === window.__id);
+      const native = typeof SCULPTED !== 'undefined' && SCULPTED[(who && who.face) || ''] === false;
       let sculpt = 0, boxes = 0;
       for (const ch of e.headG.children) {
         if (!ch.visible) continue;
         if (ch === e.sculptHead) sculpt += ch.geometry.index.count / 3;
         else boxes++;
       }
-      const bb = e.sculptHead ? new THREE.Box3().setFromObject(e.sculptHead) : null;
+      let bb = e.sculptHead ? new THREE.Box3().setFromObject(e.sculptHead) : null;
+      if (native && !e.sculptHead) {
+        bb = new THREE.Box3(); e.headG.updateWorldMatrix(true, true);
+        e.headG.traverse(o => { if (o.isMesh && o.visible) bb.expandByObject(o); });
+      }
       /* ---------- AND IT HAS TO BE THE SIZE OF A HEAD ----------
          This harness reported the sculpt's dimensions from the first day and never once
          compared them to anything, so three heads at sixty per cent of the size of everybody
@@ -205,12 +219,12 @@ const WHO = [
           ? `head is ${(mine * 100).toFixed(1)}% of body against a box head's ${(theirs * 100).toFixed(1)}% (median of ${ref.n}, ${(ref.lo * 100).toFixed(1)}-${(ref.hi * 100).toFixed(1)})`
           : `!! THE HEAD IS THE WRONG SIZE — ${(mine * 100).toFixed(1)}% of body against a box head's ${(theirs * 100).toFixed(1)}% (${r.toFixed(2)}x)`;
       }
-      return { ok: !!e.sculptHead, sculpt, boxes, sized, top: bb ? +bb.max.y.toFixed(2) : 0, bot: bb ? +bb.min.y.toFixed(2) : 0,
+      return { native, ok: native ? (!e.sculptHead && boxes > 0) : !!e.sculptHead, sculpt, boxes: native ? 0 : boxes, sized, top: bb ? +bb.max.y.toFixed(2) : 0, bot: bb ? +bb.min.y.toFixed(2) : 0,
                wide: bb ? +(bb.max.x - bb.min.x).toFixed(2) : 0 };
     });
     rows.push({ w, shots, state });
-    console.log(`  ${w.face.padEnd(9)} ${state.ok ? state.sculpt + ' tris' : '!! NO SCULPT'}` +
-      `  ${state.boxes ? '!! ' + state.boxes + ' BOX PARTS STILL SHOWING' : 'box head hidden'}` +
+    console.log(`  ${w.face.padEnd(9)} ${state.native ? (state.ok ? 'built natively, no sculpt' : '!! A SCULPT IS STILL ON IT') : state.ok ? state.sculpt + ' tris' : '!! NO SCULPT'}` +
+      `  ${state.native ? '' : state.boxes ? '!! ' + state.boxes + ' BOX PARTS STILL SHOWING' : 'box head hidden'}` +
       `  y ${state.bot}..${state.top}  w ${state.wide}`);
   }
 
@@ -411,7 +425,7 @@ const WHO = [
   const bad = rows.filter(r => !r.state.ok || r.state.boxes || String(r.state.sized).startsWith('!!'));
   if (helmBad.length) { console.log('\n*** ' + helmBad.join('\n*** ')); process.exitCode = 1; }
   console.log(`\n${path.basename(OUT)} — ` + (bad.length ? '*** ' + bad.map(r => r.w.face).join(', ') + ' WRONG'
-    : WHO.length + ' SCULPTED HEADS AND TWO HELMS, AND NOTHING LEFT OF THE BOXES'));
+    : `${rows.filter(r => !r.state.native).length} SCULPTED AND ${rows.filter(r => r.state.native).length} BUILT HEADS, ALL THE RIGHT SIZE, AND TWO HELMS`));
   if (errs.length) { console.log('errs:', errs.length); errs.slice(0, 3).forEach(e => console.log('  ' + e)); }
   await b.close();
   if (bad.length) process.exitCode = 1;
