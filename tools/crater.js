@@ -15,10 +15,12 @@
  *      worldgen placed left standing on it
  *   3. the rim is a wall, and the breaches are the ways in: a path from the lip to the floor
  *      exists, never crosses the wall, and has to go round to a breach to get there
- *   4. the shape: a floor held above the water, a crest over five units high, the approach rising
- *      toward it; nothing grows in the glass; the approach keeps its (dead) trees
+ *   4. the shape: a floor held above the water, a crest over five units high, the walk in rising
+ *      toward it; nothing grows in the glass; the Ashfall and the Scorch keep their (dead) trees
  *   5. the air changes: the fog over the crater is not the fog outside it, and the veil stands
- *   6. walking in says what it is, once each and in order, and opens a thread that points there
+ *   6. walking in says what it is, stretch by stretch (the Marches, the Ashfall, the Scorch, the
+ *      glass, the lip, the floor), once each and in order, opens a thread that points there, and
+ *      moves the thread on at each
  *   7. a save from before the crater is refused, and says why
  *   8. the glass and the bowl are held, day and night: the crater's Watchers are placed, are not
  *      unmade at dawn, and the Messengers stand in the bowl at peace with the rest of them
@@ -36,11 +38,22 @@
  *      the Fracture lurches at once and its daily rate goes up for the rest of the run
  *  (13b) and it fights like the second-to-last thing: 900 blood, a flight of Eyes over it, the
  *      light called down on whoever is at it, and a turn at two thirds of its blood
- *  16. the roads go round it: every town is on one network, no road comes inside the approach,
+ *  16. the roads go round it: every town is on one network, no road comes inside the Ashfall,
  *      and a road whose line would cross the headland follows the ring outside the ridge (both seeds)
  *  17. and so does everybody on the world's business: a caravaneer and a soldier sent from one
  *      side of the headland to the other walk the ring round the ridge and arrive, a trip between towns the roads do not join directly is
  *      strung together from roads, and one of yours sent the same way goes where they are sent
+ *  18. the walk in is gradual (phase 2, "more gradual, fitting for a final boss arena"): along the
+ *      line from the gorge to the lip, the depth everything reads never falls and never jumps;
+ *      the ground climbs through every stretch and has no cliff in it; the colour goes out of
+ *      the dust stretch by stretch, darkens through the Scorch, and never changes at a line; the
+ *      scrub is gone from the Ashfall in and the Scorch has fewer trees than the Ashfall
+ *  19. the danger ramps: the Marches are safe (nothing native, nothing arrives by night on them or
+ *      for anybody on them, and nothing on the headland follows anybody onto them); the Ashfall
+ *      is empty by day and walked at night; the Scorch holds a few by day and more at night;
+ *      the dawn takes the night's back; the light comes down in the Scorch at night, sparse and
+ *      about half as hard, and not at all on the Marches; and a world where nobody goes onto
+ *      the headland draws no dice for any of it
  *
  * Anything starting '!!' fails the build.
  *
@@ -74,7 +87,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       if (typeof inHeadland !== 'function') return { none: true };
       /* 1. ON ITS HEADLAND: in the north-east quarter, the sea behind it, and the gorge the one
          way in — sealed, a flood of the ground floor from the bowl reaches nothing off the
-         headland; open, there is a walk from the mouth of the gorge to the approach */
+         headland; open, there is a walk from the mouth of the gorge to the Ashfall */
       const R = CRATER;
       if (!(R.x > W * 0.75 && R.y < H * 0.25)) bits.push(`it is at ${R.x},${R.y}, not in the north-east`);
       let wet = 0, ring = 0;
@@ -104,7 +117,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       for (const k of gorge) blocked.delete(k);
       if (leak) bits.push(`with the gorge shut the headland still leaks, at ${leak.x},${leak.y}`);
       const mouth = { x: R.x + Math.cos(CRATER_GORGE_A) * (R1 + 12), y: R.y + Math.sin(CRATER_GORGE_A) * (R1 + 12) };
-      const inner = { x: R.x + Math.cos(CRATER_GORGE_A) * R.approach, y: R.y + Math.sin(CRATER_GORGE_A) * R.approach };
+      const inner = { x: R.x + Math.cos(CRATER_GORGE_A) * R.ashfall, y: R.y + Math.sin(CRATER_GORGE_A) * R.ashfall };
       if (!findPath(mouth.x, mouth.y, inner.x, inner.y, 0, 200000)) bits.push('there is no walk in through the gorge');
       /* 2. and the world keeps off the whole headland, not only the glass */
       const on = (x, y) => inHeadland(x, y);
@@ -131,13 +144,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         for (const rt of tradeRoutes) lab[find(rt.aI)] = find(rt.bI);
         const islands = towns.filter((_, i) => find(i) !== find(0)).map(t => t.name);
         if (islands.length) bits.push(`${islands.join(', ')} ${islands.length > 1 ? 'are' : 'is'} off the road network`);
-        const inside = tradeRoutes.filter(rt => rt.wps.some(w => within(w.x, w.y, R.approach))).length;
-        if (inside) bits.push(`${inside} roads come inside the approach`);
+        const inside = tradeRoutes.filter(rt => rt.wps.some(w => within(w.x, w.y, R.ashfall))).length;
+        if (inside) bits.push(`${inside} roads come inside the Ashfall`);
         const gate = t => ({ x: t.x, y: t.y + (t.def.wall ? t.def.wall.r + 2 : 4) });
         const across = tradeRoutes.filter(rt => craterCrosses(gate(towns[rt.aI]).x, gate(towns[rt.aI]).y, gate(towns[rt.bI]).x, gate(towns[rt.bI]).y, CRATER_AVOID_R));
         const onRing = across.filter(rt => rt.wps.some(w => Math.abs(craterD(w.x, w.y) - CRATER_RING_R) < 20));
         if (onRing.length < across.length) bits.push(`${across.length - onRing.length} roads across the crater do not follow the ring`);
-        roadNote = `; all ${towns.length} towns are on one network of ${tradeRoutes.length} roads, none inside the approach, ${across.length} of them round the ring`;
+        roadNote = `; all ${towns.length} towns are on one network of ${tradeRoutes.length} roads, none inside the Ashfall, ${across.length} of them round the ring`;
       } else bits.push('there is no ring to route round in this build');
       const nearest = Math.min(...towns.map(t => craterD(t.x, t.y)));
       return { bits, nearest: Math.round(nearest), roads: tradeRoutes.length, roadNote };
@@ -156,6 +169,16 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const R = {};
       paused = true;
       const C = CRATER;
+      /* ---- 19, first part: nobody on the headland, nothing drawn. Asked first, while the glass
+         and the bowl are full, so the crater's own restock draws nothing either ---- */
+      {
+        const s0 = seed, walkIn = () => chars.filter(c => ['scorch', 'scorchNight', 'ashfall'].includes(c.craterOwn) && c.state !== 'dead').length;
+        const onHead = player().filter(c => inHeadland(c.x, c.y)).length;
+        for (const hr of [12, 23]) { hour = hr; for (let i = 0; i < 200; i++) craterDangerTick(0.5); }
+        R._noDice = onHead ? `!! ${onHead} OF YOURS START ON THE HEADLAND`
+          : seed !== s0 || walkIn() ? `!! WITH NOBODY ON THE HEADLAND THE CRATER DREW DICE (${seed !== s0}) AND MADE ${walkIn()} OF THE WALK IN'S OWN` : 'ok';
+        hour = 12;
+      }
       /* ---- 3. the wall and the breaches ---- */
       {
         /* start on the lip halfway between two breaches, where the wall is as far from a way
@@ -197,28 +220,28 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         let crest = 0, n = 0;
         for (let i = 0; i < 360; i++) { const a = i / 360 * Math.PI * 2; if (craterBreachAt(a) > 0) continue; const Rr = C.rim + craterWobble(a); crest += heightAt(C.x + Math.cos(a) * (Rr + 1.5), C.y + Math.sin(a) * (Rr + 1.5)); n++; }
         crest /= n;
-        const hIn = heightAt(C.x, C.y + C.glass), hOut = heightAt(C.x, C.y + C.approach + 20);
+        const hIn = heightAt(C.x, C.y + C.glass), hOut = heightAt(C.x, C.y + C.ashfall + 20);
         if (floorMin < -0.14) bits.push(`the floor dips to ${floorMin.toFixed(2)}, under the water plane`);
         if (floorMax > 0.6) bits.push(`the floor rises to ${floorMax.toFixed(2)}`);
         if (crest < 5.5) bits.push(`the crest averages ${crest.toFixed(2)}`);
-        if (!(hIn > hOut + 0.4)) bits.push(`the approach does not rise toward it (${hOut.toFixed(2)} outside, ${hIn.toFixed(2)} at the glass)`);
+        if (!(hIn > hOut + 0.4)) bits.push(`the walk in does not rise toward it (${hOut.toFixed(2)} in the Marches, ${hIn.toFixed(2)} at the glass)`);
         let growsIn = 0, trees = 0;
         for (let y = C.y - C.glass; y < C.y + C.glass; y += 2) for (let x = C.x - C.glass; x < C.x + C.glass; x += 2) {
           if (craterD(x, y) >= C.glass) continue;
           const d0 = rawDecorAt(x, y); if (d0 === 'tree' || d0 === 'shrub') growsIn++;
         }
-        for (let y = C.y - C.approach; y < C.y + C.approach; y += 2) for (let x = C.x - C.approach; x < C.x + C.approach; x += 2) {
-          const d = craterD(x, y); if (d < C.glass || d >= C.approach) continue;
+        for (let y = C.y - C.ashfall; y < C.y + C.ashfall; y += 2) for (let x = C.x - C.ashfall; x < C.x + C.ashfall; x += 2) {
+          const d = craterD(x, y); if (d < C.glass || d >= C.ashfall) continue;
           if (rawDecorAt(x, y) === 'tree') trees++;
         }
         if (growsIn) bits.push(`${growsIn} living things grow in the glass`);
-        if (!trees) bits.push('the approach has no trees left to stand dead in it');
+        if (!trees) bits.push('the Ashfall and the Scorch have no trees left to stand dead in them');
         R.theShapeOfIt = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
-          : `a floor between ${floorMin.toFixed(2)} and ${floorMax.toFixed(2)}, a crest averaging ${crest.toFixed(1)}, the approach rising from ${hOut.toFixed(2)} to ${hIn.toFixed(2)}; nothing grows in the glass and the approach keeps ${trees} trees (sampled), drawn dead`;
+          : `a floor between ${floorMin.toFixed(2)} and ${floorMax.toFixed(2)}, a crest averaging ${crest.toFixed(1)}, the walk in rising from ${hOut.toFixed(2)} in the Marches to ${hIn.toFixed(2)} at the glass; nothing grows in the glass and the Ashfall and the Scorch keep ${trees} trees (sampled), drawn dead`;
       }
       /* ---- 5. the air ---- */
       {
-        const far = { x: C.x, y: C.y + C.approach + 200 };
+        const far = { x: C.x, y: C.y + C.ashfall + 200 };
         const sample = (x, y) => { camX = camSX = x; camY = camSY = y; activeFloor = 0; hour = 12; updateSky(); return { c: scene.fog.color.getHex(), far: scene.fog.far }; };
         const out0 = sample(far.x, far.y), in0 = sample(C.x, C.y + 60);
         const bits = [];
@@ -235,21 +258,29 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const _log = log; log = (t, k) => { lines.push(String(t)); return _log(t, k); };
         const heard = [];
         try {
-          for (const [ring, d] of [['approach', 170], ['glass', 110], ['rim', 81.5], ['bowl', 30]]) {
-            me.x = C.x + d; me.y = C.y; me.floor = 0;
+          /* down the gorge's own line, so every stand is on the headland whatever side it is */
+          const A = CRATER_GORGE_A;
+          for (const [ring, d] of typeof CRATER_STEPS === 'undefined' ? [] : [['marches', 222], ['ashfall', 180], ['scorch', 145], ['glass', 110], ['rim', 81.5], ['bowl', 30]]) {
+            me.x = C.x + Math.cos(A) * d; me.y = C.y + Math.sin(A) * d; me.floor = 0;
             const n0 = lines.length;
             _crT = 0; craterTick(2);
             _crT = 0; craterTick(2);                                  /* and a second tick says nothing new */
-            heard.push([ring, lines.slice(n0).filter(l => CRATER_LINES[ring].includes(l)).length, lines.length - n0]);
+            const th0 = threads.find(t => t.key === 'crater');
+            heard.push([ring, lines.slice(n0).filter(l => CRATER_LINES[ring].includes(l)).length, craterRing(me.x, me.y), th0 ? th0.step : '']);
           }
         } finally { log = _log; }
         const th = threads.find(t => t.key === 'crater');
         const bits = [];
-        for (const [ring, got] of heard) if (got !== CRATER_LINES[ring].length) bits.push(`the ${ring} said ${got} of its ${CRATER_LINES[ring].length} lines`);
-        if (!th) bits.push('no thread was opened');
+        for (const [ring, got, was, step] of heard) {
+          if (was !== ring) bits.push(`the stand for the ${ring} is in the ${was}`);
+          if (got !== CRATER_LINES[ring].length) bits.push(`the ${ring} said ${got} of its ${CRATER_LINES[ring].length} lines`);
+          if (step !== CRATER_STEPS[ring]) bits.push(`the journal did not move on at the ${ring}`);
+        }
+        if (!heard.length) bits.push('the walk in has no stretches in this build');
+        else if (!th) bits.push('no thread was opened');
         else if (!th.mark || dist(th.mark.x, th.mark.y, C.x, C.y) > 1) bits.push('the thread does not point at the middle');
         R.walkingIn = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
-          : `walking in says the approach, the glass, the lip and the floor once each and in that order, and "The crater" goes in the journal marked at the middle`;
+          : `walking in says the Marches, the Ashfall, the Scorch, the glass, the lip and the floor once each and in that order; "The crater" goes in the journal marked at the middle and moves on at each`;
       }
       /* ---- 8. held, day and night ---- */
       {
@@ -361,11 +392,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           if (craterD(cu.x, cu.y) > 10) bits.push(`the Guardian stands ${craterD(cu.x, cu.y).toFixed(0)} from the middle`);
           if (cu.gauntKind !== 'messenger') bits.push('the Guardian is not a Messenger');
           if (cu.name !== 'The Guardian at the Gate') bits.push(`it is called ${cu.name}`);
-          /* the Eyes open when one of yours first comes into the approach, not at the making of
+          /* the Eyes open when one of yours first comes into the Ashfall, not at the making of
              the world: none before, and a flight once somebody is there */
           const eyes0 = chars.filter(c => c.craterOwn === 'gateEye' && c.state !== 'dead').length;
           if (!eyes0 || !cu.eyesUp) {
-            const w = makeChar('Walker', 'player', CRATER.x + CRATER.approach - 20, CRATER.y, { tough: 90 }); w.__probe = true; w.floor = 0; chars.push(w);
+            const w = makeChar('Walker', 'player', CRATER.x + CRATER.ashfall - 20, CRATER.y, { tough: 90 }); w.__probe = true; w.floor = 0; chars.push(w);
             rebuildCharGrid(); guardianTick(1 / 30);
             chars.splice(chars.indexOf(w), 1); rebuildCharGrid();
           }
@@ -448,18 +479,161 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const bits = [];
         for (const [who, t] of [['a caravaneer', cara], ['a soldier', sold]]) {
           if (!t.arrived) bits.push(`${who} sent across the map did not arrive in ${Math.round(t.secs)}s`);
-          if (t.minD < C.approach) bits.push(`${who} came within ${Math.round(t.minD)} of the middle`);
+          if (t.minD < C.ashfall) bits.push(`${who} came within ${Math.round(t.minD)} of the middle`);
         }
         /* NOT "WALKS IN BECAUSE YOU SENT THEM" ANY MORE: the ridge stands between, so one of yours
            goes round it too — not steered by the ring, but by the ground. What is asked is that
            the pathing finds its own way round and gets there. */
         if (!mine.arrived) bits.push(`one of yours sent the same way did not arrive in ${Math.round(mine.secs)}s`);
-        if (via && via.minD < C.approach) bits.push(`the way from ${via.from} to ${via.to} comes within ${Math.round(via.minD)}`);
+        if (via && via.minD < C.ashfall) bits.push(`the way from ${via.from} to ${via.to} comes within ${Math.round(via.minD)}`);
         R.travellersGoRound = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
           : `sent from one side of the headland to the other, a caravaneer and a soldier walk the ring and arrive (${Math.round(cara.secs)}s and ${Math.round(sold.secs)}s, never nearer than ${Math.round(Math.min(cara.minD, sold.minD))} to the middle)` +
             `${via ? `; ${via.from} to ${via.to} is strung together from ${via.hops} roads and keeps ${Math.round(via.minD)} out` : ''}` +
             `; one of yours sent the same way is not steered by the ring, finds its own way round the ridge, and arrives (${Math.round(mine.secs)}s)`;
       } else R.travellersGoRound = '!! NOBODY IN THIS BUILD KNOWS TO GO ROUND';
+      /* ---- 18. the walk in is gradual ---- */
+      {
+        const A = CRATER_GORGE_A, ux = Math.cos(A), uy = Math.sin(A), vx = -uy, vy = ux;
+        const E = craterEdge(A), lip = C.rim + 14, bits = [], SC = C.scorch || 160, AF = C.ashfall || 200;
+        const depthOf = typeof craterDepth === 'function' ? craterDepth : null;
+        if (!depthOf) bits.push('there is no one depth that the walk in reads');
+        const at = (r, side) => ({ x: C.x + ux * r + vx * side, y: C.y + uy * r + vy * side });
+        /* the depth, a tile at a time, walking in */
+        let prevK = -1, fell = 0, jump = 0;
+        for (let r = E + 4; r >= C.glass; r -= 1) {
+          const q = at(r, 0), k = depthOf ? depthOf(q.x, q.y) : 0;
+          if (prevK >= 0) { if (k < prevK - 1e-9) fell++; jump = Math.max(jump, k - prevK); }
+          prevK = k;
+        }
+        if (fell) bits.push(`the depth falls ${fell} times walking in`);
+        if (jump > 0.02) bits.push(`the depth jumps ${jump.toFixed(3)} in one tile`);
+        /* the ground: a band forty tiles across, averaged, climbs through every stretch; and no
+           tile on the line steps more than half a unit (there is no cliff until the lip) */
+        const band = (r) => { let h = 0, n = 0; for (let sd = -20; sd <= 20; sd += 4) { const q = at(r, sd); h += heightAt(q.x, q.y); n++; } return h / n; };
+        const hs = [['the Marches', 218], ['the Ashfall', 180], ['the Scorch', 145], ['the glass', 112]].map(([nm, r]) => [nm, band(r)]);
+        for (let i = 1; i < hs.length; i++) if (!(hs[i][1] > hs[i - 1][1] + 0.15)) bits.push(`the ground does not climb from ${hs[i - 1][0]} (${hs[i - 1][1].toFixed(2)}) to ${hs[i][0]} (${hs[i][1].toFixed(2)})`);
+        let step = 0;
+        for (let r = E - 1; r > lip; r -= 1) { const a0 = at(r, 0), a1 = at(r - 1, 0); step = Math.max(step, Math.abs(heightAt(a1.x, a1.y) - heightAt(a0.x, a0.y))); }
+        if (step > 0.5) bits.push(`the ground steps ${step.toFixed(2)} in one tile on the way in`);
+        /* the colour, read off the headland's own texture: averaged over a patch 48 tiles across
+           and 4 deep every four tiles in, so it is the stretch and not the grain being measured */
+        let tex = null;
+        scene.traverse(o => { if (!tex && o.name === 'ground' && o.material.map && o.material.map.repeat.x > 1.01) tex = o.material.map; });
+        let colNote = '';
+        if (!tex) bits.push('the headland has no texture of its own');
+        else {
+          const img = tex.image, HLX = W / tex.repeat.x, HLY = H / tex.repeat.y, HX0 = -tex.offset.x * HLX, HY0 = (tex.offset.y - 1 + H / HLY) * HLY;
+          const px = img.getContext('2d').getImageData(0, 0, img.width, img.height).data, kx = img.width / HLX, ky = img.height / HLY;
+          const patch = (r) => {
+            let rr = 0, gg = 0, bb = 0, n = 0;
+            for (let dr = -2; dr <= 2; dr += 0.5) for (let sd = -24; sd <= 24; sd += 0.5) {
+              const q = at(r + dr, sd), ix = Math.floor((q.x - HX0) * kx), iy = Math.floor((q.y - HY0) * ky), o = (iy * img.width + ix) * 4;
+              rr += px[o]; gg += px[o + 1]; bb += px[o + 2]; n++;
+            }
+            rr /= n; gg /= n; bb /= n;
+            return { lum: 0.3 * rr + 0.59 * gg + 0.11 * bb, chroma: Math.max(rr, gg, bb) - Math.min(rr, gg, bb) };
+          };
+          const P = []; for (let r = Math.floor(E) + 8; r >= C.glass - 12; r -= 4) P.push([r, patch(r)]);
+          const by = (r) => P.reduce((a, b) => Math.abs(b[0] - r) < Math.abs(a[0] - r) ? b : a)[1];
+          const mOut = by(E - 8), mar = by(AF + 8), ash = by(AF - 20), sco = by(SC - 15), gla = by(C.glass - 10);
+          if (!(mOut.chroma > mar.chroma && mar.chroma > ash.chroma && ash.chroma > sco.chroma)) bits.push(`the colour does not go out of the dust stretch by stretch (chroma ${[mOut, mar, ash, sco].map(p => p.chroma.toFixed(1)).join(', ')})`);
+          if (!(sco.lum < ash.lum - 15)) bits.push(`the Scorch is not darker than the Ashfall (${sco.lum.toFixed(0)} against ${ash.lum.toFixed(0)})`);
+          if (!(gla.lum > sco.lum + 60)) bits.push(`the glass does not stand out of the Scorch (${gla.lum.toFixed(0)} against ${sco.lum.toFixed(0)})`);
+          let worst = 0, worstR = 0;
+          for (let i = 1; i < P.length; i++) { if (P[i - 1][0] > E - 4) continue; if (P[i][0] < C.glass + 12) break; const dl = Math.abs(P[i][1].lum - P[i - 1][1].lum); if (dl > worst) { worst = dl; worstR = P[i][0]; } }
+          if (worst > 16) bits.push(`the ground changes by ${worst.toFixed(0)} in four tiles at ${worstR}: a line (${P.map(q => q[0] + ':' + q[1].lum.toFixed(0)).join(' ')})`);
+          colNote = `; the colour goes out of it (chroma ${mOut.chroma.toFixed(0)} in the outer Marches, ${mar.chroma.toFixed(0)}, ${ash.chroma.toFixed(0)}, ${sco.chroma.toFixed(0)} in the Scorch), the Scorch darkens to ${sco.lum.toFixed(0)} against the Ashfall's ${ash.lum.toFixed(0)} and the glass stands at ${gla.lum.toFixed(0)}, and no four tiles on the way change it by more than ${worst.toFixed(0)}`;
+        }
+        /* what grows: no scrub from the Ashfall in, fewer trees in the Scorch than the Ashfall */
+        let shrubs = 0, tA = 0, nA = 0, tS = 0, nS = 0;
+        for (let y = C.y - AF; y < C.y + AF; y++) for (let x = C.x - AF; x < C.x + AF; x++) {
+          const d = craterD(x, y); if (d < C.glass || d >= AF || terr[y * W + x] === 3) continue;
+          const dd = rawDecorAt(x, y);
+          if (dd === 'shrub') shrubs++;
+          if (terr[y * W + x] === 0) { if (d < SC) { nS++; if (dd === 'tree') tS++; } else { nA++; if (dd === 'tree') tA++; } }
+        }
+        if (shrubs) bits.push(`${shrubs} shrubs grow in the Ashfall and the Scorch`);
+        if (nS && nA && !(tS / nS < tA / nA * 0.8)) bits.push(`the Scorch keeps as many trees as the Ashfall (${(tS / nS * 100).toFixed(1)}% against ${(tA / nA * 100).toFixed(1)}%)`);
+        R.theWalkInIsGradual = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : `from the gorge to the lip the depth only ever grows, never more than ${jump.toFixed(3)} a tile; the ground climbs ${hs.map(h => h[1].toFixed(2)).join(' -> ')} through the Marches, the Ashfall, the Scorch and the glass, never stepping more than ${step.toFixed(2)} in a tile${colNote}; no scrub from the Ashfall in, and the Scorch keeps ${nS ? (tS / nS * 100).toFixed(1) : '-'}% of its trees to the Ashfall's ${nA ? (tA / nA * 100).toFixed(1) : '-'}%`;
+      }
+      /* ---- 19. the danger ramps ---- */
+      if (typeof craterRefuge !== 'function' || !CRATER_POP.scorch) R.theDangerRamps = '!! THE WALK IN HOLDS NOTHING OF ITS OWN IN THIS BUILD, AND THE MARCHES ARE NO REFUGE';
+      else {
+        const bits = [];
+        if (R._noDice !== 'ok') bits.push(R._noDice.replace(/^!! /, '').toLowerCase());
+        const A = CRATER_GORGE_A, at = (r) => ({ x: C.x + Math.cos(A) * r, y: C.y + Math.sin(A) * r });
+        const mine = player().filter(c => c.state !== 'dead');
+        const home = mine.map(c => ({ c, x: c.x, y: c.y }));
+        const standAll = (r) => mine.forEach((c, i) => { const q = at(r - (i % 3)); c.x = q.x + (i % 2); c.y = q.y; c.floor = 0; });
+        const own = (k) => chars.filter(c => c.craterOwn === k && c.state !== 'dead');
+        /* the Marches, by day: the Scorch fills, and nothing else */
+        standAll(222); hour = 12;
+        for (let i = 0; i < 20 * 240; i++) craterDangerTick(1 / 240);
+        const dayS = own('scorch'), dayN = own('scorchNight').length + own('ashfall').length;
+        if (dayS.length < CRATER_POP.scorch.want) bits.push(`by day only ${dayS.length} of ${CRATER_POP.scorch.want} hold the Scorch`);
+        if (dayN) bits.push(`${dayN} of the night's are out by day`);
+        if (dayS.some(g => craterRing(g.x, g.y) !== 'scorch')) bits.push('a Scorch post stands outside the Scorch');
+        /* and by night: the Ashfall is walked and the Scorch thickens, all of it the night's */
+        hour = 23;
+        for (let i = 0; i < 20 * 240; i++) craterDangerTick(1 / 240);
+        const nA = own('ashfall'), nS = own('scorchNight');
+        if (nA.length < CRATER_POP.ashfall.want) bits.push(`at night only ${nA.length} of ${CRATER_POP.ashfall.want} walk the Ashfall`);
+        if (nS.length < CRATER_POP.scorchNight.want) bits.push(`at night only ${nS.length} more come into the Scorch`);
+        if ([...nA, ...nS].some(g => !g.nightborn)) bits.push('the night\'s own are not the night\'s');
+        if (nA.some(g => craterRing(g.x, g.y) !== 'ashfall')) bits.push('an Ashfall post stands outside the Ashfall');
+        const inSight = [...dayS, ...nA, ...nS].filter(g => mine.some(c => dist(c.x, c.y, g.x, g.y) < 36)).length;
+        if (inSight) bits.push(`${inSight} were put down in sight of yours`);
+        if (chars.some(c => c.faction === 'gaunt' && c.state !== 'dead' && !(c.floor || 0) && craterRefuge(c.x, c.y))) bits.push('something of the dark stands on the Marches');
+        /* nothing arrives by night, for anybody on the Marches: and outside the gorge, it does */
+        const arrivals = () => chars.filter(c => c.nightSpawn && c.state !== 'dead').length;
+        const clearNight = () => { for (let i = chars.length - 1; i >= 0; i--) if (chars[i].nightSpawn) chars.splice(i, 1); };
+        const s0 = seed;
+        clearNight(); hour = 23;
+        for (let i = 0; i < 60; i++) gauntTick(0.5);
+        const onMarches = arrivals();
+        clearNight(); standAll(C.range + C.ridge + 40);
+        for (let i = 0; i < 60; i++) gauntTick(0.5);
+        const outside = arrivals();
+        clearNight();
+        if (onMarches) bits.push(`${onMarches} came by night for the ones on the Marches`);
+        if (!outside) bits.push('nothing came by night outside the gorge either, so the Marches prove nothing');
+        /* the dawn takes the night's back */
+        standAll(222); hour = 5.9; gauntDawn();
+        const kept = own('ashfall').length + own('scorchNight').length;
+        if (kept) bits.push(`the dawn left ${kept} of the night's`);
+        if (own('scorch').length < dayS.length) bits.push('the dawn took the Scorch\'s own');
+        /* the refuge: a Scorch post after one of yours lets go when they step onto the Marches */
+        /* posted where it stands, so its own leash is not what lets go */
+        const g = dayS[0], me = mine[0], post = g && { ...g.guard };
+        const pull = (r) => { const q = at(r); me.x = q.x; me.y = q.y; const gq = at(C.ashfall - 3); g.x = gq.x + 0.5; g.y = gq.y; g.guard = { x: g.x, y: g.y }; g.target = me; g.path = null; rebuildCharGrid(); ai(g, 1 / 30); physics(g, 1 / 30); return g.target === me; };
+        let lets = null, holds = null;
+        if (g && me) { hour = 12; lets = !pull(C.ashfall + 12); holds = pull(C.ashfall - 12); g.guard = post; g.x = post.x; g.y = post.y; g.target = null; g.moveTarget = null; }
+        if (lets === false) bits.push('a Watcher followed one of yours onto the Marches');
+        if (holds === false) bits.push('a Watcher let go of one of yours in the Ashfall too, so the Marches prove nothing');
+        /* the light in the Scorch: sparse, weak, at night; none on the Marches */
+        const strikeRun = (r, secs) => {
+          standAll(r); hour = 23; craterStrikes.length = 0; _strikeT = 0;
+          const made = [], seen = new Set(); let tt = 0;
+          for (let i = 0; i < secs * 30; i++) { strikeTick(1 / 30); tt += 1 / 30; for (const st of craterStrikes) if (!seen.has(st)) { seen.add(st); made.push({ t: tt, weak: !!st.weak }); } standAll(r); }
+          craterStrikes.length = 0;
+          return made;
+        };
+        for (const c of mine) { c.state = 'ok'; c.blood = c.maxBlood; for (const k of PARTS) { c.parts[k].hp = c.parts[k].max; c.parts[k].bleed = 0; } }
+        const sc = strikeRun(145, 90), gl = strikeRun(110, 30), ma = strikeRun(222, 30);
+        const gap = (m) => m.length > 1 ? (m[m.length - 1].t - m[0].t) / (m.length - 1) : Infinity;
+        if (!sc.length) bits.push('no light came down in the Scorch in ninety seconds of night');
+        if (sc.some(m => !m.weak)) bits.push('the Scorch\'s light is as hard as the glass\'s');
+        if (gl.some(m => m.weak)) bits.push('the glass\'s light is weak');
+        if (sc.length > 1 && !(gap(sc) > gap(gl) * 1.5)) bits.push(`the Scorch's light is not sparser (every ${gap(sc).toFixed(1)}s against ${gap(gl).toFixed(1)}s on the glass)`);
+        if (ma.length) bits.push(`${ma.length} strikes on the Marches`);
+        for (const h0 of home) { h0.c.x = h0.x; h0.c.y = h0.y; }
+        for (const c of mine) { c.state = 'ok'; c.blood = c.maxBlood; for (const k of PARTS) { c.parts[k].hp = c.parts[k].max; c.parts[k].bleed = 0; } }
+        hour = 12; rebuildCharGrid();
+        R.theDangerRamps = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : `nobody on the headland, no dice drawn; with yours on the Marches: by day ${dayS.length} hold the Scorch and nothing else is out, by night ${nA.length} walk the Ashfall and ${nS.length} more come into the Scorch, none put down in sight, and the dawn takes the night's back; thirty hours of night send nothing for the ones on the Marches (${outside} for the same party outside the gorge); a Watcher lets go of one of yours at the Marches and holds on in the Ashfall; the light comes down in the Scorch every ${gap(sc).toFixed(1)}s at half strength (${gap(gl).toFixed(1)}s on the glass) and never on the Marches`;
+        delete R._noDice;
+      }
       /* ---- 7. an old save ---- */
       {
         const lines = [];

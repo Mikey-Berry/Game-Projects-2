@@ -639,7 +639,8 @@ asking for the tender. The living wade it; the dead do not notice it.
 
 **Built:** the kingdom's crater. Its heart was annihilated in brilliant light, and it is the largest
 landmark in the world: a headland in the north-east standing out into the salt, walled on the
-landward side by a ridge with one gorge through it. It is also where the rite was performed, and
+landward side by a ridge with one gorge through it. From the gorge in it deepens: the Marches, the
+Ashfall, the Scorch, the glass, the rim and the bowl. It is also where the rite was performed, and
 the Door opens at the bottom of the bowl.
 
 ## 17. Aesthetic key & voice guide `[★]`
