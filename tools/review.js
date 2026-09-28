@@ -18,6 +18,8 @@
  *  11. the night sent nothing: its cap counted every gaunt in the world, the depths' hundreds
  *      included, against a cap of three (found 2026-09-25, CODE-AUDIT §5.9). And the first Eye
  *      flight to wander threw, which nobody saw while the spawner was dead
+ *  12. quarry spliced out of the world alive (a closed tear's gaunts) stayed a target, so
+ *      whoever was fighting it stood swinging at nothing (found by `marchorder`, 2026-09-28)
  *
  * Anything starting '!!' fails the build.
  *
@@ -244,6 +246,40 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       for (let i = chars.length - 1; i >= 0; i--) if (chars[i].nightSpawn) chars.splice(i, 1);
       for (const w of was) { w.c.x = w.x; w.c.y = w.y; w.c.floor = w.f; }
       hour = hour0; bloodMoon = blood0;
+      rebuildCharGrid();
+    }
+    /* ---- 12. quarry that leaves the world alive is let go ----
+       A closed tear takes its gaunts back with it: spliced out of `chars`, never killed, so
+       their state stays 'ok'. The target check only asked about the state, and whoever was
+       fighting one stood swinging at nothing. Staged through the real exit — one of yours at
+       blows with a tear's gaunt, the tear closed by the game's own `closeRift` — and then the
+       real step. Found by `marchorder` 2026-09-28, where two blades of a band did it for the
+       whole walk home. */
+    {
+      const me = player().find(c => c.state === 'ok' && !c.undead);
+      const was = { x: me.x, y: me.y, f: me.floor };
+      let q = null;
+      for (let t = 0; t < 400 && !q; t++) {
+        const x = 90 + ((t * 811) % (W - 180)), y = 90 + ((t * 499) % (H - 180));
+        if (nearestTownDist(x, y) > 70 && (typeof craterD !== 'function' || craterD(x, y) > 240) && !isBlocked(x, y) && !isBlocked(x + 1, y) && tileAt(x, y) !== 3) q = { x, y };
+      }
+      me.x = q.x; me.y = q.y; me.floor = 0; me.moveTarget = null;
+      const tear = { id: 'review12', x: q.x + 3, y: q.y, r: 6 };
+      const g = makeChar('Tear-gaunt', 'gaunt', q.x + 1, q.y, { atk: 2, def: 20, tough: 30 });
+      g.state = 'ok'; g.riftId = tear.id; g.provoked = true; chars.push(g);
+      me.target = g; me.targetManual = false;
+      rebuildCharGrid();
+      const p0 = paused; paused = false;
+      for (let i = 0; i < 15; i++) update(1 / 30);
+      const engaged = me.target === g && g.state === 'ok';
+      closeRift(tear, null);
+      for (let i = 0; i < 15; i++) update(1 / 30);
+      paused = p0;
+      R.goneQuarryIsLetGo = !engaged ? `!! THE STAGING NEVER HAD ${me.name} AT BLOWS WITH THE GAUNT (target ${me.target ? me.target.name : 'none'}, gaunt ${g.state})`
+        : chars.includes(g) ? `!! CLOSING THE TEAR LEFT ITS GAUNT IN THE WORLD`
+        : me.target !== g ? `${me.name} was at blows with a tear's gaunt; the tear closed and took it, and half a second later they have let it go`
+        : `!! ${me.name.toUpperCase()} IS STILL SWINGING AT A GAUNT THE CLOSED TEAR TOOK OUT OF THE WORLD`;
+      me.target = null; me.x = was.x; me.y = was.y; me.floor = was.f;
       rebuildCharGrid();
     }
     return R;
