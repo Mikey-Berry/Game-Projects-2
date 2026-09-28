@@ -169,6 +169,63 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.andFetchesTheGreatDeadFirst = cart.cartBody === giant
         ? 'and it crosses the field past three ordinary corpses to fetch the one that cannot be worked where it lies'
         : `!! THE CART WENT FOR ${cart.cartBody ? 'a body at ' + cart.cartBody.x.toFixed(0) + ',' + cart.cartBody.y.toFixed(0) : 'nothing'}`;
+      chars.splice(chars.indexOf(cart), 1);
+    });
+
+    /* ---------- 5. AND WHAT IT PICKS UP, IT BRINGS HOME ----------
+       "Gravecarts sometimes grab a Sixfold, then proceed to wander around endlessly without
+        dropping it off at the boneyard. Not sure if this is because the boneyard is full."
+       Two ways it happened, both driven here through the real step rather than `cartTick`
+       called by hand — calling it by hand is how both got past claim 4:
+         · with the Sixfold aboard, the scan still counted one body against six and walked to
+           every ordinary corpse in reach, to be refused each time. A crowded yard is the worst
+           case: bodies lying just off the racks, all of them in reach. Staged exactly so.
+         · a bound cart stands up guarding its necromancer, and the guard block ran first: a
+           step from its place and it was sent back, so it could lift a body at his feet and
+           never leave him with it. */
+    const clearDead = () => { for (let i = corpses.length - 1; i >= 0; i--) { const c = corpses[i]; corpses.splice(i, 1); const j = chars.indexOf(c); if (j >= 0) chars.splice(j, 1); } };
+    const runUntil = (secs, done) => { const p0 = paused; paused = false; let t = 0; rebuildCharGrid(); while (t < secs && !done()) { update(1 / 30); t += 1 / 30; } paused = p0; return t; };
+    const Y = yardSpot();
+    const mkCart = (x, y) => { const q = findOpenNear(Math.round(x), Math.round(y), 4);
+      const c = makeChar('Gravecart', 'player', q.x, q.y, { atk: 2, def: 4, tough: 10, ath: 6 });
+      c.state = 'ok'; c.cart = true; c.mule = true; c.beast = true; c.undead = true; c.fleeOnHit = true; c.master = me;
+      chars.push(c); return c; };
+    guard(['aLoadedCartGoesHomePastACrowdedYard'], () => {
+      clearDead();
+      /* the yard is "full": twelve bodies lying about it. SPREAD, not stacked at the racks: a
+         refused body is only skipped for a tenth of an hour, and eight of them packed round the
+         footprint were all refused inside that window, so the old cart ran out of candidates and
+         went home. Across a field the walk between them outlasts the skip and it never does. */
+      for (let i = 0; i < 12; i++) { const a = i / 12 * Math.PI * 2; corpse(Y.x + Math.cos(a) * 14, Y.y + Math.sin(a) * 14, 1); }
+      const cart = mkCart(Y.x + 22, Y.y);
+      const six = corpse(cart.x + 0.5, cart.y, 2.4);
+      if (!takeBody(cart, six)) { R.aLoadedCartGoesHomePastACrowdedYard = '!! THE CART WOULD NOT LIFT THE SIXFOLD AT ALL'; return; }
+      const t = runUntil(60, () => !carried(cart));
+      /* AND WALKED THERE. The old ten-second out put the load on the racks from wherever the cart
+         stood, so "it ended up on the racks" proved nothing about the cart getting there. */
+      const atYard = dist(cart.x, cart.y, Y.x, Y.y) <= 3.5;
+      R.aLoadedCartGoesHomePastACrowdedYard = (!carried(cart) && inBoneyard(six) && atYard)
+        ? `a cart with a Sixfold aboard walks past twelve bodies lying about the yard and sets it on the racks in ${t.toFixed(0)}s`
+        : `!! ${carried(cart) ? 'A MINUTE ON, THE CART STILL HAS THE SIXFOLD' : !inBoneyard(six) ? 'THE CART PUT IT DOWN OFF THE RACKS' : 'IT LANDED ON THE RACKS FROM ACROSS THE FIELD'}, ${dist(cart.x, cart.y, Y.x, Y.y).toFixed(1)} TILES FROM THE YARD`;
+      chars.splice(chars.indexOf(cart), 1);
+    });
+    guard(['aBoundCartLeavesItsNecromancerToHaul'], () => {
+      clearDead();
+      const was = { x: me.x, y: me.y, f: me.floor };
+      const q = findOpenNear(Math.round(Y.x - 26), Math.round(Y.y), 4);
+      me.x = q.x; me.y = q.y; me.floor = 0; me.moveTarget = null; me.target = null;
+      const cart = mkCart(me.x + 1.5, me.y);
+      cart.guardTarget = me;                          /* as `raiseUndead` stands one up */
+      const six = corpse(me.x, me.y + 1.2, 2.4);
+      const t = runUntil(90, () => inBoneyard(six) && !carried(cart));
+      const atYard = dist(cart.x, cart.y, Y.x, Y.y) <= 3.5;
+      R.aBoundCartLeavesItsNecromancerToHaul = (inBoneyard(six) && atYard)
+        ? `a cart still guarding the one who bound it lifts the Sixfold at their feet, leaves them and walks it onto the racks in ${t.toFixed(0)}s`
+        : inBoneyard(six)
+        ? `!! THE SIXFOLD LANDED ON THE RACKS WITH THE CART ${dist(cart.x, cart.y, Y.x, Y.y).toFixed(1)} TILES AWAY, ${dist(cart.x, cart.y, me.x, me.y).toFixed(1)} FROM ITS NECROMANCER — it never walked it there`
+        : `!! A MINUTE AND A HALF ON, THE SIXFOLD IS ${carried(cart) ? 'ON THE CART' : 'ON THE GROUND'} AND THE CART IS ${dist(cart.x, cart.y, me.x, me.y).toFixed(1)} TILES FROM ITS NECROMANCER`;
+      chars.splice(chars.indexOf(cart), 1);
+      me.x = was.x; me.y = was.y; me.floor = was.f;
     });
 
     return R;

@@ -17845,6 +17845,13 @@ function physics(c, dt){
         const st = c.bandStation;
         if(st && c.under != null){
           if(dist(c.x, c.y, st.x, st.y) > 1.5) c.moveTarget = {x: st.x, y: st.y};
+        } else if(hasRounds(c)){
+          /* ---------- A THING WITH ROUNDS TO DO IS NOT HELD TO ITS WARD ----------
+             Everything bound is stood up guarding whoever bound it, and this block runs ahead of
+             the rounds below: a Gravecart that walked a step from its place was sent straight
+             back, so it could lift a body lying beside its necromancer and never carry it
+             anywhere. The Stitch-Hand the same, for anybody hurt out of arm's reach. With work
+             in hand they do the work; with none they still keep to their ward. */
         } else {
           /* ---------- A PLACE IN A RING, NOT THE WARD'S OWN TILE ----------
              "Large groups set to bodyguard a single person end up pushing them around and
@@ -22416,9 +22423,25 @@ function forceTick(c, dt){
   }
   return true;
 }
+/* whether a bound hand has work of its own in hand right now (see the BODYGUARD block) */
+function hasRounds(c){
+  if(c.faction !== 'player' || c.state !== 'ok') return false;
+  if(c.cart) return carried(c) > 0 || !!(c.cartBody && c.cartBody.state === 'dead' && !c.cartBody.raised);
+  if(c.stitcher) return !!(c.stitchTarget && c.stitchTarget.state !== 'dead');
+  return false;
+}
 function cartTick(c, dt){
   const cap = carryCap(c);
   const load = carried(c);
+  /* ---------- A GREAT BODY IS THE WHOLE LOAD, HERE TOO ----------
+     "Gravecarts sometimes grab a Sixfold, then proceed to wander around endlessly without
+      dropping it off at the boneyard."
+     `takeBody` has said since the great dead came in that a flatbed with a Sixfold on it is a
+     full flatbed. This scan never heard: it counted one body against a cap of six, so it went
+     on choosing ordinary corpses, walked to each, was refused, skipped it for a tenth of an
+     hour and chose the next — corpse to corpse across the field, never turning for home. A
+     crowded yard made it worst, because every body lying just off the racks was in reach. */
+  const full = load >= cap || bodiesOf(c).some(isGreatBody);
   /* ---------- NO YARD, NO ROUND ----------
      "Gravecarts, when there is no graveyard available, sort of default to picking up and then
       immediately dropping corpses. They should simply follow whatever orders given, not default
@@ -22444,7 +22467,7 @@ function cartTick(c, dt){
        cart that walks past the thing it exists for is the cart we started with. Two piles, and
        the giant pile is taken first — a cart on a map with no giant on it clears the field
        exactly as it always did. */
-    if(load < cap && yard) for(const b of corpses){
+    if(!full && yard) for(const b of corpses){
       if(!cartFodder(b) || b._cartSkip > day + hour/24) continue;
       if(inBoneyard(b)) continue;                       /* already home */
       /* AND WITHIN THE YARD'S REACH, not the cart's. A body it would have to drag across the
@@ -22464,7 +22487,7 @@ function cartTick(c, dt){
     c.cartBody = body;
   }
   const body = c.cartBody && corpses.includes(c.cartBody) && cartFodder(c.cartBody) ? c.cartBody : null;
-  if(body && load < cap){
+  if(body && !full){
     if(dist(c.x, c.y, body.x, body.y) > 1.2){
       /* a body across a river is not work — the same trap the harvest job fell into */
       c.cartGiveUp = (c.cartGiveUp || 45) - dt;
@@ -22476,7 +22499,7 @@ function cartTick(c, dt){
        now — hands full, a great body on a loaded bed, no room, not enough hands — and without
        this the scan re-picks the same corpse two seconds later and the round never advances. */
     if(!takeBody(c, body)) body._cartSkip = day + hour / 24 + 0.05;
-    c.cartBody = null; c.cartScanT = 0;
+    c.cartBody = null; c.cartScanT = 0; c.cartBest = 0; c.cartStall = 0;
     return true;
   }
   if(load > 0){
@@ -22507,14 +22530,29 @@ function cartTick(c, dt){
        forever. Walk to within a tile of the centre instead. */
     const arrived = tight ? dist(c.x, c.y, home.x, home.y) <= 1.0 : dist(c.x, c.y, home.x, home.y) <= 2.2;
     if(!arrived){
-      c.cartHomeT = (c.cartHomeT || 0) + dt;
-      if(c.cartHomeT < 10){ travel(c, home.x, home.y, dt, tight ? 0.5 : 1.6); return true; }
+      /* THE TEN SECONDS START AT THE RACKS, NOT AT THE FIELD. This counted from the moment the
+         cart turned for home, so any trip longer than ten seconds ended with the load put on the
+         racks from wherever the cart happened to be — across the map, through walls. It is the
+         out for a yard that cannot be stood on, so it only runs once the cart is at the yard. */
+      const dh = dist(c.x, c.y, home.x, home.y);
+      if(dh < 3.5) c.cartHomeT = (c.cartHomeT || 0) + dt;
+      else if(!c.cartBest || dh < c.cartBest - 0.5){ c.cartBest = dh; c.cartStall = 0; }
+      else if((c.cartStall = (c.cartStall || 0) + dt) > 30){
+        /* AND A YARD IT CANNOT GET TO AT ALL — across water, behind a wall — is not walked at
+           forever either. Half a minute with no ground gained and the load goes down where the
+           cart stands, and those bodies are left be for a day rather than lifted straight back. */
+        for(const b of bodiesOf(c)) b._cartSkip = day + hour / 24 + 1;
+        c.cartBest = 0; c.cartStall = 0; c.cartHomeT = 0;
+        dropBodies(c);
+        return true;
+      }
+      if((c.cartHomeT || 0) < 10){ travel(c, home.x, home.y, dt, tight ? 0.5 : 1.6); return true; }
       /* AND IT STILL HAS TO END. If the racks cannot be reached — something in the way, a wall
          against the footprint — ten seconds is enough, and the load goes onto the racks anyway
          rather than beside them, because a body dropped short is a body fetched again. */
-      if(tight){ c.cartHomeT = 0; dropBodies(c, home); return true; }
+      if(tight){ c.cartHomeT = 0; c.cartBest = 0; dropBodies(c, home); return true; }
     }
-    c.cartHomeT = 0;
+    c.cartHomeT = 0; c.cartBest = 0; c.cartStall = 0;
     dropBodies(c, tight ? home : null);
     return true;
   }
