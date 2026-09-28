@@ -33,6 +33,9 @@
  *  10. a shrine stone is a small philosopher's stone: breaking a shrine gives the stone, the
  *      bench reads it for insight, CRUSH makes it ash, and ash carries the Door's hold faster
  *      without being needed for it
+ *  11. what a thing is can be found where it is listed: the wagon, a pack and a town's counter
+ *      name their items with a card, and hovering the name brings up its description. The only
+ *      place a description was ever printed was the gear chooser
  *
  * Anything starting '!!' fails the build.
  *
@@ -838,6 +841,54 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `a broken shrine gives its stone whole (no ash, ${R.rpOnBreak} insight on the spot); the bench offers it to read for ${ITEMS.s_stone.rp} insight; ` +
           `CRUSH in the wagon makes it 3 measures of ash; and ash burned into the Door's hold carries it ${(R.hold.ashed / R.hold.bare).toFixed(2)}x as far over the same ten seconds, while the hold still moves without any`;
       delete R.rpOnBreak; delete R.hold;
+    }
+    /* ---- 11. what a thing is can be found where it is listed ----
+       "Right now items don't have a description you can find." The only place a description was
+       printed was the gear chooser. So: the wagon, somebody's pack and a town's counter all name
+       their items with the card, and hovering the name brings the description up in the tip. */
+    {
+      const bits = [];
+      const st0 = Object.assign({}, stash);
+      const me = player()[0], inv0 = me.inv;
+      addItem('w_leaf', 1); addItem('a_pla', 1);
+      opts.stash = true; if (typeof applyStashFold === 'function') applyStashFold(); refreshInv();
+      const unnamed = (sel) => [...document.querySelectorAll(sel)].filter(r => !r.querySelector('[data-item]')).length;
+      const wagonRows = document.querySelectorAll('#invbody .invrow').length, wagonBare = unnamed('#invbody .invrow');
+      if (!wagonRows || wagonBare) bits.push(`${wagonBare} of ${wagonRows} wagon rows name no item`);
+      const leaf = document.querySelector('#invbody [data-item="w_leaf"]');
+      const tip = document.getElementById('tip');
+      if (!leaf) bits.push('the Sunless Leaf is not in the wagon list');
+      else {
+        const r = leaf.getBoundingClientRect();
+        leaf.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: r.left + 4, clientY: r.top + 4 }));
+        const lore = tip && tip.querySelector('.ilore');
+        if (!(tip && tip.style.display === 'block' && lore && lore.textContent === ITEMS.w_leaf.desc)) bits.push('hovering the Sunless Leaf does not bring up its description');
+        leaf.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }));
+      }
+      me.inv = { meat: 2, w_leaf: 1 };
+      openInventory(me);
+      const kitRows = document.querySelectorAll('#modalbody .invrow').length, kitBare = unnamed('#modalbody .invrow');
+      if (!kitRows || kitBare) bits.push(`${kitBare} of ${kitRows} pack and wagon rows in the kit name no item`);
+      document.getElementById('modal').style.display = 'none'; modalOpen = false;
+      /* not Dustport's: claim 5 has just put it to the torch, and a counter in a town that
+         hates you does not open at all */
+      const v = vendors.find(v2 => v2.vt === 'weapons' && v2.town && !(v2.town.sacked > 0) && v2.town.rep > -50);
+      let shopRows = 0;
+      if (v) {
+        v.town.stock.w_sw = (v.town.stock.w_sw || 0) + 1;
+        openVendor(v);
+        shopRows = document.querySelectorAll('#modalbody .trow [data-buy]').length;
+        const shopBare = [...document.querySelectorAll('#modalbody .trow')].filter(r => r.querySelector('[data-buy]') && !r.querySelector('[data-item]')).length;
+        if (!shopRows || shopBare) bits.push(`${shopBare} of ${shopRows} counter rows name no item`);
+        document.getElementById('modal').style.display = 'none'; modalOpen = false;
+        v.town.stock.w_sw -= 1;
+      } else bits.push('no weapons counter in the world');
+      me.inv = inv0;
+      for (const k of Object.keys(stash)) if (!(k in st0)) delete stash[k];
+      Object.assign(stash, st0); refreshInv();
+      const all = Object.keys(ITEMS), told = all.filter(k => ITEMS[k].desc).length;
+      R.whatAThingIs = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+        : `the wagon (${wagonRows} rows), a pack and the wagon in the kit (${kitRows}) and ${v.name}'s counter (${shopRows}) name every item with its card, and hovering the Sunless Leaf brings up its description; ${told} of ${all.length} items have one to find`;
     }
     return R;
   }));

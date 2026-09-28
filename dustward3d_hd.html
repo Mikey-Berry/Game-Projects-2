@@ -489,6 +489,12 @@ body.touch #hint{display:none}
     display:none;box-shadow:0 4px 14px #000a}
   #tip b{color:var(--warn);letter-spacing:1px;display:block;margin-bottom:3px}
   #tip i{color:var(--dust);font-style:normal;display:block;margin-top:4px}
+  #tip.item{max-width:320px}
+  #tip .ik{color:var(--dust);display:block;font-size:10px;letter-spacing:.06em;margin:-1px 0 4px}
+  #tip .in{display:block}
+  #tip .ilore{display:block;margin-top:6px;padding-top:6px;border-top:1px solid var(--edge);
+    font-style:italic;color:#cfc3ae}
+  .iname[data-item]{cursor:help;border-bottom:1px dotted #ffffff38}
   [data-tip]{cursor:help}
   button[data-tip],.port[data-tip]{cursor:pointer}
   .newsrow{display:flex;gap:10px;padding:4px 0;border-bottom:1px solid rgba(120,100,80,.12);font-size:12px}
@@ -43552,6 +43558,48 @@ const TIPS = {
   binding:'<b>BINDING</b>How much of the dead this one is holding up, against how many they can hold at once. The ceiling grows with MAGIC, with the Necromancy rites, and with every soulbound standing beside them.<i>A body held by an anchored circle is counted separately — it is standing because the stone says so, not because you are, and it costs you neither a slot nor the strain.</i>',
   job:  '<b>JOB</b>Standing work they return to when nobody is giving orders.',
 };
+/* ---------- WHAT A THING IS, WHEREVER IT IS LISTED ----------
+   "Right now items don't have a description you can find." Forty-three of them had one, and
+   the only place it was ever printed was the gear chooser, beside helms when you were looking
+   for a helm. The wagon, the pack, the counter and the bins all showed a name and a count.
+   So every list that names an item wraps the name with `iname`, and the tooltip above reads
+   it: what kind of thing it is, what it does in numbers, and then, set apart, what it is. */
+const ITEM_KIND = {food:'Food', med:'Medicine', mat:'Material', trade:'Trade good', weapon:'Weapon',
+  armor:'Body armour', head:'Headgear', cloak:'Cloak', trinket:'Trinket', pack:'Pack',
+  pros:'Prosthesis', tome:'Book', formula:'Formula', quest:'Writing', stone:'Stone'};
+function iname(k, label){
+  const it = ITEMS[k];
+  return `<span class="iname" data-item="${k}">${label != null ? label : it ? it.name : k}</span>`;
+}
+function itemCard(k){
+  const it = ITEMS[k]; if(!it) return '';
+  const pct = v => Math.round(v * 100) + '%';
+  const kind = [it.legend ? 'Legendary' : '', it.pre ? 'Golden Age' : '', ITEM_KIND[it.type] || it.type]
+    .filter(Boolean).join(' · ');
+  const n = [];
+  if(it.dmg) n.push(`${it.dmg} ${it.wt}`);
+  if(it.range) n.push(`range ${it.range}`);
+  else if(it.reach) n.push('long reach');
+  if(it.ap) n.push(`${pct(it.ap)} through armour`);
+  if(it.nullOnly) n.push('deaf hands only');
+  if(it.def) n.push(`${pct(it.def)} off a blow`);
+  if(it.pen) n.push(`slows ${pct(it.pen)}`);
+  if(it.cap) n.push(`+${it.cap}kg carried`);
+  if(it.combatPen) n.push(`blows ${pct(it.combatPen)} softer`);
+  if(it.cha) n.push(`+${it.cha} tongue`);
+  if(it.mana) n.push(`+${it.mana} mana`);
+  if(it.bind) n.push(`+${it.bind} bound`);
+  if(it.conceal) n.push('the dead read as living');
+  if(it.feed) n.push(`feeds ${it.feed}`);
+  if(it.type === 'pros') n.push(`${pct(PROS_TIER[it.tier || 2])} of the limb`);
+  if(it.rp) n.push(`${it.rp} research`);
+  if(it.crush) n.push('can be crushed');
+  const worth = `${KG[k] || 1}kg${it.base ? ' · worth ' + it.base : ''}`;
+  return `<b>${it.name}</b><span class="ik">${kind}</span>` +
+    (n.length ? `<span class="in">${n.join(' · ')}</span>` : '') +
+    (it.desc ? `<span class="ilore">${it.desc}</span>` : '') +
+    `<i>${worth}</i>`;
+}
 {
   const tipEl = () => $('tip');
   let shown = null;
@@ -43566,23 +43614,37 @@ const TIPS = {
     t.style.left = Math.max(4, x) + 'px';
     t.style.top = Math.max(4, y) + 'px';
   };
-  addEventListener('mouseover', ev => {
-    const el = ev.target && ev.target.closest && ev.target.closest('[data-tip]');
-    if(!el){ if(shown) hide(); return; }
+  const show = (el, ev) => {
+    const item = el.getAttribute('data-item');
     const key = el.getAttribute('data-tip');
-    const txt = TIPS[key] || key;
+    const txt = item ? itemCard(item) : (TIPS[key] || key);
     if(!txt){ hide(); return; }
     const t = tipEl(); if(!t) return;
     t.innerHTML = txt;
+    t.classList.toggle('item', !!item);
     t.style.display = 'block';
     shown = el;
     place(ev);
+  };
+  const TIPPED = '[data-tip],[data-item]';
+  addEventListener('mouseover', ev => {
+    const el = ev.target && ev.target.closest && ev.target.closest(TIPPED);
+    if(!el){ if(shown) hide(); return; }
+    show(el, ev);
   });
   addEventListener('mousemove', ev => { if(shown) place(ev); });
   addEventListener('mouseout', ev => {
-    if(shown && (!ev.relatedTarget || !ev.relatedTarget.closest || !ev.relatedTarget.closest('[data-tip]'))) hide();
+    if(shown && (!ev.relatedTarget || !ev.relatedTarget.closest || !ev.relatedTarget.closest(TIPPED))) hide();
   });
   addEventListener('mousedown', hide);
+  /* A TAP HAS NO HOVER. On a phone the card comes up on the tap and stays until the next one;
+     on a desk the click that the mousedown above just hid it for puts it back. A name inside a
+     button (a paperdoll slot) is left to the button, which has a job of its own. */
+  addEventListener('click', ev => {
+    const el = ev.target && ev.target.closest && ev.target.closest('[data-item]');
+    if(!el || el.closest('button')) return;
+    show(el, ev);
+  });
 }
 function refreshTop(){
   refreshStudyBtn();
@@ -44831,7 +44893,7 @@ function openWorkshops(){
         const state = who ? `<span style="color:var(--ok)">${who.name} is on it</span>`
                     : why ? `<span style="color:var(--rust)">${why}</span>`
                           : '<span style="color:var(--dust)">waiting for a free pair of hands</span>';
-        row.innerHTML = `<span class="tn">${ITEMS[o.out].name} <span style="color:var(--dust)">×${o.want - o.done} left of ${o.want} · ${SHOP_NAMES[o.kind] || o.kind}</span></span>
+        row.innerHTML = `<span class="tn">${iname(o.out)} <span style="color:var(--dust)">×${o.want - o.done} left of ${o.want} · ${SHOP_NAMES[o.kind] || o.kind}</span></span>
           <span class="tc">${state}</span>`;
         const x = document.createElement('button');
         x.textContent = 'CANCEL'; x.style.cssText = 'padding:1px 6px;font-size:10px';
@@ -44857,7 +44919,7 @@ function openWorkshops(){
         const costTxt = Object.keys(r.cost).map(k => `${r.cost[k]} ${ITEMS[k].name}`).join(' + ');
         /* `tech: null` is "no research needed" and must not read as locked — see `gateName` */
         const locked = !!r.tech && !research.done[r.tech];
-        row.innerHTML = `<span class="tn">${it.name}${r.n > 1 ? ' ×' + r.n : ''} <span style="color:var(--dust)">${costTxt}</span></span>
+        row.innerHTML = `<span class="tn">${iname(r.out)}${r.n > 1 ? ' ×' + r.n : ''} <span style="color:var(--dust)">${costTxt}</span></span>
           <span class="tc">${locked ? `needs ${gateName(r.tech)}` : shop ? '' : 'no ' + (BUILD_TYPES[kind] ? BUILD_TYPES[kind].name : kind)}</span>`;
         const btn = document.createElement('button');
         btn.textContent = 'ORDER';
@@ -44972,7 +45034,7 @@ function campStoresLine(){
   } else for(const k of keys){
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;color:var(--bone);gap:4px';
-    row.innerHTML = `<span>${ITEMS[k] ? ITEMS[k].name : k}</span>`;
+    row.innerHTML = `<span>${iname(k)}</span>`;
     const right = document.createElement('span');
     right.style.cssText = 'display:flex;align-items:center;gap:3px';
     right.innerHTML = `<b>${tot[k]}</b>`;
@@ -45107,7 +45169,7 @@ function gearBlock(c2, body, redraw){
         const it = c2[sl] ? ITEMS[c2[sl]] : null;
         const b = document.createElement('button');
         b.className = 'dslot' + (sl === gearSlot ? ' on' : '');
-        b.innerHTML = `<span class="dk">${EQ_LABEL[sl]}</span><span class="dv${it?'':' empty'}">${it ? it.name : '—'}</span>`;
+        b.innerHTML = `<span class="dk">${EQ_LABEL[sl]}</span><span class="dv${it?'':' empty'}">${it ? iname(c2[sl]) : '—'}</span>`;
         b.onclick = () => { gearSlot = sl; rndr(); };
         d.appendChild(b);
       }
@@ -45169,7 +45231,7 @@ function gearBlock(c2, body, redraw){
       const it = ITEMS[k];
       const row = document.createElement('div'); row.className = 'trow';
       const why = gearRefusal(c2, k);
-      row.innerHTML = `<span class="tn">${it.name} <span style="color:var(--dust)">×${stash[k]}${it.desc ? ' · ' + it.desc : ''}</span></span>`;
+      row.innerHTML = `<span class="tn">${iname(k)} <span style="color:var(--dust)">×${stash[k]}</span></span>`;
       const b = document.createElement('button');
       b.textContent = EQ_VERB[gearSlot] || 'EQUIP';
       b.disabled = !!why; if(why) b.title = why;
@@ -45442,7 +45504,7 @@ function refreshInv(){
     if(it.type==='tome') btns = `<button data-read="${k}">READ</button>`;
     if(it.crush) btns = `<button data-crush="${k}" title="Crush it for what it holds">CRUSH</button>`;
     if(bins().some(bn => binAccepts(bn, k))) btns += `<button data-stow="${k}" title="Send to camp stores (shift ×10)">STOW</button>`;
-    row.innerHTML = `<span>${it.name} ×${stash[k]}</span><span>${btns}</span>`;
+    row.innerHTML = `<span>${iname(k)} ×${stash[k]}</span><span>${btns}</span>`;
     b.appendChild(row);
   }
   b.querySelectorAll('[data-stow]').forEach(btn => btn.onclick = (e) => {
@@ -45660,7 +45722,7 @@ function openInventory(c){
     for(const k of invKeys){
       const it = ITEMS[k];
       const row = document.createElement('div'); row.className='invrow';
-      row.innerHTML = `<span>${it.name} ×${c.inv[k]}</span>`;
+      row.innerHTML = `<span>${iname(k)} ×${c.inv[k]}</span>`;
       const acts = document.createElement('span');
       const mk = (label, fn) => { const b=document.createElement('button'); b.textContent=label; b.style.cssText='padding:2px 5px;font-size:10px;margin-left:3px'; b.onclick=fn; acts.appendChild(b); return b; };
       /* MOVING A STACK. Selling has taken shift for ten since the shop was written; the pack
@@ -45755,7 +45817,7 @@ function openInventory(c){
     for(const k of sk){
       const it = ITEMS[k];
       const row = document.createElement('div'); row.className='invrow';
-      row.innerHTML = `<span>${it.name} ×${stash[k]}</span>`;
+      row.innerHTML = `<span>${iname(k)} ×${stash[k]}</span>`;
       const s2 = document.createElement('span');
       const b = document.createElement('button'); b.textContent='TAKE'; b.style.cssText='padding:2px 5px;font-size:10px';
       b.onclick = () => { if(takeItem(k)){ invAdd(c,k,1); log(`${c.name} took ${it.name} from the wagon.`); render(); refreshInv(); } };
@@ -45987,7 +46049,7 @@ function openVendor(v){
          number moves the price the way that favours you in both directions. */
       const bp = Math.round(priceBuy(town,k) * prejMult), sp = Math.max(1, Math.round(priceSell(town,k) / prejMult));
       const have = ownPool(k), inStock = stockOf(town, k);
-      row.innerHTML = `<span class="tn">${it.name}${it.dmg?` <span style="color:var(--dust)">dmg ${it.dmg} ${it.wt}</span>`:''}${it.def?` <span style="color:var(--dust)">-${Math.round(it.def*100)}% dmg</span>`:''}</span>
+      row.innerHTML = `<span class="tn">${iname(k)}${it.dmg?` <span style="color:var(--dust)">dmg ${it.dmg} ${it.wt}</span>`:''}${it.def?` <span style="color:var(--dust)">-${Math.round(it.def*100)}% dmg</span>`:''}</span>
         <span class="tc">stock ${inStock} · own ${have}</span>
         <button data-buy="${k}" ${inStock?'':'disabled'}>BUY ${bp}</button>
         <button data-sell="${k}" ${have?'':'disabled'}>SELL ${sp}</button>`;
@@ -46043,7 +46105,7 @@ function openCaravanTrade(tr){
     for(const k of VENDOR_STOCK.general){
       const it = ITEMS[k];
       const row = document.createElement('div'); row.className = 'trow';
-      row.innerHTML = `<span class="tn">${it.name}</span><span class="tc">own ${stash[k]||0}</span>
+      row.innerHTML = `<span class="tn">${iname(k)}</span><span class="tc">own ${stash[k]||0}</span>
         <button data-buy="${k}">BUY ${cBuy(k)}</button>
         <button data-sell="${k}" ${(stash[k]||0)?'':'disabled'}>SELL ${cSell(k)}</button>`;
       body.appendChild(row);
@@ -46381,7 +46443,7 @@ function openBar(v){
     if(brew && (stockOf(town, brew) > 0)){
       const it = ITEMS[brew], bp = priceBuy(town, brew);
       const row = document.createElement('div'); row.className='trow';
-      row.innerHTML = `<span class="tn">${it.name} <span style="color:var(--dust)">the house measure — ${stockOf(town, brew)} behind the counter</span></span>` +
+      row.innerHTML = `<span class="tn">${iname(brew)} <span style="color:var(--dust)">the house measure — ${stockOf(town, brew)} behind the counter</span></span>` +
         `<span class="tc">own ${stash[brew]||0}</span><button data-buy="${brew}">BUY ${bp}</button>`;
       body.appendChild(row);
     }
@@ -46395,7 +46457,7 @@ function openBar(v){
     for(const k of VENDOR_STOCK.bar){
       const it = ITEMS[k], bp = priceBuy(town,k), have = stockOf(town, k);
       const row = document.createElement('div'); row.className='trow';
-      row.innerHTML = `<span class="tn">${it.name} <span style="color:var(--dust)">${have ? have + ' behind the counter' : 'none left'}</span></span>` +
+      row.innerHTML = `<span class="tn">${iname(k)} <span style="color:var(--dust)">${have ? have + ' behind the counter' : 'none left'}</span></span>` +
         `<span class="tc">own ${stash[k]||0}</span><button data-buy="${k}" ${have ? '' : 'disabled'}>BUY ${bp}</button>`;
       body.appendChild(row);
     }

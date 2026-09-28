@@ -34,9 +34,9 @@ Ranked by what each one buys against what it costs.
 3. **One render signature cost 2 ms every frame** (§2.1). *Fixed.* `syncRedoubts` filtered the
    whole roster once per cave, on every frame, just to decide whether to rebuild. That was 90%
    of the per-frame signature cost.
-4. **Decide what the authored barks are for** (§5.1). 53 hand-written lines of dialogue are
-   attached to characters and never spoken, and one harness asserts they exist. This is a
-   design call for the owner, not a cleanup.
+4. **Decide what the authored barks are for** (§5.1). *Wired, 2026-09-25.* 53 hand-written
+   lines of dialogue were attached to characters and never spoken, and one harness asserted
+   they existed.
 5. **Add the lint** (§6.1). This is the third audit in a row to recommend it. This time it
    would have caught 27 unused variables, a self-comparison and a stray `}` in the stylesheet
    that silently dropped a rule.
@@ -434,7 +434,10 @@ drift += 0.2`, a count. The `NATIVE_*` toggles look dead from inside the game, b
 
 These are questions of behaviour or design, or changes big enough to need a decision.
 
-### 5.1 The barks are authored and never spoken — **your call**
+### 5.1 The barks are authored and never spoken — **wired 2026-09-25**
+
+Your call was to wire them. Every kind with authored lines now says one when a player body is
+near (`LORE-SEAMS.md` §1.1, `tools/seams.js` claim 1). The original finding:
 
 `c.barks` is set in eight places: the redoubt's vat-soldiers, three of the immortals in
 `spawnImmortals`, the Archivist, the thing in the rock, and copies of the `bark:` fields in the
@@ -473,7 +476,11 @@ all the time. Fixing it changes how the game looks, so I left it to you. Either 
 emissive only (they already have an unlit `MeshBasicMaterial` head), or let them join the torch
 pool.
 
-### 5.3 Half of the conviction design is not wired
+### 5.3 Half of the conviction design is not wired — **wired 2026-09-25**
+
+All six deeds fire now, the formula crime is raised inside a Church town's walls, and Sanctified
+Ash has its uses: it speeds the Door rite and hallows a sundered site (`LORE-SEAMS.md` §1.2 and
+§1.4). The original finding:
 
 `CONVICTIONS` weights `sack` (six convictions), `heal`, `retreat`, `rescued`, `mercy` and
 `formula`. `deed()` is never called with any of them. `git log -S` finds no call in the
@@ -500,10 +507,11 @@ EQUIP/EAT/FEED/READ handlers. There are also two equip paths: `equipFromStash`, 
 `invTake`/`invAdd`. §1.4 was the first bug from the copies drifting apart. One
 `useItem(c, id, from)` would stop the next one.
 
-### 5.6 Playtest cheats ship in Options
+### 5.6 Playtest cheats ship in Options — **ruled 2026-09-28: keep them for now**
 
 *"GIVE 10,000 GOLD — playtesting only"* and *"REVEAL MAP — playtesting only"* are visible to
-every player. If that is deliberate, fine. If not, gate them behind a flag.
+every player. They stay while the game is being playtested; gate them behind a flag before it
+goes out.
 
 ### 5.7 Repetition I did not merge
 

@@ -444,6 +444,11 @@ their own faction, beside the Paladins, and there are more of them late. `tools/
   so since the crater was built the yard and the Attention could never stand a Messenger up.
   They are not counted now.
 
+- **One at the pass** (2026-09-28, crater phase 3). The Order's post at the mouth of the gorge
+  has five of its people and a Messenger standing at the barricade beside them. It is
+  `faction: 'messenger'` like any other abroad, and it fights with the post when the post turns
+  on you.
+
 Still open: **their job has no expression.** Nothing about a Messenger responds to the Door or
 the tears. Logged in §7.
 
@@ -556,6 +561,11 @@ These have real equivalents in play, listed so nobody re-checks them:
   exception; the golem kinds; Grave-bred.
 - **Conviction machinery:** the education damper (`convictionSwing`, lettered × 0.65).
 - **Legendaries:** all twelve, seeded by `placeLegends` and counted by `tools/legends.js`.
+- **Item descriptions can be found** (2026-09-28). Every list that names an item (the wagon, a
+  pack, the kit, the counters, the bins, the work orders and the bar) shows a card on hover or
+  tap: its kind, its numbers, and the description set apart below them. The only place a
+  description was printed before was the gear chooser. `tools/seams.js` claim 11 checks it.
+  43 of the 100 base items have a description; the other 57 are drafted in §9.3.
 
 ---
 
@@ -574,11 +584,11 @@ them should move.
 - **Mother and Malathuun** — **settled 2026-09-26, the bible's way.** She said *"You have stood on
   my brother."* The bible makes Malathuun another Old One and a bystander, with no kinship to
   her. She now says *"one of my kind"*.
-- **Mother and the Dust art.** In code she says *"You work the dust art. That came out of
-  me."* The bible's §7 does not tie Dust to her.
-
-  This one may be deliberate code-side canon worth folding into the bible. It sharpens the
-  story, but right now the bible does not know it.
+- **Mother and the Dust art** — **ruled 2026-09-28, the bible's way: Dust did not come from
+  her.** Three of her lines say it did (*"You work the dust art. That came out of me."*, *"the
+  art they took off me"*, *"It was mine before it was a technique."*). They were written on the
+  code side and are wrong. The replacements are in §9.1, waiting on a ruling, and the old lines
+  stay until then.
 - **The conviction list.** Bible §14 lists seven convictions and includes Cold. The code has
   eight, and **Loyal** is missing from the bible.
 
@@ -590,10 +600,10 @@ Put down on 2026-09-25 so none of it is lost. Nothing here is started.
 
 **Lore, needing a ruling before code**
 
-- The bible drift in §6: the Codex and the Doctrine, where Mother is, Dust from her, Loyal
-  missing from the convictions.
-- The Last Scholar, and Tohu & Bohu behind him.
-- The Tablets of the Deep (§3.3 option 2 is their thin end).
+- The bible drift in §6: the Codex and the Doctrine, where Mother is, Loyal missing from the
+  convictions. (Dust from her: ruled, §6.)
+- The Last Scholar, and Tohu & Bohu behind him: proposed in §9.
+- The Tablets of the Deep (§3.3 option 2 is their thin end): proposed in §9.
 - The Good Kami rites and the curse clause.
 - More lunar events.
 - The pureblood line.
@@ -607,7 +617,7 @@ Put down on 2026-09-25 so none of it is lost. Nothing here is started.
 **Game and code**
 
 - The Dame's *"do not come back"* is never enforced (§2.2).
-- The playtest cheats are visible in Options.
+- The playtest cheats are visible in Options. **Ruled 2026-09-28: keep them for now.**
 - A forage band may leave the inner part of its circle unswept, and leave members behind at the
   close. **Reproduced 2026-09-26:** `command.js` read "BAND LEFT BEHIND (19) | MISSED A CHEST
   (0/1)" and, on another world path, "BAND LEFT BEHIND (55)", whenever the world's stream was
@@ -615,17 +625,20 @@ Put down on 2026-09-25 so none of it is lost. Nothing here is started.
   its own look.
 - The skinned rig: one mesh per body instead of 12 to 15 (`CODE-AUDIT.md` §2.3). The largest
   draw-call saving left.
-- A bigger map (2048 measured: 521 MB heap against 304, 14 ms a step against 12, Greenrest's
-  layout needs two fixes; 2880 is a gigabyte). Waiting on your call, and on more towns to fill it.
+- A bigger map: **done.** 2048 was measured and built, then 2560 square with crater phase 1
+  (v24, 2026-09-28). More towns to fill it are still to come.
 - The other five biomes from the 2026-09-26 brainstorm (sulphur vents, quicksilver fens, the
   nigredo ashwood, albedo chalk, the oases). Three are built (§8.1).
-- The old king's court: sketched in §8.3 for your call.
+- The old king's court: **built** (§8.5).
 - After you have played the crater: ruin density, cache loot and strike rate. Visible waystones
-  at the ring's waypoints, and a scavengers' waystation at the mouth of the gorge.
+  at the ring's waypoints. (The scavengers' waystation at the mouth of the gorge is superseded:
+  the Order holds it now, §4.)
 - Town spacing: a rule keeping every town within about 450 tiles of another (Ironscar).
 - The deploy preview has not been checked since the crater.
-- A second full-suite run once the biomes and the old king have settled (the first, on
-  `d7a5602`, was 178/179 with its one red fixed).
+- A full-suite run after the crater's three phases. The last two were on `d7a5602` (178/179)
+  and after the biomes and the old king (190/191, the one red `marchorder.js`, ruled in
+  `CODE-AUDIT.md` §5.15). Both reds were fixed. Crater phases 1 to 3 have only had targeted
+  batches.
 
 ## 8. The three grounds and the old king (2026-09-26)
 
@@ -817,6 +830,291 @@ The three endings are unchanged: a friend of the house, the square, or the barga
 closes the thread. §2.2 (the Dame's *"do not come back"* is not enforced) is still open.
 
 `tools/playnotes.js` claim 9 walks it end to end.
+
+## 9. Waiting on a ruling (2026-09-28)
+
+Nothing in this section is in the game. Each part has a question for you, and each part goes
+in only once you have ruled on it. **(mine)** marks invention that neither the bible nor the
+code already says.
+
+### 9.1 Mother and the Dust art: three lines to replace
+
+Ruled: Dust did not come from her. What the bible *does* say (§3, the tap table) is that before
+the Fracture every art's route ran **through** her. She interceded, and there was no other way
+through. After it, the power comes straight out of the wound, and she is **Redundant**. Nothing
+in the game says "redundant" yet, and these three lines are the natural place for it.
+
+| where | now | option A: through her, not from her (recommended) | option B: no tie to her at all |
+|---|---|---|---|
+| a stranger with the Dust gift or tier II | *"You work the dust art. That came out of me. Out of ME — a woman under a mountain, on a table, awake for it. Every time you fold the light you are spending a piece of me. Do it anyway. It is spent."* | *"You work the dust art. Once, every art in the world came through this room on its way to somebody. Now it comes out of the hole in the sky, and it does not need me. You are standing in front of the part they stopped needing."* | *"You work the dust art. What is left of it. In their day it did not hide a thing; it made it so the thing had never been there. You only hide. Keep hiding. It is the better use."* |
+| one of hers at tier III | *"You have mastered the art they took off me. Do you understand that when you work it, you are working ME?"* | *"You have mastered the dust art. They used to draw it through me a measure at a time and write down what each measure cost. You draw it from nowhere and owe nobody. I do not know whether to be glad."* | *"You have mastered the dust art, or what is left of it. They could unmake a thing, once. You can make it hard to see. Be content with that. They were not."* |
+| one of hers at tier II | *"You use the art. Adequately. It was mine before it was a technique."* | *"You use the art. Adequately. It used to come through me. Now it comes through anybody, and it shows."* | *"You use the art. Adequately. They did it better, and it cost them more."* |
+
+Option A voices the bible's own "Redundant" beat and says nothing new. Option B says only what
+§7 says ("a degradation of an art that altered reality itself") and keeps her out of it.
+
+### 9.2 Drift between the bible and the code: which side moves?
+
+1. **The Codex and the Doctrine.** The bible gives the Codex the Church text that "names them
+   once". The code gives that text to **The First Doctrine**, a quest item: it is in the oldest
+   redoubt's vault and Czarina wants it. The Codex is a Golden-Age alchemy manual there: the
+   Transmutation research is built from one, the Kept gather round one at the altar, and the
+   court drops them. *Recommendation: the bible follows the code.* The Doctrine is the Church
+   text and the Codex is the Golden Age's manual. The Codex's description is in 9.3.
+2. **Where Mother is.** The bible says "a cell at the bottom of a sealed redoubt". The code
+   says a Golden-Age seal at the bottom of a warren. The bible's own §3 says the prison was
+   built "around a god who was lying where she had always lain", in the purebloods' earth.
+   *Recommendation: the bible follows the code*, with the vault at the bottom of a warren.
+3. **Loyal is missing from the bible's convictions (§14).** In code it is *"Decided about you a
+   long time ago. Takes a great deal to undecide."*, and what moves it most is a captive taken
+   back. *Recommendation: add it to §14 as shipped.*
+4. **"Llammialith's Tooth".** Her name is "known only to the precious few she has chosen to
+   whisper it to", and her scene is where she gives it to you. A legendary weapon with the
+   name on it gives it away first. The Unblinded, one of the Kept, carries it. *Recommendation:*
+   **The Priest's Tooth**, because Priest is the purebloods' word for her. The description stays.
+5. **"The Fall".** Two items say it (the Sunless Leaf "older than the Fall", the Aether Cell
+   "pre-Fall"). Everything else says the Fracture. *Recommendation: Fracture*, unless "the
+   Fall" is meant as a folk word, in which case it does not belong in the narrator's text.
+6. **The Sunken Crown has two histories. Found while writing its description.** §13 and the
+   2026-09-27 rework make it the Pouring's register-band, sunk and tarnished, with eleven names
+   inside, which the demilich asks you to read. §14 and Lyonart's start say he "came through
+   with the Sunken Crown" from Alagadda, and the game gives him one. The Circlet of the
+   Pouring *also* has eleven signatures and a blank twelfth. Options:
+   - (a) there were several register-bands, and one of them went through a tear;
+   - (b) Lyonart carries a different crown, perhaps Alagadda's;
+   - (c) the band inside the Sunken Crown is not the Pouring's, and only the Circlet is.
+
+   I have no recommendation; this is your call. The description in 9.3 avoids its history.
+7. **The Kept and "the only one of his kind left".** The bible's §11 says the Last Scholar is
+   the last pureblood. The game has congregations of the Kept, who are purebloods, still
+   keeping the vigil in the Deep. The Scholar scaffolding (9.5) depends on how those two fit.
+   A reading that keeps both is that **the civilisation** ended, and what is down there is what
+   was left when it did: no council, no letters, "a language with no descendants", and the
+   Scholar is the last one of them who is *whole*. Does that hold, or does one side move?
+
+### 9.3 Descriptions for the 57 items that have none
+
+These follow the house style of the 43 there already: two or three sentences, physical first,
+and the lore coming in sideways and ending on the turn. The item card now shows them wherever an
+item is listed (wagon, pack, kit, counters, bins, work orders, the bar).
+
+**Food and medicine**
+
+| item | description |
+|---|---|
+| Dried Meat | Strips of whatever walked past the smokehouse last, salted and hung until it could be anything. It keeps. Nobody asks which animal, and nobody should. |
+| Greenfruit | Grown at Greenrest, because nowhere else grows anything. Sweet, bruised by the road, and soft by the second day. It is why Greenrest has more watchmen than trees. |
+| Shore Fish | Caught in the shallows at the rim of the world, since there is no other water for a fish to live in. Bony, grey, and better than nothing by a narrow margin. |
+| Bandage Kit | Boiled linen, a needle, a twist of gut and a bottle of something that stings. Eight dressings to a kit. It stops the bleeding; it does not bring anything back. |
+
+**Materials**
+
+| item | description |
+|---|---|
+| Build Materials | Lashed bundles of pole, plank, cord and peg: everything a wall needs except the reason. Hauled to a blueprint, they become the blueprint. |
+| Wood | Cut from the dead husks that stand in for trees everywhere but Greenrest. Grey all the way through. It still burns, which is more than can be said for most things out here. |
+| Stone | Quarried, or pulled out of something somebody else already quarried. Most of the good building stone in the world has been used at least twice. |
+| Copper Ore | Green-veined rock out of Copperhold's shafts. Mine money built those walls; this is what mine money looks like before it is money. |
+| Iron Ore | Red, heavy, and worth nothing until a smelter has had it. Ironscar digs it with indebted hands, and there are hired blades standing over the hands. |
+| Coal | Black rock that burns longer and hotter than wood. The smelter eats it by the sack and never says thank you. |
+| Copper Ingot | Smelted, poured and stamped. Too soft for an edge, right for a fitting, and the easiest thing in the world to sell. |
+| Iron Ingot | A bar of good iron. A smelter makes them slowly. An automaton gives them up all at once, if you can put it down first. |
+| Quickened Flesh | Tissue out of the vat bog, where what the vats grew went into the ground and kept growing. It is warm, it moves when it is handled, and a graft takes to it better than to anything that was ever born. |
+| Fabric | Bolts of woven cloth, dyed the colour of dust whether or not anybody meant it to be. Coats, bandages, shrouds. The world goes through a lot of shrouds. |
+| Lead | Soft grey metal, heavy and cheap. The Golden Age made gold out of it as a matter of routine. It can still be done, by whoever has read the right codex, and it is still worth doing. |
+| Gold Bar | A stamped bar of gold. Some gold was mined. Some was lead last week, and no assayer alive can tell you which. |
+
+**Trade goods**
+
+| item | description |
+|---|---|
+| Rum | Cane spirit from somewhere that has cane. It rides in every caravan because it pays at every counter, and it opens a conversation that gold would only insult. |
+| Harbourblack | Cask rum cut with salt and let go dark, to Dustport's own receipt. It tastes of tar and pays like a debt coming due. |
+| Cask Rum | Rum that has sat in wood long enough to forget where it came from. Worth the wait, which is not something you hear often out here. |
+| Hound Hide | Off a waste hound, scraped and dried. It is stiff, it stinks, and it is the best leather most people will ever wear. |
+| Mortal Remains | Bones, mostly, and what still clings to them, bundled in sacking. To a gravekeeper it is a duty and to a necromancer it is stock. Most towns fine you for the difference. |
+| Sunken Crown | Heavy bronze gone green, sunk down over a brow for so long it kept the shape. Something is written round the inner band. The Last Rite wants it, and gives it back afterwards: it is a key, not a candle. *(Holds whichever way 9.2.6 goes.)* |
+| Leviathan Hide | A slab of hide off something the size of a street. Thick enough to turn a blade, and it smells of nowhere you have been. |
+
+**Weapons**
+
+| item | description |
+|---|---|
+| Plank | A length of board with a nail or two left in it. It is what you pick up when there is nothing else to pick up, and there often is not. |
+| Iron Club | A bar of iron with a grip wound round one end. There is no technique to it. It works on the things a blade slides off. |
+| Rusty Katana | A curved blade somebody once looked after. The rust has got into the edge and will not come out. It still cuts; it just takes longer about it. |
+| Arming Sword | A straight double edge and a crossguard: the sword a town gives the man it sends to the gate. Nothing about it is remarkable, which is why it works. |
+| Dagger | A hand's length of point. Useless in a fair fight and very good at ending an unfair one. |
+| Katana | A curved single edge, folded by somebody who knew how. It asks for both hands and repays them. |
+| Nodachi | Taller than the man who carries it. Too long to draw quickly and too heavy to swing twice, and the first swing is usually enough. |
+| Hunting Bow | Horn and sinew, drawn for elk. It was never meant for people, and it does not know the difference. |
+| Crossbow | A steel prod on a stock, wound back with a crank. Slow to load, and plate is only a suggestion to the bolt. |
+| Sundering Edge | A Golden-Age blade with a line down the flat that is not quite the colour of the rest. It has never needed sharpening. Nobody knows what it was made to cut, because nothing left in the world gives it any trouble. |
+| Kingsfang | A two-handed blade out of a sealed vault, laid up in oil nine generations ago and taken out as sharp as the day. Whose king it was named for, the vault did not record. |
+| Pyre Blade | Sister Ash's. The edge is always warm and sometimes a good deal more than warm. She burned her order with it, and she will tell you bones burn easier. |
+
+**Armour, head and cloak**
+
+| item | description |
+|---|---|
+| Rag Shirt | A shirt that has been more hole than shirt for some time. It keeps the dust off. It does not keep anything else off. |
+| Leather Jacket | Hound hide boiled hard and stitched double at the shoulders. Most blades turn on it once. |
+| Iron Plate | Breastplate, backplate and the straps between. It takes the heart out of a cut, and the spring out of the man inside it. |
+| Alchemic Carapace | Golden-Age plate in one piece, with no rivet or seam a smith would recognise. Heavy past bearing on a long march, and nothing made since stops a blow half as well. It was made for the war that was lost. |
+| Baroness's Plate | The Red Baroness's own, lacquered the colour she is named for. She did not come by it honestly and neither will you. |
+| Leviathan Coat | Leviathan hide cut long and oiled dark. It turns a blade like plate, it moves like a coat, and it never quite dries. |
+| Gravecloth Shroud | Grave linen, wound the way Hollowmere winds its dead. On the living it is barely a shirt. On the risen it passes for one of the living. |
+| Marshal's Plate | Grand Marshal Vey's plate, enamelled white and dented everywhere a man can be struck. It was never once taken off him, until it was. |
+| Padded Cap | Quilted wool with a chin strap. It will not stop a blade, only the ones that were not really trying. |
+| Kettle Helm | A steel brim over a round crown: the helm a militia can afford. Rain runs off it, and so do most arrows. |
+| Closed Armet | A helm that shuts over the whole face. The world gets small and dark inside it, which is a fair trade for keeping the face. |
+| Road Cloak | Heavy wool, cut long for a road with no end to it, with deep pockets sewn inside. It does not stop much. It carries a little more. |
+
+**Books, packs and grafts**
+
+| item | description |
+|---|---|
+| Transmutation Codex | A Golden-Age manual in iron boards, on turning one thing into another. It was written for people who had something to draw the art through, and the bench can still rebuild the art from it. *(If 9.2.1 goes the code's way.)* |
+| Weathered Tome | Somebody's notes, bound in whatever was to hand. Half of it is wrong and all of it is useful. |
+| Traveller's Pack | Canvas and two straps. Enough for a week on the road, and light enough that you forget it until you have to run. |
+| Hauler's Pack | A frame pack built to be loaded until the carrier complains, then loaded again. Nobody fights well under one. |
+| Bone Graft (Arm) | Bone off the dead, pinned to a stump and bound on by rite. It is not an arm. It is somewhere to put the rest of one. |
+| Bone Graft (Leg) | Bone off the dead, pinned to a stump and bound on by rite. It is not a leg. It is somewhere to stand. |
+| Skeleton Arm | A whole arm's worth of the dead, wired joint to joint and bound on by rite. It answers most of the time. The rite does not say whose it was. |
+| Skeleton Leg | A whole leg's worth of the dead, wired joint to joint and bound on by rite. It carries you most of the time. The rite does not say whose it was. |
+| Articulated Arm | Iron, copper and quickened flesh, jointed like the real thing and a little better. Some mornings, whoever wears it forgets which arm they were born with. |
+| Articulated Leg | Iron, copper and quickened flesh, jointed like the real thing and a little better. Some mornings, whoever wears it forgets which leg they were born with. |
+
+Fixes to existing text, if you agree:
+- "the Fall" becomes "the Fracture" (9.2.5).
+- The Tooth is renamed (9.2.4).
+- Final full stops go on the ten one-line descriptions that lack one (Salt, the Socket Spear, the
+  helm, the wreath, both cloaks and the four trinkets).
+
+### 9.4 The Tablets of the Deep
+
+**Mechanics (proposed):**
+
+- **Nine tablets per world**, each a unique item. They are stone and weigh 4 kg. They sell for
+  nothing, because their whole value is what they say.
+- **Where they are:** three to a storey, and the deeper, the later. Six lie in the Kept's halls
+  (two per storey), as a slab you walk up to, like a cache. The other three are given to you by
+  a congregation when its altar reaches KIN, one per storey. So a player who keeps the vigil,
+  rather than cutting through it, gets the ones that matter most.
+- **Reading:**
+  - Only the lettered can read one, by the test the convictions already use: MAG over 12, a
+    Scholar, or lettered.
+  - Anybody else gets *"The marks are cut deep and even, and they mean nothing to [name]."*
+  - Reading gives **nothing**: no insight, no MAG, no research, as the bible says.
+- **The journal:**
+  - CHRONICLES gets a **TABLETS** tab. Each tablet read is filed there with its text and where it
+    was found.
+  - A tablet you have but cannot read shows as *unread — wants somebody lettered*.
+  - The tablet stays in the wagon after it is read.
+- **(mine)** They are cut to be **read by the fingers**, since the purebloods were blind, and
+  the text is given as *what [the reader] makes of it*. That is also how a script in "a
+  language with no descendants" can be read at all: the reader does not read the words, only
+  what the carving shows. Keep or drop?
+
+**The texts.**
+
+- They are in the purebloods' voice and call her **the Priest** throughout.
+- They never name the Eldest. They record what happened and explain none of it.
+- What ended them stays open: the ninth breaks off.
+
+1. **THE FIRST THING TAUGHT.** *We live below because the sky looks. What is past the sky is
+   not empty. It is attention. Stone is the one roof it cannot see through, and the deeper the
+   stone, the less it sees.*
+2. **THE PRIEST WAS LEFT.** *Her kin went out among the stars and did not take her. She lay in
+   the rock a long age before we found her, and when we found her she did not ask to be
+   worshipped. She asked to be useful. We gave her a congregation, and she gave us her voice,
+   which carries further than ours.*
+3. **ONLY SHE SPEAKS UPWARD.** *We do not address it. No one of us addresses it. The Priest
+   speaks upward for us, and only for us, and she has never once told us what she hears.*
+4. **THE WALL OF THE GREAT HALL.** *The congregation at the bottom, small. Above them the
+   Priest, arms open. Above her, cut deeper than anything else in the hall, the thing she faces.
+   Every line of the carving runs up to it, so a hand that follows any one of them is led to the
+   top.* The bible's "the temple art points upward": this is the one that was read by the
+   wrong people much later.
+5. **WE HAVE BEEN ELSEWHERE.** *Not up. Never up. Through. There are ways between that do not
+   cross the sky, and we walked them, and were received, and came home. One of the places was a
+   kingdom built on the same work we do. We did not stay. It is not a place a person should
+   stay.* This is Alagadda; the bible says its exile is one-way.
+6. **SOME OF US WENT UP.** *They wanted the warm and the light, and they said the sky had not
+   looked at anyone in a long time. We let them go. We did not follow. It has been long enough
+   now that they will not remember us, and the Priest says that is a mercy to them.*
+7. **FEW CHILDREN THIS AGE.** *Fewer the next. The council has decided that some of us will go
+   up to those who went up before, and ask them for nothing, and tell them nothing, and come
+   back with children or not come back. The Priest did not argue. She said she had seen kin
+   leave before.*
+8. **ONE OF US WENT UP TO TEACH THEM.** *Not all of it. The council argued a long time over how
+   much, and he went before they had finished arguing. His name was on this tablet. It has been
+   cut out, carefully, by somebody with a better chisel than ours.* **(mine)** This is the
+   First Scholar, and the implication is that he came back and took his own name off.
+9. **THE COUNCIL HAS STOPPED MEETING.** *There are enough of us left to fill one hall. The Priest
+   asks after each of us by name, every day, and every day there are fewer names. We are cutting
+   this because somebody should, and because the* The tablet ends there.
+
+### 9.5 The Last Scholar: scaffolding
+
+The bible's rules:
+
+- he appears human, with great age and melancholy, and a voice tinged with regret;
+- he appears and reappears through history;
+- he reaches the player only by "being unhelpful";
+- his immortality is never explained, and what ended his people is never resolved;
+- he is never written as a hero or as a villain;
+- his life holds the Twins.
+
+**Proposed shape:**
+
+- **A figure, not a follower.** One body, `lastScholar`, drawn as an old man in a travelling
+  coat. He cannot be recruited, raised or bound. Nothing is hostile to him and he is hostile to
+  nothing. An attack order on him is refused with the log line *"Nobody lifts a hand. Nobody can
+  say afterwards why not."* **(mine)** If blows land anyway (a stray bolt, a blast), he takes
+  none of them.
+- **He comes and goes.** He is on the map only for a sighting, and leaves when nobody of yours
+  is looking.
+- **His thread.** It is called *The man with the old face*. It opens when Mother's second scene
+  closes, since she is the one who says he exists. A sighting also opens it, for a player who
+  never reaches her.
+- **The sightings (each happens once):**
+  1. **Early (days 20 to 40).** He stands a little way off from a Scholar (the Archivist at
+     Dustport, or one on the road), watching the road.
+  2. **After Mother's second scene.** He is at the mouth of the warren you came up out of.
+  3. **After a tablet is read.** He is somewhere near the Deep mouth nearest your reader.
+  4. **When the Door opens.** He is at the rim of the bowl and does not go in. He is gone when
+     it closes.
+- **Hearsay.** In town rumours, rarely, somebody's grandmother described him, and so did theirs:
+  *"Same coat."* It is a folk-layer line, and it never names him.
+- **Talking to him.** A short tree. Every answer is true and useless:
+  - *(who are you)* "Nobody you need. I have been somebody people needed, and it did not go well
+    for them."
+  - *(how old are you)* "Older than I would like. I stopped counting when counting stopped
+    helping."
+  - *(Mother, once her scene is done)* "She is owed more than I paid her. Do not carry her
+    anything from me. She knows."
+  - *(the Scholars)* "They took their name from the wrong end of my life. It suits them better
+    than it suited me."
+  - *(your people)* "Gone. I was there. That is all of it I will say, and it is more than I have
+    said in a while."
+  - *(the Door)* "Close it. Not for them. For you."
+  - *(the Hollows, to one of hers)* "I made you to save them. It worked. Do not thank me for
+    it."
+  - *(what is on the throne)* "Nothing that will ever know you asked."
+  - *(the Twins: never. Nobody in the world knows to ask.)*
+  - *(leaving)* "I have been here before. I will be again. You will not."
+- **What this does not do:** explain his immortality, name what ended his people, give the
+  player a quest, or make him killable. The last is deliberate for now: his death has
+  consequences the setting has not decided on.
+
+Questions for 9.5:
+
+- the sightings as listed, or fewer;
+- the attack-order line;
+- the throne line, which is the nearest thing to an answer he gives (the bible allows him to be
+  "unhelpful" about it);
+- 9.2.7 first, since "the last of his kind" has to fit the Kept.
 
 ---
 

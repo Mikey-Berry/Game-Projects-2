@@ -200,10 +200,11 @@ Paladins.
 > not deceived. He is a man who reached a correct conclusion from a false premise and will never
 > learn which half was which.
 
-> MECHANICAL NOTE `[C]`. `hostile()` reads `if(a.faction === 'gaunt' || b.faction === 'gaunt')
-> return true;` with the comment "the gaunts did not come here to take sides." That is correct and
-> should stay. **Messengers therefore need their own faction, not `gaunt`.** Ordinary Watchers stay
-> unconditionally hostile to everyone; Messengers get a faction that can stand beside `purge`.
+> MECHANICAL NOTE `[C]`, **built 2026-09-25**. `hostile()` reads `if(a.faction === 'gaunt' ||
+> b.faction === 'gaunt') return true;` with the comment "the gaunts did not come here to take
+> sides." That is correct and stays. Messengers abroad are their own faction, `messenger`, at peace
+> with `purge`; ordinary Watchers stay hostile to everyone. The crater's own Messengers are handed
+> back to `gaunt`, so they allow nothing close, the Order included (`LORE-SEAMS.md` §3.2).
 
 > THE CONSEQUENCE, FOR WHOEVER WRITES THEIR DIALOGUE. The Watchers are not villains. They arrived
 > when a species disturbed a bound god and have been killing everything near the breach ever
@@ -530,6 +531,7 @@ dug into the first civilisation's tunnels, and at the bottom of one of them is M
   the opposite of what the player does, without being an enemy for it.**
 - **Osric & Wenna** — Hollowmere gravekeepers who compete with you for corpses.
 - **The Last Scholar `[★]`** — §11. Not yet in the code, and the largest unbuilt figure in the setting.
+  His scaffolding is proposed in `LORE-SEAMS.md` §9.5 and waiting on a ruling.
 - **Mother · Llammialith `[★]`** — §6. Alive, redundant, and the only being who knows the whole of it.
 - **The old king `[★]` `[C]`** — the kingdom's last king. He was at the middle of the rite when it
   worked, and he was not annihilated with his capital: he went through, toward the throne, and he
@@ -537,7 +539,9 @@ dug into the first civilisation's tunnels, and at the bottom of one of them is M
   Nobody in the world calls him that**; outwardly he is only ever *the old king*. When the sky
   opens he hangs in the mouth of the Door on a rope of light, and he is the last thing the closing
   rite has to bring down. He believes the rite was done correctly, and he is right. His court
-  (four, one per Art) is sketched in `LORE-SEAMS.md` §8.3 and is `[?]` until ruled on.
+  (four, one per Art) is **built** (2026-09-27): each courtier comes through at their own ground,
+  and the old king comes down carrying the Art of every courtier not yet slain (`LORE-SEAMS.md`
+  §8.5).
 
 **Verity, rewritten `[★]`.** **She ascended after the Fracture, not before** — ninety years ago,
 four generations back, not an ancient. She was a Scholar, and her tragedy is that **she succeeded.**
@@ -599,9 +603,11 @@ lettered move slower in both directions.
   Golden Age's best weapons can only be held by people it deliberately crippled to hold them.
 - **Philosopher Stones `[★]`** — condensed alchemical might able to rewrite the laws of reality, one
   use, with all the contamination hazard that implies. Golden Age power sources for when latent
-  aether was scarce. One wrote the law that holds the Twins.
-- **Tablets of the Deep `[★]`, not yet built** — the purebloods' tablets, manuscripts and temple
-  depictions. Unlike Formulae and Codices they would give **no insight at all**, only what happened.
+  aether was scarce. One wrote the law that holds the Twins. **Minor ones are built** (ruled
+  2026-09-26): every shrine's stone is one, and crushing it gives Sanctified Ash. The great ones
+  are not in the game.
+- **Tablets of the Deep `[★]`, not yet built; proposed in `LORE-SEAMS.md` §9.4** — the purebloods'
+  tablets, manuscripts and temple depictions. Unlike Formulae and Codices they would give **no insight at all**, only what happened.
   A collectible whose entire value is lore, found in the Deep, readable only by the lettered. The
   most promising route by which a player could assemble the cosmology without Saga's questline.
 - **Codices & Formulae `[C]`** — the physical remnants of Golden-Age knowledge, and the only source
@@ -683,8 +689,8 @@ Flagged, unresolved, safe to revisit. Keep dependent dialogue thin.
 | The Last Scholar's immortality | **Deliberately never explained.** The legends this character is built on work because nobody produces the mechanism. |
 | How Mother's parasites work | Moral shape settled — cut from her, and she allowed it. The biology is undefined and is on the shelf for its own pass. |
 | The Ossuary King as the last king | **Ruled 2026-09-27: no.** Reworked as a registrar who would not be the twelfth name. No relation to the old king. The rumour is retired, not kept open. |
-| The old king's court | Four, one per Art, sketched in `LORE-SEAMS.md` §8.3. Not built. |
-| The kingdom's crater | Unbuilt. Should be the largest landmark in the world, and the natural site for the Door. |
+| The old king's court | **Built 2026-09-27.** Four, one per Art (`LORE-SEAMS.md` §8.5). |
+| The kingdom's crater | **Built 2026-09-25 to 09-28**, in three phases: the headland, the walk in, the Order's post at the gorge (§16). |
 | What the Church knew | It existed before the Fracture, alongside the kingdom. Whether it blessed the rite is unwritten, and it is where the closely-guarded secret came from. |
 | Good Kami's placement | Candidate: the one of Mother's kin who did not leave. |
 | Har-Mageddon's placement | No slot in the revised cosmology yet, and the Coil is already shipped. |
@@ -693,23 +699,25 @@ Flagged, unresolved, safe to revisit. Keep dependent dialogue thin.
 | The Hollow ladder | Not a fourth branch immortality. Whether it should be reframed or extended is for workshopping. |
 | The Hollow Citadel | Exists, four floors, at Hollowmere. Purpose unwritten. |
 | Mother's serial number | Needs a format. Make it clerical — an asset tag, not a codename. It should look like the requisition number on the Ordnance Schematic. |
-| Sanctified Ash | Is a shrine stone a small Philosopher Stone, or something else the faithful mistook for one? |
+| Sanctified Ash | **Ruled 2026-09-26:** a shrine stone is a minor Philosopher Stone, and crushing one gives the ash. Built. |
 | "Dusters" | Shipped; overlaps Dust / dust bandits / Dustport. Kept — the overlap reads as slang doing several jobs. |
 | Broken decay | "The Fracture broke decay itself — the waste as preservative" is a canonisation candidate, nearly free against the existing rot ladder. |
 
-**Forthcoming, and where it fits.**
+**Built since revision 2, and where it fits.** All three were forthcoming when this was written,
+and all three are now in the game.
 
-- **Malathuun's Curse** — a sundered site stands up. Not a new rule: the corpse-sites *are*
+- **Malathuun's Curse** `[C]` — a sundered site stands up. Not a new rule: the corpse-sites *are*
   Malathuun, the ground there already breeds things that did not exist last year, and "the dead god
   does not appear to mind. Appear." has been waiting for something to justify that last word. It
   fits better now that he was a bystander rather than a resource: the one Old One in this story who
   was owed nothing and lost everything.
-- **Eyes of Ainzopha'ar** — the Eldest's own eyes, and the first thing it has ever put into the
+- **Eyes of Ainzopha'ar** `[C]` — the Eldest's own eyes, and the first thing it has ever put into the
   world. Note the tension worth exploiting: he is mindless, so they cannot be *sent*. They would be
   something a sleeping thing sheds.
-- **Messengers** — now the jailers (§5). Their tongue is the language the tap was designed in; you
-  do not wire a sleeping god into a prisoner by accident. **They need their own faction in code, not
-  `gaunt`.**
+- **Messengers** `[C]` — now the jailers (§5). Their tongue is the language the tap was designed
+  in; you do not wire a sleeping god into a prisoner by accident. They have their own faction in
+  code (§5, mechanical note). Their job still has no expression: nothing about them answers the
+  Door or the tears.
 
 ---
 
