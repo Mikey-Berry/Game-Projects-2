@@ -34789,6 +34789,23 @@ const FACES = {
   lyre:    {skin:'#c6b195', eye:'#0b0810', hair:'#f4f1ea', glow:false, body:'#1c1a19'},
 };
 function faceOf(c){ return (c && c.face && FACES[c.face]) || null; }
+/* ---------- THE NAMED ARE THE SHAPE THEY ARE ----------
+   "Could we lock in the body type/shape for origin characters? Lyonart is always a slightly
+    tall build, Lyre is short and thin, Saga is average, and Czarina is a bit taller than Saga."
+   Every other body rolls its frame and its height off its id, and an origin's id is whatever
+   the counter had reached when the world placed them — so Lyonart was broad in one game and
+   rangy in the next, and every face and haircut authored against one of those was being
+   judged on a body it would not always have. These are not rolls. `w` and `h` REPLACE the
+   id's width and height jitter outright (they are the final numbers, before a line's own
+   build, age, or a vessel's scale compose on top); the four knobs are the frame, same meaning
+   as the BUILDS table in buildCharMesh. Heights sit against the population's: an average man
+   comes out near 0.99, an average woman near 0.96. */
+const ORIGIN_FRAMES = {
+  lyonart: {key:'tall',    sh:1.02, hip:0.95, ch:0.96, limb:0.92, w:0.97, h:1.06},
+  lyre:    {key:'slight',  sh:0.90, hip:0.94, ch:0.88, limb:0.84, w:0.88, h:0.89},
+  saga:    {key:'average', sh:1.00, hip:1.00, ch:1.00, limb:1.00, w:1.00, h:0.99},
+  czarina: {key:'tall',    sh:1.04, hip:0.97, ch:0.98, limb:0.96, w:0.96, h:1.03},
+};
 /* ---------- PAINTED FACES ----------
    "Perhaps we need to 'paint' their facial features and other details rather than try to render
     them with pixels and boxes since this is not working well."
@@ -36092,7 +36109,9 @@ function buildCharMesh(c){
     {key:'stocky', w:16, sh:1.11, hip:1.11, ch:1.09, limb:1.15, sx:1.07, sy:0.91},
     {key:'heavy',  w:12, sh:1.06, hip:1.18, ch:1.22, limb:1.24, sx:1.09, sy:0.96},
   ];
-  const ARCH = (c.beast || c.construct || c.demilich) ? null : (() => {
+  /* an origin does not roll one (see THE NAMED ARE THE SHAPE THEY ARE) */
+  const ORI = (!c.beast && !c.construct && !c.demilich && c.face && ORIGIN_FRAMES[c.face]) || null;
+  const ARCH = (c.beast || c.construct || c.demilich) ? null : ORI || (() => {
     let t = hash2(c.id * 23 + 5, c.id * 41 + 3) * BUILDS.reduce((a, b) => a + b.w, 0);
     for(const b of BUILDS){ t -= b.w; if(t <= 0) return b; }
     return BUILDS[0];
@@ -36107,7 +36126,7 @@ function buildCharMesh(c){
      of five jobs rather than six body types, so what a player reads is "these two came out of
      the same vat for the same reason" and not "these two rolled the same number". */
   let PURP = null, ARCH2 = ARCH;
-  if(c.race === 'homunculus' && !c.beast && !c.construct){
+  if(c.race === 'homunculus' && !c.beast && !c.construct && !ORI){
     const BYTRADE = {smith:'hauler', miner:'hauler', farmer:'labour', fisher:'labour',
                      salter:'labour', hunter:'runner', crafter:'clerk', brewer:'clerk'};
     const JOBS = ['hauler', 'labour', 'runner', 'clerk', 'soldier'];
@@ -36141,8 +36160,9 @@ function buildCharMesh(c){
      to the character; how large a poured shell came out belongs to the shell, so it rides the
      visual scale instead and never touches a hitbox. */
   const _vk = vesselBody(c) ? vesselScale(c) : 1;
-  e.baseSX = (c.beast ? 1 : ((fem ? 0.90 : 0.94) + h3*0.12) * ((BLD && BLD.sx) || 1) * A('sx')) * _vk;
-  e.baseSY = (c.beast ? 1 : ((fem ? 0.89 : 0.92) + h1*0.14) * ((BLD && BLD.sy) || 1) * A('sy')) * _vk;
+  const jx = ORI ? ORI.w : (fem ? 0.90 : 0.94) + h3*0.12, jy = ORI ? ORI.h : (fem ? 0.89 : 0.92) + h1*0.14;
+  e.baseSX = (c.beast ? 1 : jx * ((BLD && BLD.sx) || 1) * A('sx')) * _vk;
+  e.baseSY = (c.beast ? 1 : jy * ((BLD && BLD.sy) || 1) * A('sy')) * _vk;
   /* the risen are not people with grey skin on: they are what is left when the rest goes */
   const risen = !!c.undead && !c.lich && !c.beast && !c.construct;
   const SH = (fem ? 0.82 : 1) * ((BLD && BLD.sh) || 1) * A('sh');        /* shoulder width */
@@ -37232,6 +37252,12 @@ function buildCharMesh(c){
     }
     e.headG = new THREE.Group();
     e.headG.position.set(0, kin === 'brute' ? 0.545 : 0.62, 0); e.spine.add(e.headG);
+    /* A tall frame is a tall body, not a stretched head: the head is scaled up to the body's
+       HEIGHT all round rather than squashed to its width, so an origin's face is drawn at
+       exactly the proportions it was authored at and the head keeps the share of the body a
+       crowd's heads have (squashing it the other way made Lyonart's 0.87x of that, and
+       undersized heads have come back from play twice — see tools/heads.js). */
+    if(ORI){ const k = e.baseSY / e.baseSX; e.headG.scale.set(k, 1, k); }
     e.boxBody.push(obox(0.1, 0.1, 0.1, skinCol, 0, 0.02, 0, e.headG));                /* neck */
     const skullK = kin === 'brute' ? 1.22 : kin === 'colossus' ? 1.1
       : kin === 'archer' ? 0.92 : kin === 'mage' ? 0.94 : 1;
