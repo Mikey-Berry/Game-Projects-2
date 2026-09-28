@@ -61,7 +61,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           if (seen.has(id) || isBlocked(nx, ny, f)) continue;
           seen.add(id); q.push([nx, ny]);
         }
-        if (seen.size > 400000) break;
+        if (seen.size > 2000000) break;   /* 400k was a 2048 world's storey; the 2560 one is bigger */
       }
       return seen;
     };

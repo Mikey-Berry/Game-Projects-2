@@ -614,7 +614,7 @@ body.touch #hint{display:none}
 <script>
 "use strict";
 /* ============================================================ CORE */
-const W = 2048, H = 2048;   /* v23 scale, 2026-09-27: twice the waste again */
+const W = 2560, H = 2560;   /* v24 scale, 2026-09-28: the crater moved to a headland in the north-east */
 /* ---------- HOW MUCH MORE WORLD THERE IS ----------
    The seven seats, the redoubts and every named thing stay singular. What is SCATTERED — ruins,
    wild seams, drifters, camps, the sundered sites — was counted for a map 1440 on a side, and at
@@ -685,7 +685,7 @@ function clamp(v,a,b){ return v<a?a:v>b?b:v; }
     That alone annihilated the kingdom at the centre in brilliant light, tore the fabric of
     reality, and opened a path between the material and the immaterial that has never closed."
    The lore bible has said since it was written that this is the largest landmark in the world,
-   and there was nothing there. It is at the dead centre of the map, in every world, and it is
+   and there was nothing there. It stands on a headland in the north-east, in every world, and it is
    decided FIRST: everything else in worldgen is placed around it, never the other way round.
    FOUR RINGS, and the danger reads before anything attacks you:
      the APPROACH  ash where the scrub was; every dead tree leans away from the middle; the
@@ -695,8 +695,38 @@ function clamp(v,a,b){ return v<a?a:v>b?b:v; }
      the RIM       a lip you can climb, and an inner wall you cannot, except at the breaches
      the BOWL      the floor of what was the capital, and the wound at the bottom of it
    NO DICE. The centre is fixed, the breaches are hashed off the seed the world was asked for,
-   and the rim's wobble is noise; nothing here draws from `rnd()`. */
-const CRATER = {x: W/2, y: H/2, bowl: 74, rim: 80, crest: 83, glass: 130, approach: 200};
+   and the rim's wobble is noise; nothing here draws from `rnd()`.
+
+   ---------- AND IT IS NOT IN THE MIDDLE ANY MORE ----------
+   "Having it at the world's center makes it a bit too easy to stumble upon. Perhaps a northern
+    corner of the map would be better. This would also allow for more natural barriers to
+    bottleneck the approach. Makes it an obvious entrance rather than something you randomly
+    stumble into." And: "One pass only. Bottleneck."
+   A HEADLAND in the north-east, standing out into the salt sea: land out to `range` from the
+   centre, then a band `ridge` tiles deep that is sea where the sea is and an unbroken ridge of
+   rock where the mainland is, with ONE gorge through it, cut on the bearing to the middle of
+   the world. The sea on two sides and the ridge on the other two are the barrier; the gorge is
+   the door. `range` is also where every other thing the world places keeps out to — nothing but
+   the crater's own stands on the headland. */
+/* JUST PAST THE CORNER OF THE COAST, so half the disc stands out over the salt and the other
+   half is where it joins the mainland: measured at 0.85 the whole disc sat on dry land and the
+   ridge closed right round it with a strip of mainland beyond, which is a walled bowl rather
+   than a headland. */
+const CRATER = {x: Math.round(W * 0.885), y: Math.round(H * 0.115), bowl: 74, rim: 80, crest: 83, glass: 130, approach: 200,
+                range: 236, ridge: 26};
+/* the gorge: its bearing from the centre (toward the middle of the world), and half its width */
+const CRATER_GORGE_A = Math.atan2(H / 2 - CRATER.y, W / 2 - CRATER.x);
+const CRATER_GORGE_HW = 7.5;
+/* the headland's own edge, not a compass circle: a few tiles of wander, read off noise round it */
+function craterEdge(a){ return CRATER.range + (vnoise(Math.cos(a) * 3 + 40, Math.sin(a) * 3 + 40) - 0.5) * 14; }
+/* on the headland or its ridge, with `pad` tiles to spare: the test every placer asks */
+function inHeadland(x, y, pad){ return craterD(x, y) < CRATER.range + CRATER.ridge + 7 + (pad || 0); }
+/* is this tile in the gorge: within its half-width of the line out from the centre, on its side */
+function inCraterGorge(x, y){
+  const dx = x - CRATER.x, dy = y - CRATER.y, ux = Math.cos(CRATER_GORGE_A), uy = Math.sin(CRATER_GORGE_A);
+  const along = dx * ux + dy * uy, side = Math.abs(-dx * uy + dy * ux);
+  return along > 0 && side < CRATER_GORGE_HW + (vnoise(along * 0.12 + 7, 3) - 0.5) * 3;
+}
 const CRATER_SEED = seed;
 const CRATER_BREACH_W = 0.09;               /* radians either side of a breach's centre: ~9 tiles of pass at the rim */
 const CRATER_BREACHES = [0, 1, 2, 3].map(i =>
@@ -813,9 +843,14 @@ function craterRuinTiles(){
    straight line would cross the approach walks it instead, node to node, the shorter way round,
    until the line to where it is going is clear. Fixed nodes rather than a point recomputed each
    step, so a traveller's goal holds still and its pathing does not churn; snapped to open ground
-   the first time they are asked for, which is the road builder, at load. */
-const CRATER_RING_R = CRATER.approach + 30, CRATER_RING_N = 24;
-const CRATER_AVOID_R = CRATER.approach + 10;
+   the first time they are asked for, which is the road builder, at load.
+   ON THE HEADLAND IT IS HALF A RING. The ridge and the sea now keep everybody out on their own;
+   what the ring still does is stop a traveller walking a straight line at a ridge it cannot
+   cross, between two places either side of the headland. So it stands just outside the ridge,
+   and only its nodes on dry land are kept: round the sea side there is nowhere to walk, and
+   from the mainland the shorter way round is always the landward one. */
+const CRATER_RING_R = CRATER.range + CRATER.ridge + 30, CRATER_RING_N = 48;
+const CRATER_AVOID_R = CRATER.range + CRATER.ridge + 12;
 let _craterRingNodes = null;
 function craterRingNodes(){
   if(_craterRingNodes) return _craterRingNodes;
@@ -830,7 +865,7 @@ function craterRingNodes(){
       }
       if(p) break;
     }
-    out.push(p || {x: CRATER.x + Math.cos(a0) * CRATER_RING_R, y: CRATER.y + Math.sin(a0) * CRATER_RING_R, a: a0, i});
+    if(p) out.push(p);              /* none out over the sea: nobody walks there */
   }
   return (_craterRingNodes = out);
 }
@@ -916,7 +951,16 @@ for(let y=0;y<H;y++) for(let x=0;x<W;x++){
      cliff grown out of noise across the rim would seal a breach; the glass is dust through. */
   { const cd = craterD(x, y);
     if(cd < CRATER.glass + 24 && (t === 2 || t === 3)) t = 1;
-    if(cd < CRATER.glass) t = 1; }
+    if(cd < CRATER.glass) t = 1;
+    /* THE HEADLAND: dry out to its edge whatever the coast was going to do, so it stands out
+       into the salt; then the ridge band — rock where it meets the mainland, left as sea where it
+       meets the sea — with the gorge through it. Read at the tile's middle, the same point the
+       ridge stamp below reads, so the paint and the blocking agree to the tile. */
+    else if(cd < CRATER.range + CRATER.ridge + 8){
+      const px = x + 0.5, py = y + 0.5, dm = craterD(px, py), e = craterEdge(craterAng(px, py));
+      if(dm < e){ if(t === 3 || t === 2) t = 1; }
+      else if(dm < e + CRATER.ridge && t !== 3) t = inCraterGorge(px, py) ? 1 : 2;
+    } }
   terr[y*W+x] = t;
 }
 /* ---------- AND WHAT KIND OF WATER IT IS, MEASURED IN TILES FROM THE SHORE ----------
@@ -1049,6 +1093,24 @@ const stairs = [];
 const FLOOR_H = 3.4;            /* world units between storeys */
 const FLOOR_SPAN = W * H;
 function bkey(x, y, f = 0){ return (f + 4) * FLOOR_SPAN + y * W + x; }   /* +4 so cellars key cleanly */
+/* ---------- THE RIDGE ROUND THE HEADLAND, AS SOON AS THERE IS ANYWHERE TO WRITE IT ----------
+   Before the towns, the roads and everything else the world lays out, so every one of them
+   meets it as terrain: a road cannot be routed across it only to be walled over later, and it
+   is in `baseBlocked` because that is copied from here after the towns. Its height is lifted
+   with the crater's own, once the ground has heights at all (see THE CRATER, CUT INTO THE
+   HEIGHTS). Rock on the landward side, the gorge the one gap in it, the sea the rest. */
+(function stampCraterRidge(){
+  const C = CRATER, R1 = C.range + C.ridge + 8;
+  for(let y = Math.max(0, Math.floor(C.y - R1)); y <= Math.min(H - 1, Math.ceil(C.y + R1)); y++)
+  for(let x = Math.max(0, Math.floor(C.x - R1)); x <= Math.min(W - 1, Math.ceil(C.x + R1)); x++){
+    if(terr[y*W+x] !== 2) continue;                /* the ridge is exactly the rock the band laid */
+    const px = x + 0.5, py = y + 0.5, d = craterD(px, py);
+    if(d > R1) continue;
+    const e = craterEdge(craterAng(px, py));
+    if(d < e || d >= e + C.ridge) continue;
+    blocked.add(bkey(x, y, 0));
+  }
+})();
 /* ---------- AND DOWN IS NOT ONE STEP ----------
    "the 'floor transfer' should be taken FAR more extreme (think an elevator lol)".
    Storeys UP are storeys: a rampart is one floor over the yard and that is what a rampart is.
@@ -2241,7 +2303,7 @@ function cellHpFor(t){
 function areaClear(x,y,w,h){
   /* NOBODY BUILDS WITHIN SIGHT OF IT. Every caller is a whole plan (a town, the Bastion, the
      Guild yard), and the approach is the ring the world has learned to leave alone. */
-  if(craterNear(x, y, w, h, CRATER.approach + 8)) return false;
+  if(craterNear(x, y, w, h, CRATER.range + CRATER.ridge + 16)) return false;   /* the headland, ridge and all */
   for(let j=y-1;j<y+h+1;j++) for(let i=x-1;i<x+w+1;i++){
     const t = tileAt(i,j);
     if(t===3) return false;
@@ -2711,6 +2773,7 @@ function placeTownAt(def, cx0, cy0){
   while(oreFields.length < Math.round(7 * AREA_K) && tries++ < 4000 * AREA_K){
     const x = ri(25, W-25), y = ri(25, H-25);
     if(tileAt(x,y) === 3) continue;
+    if(inHeadland(x, y, 16)) continue;             /* nothing on the headland but the crater's own */
     if(towns.some(t => dist(t.x, t.y, x, y) < 50)) continue;
     if(oreFields.some(f => dist(f.x, f.y, x, y) < 70)) continue;
     oreFields.push({x, y, r: ri(9, 14), kind: rnd() < 0.5 ? 'cvein' : 'ivein', home: null});
@@ -6072,7 +6135,7 @@ function rollChestLoot(){
   while(ruins.length < Math.round(8 * AREA_K) && tries++ < 8000 * AREA_K){
     const x = ri(12, W-12), y = ri(12, H-12);
     if(tileAt(x,y) === 3) continue;
-    if(craterD(x, y) < CRATER.glass + 10) continue;      /* the capital's ruins are the crater's own */
+    if(inHeadland(x, y, 6)) continue;                     /* the capital's ruins are the crater's own */
     if(towns.some(t => dist(t.x,t.y,x,y) < 22)) continue;
     if(bastion && dist(bastion.x,bastion.y,x,y) < 16) continue;
     if(ruins.some(r => dist(r.x,r.y,x,y) < 26)) continue;
@@ -6142,7 +6205,7 @@ function razeSlaverCamp(){
   while(!slaverCamp && tries++ < 6000){
     const x = ri(15, W-15), y = ri(15, H-15);
     if(tileAt(x,y) === 3) continue;
-    if(craterD(x, y) < CRATER.approach + 10) continue;    /* slavers want roads, not that */
+    if(inHeadland(x, y, 20)) continue;                    /* slavers want roads, not that */
     if(towns.some(t => dist(t.x,t.y,x,y) < 35)) continue;
     if(bastion && dist(bastion.x,bastion.y,x,y) < 25) continue;
     if(ruins.some(r => dist(r.x,r.y,x,y) < 20)) continue;
@@ -6558,7 +6621,7 @@ function bossSpot(minTown, minStart){
   for(let tries=0; tries<6000; tries++){
     const x = ri(15, W-15), y = ri(15, H-15);
     if(tileAt(x,y)===3 || isBlocked(x,y)) continue;
-    if(craterD(x, y) < CRATER.glass + 12) continue;        /* the crater keeps its own, see CRATER */
+    if(inHeadland(x, y, 12)) continue;                     /* the crater keeps its own, see CRATER */
     if(towns.some(t => dist(t.x,t.y,x,y) < minTown)) continue;
     if(dist(startTown.x, startTown.y, x, y) < minStart) continue;
     if(bastion && dist(bastion.x, bastion.y, x, y) < 20) continue;
@@ -6568,12 +6631,13 @@ function bossSpot(minTown, minStart){
   for(let tries=0; tries<2000; tries++){
     const x = ri(15, W-15), y = ri(15, H-15);
     if(tileAt(x,y)===3 || isBlocked(x,y)) continue;
-    if(craterD(x, y) < CRATER.glass + 12) continue;
+    if(inHeadland(x, y, 12)) continue;
     if(towns.some(t => dist(t.x,t.y,x,y) < minTown*0.6)) continue;
     return {x, y};
   }
-  /* the last resort used to be the middle of the map, which is now the one place it cannot be */
-  return {x: CRATER.x, y: CRATER.y + CRATER.approach + 20};
+  /* the last resort: out on the mainland past the gorge, the one direction off the headland that is ground */
+  return {x: CRATER.x + Math.cos(CRATER_GORGE_A) * (CRATER.range + CRATER.ridge + 40),
+          y: CRATER.y + Math.sin(CRATER_GORGE_A) * (CRATER.range + CRATER.ridge + 40)};   /* out past the gorge */
 }
 /* ---------- the other two paths ----------
    Three branches of the golden age went looking for immortality. The Dark found lichdom —
@@ -8458,7 +8522,18 @@ let estate = null;
      scene: you are turned away by somebody who is not allowed to decide, and the person who
      could decide is not going to come out to you. */
   const gm = gate[0];
-  const sp = findOpenNear(gm.x + nx * 1.5, gm.y + ny * 1.5, 2);
+  /* OUT FROM THE GATE, AND OUTSIDE THE YARD BY CONSTRUCTION. `findOpenNear` looks every way
+     round a point a tile and a half past the gate, so when that ground was taken it settled
+     him through the gate and inside the wall — the town on the 2560 world did exactly that.
+     Walked outward along the gate's own normal instead, a little either side, and never
+     anywhere inside the yard; the old call stays as the last resort. */
+  const inYard = (qx, qy) => Math.abs(qx - cx) <= HW && Math.abs(qy - cy) <= HH;
+  let sp = null;
+  for(let k = 1.5; k <= 6 && !sp; k += 0.5) for(const off of [0, 0.7, -0.7, 1.4, -1.4]){
+    const qx = gm.x + nx * k - ny * off, qy = gm.y + ny * k + nx * off;
+    if(!isBlocked(qx, qy) && tileAt(qx, qy) !== 3 && !inYard(qx, qy)){ sp = {x: qx, y: qy}; break; }
+  }
+  if(!sp) sp = findOpenNear(gm.x + nx * 1.5, gm.y + ny * 1.5, 2);
   const serv = makeChar('Bellowes', 'town', sp.x, sp.y,
     {atk: 8, def: 10, tough: 10, ath: 4, armor: 'a_lea', homeTown: t, guard: {x: sp.x, y: sp.y}, age: 61, sex: 'm'});
   serv.civ = true; serv.orchardServant = true;
@@ -9292,9 +9367,11 @@ function routeFor(fromT, toT){
      on it. And a road whose straight line would cross the crater's approach goes round, on the
      ring (`craterRingNodes`), which is sealed off for the length of this function besides. */
   const seal = [];
-  for(let y = Math.floor(CRATER.y - CRATER.approach); y <= CRATER.y + CRATER.approach; y++)
-    for(let x = Math.floor(CRATER.x - CRATER.approach); x <= CRATER.x + CRATER.approach; x++){
-      if(craterD(x + 0.5, y + 0.5) >= CRATER.approach) continue;
+  /* the whole headland, not only the approach: the gorge is open ground, and a road has no
+     business down it */
+  for(let y = Math.max(0, Math.floor(CRATER.y - CRATER.range)); y <= Math.min(H - 1, CRATER.y + CRATER.range); y++)
+    for(let x = Math.max(0, Math.floor(CRATER.x - CRATER.range)); x <= Math.min(W - 1, CRATER.x + CRATER.range); x++){
+      if(craterD(x + 0.5, y + 0.5) >= CRATER.range) continue;
       const k = bkey(x, y, 0);
       if(!blocked.has(k)){ blocked.add(k); seal.push(k); }
     }
@@ -9582,7 +9659,9 @@ function spawnHostileSquad(kind){
   let x = edge===0? 4 : edge===1? W-4 : ri(6,W-6);
   let y = edge<2 ? ri(6,H-6) : edge===2? 4 : H-4;
   let g = 0;
-  while(isBlocked(x,y) && g++<50){ x = ri(6,W-6); y = ri(6,H-6); }
+  /* and not on the headland: what roams there is the crater's own, and a pack anchored inside
+     the ridge would have no way out but the gorge */
+  while((isBlocked(x,y) || inHeadland(x, y, 20)) && g++<50){ x = ri(6,W-6); y = ri(6,H-6); }
   const sq = {id:squadN, anchor:{x,y}, kind};
   const n = kind==='hound' ? ri(3,5) : ri(2,4);
   for(let i=0;i<n;i++){
@@ -18842,7 +18921,7 @@ function openTheDoor(){
   guardianWithdraws();
   theDoor = {x, y, r: 14, seal: 0, work: 0, opened: day, fed: 0};
   log('THE SKY HAS OPENED. Not a tear — a door, at the bottom of the crater, and it is standing wide. Whatever has been watching the fences is not watching any more.', 'bad');
-  worldEvent('door', x, y, 'The sky has opened over the crater at the middle of the world. Not a tear this time. A door, and it is standing wide.');
+  worldEvent('door', x, y, 'The sky has opened over the crater on the headland. Not a tear this time. A door, and it is standing wide.');
   AU.news();
   spawnBrood();
   log('There is a figure hanging in the mouth of it, a long way up, on a rope of light. It wears a crown.', 'bad');
@@ -20278,7 +20357,7 @@ function offRoad(p){
       const x = Math.round(p.x + Math.cos(base + off) * step), y = Math.round(p.y + Math.sin(base + off) * step);
       if(x < 15 || y < 15 || x > W - 15 || y > H - 15) continue;
       if(tileAt(x, y) === 3 || isBlocked(x, y)) continue;
-      if(craterD(x, y) < CRATER.glass + 12) continue;
+      if(inHeadland(x, y, 12)) continue;
       if(towns.some(t => dist(t.x, t.y, x, y) < 50)) continue;
       if(dist(startTown.x, startTown.y, x, y) < 65) continue;
       if(bastion && dist(bastion.x, bastion.y, x, y) < 20) continue;
@@ -20345,6 +20424,10 @@ function offRoad(p){
           for(const [bx, bz, hw, hd] of boxes)
             if(Math.abs(lx - bx) <= hw && Math.abs(lz - bz) <= hd){ blocked.add(bkey(tx, ty)); break; }
         }
+      /* AND ITS OWN MIDDLE, WHATEVER THE TURN. The hand's fingers straddle the centre, and at
+         one turn in a few the centre tile falls in the gap between two of them by a hair — site
+         11 on the 2560 world missed a finger by 0.03 of a tile, and its middle could be walked. */
+      blocked.add(bkey(Math.round(p.x), Math.round(p.y)));
     }
     /* ---------- THE FRAGMENT CACHE, OUT FROM UNDER THE BONES ----------
        It used to sit at the exact centre of the site — which is also where the skull, the
@@ -21152,7 +21235,7 @@ function guardianTick(dt){
 }
 function guardianFalls(c){
   bumpNotice(8);
-  const text = 'Something that stood at the gate in the middle of the world has been put down. Everybody who was out after dark last night says the sky looked back at them, and none of them can say what they mean by that.';
+  const text = 'Something that stood at the gate in the crater has been put down. Everybody who was out after dark last night says the sky looked back at them, and none of them can say what they mean by that.';
   worldEvent('boss', CRATER.x, CRATER.y, text);
   log('THE GUARDIAN AT THE GATE IS DOWN. Nothing is keeping the way now, and the sky has noticed.', 'bad');
   pushFracture(GATE_LURCH);
@@ -21346,6 +21429,12 @@ function spawnWanderers(){
          them rather than out in the waste being conspicuous at a rock. */
       const t2 = pick(towns.filter(t3 => !t3.def.undeadFriendly));
       if(t2) p = findOpenNear(Math.round(t2.x + ri(-3, 3)), Math.round(t2.y + ri(-3, 3)), 5);
+      /* BUT NOT OVER THE ALDERCOTTS' WALL. Greenrest is built round the estate, so "the middle
+         of the town" is their private yard, and Albedo was stood up inside it on the 2560 world
+         — a stranger in the one place `estate.js` asserts has none. Out through the gate side
+         instead: the street in front of it, which is the middle of the town everyone else uses. */
+      if(p && estate && estate.town === t2 && Math.abs(p.x - estate.x) <= estate.hw + 1 && Math.abs(p.y - estate.y) <= estate.hh + 1)
+        p = findOpenNear(Math.round(estate.x + ri(-3, 3)), Math.round(estate.y + estate.hh + 4), 4);
     } else if(w.where === 'shrine'){
       /* ---------- AT THE STONE, WHICH IS WHAT "AT THE STONE" MEANS ----------
          This was `findOpenNear(stone + ri(-2,2), 5)` — a two-tile jitter, and then sixty random
@@ -26921,7 +27010,7 @@ function update(dt){
   rescueTick(dt);             /* and whether anyone is coming for what you took */
   lyreTick(dt);            /* and whether anyone has walked out far enough to find her */
   motherTick(dt);             /* and whether anyone has gone far enough DOWN to find her */
-  craterTick(dt);             /* and whether anyone has walked in toward the middle of the world */
+  craterTick(dt);             /* and whether anyone has walked in toward the crater */
   strikeTick(dt);             /* and whether the light is coming down on anybody in the glass */
   guardianTick(dt);           /* and whether the thing at the middle is calling it down on you */
   biomeTick(dt);              /* the flats, the rust and the bog: who walked in, what woke, what keeps */
@@ -29557,7 +29646,7 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
     const clearTown = !towns.some(t => dist(t.x, t.y, cx, cy) < r * 1.4 + 20);
     const clearStart = !startTown || dist(startTown.x, startTown.y, cx, cy) > r * 1.4 + 24;
     const clearBastion = !bastion || dist(bastion.x, bastion.y, cx, cy) > r * 1.4 + 18;
-    const clearCrater = craterD(cx, cy) > CRATER.glass + r * 1.4 + 10;   /* no cliff across the rim */
+    const clearCrater = !inHeadland(cx, cy, r * 1.4 + 10);   /* no massif on the headland or against its ridge */
     if(!clearTown || !clearStart || !clearBastion || !clearCrater) continue;
     const peak = 5.5 + Math.min(9, r * 0.5) + rnd() * 3;
     taken++;
@@ -29743,6 +29832,27 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
     }
     for(const sl of CRATER_SLABS){ const k = bkey(Math.floor(sl.x), Math.floor(sl.y), 0); blocked.add(k); baseBlocked.add(k); }
     for(const [x, y] of craterRuinTiles()){ const k = bkey(x, y, 0); blocked.add(k); baseBlocked.add(k); }
+    /* ---------- AND THE RIDGE ROUND THE HEADLAND, STOOD UP ----------
+       It has been blocking since the ground was laid (`stampCraterRidge`); this is what it looks
+       like. A crest along the middle of the band, ridged by noise so it reads as a range and not
+       as a wall, rising out of nothing over the sea; and in the gorge the floor stays where it
+       was while the sides climb off it, so the pass is a cut through the range you can see from
+       a long way off. */
+    const R1 = C.range + C.ridge + 8, ux = Math.cos(CRATER_GORGE_A), uy = Math.sin(CRATER_GORGE_A);
+    for(let vy = Math.max(1, Math.floor(C.y - R1)); vy <= Math.min(H - 1, Math.ceil(C.y + R1)); vy++)
+    for(let vx = Math.max(1, Math.floor(C.x - R1)); vx <= Math.min(W - 1, Math.ceil(C.x + R1)); vx++){
+      const d = craterD(vx, vy);
+      if(d > R1) continue;
+      const p = (d - craterEdge(craterAng(vx, vy))) / C.ridge;
+      if(p <= -0.1 || p >= 1.1) continue;
+      let sea = 0;
+      for(const [ox, oy] of [[0, 0], [-1, 0], [0, -1], [-1, -1]]) if(tileAt(vx + ox, vy + oy) === 3) sea++;
+      if(sea === 4) continue;
+      let lift = Math.sin(Math.PI * clamp(p, 0, 1)) * (11 + (fbm(vx * 0.08 + 300, vy * 0.08 + 300, 4) - 0.5) * 9);
+      const dx = vx - C.x, dy = vy - C.y;
+      if(dx * ux + dy * uy > 0) lift *= clamp((Math.abs(-dx * uy + dy * ux) - CRATER_GORGE_HW) / 5, 0, 1);
+      if(lift > 0.01) HV[vy*(W+1)+vx] += lift;
+    }
   }
   _terrMaxY = 0;
   for(let i=0; i<HV.length; i++) if(HV[i] > _terrMaxY) _terrMaxY = HV[i];
@@ -29816,23 +29926,29 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
    spawner dropped inside the glass is walked straight back out along its own bearing, to open
    ground past the edge. A deterministic walk, not `findOpenNear`, so it spends no dice; and a
    move rather than a deletion, because the body may be somebody a quest is waiting on. */
+/* ON THE HEADLAND, "OUT" IS THROUGH THE GORGE. Walked along its own bearing, a body inside the
+   ridge meets rock or the sea; so it goes out past the ridge on the landward side instead —
+   along its own bearing where that is dry mainland, else swung round toward the gorge until it
+   is. Still a fixed walk that spends no dice, still a move and never a deletion. */
 (function clearTheCrater(){
+  const OUT0 = CRATER.range + CRATER.ridge + 10;
+  const wrap = (v) => { while(v > Math.PI) v -= Math.PI * 2; while(v < -Math.PI) v += Math.PI * 2; return v; };
   for(const c of chars){
     if((c.floor || 0) !== 0 || c.craterOwn) continue;
-    const d = craterD(c.x, c.y);
-    if(d >= CRATER.glass) continue;
-    const a = craterAng(c.x, c.y);
+    if(!inHeadland(c.x, c.y)) continue;
+    const a0 = craterAng(c.x, c.y), toGorge = wrap(CRATER_GORGE_A - a0);
     let to = null;
-    for(let r = CRATER.glass + 6 + hash2(c.id || 1, 77) * 10; r < CRATER.glass + 60 && !to; r += 1.5){
-      for(const da of [0, 0.05, -0.05, 0.1, -0.1]){
-        const x = CRATER.x + Math.cos(a + da) * r, y = CRATER.y + Math.sin(a + da) * r;
-        if(!isBlocked(x, y) && tileAt(x, y) !== 3){ to = {x, y}; break; }
+    for(let s = 0; s <= 1.0001 && !to; s += 0.05){
+      const a = a0 + toGorge * s;
+      for(let r = OUT0 + hash2(c.id || 1, 77) * 10; r < OUT0 + 60 && !to; r += 1.5){
+        const x = CRATER.x + Math.cos(a) * r, y = CRATER.y + Math.sin(a) * r;
+        if(!isBlocked(x, y) && tileAt(x, y) !== 3) to = {x, y};
       }
     }
     if(!to) continue;
     const dx = to.x - c.x, dy = to.y - c.y;
     c.x = to.x; c.y = to.y;
-    for(const key of ['guard', 'post', 'home']) if(c[key] && typeof c[key].x === 'number' && craterD(c[key].x, c[key].y) < CRATER.glass){ c[key] = {x: c[key].x + dx, y: c[key].y + dy}; }
+    for(const key of ['guard', 'post', 'home']) if(c[key] && typeof c[key].x === 'number' && inHeadland(c[key].x, c[key].y)){ c[key] = {x: c[key].x + dx, y: c[key].y + dy}; }
   }
 })();
 /* ---------- AND THEN WHAT LIVES THERE ----------
@@ -30032,7 +30148,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
      you are standing is not under you in any sense that matters. */
   for(const h of U.halls){
     if(h.f !== UNDER) continue;                 /* the sky only reaches the first storey */
-    if(craterD(h.x, h.y) < CRATER.glass + 8) continue;   /* and no hatch opens in the glass */
+    if(inHeadland(h.x, h.y, 8)) continue;   /* and no hatch opens on the headland: the gorge is the only way in */
     let sp = null;
     for(let tries = 0; tries < 30 && !sp; tries++){
       const q = findOpenNear(clamp(h.x + ri(-5, 5), 4, W-5), clamp(h.y + ri(-5, 5), 4, H-5), 6);
@@ -30065,6 +30181,9 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
     if(!sp) continue;
     const sx = Math.floor(sp.x), sy = Math.floor(sp.y);
     if(stairAt(sx, sy)) continue;
+    /* THE SHAFT, NOT ONLY ITS HALL: the spot is looked for up to forty tiles off the hall, and a
+       way down that came up on the headland would be a second way in, under the ridge */
+    if(inHeadland(sx, sy, 8)) continue;
     stairs.push({x: sx, y: sy, from: 0, to: UNDER, shaft: true});
     U.shafts.push({x: sx, y: sy, hall: h, f: UNDER, from: 0});
   }
@@ -30863,7 +30982,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
       if(biomeId[i] && biomeId[i] !== b.id) continue;           /* the first ground laid keeps it */
       const dr = dist(x, y, b.x, b.y);
       if(dr > reach) continue;
-      if(craterD(x, y) < CRATER.approach + 6) continue;
+      if(inHeadland(x, y, 6)) continue;
       /* nobody else's town stands in it, and the bog laps nobody's walls at all */
       if(towns.some(t => t !== b.home && dist(x, y, t.x, t.y) < (t.clearR || 20) + (b.id === BIOME_VAT ? 16 : 8))) continue;
       if(inBunker(x, y)) continue;
@@ -30937,7 +31056,11 @@ function heightAt(wx, wy){
      GC 16 makes a chunk 90 tiles with a 64-tile sphere and 16,200 triangles, so frustum
      culling actually bites. It costs more potential meshes (256 rather than 64) but only the
      ones in view become draw calls, and far fewer are in view. */
-  const GC = 16, CW = W / GC, CH = H / GC;
+  /* AND THE CHUNK IS A SIZE, NOT A COUNT. Sixteen across was 90 tiles on the 1440 world and 128
+     on the 2048 one; at 2560 it became 160, every chunk in view cost 56% more, and `mobile.js`
+     measured the frame at 1,078k triangles against the 900k it had been brought under. Held at
+     128 tiles whatever the map, the camera draws the same ground it did. */
+  const GC = Math.max(8, Math.round(W / 128)), CW = W / GC, CH = H / GC;
   const hAt = (vx, vz) => HV[clamp(vz,0,H)*(W+1)+clamp(vx,0,W)];
   const chunkGeo = (gx, gz) => {
     const geo = new THREE.PlaneGeometry(CW, CH, CW, CH);
@@ -31297,25 +31420,42 @@ fogTex.minFilter = THREE.LinearFilter;
    rather than a look. Each vertex now takes the HIGHEST ground within half a quad, so the
    sheet is a hull OVER the terrain rather than a chord through it. Poke-through measured at
    zero, at every tessellation tried, including the one this replaces. */
+/* ---------- AND IN PIECES, SO WHAT IS OFF SCREEN IS NOT DRAWN ----------
+   One sheet is drawn whole whenever any corner of it is in view, so its cost grew with the map:
+   232,000 triangles at 2048, 363,000 at 2560, and `mobile.js` read the frame over its line.
+   Cut into 256-tile pieces sharing one material, only the pieces in front of the camera become
+   draw calls — a handful of the hundred. Neighbours share their edge vertices at the same
+   world points and take the same hull, so there is no seam. `fogPlane` is the group; all
+   anything outside ever asks of it is `.visible`. */
 const FOG_Q = 6;                                  /* tiles per quad */
-const fogGeo = new THREE.PlaneGeometry(W, H, Math.floor(W/FOG_Q), Math.floor(H/FOG_Q));
+const FOG_CHUNK = 256;
+const fogPlane = new THREE.Group();
 {
-  const pos = fogGeo.attributes.position;
+  const mat = new THREE.MeshBasicMaterial({map: fogTex, transparent: true, depthWrite: false, depthTest: true});
   const half = FOG_Q / 2;
-  for(let i = 0; i < pos.count; i++){
-    const px = pos.getX(i) + W/2, py = -pos.getY(i) + H/2;
-    let hi = -1e9;
-    for(let dy = -half; dy <= half; dy += half) for(let dx = -half; dx <= half; dx += half)
-      hi = Math.max(hi, groundY(clamp(px + dx, 0, W-1), clamp(py + dy, 0, H-1)));
-    pos.setZ(i, hi + 0.18);
+  const nx = Math.ceil(W / FOG_CHUNK), nz = Math.ceil(H / FOG_CHUNK);
+  for(let cz = 0; cz < nz; cz++) for(let cx = 0; cx < nx; cx++){
+    const x0 = cx * FOG_CHUNK, z0 = cz * FOG_CHUNK;
+    const cw = Math.min(FOG_CHUNK, W - x0), ch = Math.min(FOG_CHUNK, H - z0);
+    const geo = new THREE.PlaneGeometry(cw, ch, Math.max(1, Math.round(cw / FOG_Q)), Math.max(1, Math.round(ch / FOG_Q)));
+    /* into the sheet's own frame: local x is world x - W/2, local y is -(world z - H/2) */
+    geo.translate(x0 + cw / 2 - W / 2, -(z0 + ch / 2 - H / 2), 0);
+    const pos = geo.attributes.position;
+    for(let i = 0; i < pos.count; i++){
+      const px = pos.getX(i) + W/2, py = -pos.getY(i) + H/2;
+      let hi = -1e9;
+      for(let dy = -half; dy <= half; dy += half) for(let dx = -half; dx <= half; dx += half)
+        hi = Math.max(hi, groundY(clamp(px + dx, 0, W-1), clamp(py + dy, 0, H-1)));
+      pos.setZ(i, hi + 0.18);
+    }
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+    const m = new THREE.Mesh(geo, mat);
+    m.renderOrder = 2;
+    fogPlane.add(m);
   }
-  pos.needsUpdate = true;
-  fogGeo.computeVertexNormals();
 }
-const fogPlane = new THREE.Mesh(
-  fogGeo,
-  new THREE.MeshBasicMaterial({map: fogTex, transparent: true, depthWrite: false, depthTest: true})
-);
 fogPlane.rotation.x = -Math.PI/2;
 fogPlane.position.set(W/2, 0, H/2);
 fogPlane.renderOrder = 2;
@@ -49905,7 +50045,7 @@ function snapshot(){
     pilgrimDestI: c.pilgrimage ? towns.indexOf(c.pilgrimage.dest) : -1,
   });
   return {
-    v:23, cats, bloodMoon, bloodMoonLast, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields,
+    v:24, cats, bloodMoon, bloodMoonLast, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields,
     /* the person in the jar is written the way everybody else is, and never as the live object
        — a body is full of references to other bodies, and those do not serialise */
     phylacteries: phylacteries.map(p => { const o = {...p}; delete o._rect; if(p.body) o.body = sChar(p.body); return o; }), phylN, noticed, noticeTier, fracture, fractureStage,
@@ -50024,7 +50164,7 @@ function snapshot(){
 function restore(d){
   /* v21 IS THE CRATER. The world is built around the middle of the map now, so every town, road
      and cave in a save made before it stands somewhere the ground no longer agrees with. */
-  if(!d || (d.v||0) < 23){ log(`That save predates ${(d && (d.v||0) >= 21) ? 'the world growing to 2048 across (v23)' : (d && (d.v||0) >= 20) ? 'the crater at the middle of the world (v21)' : 'the map expansion (v20)'}. It can no longer be loaded.`, 'bad'); return; }
+  if(!d || (d.v||0) < 24){ log(`That save predates ${(d && (d.v||0) >= 23) ? 'the crater moving to its headland in the north-east (v24)' : (d && (d.v||0) >= 21) ? 'the world growing to 2048 across (v23)' : (d && (d.v||0) >= 20) ? 'the crater at the middle of the world (v21)' : 'the map expansion (v20)'}. It can no longer be loaded.`, 'bad'); return; }
   chars.length = 0; corpses.length = 0; particles.length = 0; projectiles.length = 0;
   pBuilds.length = 0;
   blocked.clear(); for(const k of baseBlocked) blocked.add(k);
@@ -51532,7 +51672,7 @@ function craterTick(dt){
     sawPlace(tag);
     for(const l of CRATER_LINES[order[i]]) log(l, i >= 1 ? 'bad' : '');
     if(i === 0){
-      threadSet('crater', 'The crater', 'There is a crater at the middle of the world, and the waste around it has been left alone for a reason.',
+      threadSet('crater', 'The crater', 'There is a crater on a headland in the north-east, behind a ridge with one gorge through it, and the waste around it has been left alone for a reason.',
         {hint: 'The inner wall is sheer except at a few breaches. Find one, and go carefully.', mark: {x: CRATER.x, y: CRATER.y}});
       if(who) say(who, pick(['Something happened here. Something big.', 'Nobody lives out this way. I can see why.', 'The trees are all pointing the same way.']));
     }

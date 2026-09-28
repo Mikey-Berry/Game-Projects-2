@@ -166,16 +166,20 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          staircase in. "A place you cannot get into from where you are standing" is a claim
          about where you can STAND. Water cells are skipped, and the count of them is printed so
          the next person can see how much of the grid the sea is taking. */
+      /* AND NOT ON THE CRATER'S HEADLAND, on purpose (2026-09-28, the v24 move): its gorge is the
+         only way onto it, so it has no way down by design — a shaft there would be a second way
+         in, under the ridge. `crater.js` asserts there is none; this skips it, and counts it. */
       const ways = stairs.filter(st => st.to <= F && st.from === 0);
-      let worst = 0, wx = 0, wy = 0, dry = 0, wet = 0;
+      let worst = 0, wx = 0, wy = 0, dry = 0, wet = 0, head = 0;
       for (let y = 40; y < H; y += 40) for (let x = 40; x < W; x += 40) {
         if (tileAt(x, y) === 3) { wet++; continue; }
+        if (typeof inHeadland === 'function' && inHeadland(x, y)) { head++; continue; }
         dry++;
         let d = 1e9;
         for (const st of ways) d = Math.min(d, dist(st.x, st.y, x, y));
         if (d > worst) { worst = d; wx = x; wy = y; }
       }
-      R._ways = `${ways.length} ways down from the surface; of ${dry} dry sample points (${wet} skipped as sea) `
+      R._ways = `${ways.length} ways down from the surface; of ${dry} dry sample points (${wet} skipped as sea, ${head} as the crater's headland) `
               + `the worst is ${wx},${wy} at ${Math.round(worst)} tiles from one`;
       R.andThereIsAWayDownNearby = (ways.length >= 20 && worst < 200)
         ? `and the furthest anywhere on the map gets from a way down is ${Math.round(worst)} tiles, across ${ways.length} of them`

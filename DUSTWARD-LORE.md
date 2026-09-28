@@ -119,7 +119,7 @@ a mere conduit, what might be possible against the source itself? Man challenged
 **succeeded**, and a path opened to Ainzopha'ar's throne.
 
 > WHAT THE FRACTURE ACTUALLY WAS. **He did not wake.** He was disturbed, and he shifted — the
-> equivalent of rolling over in sleep. That alone annihilated the kingdom at the centre in
+> equivalent of rolling over in sleep. That alone annihilated the kingdom at its heart in
 > brilliant light, tore the fabric of reality, and opened a path between the material and the
 > immaterial that has never closed. Nobody knows what would happen if he truly woke. Nobody has
 > any intention of finding out. This is why the Messengers exist (§5).
@@ -637,9 +637,10 @@ of which still sit up. **The vat bog** round the deep redoubt, where what the va
 the ground and kept growing: quickflesh blooms, and pools that still put out half-poured things
 asking for the tender. The living wade it; the dead do not notice it.
 
-**Unbuilt and wanted `[?]`:** the kingdom's crater. It was annihilated at the centre in brilliant
-light and should be the largest landmark in the world. It is also where the rite was performed,
-which makes it the obvious place for the Door to open.
+**Built:** the kingdom's crater. Its heart was annihilated in brilliant light, and it is the largest
+landmark in the world: a headland in the north-east standing out into the salt, walled on the
+landward side by a ridge with one gorge through it. It is also where the rite was performed, and
+the Door opens at the bottom of the bowl.
 
 ## 17. Aesthetic key & voice guide `[★]`
 

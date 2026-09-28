@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* THE CRATER AT THE MIDDLE OF THE WORLD.
+/* THE CRATER ON ITS HEADLAND IN THE NORTH-EAST.
  *
  * The lore bible puts the kingdom "at the centre", annihilated in brilliant light, and calls the
  * crater the largest landmark in the world. The world is now built around it. This asks, on two
@@ -7,10 +7,12 @@
  * default seed, whether the rim is a wall with ways through, whether its ground and its sky say
  * what it is, and whether walking in tells you so in order.
  *
- *   1. it is at the dead centre of the map, in every world asked
- *   2. the world is built around it: no town, Bastion, Guild or slaver camp in the approach; no
- *      ruin, sundered site, redoubt, camp, massif or way down in the glass; no trade road through
- *      it; and nothing worldgen placed left standing in the glass
+ *   1. it stands on a headland in the north-east, in every world asked (moved there 2026-09-28,
+ *      v24): the sea round its far side, a ridge on the landward side, and ONE gorge through it —
+ *      shut, a flood from the bowl reaches nothing off the headland; open, you can walk in
+ *   2. and the world keeps off the whole headland: no town, Bastion, Guild, slaver camp, ruin,
+ *      sundered site, redoubt, camp, massif or way down on it; no trade road onto it; and nothing
+ *      worldgen placed left standing on it
  *   3. the rim is a wall, and the breaches are the ways in: a path from the lip to the floor
  *      exists, never crosses the wall, and has to go round to a breach to get there
  *   4. the shape: a floor held above the water, a crest over five units high, the approach rising
@@ -35,9 +37,9 @@
  *  (13b) and it fights like the second-to-last thing: 900 blood, a flight of Eyes over it, the
  *      light called down on whoever is at it, and a turn at two thirds of its blood
  *  16. the roads go round it: every town is on one network, no road comes inside the approach,
- *      and a road between towns on opposite sides follows the ring (both seeds)
- *  17. and so does everybody on the world's business: a caravaneer and a soldier sent across
- *      the map walk the ring and arrive, a trip between towns the roads do not join directly is
+ *      and a road whose line would cross the headland follows the ring outside the ridge (both seeds)
+ *  17. and so does everybody on the world's business: a caravaneer and a soldier sent from one
+ *      side of the headland to the other walk the ring round the ridge and arrive, a trip between towns the roads do not join directly is
  *      strung together from roads, and one of yours sent the same way goes where they are sent
  *
  * Anything starting '!!' fails the build.
@@ -69,25 +71,59 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const r = await p.evaluate(() => {
       if (typeof CRATER === 'undefined') return { none: true };
       const bits = [];
-      const at = CRATER.x === W / 2 && CRATER.y === H / 2;
-      if (!at) bits.push(`it is at ${CRATER.x},${CRATER.y}, not the middle`);
+      if (typeof inHeadland !== 'function') return { none: true };
+      /* 1. ON ITS HEADLAND: in the north-east quarter, the sea behind it, and the gorge the one
+         way in — sealed, a flood of the ground floor from the bowl reaches nothing off the
+         headland; open, there is a walk from the mouth of the gorge to the approach */
       const R = CRATER;
+      if (!(R.x > W * 0.75 && R.y < H * 0.25)) bits.push(`it is at ${R.x},${R.y}, not in the north-east`);
+      let wet = 0, ring = 0;
+      for (let a = -Math.PI; a < Math.PI; a += 0.02) {
+        if (Math.cos(a - CRATER_GORGE_A) > -0.5) continue;     /* the half facing away from the mainland */
+        const r2 = craterEdge(a) + R.ridge + 4; ring++;
+        if (tileAt(R.x + Math.cos(a) * r2, R.y + Math.sin(a) * r2) === 3) wet++;
+      }
+      if (wet < ring * 0.8) bits.push(`only ${wet} of ${ring} points round its seaward side are sea`);
+      const gorge = [], R1 = R.range + R.ridge + 10;
+      for (let y = Math.floor(R.y - R1); y <= R.y + R1; y++) for (let x = Math.floor(R.x - R1); x <= R.x + R1; x++) {
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        const d = craterD(x + 0.5, y + 0.5);
+        if (d > R.range - 12 && d < R1 && inCraterGorge(x + 0.5, y + 0.5)) { const k = bkey(x, y, 0); if (!blocked.has(k)) { blocked.add(k); gorge.push(k); } }
+      }
+      const seen = new Uint8Array(W * H), q = [Math.floor(R.y) * W + Math.floor(R.x)];
+      seen[q[0]] = 1; let leak = null;
+      while (q.length && !leak) {
+        const i = q.pop(), x = i % W, y = (i / W) | 0;
+        if (!inHeadland(x, y)) { leak = { x, y }; break; }
+        for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+          const nx = x + dx, ny = y + dy, k = ny * W + nx;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H || seen[k] || terr[k] === 3 || blocked.has(bkey(nx, ny, 0))) continue;
+          seen[k] = 1; q.push(k);
+        }
+      }
+      for (const k of gorge) blocked.delete(k);
+      if (leak) bits.push(`with the gorge shut the headland still leaks, at ${leak.x},${leak.y}`);
+      const mouth = { x: R.x + Math.cos(CRATER_GORGE_A) * (R1 + 12), y: R.y + Math.sin(CRATER_GORGE_A) * (R1 + 12) };
+      const inner = { x: R.x + Math.cos(CRATER_GORGE_A) * R.approach, y: R.y + Math.sin(CRATER_GORGE_A) * R.approach };
+      if (!findPath(mouth.x, mouth.y, inner.x, inner.y, 0, 200000)) bits.push('there is no walk in through the gorge');
+      /* 2. and the world keeps off the whole headland, not only the glass */
+      const on = (x, y) => inHeadland(x, y);
+      for (const t of towns) if (on(t.x, t.y)) bits.push(`${t.name} stands on the headland`);
+      if (bastion && on(bastion.x, bastion.y)) bits.push('the Bastion is on the headland');
+      if (guild && on(guild.x, guild.y)) bits.push('the Guild is on the headland');
+      if (slaverCamp && on(slaverCamp.x, slaverCamp.y)) bits.push('the slaver camp is on the headland');
+      const onIt = (list, name, xy) => { const n = list.filter(o => on(...xy(o))).length; if (n) bits.push(`${n} ${name} on the headland`); };
+      onIt(ruins, 'ruins', o => [o.x, o.y]);
+      onIt(corpseSites, 'sundered sites', o => [o.x, o.y]);
+      onIt(redoubts, 'redoubts', o => [o.x, o.y]);
+      onIt(camps, 'camps', o => [o.x, o.y]);
+      onIt(mountains.map(m => ({ x: m.x, y: m.y })), 'massifs', o => [o.x, o.y]);
+      onIt(stairs.filter(s => s.from === 0 && s.to < 0), 'ways down', o => [o.x, o.y]);
+      const roads = tradeRoutes.filter(rt => rt.wps.some(w => on(w.x, w.y))).length;
+      if (roads) bits.push(`${roads} trade roads run onto the headland`);
+      const strays = chars.filter(c => (c.floor || 0) === 0 && !c.craterOwn && c.state !== 'dead' && on(c.x, c.y)).map(c => c.name);
+      if (strays.length) bits.push(`${strays.length} bodies left on the headland (${strays.slice(0, 3).join(', ')})`);
       const within = (x, y, r) => craterD(x, y) < r;
-      for (const t of towns) if (within(t.x, t.y, R.approach + 8)) bits.push(`${t.name} stands ${Math.round(craterD(t.x, t.y))} from the middle`);
-      if (bastion && within(bastion.x, bastion.y, R.approach)) bits.push('the Bastion is in the approach');
-      if (guild && within(guild.x, guild.y, R.approach)) bits.push('the Guild is in the approach');
-      if (slaverCamp && within(slaverCamp.x, slaverCamp.y, R.approach)) bits.push('the slaver camp is in the approach');
-      const inGlass = (list, name, xy) => { const n = list.filter(o => within(...xy(o), R.glass)).length; if (n) bits.push(`${n} ${name} in the glass`); };
-      inGlass(ruins, 'ruins', o => [o.x, o.y]);
-      inGlass(corpseSites, 'sundered sites', o => [o.x, o.y]);
-      inGlass(redoubts, 'redoubts', o => [o.x, o.y]);
-      inGlass(camps, 'camps', o => [o.x, o.y]);
-      inGlass(mountains.map(m => ({ x: m.x, y: m.y })), 'massifs', o => [o.x, o.y]);
-      inGlass(stairs.filter(s => s.from === 0 && s.to < 0), 'ways down', o => [o.x, o.y]);
-      const roads = tradeRoutes.filter(rt => rt.wps.some(w => within(w.x, w.y, R.glass))).length;
-      if (roads) bits.push(`${roads} trade roads run through the glass`);
-      const strays = chars.filter(c => (c.floor || 0) === 0 && !c.craterOwn && within(c.x, c.y, R.glass)).map(c => c.name);
-      if (strays.length) bits.push(`${strays.length} bodies left in the glass (${strays.slice(0, 3).join(', ')})`);
       /* 16. the roads */
       let roadNote = '';
       if (typeof craterRingNodes !== 'undefined') {
@@ -109,7 +145,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const tag = seed ? `seed ${seed}` : 'the default seed';
     if (r.none) { out['builtAround' + (seed || '')] = '!! THERE IS NO CRATER IN THIS BUILD'; await p.close(); continue; }
     out[seed ? 'builtAroundSeed1' : 'builtAround'] = r.bits.length ? `!! ${tag.toUpperCase()}: ${r.bits.join('; ').toUpperCase()}`
-      : `on ${tag} it is at the dead centre, the nearest town is ${r.nearest} tiles out, nothing named or walled stands in the approach or the glass${r.roadNote}`;
+      : `on ${tag} it stands on its headland in the north-east, the sea round its far side and the gorge the only way in (shut, nothing off the headland can be reached from the bowl); the nearest town is ${r.nearest} tiles out, and nothing the world places stands on the headland${r.roadNote}`;
     if (seed) { await p.close(); continue; }
 
     /* ---- 3 to 7, on the default world ---- */
@@ -385,9 +421,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       }
       /* ---- 17. travellers go round ---- */
       if (typeof craterShuns !== 'undefined') {
+        /* EITHER SIDE OF THE HEADLAND, ON THE MAINLAND. Staged across the middle of a crater
+           that stood in the middle of the world; in the north-east corner both of those ends
+           are out at sea. West of the ridge to south of it is a straight line that runs over
+           the headland, which is the trip that has to go round. */
         const trip = (name, faction) => {
-          const a = 0.9, sx = C.x + Math.cos(a) * 300, sy = C.y + Math.sin(a) * 300;
-          const gx = C.x - Math.cos(a) * 300, gy = C.y - Math.sin(a) * 300;
+          const out = C.range + C.ridge + 70, aS = CRATER_GORGE_A + 0.75, aG = CRATER_GORGE_A - 0.75;
+          const sx = C.x + Math.cos(aS) * out, sy = C.y + Math.sin(aS) * out;
+          const gx = C.x + Math.cos(aG) * out, gy = C.y + Math.sin(aG) * out;
           const s0 = findOpenNear(sx, sy, 6), g0 = findOpenNear(gx, gy, 6);
           const c = makeChar(name, faction, s0.x, s0.y, { atk: 10, def: 10, tough: 60, ath: 6 });
           c.__probe = true; c.noFight = true; chars.push(c);
@@ -409,12 +450,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           if (!t.arrived) bits.push(`${who} sent across the map did not arrive in ${Math.round(t.secs)}s`);
           if (t.minD < C.approach) bits.push(`${who} came within ${Math.round(t.minD)} of the middle`);
         }
-        if (!(mine.minD < C.approach)) bits.push(`one of yours sent straight across kept out too (${Math.round(mine.minD)})`);
+        /* NOT "WALKS IN BECAUSE YOU SENT THEM" ANY MORE: the ridge stands between, so one of yours
+           goes round it too — not steered by the ring, but by the ground. What is asked is that
+           the pathing finds its own way round and gets there. */
+        if (!mine.arrived) bits.push(`one of yours sent the same way did not arrive in ${Math.round(mine.secs)}s`);
         if (via && via.minD < C.approach) bits.push(`the way from ${via.from} to ${via.to} comes within ${Math.round(via.minD)}`);
         R.travellersGoRound = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
-          : `sent across the map, a caravaneer and a soldier walk the ring and arrive (${Math.round(cara.secs)}s and ${Math.round(sold.secs)}s, never nearer than ${Math.round(Math.min(cara.minD, sold.minD))} to the middle)` +
+          : `sent from one side of the headland to the other, a caravaneer and a soldier walk the ring and arrive (${Math.round(cara.secs)}s and ${Math.round(sold.secs)}s, never nearer than ${Math.round(Math.min(cara.minD, sold.minD))} to the middle)` +
             `${via ? `; ${via.from} to ${via.to} is strung together from ${via.hops} roads and keeps ${Math.round(via.minD)} out` : ''}` +
-            `; one of yours sent the same way walks in to ${Math.round(mine.minD)}, because you sent them`;
+            `; one of yours sent the same way is not steered by the ring, finds its own way round the ridge, and arrives (${Math.round(mine.secs)}s)`;
       } else R.travellersGoRound = '!! NOBODY IN THIS BUILD KNOWS TO GO ROUND';
       /* ---- 7. an old save ---- */
       {
