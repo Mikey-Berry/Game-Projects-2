@@ -4016,7 +4016,14 @@ function shedPhylactery(c){
     weapon: c.weapon, armor: c.armor, pack: c.pack, inv: {...(c.inv||{})},
     spouse: c.spouse || 0, partner: c.partner || 0,
   };
-  const p = {id: ++phylN, x: c.x, y: c.y, soul};
+  /* ---------- AND THE WHOLE PERSON, NOT A NOTE ABOUT THEM ----------
+     "Upon rebuilding Lyonart from his phylactery, he takes on the generic reliquary lich model."
+     `soul` is eleven fields, and the rebuild made a brand-new body out of it — so his face was
+     gone (and the face is the only thing that gives a lich Lyonart's own head), along with his
+     sex, house, conviction, regard, attunements, and the id every roll of his look comes off.
+     `body` is the person themselves, kept whole; `soul` stays for the menu's text and for a
+     phylactery that came out of a save written before this. */
+  const p = {id: ++phylN, x: c.x, y: c.y, soul, body: c};
   phylacteries.push(p);
   /* the body is finished; the will is not */
   clearOrders(c);
@@ -4077,7 +4084,7 @@ function shedHusk(c){
        be a second ascension nobody asked for. */
     vesselPattern: c.vesselPattern || null,
   };
-  const p = {id: ++phylN, x: c.x, y: c.y, soul, husk: true};
+  const p = {id: ++phylN, x: c.x, y: c.y, soul, husk: true, body: c};   /* the whole person, as the jar keeps them */
   phylacteries.push(p);
   clearOrders(c);
   selected = selected.filter(x => x !== c);
@@ -4088,6 +4095,25 @@ function shedHusk(c){
   log('Carry it to a Forge and re-etch them. Leave it, and they wait in the metal.', '');
   refreshSquadBar(); refreshCharPanel();
 }
+/* ---------- THE PERSON STANDS BACK UP, NOT A STRANGER WITH THEIR NAME ----------
+   The body the jar kept, put back on its feet whole: same id, so the same look off every roll
+   and the same place in everybody's memory; same face, sex, house, conviction, regard and
+   attunements, because nothing of the person was ever taken out of it. What IS new is the
+   flesh — every part mended, nothing severed, nothing bleeding — and they come up with no
+   orders, standing where the rite was done. */
+function standBackUp(p, at){
+  const c = p.body;
+  c._shed = false; c.state = 'ok';
+  c.x = at.x; c.y = at.y; c.floor = 0;
+  c.blood = c.maxBlood; c.hunger = 100;
+  for(const part of Object.values(c.parts || {})){ part.hp = part.max; part.bleed = 0; part.severed = false; part.pros = false; }
+  c.target = null; c.targetManual = false; c.windup = null;
+  c.staggerT = 0; c.downT = 0; c.recoverT = 0; c.shoveT = 0; c.fleeT = 0;
+  c.carry = null; c.carryList = null; c.captured = false; c.drag = null; c.gnaw = null;
+  clearOrders(c);
+  chars.push(c);
+  return c;
+}
 function reEtchHusk(carrier, bench){
   const p = carrier.phyl;
   if(!p || !p.husk) return false;
@@ -4095,6 +4121,17 @@ function reEtchHusk(carrier, bench){
   campSpend(HUSK_COST);
   const s2 = p.soul;
   const at = findOpenNear(bench.x + 1, bench.y + 1.5, 4);
+  if(p.body){
+    const c = standBackUp(p, at);
+    carrier.phyl = null; p.carried = false;
+    const pi = phylacteries.indexOf(p); if(pi >= 0) phylacteries.splice(pi, 1);
+    addSpecks(c.x, c.y, '#e06a2a', 30);
+    say(c, 'The fit is better this time.');
+    log(`${c.name} is re-etched. Metal forgets nothing.`, 'good');
+    refreshSquadBar(); refreshCharPanel(); refreshInv();
+    return true;
+  }
+  /* a husk from a save written before it kept the whole person: built from the note, as ever */
   const c = makeChar(s2.name, 'player', at.x, at.y, {...s2.stats, gift: s2.gift, race: s2.race});
   c.immortal = 'transmute'; c.construct = true; c.big = 1.15; c.omni = !!s2.omni;
   c.vesselPattern = s2.vesselPattern || null;
@@ -4180,6 +4217,19 @@ function rebuildLich(carrier, circle){
   campSpend(REBUILD_COST);
   const s2 = p.soul;
   const at = findOpenNear(circle.x + 1, circle.y + 2.5, 4);
+  if(p.body){
+    const c = standBackUp(p, at);
+    c.lich = true; c.undead = true;
+    if(c.att) c.att.dark = Math.max(c.att.dark || 0, 3);   /* the floor the rite has always set, never a cut */
+    carrier.phyl = null; p.carried = false;
+    const pi = phylacteries.indexOf(p); if(pi >= 0) phylacteries.splice(pi, 1);
+    addSpecks(c.x, c.y, '#8a6ab5', 30);
+    say(c, '...I remain.');
+    log(`${c.name} is rebuilt. The flesh was always the negotiable part.`, 'good');
+    refreshSquadBar(); refreshCharPanel(); refreshInv();
+    return true;
+  }
+  /* a phylactery from a save written before it kept the whole person: built from the note */
   const c = makeChar(s2.name, 'player', at.x, at.y, {...s2.stats, gift: s2.gift, race: s2.race});
   c.lich = true; if(c.att) c.att.dark = 3; c.undead = true; c.omni = !!s2.omni;
   c.age = s2.age; c.goal = s2.goal;
@@ -49855,7 +49905,10 @@ function snapshot(){
     pilgrimDestI: c.pilgrimage ? towns.indexOf(c.pilgrimage.dest) : -1,
   });
   return {
-    v:23, cats, bloodMoon, bloodMoonLast, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields, phylacteries, phylN, noticed, noticeTier, fracture, fractureStage,
+    v:23, cats, bloodMoon, bloodMoonLast, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields,
+    /* the person in the jar is written the way everybody else is, and never as the live object
+       — a body is full of references to other bodies, and those do not serialise */
+    phylacteries: phylacteries.map(p => { const o = {...p}; delete o._rect; if(p.body) o.body = sChar(p.body); return o; }), phylN, noticed, noticeTier, fracture, fractureStage,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin,
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen}, hiresPaid: {...hiresPaid},
@@ -50171,7 +50224,8 @@ function restore(d){
   if(Array.isArray(d.squadGroups)) for(const g of d.squadGroups) squadGroups.push({name:g.name, open:g.open !== false});
   cats = d.cats; if(d.chronicle){ chronicle.length = 0; for(const e of d.chronicle) chronicle.push(e); };
   phylacteries.length = 0;
-  if(Array.isArray(d.phylacteries)) for(const p of d.phylacteries) phylacteries.push({...p, _rect:null});
+  /* the person in each jar comes back below, once `revive` exists and the roster has been read */
+  if(Array.isArray(d.phylacteries)) for(const p of d.phylacteries) phylacteries.push({...p, _rect:null, body:null, _bodyRec: p.body || null});
   phylN = d.phylN || 0;
   noticed = d.noticed || 0;
   fracture = d.fracture || 0;
@@ -50444,6 +50498,9 @@ function restore(d){
     return c;
   };
   for(const s of d.chars) chars.push(revive(s));
+  /* and the people waiting in phylacteries and husks, revived as everybody else is but kept off
+     the roster — they are not in the world until somebody stands them back up */
+  for(const p of phylacteries) if(p._bodyRec){ p.body = revive(p._bodyRec); p.body._shed = true; p._bodyRec = null; }
   /* ---------- AND THE DEEP'S LISTS ARE REBUILT FROM THE BODIES, AFTER THERE ARE ANY ----------
      `restore` makes fresh `chars` objects, so `deepFolk` and `stonewakes` would otherwise hold
      references to the world that was here before the load — bodies nothing else in the game can
