@@ -697,8 +697,8 @@ function clamp(v,a,b){ return v<a?a:v>b?b:v; }
                    onto stone; the dust falls here instead of drifting
      the RIM       a lip you can climb, and an inner wall you cannot, except at the breaches
      the BOWL      the floor of what was the capital, and the wound at the bottom of it
-   NO DICE. The centre is fixed, the breaches are hashed off the seed the world was asked for,
-   and the rim's wobble is noise; nothing here draws from `rnd()`.
+   NO DICE. The centre is fixed, the breaches face the gorge at angles hashed off the seed the
+   world was asked for, and the rim's wobble is noise; nothing here draws from `rnd()`.
 
    ---------- AND IT IS NOT IN THE MIDDLE ANY MORE ----------
    "Having it at the world's center makes it a bit too easy to stumble upon. Perhaps a northern
@@ -736,9 +736,47 @@ function craterGorgeSide(x, y){
 /* is this tile in the gorge: within its half-width of the line out from the centre, on its side */
 function inCraterGorge(x, y){ return craterGorgeSide(x, y) < 0; }
 const CRATER_SEED = seed;
-const CRATER_BREACH_W = 0.09;               /* radians either side of a breach's centre: ~9 tiles of pass at the rim */
-const CRATER_BREACHES = [0, 1, 2, 3].map(i =>
-  i * Math.PI / 2 + (hash2(CRATER_SEED & 0xffff, 101 + i) - 0.5) * 0.9 + hash2(CRATER_SEED >>> 16, 7) * Math.PI * 2);
+/* ---------- TWO BREACHES, AND BOTH OF THEM FACE THE GORGE ----------
+   There were four, at angles hashed round the whole ring, so the way down into the bowl could be
+   on the far side from the only way onto the headland, and the seaward lip was as open as the
+   near one. Now: THE MAIN BREACH within ten degrees of the gorge's own bearing, so the notch in
+   the crest is what you see ahead of you all the way across the Scorch; and A NARROWER ONE fifty
+   to seventy degrees off to one side (which side is the seed's), a flank and a way out. The rest
+   of the ring is wall. Widths are radians either side of the centre: the wall stands where
+   `craterBreachAt` is under 0.35, so 0.125 opens about thirteen tiles at the rim and 0.07 about
+   seven. */
+const CRATER_BREACHES = [
+  CRATER_GORGE_A + (hash2(CRATER_SEED & 0xffff, 101) - 0.5) * 0.35,
+  CRATER_GORGE_A + (hash2(CRATER_SEED >>> 16, 7) < 0.5 ? -1 : 1) * (0.87 + hash2(CRATER_SEED & 0xffff, 103) * 0.35),
+];
+const CRATER_BREACH_WS = [0.125, 0.07];
+/* ---------- THE ORDER'S POST AT THE PASS: WHERE IT STANDS ----------
+   A barricade across the gorge three tiles in from its outer mouth, with a gap in the middle a
+   body can get through and the gorge's own walls on either side, so the gap is the whole of the
+   way in; the Order's people stand at it and camp just outside. `PASS` is the middle of the
+   gap; `passAt(out, lat)` is a point `out` tiles further out along the gorge's line and `lat`
+   to the side. Pure, and read by the tiles, the posts, the drawing and the road. (Who stands
+   there and what they do: see THE PASS IS HELD.) */
+const PASS = (() => {
+  const A = CRATER_GORGE_A, ux = Math.cos(A), uy = Math.sin(A), along = craterEdge(A) + CRATER.ridge - 3;
+  return {ux, uy, vx: -uy, vy: ux, along, x: CRATER.x + ux * along, y: CRATER.y + uy * along};
+})();
+function passAt(out, lat){ return {x: PASS.x + PASS.ux * out + PASS.vx * lat, y: PASS.y + PASS.uy * out + PASS.vy * lat}; }
+/* whether anybody holds it yet, whether it has been short since some day, whether one of yours is
+   at the barricade, and whether they have been told. Up here and not with the rest of it because
+   `hostile` asks `alarm`, and `hostile` can be asked while the world is still being made. Saved. */
+const passState = {manned: false, shortSince: null, alarm: false, warned: false};
+/* the barricade's tiles: a band two tiles deep across the gorge floor, less the gap */
+function passGateTiles(){
+  const out = [];
+  for(let y = Math.floor(PASS.y - 14); y <= PASS.y + 14; y++) for(let x = Math.floor(PASS.x - 14); x <= PASS.x + 14; x++){
+    const dx = x + 0.5 - PASS.x, dy = y + 0.5 - PASS.y;
+    const a = dx * PASS.ux + dy * PASS.uy, l = dx * PASS.vx + dy * PASS.vy;
+    if(Math.abs(a) > 1.05 || Math.abs(l) < 1.8 || craterGorgeSide(x + 0.5, y + 0.5) > 1) continue;
+    out.push([x, y]);
+  }
+  return out;
+}
 function craterD(x, y){ return dist(x, y, CRATER.x, CRATER.y); }
 function craterAng(x, y){ return Math.atan2(y - CRATER.y, x - CRATER.x); }
 /* which stretch a point is in, or null off the headland (the ridge and the gorge included) */
@@ -761,9 +799,10 @@ function craterDepth(x, y){
 function craterWobble(a){ return (vnoise(Math.cos(a) * 2.2 + 20, Math.sin(a) * 2.2 + 20) - 0.5) * 6; }
 /* 1 at the middle of a breach, falling to 0 at its edges, 0 everywhere else on the ring */
 function craterBreachAt(a){
-  for(const b of CRATER_BREACHES){
-    const d = Math.abs((((a - b) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI);
-    if(d < CRATER_BREACH_W) return 1 - d / CRATER_BREACH_W;
+  for(let i = 0; i < CRATER_BREACHES.length; i++){
+    const w = CRATER_BREACH_WS[i];
+    const d = Math.abs((((a - CRATER_BREACHES[i]) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI);
+    if(d < w) return 1 - d / w;
   }
   return 0;
 }
@@ -6457,7 +6496,7 @@ function questionTick(){
 function messengerKind(c){ return c.gauntKind === 'messenger' || c.gauntKind === 'herald'; }
 function messengersAbroad(){
   let n = 0;
-  for(const o of chars) if(messengerKind(o) && o.state !== 'dead' && !o.craterOwn) n++;
+  for(const o of chars) if(messengerKind(o) && o.state !== 'dead' && !o.craterOwn && !o.gatePost) n++;
   return n;
 }
 function messengerCap(){ return 2 + (fractureStage >= 3 ? 1 : 0) + (fractureStage >= 5 ? 1 : 0); }
@@ -9359,6 +9398,7 @@ function spawnDrifter(){
 }
 /* ---------- trade routes: the roads everyone actually walks ---------- */
 const tradeRoutes = [];   /* {aI, bI, wps:[{x,y},...]} */
+const craterRoad = {wps: []};   /* the road out to the Order's post at the pass: see the end of computeTradeRoutes */
 /* ---------- A WAYPOINT YOU CANNOT STAND ON IS PASSED, NOT REACHED ----------
    "Escorts and caravans get caught up in sundered ground sites. The pathing is weird around
     them... Bodyguard jobs basically shut down around them."
@@ -9478,6 +9518,21 @@ function routeFor(fromT, toT){
     if(!pairs.length) break;
     pairs.sort((a, b) => a[0] - b[0]);
     if(!pairs.some(([, i, j]) => link(i, j))) break;
+  }
+  /* ---------- AND ONE ROAD THAT GOES NOWHERE ELSE ----------
+     From wherever the network comes nearest, out to the Order's camp at the mouth of the gorge:
+     "makes it an obvious entrance rather than something you randomly stumble into". Not a trade
+     road — no caravan runs it, and it is kept out of `tradeRoutes` so nothing that places things
+     off the roads, or routes along them, knows it is there. It is on the ground and that is all. */
+  {
+    const camp = passAt(20, 0);
+    let best = null, bd = Infinity;
+    for(const rt of tradeRoutes) for(const w of rt.wps){ const d = dist(w.x, w.y, camp.x, camp.y); if(d < bd){ bd = d; best = w; } }
+    const path = best && roadBetween(openAt(camp.x, camp.y), {x: best.x, y: best.y});
+    if(path && path.length >= 4){
+      craterRoad.wps = path.filter((_, k) => k % 6 === 0);
+      craterRoad.wps.push(path[path.length - 1]);
+    }
   }
   for(const k of seal) blocked.delete(k);
 })();
@@ -13046,6 +13101,23 @@ function tryBuild(type, tx, ty, quiet){
   if(type==='rampart' && decks.has(bkey(tx, ty, 1))){ refuse('There is already a way up there.'); return false; }
   /* not inside towns you don't own; your own city is yours to build in */
   if(towns.some(t => !t.playerRuled && dist(t.x,t.y,tx,ty) < 16)){ log('The town does not allow squatters.', 'bad'); return false; }
+  /* ---------- NOTHING PAST THE MARCHES ----------
+     "Honestly disabling buildings anywhere past the marches is fine." The Marches are the forward
+     camp; from the Ashfall in, and in the gorge itself, nothing is staked out at all, so the walk
+     in and the arena stay what they are and nobody walls the only way in shut. And the waylines
+     do not run onto the headland, the Marches included: whoever goes in walks the gorge, past
+     the Order, every time. (One can still be raised on the mainland outside it.) */
+  {
+    const onIt = (x, y) => craterD(x, y) < craterEdge(craterAng(x, y)) + CRATER.ridge;
+    let on = false, past = false;
+    for(let j = ty; j < ty + bt.h; j++) for(let i = tx; i < tx + bt.w; i++){
+      if(!onIt(i + .5, j + .5)) continue;
+      on = true;
+      if(craterRing(i + .5, j + .5) !== 'marches') past = true;
+    }
+    if(on && type === 'way'){ refuse('The waylines do not run onto the headland. Whoever goes in walks the gorge.'); return false; }
+    if(past){ refuse('Nothing will stand past the Marches, or in the pass. Build on the Marches or not at all.'); return false; }
+  }
   if((type==='circle' || type==='crypt') && !research.done.rites_binding){ log('Requires research: Rites of Binding.', 'bad'); return false; }
   if(type==='way' && !research.done.waylines){ log('Requires research: The Waylines.', 'bad'); return false; }
   if((type==='kiln' || type==='smelter') && !research.done.smelting){ log('Requires research: Smelting.', 'bad'); return false; }
@@ -14367,6 +14439,12 @@ function hostile(a, b){
      gaol IS the town's answer to what you did; a cell that gets you killed is not a sentence.
      Both ways round: a prisoner is neither a target nor a threat. */
   if(a.jailedAt || b.jailedAt) return false;
+  /* ---------- THE PASS IS HELD ----------
+     Once one of yours is at the Order's barricade (`passState.alarm`), everybody posted there is
+     at war with everybody of yours, whatever the Order thinks of you anywhere else. Short of the
+     barricade the ordinary rules below decide, so a party the Order would not look twice at can
+     walk up and be told no. */
+  if(passState.alarm && (a.gatePost || b.gatePost) && (a.gatePost ? b : a).faction === 'player') return true;
   /* an immortal in your debt will not raise a hand to you */
   if((a.immortal && a.friendly && b.faction === 'player') || (b.immortal && b.friendly && a.faction === 'player')) return false;
   /* ---------- THE PIT: THE BOUT IS THE ONLY QUARREL, AND IT ENDS WHEN THE BOUT DOES ----------
@@ -21159,15 +21237,58 @@ function corpseSiteTick(wdt){
    They burn anyone they land on, the dead included. They do not touch the Watchers.
    Everything spawned here carries `craterOwn`, which is what the restock counts and what the
    clearing pass at worldgen leaves alone. It is saved. */
+/* `heavy` is what the harder end of the clock adds to the mix (see `craterKind`). BREACH is two
+   posted at the head of each breach, out of what used to be the glass's fourteen: the ways down
+   are held, and the glass has four fewer wandering it for it. */
 const CRATER_POP = {
-  glass: {want: 14, kinds: ['gaunt', 'stalker', 'gaunt', 'shrike', 'stalker'], r0: CRATER.crest + 6, r1: CRATER.glass - 4},
-  bowl:  {want: 10, kinds: ['choir', 'maw', 'shrike', 'gaunt', 'stalker'],   r0: 10, r1: CRATER.rim - 12},
+  glass: {want: 10, kinds: ['gaunt', 'stalker', 'gaunt', 'shrike', 'stalker'], heavy: ['shrike', 'stalker'], r0: CRATER.crest + 6, r1: CRATER.glass - 4},
+  bowl:  {want: 10, kinds: ['choir', 'maw', 'shrike', 'gaunt', 'stalker'],   heavy: ['choir', 'maw', 'shrike'], r0: 10, r1: CRATER.rim - 12},
+  breach: {want: 4, kinds: ['stalker', 'gaunt'], heavy: ['stalker'], breach: true},
   /* the walk in's own (`walk: true`): made while one of yours is on the headland, and the night
      ones (`night: true`) are nightborn, so the dawn takes them back like any other */
-  scorch:      {want: 4, kinds: ['gaunt', 'stalker', 'gaunt'],          r0: CRATER.glass + 4,  r1: CRATER.scorch - 4,   walk: true},
-  scorchNight: {want: 6, kinds: ['gaunt', 'stalker', 'shrike', 'gaunt'], r0: CRATER.glass + 4,  r1: CRATER.scorch - 4,   walk: true, night: true},
-  ashfall:     {want: 6, kinds: ['gaunt', 'stalker', 'gaunt'],          r0: CRATER.scorch + 4, r1: CRATER.ashfall - 10, walk: true, night: true},
+  scorch:      {want: 4, kinds: ['gaunt', 'stalker', 'gaunt'],          heavy: ['stalker', 'shrike'], r0: CRATER.glass + 4,  r1: CRATER.scorch - 4,   walk: true},
+  scorchNight: {want: 6, kinds: ['gaunt', 'stalker', 'shrike', 'gaunt'], heavy: ['stalker', 'shrike'], r0: CRATER.glass + 4,  r1: CRATER.scorch - 4,   walk: true, night: true},
+  ashfall:     {want: 6, kinds: ['gaunt', 'stalker', 'gaunt'],          heavy: ['stalker', 'shrike'], r0: CRATER.scorch + 4, r1: CRATER.ashfall - 10, walk: true, night: true},
 };
+/* ---------- AND IT GROWS WITH THE CLOCK, BUT NOT BY MUCH ----------
+   "Let's dial the watcher count down to a max of say 30% more. The fracture clock advancing
+    already adds a lot of pressure and I don't want it to be overkill here."
+   A tenth more of every stretch's number for each step of the tide (`eldritchTide`, 0 to 3), so
+   thirty percent at the very end and never more; and from the first step, a heavier kind in the
+   mix more often. At tier 0 the numbers and the mix are exactly what they were, and no die is
+   thrown for the mix (a roll of "never" still moves the stream). The EXTRA is only made while
+   somebody of yours is on the headland, like the walk in's own: a world nobody walks into keeps
+   its old numbers and draws nothing for the new ones. */
+const CRATER_GROWTH = 0.1;
+function craterWant(ring, onHead){
+  const P = CRATER_POP[ring];
+  if(P.breach) return P.want;          /* two posts to a breach, and a post is a post */
+  return onHead ? Math.round(P.want * (1 + CRATER_GROWTH * Math.min(3, eldritchTide()))) : P.want;
+}
+function craterKind(P){
+  const tier = Math.min(3, eldritchTide());
+  return tier > 0 && rnd() < 0.12 * tier ? pick(P.heavy || P.kinds) : pick(P.kinds);
+}
+/* THE POSTS AT THE BREACHES: slot i is breach i % n, one to either side of its head, out on the
+   lip. Pure, so a regrown guard goes back to the slot that is empty and nothing needs saving. */
+function craterBreachSpot(i){
+  const n = CRATER_BREACHES.length, b = CRATER_BREACHES[i % n], side = Math.floor(i / n) % 2 ? 1 : -1;
+  for(let out = 7; out < 14; out++){
+    const R = CRATER.rim + craterWobble(b) + out;
+    const x = CRATER.x + Math.cos(b) * R - Math.sin(b) * side * 2.5, y = CRATER.y + Math.sin(b) * R + Math.cos(b) * side * 2.5;
+    if(!isBlocked(x, y)) return {x, y};
+  }
+  return {x: CRATER.x + Math.cos(b) * (CRATER.rim + 10), y: CRATER.y + Math.sin(b) * (CRATER.rim + 10)};
+}
+/* the first breach post nobody alive is standing at, or -1 */
+function craterBreachEmpty(){
+  const held = rareFolk().crater.filter(c => c.craterOwn === 'breach' && c.state !== 'dead' && c.guard);
+  for(let i = 0; i < CRATER_POP.breach.want; i++){
+    const q = craterBreachSpot(i);
+    if(!held.some(c => dist(c.guard.x, c.guard.y, q.x, q.y) < 1.5)) return i;
+  }
+  return -1;
+}
 /* THE MARCHES ARE SAFE. "Make the Marches safe." A point on them, for the dark that would follow
    somebody there: the crater's own, and anything else of the Watchers' on the headland, drop a
    quarry that stands on the Marches and go back (`physics`); the night sends nothing onto them and
@@ -21193,7 +21314,7 @@ function craterSpot(r0, r1){
 function craterPlace(g, q){ if(g){ g.x = q.x; g.y = q.y; } return g; }
 function craterSpawn(ring, kind){
   const P = CRATER_POP[ring] || CRATER_POP.bowl;
-  const q = craterSpot(P.r0, P.r1);
+  const q = P.breach ? craterBreachSpot(Math.max(0, craterBreachEmpty())) : craterSpot(P.r0, P.r1);
   const g = craterPlace(spawnGaunt(kind || pick(P.kinds), q.x, q.y), q);
   g.nightborn = false; g.floor = 0;
   g.guard = {x: g.x, y: g.y};
@@ -21312,16 +21433,19 @@ function guardianWithdraws(){
 }
 /* the hours: what the crater has lost, it grows back, but never where one of yours can see it */
 function craterDangerTick(dh){
-  const pop = {glass: 0, bowl: 0, messenger: 0, scorch: 0, scorchNight: 0, ashfall: 0};
+  const pop = {glass: 0, bowl: 0, breach: 0, messenger: 0, scorch: 0, scorchNight: 0, ashfall: 0};
   for(const c of rareFolk().crater) if(c.state !== 'dead' && pop[c.craterOwn] !== undefined) pop[c.craterOwn]++;
   /* thirty-six is sight, measured at the spot the body is put down on (`craterPlace`) */
   const unseen = (q) => !player().some(o => o.state !== 'dead' && dist(o.x, o.y, q.x, q.y) < 36);
-  for(const ring of ['glass', 'bowl']){
-    const P = CRATER_POP[ring];
-    if(pop[ring] >= P.want || rnd() >= dh * 0.08 * (P.want - pop[ring])) continue;
-    const q = craterSpot(P.r0, P.r1);
+  const onHead = player().some(o => o.state !== 'dead' && (o.floor || 0) === 0 && inHeadland(o.x, o.y));
+  for(const ring of ['glass', 'bowl', 'breach']){
+    const P = CRATER_POP[ring], want = craterWant(ring, onHead);
+    if(pop[ring] >= want || rnd() >= dh * 0.08 * (want - pop[ring])) continue;
+    let q;
+    if(P.breach){ const i = craterBreachEmpty(); if(i < 0) continue; q = craterBreachSpot(i); }
+    else q = craterSpot(P.r0, P.r1);
     if(!unseen(q)) continue;
-    const g = craterPlace(spawnGaunt(pick(P.kinds), q.x, q.y), q);
+    const g = craterPlace(spawnGaunt(craterKind(P), q.x, q.y), q);
     g.nightborn = false; g.floor = 0; g.guard = {x: g.x, y: g.y}; g.craterOwn = ring;
   }
   if(pop.messenger < CRATER_MESSENGERS && rnd() < dh * 0.012){
@@ -21335,16 +21459,121 @@ function craterDangerTick(dh){
      are drawn for them otherwise, so a world that never goes there runs exactly as it did. Faster
      than the crater's restock, because they should be in place by the time anybody gets that far
      in; still never where one of yours can see them put down. */
-  if(!player().some(o => o.state !== 'dead' && (o.floor || 0) === 0 && inHeadland(o.x, o.y))) return;
+  if(!onHead) return;
   for(const ring of ['scorch', 'scorchNight', 'ashfall']){
-    const P = CRATER_POP[ring];
+    const P = CRATER_POP[ring], want = craterWant(ring, true);
     if(P.night && !isNight()) continue;
-    if(pop[ring] >= P.want || rnd() >= dh * 0.5 * (P.want - pop[ring])) continue;
+    if(pop[ring] >= want || rnd() >= dh * 0.5 * (want - pop[ring])) continue;
     const q = craterSpot(P.r0, P.r1);
     if(!unseen(q)) continue;
-    const g = craterPlace(spawnGaunt(pick(P.kinds), q.x, q.y), q);
+    const g = craterPlace(spawnGaunt(craterKind(P), q.x, q.y), q);
     g.nightborn = !!P.night; g.floor = 0; g.guard = {x: g.x, y: g.y}; g.craterOwn = ring; g.faction = 'gaunt';
   }
+}
+/* ---------- THE PASS IS HELD ----------
+   "I would introduce some more tension - perhaps even a Messenger with them. They deny you
+    entrance and you need to fight if you want to go in."
+   The Order holds the mouth of the gorge: two Paladins at the gap in the barricade, a Messenger
+   standing a little behind them (the Order did not ask it to come and has not asked it to go),
+   and an Inquisitor and two more Paladins at the camp outside. They turn EVERYBODY back.
+     · THIRTY TILES OUT they call it: nobody goes through, not on any errand, not with any writ.
+       Once an approach; walk off and come back and they say it again.
+     · AT THE BARRICADE (`PASS_ZONE` of the gap, either side of it) the post closes on you: all of
+       them are at war with all of yours (`hostile`) and each is set on the nearest, until none of
+       yours is within `PASS_CLEAR`. Going in means going through them, and so does coming out.
+     · Killing them is killing the Order's people, with everything that already costs
+       (`purgeWrath`). The post is made up again once it has been short for a week and none of
+       yours is in sight of it.
+   It is manned when one of yours first comes within `PASS_MAN_R`, not at the making of the world:
+   six more bodies and their dice at worldgen would move everything made after them, and a world
+   that never goes north-east has no business with them. The same test mans it in a save from
+   before it existed. The dice it does spend are spent in a pocket, and put back. */
+const PASS_WARN = 30, PASS_ZONE = 8, PASS_CLEAR = 22, PASS_MAN_R = 110, PASS_SIGHT = 40, PASS_REMAN_DAYS = 7;
+const PASS_POSTS = [
+  {role: 'gate', out: 1.9, lat: -1.4}, {role: 'gate', out: 1.9, lat: 1.4},
+  {role: 'messenger', out: 5, lat: -3.5},
+  {role: 'officer', out: 14, lat: 0}, {role: 'camp', out: 13, lat: -4}, {role: 'camp', out: 13, lat: 4},
+];
+function passPostSpot(p){
+  const q = passAt(p.out, p.lat);
+  if(!isBlocked(q.x, q.y) && tileAt(q.x, q.y) !== 3) return q;
+  for(let r = 1; r <= 4; r++) for(let k = 0; k < 12; k++){
+    const x = q.x + Math.cos(k / 12 * Math.PI * 2) * r, y = q.y + Math.sin(k / 12 * Math.PI * 2) * r;
+    if(!isBlocked(x, y) && tileAt(x, y) !== 3) return {x, y};
+  }
+  return q;
+}
+function passGarrison(){ return chars.filter(c => c.gatePost && c.state !== 'dead'); }
+/* stand up whoever is missing from their post */
+function manThePass(){
+  const pocket = seed, held = passGarrison();
+  try {
+    for(const p of PASS_POSTS){
+      const q = passPostSpot(p);
+      if(held.some(c => c.guard && dist(c.guard.x, c.guard.y, q.x, q.y) < 1)) continue;
+      let c;
+      if(p.role === 'messenger'){
+        c = spawnGaunt('messenger', q.x, q.y);
+        if(!c) continue;
+        c.faction = 'messenger'; c.nightborn = false;
+      } else {
+        const officer = p.role === 'officer';
+        c = makeChar(officer ? 'Inquisitor of the Pass' : 'Paladin', 'purge', q.x, q.y, officer
+          ? {atk:34, def:36, tough:28, ath:7, magic:12, gift:'divine', armr:40, weapon:'w_kat', armor:'a_pla'}
+          : {atk:32, def:32, tough:28, ath:6, armr:45, weapon: p.lat < 0 ? 'w_nod' : 'w_kat', armor:'a_pla', head:'h_crest'});
+        c.loot = ri(150, 300);
+        chars.push(c);
+      }
+      c.x = q.x; c.y = q.y; c.floor = 0; c.squad = null;
+      c.guard = {x: q.x, y: q.y}; c.gatePost = p.role;
+    }
+  } finally { seed = pocket; }
+  passState.manned = true; passState.shortSince = null;
+}
+let _passT = 0;
+function passTick(dt){
+  if((_passT -= dt) > 0) return;
+  _passT = 0.5;
+  let near = Infinity;
+  for(const o of player()){
+    if(o.state === 'dead' || (o.floor || 0) !== 0 || o.jailedAt) continue;
+    near = Math.min(near, dist(o.x, o.y, PASS.x, PASS.y));
+  }
+  if(!passState.manned){ if(near < PASS_MAN_R) manThePass(); return; }
+  const garrison = passGarrison();
+  const speaker = garrison.find(c => c.gatePost === 'officer') || garrison.find(c => c.gatePost !== 'messenger');
+  if(garrison.length){
+    if(near < PASS_WARN && !passState.warned){
+      passState.warned = true;
+      if(speaker) say(speaker, 'No further. Nobody goes through the pass.');
+      log('The Order holds the mouth of the gorge, and something that is not one of them stands at the barricade with them. Nobody goes through, they call: not on any errand, not with any writ. Come on and they will stop you.', 'bad');
+    }
+    if(!passState.alarm && near < PASS_ZONE){
+      passState.alarm = true;
+      if(speaker) say(speaker, 'You were told.');
+      log('The Order\'s post closes on you at the barricade.', 'bad');
+    }
+  }
+  if(near > PASS_WARN + 20) passState.warned = false;
+  if(passState.alarm && (near > PASS_CLEAR || !garrison.length)){
+    passState.alarm = false;
+    for(const c of garrison) if(c.target && c.target.faction === 'player'){ c.target = null; c.path = null; }
+  }
+  /* at the barricade, all of them: each takes the nearest of yours it has not already got */
+  if(passState.alarm) for(const c of garrison){
+    if(c.state !== 'ok' || (c.target && c.target.state !== 'dead' && c.target.faction === 'player')) continue;
+    let best = null, bd = PASS_CLEAR + 8;
+    for(const o of player()){
+      if(o.state === 'dead' || (o.floor || 0) !== 0) continue;
+      const d = dist(o.x, o.y, c.x, c.y);
+      if(d < bd){ bd = d; best = o; }
+    }
+    if(best){ c.target = best; c.targetManual = false; c.path = null; }
+  }
+  /* short, and made up again after a week when none of yours can see it done */
+  if(garrison.length >= PASS_POSTS.length) passState.shortSince = null;
+  else if(passState.shortSince == null) passState.shortSince = day;
+  else if(day - passState.shortSince >= PASS_REMAN_DAYS && near > PASS_SIGHT) manThePass();
 }
 /* ---------- THE LIGHT COMES BACK AT NIGHT ----------
    `t` counts the warning down; at zero it lands, and the column stays up a moment after (`hit`
@@ -27094,6 +27323,7 @@ function update(dt){
   craterTick(dt);             /* and whether anyone has walked in toward the crater */
   strikeTick(dt);             /* and whether the light is coming down on anybody in the glass */
   guardianTick(dt);           /* and whether the thing at the middle is calling it down on you */
+  passTick(dt);               /* and whether the Order is standing in the way at the pass */
   biomeTick(dt);              /* the flats, the rust and the bog: who walked in, what woke, what keeps */
   oldKingTick(dt);            /* the man in the Door: talking from up there, or hanging people down here */
   courtTick(dt);              /* and his court, coming through onto the grounds their Arts made */
@@ -29916,6 +30146,7 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
     }
     for(const sl of CRATER_SLABS){ const k = bkey(Math.floor(sl.x), Math.floor(sl.y), 0); blocked.add(k); baseBlocked.add(k); }
     for(const [x, y] of craterRuinTiles()){ const k = bkey(x, y, 0); blocked.add(k); baseBlocked.add(k); }
+    for(const [x, y] of passGateTiles()){ const k = bkey(x, y, 0); blocked.add(k); baseBlocked.add(k); }
     /* ---------- AND THE RIDGE ROUND THE HEADLAND, STOOD UP ----------
        It has been blocking since the ground was laid (`stampCraterRidge`); this is what it looks
        like. "The ridge reads as a craggy range": it was a smooth berm, a sine across the band.
@@ -30051,7 +30282,7 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
 (function populateTheCrater(){
   const pocket = seed;
   try {
-    for(const ring of ['glass', 'bowl']) for(let i = 0; i < CRATER_POP[ring].want; i++) craterSpawn(ring);
+    for(const ring of ['glass', 'bowl', 'breach']) for(let i = 0; i < CRATER_POP[ring].want; i++) craterSpawn(ring);
     for(let i = 0; i < CRATER_MESSENGERS; i++) craterMessenger();
     /* THE CACHES. What the capital kept, and what the flash did not reach: the richest in the
        world after the warren vaults, because nothing else is this hard to reach. Three in the
@@ -31433,7 +31664,8 @@ function heightAt(wx, wy){
   spX.strokeStyle = 'rgba(148,120,86,0.5)';
   spX.lineWidth = SPLAT/W * 0.9;
   spX.lineCap = 'round'; spX.lineJoin = 'round';
-  for(const r of tradeRoutes){
+  for(const r of [...tradeRoutes, craterRoad]){
+    if(!r.wps.length) continue;
     spX.beginPath();
     r.wps.forEach((p, i) => {
       const px = p.x * SPLAT/W, py = p.y * SPLAT/H;
@@ -31441,11 +31673,13 @@ function heightAt(wx, wy){
     });
     spX.stroke();
   }
-  /* and on the headland's window, the same roads (none come onto the headland; some pass near) */
+  /* and on the headland's window, the same roads (none come onto the headland; the one to the
+     pass ends at its mouth) */
   {
     const hX = hiC.getContext('2d'), kx = hiC.width / HLX, ky = hiC.height / HLY;
     hX.strokeStyle = spX.strokeStyle; hX.lineWidth = kx * 0.9; hX.lineCap = 'round'; hX.lineJoin = 'round';
-    for(const r of tradeRoutes){
+    for(const r of [...tradeRoutes, craterRoad]){
+      if(!r.wps.length) continue;
       hX.beginPath();
       r.wps.forEach((p, i) => { const px = (p.x - HX0) * kx, py = (p.y - HY0) * ky; i ? hX.lineTo(px, py) : hX.moveTo(px, py); });
       hX.stroke();
@@ -32884,6 +33118,36 @@ function vscaleOf(c){
       dm.rotation.set(hash2(p[0], p[1]*7) * 3, hash2(p[0]*7, p[1]) * 6.3, hash2(p[0]*3, p[1]*3) * 3);
       dm.scale.y *= 0.6 + hash2(p[0]*5, p[1]*11) * 0.4;
     });
+    /* 8. THE ORDER'S POST AT THE PASS. Sharpened stakes across the gorge on the barricade's own
+          tiles; over the gap, an arch of two posts and a bar with the Order's white hanging from
+          it; and outside, where they sleep, two tents, a brazier and a pole with a rag on it. The
+          arch turns with the gorge, so its bar always lies across the way in. */
+    const stakes = [];
+    for(const [x, y] of passGateTiles()) for(let k = 0; k < 2; k++)
+      stakes.push([x + 0.25 + hash2(x * 7 + k, y * 3) * 0.5, y + 0.25 + hash2(x * 3, y * 7 + k) * 0.5]);
+    const stakeGeo = merged([
+      [new THREE.CylinderGeometry(0.1, 0.13, 2.0, 6), M(0, 1.0, 0)],
+      [new THREE.ConeGeometry(0.1, 0.45, 6), M(0, 2.22, 0)],
+    ]);
+    addInst(stakes, stakeGeo, '#5a4632', 0, p => 0.85 + hash2(p[0]*5, p[1]*5) * 0.35, false, (p, dm) => {
+      dm.rotation.set((hash2(p[0], p[1]*9) - 0.5) * 0.25, hash2(p[0]*9, p[1]) * 6.3, (hash2(p[0]*4, p[1]*4) - 0.5) * 0.25);
+    });
+    const archGeo = merged([
+      [new THREE.BoxGeometry(0.22, 3.4, 0.22), M(-2.3, 1.7, 0)],
+      [new THREE.BoxGeometry(0.22, 3.4, 0.22), M(2.3, 1.7, 0)],
+      [new THREE.BoxGeometry(5.0, 0.2, 0.2), M(0, 3.3, 0)],
+    ]);
+    const acrossPass = (p, dm) => dm.rotation.set(0, Math.atan2(-PASS.vy, PASS.vx), 0);
+    addInst([[PASS.x, PASS.y]], archGeo, '#4e4034', 0, null, false, acrossPass);
+    addInst([[PASS.x, PASS.y]], merged([[new THREE.BoxGeometry(1.1, 1.3, 0.03), M(0, 2.55, 0)]]), '#e8e4da', 0, null, false, acrossPass);
+    const tentAt = [passAt(16, 5.5), passAt(17, -5.5)].map(q => [q.x, q.y]);
+    addInst(tentAt, new THREE.ConeGeometry(1.7, 2.3, 4), '#cfc6b2', 1.15, null, false, acrossPass);
+    const fire = passAt(12, 0.5);
+    addInst([[fire.x, fire.y]], new THREE.CylinderGeometry(0.45, 0.3, 0.6, 8), '#3a3430', 0.3);
+    addInst([[fire.x, fire.y]], new THREE.DodecahedronGeometry(0.28, 0), new THREE.MeshBasicMaterial({color: 0xffa048}), 0.72);
+    const pole = passAt(10, 3.2);
+    addInst([[pole.x, pole.y]], postGeo, '#4e4034', 0, null, false, acrossPass);
+    addInst([[pole.x, pole.y]], clothGeo, '#e8e4da', 0, null, false, acrossPass);
   }
   /* Hide anything already worked out. Only a node with a nodeUses entry can be depleted, so walk
      nodeUses, not every instance. (It is empty this early, since a save is restored after the
@@ -48306,6 +48570,18 @@ function priceTip(t){
     ? `${ITEMS[k].name}? Fetches its best price in ${best.name}, if you can make the road.`
     : `Folk come from all over to sell ${ITEMS[k].name.toLowerCase()} here. Best coin around.`;
 }
+/* ---------- WHERE THE KINGDOM WAS, AND WHICH ROAD GOES THERE ----------
+   Off in a corner of the world behind a ridge, the crater is a place nobody stumbles on any
+   more, which was the point; so it is a place people talk about. Told once, it goes in the
+   journal marked at the Order's post, and walking onto the headland moves the mark to the
+   middle (`craterTick`). Nothing here if the thread is already open. */
+function craterRumor(speaker){
+  const gate = passAt(20, 0), dir = compassFrom(speaker.x, speaker.y, gate.x, gate.y);
+  if(!threadOf('crater'))
+    threadSet('crater', 'The crater', CRATER_STEPS.heard,
+      {hint: 'The road to it ends at the Order\'s post in the mouth of the gorge, and the Order turns everybody back there.', mark: {x: gate.x, y: gate.y}});
+  return `There is a crater out ${dir}, on a headland behind a ridge, where the old kingdom was. One road goes there and the Order stands at the end of it, at the only gap in the ridge. They turn everybody back. Nobody I know has asked twice.`;
+}
 function makeRumor(speaker){
   const t = speaker.homeTown || towns[0];
   const roll = rnd();
@@ -48313,6 +48589,8 @@ function makeRumor(speaker){
   /* Thresholds must ASCEND. They used to run 0.10, 0.18, 0.24 and then test 0.14, so the
      whole seat-and-ruler branch below — including every line about an outlander taking a
      town, which is to say about you — could never be reached. */
+  /* THE WAY TO THE CRATER, until you know it: half the talk of the old world is where it ended */
+  if(roll < 0.04 && !threadOf('crater')) return craterRumor(speaker);
   if(roll < 0.08) return pick(FRACTURE_TALK);
   if(roll < 0.14) return pick(GAUNT_TALK);
   if(roll < 0.20) return pick(CRAFT_TALK);
@@ -48343,6 +48621,7 @@ function makeRumor(speaker){
         baroness: `The Red Baroness works the roads ${dir} of town. Travel armed or travel poor.`,
         marshal: `The Grand Marshal never leaves his keep. Proud of those walls, that one.`,
       };
+      if(b.bossKey === 'guardian') return craterRumor(speaker);
       return lines[b.bossKey] || `Something dangerous roams the ${dir}.`;
     }
   }
@@ -49512,6 +49791,41 @@ const TALK_TREES = {
       opts: [{say:'Likewise.'}],
     },
   },
+  /* ---------- THE POST AT THE PASS ----------
+     Anybody posted there answers this, not the Order's usual word: they are not preaching, they
+     are holding a door. The one way through them is the one they give you. */
+  pass: {
+    root: {
+      line: 'No further. Nobody goes through the pass. Not on any errand, not with any writ, not for any coin. Turn round while turning round is still a thing you can do.',
+      opts: [
+        {say:'What is in there?', to:'what'},
+        {say:'On whose word?', to:'who'},
+        {say:'And the thing standing with you?', to:'thing'},
+        {say:'Stand aside.', to:'aside'},
+        {say:'We are going.'},
+      ],
+    },
+    what: {
+      line: 'What is left of the kingdom that reached for Him. It was a city once. Now it is a hole that answers whoever goes down looking, and the answer walks back out wearing them.',
+      opts: [{say:'And you keep people out.', to:'count'}, {say:'We are going.'}],
+    },
+    count: {
+      line: 'We keep a count. Who went in, on what day, with how many. We have never once had to write anything in the other column.',
+      opts: [{say:'We are going.'}],
+    },
+    who: {
+      line: 'The Bastion\'s, and the Marshal\'s, and His. You may take it up with any of the three. Two of them are a long walk from here.',
+      opts: [{say:'We are going.'}],
+    },
+    thing: {
+      line: 'It came up the road one morning and stood at the barricade, and it has not left it since. We did not ask it to stay. Nobody here has asked it to go.',
+      opts: [{say:'We are going.'}],
+    },
+    aside: {
+      line: 'Then we are the last thing you will ever argue with.',
+      opts: [{say:'So be it.', fn:() => { passState.alarm = true; passState.warned = true; }}, {say:'We are going.'}],
+    },
+  },
   guard: {
     root: {
       line: (t, c) => t.homeTown && t.homeTown.rep < -20
@@ -49902,6 +50216,7 @@ function talkTo(t, who){
   if(!speaksAtAll(t)){ say(t, pick(['...', 'It does not turn its head.', 'Something behind its face declines to answer.'])); return; }
   /* THE ORDER SPEAKS FOR ITSELF. A Paladin, the Inquisitor under the white banner, and Vey in
      his own hall used to fall through to the townsfolk tree below and talk about the weather. */
+  if(t.gatePost){ if(openDiscourse(t, 'pass')) return; }
   if(t.faction === 'purge'){ if(openDiscourse(t, 'purge')) return; }
   if(isWatch(t)){ if(openDiscourse(t, 'guard')) return; }
   /* THE OTHER PRACTITIONER GETS A CONVERSATION TOO. This was in the exclusion list beside the
@@ -50207,7 +50522,7 @@ function snapshot(){
        burnt mantle and its ember, the Bone Knight came back thin, the archer came back
        thick. Saving one string fixes the whole roster. */
     kin:c.kin||null,
-    clawDmg:c.clawDmg, clawWt:c.clawWt||null, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, craterOwn:c.craterOwn||null, nightSpawn:!!c.nightSpawn, eatsDead:!!c.eatsDead, storied:!!c.storied,
+    clawDmg:c.clawDmg, clawWt:c.clawWt||null, big:c.big, taunt:!!c.taunt, structMult:c.structMult, gauntKind:c.gauntKind||null, brood:!!c.brood, nightborn:!!c.nightborn, riftId:c.riftId||0, siteId:c.siteId||0, craterOwn:c.craterOwn||null, gatePost:c.gatePost||null, nightSpawn:!!c.nightSpawn, eatsDead:!!c.eatsDead, storied:!!c.storied,
     servitor:!!c.servitor, cart:!!c.cart, stitcher:!!c.stitcher, wisp:!!c.wisp, lamp:!!c.lamp, harvestBonus:c.harvestBonus??null, corpseWorth:c.corpseWorth??null, soulbound:!!c.soulbound, bindBonus:c.bindBonus??null, noFight:!!c.noFight, minded:!!c.minded, crafted:!!c.crafted, autoFight:!!c.autoFight, onlyArt:c.onlyArt||null, speedMult:c.speedMult||0, markT:c.markT||0, heat:c.heat||0, sweep:c.sweep?{...c.sweep}:null, mustered:!!c.mustered, ate:c.ate??null, shape:c.shape?{...c.shape}:null, shapeName:c.shapeName||null, kills:c.kills||0, mindTier:c.mindTier??null, learnMult:c.learnMult??null, noMind:!!c.noMind,
     conviction:c.conviction||null, regard:c.regard||0, devoted:!!c.devoted, leaving:c.leaving||null, boundTold:!!c.boundTold,
     /* WHAT THEY HAVE HAD. Saved because it is a LIMIT, and a limit you can wash off by
@@ -50269,7 +50584,7 @@ function snapshot(){
        — a body is full of references to other bodies, and those do not serialise */
     phylacteries: phylacteries.map(p => { const o = {...p}; delete o._rect; if(p.body) o.body = sChar(p.body); return o; }), phylN, noticed, noticeTier, fracture, fractureStage,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
-    theDoor: theDoor ? {...theDoor} : null, ruin,
+    theDoor: theDoor ? {...theDoor} : null, ruin, passS: {...passState},
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen}, hiresPaid: {...hiresPaid},
     blackReceipt: blackReceipt.stage,
     legendsGiven: {...legendsGiven},
@@ -50604,6 +50919,9 @@ function restore(d){
   if(bossSlain.custodian){ bossSlain.guardian = bossSlain.guardian || bossSlain.custodian; delete bossSlain.custodian; }
   Object.assign(legendsGiven, d.legendsGiven || {});
   Object.assign(placesSeen, d.placesSeen || {});
+  /* a save from before the pass was held: nobody has manned it, and the tick mans it when one of
+     yours next comes near (`passTick`) */
+  Object.assign(passState, {manned: false, shortSince: null, alarm: false, warned: false}, d.passS || {});
   blackReceipt.stage = d.blackReceipt || 0;
   if(arena && d.arenaS){ arena.wins = d.arenaS.wins || 0; arena.losses = d.arenaS.losses || 0; arena.best = d.arenaS.best ?? -1; }
   if(d.altarS) d.altarS.forEach((a2, i) => { const a = deepAltars[i]; if(!a) return;
@@ -50732,7 +51050,7 @@ function restore(d){
       const cv = caves.find(x => x.id === c.caveId);
       if(cv && cv.rooms) c.homeRoom = cv.rooms.find(rm => rm.id === s.roomId) || c.homeRoom;
     } c.floor = s.floor || 0; c.captured = !!s.captured;
-    c.clawDmg = s.clawDmg || 0; c.clawWt = s.clawWt || null; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.craterOwn = s.craterOwn || null; c.nightSpawn = !!s.nightSpawn; c.eatsDead = !!s.eatsDead; c.storied = !!s.storied;
+    c.clawDmg = s.clawDmg || 0; c.clawWt = s.clawWt || null; c.big = s.big || 1; c.taunt = !!s.taunt; c.gauntKind = s.gauntKind || null; c.brood = !!s.brood; c.kin = s.kin || null; c.nightborn = !!s.nightborn; c.riftId = s.riftId || 0; c.siteId = s.siteId || 0; c.craterOwn = s.craterOwn || null; c.gatePost = s.gatePost || null; c.nightSpawn = !!s.nightSpawn; c.eatsDead = !!s.eatsDead; c.storied = !!s.storied;
     c.structMult = s.structMult || 1; c.shortTag = s.shortTag || '';
     /* `|| 1` IS WRONG FOR A PROPPED BODY. Old Bones and Mass Reanimation both set
        `bindWeight = 0` — nothing about them is carried in anybody's head — and `0 || 1` puts
@@ -51883,6 +52201,7 @@ const CRATER_LINES = {
   bowl:     ['You are standing where the kingdom was. Nothing down here is the right colour.'],
 };
 const CRATER_STEPS = {
+  heard:   'Heard of: a crater on a headland in the north-east, behind a ridge with one gorge through it. The Order holds the mouth of the gorge and lets nobody through.',
   marches: 'There is a crater on a headland in the north-east, behind a ridge with one gorge through it, and the waste around it has been left alone for a reason.',
   ashfall: 'Through the Marches and into the Ashfall, where something walks at night. The crater is further in.',
   scorch:  'Into the Scorch. The light comes down here at night, and it comes down harder further in.',

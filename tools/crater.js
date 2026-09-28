@@ -54,6 +54,21 @@
  *      the dawn takes the night's back; the light comes down in the Scorch at night, sparse and
  *      about half as hard, and not at all on the Marches; and a world where nobody goes onto
  *      the headland draws no dice for any of it
+ *  20. the breaches face the gorge (phase 3): two, the main one within ten degrees of the gorge's
+ *      bearing and wider, the flank fifty to seventy degrees round; none on the seaward half; a
+ *      walk from the end of the road to the floor; two Watchers posted at each
+ *  21. the pass is held: a barricade closes the gorge but for a gap; nobody holds it until one of
+ *      yours comes near, then five of the Order and a Messenger (not counted abroad); they call
+ *      it at thirty tiles without touching a party the Order has no quarrel with; at the
+ *      barricade, from either side, all six close; they let go once you walk off; "stand aside"
+ *      starts it; cleared, the post is made up a week on, never in sight; the save keeps it
+ *  22. the way there: a road from the network to the Order's camp and no further, not a trade
+ *      road (both seeds); asked for news, people tell of it with a bearing, which opens the
+ *      journal marked at the pass, once; walking onto the Marches moves the mark to the middle
+ *  23. the clock adds a little: nothing more at the start of the clock and no extra die; at the
+ *      end never more than thirty percent, and only with yours on the headland
+ *  24. nothing past the Marches: a wall is refused from the Ashfall in and in the gorge, allowed on
+ *      the Marches; a Wayline Circle is refused on the headland and allowed outside the gorge
  *
  * Anything starting '!!' fails the build.
  *
@@ -134,7 +149,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       onIt(stairs.filter(s => s.from === 0 && s.to < 0), 'ways down', o => [o.x, o.y]);
       const roads = tradeRoutes.filter(rt => rt.wps.some(w => on(w.x, w.y))).length;
       if (roads) bits.push(`${roads} trade roads run onto the headland`);
-      const strays = chars.filter(c => (c.floor || 0) === 0 && !c.craterOwn && c.state !== 'dead' && on(c.x, c.y)).map(c => c.name);
+      const strays = chars.filter(c => (c.floor || 0) === 0 && !c.craterOwn && !c.gatePost && c.state !== 'dead' && on(c.x, c.y)).map(c => c.name);
       if (strays.length) bits.push(`${strays.length} bodies left on the headland (${strays.slice(0, 3).join(', ')})`);
       const within = (x, y, r) => craterD(x, y) < r;
       /* 16. the roads */
@@ -153,10 +168,30 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         roadNote = `; all ${towns.length} towns are on one network of ${tradeRoutes.length} roads, none inside the Ashfall, ${across.length} of them round the ring`;
       } else bits.push('there is no ring to route round in this build');
       const nearest = Math.min(...towns.map(t => craterD(t.x, t.y)));
-      return { bits, nearest: Math.round(nearest), roads: tradeRoutes.length, roadNote };
+      /* 22, first part: the road out to the Order's post, on this seed too */
+      let passRoad;
+      if (typeof craterRoad === 'undefined' || typeof passAt !== 'function') passRoad = '!! THERE IS NO ROAD TO THE PASS IN THIS BUILD';
+      else {
+        const w = craterRoad.wps, camp = passAt(20, 0), pb = [];
+        let len = 0;
+        for (let i = 1; i < w.length; i++) len += dist(w[i].x, w[i].y, w[i - 1].x, w[i - 1].y);
+        if (w.length < 4) pb.push('there is no road out to the pass');
+        else {
+          const ends = [w[0], w[w.length - 1]];
+          if (!ends.some(e => dist(e.x, e.y, camp.x, camp.y) < 8)) pb.push('the road does not end at the Order\'s camp');
+          if (!ends.some(e => tradeRoutes.some(rt => rt.wps.some(q => dist(q.x, q.y, e.x, e.y) < 8)))) pb.push('the road does not join the network');
+          const onto = w.filter(q => craterD(q.x, q.y) < craterEdge(craterAng(q.x, q.y)) + R.ridge).length;
+          if (onto) pb.push(`${onto} of its waypoints are in the gorge or on the headland`);
+          if (tradeRoutes.includes(craterRoad)) pb.push('it is a trade road');
+        }
+        passRoad = pb.length ? `!! ${pb.join('; ').toUpperCase()}`
+          : `a road ${Math.round(len)} tiles long runs from the network out to the Order's camp at the mouth of the gorge and no further, and no caravan runs it`;
+      }
+      return { bits, nearest: Math.round(nearest), roads: tradeRoutes.length, roadNote, passRoad };
     });
     const tag = seed ? `seed ${seed}` : 'the default seed';
     if (r.none) { out['builtAround' + (seed || '')] = '!! THERE IS NO CRATER IN THIS BUILD'; await p.close(); continue; }
+    out[seed ? 'theRoadToThePassSeed1' : 'theRoadToThePass'] = r.passRoad;
     out[seed ? 'builtAroundSeed1' : 'builtAround'] = r.bits.length ? `!! ${tag.toUpperCase()}: ${r.bits.join('; ').toUpperCase()}`
       : `on ${tag} it stands on its headland in the north-east, the sea round its far side and the gorge the only way in (shut, nothing off the headland can be reached from the bowl); the nearest town is ${r.nearest} tiles out, and nothing the world places stands on the headland${r.roadNote}`;
     if (seed) { await p.close(); continue; }
@@ -193,7 +228,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         let wall = 0, ring = 0;
         for (let i = 0; i < 720; i++) { const a = i / 720 * Math.PI * 2; const Rr = C.rim + craterWobble(a) - 2.5;
           ring++; if (isBlocked(C.x + Math.cos(a) * Rr, C.y + Math.sin(a) * Rr)) wall++; }
-        const pathIn = findPath(sx, sy, C.x + 5, C.y + 5);
+        const pathIn = findPath(sx, sy, C.x + 5, C.y + 5, 0, 200000);
         let crossed = 0;
         if (pathIn) for (const n of pathIn) {
           const a = craterAng(n.x, n.y), d = craterD(n.x, n.y), Rr = C.rim + craterWobble(a);
@@ -285,25 +320,26 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       /* ---- 8. held, day and night ---- */
       {
         const own = (k) => chars.filter(c => c.craterOwn === k && c.state !== 'dead');
-        const g0 = own('glass'), b0 = own('bowl'), m0 = own('messenger');
+        const g0 = [...own('glass'), ...own('breach')], b0 = own('bowl'), m0 = own('messenger');
+        const gWant = CRATER_POP.glass.want + (CRATER_POP.breach ? CRATER_POP.breach.want : 0);
         const bits = [];
         if (typeof CRATER_POP === 'undefined') bits.push('nothing lives in the crater in this build');
         else {
-          if (g0.length < CRATER_POP.glass.want) bits.push(`${g0.length} of ${CRATER_POP.glass.want} hold the glass`);
+          if (g0.length < gWant) bits.push(`${g0.length} of ${gWant} hold the glass`);
           if (b0.length < CRATER_POP.bowl.want) bits.push(`${b0.length} of ${CRATER_POP.bowl.want} hold the bowl`);
           if (m0.length < CRATER_MESSENGERS) bits.push(`${m0.length} Messengers`);
-          const off = [...g0, ...b0, ...m0].filter(c => { const r = craterRing(c.x, c.y); return c.craterOwn === 'glass' ? r !== 'glass' : r !== 'bowl'; });
+          const off = [...g0, ...b0, ...m0].filter(c => { const r = craterRing(c.x, c.y); return c.craterOwn === 'glass' || c.craterOwn === 'breach' ? r !== 'glass' : r !== 'bowl'; });
           if (off.length) bits.push(`${off.length} stand outside their ring`);
           if (m0.some(m => !/Messenger/.test(m.name))) bits.push('a "Messenger" is not one');
           const peace = m0.every(m => [...g0, ...b0].every(g => !hostile(m, g)));
           if (!peace) bits.push('the Messengers are at war with the crater\'s Watchers');
           /* and the dawn */
           hour = 5.9; gauntDawn && gauntDawn();
-          const g1 = own('glass').length + own('bowl').length + own('messenger').length;
+          const g1 = own('glass').length + own('breach').length + own('bowl').length + own('messenger').length;
           if (g1 < g0.length + b0.length + m0.length) bits.push(`the dawn took ${g0.length + b0.length + m0.length - g1} of them`);
         }
         R.theCraterIsHeld = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
-          : `${g0.length} Watchers hold the glass and ${b0.length} the bowl, with ${m0.length} Messengers at peace among them, and the dawn takes none of them`;
+          : `${g0.length} Watchers hold the glass (${own('breach').length} of them posted at the breaches) and ${b0.length} the bowl, with ${m0.length} Messengers at peace among them, and the dawn takes none of them`;
       }
       /* ---- 9. it grows back, unseen ---- */
       if (typeof CRATER_POP !== 'undefined') {
@@ -404,7 +440,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
           if (eyes0 && !cu.eyesUp) bits.push(`${eyes0} Eyes were over it before anybody came`);
           if (cu.maxBlood < 900) bits.push(`it has ${cu.maxBlood} blood`);
           if (eyes.length < 4 || eyes.some(e => hostile(cu, e))) bits.push(`${eyes.length} Eyes keep station over it${eyes.some(e => hostile(cu, e)) ? ', at war with it' : ''}`);
-          const kept = chars.filter(c => (c.craterOwn === 'glass' || c.craterOwn === 'bowl' || c.craterOwn === 'messenger') && c.state !== 'dead');
+          const kept = chars.filter(c => (c.craterOwn === 'glass' || c.craterOwn === 'breach' || c.craterOwn === 'bowl' || c.craterOwn === 'messenger') && c.state !== 'dead');
           if (kept.some(g => hostile(cu, g))) bits.push('it is at war with the crater\'s own');
         }
         /* and it fights like the second-to-last thing: the light comes down on whoever is at it,
@@ -633,6 +669,216 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         R.theDangerRamps = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
           : `nobody on the headland, no dice drawn; with yours on the Marches: by day ${dayS.length} hold the Scorch and nothing else is out, by night ${nA.length} walk the Ashfall and ${nS.length} more come into the Scorch, none put down in sight, and the dawn takes the night's back; thirty hours of night send nothing for the ones on the Marches (${outside} for the same party outside the gorge); a Watcher lets go of one of yours at the Marches and holds on in the Ashfall; the light comes down in the Scorch every ${gap(sc).toFixed(1)}s at half strength (${gap(gl).toFixed(1)}s on the glass) and never on the Marches`;
         delete R._noDice;
+      }
+      /* ---- 20. the breaches face the gorge ---- */
+      if (typeof CRATER_BREACH_WS === 'undefined') R.theBreachesFaceTheGorge = '!! THE BREACHES ARE STILL WHEREVER THE SEED PUT THEM IN THIS BUILD';
+      else {
+        const bits = [], A = CRATER_GORGE_A;
+        const off = (a, b) => Math.abs((((a - b) % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI);
+        const deg = (r) => Math.round(r * 180 / Math.PI);
+        if (CRATER_BREACHES.length !== 2) bits.push(`there are ${CRATER_BREACHES.length} breaches`);
+        const m = off(CRATER_BREACHES[0], A), f = off(CRATER_BREACHES[1], A);
+        if (!(m <= 0.18)) bits.push(`the main breach is ${deg(m)} degrees off the gorge`);
+        if (!(f >= 0.86 && f <= 1.23)) bits.push(`the flank breach is ${deg(f)} degrees off the gorge`);
+        let openM = 0, openF = 0, seaward = 0;
+        for (let i = 0; i < 3600; i++) {
+          const a = i / 3600 * 2 * Math.PI, b = craterBreachAt(a);
+          if (b >= 0.35) { if (off(a, CRATER_BREACHES[0]) < 0.2) openM++; else openF++; }
+          if (Math.cos(a - A) < 0 && b > 0) seaward++;
+        }
+        const tiles = (n) => Math.round(n / 3600 * 2 * Math.PI * C.rim);
+        if (seaward) bits.push('a breach opens on the seaward half');
+        if (!(tiles(openM) > tiles(openF))) bits.push(`the main breach (${tiles(openM)} tiles) is no wider than the flank (${tiles(openF)})`);
+        const q = passAt(24, 0), walk = findPath(q.x, q.y, C.x + 5, C.y + 5, 0, 400000);
+        let used = '';
+        if (!walk) bits.push('there is no walk from the end of the road to the floor');
+        else {
+          const at = walk.filter(n => { const d = craterD(n.x, n.y); return d < C.rim && d > C.rim - 12; });
+          used = at.length ? (off(craterAng(at[0].x, at[0].y), CRATER_BREACHES[0]) < 0.25 ? 'the main breach' : 'the flank breach') : 'no breach';
+        }
+        const guards = chars.filter(c => c.craterOwn === 'breach' && c.state !== 'dead' && c.guard);
+        const per = CRATER_BREACHES.map(b => guards.filter(g => off(craterAng(g.guard.x, g.guard.y), b) < 0.12 && craterD(g.guard.x, g.guard.y) > C.rim).length);
+        if (per.some(n => n < 2)) bits.push(`the breaches are held by ${per.join(' and ')}`);
+        R.theBreachesFaceTheGorge = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : `two breaches: the main one ${deg(m)} degrees off the gorge's bearing and ${tiles(openM)} tiles open, the flank ${deg(f)} degrees round and ${tiles(openF)} open, none on the seaward half; from the end of the road to the floor is a walk of ${walk.length} steps through the pass and ${used}; two Watchers posted at each`;
+      }
+      /* ---- 21. the pass is held ---- */
+      if (typeof passTick !== 'function') R.thePassIsHeld = '!! NOBODY HOLDS THE PASS IN THIS BUILD';
+      else {
+        const bits = [], me = player()[0], home = { x: me.x, y: me.y };
+        const at = (out) => { const q = passAt(out, 0); me.x = q.x; me.y = q.y; me.floor = 0; me.state = 'ok'; rebuildCharGrid(); _passT = 0; passTick(1 / 30); };
+        /* the barricade, and the gap the only way through it */
+        const gt = passGateTiles();
+        if (gt.length < 8) bits.push(`the barricade is ${gt.length} tiles`);
+        if (gt.some(([x, y]) => !isBlocked(x + 0.5, y + 0.5))) bits.push('some of the barricade can be walked through');
+        const gap = [];
+        for (let y = Math.floor(PASS.y - 4); y <= PASS.y + 4; y++) for (let x = Math.floor(PASS.x - 4); x <= PASS.x + 4; x++) {
+          const dx = x + 0.5 - PASS.x, dy = y + 0.5 - PASS.y, a = dx * PASS.ux + dy * PASS.uy, l = dx * PASS.vx + dy * PASS.vy;
+          if (Math.abs(a) <= 1.05 && Math.abs(l) < 1.8) { const k = bkey(x, y, 0); if (!blocked.has(k)) { blocked.add(k); gap.push(k); } }
+        }
+        const reach = () => {
+          const s = passAt(-8, 0), g = passAt(12, 0), seen = new Uint8Array(W * H), qq = [Math.floor(s.y) * W + Math.floor(s.x)];
+          seen[qq[0]] = 1;
+          while (qq.length) {
+            const i = qq.pop(), x = i % W, y = (i / W) | 0;
+            if (dist(x + 0.5, y + 0.5, g.x, g.y) < 1.5) return true;
+            for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+              const nx = x + dx, ny = y + dy, k = ny * W + nx;
+              if (nx < 0 || ny < 0 || nx >= W || ny >= H || seen[k] || terr[k] === 3 || blocked.has(bkey(nx, ny, 0))) continue;
+              seen[k] = 1; qq.push(k);
+            }
+          }
+          return false;
+        };
+        const shut = reach();
+        for (const k of gap) blocked.delete(k);
+        const open = reach();
+        if (shut) bits.push('the barricade does not close the gorge even with the gap stopped');
+        if (!open) bits.push('there is no way through the gap');
+        /* not manned until somebody comes near */
+        if (passGarrison().length || passState.manned) bits.push('the post was manned before anybody came near it');
+        const abroad0 = messengersAbroad();
+        at(60);
+        const G = passGarrison(), pal = G.filter(c => c.faction === 'purge'), msg = G.filter(c => messengerKind(c));
+        if (G.length !== 6) bits.push(`${G.length} hold the pass`);
+        if (pal.length !== 5 || msg.length !== 1 || (msg[0] && msg[0].faction !== 'messenger')) bits.push(`the post is ${G.map(c => c.name).join(', ')}`);
+        if (messengersAbroad() !== abroad0) bits.push('the post\'s Messenger counts against the ones abroad');
+        /* told at thirty tiles, fought at the barricade, from either side; let go at a distance */
+        const lines = [];
+        const _log = log; log = (t, k) => { lines.push(String(t)); return _log(t, k); };
+        let warned = false, early = false, war = false, set = 0, inside = false, calm = false;
+        try {
+          at(25);
+          warned = lines.some(l => /Nobody goes through/.test(l));
+          early = passState.alarm || pal.some(c => hostile(c, me));
+          at(3);
+          war = passState.alarm && pal.every(c => hostile(c, me)) && msg.every(c => hostile(c, me));
+          set = G.filter(c => c.target === me).length;
+          at(45); calm = !passState.alarm && !pal.some(c => hostile(c, me));
+          at(-6); inside = passState.alarm;
+          at(45);
+        } finally { log = _log; }
+        if (!warned) bits.push('nobody called out at thirty tiles');
+        if (early) bits.push('they fought one of yours the Order had no quarrel with, short of the barricade');
+        if (!war) bits.push('the post did not close at the barricade');
+        if (set < G.length) bits.push(`only ${set} of ${G.length} came at the one at the barricade`);
+        if (!inside) bits.push('coming out, the post let them by');
+        if (!calm) bits.push('the post was still at war once they had walked off');
+        /* the one way through them they offer */
+        passState.alarm = false;
+        TALK_TREES.pass.aside.opts[0].fn();
+        if (!passState.alarm) bits.push('"stand aside" did not start the fight');
+        passState.alarm = false; passState.warned = false;
+        /* cleared, it is made up a week on, never in sight of yours */
+        for (const c of passGarrison()) c.state = 'dead';
+        const d0 = day;
+        at(80);
+        const atOnce = passGarrison().length;
+        day = d0 + 8; at(30); const inSight = passGarrison().length;
+        at(80); const madeUp = passGarrison().length;
+        day = d0;
+        if (atOnce) bits.push('a cleared post was made up at once');
+        if (inSight) bits.push('the post was made up in sight of yours');
+        if (madeUp !== 6) bits.push(`a week on the post has ${madeUp}`);
+        /* and it is kept */
+        const snap = snapshot();
+        const kept = snap.passS && snap.passS.manned && snap.chars.filter(s => s.gatePost && s.state !== 'dead').length === 6;
+        if (!kept) bits.push('the save does not keep the post');
+        passState.alarm = false; passState.warned = false;
+        me.x = home.x; me.y = home.y; rebuildCharGrid();
+        R.thePassIsHeld = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : `a barricade of ${gt.length} tiles closes the gorge but for a gap; nobody holds it until one of yours comes within ${PASS_MAN_R} tiles, and then five of the Order and a Messenger (not counted among the ones abroad); at thirty tiles they call it, and a party the Order has no quarrel with is not touched; at the barricade, from outside or in, all six close on the one of yours and let go once they walk off; "stand aside" starts it; cleared, the post is made up a week on and not in sight of yours, and the save keeps it`;
+      }
+      /* ---- 22, second part: the rumour, and the journal ---- */
+      if (typeof craterRumor !== 'function') R.theWayThereIsTold = '!! NOBODY TALKS ABOUT THE CRATER IN THIS BUILD';
+      else {
+        const bits = [];
+        const i0 = threads.findIndex(t => t.key === 'crater'), saved = i0 >= 0 ? threads.splice(i0, 1)[0] : null;
+        const seenK = Object.keys(placesSeen).filter(k => k.startsWith('crater_')), seenV = seenK.map(k => placesSeen[k]);
+        for (const k of seenK) delete placesSeen[k];
+        const t0 = towns[0], speaker = { x: t0.x, y: t0.y, homeTown: t0 }, gate = passAt(20, 0), dir = compassFrom(t0.x, t0.y, gate.x, gate.y);
+        let heard = 0;
+        for (let i = 0; i < 400; i++) {
+          const l = makeRumor(speaker);
+          if (/There is a crater out/.test(l)) { heard++; const j = threads.findIndex(t => t.key === 'crater'); if (i < 399 && j >= 0) threads.splice(j, 1); }
+        }
+        const j0 = threads.findIndex(t => t.key === 'crater'); if (j0 >= 0) threads.splice(j0, 1);
+        const line = craterRumor(speaker), th = threadOf('crater');
+        if (!heard) bits.push('four hundred asks for news never mentioned it');
+        if (!line.includes(dir)) bits.push(`the rumour does not say ${dir}`);
+        if (!th || !th.mark || dist(th.mark.x, th.mark.y, gate.x, gate.y) > 1) bits.push('hearing it does not mark the pass in the journal');
+        const again = craterRumor(speaker);
+        if (threads.filter(t => t.key === 'crater').length !== 1) bits.push('hearing it twice opened it twice');
+        const me = player()[0], home = { x: me.x, y: me.y };
+        me.x = C.x + Math.cos(CRATER_GORGE_A) * 222; me.y = C.y + Math.sin(CRATER_GORGE_A) * 222; me.floor = 0;
+        _crT = 0; craterTick(2);
+        const th2 = threadOf('crater');
+        if (!th2 || !th2.mark || dist(th2.mark.x, th2.mark.y, C.x, C.y) > 1) bits.push('walking onto the Marches did not move the mark to the middle');
+        me.x = home.x; me.y = home.y;
+        const j1 = threads.findIndex(t => t.key === 'crater'); if (j1 >= 0) threads.splice(j1, 1);
+        if (saved) threads.push(saved);
+        seenK.forEach((k, i) => { placesSeen[k] = seenV[i]; });
+        R.theWayThereIsTold = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : `asked for news, ${heard} in four hundred tell of a crater out ${dir} behind a ridge with the Order at the only gap; hearing it opens "The crater" marked at the Order's post, once, and walking onto the Marches moves the mark to the middle`;
+      }
+      /* ---- 23. the clock adds a little ---- */
+      if (typeof craterWant !== 'function') R.theClockAddsALittle = '!! THE CRATER DOES NOT GROW WITH THE CLOCK IN THIS BUILD';
+      else {
+        const bits = [], fs0 = fractureStage, nt0 = noticeTier, keys = Object.keys(CRATER_POP);
+        fractureStage = 0; noticeTier = 0;
+        const t0 = keys.filter(k => craterWant(k, true) !== CRATER_POP[k].want);
+        const P = CRATER_POP.glass, s0 = seed;
+        craterKind(P); const s1 = seed; seed = s0; pick(P.kinds); const s2 = seed; seed = s0;
+        fractureStage = 9; noticeTier = 5;
+        const top = keys.map(k => [k, craterWant(k, true), craterWant(k, false), CRATER_POP[k].want]);
+        fractureStage = fs0; noticeTier = nt0;
+        if (t0.length) bits.push(`at the start of the clock ${t0.join(', ')} already want more`);
+        if (s1 !== s2) bits.push('at the start of the clock the mix draws an extra die');
+        const over = top.filter(([, w, , b]) => w > Math.round(b * 1.3));
+        if (over.length) bits.push(`at the end of the clock ${over.map(([k, w, , b]) => `${k} wants ${w} of ${b}`).join(', ')}`);
+        const away = top.filter(([, , o, b]) => o !== b);
+        if (away.length) bits.push('with nobody on the headland it still grows');
+        if (!top.some(([, w, , b]) => w > b)) bits.push('nothing grows at the end of the clock');
+        R.theClockAddsALittle = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : `at the start of the clock every stretch wants what it always did and the mix draws no extra die; at the end, with yours on the headland, ${top.map(([k, w, , b]) => `${k} ${b} -> ${w}`).join(', ')} (never over thirty percent), and with nobody there, the old numbers`;
+      }
+      /* ---- 24. nothing past the Marches ---- */
+      {
+        const bits = [], A = CRATER_GORGE_A;
+        const openNear = (r) => {
+          for (let k = 0; k < 80; k++) {
+            const a = A + (k % 2 ? 1 : -1) * Math.floor(k / 2) * 0.012;
+            const x = Math.floor(C.x + Math.cos(a) * r), y = Math.floor(C.y + Math.sin(a) * r);
+            if ([[0, 0], [1, 0], [0, 1], [1, 1]].every(([ox, oy]) => !isBlocked(x + ox + 0.5, y + oy + 0.5))) return { x, y };
+          }
+          return null;
+        };
+        const wl0 = research.done.waylines, af0 = activeFloor;
+        research.done.waylines = true; activeFloor = 0;
+        const tryAt = (type, q) => { if (!q) return null; const n0 = blueprints.length; const ok = !!tryBuild(type, q.x, q.y, true); if (blueprints.length > n0) blueprints.length = n0; return ok; };
+        const open2 = (p) => {
+          for (let r = 0; r < 8; r++) for (let k = 0; k < 16; k++) {
+            const x = Math.floor(p.x + Math.cos(k / 16 * Math.PI * 2) * r), y = Math.floor(p.y + Math.sin(k / 16 * Math.PI * 2) * r);
+            if ([[0, 0], [1, 0], [0, 1], [1, 1]].every(([ox, oy]) => !isBlocked(x + ox + 0.5, y + oy + 0.5) && tileAt(x + ox, y + oy) !== 3)) return { x, y };
+          }
+          return { x: Math.floor(p.x), y: Math.floor(p.y) };
+        };
+        const along = (r) => ({ x: C.x + Math.cos(A) * r, y: C.y + Math.sin(A) * r }), E = craterEdge(A);
+        const gIn = open2(along(E + 10)), gOut = open2(along(E + C.ridge + 40));
+        const cases = [
+          ['a wall on the Marches', 'wall', openNear(222), true],
+          ['a wall in the Ashfall', 'wall', openNear(180), false],
+          ['a wall in the Scorch', 'wall', openNear(145), false],
+          ['a wall on the glass', 'wall', openNear(110), false],
+          ['a wall in the gorge', 'wall', gIn, false],
+          ['a Wayline Circle on the Marches', 'way', openNear(222), false],
+          ['a Wayline Circle outside the gorge', 'way', gOut, true],
+        ];
+        const got = cases.map(([nm, type, q, want]) => [nm, tryAt(type, q), want]);
+        research.done.waylines = wl0; activeFloor = af0;
+        for (const [nm, ok, want] of got) if (ok !== want) bits.push(`${nm} was ${ok === null ? 'not tried (no open ground)' : ok ? 'allowed' : 'refused'}`);
+        R.nothingPastTheMarches = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+          : 'a wall can be staked on the Marches and nowhere further in (the Ashfall, the Scorch, the glass) nor in the gorge; a Wayline Circle is refused on the Marches and allowed on the mainland outside the gorge';
       }
       /* ---- 7. an old save ---- */
       {
