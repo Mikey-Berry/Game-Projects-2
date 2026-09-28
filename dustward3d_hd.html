@@ -34848,7 +34848,7 @@ function faceDecal(parent, paint, z, glowMats){
    boxes used to try to say. */
 const NAMED_PAINT = {
   lyre:    {eye: '#17121c', w: 0.064, h: 0.046, lash: true,  brow: '#a39d93', tilt:  0.08, mouth: '#7c4a46', curve: -0.20, glow: false},
-  saga:    {eye: '#e8951e', w: 0.060, h: 0.044, lash: false, brow: '#6a5420', tilt: -0.14, mouth: '#6a4432', curve:  0.00, glow: true},
+  saga:    {eye: '#e8951e', w: 0.060, h: 0.044, lash: false, brow: '#6a5420', tilt: -0.14, mouth: '#6a4432', curve:  0.00, glow: true, glasses: '#2b241c'},
   czarina: {eye: '#e8951e', w: 0.062, h: 0.042, lash: true,  brow: '#1c1720', tilt:  0.16, mouth: '#6e3a36', curve:  0.30, smirk: true, glow: true},
 };
 function paintNamedFace(ctx, gx, sp, tier){
@@ -34907,6 +34907,26 @@ function paintNamedFace(ctx, gx, sp, tier){
       }
     }
   }
+  /* ROUND GLASSES, painted like a toy's: a tinted lens, a dark wire rim, a bridge, and one glint
+     across the top of each lens. Wide enough to sit round the eye, not on it, so the lit amber
+     still shows through clean (the rim is not drawn on the glow map). */
+  if(sp.glasses){
+    const R = fpL(0.047), by = fpV(0.262);
+    for(const sx of [-1, 1]){
+      const cx = fpU(sx * 0.064);
+      ctx.fillStyle = 'rgba(210,225,230,0.16)';
+      ctx.beginPath(); ctx.arc(cx, by, R, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = sp.glasses; ctx.lineWidth = fpL(0.009);
+      ctx.beginPath(); ctx.arc(cx, by, R, 0, Math.PI * 2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = fpL(0.005); ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(cx, by, R * 0.66, Math.PI * 1.15, Math.PI * 1.45); ctx.stroke();
+      /* out to the edge of the face, where the built hinge picks it up */
+      ctx.strokeStyle = sp.glasses; ctx.lineWidth = fpL(0.009);
+      ctx.beginPath(); ctx.moveTo(cx + sx * R, by - fpL(0.004)); ctx.lineTo(fpU(sx * 0.150), by - fpL(0.006)); ctx.stroke();
+    }
+    ctx.strokeStyle = sp.glasses; ctx.lineWidth = fpL(0.008);
+    ctx.beginPath(); ctx.arc(fpU(0), by + fpL(0.004), fpL(0.020), Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();   /* the bridge */
+  }
   /* the mouth: a short line, bent by `curve` (up is a smile), and lopsided for a smirk */
   const mx = fpU(0), my = fpV(0.170), mw = fpL(0.056);
   ctx.strokeStyle = sp.mouth; ctx.lineWidth = fpL(0.011); ctx.lineCap = 'round';
@@ -34955,6 +34975,68 @@ function paintUncloudedFace(ctx, gx, sp){
       c.stroke();
     }
   }
+}
+/* ============================================================ SUCCUBUS HORNS
+   "The horns read as disconnected floating rectangles rather than genuine horns. Fix that, and
+    perhaps create a few horn variations too."
+   A horn is a CHAIN: a root buried in the skull under the hair, then tapered segments each
+   starting where the last one ended and turned a little further, finishing in a point. Built
+   in head-bone units (the skull runs y 0.08..0.40, x ±0.14, front at z 0.16) and merged, both
+   horns, into one smooth-shaded geometry per kind, shared by every succubus that grows that
+   kind. Each segment starts a little inside the one before, so the outside of a bend never
+   opens a gap. Rotations are in the segment's own frame, +y along the horn: +x tips it toward
+   the face, -z (on the right) turns it outward; the left horn is the mirror.
+     swept    back off the temples and down behind the head — the old silhouette, joined up
+     ram      out from the side of the head and curled back and down round the ear
+     upright  short, from the top of the brow, rising and curving in at the tip
+     bull     out sideways and then up, a crescent */
+const SUCC_HORNS = ['swept', 'ram', 'upright', 'bull'];
+const SUCC_HORN_SPEC = {
+  swept:   {root: [0.100, 0.425, 0.055], rot: [-0.20, 0, -0.45], r: 0.040, segs: [[0.12, -0.30, 0], [0.12, -0.45, 0.04], [0.11, -0.45, 0.06], [0.10, -0.35, 0.06]]},
+  ram:     {root: [0.140, 0.405, 0.040], rot: [-0.25, 0, -0.95], r: 0.052, segs: [[0.10, -0.55, 0.10], [0.10, -0.75, 0.05], [0.10, -0.80, 0], [0.09, -0.80, -0.05], [0.08, -0.70, -0.05]]},
+  upright: {root: [0.078, 0.425, 0.075], rot: [0.12, 0, -0.30], r: 0.036, segs: [[0.10, -0.10, 0.18], [0.09, -0.12, 0.26], [0.08, -0.10, 0.30]]},
+  bull:    {root: [0.110, 0.410, 0.030], rot: [0.05, 0, -1.25], r: 0.040, segs: [[0.11, 0, 0.35], [0.10, 0.05, 0.45], [0.10, 0.05, 0.45], [0.09, 0, 0.35]]},
+};
+const _hornGeos = new Map();
+function succHornGeo(kind){
+  let g = _hornGeos.get(kind);
+  if(g) return g;
+  const spec = SUCC_HORN_SPEC[kind] || SUCC_HORN_SPEC.swept;
+  const TAPER = 0.72;
+  const seg = new THREE.CylinderGeometry(TAPER, 1, 1, 8, 1, true); seg.translate(0, 0.5, 0);
+  const tip = new THREE.ConeGeometry(1, 1, 8, 1, true); tip.translate(0, 0.5, 0);
+  const pos = [], nrm = [], idx = [];
+  const add = (geo, m) => {
+    const nm = new THREE.Matrix3().getNormalMatrix(m), v = new THREE.Vector3();
+    const P = geo.attributes.position, N = geo.attributes.normal, base = pos.length / 3;
+    for(let i = 0; i < P.count; i++){
+      v.fromBufferAttribute(P, i).applyMatrix4(m); pos.push(v.x, v.y, v.z);
+      v.fromBufferAttribute(N, i).applyMatrix3(nm).normalize(); nrm.push(v.x, v.y, v.z);
+    }
+    const I = geo.index;
+    for(let i = 0; i < I.count; i++) idx.push(I.getX(i) + base);
+  };
+  const E = new THREE.Euler(), Q = new THREE.Quaternion(), T = new THREE.Vector3(), S = new THREE.Vector3(), R = new THREE.Matrix4();
+  for(const sx of [-1, 1]){
+    const [x, y, z] = spec.root, [rx, ry, rz] = spec.rot;
+    let M = new THREE.Matrix4().compose(T.set(sx * x, y, z), Q.setFromEuler(E.set(rx, sx * ry, sx * rz)), S.set(1, 1, 1));
+    let r = spec.r;
+    spec.segs.forEach(([len, bx, bz], i) => {
+      /* the bend is applied at the START of each segment, so the chain curves from the root */
+      M = M.clone().multiply(R.makeRotationFromEuler(E.set(bx, 0, sx * bz)));
+      const last = i === spec.segs.length - 1;
+      add(last ? tip : seg, M.clone().multiply(new THREE.Matrix4().makeScale(r, len, r)));
+      M = M.clone().multiply(new THREE.Matrix4().makeTranslation(0, len * 0.9, 0));
+      r *= TAPER;
+    });
+  }
+  g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setIndex(idx); g.computeBoundingSphere();
+  seg.dispose(); tip.dispose();
+  _hornGeos.set(kind, g); _sharedRes.add(g);
+  return g;
 }
 /* hair as soft masses: ellipsoids merged into one smooth-shaded, vertex-coloured mesh */
 const _blobGeos = new Map();
@@ -35015,16 +35097,67 @@ function namedHair(face, hc){
     P(0.060, 0.160, 0.160,  0.148, 0.285, -0.030, 0, 0, 0, dk),
     P(0.260, 0.160, 0.100, 0, 0.220, -0.140, 0, 0, 0, dk),
   ];
+  /* CZARINA. "Some of Czarina's hair clips through her face." Three pieces did: the swept
+     fringe hung low enough at its outer end to cross the brow and the corner of the eye, the
+     loose lock beside it sat exactly on the plane the face is painted on (so the two fought
+     for the same pixels), and the two dark masses at the temples came out through the cheeks
+     at eye height. The fringe now sweeps across ABOVE the brows, the lock hangs outside the
+     eye and in front of the face, and the temple masses sit higher and further back, where
+     the hair actually is. */
   return [                                                     /* czarina */
     P(0.330, 0.270, 0.330, 0, 0.355, -0.010),
-    P(0.260, 0.120, 0.100, 0.020, 0.345, 0.120, 0, 0, -0.28), /* the fringe, swept across */
-    P(0.080, 0.140, 0.070, 0.120, 0.300, 0.128, 0, 0, -0.40),
-    P(0.055, 0.140, 0.150, -0.150, 0.275, -0.030, 0, 0, 0, dk),
-    P(0.055, 0.140, 0.150,  0.150, 0.275, -0.030, 0, 0, 0, dk),
+    P(0.260, 0.085, 0.100, 0.015, 0.392, 0.118, 0, 0, -0.20), /* the fringe, swept across above the brows */
+    P(0.062, 0.130, 0.070, 0.152, 0.318, 0.118, 0, 0, -0.25), /* and one lock, framing the face */
+    P(0.055, 0.150, 0.150, -0.140, 0.335, -0.060, 0, 0, 0, dk),
+    P(0.055, 0.150, 0.150,  0.140, 0.335, -0.060, 0, 0, 0, dk),
     P(0.150, 0.070, 0.150, -0.060, 0.458, -0.030, 0, 0, 0.30),
     P(0.150, 0.070, 0.150,  0.075, 0.452, -0.065, 0, 0, -0.35),
     P(0.270, 0.140, 0.100, 0, 0.220, -0.140, 0, 0, 0, dk),
   ];
+}
+/* ============================================================ SAGA WEARS LYONART'S HAIR
+   "Saga's hair currently reads as a bunch of oval rocks. Is there no way to replicate Lyonart's
+    tussled hair look?"
+   What Lyonart's sculpt has and ellipsoids cannot: layered locks with hard facets, lying over
+   each other like shingles, each catching the light on one plane and going dark on the next.
+   Building that out of tapered wedges was tried first and came out a crown of spikes; the
+   honest answer to "replicate his look" is to use his hair. So it is lifted off his sculpt.
+   The sculpt's hair is grey all through (r, g and b within a few hundredths of each other) and
+   nothing else on the head is — the skin runs warm and the eyes are black — so the hair can be
+   taken off it triangle by triangle. It is refitted onto a painted head through the same
+   HEADFIT the sculpt itself uses, cut short at `cut` (sculpt units, the head runs -0.47..0.47)
+   so it stops at the ears and nape, mirrored so the sweep falls the other way, and recoloured:
+   the sculpt's own light and shade kept, the colour made the wearer's. */
+function sculptHairGeo(key, src, hc, cut, mirror){
+  let g = _blobGeos.get(key);
+  if(g) return g;
+  const g0 = headGeo(src), fit = HEADFIT[src];
+  const P = g0.attributes.position, C = g0.attributes.color, N = g0.attributes.normal, I = g0.index;
+  /* hair is grey to cool (blue at least as strong as red); skin is warm, and the eyes are black */
+  const grey = (i) => { const r = C.getX(i), gg = C.getY(i), b = C.getZ(i); return r - b < 0.03 && Math.max(r, gg, b) - Math.min(r, gg, b) < 0.14 && Math.max(r, gg, b) > 0.06; };
+  const want = new THREE.Color(hc);
+  const pos = [], nrm = [], col = [];
+  const sx = mirror ? -1 : 1;
+  for(let t = 0; t < I.count; t += 3){
+    const tri = [I.getX(t), I.getX(t + 1), I.getX(t + 2)];
+    /* a lock that crosses the cut is trimmed AT it, not dropped: dropping whole triangles left
+       the back of the head bare, because the long fall behind is one sheet from crown to nape */
+    if(!tri.every(grey) || !tri.some(i => P.getY(i) > cut)) continue;
+    const order = mirror ? [tri[0], tri[2], tri[1]] : tri;         /* a mirror turns the winding inside out */
+    for(const i of order){
+      pos.push(sx * P.getX(i) * fit.s + fit.x, Math.max(cut, P.getY(i)) * fit.s + fit.y, P.getZ(i) * fit.s + fit.z);
+      nrm.push(sx * N.getX(i), N.getY(i), N.getZ(i));
+      const k = clamp((C.getX(i) + C.getY(i) + C.getZ(i)) / 3 / 0.33, 0.35, 1.25);
+      col.push(want.r * k, want.g * k, want.b * k);
+    }
+  }
+  g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.computeBoundingSphere();
+  _blobGeos.set(key, g); _sharedRes.add(g);
+  return g;
 }
 /* a box with its edges rounded off, flat enough in front for a painted face */
 let _rbGeo = null;
@@ -35044,54 +35177,6 @@ function roundedBoxGeo(){
   }
   _rbGeo = g; _sharedRes.add(g);
   return g;
-}
-/* AN ANIME EYE: an almond opening, flatter over the top than under it, filled nearly edge to edge
-   by a tall iris that runs dark at the top to light at the bottom, a pupil, a heavy upper lash
-   that runs past the outer corner into a flick, a thin lower lash, and two catch-lights — the
-   big one high, the small one low, on the same side for both eyes, because both eyes are lit by
-   the same light. `o.outer` is which way the outer corner lies on the canvas (-1 or 1). The iris
-   and the lights go on the glow map as well, and that is the shine. */
-function paintAnimeEye(ctx, gx, x, y, w, h, o){
-  const cx = fpU(x), cy = fpV(y), W = fpL(w), Hh = fpL(h);
-  const shape = (c) => {
-    c.beginPath();
-    c.moveTo(cx - W / 2, cy + Hh * 0.04);
-    c.bezierCurveTo(cx - W / 2, cy - Hh * 0.62, cx + W / 2, cy - Hh * 0.62, cx + W / 2, cy + Hh * 0.04);
-    c.bezierCurveTo(cx + W / 2, cy + Hh * 0.62, cx - W / 2, cy + Hh * 0.62, cx - W / 2, cy + Hh * 0.04);
-    c.closePath();
-  };
-  const iris = (c, k) => {
-    const g = c.createLinearGradient(0, cy - Hh * 0.46, 0, cy + Hh * 0.46);
-    g.addColorStop(0, mixHex(o.iris, '#000000', 1 - 0.35 * k));
-    g.addColorStop(0.45, mixHex(o.iris, '#000000', 1 - 0.85 * k));
-    g.addColorStop(1, mixHex(o.irisLo, '#000000', 1 - k));
-    c.fillStyle = g;
-    c.beginPath(); c.ellipse(cx, cy + Hh * 0.05, W * 0.34, Hh * 0.47, 0, 0, Math.PI * 2); c.fill();
-  };
-  ctx.save(); shape(ctx); ctx.fillStyle = o.white; ctx.fill(); ctx.clip();
-  iris(ctx, 1);
-  ctx.strokeStyle = mixHex(o.iris, '#000000', 0.55); ctx.lineWidth = W * 0.05;
-  ctx.beginPath(); ctx.ellipse(cx, cy + Hh * 0.05, W * 0.34, Hh * 0.47, 0, 0, Math.PI * 2); ctx.stroke();
-  ctx.fillStyle = o.pupil;
-  ctx.beginPath(); ctx.ellipse(cx, cy - Hh * 0.02, W * 0.13, Hh * 0.24, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.restore();
-  gx.save(); shape(gx); gx.clip(); iris(gx, o.glow); gx.restore();
-  ctx.strokeStyle = o.lash; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  ctx.lineWidth = Hh * 0.17;
-  ctx.beginPath();
-  ctx.moveTo(cx - W / 2 - W * 0.05, cy + Hh * 0.02);
-  ctx.bezierCurveTo(cx - W / 2, cy - Hh * 0.66, cx + W / 2, cy - Hh * 0.66, cx + W / 2 + W * 0.05, cy - Hh * 0.02);
-  ctx.stroke();
-  const ox = cx + o.outer * (W / 2 + W * 0.02);
-  ctx.lineWidth = Hh * 0.11;
-  ctx.beginPath(); ctx.moveTo(ox, cy - Hh * 0.08); ctx.lineTo(ox + o.outer * W * 0.24, cy - Hh * 0.36); ctx.stroke();
-  ctx.lineWidth = Hh * 0.05;
-  ctx.beginPath(); ctx.moveTo(cx - W * 0.32, cy + Hh * 0.50); ctx.quadraticCurveTo(cx, cy + Hh * 0.60, cx + W * 0.34, cy + Hh * 0.46); ctx.stroke();
-  for(const c of [ctx, gx]){
-    c.fillStyle = '#ffffff';
-    c.beginPath(); c.ellipse(cx - W * 0.13, cy - Hh * 0.16, W * 0.11, Hh * 0.12, -0.3, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.ellipse(cx + W * 0.13, cy + Hh * 0.22, W * 0.05, Hh * 0.05, 0, 0, Math.PI * 2); c.fill();
-  }
 }
 /* ---------- WEAPONS ----------
    Every weapon in the game used to be the same object: one 0.06 x 0.95 x 0.06 box in
@@ -37329,8 +37414,22 @@ function buildCharMesh(c){
       obox(0.32, 0.1, 0.32, '#efeae0', 0, 0.42, -0.02, e.headG);   /* the crown, in place of hair */
     else if(painted){
       /* soft masses, not slabs: see THE NAMED THREE, PAINTED */
-      mk(blobGeo('hair:' + c.face, namedHair(c.face, FACE.hair)), new THREE.MeshLambertMaterial({vertexColors: true}),
-         1, 1, 1, 0, 0, 0, e.headG);
+      const hm = mk(c.face === 'saga' ? sculptHairGeo('sculpt:saga', 'lyonart', FACE.hair, -0.12, true) : blobGeo('hair:' + c.face, namedHair(c.face, FACE.hair)),
+         new THREE.MeshLambertMaterial({vertexColors: true}), 1, 1, 1, 0, 0, 0, e.headG);
+      /* his sculpt's head is far wider than a painted one (0.53 across against 0.30), so the
+         lifted hair is fitted to THIS skull, whatever its build makes it */
+      if(c.face === 'saga' && e.head){ const k = e.head.scale.x / 0.30; hm.scale.set(0.76 * k, 1, 0.80 * k); }
+      /* SAGA'S GLASSES. The rims are painted with the face (see `paintNamedFace`); what is built
+         is the part a painted face cannot have — the arms, back along the sides of the head to
+         the ears, and the hinge round the corner — so he wears them from the side as well. */
+      if(c.face === 'saga' && e.head){
+        const hw = e.head.scale.x / 2, fr = NAMED_PAINT.saga.glasses;
+        for(const sx of [-1, 1]){
+          obox(0.012, 0.013, 0.20, fr, sx * (hw + 0.005), 0.262, 0.030, e.headG);            /* the arm */
+          const hg = obox(0.040, 0.013, 0.013, fr, sx * (hw - 0.012), 0.262, 0.150, e.headG); /* the hinge */
+          hg.rotation.y = -sx * 0.55;
+        }
+      }
     }
     else if(FACE){
       /* ---------- NAMED HAIR ----------
@@ -37770,13 +37869,13 @@ function buildCharMesh(c){
           const away = (hex, amt) => '#' + new THREE.Color(base).lerp(new THREE.Color(hex), amt).getHexString();
           const horn = darkHide ? away('#e4dad0', 0.62) : shade(base, 0.42);
           const memb = darkHide ? away('#d8c8d4', 0.34) : away('#241018', 0.55);
-          for(const sx of [-1, 1]){
-            const a = B(0.05, 0.20, 0.05, horn, sx*0.10, 0.34, -0.03, e.headG);
-            a.rotation.x = 0.6; a.rotation.z = -sx * 0.28;
-            const b2 = B(0.038, 0.16, 0.038, horn, sx*0.155, 0.44, -0.13, e.headG);
-            b2.rotation.x = 1.05; b2.rotation.z = -sx * 0.34;
-            B(0.028, 0.07, 0.028, horn, sx*0.185, 0.475, -0.235, e.headG).rotation.x = 1.4;
-          }
+          /* THE HORNS ARE ONE PIECE EACH, GROWN OUT OF THE SKULL (see SUCCUBUS HORNS). They
+             were three boxes a side placed by their centres, and nothing made the end of one
+             meet the start of the next, so they read as rectangles floating round her head. */
+          const hk = SUCC_HORN_SPEC[c.hornKind] ? c.hornKind      /* a probe may ask for one kind */
+            : SUCC_HORNS[Math.floor(h(71) * SUCC_HORNS.length) % SUCC_HORNS.length];
+          mk(succHornGeo(hk), new THREE.MeshLambertMaterial({color: new THREE.Color(horn)}), 1, 1, 1, 0, 0, 0, e.headG);
+          e.hornKind = hk;
           /* the tail: five falling segments off the base of the spine, each a little smaller */
           let ty = 0.02, tz = -0.22;
           for(let i = 0; i < 5; i++){
@@ -37796,12 +37895,8 @@ function buildCharMesh(c){
                  the game, and it comes OFF the face: a side part, the fringe swept away from it
                  across the brow, long lengths falling in front of the shoulders and a fall down
                  the back. The horns come up through it, and the horns are the silhouette.
-               · HER EYES ARE THE TELL: big, painted, and lit (see below). The first cut of this
-                 pass gave her a woman's face — small eyes, brows, a nose — and the note back was
-                 that she is an idealised caricature, so the nose went and the eyes came back big.
-               · AND A MOUTH. Dark, and on her own skin. A face without one is a mask, and the
-                 point of her is that people decide not to notice what she is, not that she has
-                 no face to look at.
+               · HER EYES ARE THE TELL: big, square and lit (see below). Painted almond eyes
+                 were tried after this and read as uncanny, and the lips with them; both are gone.
              Everything stays off the id's hash, so a succubus that walks out of view and back is
              the same one; and every mark still reads off her own hide, chalk or soot, because
              every colour here is pushed away from `base` rather than simply darkened. */
@@ -37810,24 +37905,23 @@ function buildCharMesh(c){
           const IRIS = ['#7fd45a', '#ffc94a', '#b47cff', '#4fd6c8', '#ff6a4a'];
           const iris = IRIS[Math.floor(h(53) * IRIS.length) % IRIS.length];
           const lash = darkHide ? '#120c10' : '#181016';
-          const lip = darkHide ? away('#d27a96', 0.55) : away('#4a1426', 0.62);
-          const lipLo = darkHide ? away('#e29ab0', 0.45) : away('#6a2038', 0.55);
-          /* ---------- AND THE EYES ARE ANIME EYES ----------
-             "The idea is more of an 'anime' style, idealized caricature. So we need to cut the
-              'womanly' face, at least the nose and smaller eyes. Bring back the bigger eyes... go
-              for big shiny anime eyes." Painted, not built (see PAINTED FACES): big almond
-             eyes a third of the face tall, nearly filled by a lit iris, heavy upswept lashes and
-             two catch-lights. No nose, which is the caricature. The mouth is kept as it was. */
-          const paint = facePaint(`succ:${iris}:${darkHide ? 1 : 0}`, (ctx, gx) => {
-            for(const sx of [-1, 1])
-              paintAnimeEye(ctx, gx, sx * 0.066, 0.246, 0.104, 0.118, {
-                iris, irisLo: mixHex(iris, '#ffffff', 0.55), white: '#f7f1f2', pupil: '#12080f',
-                lash, outer: sx, glow: 0.6});
-          });
-          faceDecal(e.headG, paint, 0.162, glowMats);
-          const upper = B(0.074, 0.018, 0.02, lip, 0, 0.166, 0.157, e.headG);              /* the mouth */
-          upper.rotation.z = 0.05;                                                          /* and the half of a smile */
-          B(0.058, 0.016, 0.02, lipLo, 0, 0.151, 0.157, e.headG);
+          /* ---------- SQUARE EYES, AND NO MOUTH ----------
+             "Can we revert to the square anime eyes for the succubi, like before? This currently
+              reads as just... uncanny valley. Also the lips are not working. Let's take those off."
+             The eyes are the big square ones from before the face was rebuilt (d68c362), put
+             back as they were: a third of the face each, black above where lash and pupil are
+             one mass, the colour below it and LIT, a paler patch low in the outer corner, and a
+             white catch-light up by the nose. Nearly touching, with a clear strip of skin between
+             so they stay two eyes at range. No nose and no mouth: a caricature, as ruled. */
+          const irisLo = mixHex(iris, '#ffffff', 0.62);
+          for(const sx of [-1, 1]){
+            B(0.094, 0.056, 0.02, lash, sx*0.067, 0.274, 0.152, e.headG);
+            /* lit, but LOW: at the lamp's full 1.7 the colour burns through to white and all
+               five irises came back the same pale square */
+            mkGlow(BOXG, ownGlow(iris),   0.094, 0.086, 0.02, sx*0.067, 0.203, 0.152, e.headG).material.emissiveIntensity = 0.55;
+            mkGlow(BOXG, ownGlow(irisLo), 0.048, 0.034, 0.02, sx*0.078, 0.176, 0.154, e.headG).material.emissiveIntensity = 0.45;
+            mkGlow(BOXG, ownGlow('#ffffff'), 0.024, 0.024, 0.02, sx*0.050, 0.242, 0.154, e.headG);
+          }
           /* the hair: a crown within the skull's width, a side part, and the fringe swept off it */
           B(0.310, 0.100, 0.300, hairc, 0.010, 0.418, -0.010, e.headG);
           B(0.200, 0.050, 0.240, hairc, -0.040, 0.470, -0.020, e.headG);
@@ -50876,7 +50970,11 @@ function lyreTick(dt){
   her.face = 'lyre';        /* a sculpted head; there is no FACES entry, so the body keeps its own */
   her.holdsFire = true;   /* she does not shoot her brother's household on sight — see pierceNeutral */
   her.blood = 150; her.maxBlood = 150;
-  her.conviction = 'compassion';
+  /* COLD, NOT COMPASSIONATE. "She is still somewhat compassionate in that she is trying to save
+     people, but her way of going about it is cold and calculating, as opposed to Lyonart's
+     somewhat fiery ambition." Eleven years of closing tears by hand is the compassion; how she
+     weighs a life against a tear is the conviction. */
+  her.conviction = 'cold';
   chars.push(her);
   worldEvent('lyre', p2.x, p2.y,
     'She is alive. She has been out here a long time, and she has not been idle: the tears in this stretch of waste are closed, one after another, by hand.');
@@ -51962,7 +52060,7 @@ function applyCreation(race, gift, origin, sub){
         {atk:22, def:26, tough:20, ath:8, medic:40, magic:52, gift:'divine', armr:20,
          weapon:'w_kat', armor:'a_lea'});
       lyre.face = 'lyre'; lyre.house = 'alagadda';
-      lyre.conviction = 'compassion';
+      lyre.conviction = 'cold';        /* see where she is found: cold and calculating, not ambitious */
       lyre.blood = 150; lyre.maxBlood = 150; lyre.shortTag = 'LR';
       chars.push(lyre);
 
