@@ -541,6 +541,40 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
+### 5.20 The Sixfold's harness reads a Sixfold that barely fights — **raised 2026-09-29, not changed**
+
+`sixfold.js` has two red claims on this branch, and one of them is red on HEAD too.
+- **`oneBlowTakesTheRank`:** the sweep trial hurts 0 of 36 bodies on both builds. Staged beside a
+  target, the beast swings once in three seconds on either build, with identical traces, so this
+  predates the 2026-09-29 round.
+- **`andNowItCostsThemMore`:** HEAD reads 5 kills against 0 across eight worlds, and this branch
+  reads 0 against 0. The file already calls this "the most chaotic number in this file". The world
+  it runs in moved: two wanderers were added and every later id shifted by two. The Sixfold's own
+  code is unchanged and swings the same.
+- **Worth its own look:** a creature the bible calls capable of wiping out cities kills five Old
+  Bones in eight minutes of fighting. `orders.js` (`andOnATreeSetsWood`: no tree near its staging
+  point) is also red on HEAD.
+
+### 5.19 A Coil member stayed a Coil member after the flag moved — **fixed 2026-09-29**
+
+`rareFolk()` files the Coil in a bucket and keeps the filing until `chars.length` changes.
+Recruitment wrote `conv.coil = true` and nothing else, so a neighbour recruited on a quiet day
+missed meetings until somebody was born or died. Found when an arrested cell counted 5 → 2 instead
+of 5 → 0. Every write now goes through `coilFlag`, which drops the filing, and `coilCells` asks
+`c.coil` again.
+
+`t.coilHeld` ("the watch has stopped asking questions") was **set and never read**: nothing
+consulted it. It is now read in `crime()`, for a friend of the stone only (THE COIL, WIDENED).
+Whether it should also blunt the watch for everybody is a design call and has not been made.
+
+### 5.18 A quest stage's closing line was never shown — **fixed 2026-09-29**
+
+Every immortal stage carries a `done` line: what the giver says when the stage is met. Nothing
+read it. The window logged "is satisfied — for now" and the next stage's hint, so every closing
+line in `IMMORTAL_LINES` was dead text. It is now read before `give()` runs (which can change the
+stores a line depends on), logged, and drawn above the next ask (`c._stageSaid`). Found while
+writing the demilich's lines for the Exile's Crown, which would otherwise never have been seen.
+
 ### 5.17 The ground drew black everywhere since crater phase 1 — **fixed 2026-09-29**
 
 Reported: *"the whole map is pitch black, as though it were the fog effect. But it's just

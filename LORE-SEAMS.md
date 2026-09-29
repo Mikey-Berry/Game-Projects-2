@@ -531,7 +531,7 @@ and zero player-facing strings.
 | **Homunculi attract artificial souls** (§9): "stray alchemical overflow, an Old One's dream, even a whole Watcher" | Absent in text and in mechanics. The race blurb is only "Vat-grown. Learns frighteningly fast". **Tenants proposed in §10.4.** |
 | **The chimera is her flesh** (§9): "Two peoples out of one prisoner" | The Hollow half is in play; Mother calls a Hollow one of hers. The chimera half is not: nothing a player can read ties the chimera to her. |
 | **The Divine art's depth cost** (§7): "delve too deep and you are blinded by eldritch light and maddened" | No mechanic. |
-| **The Dust art's reach** (§7): "vanish, plant a false memory, or raise a wall that was never there" | Two of three. *The Veil* vanishes, and a worn face makes "the law forget you". There is no illusory wall. **The wall is proposed as the rebuilt Unremembered's, and its formula as his drop (§10.3).** |
+| **The Dust art's reach** (§7): "vanish, plant a false memory, or raise a wall that was never there" | Two of three. *The Veil* vanishes, and a worn face makes "the law forget you". **Closed 2026-09-29:** the rebuilt Unremembered raises the wall in a fight, and a leaf of his ledger teaches it to a player at Dust III (THE WALL THAT WAS NEVER THERE, §10.3). All three reaches are in the game. |
 | **The Hollow Citadel** (§16) | Four walkable storeys at Hollowmere, and nothing in them. The bible marks its purpose `[?]`. |
 
 ---
@@ -606,11 +606,11 @@ Put down on 2026-09-25 so none of it is lost. Nothing here is started.
 - The Tablets of the Deep (§3.3 option 2 is their thin end): proposed in §9.
 - The Good Kami rites and the curse clause.
 - More lunar events.
-- The pureblood line.
-- Homunculi attracting souls.
+- The pureblood line. *(Ruled and built 2026-09-29: Saltmere's Salt-cured, §10.6.)*
+- Homunculi attracting souls. *(Built 2026-09-29: the tenants, §10.4.)*
 - The chimera's tie to Mother.
 - The Divine art's depth cost.
-- The Dust art's illusory wall.
+- The Dust art's illusory wall. *(Built 2026-09-29: the Unremembered's, and his ledger leaf, §10.3.)*
 - The Hollow Citadel's purpose.
 - The Messengers' job: nothing about them responds to the Door, the tears or the clock (§3.2).
 
@@ -1138,7 +1138,21 @@ Questions for 9.5:
   - the Ossuary King is to be renamed.
 - The eight wanderers and Czarina are in the bible's §13.
 
-**Nothing else below is in the game.** **(mine)** marks my own invention.
+**Ruled and built, 2026-09-29.** The proposals below are kept as they were put; this is what came
+of each.
+
+| § | ruling | built |
+|---|---|---|
+| 10.1 | **The Lord of Ash and Bone**; his trinket is **the Lord's Signet**. The repetition with "ash" is distant enough. | Renamed everywhere a player reads it (rumour, hunt question, masters, Signet). The code's `bossKey` stays `king`. |
+| 10.2 | **The Exile's Crown**, and the demilich **accepts** it, so Lyonart goes round the Lord instead of through him: "half the point of Lyonart's origin". | Lyonart starts with it. The demilich's crown stage takes either crown, and the Last Rite takes any `lichCrown`. His lines for the Exile's Crown: *"No names. Ours had eleven, and a space…"*. Along the way, the text a stage said on completion was never shown (read after the stage advanced); it now is. |
+| 10.3 | The name stays. "Build it and send screenshots." | Rebuilt: the look below, and the fight at full Dust (wall, four of him, Loyalty that always takes, Veil that relocates). The old king inherits the walls. His ledger leaf teaches a player Dust III wall. The Remembrancer office and the Hesper line were not ruled and are not in. |
+| 10.4 | "Those tenants and rates are good." Overflow works in a Nullborn; workings cost no more Attention, but the discharge stays; a Watcher may turn. | All four tenants, at 14/10/7/4%. A Watcher turns at 1% a day from THE WATCHERS WAKE. A Scholar can "look" at a homunculus. |
+| 10.5 | "A sixfold", not "the". Capped, "as they are capable of wiping out cities". | Named as a kind; none on day one; cap 1/1/1/2/3/4 by Fracture stage; one a day at 30% under the cap from stage 3; the Sigil-Bound counts any kill; the Mantle rides the first born. |
+| 10.6 | "Incorporate it." | Easy in the dark (half the price), shy of the noon flats, the Kept know them (+50% regard), four Saltmere lines. |
+| 10.7 | 1, 2, 4, 5, 6 and 7 yes; **3 (Kami keeps them out of Fallowend) no**: "the rivalry… is a bit more zoomed out". 4 gains the choice not to report; 5 becomes the cells rising against their own towns. | All six. Named by layer (the Order's `devourer` topic; the Coil's Appetite and Seventh). The Appetite sows wars with evidence. Report or stand with them. The rising at the Door. Rubido's barks. The Ouroboros Ring and the Serpent in Ash. |
+| 10.8 | Blythe: a Hospitaller the Order **never hunted and hopes will rejoin**, not in their camps, a drunk. **Maren and Tallow approved; Grist and Idris cut.** | Blythe (taproom, three bottles, the drunk surgeon's hands, the Order's and Ash's lines), Maren (Copperhold speaker with a conversation), Tallow (Copperhold wanderer with her echo). |
+
+**(mine)** marks my own invention.
 
 ### 10.1 The Ossuary King: a new name
 

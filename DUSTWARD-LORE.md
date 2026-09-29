@@ -359,6 +359,20 @@ necromancer.
 - **Homunculus `[C]`** — vat-grown, learns frighteningly fast, dies at 34, sterile. Six lines poured
   for one job each. As empty vessels they attract **artificial souls** — stray alchemical overflow,
   an Old One's dream, even a whole Watcher. The Golden Age believed it was manufacturing labour.
+  **Built 2026-09-29, the tenants and rates as proposed.** About a third are not alone in there, and
+  nobody knows which until it shows:
+  - **Overflow (14%)**, the vat's leftover charge. It comes out as a gift at I, even in a Nullborn.
+    A working draws no more Attention than usual, but it can **discharge** and burn whoever is
+    beside it, the vessel too.
+  - **A dream (10%)**, an Old One's, and by what it says in its sleep, Malathuun's (never named).
+    One skill learned twice as fast. Some nights it walks toward Sundered ground, and the things
+    there do not touch it.
+  - **An echo (7%)**, a Golden-Age person. It is lettered and studies half again as fast. After a
+    season it answers to another name, is haunted, and will not raise the dead.
+  - **A whole Watcher (4%).** It sees in the dark, and gaunts pass it by unless it strikes one. The
+    Order and the Messengers know it on sight. From THE WATCHERS WAKE it may **turn**, for good
+    (1% a day).
+  - Never Mother's: the Hollows are hers, and that line stays hard. Nine has nobody in him.
 - **Golem `[C]`** — "a servant that was left running until it began to want things." Clay, Rock,
   Paper, Glass.
 
@@ -377,8 +391,12 @@ went up and bred back in, a pureblood-descended human line was always available,
 Salt-cured are it**. It is **implied, never stated**: nobody in the world knows it, Saltmere least of
 all. The traits to lean on are pale, light-averse, easy underground, uneasy under open sky. The town
 already "marries among themselves, buries among themselves, and counts every stranger twice", and the
-brine is the story Saltmere tells itself about why it is the way it is. The ways to show it are in
-`LORE-SEAMS.md` §10.6.
+brine is the story Saltmere tells itself about why it is the way it is. **Built 2026-09-29.** A
+Salt-cured pays half the dark's price underground (pace, blow, working, and a little further seen
+without a lamp). They are a touch slower on the surface from ten until three. The Kept know them:
+an offering laid with one at the stone buys half again the regard, and the first time, the
+congregation comes in close to look. And Saltmere says it without saying it (*"We keep off the
+flats at noon. It's the glare. That's all it is."*).
 
 ## 10. The Attention, the night & the deep `[C]`
 
@@ -401,7 +419,7 @@ them. Rift-held ones outlast dawn.
 | Choir-Kin | Heavy, and it speaks in *(the chord)* — one held note. |
 | Larder-Kin | It does not want to fight you. It wants *one* of you, and it will wait all night. Keeps a **midden** in the deep waste. You find it by following what took someone. |
 | Brood-of-the-Door | **The thing holding it open**, shoulders in this world and the rest on the far side. Never enters, never leaves the Door's radius, and while it stands the closing rite cannot finish. |
-| Sixfolds | **A late-game enemy, not a single boss** (ruled 2026-09-29; the code still treats it as one, `LORE-SEAMS.md` §10.5). Six legs, jointed wrong. Born when a tear reaches full width — "the rift collapses behind it, done with its purpose. It does not go back. It goes OUT." |
+| Sixfolds | **A late-game enemy, not a single boss** (ruled 2026-09-29, **built** the same day). Six legs, jointed wrong. Born when a tear reaches full width — "the rift collapses behind it, done with its purpose. It does not go back. It goes OUT." None walks on day one. **They are capped by the Fracture**, because a few of them can wipe out a city: one until THE SKY LEANS, then two, then three, then four at the Second Fracture. From THE WATCHERS WAKE the deep waste puts one up on its own, under the cap. |
 
 **Rifts, the Door, and the clock.** A **tear** is a place where the world did not knit back
 together. Leave one open and it widens; at the second stage it begins to **sing**. **The Door** is
@@ -490,8 +508,29 @@ says yes.**
 **The Coil `[C]`.** Har'mageddon's doom cult. From the shipped comment: *"The seventh living god
 has quiet people in every town. They pay their tithes, sweep their steps, and after dark some of
 them walk out past the fences to a stone that is not on any map, and practice. Not worship.
-Practice."* Five ordinary civilians marked at worldgen — never at Hollowmere — with an exposure
-state and two sets of dialogue depending on it.
+Practice."* Cells of three to five in every town but Hollowmere, each with a speaker. They meet
+some nights at the serpent stone, recruit, and buy the watch.
+
+**Widened 2026-09-29** (`LORE-SEAMS.md` §10.7, items 1, 2, 4, 5, 6 and 7):
+- **Named by layer.** The Church names him **Har'mageddon, the sixth-born**, the Devourer (the
+  Order's talk). The Coil never says the name to anybody outside it: **the Appetite**, **the
+  Seventh**. Nobody reconciles the count.
+- **The Appetite.** Every running war feeds it, and so do open tears and a red moon. Fed enough, a
+  cell **makes a war**: its own town's caravan burned on the road with the neighbour's colours on
+  the dead. A Serpent in Ash lies by the wagons, and shown to either seat, it ends the war.
+- **Witness, then choose.** Seeing them at the stone leaves the mark on it.
+  - **Report them:** take the mark to their town's seat, and the cell is arrested. The Coil marks
+    you, and knives come a night or three later.
+  - **Or stand with them:** they drill you at the stone. On the third night the speaker gives you
+    the **Ouroboros Ring** (every kill in a fight adds to the next blow, and whoever wears it does
+    not fall back). In a town they hold, the watch looks away for you, short of murder.
+- **The rising.** At the Second Fracture the cells come out with blades and go for **their own
+  towns**, not the crater. They feed on the chaos and do not know what the Door is. A friend of the
+  stone is not in their way.
+- **Rubido** was on the god's side of the stone once, and his barks say so without the name.
+- **Maren Tollis** (below) is the Copperhold speaker, and the cult's human face.
+- *Not incorporated:* Kami keeping them out of Fallowend (item 3). The rivalry is further out than
+  that, and not so obvious.
 
 **The Compact `[C]`.** The player's institution, deliberately expensive. A town that signs puts
 stores into a common stock and its guards into a shared muster — so **a signatory is immediately
@@ -514,19 +553,23 @@ dug into the first civilisation's tunnels, and at the bottom of one of them is M
 - **The Sigil-Bound** — transmutation immortal in an armour vessel, one of eleven poured, two
   hundred years ago. "Nobody has seen it open" — opening it ends it. He is losing his name and the
   questline is him getting it back. Sex unfixed `[?]`.
-- **The Ossuary King** (m) — **not a king** (rebuilt 2026-09-27), and **to be renamed** so the
-  name stops competing with the old king's (2026-09-29; options in `LORE-SEAMS.md` §10.1). A Golden-Age registrar who
+- **The Lord of Ash and Bone** (m) — **not a king** (rebuilt 2026-09-27), and **renamed 2026-09-29**
+  from the Ossuary King so the name stops competing with the old king's. His trinket is **the
+  Lord's Signet**. A Golden-Age registrar who
   countersigned the Pouring: eleven names and his hand under every one. He was meant to be the
   twelfth, went halfway into the vessel and climbed back out, and what climbed out wears its own
   bones on the outside, like the house they are kept in. He sits a throne in a far ruin with the
   dead kneeling in rows before him, petitioners who came to be registered and never left. The
-  folk call him a king for the throne and the crown; the "crown" is the Pouring's register-band,
+  folk call him a lord for the throne and the crown; the "crown" is the Pouring's register-band,
   sunk and tarnished (the Sunken Crown). He has **no relation to the old king** `[C]`. See the
   note below.
-  **The crown, ruled 2026-09-29:** the Last Rite (lichdom) wants *an ancient crown of alchemical
-  significance*. That is usually the Sunken Crown taken from him, but it need not be: what Lyonart
-  came through with is an equivalent (§14), and the demilich knows the difference. The name and the
-  lines are in `LORE-SEAMS.md` §10.2.
+  **The crown, ruled and built 2026-09-29:** the Last Rite (lichdom) wants *an ancient crown of
+  alchemical significance*. That is usually the Sunken Crown taken from him, but it need not be.
+  Lyonart came through with **the Exile's Crown** (§14), and **the demilich accepts it**, so
+  Lyonart's road to lichdom goes round the Lord of Ash and Bone instead of through him. *"No names.
+  Ours had eleven, and a space... It will open the door. Better than ours would, and I do not like
+  that, and it is not my business. Put it away. The one in the ruin can keep his crown, and you can
+  keep your skin."*
 - **Sister Ash** (f) — exiled inquisitor with a pyre-weapon. The light gave her certainty where it
   gave Verity quiet. "I burned my order. Bones burn easier."
 - **Grand Marshal Vey** — holds the Bastion.
@@ -549,7 +592,18 @@ dug into the first civilisation's tunnels, and at the bottom of one of them is M
   rite has to bring down. He believes the rite was done correctly, and he is right. His court
   (four, one per Art) is **built** (2026-09-27): each courtier comes through at their own ground,
   and the old king comes down carrying the Art of every courtier not yet slain (`LORE-SEAMS.md`
-  §8.5).
+  §8.5). **The Unremembered was rebuilt 2026-09-29** (the name kept). It is a court scribe in
+  salt-grey, masked with a white oval and one black redaction bar, with black bars drifting across
+  him. A band of his chest is gone and a forearm floats past its sleeve. Afterimages stand on the
+  path he took. He works the Dust arts at full, the originals of the player's degraded ones:
+  - a wall that was never there;
+  - four of him at half blood, and their blades cut;
+  - a Loyalty that always takes;
+  - a Veil that puts him somewhere else.
+
+  While he stands, the old king inherits the walls. When he dies, *"Something was killed on the salt
+  flats. Nobody who was there can say what."* A leaf of his ledger gives a Dust III player the wall:
+  the reach the art had lost (§7's "raise a wall that was never there").
 
 **Also in the world `[C]`** (added 2026-09-29; the bible did not know them). The recruitable
 uniques. The code calls them the wanderers: one of each is out there in every world, always in the
@@ -565,11 +619,16 @@ same *kind* of place and never the same place twice, and each costs something di
 | **Albedo** (f, succubus) | the one nobody mentions | a town that has agreed not to notice her; come back when the Order burns somebody | compassionate |
 | **Rubido** (m, fallen) | the one that walked out | the Coil's serpent stone. *"I have been on the other side of that particular arrangement."* | cold |
 | **Hesper Lund** (f, dust) | the one you keep meeting | the trade roads; cross her path three times | haunted |
+| **Tallow** (f, homunculus, Vat-born) | the one with the papers | Copperhold; show her a formula (not spent). She has an **echo** already shown: *"My name is Tallow. I know it is. I have the papers. She keeps signing them, though."* The name is Ilse Carrow's. Added 2026-09-29. | haunted |
+| **Brother Blythe** (m) | the one who put the helm down | a town's taproom, drinking; three bottles of rum. An ex-Paladin Hospitaller who took Ash's path without the exile. The Order never hunted him and would have him back tomorrow; his bed in the infirmary is still made. Plate, no helm, the blessed gift, a strong medic, and **a drunk surgeon**: steady with his bottle a day (1.25x), shaking without (0.6x). Added 2026-09-29. | devout |
 
 **Czarina** (f) is Saga's: the other Hollow who walked out of the redoubt, built as a bodyguard, with
 no gift (loyal). Other named people with a place in the code are the Archivist (Dustport's Scholar),
 Bellowes and the Dame (the Aldercott house), the Demilich (the ninth name on the band), the Last
-Warden and the Deep Warden. New ones are sketched in `LORE-SEAMS.md` §10.8, Brother Blythe first.
+Warden and the Deep Warden. **Maren Tollis** (f, added 2026-09-29) is a Copperhold chandler and the
+Coil's speaker there: pleasant, fair-dealing, drills at the stone twice a week, and if you find her
+out she does not run. She asks you what you think war is for. Of the others sketched in
+`LORE-SEAMS.md` §10.8, Old Grist and Idris Vane were cut.
 
 **Verity, rewritten `[★]`.** **She ascended after the Fracture, not before** — ninety years ago,
 four generations back, not an ancient. She was a Scholar, and her tragedy is that **she succeeded.**
@@ -587,12 +646,12 @@ her. **It worked.** Her five requests all read as experiments run by a researche
 condition, and the last is her asking a stranger to stand there while she tries, and fails, to want
 to stop.
 
-> ON THE OSSUARY KING `[C]`, ruled 2026-09-27. The old scholars' rumour made him the Golden
+> ON THE LORD OF ASH AND BONE (then the Ossuary King) `[C]`, ruled 2026-09-27. The old scholars' rumour made him the Golden
 > Age's last king. **That rumour is retired.** He was reworked from the ground up as a
 > registrar with a throne, and the user ruled him **no relation to the old king**: not the
 > husk, not the heir, not a rumour of either. The twelfth space on the Circlet was his, and he
 > would not sign it (the demilich's line). The folk may still call him a king; nothing in the
-> world treats him as one.
+> world treats him as one. (Renamed 2026-09-29, partly so that "king" means one person.)
 
 ## 14. Where the player comes in `[C]`
 
@@ -600,7 +659,9 @@ Five roles anybody could have had — **Gravekeeper**, **Exile**, **Freed Slave*
 Merchant**, **Old Soldier** — and two people in particular:
 
 - **Lyonart d'Alagadda** — exiled prince, **from another world**. Came through with a crown of his
-  own, not the Sunken Crown but an equivalent for the Last Rite (ruled 2026-09-29, name pending), six
+  own, **the Exile's Crown**: not the Sunken Crown, but the demilich accepts it for the Last Rite
+  (ruled 2026-09-29), which is half the point of his origin. Nobody here can say what it is made of,
+  and there are no names inside it. Six
   of his household still following, and one sworn man still breathing. Begins holding the
   endgame and unable to reach it. His road is social — ask in halls, three tellings, rumour — and it
   ends at a sister who has spent eleven years undoing his kind of work.
@@ -720,12 +781,12 @@ Flagged, unresolved, safe to revisit. Keep dependent dialogue thin.
 | What ended the first civilisation | **The most load-bearing open question in the setting.** Everything the Last Scholar does is an attempt to stop it happening to humanity, and he thinks it is happening again. |
 | The Last Scholar's immortality | **Deliberately never explained.** The legends this character is built on work because nobody produces the mechanism. |
 | How Mother's parasites work | Moral shape settled — cut from her, and she allowed it. The biology is undefined and is on the shelf for its own pass. |
-| The Ossuary King as the last king | **Ruled 2026-09-27: no.** Reworked as a registrar who would not be the twelfth name. No relation to the old king. The rumour is retired, not kept open. |
+| The Lord of Ash and Bone (then the Ossuary King) as the last king | **Ruled 2026-09-27: no.** Reworked as a registrar who would not be the twelfth name. No relation to the old king. The rumour is retired, not kept open. |
 | The old king's court | **Built 2026-09-27.** Four, one per Art (`LORE-SEAMS.md` §8.5). |
 | The kingdom's crater | **Built 2026-09-25 to 09-28**, in three phases: the headland, the walk in, the Order's post at the gorge (§16). |
 | What the Church knew | It existed before the Fracture, alongside the kingdom. Whether it blessed the rite is unwritten, and it is where the closely-guarded secret came from. |
 | Good Kami's placement | Candidate: the one of Mother's kin who did not leave. |
-| Har'mageddon's placement | No slot in the revised cosmology yet, and the Coil is already shipped. Ways to widen his part are in `LORE-SEAMS.md` §10.7. |
+| Har'mageddon's placement | No slot in the revised cosmology yet. His part in the world was widened 2026-09-29 (named by layer, the Appetite, the rising: §12), without placing him. Kami's rivalry with him stays "zoomed out". |
 | God birth-order | First through seventh; five undefined; **do not resolve.** The shipped Coil comment says "seventh living god" and that is as far as anything should go. |
 | The eldritch moon | Recycled and held. It used to explain Scaleborn births and cannot now. Candidate: the Voidborn Twins, who have no worldly signature at all. |
 | The Hollow ladder | Not a fourth branch immortality. Whether it should be reframed or extended is for workshopping. |
