@@ -779,6 +779,19 @@ const lastScholar = {heard: false, done: {}, talked: 0, body: null, key: null, s
 const SIXFOLD_CAP = [1, 1, 1, 2, 3, 4];
 let sixfoldKills = 0;           /* how many have been put down, by anybody; see the Sigil-Bound */
 let sixMantleGiven = false;     /* the Gaunt's Mantle rides the first one born; see placeLegends */
+/* the Coil's standing with you and its hunger (see THE COIL, WIDENED): up here because `kill`,
+   `hostile` and `crime` read it, and any of them can run while the world is still being made */
+let coilAppetite = 0;          /* what the chaos has fed it. Nobody in the world reads this number */
+let coilSown = 0;              /* wars a cell has started on purpose */
+let coilWars = [];             /* {a, b, day, x, y, proven}: town indices, and where the mark lies */
+let coilFriend = false;        /* you stood at the stone with them */
+let coilEnemy = false;         /* you took the mark to a seat */
+let coilVisits = 0, coilVisitNight = -1;
+let coilHitDay = -1;           /* the night the knives come, once they have marked you */
+let coilRisen = false;
+/* the Ouroboros Ring (see THE COIL, WIDENED): each kill in a fight adds OURO_PER to every blow
+   after it, up to OURO_MAX kills, and the count is gone once OURO_FADE_H passes without one */
+const OURO_PER = 0.08, OURO_MAX = 5, OURO_FADE_H = 2;
 /* the barricade's tiles: a band two tiles deep across the gorge floor, less the gap */
 function passGateTiles(){
   const out = [];
@@ -1708,6 +1721,9 @@ const ITEMS = {
   crown:   {name:'Sunken Crown',  base:2500,type:'trade', lichCrown:true},
   crown_exile:{name:"The Exile's Crown", base:2500, type:'trade', lichCrown:true,
     desc:'He came through with it on. Nobody here can say what it is made of, and there are no names inside it. The Last Rite will take it all the same.'},
+  /* the Coil's mark: evidence, and nothing else. See THE COIL, WIDENED */
+  coil_mark:{name:'Serpent in Ash', base:30, type:'trade',
+    desc:'A serpent eating its own tail, pressed into a cake of ash the size of a palm. It holds its shape better than ash should. Any seat in the country would know it for what it is.'},
   hide_lev:{name:'Leviathan Hide',base:150, type:'trade'},
   w_kingsfang:{name:'Kingsfang',  base:5000,type:'weapon', dmg:34, wt:'cut'},
   w_pyre:  {name:'Pyre Blade',    base:4500,type:'weapon', dmg:30, wt:'burn'},
@@ -1748,6 +1764,10 @@ const ITEMS = {
     desc:'A brass tally that says somebody vouched for you. Doors open a little wider'},
   t_phial: {name:'Ash Phial',     base:800, type:'trinket', mana:6,
     desc:'A finger of grave-ash in glass. The pool comes back deeper for carrying it'},
+  /* the Coil's gift to somebody who stood at the stone with them. Not a legendary: nobody has to
+     find it, it is handed over. See THE COIL, WIDENED */
+  t_ouro:  {name:'Ouroboros Ring', base:2200, type:'trinket', ouro:true,
+    desc:'Black iron, a serpent with its tail in its mouth. Every kill in a fight goes into the next blow. Whoever wears it does not fall back'},
   a_marshal:{name:"Marshal's Plate", base:5800,type:'armor', def:.45, pen:.26},
   /* ============================================================ THE LEGENDARIES ============
      "Legendaries to start building — reference the Unbuilt doc."
@@ -5665,6 +5685,7 @@ function squadBark(c){
      arrow does. See tools/pain.js. */
   /* what it is like to be the thing you are — rarer than the rest, because it is the one
      thing about somebody that never changes and a loop of it would wear out fastest */
+  if(c.wanderKey === 'rubido' && vrnd() < 0.3) return rubidoBark(c);   /* see RUBIDO KNOWS */
   if(vrnd() < 0.2){ const rl = raceBark(c); if(rl) return rl; }
   /* the situation gets first refusal, but not every time: a squad that only ever narrates
      the larder never tells you what it thinks of you, and that was the whole point of them */
@@ -10686,6 +10707,14 @@ function crime(kind, x, y, by, f){
   if(t.def.undeadFriendly && (kind === 'raising' || kind === 'walkdead' || kind === 'formula')) return null;
   const saw = witnessNear(x, y, t, 0, null, fl);
   if(!saw) return null;
+  /* ---------- A TOWN THE COIL HOLDS LOOKS THE OTHER WAY ----------
+     For somebody who has stood at the stone with them, and short of murder. The watch there has
+     "stopped asking questions" since the cells grew deep (see coilTick); for a friend of the
+     stone it also stops booking them. See THE COIL, WIDENED. */
+  if(coilFriend && t.coilHeld && spec.bounty < CRIMES.murder.bounty){
+    if(nowH() - (t._coilLookH ?? -99) > 6){ t._coilLookH = nowH(); log(`${saw.name} saw it. Then somebody had a quiet word, and ${saw.name} did not see anything after all.`, ''); }
+    return null;
+  }
   /* ---------- SOMEBODY TALKS THEM ROUND ----------
      "Charismatic: occasional store discounts, forgiveness of minor trespasses." MINOR is the
      load-bearing word and it is read off the price the town puts on the thing rather than
@@ -11901,6 +11930,12 @@ function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
   if(!raw) dmg = mitigate(d, dmg, wt, unmade ? 1 : ap, a);
   /* A CAGE OF BONE WORN OUTSIDE (the Lord of Ash and Bone): a hammer breaks it, a blade skates off it */
   if(d.boneWard && !raw) dmg *= BONE_WARD[wt] ?? 1;
+  /* THE OUROBOROS RING: each kill in this fight adds to every blow after it. The fight is over
+     when OURO_FADE_H passes without one, and the count goes with it. */
+  if(a && a.ouroN && gearHas(a, 'ouro')){
+    if(nowH() - (a.ouroH ?? -99) > OURO_FADE_H) a.ouroN = 0;
+    else dmg *= 1 + OURO_PER * a.ouroN;
+  }
   /* an awakened parasite remembers what it was bred to kill */
   if(a && a.race==='hollow' && a.hollowTier >= 1 && d.gauntKind) dmg *= 1.35;
   /* THE KEEPER'S HUNGER: a third of what it takes out of you goes into it */
@@ -12141,6 +12176,15 @@ function kill(c, by){
   /* the ledger is written here, not inferred from a body that will be gone in two days */
   if(c.bossKey && !bossSlain[c.bossKey]) bossSlain[c.bossKey] = day;
   if(c.gauntKind === 'sixfold') sixfoldKills++;
+  /* THE OUROBOROS RING: every kill in a fight goes into the next blow (see applyDamage) */
+  if(by && by !== c && gearHas(by, 'ouro')){
+    if(nowH() - (by.ouroH ?? -99) > OURO_FADE_H) by.ouroN = 0;
+    by.ouroN = Math.min(OURO_MAX, (by.ouroN || 0) + 1); by.ouroH = nowH();
+  }
+  if(c.coil && !c.coilKnife && coilFriend && by && by.faction === 'player'){
+    coilFriend = false;
+    log(`${c.name} was one of the people at the stone. They will not make room for you in the circle again.`, 'bad');
+  }
   siteSpent(c);                   /* a site's gaunt is one fewer it grows back (WHAT A SITE HAS LEFT TO SPEND) */
   if(c.bossKey && threadOf('master_' + c.bossKey) && !threadOf('master_' + c.bossKey).done)
     threadDone('master_' + c.bossKey, 'Dead. Whatever it knew went with it.');
@@ -14543,6 +14587,16 @@ function hostile(a, b){
     if(o2.faction === 'deep') return false;
     return !!d2.provoked && o2.faction === 'player';
   }
+  /* ---------- THE COIL, RISEN ----------
+     Their own town's watch and people, the Order, and anything that came through a tear. You too,
+     unless you have stood at the stone with them and have not since given them a reason. See
+     THE COIL, WIDENED. */
+  if(a.faction === 'coil' || b.faction === 'coil'){
+    const k = a.faction === 'coil' ? a : b, o3 = k === a ? b : a;
+    if(o3.faction === 'gaunt' || o3.gauntKind) return true;
+    if(o3.faction === 'player') return !coilFriend || !!k.provoked;
+    return o3.faction === 'town' || o3.faction === 'purge' || o3.faction === 'messenger';
+  }
   /* ---------- A WATCHER IN A VESSEL, AND WHAT KNOWS IT ----------
      The gaunts pass it by unless it has struck one (`gauntStruckH`); the Order and the
      Messengers know what it is on sight. See WHAT MOVES INTO A VESSEL. */
@@ -15784,7 +15838,8 @@ function commandTick(dt){
        the fight paid for itself. The dire case is not held: half the band down or the captain
        at a fifth of his blood is not a looting problem. */
     const dire = standing < 0.25 || cdr.blood < cdr.maxBlood * 0.22;
-    if(m.phase !== 'home' && (standing < grit(cdr) || hurtCdr) && (!m.after || dire)){
+    /* WHOEVER WEARS THE OUROBOROS RING DOES NOT FALL BACK: a band under that captain fights on */
+    if(m.phase !== 'home' && !gearHas(cdr, 'ouro') && (standing < grit(cdr) || hurtCdr) && (!m.after || dire)){
       m.phase = 'home';
       cmdSay(cdr, standing < grit(cdr) ? 'Too many down. Breaking off.' : 'I am cut. Pulling back.', 'bad');
       /* A RETREAT IS A DEED. The conviction table has weighed `retreat` since it was written
@@ -19123,6 +19178,7 @@ function openTheDoor(){
   AU.news();
   spawnBrood();
   log('There is a figure hanging in the mouth of it, a long way up, on a rope of light. It wears a crown.', 'bad');
+  coilRise();
   return theDoor;
 }
 /* ============================================================ BROOD-OF-THE-DOOR
@@ -20738,7 +20794,8 @@ let coilN = 0;
 let coilMeetNight = false;
 function coilTick(){
   if(!coilShrine) return;
-  const members = rareFolk().coil.filter(c => c.state === 'ok');
+  coilWiden();              /* the Appetite, the knives, the stone's guests: see THE COIL, WIDENED */
+  const members = coilCells();
   if(!members.length) return;
   if(isNight()){
     if(!coilMeetNight && rnd() < 0.25){ coilMeetNight = true; }
@@ -20755,7 +20812,12 @@ function coilTick(){
         coilExposed = true;
         log('Figures around a serpent-marked stone — townsfolk you have traded with, drilling with blades in the dark. They see you seeing them. Nobody says anything.', 'bad');
         worldEvent('coil', coilShrine.x, coilShrine.y, 'There is a stone in the waste cut with a serpent that eats its own tail. The ground around it is packed hard, like a training yard. Like a training yard that gets used.');
+        /* AND WHAT THEY LEAVE ON IT. The evidence a seat will believe, and the only one: see
+           THE COIL, WIDENED. Once, at the moment you first see them. */
+        makeDrop(coilShrine.x + 0.5, coilShrine.y + 1.2, {coil_mark: 1});
+        log('Somebody has left a serpent pressed into a cake of ash on top of the stone. Any seat in the country would know that mark. You could take it to one. Or you could come back another night.', '');
       }
+      coilGuests(members);
     }
   } else {
     if(coilMeetNight){
@@ -20800,7 +20862,7 @@ function coilTick(){
       const near = t2 ? chars.filter(c => c.civ && c.homeTown === t2 && !c.coil && c.state === 'ok' && c.age >= 18) : [];
       if(near.length){
         const conv = pick(near);
-        conv.coil = true;
+        coilFlag(conv, true);
         coilN++;
         if(coilExposed && player().some(o => o.state !== 'dead' && dist(o.x, o.y, conv.x, conv.y) < 14))
           log(`${conv.name} of ${t2.name} has started walking out after dark. You know where to.`, '');
@@ -20832,7 +20894,220 @@ function coilTick(){
 }
 let coilStruck = false;
 let _coilDay = -1;
+/* ============================================================ THE COIL, WIDENED
+   Ruled 2026-09-29 (LORE-SEAMS §10.7, items 1, 2, 4, 5, 6 and 7; item 3, Kami keeping them out
+   of Fallowend, was ruled OUT: the rivalry is further out than that, and not so obvious).
+     THE APPETITE. Every running war feeds a number nobody in the world can read, and so do open
+       tears and a red moon. When it is fed enough a cell MAKES a war: its own town's caravan
+       burned on the road with the neighbour's colours on the dead. The mark they leave in the
+       ash is the evidence, and a seat shown it calls the war off.
+     WITNESS, THEN CHOOSE. Seeing them at the stone leaves the same mark on top of it. Take it to
+       their town's seat and the cell is arrested, and the Coil marks you: knives, some night
+       soon. Or say nothing, go back, and stand at the stone with them: they drill you, the watch
+       in a town they hold looks the other way for you, and on the third night they give you the
+       Ouroboros Ring.
+     THE RISING. At the Second Fracture the cells come out of their houses with blades and go
+       for their own towns. Not the crater: they feed on the chaos, and none of them know what the
+       Door is. Anybody who has stood at the stone with them is not in their way.
+   Named by layer: the Church says Har'mageddon, the sixth-born (the Order's Teaches tree); the
+   Coil never says the name to anybody outside it, only the Appetite and the Seventh; and the
+   birth order stays unreconciled on purpose (bible §3). */
 /* the state is declared up by the Sixfold's, because `kill` and `hostile` read it */
+const COIL_SOW_AT = [18, 45, 80];     /* the Appetite at which the first, second and third war is sown */
+const COIL_RING_VISITS = 3;           /* nights at the stone before they give you the ring */
+/* who is still a quiet person in a town: not risen, not in a cell, not somebody else's now */
+/* `c.coil` asked again: `rareFolk` is cached on the roster's length, and a member who was taken
+   or turned is still in its bucket until somebody is born or dies (see `coilFlag`) */
+function coilCells(){ return rareFolk().coil.filter(c => c.coil && c.state === 'ok' && c.faction === 'town' && !c.jailedAt && !c.coilRisen); }
+/* EVERY WRITE TO `c.coil` GOES THROUGH HERE. `rareFolk` files the Coil in a bucket and keeps the
+   filing until the roster changes length, so a neighbour recruited on a quiet day was not at the
+   next meeting, and a cell arrested stayed a cell. Drop the filing whenever the flag moves. */
+function coilFlag(c, on){ c.coil = !!on; if(!on) c.coilSpeaker = false; _rare = null; }
+function coilCellOf(t){ return coilCells().filter(m => m.homeTown === t); }
+let _coilWideDay = -1;
+function coilWiden(){
+  if(coilEnemy && coilHitDay >= 0 && day >= coilHitDay && isNight()) coilKnives();
+  if(_coilWideDay === day) return;
+  _coilWideDay = day;
+  const wars = towns.filter(t => t.warWith).length / 2;
+  coilAppetite += wars * 2 + Math.min(4, rifts.length) * 0.5 + (bloodMoon ? 3 : 0);
+  if(!coilRisen && coilSown < COIL_SOW_AT.length && coilAppetite >= COIL_SOW_AT[coilSown]) coilSow();
+}
+/* ---------- A WAR, MADE ----------
+   The cell burns its own town's caravan and dresses the dead in the neighbour's colours, so the
+   town with the cell is the one that declares. It picks the neighbour its town already likes
+   least: the Coil does not invent a grudge, it feeds one. */
+function coilSow(){
+  let best = null, br = 1e9;
+  for(let i = 0; i < towns.length; i++) for(let j = 0; j < towns.length; j++){
+    if(i === j) continue;
+    const a = towns[i], b = towns[j];
+    if(a.def.key === 'hollowmere' || b.def.key === 'hollowmere') continue;
+    if(a.playerRuled || b.playerRuled || a.warWith || b.warWith || a.sacked || b.sacked) continue;
+    if(coilCellOf(a).length < 2) continue;
+    const r = relGet(i, j);
+    if(r < br){ br = r; best = [i, j]; }
+  }
+  if(!best) return false;
+  const [i, j] = best, a = towns[i], b = towns[j];
+  coilSown++;
+  a.warWith = b; b.warWith = a; a.warDay = day; b.warDay = day;
+  relSet(i, j, Math.min(relGet(i, j), -40));
+  const q = findOpenNear(Math.round(a.x + (b.x - a.x) * 0.18), Math.round(a.y + (b.y - a.y) * 0.18), 6);
+  makeDrop(q.x, q.y, {coil_mark: 1});
+  coilWars.push({a: i, b: j, day, x: q.x, y: q.y, proven: false});
+  worldEvent('war', a.x, a.y, `A caravan out of ${a.name} was found burned on the ${b.name} road, and the dead drivers were wearing ${b.name}'s colours. ${a.name} has declared war on ${b.name}.`);
+  worldEvent('coil', q.x, q.y, `Drovers who went back out to the burned ${a.name} wagons say there was something pressed into the ash beside them, and would not say what.`);
+  spawnArmy(i, b);
+  return true;
+}
+/* the sown war this town is in, while it is still being fought and nobody has shown the mark */
+function coilWarOf(t){
+  if(!t) return null;
+  return coilWars.find(w => !w.proven && (towns[w.a] === t || towns[w.b] === t) && towns[w.a].warWith === towns[w.b]) || null;
+}
+function coilProve(t){
+  const w = coilWarOf(t); if(!w) return;
+  campTake('coil_mark', 1);
+  w.proven = true;
+  const a = towns[w.a], b = towns[w.b];
+  a.warWith = null; b.warWith = null;
+  relSet(w.a, w.b, relGet(w.a, w.b) + 30);
+  t.rep = clamp(t.rep + 8, -300, 100);
+  coilExposed = true;
+  worldEvent('peace', t.x, t.y, `${a.name} and ${b.name} have laid down arms. Somebody brought ${t.name}'s seat a mark out of the ash by the burned wagons, and neither seat will say whose.`);
+  log(`${a.name} and ${b.name} are standing their hosts down. The mark in the ash did it.`, 'good');
+  coilMarked();
+}
+/* ---------- REPORTED ----------
+   The whole cell in that town, into its own gaol where there is room and out of the Coil where
+   there is not. The Order is not needed: a seat that has seen the mark does its own asking. */
+function coilReport(t){
+  campTake('coil_mark', 1);
+  const cell = coilCellOf(t);
+  let held = 0;
+  for(const m of cell){
+    coilFlag(m, false); m.coilOut = false; m.moveTarget = null;
+    const cl = freeCell(t);
+    if(cl){ stripKit(m); jail(m, cl, 20); held++; }
+  }
+  t.coilHeld = false;
+  t.rep = clamp(t.rep + 8, -300, 100);
+  worldEvent('coil', t.x, t.y, `${t.name} has taken ${cell.length === 1 ? 'one of its own' : cell.length + ' of its own'} for walking out past the fences at night.${held ? ' The gaol is full of people everybody knew.' : ''}`);
+  log(`${t.name}'s seat has the names. ${cell.length === 1 ? 'One is' : cell.length + ' are'} taken, ${held ? 'and the gaol has them' : 'and nobody is saying where'}.`, 'good');
+  coilMarked();
+}
+function coilMarked(){
+  const was = coilFriend;
+  coilFriend = false; coilEnemy = true;
+  coilHitDay = day + ri(1, 3);
+  log(was ? 'You stood at the stone with them, and then you told. They will have worked out which.' : 'The Coil will know who told. It always does.', 'bad');
+}
+/* ---------- THE KNIVES ----------
+   Once, a night or three after they have marked you: three people you may have bought candles
+   from, come across the dark for whoever leads your people. One carries a mark, so the evidence
+   can be had again. */
+function coilKnives(){
+  coilHitDay = -1;
+  const us = player().filter(c => c.state === 'ok' && !(c.floor || 0) && !c.undead);
+  if(!us.length) return;
+  const mark = us.find(c => c === player()[0]) || us[0];
+  for(let k = 0; k < 3; k++){
+    const a2 = rnd() * Math.PI * 2;
+    const q = findOpenNear(Math.round(mark.x + Math.cos(a2) * 16), Math.round(mark.y + Math.sin(a2) * 16), 5);
+    const sx = rnd() < 0.5 ? 'f' : 'm';
+    const c = makeChar(pickName(true), 'coil', q.x, q.y, {atk: 30, def: 26, tough: 24, ath: 12, sex: sx, weapon: 'w_kat', armor: 'a_lea'});
+    c.coil = true; c.coilKnife = true; c.coilRisen = true;
+    c.target = mark;
+    if(k === 0) c.dropItems = {coil_mark: 1};
+    chars.push(c);
+  }
+  log(`Three people with their hoods up are coming across the dark toward ${mark.name}. You have seen at least one of them behind a counter.`, 'bad');
+}
+/* ---------- A GUEST AT THE STONE ----------
+   On a meeting night, anybody of yours at the stone with the cell there drills with them, and
+   the first of them each night counts as a visit. The third, they give you the ring. */
+function coilGuests(members){
+  if(!coilFriend || coilEnemy) return;
+  const at = (o) => dist(o.x, o.y, coilShrine.x, coilShrine.y) < 6;
+  if(!members.some(at)) return;
+  const here = player().filter(c => c.state === 'ok' && !c.undead && at(c));
+  if(!here.length) return;
+  for(const c of here) if(rnd() < 0.03){ xpGain(c, 'atk', 0.5); xpGain(c, 'def', 0.5); }
+  const nid = Math.floor((nowH() + 6) / 24);
+  if(coilVisitNight === nid) return;
+  coilVisitNight = nid; coilVisits++;
+  if(coilVisits < COIL_RING_VISITS)
+    log(coilVisits === 1 ? 'Nobody at the stone says anything when you walk up. Somebody hands you a practice blade.'
+                         : 'They make room in the circle for you without being asked.', '');
+  else if(coilVisits === COIL_RING_VISITS){
+    storeItem('t_ouro', 1, here[0]);
+    log('Before dawn the speaker puts a ring in your hand: black iron, a serpent eating its tail. "You came back three times. The Seventh likes a thing that comes back."', 'good');
+  }
+}
+function coilJoin(){
+  if(coilEnemy) return;
+  coilFriend = true;
+  log('You have told them you will come. The next night the moon is down, they will be at the stone.', '');
+}
+/* ---------- THE RISING ----------
+   At the Second Fracture every quiet person left comes out of the house with a blade and goes
+   for the watch of the town they live in. They are not going to the crater: they do not know
+   what the Door is, and it would not interest them if they did. */
+function coilRise(){
+  if(coilRisen) return;
+  coilRisen = true;
+  const risers = coilCells();
+  const hit = new Set();
+  for(const m of risers){
+    const t = m.homeTown; if(!t) continue;
+    m.coilRisen = true; m.faction = 'coil'; m.civ = false; m.neutral = false; m.coilOut = false;
+    if(!m.weapon) m.weapon = 'w_kat';
+    m.stats.atk = Math.max(m.stats.atk, 24); m.stats.def = Math.max(m.stats.def, 20);
+    m.guard = {x: t.x, y: t.y};
+    m.moveTarget = {x: t.x + ri(-3, 3), y: t.y + ri(-3, 3)};
+    hit.add(t);
+  }
+  for(const t of hit) worldEvent('coil', t.x, t.y, `In ${t.name}, people who had lived there all their lives came out of their houses with blades and went for the watch. Nobody marched anywhere. They were not after the Door. They were hungry.`);
+  if(hit.size) log(`The Coil has risen in ${[...hit].map(t => t.name).join(', ')}. Not at the crater: at home, in their own streets, against their own watch.${coilFriend ? ' None of them turn toward your people.' : ''}`, 'bad');
+}
+/* ---------- RUBIDO KNOWS ----------
+   "Love the idea of Rubido having more knowledge of this specifically. We can give him some
+    barks that hint at this." He was on the god's side of the stone once. He never says the name. */
+const RUBIDO_TALK = {
+  stone: ['I stood at that stone longer than any of them has been alive. It was never listening. It was counting.',
+          'They drill in a circle because he is a circle. They think it is a shape they chose.'],
+  war:   ['Two towns at each other\'s throats and neither can say how it started. I can. Somebody got hungry.',
+          'That is not smoke on the wind. It is appetite. I used to be able to tell whose.'],
+  risen: ['There they go. Not for the Door. They do not know what a door is. They only know it is dinner time.'],
+  any:   ['Everything that eats is eaten. They say it like a comfort. It is a menu.',
+          'I was on the other side of that arrangement, the side with the teeth. You do not come back from that side. You walk out of it.',
+          'He does not want the world. He wants the wanting. When there is nothing left he will start on himself, and call it the end of time.',
+          'The Paladins count him sixth and the Coil counts him seventh. I never once heard him count.'],
+};
+function rubidoBark(c){
+  if(coilRisen && vrnd() < 0.5) return vpick(RUBIDO_TALK.risen);
+  if(coilShrine && dist(c.x, c.y, coilShrine.x, coilShrine.y) < 30) return vpick(RUBIDO_TALK.stone);
+  if(towns.some(t => t.warWith) && vrnd() < 0.5) return vpick(RUBIDO_TALK.war);
+  return vpick(RUBIDO_TALK.any);
+}
+/* ---------- MAREN TOLLIS ----------
+   Ruled 2026-09-29: a Copperhold chandler and the Coil's speaker there, the cult's human face.
+   Pleasant, fair-dealing, drills at the stone twice a week, and if you find her out she does not
+   run: she asks you what you think war is for. She is one of the townsfolk the seeder already
+   made, given a name and the speaker's place, so no die is spent on her. */
+(function seedMaren(){
+  const cop = towns.find(t => t.def.key === 'copperhold'); if(!cop) return;
+  const cell = chars.filter(c => c.coil && c.homeTown === cop && c.state !== 'dead');
+  const fits = (c) => c.sex === 'f' && (!c.race || c.race === 'human') && c.age >= 25;
+  let m = cell.find(fits);
+  if(!m) m = chars.find(c => c.civ && c.homeTown === cop && c.state !== 'dead' && !c.coil && fits(c));
+  if(!m) return;
+  for(const o of cell) o.coilSpeaker = false;
+  if(!m.coil){ coilFlag(m, true); coilN++; }
+  m.coilSpeaker = true; m.maren = true;
+  m.name = 'Maren Tollis';
+})();
 /* ---------- DEEP-WASTE FAUNA ----------
    Not everything out there came through a tear. Some of it just grew where nothing
    should, and got on with the business of eating. */
@@ -50239,6 +50514,60 @@ const TALK_TREES = {
       }}],
     },
   },
+  /* ---------- THE STONE'S HUMAN FACE ----------
+     A speaker, once you have seen the stone, and Maren Tollis from the first word. Before you
+     know, she sells candles. After, she does not run: she asks you what you think war is for.
+     See THE COIL, WIDENED. */
+  coil: {
+    root: {
+      line: (t) => {
+        if(!coilExposed) return 'Candles, lamp-oil, wick by the yard. Copperhold burns more light than any town on the road, and most of it is mine.';
+        if(coilEnemy) return 'You told them. I know it was you, because nobody else ever looked at us properly.';
+        if(coilFriend) return 'Next time the moon is down. You know the way, and you know to come alone.';
+        return t.maren ? 'You were at the stone. I saw you see us. Candles, was it?' : 'You were at the stone. Say what you came to say, and say it quietly.';
+      },
+      opts: [
+        {say:'What sells, these days?', when:() => !coilExposed, to:'sells'},
+        {say:'What are you training for?', when:() => coilExposed, to:'what'},
+        {say:'Who is the snake?', when:() => coilExposed, to:'name'},
+        {say:'I would like to come, next time.', when:() => coilExposed && !coilFriend && !coilEnemy, fn:() => coilJoin(), to:'join'},
+        {say:'I am going to tell your seat.', when:(t) => coilExposed && !coilEnemy && !!(t.homeTown && t.homeTown.leader), to:'report'},
+        {say:'Good day.'},
+      ],
+    },
+    sells: {
+      line: 'Light. Every time a war comes down the road people buy more of it. Funny, how badly they want to see it coming.',
+      opts: [{say:'Good day.'}],
+    },
+    what: {
+      line: 'For when it comes. Not the sky: the sky is the Paladins\' worry. When the roads close and the towns turn on each other, somebody has to be ready to be the last one standing. We practise being ready.',
+      opts: [{say:'And who is the snake?', to:'name'}, {say:'Good day.'}],
+    },
+    name: {
+      line: 'We do not say his name to people who are not with us. The Appetite. The Seventh. Your Paladins call him something else and count him differently, and they are wrong about both. Everything that eats is eaten, stranger. We intend to be last.',
+      opts: [{say:'Good day.'}],
+    },
+    join: {
+      line: 'Then come when the moon is down. Come alone, bring nobody who talks, and do not stare at anybody you recognise.',
+      opts: [{say:'I will be there.'}],
+    },
+    report: {
+      line: (t) => `Then tell the ${t.homeTown && t.homeTown.leader ? t.homeTown.leader.title : 'seat'}. But tell me first: what do you think war is for?`,
+      opts: [
+        {say:'For taking what the other side has.', to:'war_take'},
+        {say:'For nothing. It is a waste.', to:'war_waste'},
+        {say:'Say nothing, and go.'},
+      ],
+    },
+    war_take: {
+      line: 'Then you understand it better than our seat does. Go and tell. You will be thanked, and inside a year the seat will be at war with somebody over copper and will not know why it feels so well.',
+      opts: [{say:'Good day.'}],
+    },
+    war_waste: {
+      line: 'Nothing that happens that often is a waste. It is a meal. Go and tell, if you like. It will not make anybody any less hungry.',
+      opts: [{say:'Good day.'}],
+    },
+  },
   town: {
     root: {
       line: (t, c) => fameGreeting(t, c),
@@ -50365,8 +50694,23 @@ const TALK_TREES = {
         {say:'And the fire-workers?', req:{att:{destruction:1}}, to:'wild'},
         {say:'A tear closes for the blessed art and the profane one alike. It is the same well.', req:{conv:'scholar'}, to:'samewell'},
         {say:'What does the Order want with me?', when:(t) => t.bossKey === 'marshal', to:'want'},
+        {say:'What else is out there, besides your Light?', to:'devourer'},
         {say:'Walk on.'},
       ],
+    },
+    /* ---------- HIS NAME, IN THE CHURCH'S LAYER ----------
+       Ruled 2026-09-29, naming by layer: the Order says Har'mageddon and counts him sixth; the
+       Coil never says the name to outsiders and counts him seventh; nobody reconciles it. */
+    devourer: {
+      line: 'Har\'mageddon. The sixth-born, the Devourer: the one that eats and is never full, and when there is nothing left it will eat its own tail and call that the end of time. The old stories set Good Kami across from him. Some of the brothers say he is only greed with a god\'s name on it. I have watched two towns go to war over one well, and I no longer say "only".',
+      opts: [
+        {say:'The sixth? I have heard him called the seventh.', when:() => coilExposed, to:'seventh'},
+        {say:'Walk on.'},
+      ],
+    },
+    seventh: {
+      line: 'Then you have been listening to people who count wrong. Ask yourself who taught them to count, and then stop listening to them.',
+      opts: [{say:'I will.'}],
     },
     light: {
       line: 'Ainzopha\'ar. The Light without end. His eye goes over the world looking for the sun that was lost, and one day it finds it, and on that day everything anybody ever worked in the dark is seen. All of it. By Him.',
@@ -50566,8 +50910,29 @@ const TALK_TREES = {
          when:(t2)=>!!(fallowend && towns[t2.isLeader] === fallowend.town &&
                        (fallowend.town.rep || 0) >= VIOLET_REGARD && !research.done.violet_light),
          to:'teaching'},
+        /* ---------- THE MARK, SHOWN TO A SEAT ----------
+           Evidence first: a seat does not act on a stranger's word about its own people. The
+           sown war is asked before the cell because it is the louder thing, and both spend the
+           mark. See THE COIL, WIDENED. */
+        {say:'This war was sown. Whoever burned that caravan left this in the ash.',
+         when:(t2)=>!!coilWarOf(towns[t2.isLeader]) && campHas('coil_mark') > 0,
+         fn:(t2)=>coilProve(towns[t2.isLeader]), to:'coil_sown'},
+        {say:'Some of your people walk out past the fences at night, to a stone. They left this on it.',
+         when:(t2)=>{ const tw = towns[t2.isLeader]; return !!tw && coilExposed && campHas('coil_mark') > 0 && coilCellOf(tw).length > 0; },
+         fn:(t2)=>coilReport(towns[t2.isLeader]), to:'coil_told'},
         {say:'Nothing today.'},
       ],
+    },
+    coil_sown: {
+      line: (t) => {
+        const town = towns[t.isLeader];
+        return `A serpent in ash. So my riders have been dying for somebody else's supper. I will send to ${town && town.warWith ? town.warWith.name : 'them'} tonight with this in the rider's hand, and we will see whether their seat can read.`;
+      },
+      opts: [{say:'I hope it can.'}],
+    },
+    coil_told: {
+      line: 'That mark was on a threshold in this country once, with a seat lying dead across it. Give me the names. Then leave me alone while I find out how many of my own watch knew.',
+      opts: [{say:'They are yours.'}],
     },
     /* ---------- WHAT FOUR GENERATIONS OF KEEPING IT ALIGHT LOOKS LIKE FROM INSIDE ----------
        She is not being coy and she is not withholding a secret: she genuinely believes it is
@@ -50852,12 +51217,16 @@ function talkTo(t, who){
      does what the player does had three barks, in a game about doing it. */
   else if(t.npcNecro){ if(openDiscourse(t, 'necro')) return; }
   else if(!t.coil && !t.vt && !t.wanderKey){ if(openDiscourse(t, 'town')) return; }
+  /* THE ONE CULTIST WITH A MENU: a speaker, once you have seen the stone, and Maren always. The
+     rest keep their one strange sentence. See THE COIL, WIDENED. */
+  if(t.coil && t.faction === 'town' && (t.maren || (t.coilSpeaker && coilExposed))){ if(openDiscourse(t, 'coil')) return; }
   if(t.faction==='drifter') line = pick(DRIFTER_BARKS);
   else if(t.npcNecro) line = pick(['The dead here rest lightly. We prefer it that way.','Bring me a body and I\'ll show you craft.', makeRumor(t)]);
   else if(t.coil && coilExposed) line = pick([
-    'The wars are not the end. The wars are the appetite.',
+    'The wars are not the end. The wars are the Appetite, at table.',
     'Everything that eats is eaten. We simply intend to be last.',
-    'You saw the stone. And here we both are, saying nothing. That is wisdom.']);
+    'The Seventh does not need you to believe in it. It only needs you hungry.',
+    coilFriend ? 'Next time the moon is down. You know the way.' : 'You saw the stone. And here we both are, saying nothing. That is wisdom.']);
   else if(t.coil) line = pick([
     'Quiet season. I keep my head down and my tools sharp.',
     'You sleep better when you\'re ready for the worst. I sleep very well.',
@@ -51188,7 +51557,7 @@ function snapshot(){
        rule exists to prevent — because the crew check runs every frame and would find no crew. */
     haulForId: c.haulFor ? c.haulFor.id : null,
     haulCrewIds: c.haulCrew ? c.haulCrew.map(o => o.id) : null,
-    lich: !!c.lich, face: c.face||null, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, coilSpeaker: !!c.coilSpeaker, pCaravan: c.pCaravan||0, att: (c.att && !sameFlat(c.att, attBase(c.gift, c.race))) ? c.att : null,
+    lich: !!c.lich, face: c.face||null, hollowTier: c.hollowTier||0, nascent: !!c.nascent, xpDebt: c.xpDebt, settler: !!c.settler, chain: c.chain||null, coil: !!c.coil, coilSpeaker: !!c.coilSpeaker, coilRisen: !!c.coilRisen, coilKnife: !!c.coilKnife, maren: !!c.maren, pCaravan: c.pCaravan||0, att: (c.att && !sameFlat(c.att, attBase(c.gift, c.race))) ? c.att : null,
     attXp: (c.attXp && Object.values(c.attXp).some(v => v)) ? c.attXp : null,
     guardTargetId: c.guardTarget ? c.guardTarget.id : null,
     /* somebody you were paid to keep alive, and who they were walking to */
@@ -51214,6 +51583,7 @@ function snapshot(){
     phylacteries: phylacteries.map(p => { const o = {...p}; delete o._rect; if(p.body) o.body = sChar(p.body); return o; }), phylN, noticed, noticeTier, fracture, fractureStage,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin, passS: {...passState}, sixS: {kills: sixfoldKills, mantle: sixMantleGiven},
+    coilW: {app: coilAppetite, sown: coilSown, wars: coilWars.map(w => ({...w})), friend: coilFriend, enemy: coilEnemy, visits: coilVisits, vnight: coilVisitNight, hit: coilHitDay, risen: coilRisen},
     scholarS: {heard: lastScholar.heard, done: {...lastScholar.done}, talked: lastScholar.talked},
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen}, hiresPaid: {...hiresPaid},
     blackReceipt: blackReceipt.stage,
@@ -51555,6 +51925,12 @@ function restore(d){
   sixfoldKills = (d.sixS && d.sixS.kills) || 0;
   /* a save from before carries its Sixfold, and its Mantle, in `chars` */
   sixMantleGiven = d.sixS ? !!d.sixS.mantle : true;
+  {
+    const w = d.coilW || {};
+    coilAppetite = w.app || 0; coilSown = w.sown || 0; coilWars = Array.isArray(w.wars) ? w.wars.map(x => ({...x})) : [];
+    coilFriend = !!w.friend; coilEnemy = !!w.enemy; coilVisits = w.visits || 0;
+    coilVisitNight = w.vnight ?? -1; coilHitDay = w.hit ?? -1; coilRisen = !!w.risen;
+  }
   /* a save taken while he stood somewhere comes back without him; a sighting nobody had seen
      yet is due again, one somebody had seen is spent */
   Object.assign(lastScholar, {heard: false, done: {}, talked: 0, body: null, key: null, seenAt: null, unseenT: 0, until: 0}, d.scholarS || {});
@@ -51779,7 +52155,7 @@ function restore(d){
       const rd = redoubts.find(x => x.id === c.redoubtDeep);
       if(rd && rd.rooms) c.homeRoom = rd.rooms.find(rm => rm.id === c.roomId) || null;
     }
-    c.lich = !!s.lich; c.face = s.face||null; c.hollowTier = s.hollowTier||0; c.nascent = !!s.nascent; c.xpDebt = s.xpDebt||null; c.settler = !!s.settler; c.chain = s.chain||null; c.coil = !!s.coil; c.coilSpeaker = !!s.coilSpeaker; c.pCaravan = s.pCaravan||0;
+    c.lich = !!s.lich; c.face = s.face||null; c.hollowTier = s.hollowTier||0; c.nascent = !!s.nascent; c.xpDebt = s.xpDebt||null; c.settler = !!s.settler; c.chain = s.chain||null; c.coil = !!s.coil; c.coilSpeaker = !!s.coilSpeaker; c.coilRisen = !!s.coilRisen; c.coilKnife = !!s.coilKnife; c.maren = !!s.maren; c.pCaravan = s.pCaravan||0;
     c.att = s.att || {divine:0, destruction:0, dark:0, dust:0, ...((s.gift && s.race!=='chimera') ? {[s.gift]: 2} : {})};
     c.attXp = s.attXp || {divine:0, destruction:0, dark:0, dust:0};
     c.npcNecro = !!s.npcNecro; c.lieutenant = !!s.lieutenant; c.civ = !!s.civ; c.merc = !!s.merc;
