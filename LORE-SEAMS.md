@@ -525,13 +525,13 @@ and zero player-facing strings.
 | **Tablets of the Deep; the temple art that "points upward"** (§2, §15) | Absent. The Kept have altars (`deepAltars`) and no depictions. The only tablet in the code is the wax-tablet case on Lyre's model. |
 | **The kingdom's crater** (§16): "should be the largest landmark in the world", and the natural site of the Door | **Built, 2026-09-25, in three phases.** **The place:** on a headland in the north-east of every world (moved there 2026-09-28, v24, from the dead centre: "too easy to stumble upon"), standing out into the salt with a ridge across its landward side and one gorge through it, in stretches that deepen from the gorge in (2026-09-28, phase 2: "more gradual, fitting for a final boss arena"): the Marches (the dust going grey, the first dead trees; safe), the Ashfall (ash everywhere and still falling, dead trees leaning away from the middle, the Order's posts, bones; walked at night), the Scorch (burned black, glass lying on it in puddles that run together; a few Watchers by day, more at night, and a weaker light), the glass (fused ground, standing slabs with shadows burned onto them), the rim (a wall with two breaches, both facing the gorge), and the bowl with a veil of light over it. The Order holds the mouth of the gorge with a barricade, five of its people and a Messenger, and turns everybody back: going in means going through them. One road runs out to their post, and people in the towns will tell you where it goes. The ground climbs all the way in, and the ridge is a broken range with scree at its foot. **The danger:** the glass and the bowl are held day and night by Watchers the dawn does not take; three Messengers stand at peace with them; what is killed grows back out of sight; at night telegraphed strikes of light come down on whoever is in the glass. **The reason:** the capital's footings across the bowl, a colonnade round the middle, seven caches, and **the Guardian at the Gate**, a Messenger boss at the middle until the Second Fracture. Then it is gone and the Door opens there, so closing the Door is an expedition into the crater. The roads go round it on a ring of fixed waypoints outside the ridge, and so does anybody travelling on the world's business: caravans, pilgrims, escorts and armies. `tools/crater.js` checks all 24 claims. **Ruled 2026-09-25:** it was strengthened on 2026-09-26 (900 blood, a flight of Eyes over it, the light called down on whoever is at it, and two turns as it bleeds). Killing it before the Fracture raises the Attention by 8, moves the Fracture on 8 at once (about fourteen days of calendar), and adds 0.15 a day to its rate for the rest of the run (the calendar is 0.56). It was called the Custodian until then. |
 | **Good Kami** (§6, §12) | Half built. The kami stone at Fallowend consecrates a charm, and the town is `kami: true`. Missing: the rites the bible lists (dirty water at a crossroads, dust not swept past a threshold at night, a dead name spoken into the wind) and the curse clause, *"you do not improvise with something that says yes"*. |
-| **Old Har-Mageddon** (§6) | Never named in play. The Coil gestures at him (*"The wars are not the end. The wars are the appetite."*). The Paladin myth that sets him against Kami is absent. The bible says to keep this thin, so this is the lowest priority here. |
+| **Old Har'mageddon** (§6; spelled *Har-Mageddon* until 2026-09-29) | Never named in play. The Coil gestures at him (*"The wars are not the end. The wars are the appetite."*). The Paladin myth that sets him against Kami is absent. The bible says to keep this thin, so this is the lowest priority here. **Widening his part: proposed in §10.7.** |
 | **Lunar events, "several exist"** (§10) | Only the blood moon. The "eldritch moon" is held open in §18. |
-| **A pureblood-descended human line** (§9), "a line not yet written" | Absent. Salt-cured is Saltmere's line, but it is about brine, not pale, light-averse blood. |
-| **Homunculi attract artificial souls** (§9): "stray alchemical overflow, an Old One's dream, even a whole Watcher" | Absent in text and in mechanics. The race blurb is only "Vat-grown. Learns frighteningly fast". |
+| **A pureblood-descended human line** (§9), "a line not yet written" | Absent. Salt-cured is Saltmere's line, but it is about brine, not pale, light-averse blood. **Ruled 2026-09-29: the Salt-cured, implied and never stated.** How to show it: §10.6. |
+| **Homunculi attract artificial souls** (§9): "stray alchemical overflow, an Old One's dream, even a whole Watcher" | Absent in text and in mechanics. The race blurb is only "Vat-grown. Learns frighteningly fast". **Tenants proposed in §10.4.** |
 | **The chimera is her flesh** (§9): "Two peoples out of one prisoner" | The Hollow half is in play; Mother calls a Hollow one of hers. The chimera half is not: nothing a player can read ties the chimera to her. |
 | **The Divine art's depth cost** (§7): "delve too deep and you are blinded by eldritch light and maddened" | No mechanic. |
-| **The Dust art's reach** (§7): "vanish, plant a false memory, or raise a wall that was never there" | Two of three. *The Veil* vanishes, and a worn face makes "the law forget you". There is no illusory wall. |
+| **The Dust art's reach** (§7): "vanish, plant a false memory, or raise a wall that was never there" | Two of three. *The Veil* vanishes, and a worn face makes "the law forget you". There is no illusory wall. **The wall is proposed as the rebuilt Unremembered's, and its formula as his drop (§10.3).** |
 | **The Hollow Citadel** (§16) | Four walkable storeys at Hollowmere, and nothing in them. The bible marks its purpose `[?]`. |
 
 ---
@@ -1125,6 +1125,336 @@ Questions for 9.5:
 - the throne line, which is the nearest thing to an answer he gives (the bible allows him to be
   "unhelpful" about it);
 - 9.2.7 first, since "the last of his kind" has to fit the Kept.
+
+## 10. The round of 2026-09-29: renames, reworks and brainstorms
+
+**Already done this round, in the docs:**
+- Loyal is in the bible's convictions.
+- Har-Mageddon is spelled Har'mageddon. He was never named in the code, so only the docs changed.
+- The bible records four rulings:
+  - Saltmere's Salt-cured are the pureblood-descended line, implied and never stated;
+  - lichdom wants an ancient crown of alchemical significance;
+  - the Sixfold is a late-game enemy, not a boss;
+  - the Ossuary King is to be renamed.
+- The eight wanderers and Czarina are in the bible's §13.
+
+**Nothing else below is in the game.** **(mine)** marks my own invention.
+
+### 10.1 The Ossuary King: a new name
+
+What he is:
+- a Golden-Age registrar who countersigned the Pouring;
+- he was meant to be the twelfth name, went halfway into the vessel and climbed back out;
+- he wears his bones on the outside and sits a throne with dead petitioners kneeling before him;
+- the "crown" is the Pouring's register-band.
+
+"King" is what's wrong with the name, and there is a second collision: the player can build an
+**Ossuary**, so "Ossuary" is a building and a boss.
+
+A rename touches 13 strings in the code, his Signet ("The Ossuary King's Signet") and two harnesses.
+
+| name | for | against |
+|---|---|---|
+| **The Lord of Ash and Bone** (yours) | Plain-harsh, and says throne and bones at once | "Ash" is already Sister Ash, the Ashfall, Sanctified Ash and the Ash Phial |
+| **The Lord of Bones** | Shortest, and the ash collision is gone | Generic |
+| **The Undersigned** **(mine)** | His whole story in one word: he signed under eleven names and would not sign his own. Grim-title, and the joke lands late | A clerk's word, so the folk would not coin it; the demilich would |
+| **The Bone Registrar** | Flat and true | Undramatic for a boss |
+| **The Lord of Petitioners** | His court is the kneeling dead | Long |
+| **The Countersign** | Clerical and eerie | Reads as a password |
+
+**Recommendation: two names, by speaker**, the way the vocabulary already works:
+- *The Lord of Bones* is the folk name, and his display name;
+- *the Undersigned* is what the demilich calls him.
+
+His Signet becomes *The Undersigned's Signet* either way. If you would rather have one name,
+yours minus the ash, *the Lord of Bones*, avoids every collision.
+
+### 10.2 The crown for the Last Rite
+
+**Ruled:** the rite wants *an ancient crown of alchemical significance*. That is usually the Sunken
+Crown, and Lyonart's is an equivalent.
+
+**Mechanics (proposed):**
+- **Any crown with the flag opens the rite.** The Last Rite accepts any item marked `lichCrown`.
+  - It keeps the rule that the crown "is a key, not a candle", so it survives the rite.
+  - The requirements line reads *"an ancient crown (Sunken Crown ×1, or …)"*.
+- **Lyonart starts with a new item of his own, not the Sunken Crown.**
+  - Today his `crown` satisfies the demilich's third stage at once, and the demilich reads eleven
+    names off a crown that came from another world. That is the contradiction this fixes.
+  - The third stage stays the Sunken Crown's alone. The eleven names are on it, so Lyonart still has
+    to take one off the Ossuary King.
+- **Where the Sunken Crown comes from:** his drop and the demilich's final reward, both unchanged.
+- **Question: does the Old King's Crown also count?** It is the legendary helm he drops, *"nothing
+  is engraved in it at all"*. I would say no: a crown with no names on it is the point of him.
+
+**Names for Lyonart's crown:**
+
+| name | note |
+|---|---|
+| **The Dark Prince's Crown** (yours) | Implies the world calls him the Dark Prince. It is good if something in the world says it; nothing does yet |
+| **The Exile's Crown** **(mine)** | Flat-descriptive, which is the bible's rule for things. Humble for a prince, which suits a man who cannot use it yet |
+| **The Crown of Alagadda** | Names a kingdom nobody here has heard of, and his surname already carries it |
+| **The Far Crown** | Quiet and strange |
+
+My pick is *The Exile's Crown*. *The Dark Prince's Crown* works if the halls start calling him that,
+and they could (a rumour line).
+
+**The demilich, when Lyonart does the quest** (drafts):
+- **At the third stage, with Lyonart's crown in the stores:** *"Not that one. I can see it from here,
+  and I can see where it has been, which is further than anybody has gone who came back. Bring me
+  the one with the names in it."*
+- **At the last stage, handing over the Sunken Crown:** *"You came here with a crown already. It is
+  not one of ours. Ours were cast for a register; that one was cast for a throne, somewhere they
+  did this work before we did and did not stop **(mine)**. It will open the same door. Keep mine
+  anyway. I would not trust a key that fits two worlds with everything."*
+
+### 10.3 The Unremembered, rebuilt
+
+**Why it is the weakest of the court:**
+- The others are an office: the Chancellor, the Master of the Pouring, the Keeper of the Conduit.
+  The Unremembered is an adjective.
+- The others are masked; it is a dun robe with a smear for a face, and three faint copies jittering
+  in place.
+- Its whole fight is three seconds unseen every twelve.
+
+Dust is "the art that altered reality itself": vanish, plant a false memory, raise a wall that was
+never there. Each of the player's Dust arts is a degraded version of one of those:
+- *The Veil* and *Step Unseen* (vanish);
+- *The Unwalled* (a squad that was never there, whose blades cut nothing);
+- *Loyalty of Dust* (a charm that may not take);
+- *Change Form*.
+
+The courtier should be those arts at full, so the player sees what theirs used to be.
+
+**Who (proposed):**
+- **The King's Remembrancer.** **(mine)** It is a real old office: the Remembrancer kept the
+  kingdom's records.
+- In the Golden Age his office decided what the kingdom remembered, and with the art it decided
+  what had happened.
+- Nobody can remember him now; the folk call him the Unremembered, and so does the log.
+- He comes through onto the salt flats. The town beside them, Saltmere, brines everything it means
+  to keep, and he is the thing nothing keeps.
+- **Question:** keep *The Unremembered* as the name shown (my pick, with the Remembrancer only in
+  what the lettered say), or show *The Remembrancer*?
+
+**Look:**
+- Tall and thin in the grey-white of the salt: a scribe's layered robe with long sleeves, a ledger
+  on a chain at the hip, and ink-black fingertips.
+- **Masked, like the rest of the court.** A plain white oval with one black bar across it where the
+  eyes would be: a redaction.
+- **Black bars drift round him and across him** as if somebody is still editing.
+- **He is not all there.** A forearm and hand float at the end of a sleeve with nothing joining
+  them, and a band of the torso is missing, with the robe behind showing through the gap.
+- **The afterimages trail where he has been**, a second or two behind, instead of jittering in place.
+- Dust falls off him the whole time, like a page being rubbed out.
+- I would build him and send screenshots to iterate, as with the court.
+
+**The fight: the Dust arts at full:**
+
+| his | the player's degraded version |
+|---|---|
+| **The wall that was never there.** About every 15 s he raises a pale wall of 5–7 tiles across a flank or between himself and the nearest of yours. It is real to paths and sight for 8 s, then it is dust. | None: the art has lost this reach. It is the §4 seam, *"there is no illusory wall"*. |
+| **His Unwalled.** At half blood he becomes four, and **their blades cut**, until one of them is struck, and then that one is dust. | The Unwalled: phantoms whose blades cut nothing. |
+| **His Loyalty.** One of yours forgets whose side they are on for 8 s, and it always takes. | Loyalty of Dust, which may not. |
+| **His Veil.** Vanishes and is somewhere else, and whoever was fighting him loses him. | The Veil: vanish in place. |
+
+- **Struck from the record.** While he stands, his name in the log is *The ———*. When he dies the
+  journal says *"Something was killed on the salt flats. Nobody who was there can say what."*
+- **The old king inherits the walls,** not the fold: with the Remembrancer alive, walls rise inside
+  the Door while you fight the king.
+- **What he drops:** besides the usual codex, formula and tome, **the formula for the wall**, so a
+  Dust III player learns the reach the art had lost. That closes the §4 seam for the player too.
+- **Link to Hesper Lund (question):** she walks the roads and "is on the road again every time". A
+  line from her once the Remembrancer is dead (*"I remember where I was going"*) would tie them.
+  Only if you want her to have lost something to him. **(mine)**
+
+### 10.4 Homunculi and the souls they draw
+
+The bible: *"As empty vessels they attract artificial souls — stray alchemical overflow, an Old One's
+dream, even a whole Watcher. The Golden Age believed it was manufacturing labour."*
+
+In the code, homunculi are five lines (Vat-born, Wardline, Forge-line, Sleepless, Nullborn), learn
+at ×1.35, and die at 34.
+
+**The idea:**
+- **Every homunculus, on the day it is poured, has a chance of a tenant.**
+- The tenant is **hidden until it shows**: a line in the log, and after that a row on the character
+  sheet.
+- It can show in three ways:
+  - **a trigger** that fits the tenant (the first night near a tear, a blood moon, a kill);
+  - **time** (a season in the squad);
+  - **a Scholar asked to look.**
+- Each tenant has one real upside and one real downside.
+
+| tenant | chance | upside | downside | how it shows |
+|---|---|---|---|---|
+| **Nobody** (empty) | ~65% | none: the Golden Age's intended product | none | never |
+| **Overflow**: the vat's leftover charge | ~14% | Gifted: attunes to a random art, starting at I, even a Nullborn **(question)** | Each working draws more of the Attention, and now and then it discharges: a spark and a burn to whoever is beside it | first time it casts, or in a fight |
+| **A dream**: an Old One's | ~10% | Learns one skill (the dream's) twice as fast, and dreams **lines** at night (lore snippets, one at a time) | Sleepwalks: some nights it walks toward the nearest Sundered site, and Malathuun's creatures there do not touch it **(mine)** | a night's sleepwalk |
+| **An echo**: a Golden-Age person, a pourer or a subject | ~7% | Lettered: reads formulae and tablets, with a small research bonus | It starts answering to another name: its **name changes** on the roster, conviction becomes haunted, and it will not raise the dead | a season in the squad |
+| **A whole Watcher** | ~4% | Sees in the dark (day sight at night); gaunts pass it by unless it attacks | The Order knows it on sight (Paladins hostile, an inquisition finds it), Messengers hunt it, and at the Second Fracture it may turn for good | the first tear it stands near |
+
+- **Never Mother's.** The Hollows are hers, and a homunculus with a piece of her would blur the one
+  line the bible draws hard.
+- **Nine**, the unique, has no tenant: *"The order has not been rescinded"* is a person with nobody
+  else in.
+- **Nothing new is built for it.** It reads systems that exist: gifts, the Attention, sleep, the
+  sundered sites, the Order's inquisition, the Messengers, the convictions and names.
+
+Questions:
+- the five tenants, or fewer;
+- whether the rates suit;
+- whether the Watcher tenant should be able to turn.
+
+### 10.5 The Sixfold: a kind of creature, still written as a boss
+
+**Where the code treats it as one:**
+
+| # | where | what | fix |
+|---|---|---|---|
+| 1 | `spawnSixfold` | every one is named **"The Sixfold"** | "Sixfold", and the log says "a Sixfold" / "the Sixfold" by context |
+| 2 | `spawnSixfold` | every one has `bossKey: 'sixfold'`, so the kill ledger (`bossSlain`) records the first and ignores the rest | a kind, not a boss key; a kill count |
+| 3 | worldgen | **one is spawned on day one** near a corpse site, so the early game has one | none at worldgen; see below |
+| 4 | the legendaries | *The Gaunt's Mantle* is carried by the day-one Sixfold ("scavenged off the largest scavenger") | the first Sixfold born carries it |
+| 5 | the Sigil-Bound's second stage | done when `bossSlain.sixfold` is set | done when a Sixfold dies after it is asked (so a day-one kill does not pre-complete it) |
+| 6 | asking after quarries | a Scholar says *"The Sixfold. It feeds where the ground is Sundered…"* | *"Sixfolds feed where…"*, pointing at the nearest |
+| 7 | Mother | *"You put down the sixfold thing."* (keyed on the ledger) | keyed on the kill count; the line is fine |
+| 8 | `vscaleOf` | "the boss stays the biggest thing in the world" | the kind still draws big; the comment goes |
+| 9 | the log | *"The Sixfold gathers all six legs…"*, *"The Sixfold tears something…"* | the creature's own name |
+| 10 | the bible §10 | the row was "The Sixfold" | done: "Sixfolds, a late-game enemy" |
+
+**How to make it late-game (proposed):**
+- **Born when a tear reaches full width**, as now. Early on that only happens to a player who leaves
+  a tear alone.
+- **From the Second Fracture's middle stages on (stage 3 and up),** one or two walk the deep waste on
+  their own, as the Messengers already rise with the clock.
+- **The cap on how many exist** follows the Fracture stage: 0/0/1/2/3/4.
+
+The Sigil-Bound's "a Sixfold walks the waste" then asks for something the player may have to wait
+for, or make (leave a tear open). Question: is that the right cost, or should his step move later in
+his chain?
+
+### 10.6 Saltmere and the pureblood line
+
+**Ruled:** implied, never stated. The line in play today: *"Saltmere brines everything it means to
+keep, and after enough generations that includes the people. Hard to kill and hard to change."*
+(toughness and armour, resists sickness).
+
+**Leaning in (proposed):**
+- **The blurb** (draft): *"Saltmere brines everything it means to keep, and after enough generations
+  that includes the people. Pale under the salt-burn, easy in a cellar, and hard to kill."*
+- **Traits:** one that shows the old blood, and one that costs:
+  - **easy underground:** the dark's toll on them is halved, and they see a little further below;
+  - **uneasy under open sky:** 5% slower on the surface between late morning and mid-afternoon.
+- **The Kept notice.** A Salt-cured who lays something on a vigil's altar raises its regard by half
+  again, and the congregation "comes in close to look at this one" **(mine)**. Nobody says why.
+  This is the strongest single tell, and it is all show and no statement.
+- **Saltmere talks** (townsfolk, drafts):
+  - *"We keep off the flats at noon. It's the glare. That's all it is."*
+  - *"My grandmother could find the cellar steps without a lamp. So can I, mostly."*
+  - *"We bury deep here. Deeper than we need to. Nobody remembers why we started."*
+  - *"Strangers ask why we marry in. We ask why they don't."*
+- **The Unremembered's ground is theirs** (10.3): the thing nothing keeps comes through beside the
+  town that keeps everything.
+
+### 10.7 Har'mageddon, and the Coil
+
+**What exists:**
+- **He is never named in play.**
+- **The Coil:**
+  - cells of 3 to 5 townsfolk in every town but Hollowmere, with a speaker each;
+  - they meet some nights at a serpent stone (an ouroboros) that is on no map, and train, "not
+    worship, practice";
+  - they recruit and buy the watch;
+  - once, when two wars are running at once, they murder a town's leader and leave a serpent in ash
+    on the threshold.
+- **Rubido** stands at their stone: *"I have been on the other side of that particular arrangement."*
+- **In the bible:**
+  - he is the devourer and seeker of endless war, the ouroboros at the end of time;
+  - Paladin myth sets him against Good Kami and calls him the **sixth-born**; the cults say the
+    **seventh living**;
+  - his place in the cosmology is open.
+
+**Ways to widen it** (pick any; they stack):
+1. **Name him, by layer.**
+   - The Church's Teaches tree gains a topic: Kami and Har'mageddon, the sixth-born, *"greed with a
+     god's name on it"*.
+   - The Coil never says the name to outsiders: *"the Appetite"*, *"the Seventh"*.
+   - Which birth order a speaker uses says which side they are on, and nobody reconciles it.
+2. **War is the sacrament, as a system.**
+   - Every running war feeds a hidden *Appetite*.
+   - At thresholds a cell **makes** a war: a caravan burned in one town's colours, an envoy found
+     dead, an insult posted at a gate. Two towns go to war over something the player may be able
+     to prove was the Coil.
+3. **Kami keeps them out.** Fallowend, every lintel hung with charms, **cannot hold a cell**. The
+   cult's recruitment fails there, and a speaker sent there leaves. That is the Paladin myth made
+   mechanical, and Kami answering, as the bible says Kami does. **(mine)**
+4. **An investigation.**
+   - Asking in halls (the rumour system) about the serpent in ash, then following a member out
+     after dark, finds the stone.
+   - Exposing a cell to its town's leader turns the town against it: arrests, and the Order is
+     not needed.
+   - Leaving it alone lets it grow; the watch looks away already.
+5. **The Coil wants the Door open. (Question: a lore decision.)** A devourer's cult would want the
+   end, and the Eldest waking is the end.
+   - At the closing rite, when the Door is open, **Coil cells march on the crater** and fight
+     whoever is holding the rite.
+   - The quiet people you traded with for sixty days are at the rim with blades. It makes them part
+     of the endgame and ties the cult to the main plot, without saying what Har'mageddon is.
+6. **Rubido.** He was once on the god's side of the stone. A line at recruitment, or as a companion
+   near the stone, says a little more, and never the name.
+7. **Coil relics:**
+   - an **Ouroboros Ring** (a trinket): every kill in a fight adds a little to the next blow, but
+     whoever wears it will not retreat;
+   - a **Serpent in Ash** mark found at the stone.
+
+My order: 3 and 1 first (cheap and mythic), then 2, then 4. Then 5 if you want the Coil at the end.
+
+### 10.8 Named people
+
+The bible's named figures now include the eight wanderers and Czarina (§13). The world still has
+gaps where the setting's arguments have no face.
+
+- **Brother Blythe** (yours) — an ex-Paladin who took Sister Ash's path without the exile. He still
+  wears the plate, but not the helm.
+  - **The shape (proposed):** he asked Ash's question, *what is the light we burn them with made
+    of?*, and stopped lighting pyres. The Order did not throw him out, because he is **the best field
+    surgeon the Bastion has** **(mine)**: a Hospitaller.
+  - **The helm is on a pyre somewhere.** He will not be anonymous when he decides who lives.
+  - **Divine gift, devout** (to the people, not the Church), tanky, a strong medic.
+  - **Where:** at the Order's post at the pass, or in its camps. He is the one Paladin who will talk
+    to you there without *"no further"*.
+  - **What it takes (options):**
+    - spare somebody the Order meant to burn (an accused suspect or one of Albedo's kind);
+    - or bring him to the pyre where his helm is.
+  - **What he knows:** half of what Ash knows: that the light and the dark are drawn from one well.
+    He has not said it aloud, and says it once to a player who has closed a tear with the blessed
+    art.
+  - Ash and he would have **one line each about the other**, and neither is kind.
+- **Maren Tollis** **(mine)** — a Copperhold chandler and a **Coil speaker**. The cult's human face:
+  pleasant, fair-dealing, drills at the stone twice a week. Met at her counter. If exposed she does
+  not run; she asks what you think war is for.
+- **Old Grist** **(mine)** — **Saltmere's salt-house keeper**. She salts the town's dead and keeps
+  the burial rolls, and is the tell of 10.6 in one person: she works in the dark, avoids the noon
+  flats, and has kept every name for fifty years. She would be the one to say, once, *"the flats
+  used to be further off"*.
+- **Idris Vane** **(mine)** — a **Scholar cartographer** with a name and a route. He keeps the
+  ledger of quiet corpse-fields (the bible's way to Lyre). He has seen the old man twice, forty
+  years apart, and it is his journal that makes the Last Scholar's early sighting land.
+- **Tallow** **(mine)** — a **Vat-born homunculus with an echo** (10.4), recruitable. It began
+  answering to a woman's name last winter and would like to know whose.
+
+Questions:
+- Brother Blythe's shape: Hospitaller, at the pass, what it takes;
+- which of the other four to keep;
+- whether Blythe and the others are wanderers (recruitable uniques) or people who stay put.
+
+### 10.9 Found on the way
+
+- **Homunculus lines:** the bible says *"six lines poured for one job each"*; the code has five
+  (Vat-born, Wardline, Forge-line, Sleepless, Nullborn). One side should move.
+- **The wanderers** are introduced in the code as "six people" and there are eight now. That is a
+  comment only.
 
 ---
 
