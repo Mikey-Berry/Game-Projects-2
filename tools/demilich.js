@@ -60,7 +60,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     };
   });
   R.heIsThere = there.found && there.inImmortals && there.questGive === 'dark'
-    ? `${there.name} sits ${there.fromKing} tiles from the Ossuary King, in \`immortals\` with the other two`
+    ? `${there.name} sits ${there.fromKing} tiles from the Lord of Ash and Bone, in \`immortals\` with the other two`
     : `!! NO DEMILICH IN THE WORLD (found ${there.found}, in immortals ${there.inImmortals})`;
   R.theRiteIsGated = there.gate === 'dark'
     ? "`last_rite` carries needsQuest:'dark' — the one ascension that had no quest on it"
