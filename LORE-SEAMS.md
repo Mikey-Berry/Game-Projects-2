@@ -1470,6 +1470,135 @@ Questions:
 - **The wanderers** are introduced in the code as "six people" and there are eight now. That is a
   comment only.
 
+
+## 11. Play notes of 2026-09-29: the postgame, the Brood, a fuller world
+
+Three brainstorms for a ruling. Two small fixes from the same notes are built: the Messenger fights
+with its arm and a burning blade, and a townsperson answers with a rumour instead of a window.
+**(mine)** marks my own invention.
+
+### 11.1 After the Door: the postgame
+
+"Defeating the old king and sealing the door should somewhat 'reset' the world. As in, all existing
+tears should close, and the attention should reset to zero."
+
+**Built:** sealing the Door now closes every tear in the waste, sends back what came through them,
+and puts the Attention to zero.
+
+**Found, and it needs a ruling first:** the Fracture drops only to 92 and the calendar keeps
+running, so **the Door opens again about fifteen days later** (100 / 180 a day from 92). Today there
+is no postgame, only a reprieve. The shipped line, *"It is not over. It is survivable."*, was
+written for that reprieve. Options for the clock:
+- **A. Stop it.** The sky is shut and stays shut, and the world gets on with living. The simplest,
+  and the one every item below assumes. **(my pick)**
+- **B. Roll it back** to the start of THE WATCHERS WAKE (60), running at half speed: a second,
+  slower cycle, with the tears coming back one at a time.
+- **C. Let it heal.** The Fracture runs *down* a point a day to zero. Stage by stage the tears stop
+  opening, the dust thins and the light comes back. It reads as the world recovering.
+
+**What the postgame could hold** (pick any; they stack):
+1. **The dust thins.** Over some weeks the lighting and fog lift toward a clear sky nobody alive
+   has seen, and the towns remark on it. It is the visible reward, and cheap to build (the
+   lighting already reads the clock).
+2. **Resettle the fallen.** A seat that fell to the dark or the torch can be refounded: stores, a
+   watch, and refugees from the other towns walking to it. A player-built seat joins the Compact.
+3. **The Compact after the war.** With nothing at the gates, the signatories start arguing: tithes,
+   borders, who pays for the muster now. The player's institution becomes politics. The old war
+   system gets new causes.
+4. **The Order claims it.** The Paladins preach that Ainzopha'ar shut the sky. If the player is a
+   necromancer, a lich or Hollow, the Order's answer to a profane saviour is a crusade. If the
+   player is blessed, the Order wants them canonised and at the Bastion. Either way the Church's
+   two layers (what it teaches, what is true) finally collide in public.
+5. **The Coil without a war to feed on.** The Appetite turns inward: cells fight each other, or
+   start the one war nobody else will.
+6. **The people who were waiting for this:**
+   - Mother's third scene (she felt the Door shut);
+   - the Last Scholar's last conversation (he knows it is not the end: the Twins are still held,
+     §11 of the bible);
+   - Lyre's ending with her brother;
+   - the demilich's (a lich in a world with no Door).
+7. **The crater opens.** With the Door shut, the colonnade's floor gives onto the kingdom
+   underneath: vaults, the throne room, what was on the throne (bible §4, author-canon). An
+   endgame dungeon for the postgame.
+8. **An epilogue page.** A chronicle of the run: seats that stood and fell, the deeds each
+   conviction weighed, who is still alive. Then *continue*, not *game over*.
+
+**My order:** A, then 1 and 8 (cheap and they say "you won"), then 6, then 2 and 4. 7 is the big one
+and wants its own round.
+
+### 11.2 Brood-of-the-Door: something more eldritch
+
+"Basically just a giant dude. Kind of lame."
+
+- **What it does, which any replacement keeps:**
+  - it is the thing holding the Door open;
+  - four anchors can be cut off, and each narrows the Door (cheaper rite);
+  - the Door's reinforcements come out of it;
+  - the rite cannot land while it stands;
+  - it never leaves the Door.
+- **Why it reads wrong:** it is a torso with four arms planted in the ground, so the eye sees a very
+  large man doing a push-up.
+
+**Options** (all **(mine)**):
+- **A. The Hand.** You never see the body. Four enormous jointed fingers are hooked over the rim of
+  the Door from the far side, prising it open, each several tiles tall with too many knuckles.
+  Between them the Door's lips are held apart. The four fingers are the four limbs, and cutting one
+  lets the rim close a little. The doorborn drop from the gap between the fingers. It is the
+  clearest possible picture of "the thing holding it open", and it needs almost no new mechanic.
+  **(my pick)**
+- **B. The Cord.** A pulsing umbilicus from the Door down to the crater floor, anchored by four
+  roots, with things born along it like beads that drop off when they are ripe. Cutting the roots
+  sags the cord. It reads as the Door feeding on the world.
+- **C. The Pupa.** A translucent sac hanging in the Door on four veined stalks, full of shapes that
+  move. It swells as the fight goes on, and a stalk cut drops it a little. It dies by tearing, and
+  what spills out is the last wave.
+- **D. The Wheel.** Interlocking rings covered in eyes, turning slowly in the Door: the thing the
+  Order would call an angel of Ainzopha'ar. Four rings to break. It is the most striking, and it
+  makes an argument (the Church's god holds the Door open), which is a lore decision, not only a
+  look.
+- **E. The Host.** Not one creature: a knot of doorborn fused into a column wedged in the Door, faces
+  and limbs of every gaunt kind grown together, with four thick trunks braced on the ground. Each
+  trunk cut spills its bodies.
+
+### 11.3 A world that feels sparse
+
+"The size is great but we need to brainstorm ways to balance emptiness with life."
+
+**Measured** (default seed, 2560², about 5.25M land tiles):
+- **Places:** 7 towns, 25 ruins, 3 redoubts, 13 Sundered sites, 6 shrines and 296 chests.
+- **Distance:** from a random land tile, the nearest place of any kind is a median 69 tiles off
+  (90th percentile 132). That is 19–37 seconds of walking.
+- **People and animals between places:** about 45 fauna, 99 wild, 23 drifters and 33 of the
+  guild, on the whole map. The 1,270 bandits are almost all in their camps.
+- **Conclusion:** places are not especially far apart. What is missing is life *between* them.
+  The walk is empty, not long.
+
+**Ways to fill it** (pick any):
+1. **Hamlets and farmsteads.** Small unwalled places of three to eight people around each town,
+   and along the roads: salt-pans, charcoal burners, a shepherd, a well with a hut. They are the
+   town's hinterland. They supply it, raids hit them first, and they give a war and the Fracture
+   something to burn before the walls. **The biggest single change.**
+2. **Traffic on the roads.** More of what already exists: pilgrims, the Order's patrols with a
+   prisoner, refugees from a war, a caravan broken down and asking for help. Each is a short
+   encounter that reads the world's state, so a war *looks* like a war from the road.
+3. **Herds and scavengers.** Strider herds that migrate, carrion birds circling wherever something
+   died (a free pointer to fights and corpses), dust hares, and something that follows caravans.
+   Cheap, and it makes empty ground feel inhabited rather than abandoned.
+4. **Landmarks on a grid.** A guarantee that no point of land is more than about 50 tiles from
+   *something*. Most are small: a standing stone, a Golden-Age statue half buried, a wreck, a
+   milestone, a cairn with a line of text. Each is a place to find a Tablet or an item's story (the
+   lore drops the item card made room for).
+5. **History that stays.** A war leaves burned farmsteads and a mass grave where it was fought, a
+   sack leaves a refugee camp outside a neighbour's walls, and a tear that closed leaves glassed
+   ground. The map records the run.
+6. **Waystations.** An inn every hundred-odd tiles on the trade roads (the scavengers' waystation is
+   one already): food, rumours, a bed, and a hired sword or two.
+7. **Getting across it.** Pay to ride with a caravan between two towns you know, or build a Wayline
+   Circle at each end. That fills the map with less walking rather than more things.
+
+**My order:** 1 and 3 together (they fill the ground most for the least), then 2 (it makes the
+world's events visible), then 4 (it carries the lore drops). 5 is the long-term one.
+
 ---
 
 ## Appendix: re-running the counts

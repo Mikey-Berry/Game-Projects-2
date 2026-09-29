@@ -426,7 +426,10 @@ together. Leave one open and it widens; at the second stage it begins to **sing*
 the Second Fracture made local: one tear, far larger, that does not drift shut. The Second Fracture
 arrives on a calendar — roughly a hundred and eighty days, whatever anyone does. Living loudly
 advances it; the floor is fixed. Six stages: **The Dust Falls**, **A Stillness**, **The Thinning**,
-**The Watchers Wake**, **The Sky Leans**, **The Second Fracture**.
+**The Watchers Wake**, **The Sky Leans**, **The Second Fracture**. **Sealing the Door** (built
+2026-09-29) closes every tear in the waste with it and puts the Attention back to nothing. What the
+clock does after that, and what the world is like once the sky is shut, is open: `LORE-SEAMS.md`
+§11.1.
 
 **A Stillness is the hinge.** It has happened twice — once nine generations ago, and once eleven
 seconds ago with the player standing in it. The first Fracture did not close itself. Somebody shut
