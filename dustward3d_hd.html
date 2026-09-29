@@ -1982,7 +1982,13 @@ const TOWNS = [
   {key:'saltmere',  name:'SALTMERE',   giftChance:.28,
     wall:{r:23, mat:'wood', hp:400}, guards:11, civs:20,
     mult:{copper:1.4, fabric:1.05, rum:0.85, rum_black:0.96, hide:1.3, meat:1.15, fruit:1.25, fish:0.55, salt:0.35},
-    civBarks:['The flats give salt, the salt gives everything else.','We mind the tide-marks. You should too.','Outsiders taste of copper. We can tell.','Cure it in brine and it keeps till judgment.','Low tide at dusk. Stay off the pans.'],
+    /* and the old blood, said sideways: see the Salt-cured. Nobody in Saltmere knows what it is
+       they are describing, which is why they describe it so plainly */
+    civBarks:['The flats give salt, the salt gives everything else.','We mind the tide-marks. You should too.','Outsiders taste of copper. We can tell.','Cure it in brine and it keeps till judgment.',
+              'We keep off the flats at noon. It\'s the glare. That\'s all it is.',
+              'My grandmother could find the cellar steps without a lamp. So can I, mostly.',
+              'We bury deep here. Deeper than we need to. Nobody remembers why we started.',
+              'Strangers ask why we marry in. We ask why they don\'t.','Low tide at dusk. Stay off the pans.'],
     lore:'A shuttered town on the salt flats, curing fish and hoarding brine. They marry among themselves, bury among themselves, and count every stranger twice.'},
   {key:'ironscar',  name:'IRONSCAR',   giftChance:.42, mercs:true,
     /* THE PIT IS THE MIDDLE OF THE TOWN, not an outbuilding, so the walls stand well back from
@@ -3065,8 +3071,14 @@ const SUBRACES = {
       blurb:'Nobody leaves Ironscar paid up. What they take instead is usually a fight.',
       stats:{atk:3, blades:3, blunt:2, def:-1},
       learn:{atk:1.30, blades:1.30, blunt:1.25, farming:0.60, brewing:0.65}},
-    saltcured:  {label:'Salt-cured',  w:10, skin:'#b6a288', sickResist:true,
-      blurb:'Saltmere brines everything it means to keep, and after enough generations that includes the people. Hard to kill and hard to change.',
+    /* ---------- AND THE OLD BLOOD, WHICH NOBODY SAYS ----------
+       Ruled 2026-09-29: Saltmere's line is the pureblood-descended one, implied and never
+       stated. Nothing in the game says it. What shows is what the bible gives the old line:
+       easy underground, uneasy under open sky — the dark takes half its toll from them
+       (`darkEase`) and the noon sun on the surface slows them a little (`sunShy`). And the
+       Kept come in close when one of them lays something on the stone (`altarOffer`). */
+    saltcured:  {label:'Salt-cured',  w:10, skin:'#b6a288', sickResist:true, deepEasy:true, sunShy:true,
+      blurb:'Saltmere brines everything it means to keep, and after enough generations that includes the people. Pale under the salt-burn, easy in a cellar, hard to kill and hard to change.',
       stats:{tough:3, armr:3},
       learn:{tough:1.30, armr:1.25, atk:0.85, magic:0.85, crafting:0.85, ath:0.85}},
     gravebred:  {label:'Grave-bred',  w:10, skin:'#b09a86',
@@ -3962,7 +3974,9 @@ function moveSpeedRaw(c){
   /* and neither does the sun. Walking rock you cannot see is a hand on the wall and a foot
      put down carefully — see THE DARK. The storm line above and this one are the two things
      the world does to a pace, and they are on opposite sides of the ceiling. */
-  if(inTheDark(c)) s *= DARK_MOVE_K;
+  if(inTheDark(c)) s *= 1 - (1 - DARK_MOVE_K) * darkEase(c);
+  /* the old blood keeps off the noon flats: see the Salt-cured */
+  if(subOf(c) && subOf(c).sunShy && !(c.floor || 0) && hour >= 10 && hour < 15) s *= 0.95;
   s *= traitOf(c, 'speed', 1);        /* the line overrides the race: an ox-bound chimera is not a houndkin */
   if(c.race==='hollow' && c.blood < 60) s *= 1.1;   /* the rider spurs the host */
   const ld = invWeight(c) / Math.max(1, invCap(c));
@@ -11391,7 +11405,7 @@ function hitChance(a, d){
      darkness is deliberately NOT a second term: everything down here is either blind or is
      one of the things that never was, and stacking both would put an ordinary swing under
      the 0.15 floor and turn a fight into a stalemate rather than a bad idea. */
-  const blind = inTheDark(a) ? ((wepOf(a) || {}).range ? DARK_RANGED : DARK_MELEE) : 0;
+  const blind = inTheDark(a) ? ((wepOf(a) || {}).range ? DARK_RANGED : DARK_MELEE) * darkEase(a) : 0;
   return clamp(0.55 + (a.stats.atk - d.stats.def)*0.02 + skillEdge + love - wild - blind
                - boozeWobble(a) + boozeWobble(d), 0.15, 0.94);
 }
@@ -20182,9 +20196,19 @@ function altarOffer(a, row){
   if(row.gold){ if(cats < row.gold) return false; cats -= row.gold; }
   else if(!campSpend(row.need)) return false;
   a.given.push(row.cat);
-  a.regard = clamp(a.regard + row.regard, -100, 100);
+  /* ---------- AND THEY KNOW ONE OF THEIR OWN, WITHOUT A WORD ----------
+     A Salt-cured of yours standing at the stone when it is laid down: the regard it buys goes
+     half again as far, and the first time at each altar the congregation comes in close to look
+     at them. Nothing is said, on either side. That is the whole of the tell. */
+  const kin = player().find(o => o.state === 'ok' && o.sub === 'saltcured' && (o.floor || 0) === (a.floor || 0)
+    && dist(o.x, o.y, a.x, a.y) < 10);
+  a.regard = clamp(a.regard + row.regard * (kin ? 1.5 : 1), -100, 100);
   const got = row.give ? row.give() : null;
   log(row.say, '');
+  if(kin && !a.sawKin){
+    a.sawKin = true;
+    log(`One of them comes in out of the dark to look at ${kin.name}. Then another. They stand like that for a long time, close enough to touch, and then go back to the edge of the light.`, '');
+  }
   if(got) log(`The vigil answers in kind: ${got}.`, 'good');
   /* ---------- AND AT SOME POINT THEY STOP WATCHING YOU ----------
      Which is the payoff, and it is not a number on a sheet: the hall's congregation comes off
@@ -25787,7 +25811,10 @@ function inTheDark(c){
   if(seesInDark(c)) return false;
   return !litNear(c);
 }
-function darkWorkK(c){ return inTheDark(c) ? DARK_WORK_K : 1; }
+function darkWorkK(c){ return inTheDark(c) ? 1 - (1 - DARK_WORK_K) * darkEase(c) : 1; }
+/* how much of the dark's toll lands on this body: all of it, or half for a line that was
+   easy underground before it had a name (the Salt-cured) */
+function darkEase(c){ const t = c && subOf(c); return t && t.deepEasy ? 0.5 : 1; }
 /* the precision trades, refused rather than slowed — and said out loud at most once an hour
    per body, because a camp of eight blind builders would otherwise write the log by itself */
 function darkStops(c, job){
@@ -29601,7 +29628,7 @@ function computeVision(){
        line — the same wholesale override the sky itself gets in `updateSky`. */
     if(darkFloor(c)){
       const dr = seesInDark(c) ? DARK_SIGHT_DEAD
-               : litNear(c)    ? DARK_SIGHT_LIT : DARK_SIGHT_BLIND;
+               : litNear(c)    ? DARK_SIGHT_LIT : DARK_SIGHT_BLIND + (darkEase(c) < 1 ? 5 : 0);
       stampVision(c.x, c.y, dr);
       markUnderSeen(c, dr);     /* the storey's own memory — the flat fog cannot hold it */
       continue;
@@ -50974,7 +51001,7 @@ function snapshot(){
     arenaS: arena ? {wins: arena.wins, losses: arena.losses, best: arena.best} : null,
     /* what each vigil thinks of you, and whether it has turned its back. Per altar, because the
        deep has no roads: what you did in one hall is not known in the next one. */
-    altarS: deepAltars.map(a => ({regard: a.regard, kin: !!a.kin, given: a.given.slice()})),
+    altarS: deepAltars.map(a => ({regard: a.regard, kin: !!a.kin, given: a.given.slice(), sawKin: !!a.sawKin})),
     estateS: estate ? {admitted: !!estate.admitted, opened: !!estate.opened, doorOpen: !!estate.doorOpen,
                        deal: estate.deal || null, watched: !!estate.watched, taken: estate.taken || 0,
                        invites: (estate.invites || []).map(i => ({...i})),
@@ -51309,7 +51336,7 @@ function restore(d){
   blackReceipt.stage = d.blackReceipt || 0;
   if(arena && d.arenaS){ arena.wins = d.arenaS.wins || 0; arena.losses = d.arenaS.losses || 0; arena.best = d.arenaS.best ?? -1; }
   if(d.altarS) d.altarS.forEach((a2, i) => { const a = deepAltars[i]; if(!a) return;
-    a.regard = a2.regard || 0; a.kin = !!a2.kin; a.given = (a2.given || []).slice(); });
+    a.regard = a2.regard || 0; a.kin = !!a2.kin; a.given = (a2.given || []).slice(); a.sawKin = !!a2.sawKin; });
 
   if(estate && d.estateS){
     const E = d.estateS;
