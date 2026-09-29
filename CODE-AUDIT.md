@@ -541,6 +541,27 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
+### 5.17 The ground drew black everywhere since crater phase 1 — **fixed 2026-09-29**
+
+Reported: *"the whole map is pitch black, as though it were the fog effect. But it's just
+everywhere."* It was the fog. Crater phase 1 (`54dcabc`, merged as `321e276`) cut the fog-of-war
+sheet into 256-tile pieces so the renderer could skip the ones off screen. Each piece kept the
+0..1 texture coordinates a `PlaneGeometry` is born with, so each drew the whole world's fog shrunk
+onto itself. The world is nearly all unexplored, so the ground went black everywhere, and the
+patch you had seen turned up as a speck in every piece.
+
+- **Measured:** ground in sight beside the party read 57 against 139 with the sheet hidden. The
+  build before phase 1 read 151 either way.
+- **Why nothing caught it:** every harness that looks at pixels hides the fog first, and every
+  harness about sight reads `vis`.
+- **The fix:** each vertex now takes its world position over the map's size, as the single
+  sheet's did.
+- **Found beside it, in the minimap:** it read one tile per 20×20 block (the top-left corner), so
+  it showed 67 of the 99 blocks a walk down a road had uncovered, and 3 of the 8 at the start. It
+  keeps a cell per pixel now, set the moment anything in its block is known.
+- **The check:** `tools/fog.js` compares the same ground pixels with the sheet on and off. Four
+  of its five claims were red on `d46801a`; the fifth is a control.
+
 ### 5.16 Sundered sites are laid on top of the roads — **fixed 2026-09-27**
 
 The play note: *"escorts and caravans get caught up in sundered ground sites. The pathing is weird
