@@ -5008,7 +5008,7 @@ const REGARD = [
 function regardBand(v){ let b = REGARD[0]; for(const r of REGARD) if(v >= r.at) b = r; return b; }
 /* Education is a damper, not a direction: the lettered move slower both ways. */
 function convictionSwing(c){
-  const lettered = (c.stats && c.stats.magic > 12) || c.scholar || c.minded === 'lettered';
+  const lettered = (c.stats && c.stats.magic > 12) || c.scholar || c.minded === 'lettered' || (c.tenant === 'echo' && c.tenantKnown);
   return lettered ? 0.65 : 1;
 }
 /* ============================================================ WHAT THE WORLD HAS HEARD
@@ -7778,6 +7778,24 @@ function openScholar(sc, who){
       const ab = document.createElement('button'); ab.textContent = 'ASK AFTER THE OLD MASTER';
       ab.onclick = () => { askAfterMaster(sc, art, u); draw(); };
       ar.appendChild(ab); body.appendChild(ar);
+    }
+    /* ---------- AND A SCHOLAR CAN LOOK AT A VESSEL ----------
+       One of the three ways a tenant shows (see WHAT MOVES INTO A VESSEL): a homunculus of yours
+       standing here, whose tenant has not shown, can be looked at. The scholar tells you what
+       they see, and for the empty ones that is the answer too. */
+    for(const u of player().filter(u2 => u2.race === 'homunculus' && u2.state === 'ok' && !u2.tenantKnown && !u2.scholarLooked
+                                           && dist(u2.x, u2.y, sc.x, sc.y) < 12)){
+      if(u.tenant === undefined) rollTenant(u);
+      const tr = document.createElement('div'); tr.className = 'trow';
+      tr.innerHTML = `<span class="tn">${u.name} is vat-born. <span style="color:var(--dust)">A scholar can tell whether it is alone in there.</span></span>`;
+      const tb = document.createElement('button'); tb.textContent = 'ASK THEM TO LOOK';
+      tb.onclick = () => {
+        u.scholarLooked = true;
+        if(!u.tenant) log(`${sc.name} looks for a long time. "Nobody else. It is what the vat meant it to be. That is rarer than you would think."`, '');
+        else { log(`${sc.name} looks for a long time, and then steps back. "It is not alone."`, 'bad'); tenantShows(u); }
+        draw();
+      };
+      tr.appendChild(tb); body.appendChild(tr);
     }
     /* and a quarry a scholar would know about, while a quest is asking (see ASKING AFTER A QUARRY) */
     for(const o of huntOpts(sc)){
@@ -11351,6 +11369,10 @@ function xpGain(c, stat, amt){
      a hand that will be exactly as good in a hundred days as it is now and one that is
      genuinely learning its trade. Living people have no `learnMult` and are unaffected. */
   if(c.learnMult) amt *= c.learnMult;
+  /* a dreamer learns the dream's skill twice over; an echo studies like somebody who already
+     knew how (see WHAT MOVES INTO A VESSEL) */
+  if(c.tenant === 'dream' && stat === c.dreamSkill) amt *= 2;
+  if(c.tenant === 'echo' && c.tenantKnown && stat === 'study') amt *= 1.5;
   /* THE LAW OF THE SHOVEL. Labour was the fastest skill in the game to max out by a wide
      margin — every one of its four earning sites paid a flat rate, and the skill's own reward
      is a faster work cycle, so it paid itself. Eleven minutes of one hand on a woodpile took a
@@ -11857,6 +11879,7 @@ function markThreat(c){
 }
 function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
   if(d.lastScholar) return;   /* nothing lands on him — see THE LAST SCHOLAR */
+  if(a && a.tenant === 'watcher' && d.faction === 'gaunt') a.gauntStruckH = nowH() + 6;   /* and now they know it */
   /* ---------- SOMETHING IS SWINGING AT THIS ONE ----------
      `c.target` is who a body is fighting, which is not the same question as whether anybody
      is fighting IT — so the squad bar could not tell a hand being cut down off-camera from a
@@ -14520,6 +14543,16 @@ function hostile(a, b){
     if(o2.faction === 'deep') return false;
     return !!d2.provoked && o2.faction === 'player';
   }
+  /* ---------- A WATCHER IN A VESSEL, AND WHAT KNOWS IT ----------
+     The gaunts pass it by unless it has struck one (`gauntStruckH`); the Order and the
+     Messengers know what it is on sight. See WHAT MOVES INTO A VESSEL. */
+  if(a.tenant === 'watcher' || b.tenant === 'watcher'){
+    const w = a.tenant === 'watcher' ? a : b, o = w === a ? b : a;
+    if(o.faction === 'gaunt' && !(w.gauntStruckH > nowH())) return false;
+    if(o.faction === 'purge' || o.faction === 'messenger') return true;
+  }
+  /* and what dreams Malathuun's dreams walks his ground untouched */
+  if((a.tenant === 'dream' && b.siteId != null) || (b.tenant === 'dream' && a.siteId != null)) return false;
   /* the gaunts did not come here to take sides */
   if(a.faction === 'gaunt' || b.faction === 'gaunt') return true;
   /* fixed enmities: Ash vs the dead, dead exiles vs their hunters — provoked or not */
@@ -21946,10 +21979,33 @@ const WANDERERS = [
    pitch:'"You again." She does not look surprised, which is somehow worse.',
    ask:'"Three roads is a road. Cross mine in a third place and I will tell you what I am doing out here."',
    join:'"Three." She falls in beside you without being asked. "I am not following you. We are going the same way, and we have been for a while."'},
+
+  /* ---------- AND ONE WHO IS NOT ALONE ----------
+     Ruled 2026-09-29: a Vat-born with an echo in it (WHAT MOVES INTO A VESSEL). The one tenant a
+     player can meet before it is theirs, so the rule that a tenant shows only in your company
+     does not apply: it has already shown, and it is why she is standing at a counter asking.
+     LATE: added after the world's dice were counted, so she is placed in a pocket and every
+     world keeps the shape it had. */
+  {key:'tallow', name:'Tallow', sex:'f', where:'town', town:'copperhold', tag:'the one with the papers', late:true,
+   race:'homunculus', sub:'vatborn', tenant:'echo', echoName:'Ilse Carrow',
+   stats:{atk:12, def:16, tough:22, ath:8, labor:30, crafting:26, medic:10},
+   weapon:null, armor:'a_lea', conviction:'haunted',
+   want:'formula',
+   news:'A vat-born keeps its own papers in its apron in Copperhold, which is unusual, and has started signing them with somebody else\'s name, which is worse. The clerks say the hand is older than any of them were taught.',
+   pitch:'"My name is Tallow. I know it is. I have the papers." It looks at its hands. "She keeps signing them, though."',
+   ask:'"Bring me something written before the sky opened. A formula, anything in the old hand. If it is hers I will know it, and then I will know whose name I keep writing."',
+   join:'"It is." It turns the page over, and back. "It is her hand. Ilse Carrow." It folds its papers away. "My name is Tallow. I would like to find out what she wanted."'},
 ];
 function wandererDef(k){ return WANDERERS.find(w => w.key === k) || null; }
 function spawnWanderers(){
   for(const w of WANDERERS){
+    if(!w.late){ placeWanderer(w); continue; }
+    const pocket = seed;                     /* borrowed, and put back whatever happens */
+    try{ placeWanderer(w); } finally{ seed = pocket; }
+  }
+}
+function placeWanderer(w){
+  {
     let p = null, cell = null;
     if(w.where === 'gaol'){
       /* a real empty cell in somebody else's town, so freeing him runs through the gaol the
@@ -21968,7 +22024,7 @@ function spawnWanderers(){
       /* INSIDE A TOWN, among people who have agreed not to notice — which is the whole of
          what a succubus is, and it only means anything if she is standing in the middle of
          them rather than out in the waste being conspicuous at a rock. */
-      const t2 = pick(towns.filter(t3 => !t3.def.undeadFriendly));
+      const t2 = w.town ? towns.find(t3 => t3.def.key === w.town) : pick(towns.filter(t3 => !t3.def.undeadFriendly));
       if(t2) p = findOpenNear(Math.round(t2.x + ri(-3, 3)), Math.round(t2.y + ri(-3, 3)), 5);
       /* BUT NOT OVER THE ALDERCOTTS' WALL. Greenrest is built round the estate, so "the middle
          of the town" is their private yard, and Albedo was stood up inside it on the 2560 world
@@ -22009,6 +22065,8 @@ function spawnWanderers(){
     c.conviction = w.conviction;
     if(w.gift){ c.gift = w.gift; c.att = {divine:0, destruction:0, dark:0, dust:0}; c.att[w.gift] = 2; c.mana = rawMaxMana(c); }
     if(w.race){ c.race = w.race; if(w.sub) c.sub = w.sub; fitLine(c); }
+    /* a tenant that has already shown: known from the start, and never rolled over */
+    if(w.tenant){ c.tenant = w.tenant; c.tenantKnown = true; if(w.echoName) c.echoName = w.echoName; }
     c.blood = c.maxBlood = Math.max(c.maxBlood, 120);
     c.wanderMet = 0;
     chars.push(c);
@@ -22060,6 +22118,12 @@ function wandererGate(c){
     const near = pyres.slice().sort((a, b) =>
       dist(a.x, a.y, c.x, c.y) - dist(b.x, b.y, c.x, c.y))[0];
     return {ok:false, why:`the Order has ${pyres.length === 1 ? 'built one pole' : 'built ' + pyres.length + ' poles'} and nobody of yours has stood at ${pyres.length === 1 ? 'it' : 'one'} to read the name — the nearest is ${placeHint(c.x, c.y, near.x, near.y)}`};
+  }
+  /* SHOWN, NOT SPENT: she wants to read the hand, and hands it back */
+  if(w.want === 'formula'){
+    const f = ['formula_p', 'formula_w', 'formula_t'].find(k => campHas(k) > 0);
+    return f ? {ok:true, label:`SHOW IT THE ${ITEMS[f].name.toUpperCase()}`}
+             : {ok:false, why:'it wants to see something written before the sky opened, and there is no formula in the stores'};
   }
   /* AND HIS IS THE ONE THING IN THIS WORLD YOU CANNOT SHORTCUT: somebody who grew. */
   if(w.want === 'beat'){
@@ -24371,6 +24435,162 @@ function splinterFree(c){
   }
   return false;
 }
+/* ============================================================ WHAT MOVES INTO A VESSEL
+   The bible: "As empty vessels they attract artificial souls — stray alchemical overflow, an Old
+   One's dream, even a whole Watcher. The Golden Age believed it was manufacturing labour."
+   Ruled 2026-09-29, with the tenants and the rates as proposed: about a third of homunculi are
+   not alone in there, and nobody knows which until it shows.
+     overflow  14%  the vat's leftover charge. It comes out as a gift, one art at I, even in a
+                    Nullborn (which then cannot hold the lance). No more Attention than any
+                    working, but a working can DISCHARGE: a crack of the charge that burns
+                    whoever is standing beside it, the vessel included. Shows in its first fight.
+     dream     10%  an Old One's dream — Malathuun's, by what it says, though nobody says so.
+                    One skill (the dream's) learned twice as fast; it talks in its sleep; some
+                    nights it walks toward the nearest Sundered ground, and the things there do
+                    not touch it. Shows the first night it walks.
+     echo       7%  a Golden-Age person, a pourer or a subject. Lettered, and study comes half
+                    again as fast; but after a season in the squad it starts answering to
+                    another name, it is haunted, and it will not raise the dead. Shows after a
+                    season with you.
+     watcher    4%  a whole Watcher. Sees at night as well as by day, and in the dark below;
+                    gaunts pass it by unless it strikes one. The Order knows it on sight and so
+                    do the Messengers. And from THE WATCHERS WAKE on it may turn, for good.
+                    Shows the first time it stands near a tear, or a Paladin sees it.
+   Never Mother's: the Hollows are hers, and a vessel with a piece of her in it would blur the one
+   line the bible draws hard. Nine has nobody in him.
+   ROLLED OFF THE BODY'S OWN ID, the first time it stands in your squad, so it spends none of the
+   world's dice and a given homunculus always had whoever it had. */
+const TENANT_ODDS = [['overflow', 0.14], ['dream', 0.10], ['echo', 0.07], ['watcher', 0.04]];
+const TENANT_LABEL = {overflow: 'Overflow — the vat\'s leftover charge', dream: 'A dream — an Old One\'s',
+                      echo: 'An echo — somebody from before', watcher: 'A whole Watcher'};
+const DREAM_SKILLS = ['medic', 'crafting', 'smithing', 'farming', 'magic', 'blades', 'ranged', 'labor'];
+/* the names the echoes answer to: Golden-Age, and nobody's alive */
+const ECHO_NAMES = ['Ilse Carrow', 'Maud Wetherell', 'Tobiah Quint', 'Sabel Orne', 'Edric Fane',
+                    'Annick Pell', 'Rowan Stayle', 'Cordelia Hast', 'Lucan Meer', 'Orla Brisk'];
+/* what the dreamer says in its sleep. Malathuun's, never named: a god in pieces who did nothing */
+const DREAM_LINES = [
+  'It is very large, and it is in pieces, and none of the pieces are cold.',
+  'Somebody is carrying my hand across the salt. I can feel them counting.',
+  'I did nothing. I was asleep. Then I was everywhere.',
+  'The ground is growing teeth where I fell. They are mine. I do not want them.',
+  'Tell the little ones to stop. They think I am food.',
+  'There was a sky once, and I was under it, and nobody knew my name.',
+  'I am still warm. Why am I still warm.',
+  'Something with six legs is looking for me. It is looking in the wrong pieces.',
+];
+const TENANT_TURN_DAILY = 0.01;      /* a Watcher's chance a day to turn, from THE WATCHERS WAKE (about half by the Door) */
+function rollTenant(c){
+  if(!c || c.race !== 'homunculus' || c.tenant !== undefined) return;
+  c.tenant = null; c.tenantKnown = false;
+  if(c.wanderKey === 'nine') return;             /* "The order has not been rescinded." Nobody else in there */
+  const h = hash2(((c.id | 0) * 13 + 7) | 0, 4099);
+  let acc = 0;
+  for(const [k, pr] of TENANT_ODDS){ acc += pr; if(h < acc){ c.tenant = k; break; } }
+  const h2 = hash2(((c.id | 0) * 5 + 1) | 0, 77);
+  if(c.tenant === 'dream') c.dreamSkill = DREAM_SKILLS[Math.floor(h2 * DREAM_SKILLS.length) % DREAM_SKILLS.length];
+  if(c.tenant === 'echo') c.echoName = ECHO_NAMES[Math.floor(h2 * ECHO_NAMES.length) % ECHO_NAMES.length];
+  if(c.tenant === 'overflow') c.overflowArt = ['dark', 'divine', 'destruction', 'dust'][Math.floor(h2 * 4) % 4];
+}
+/* it shows: said once, and from here on it is on the character sheet */
+function tenantShows(c){
+  if(!c || !c.tenant || c.tenantKnown) return;
+  c.tenantKnown = true;
+  if(c.tenant === 'overflow'){
+    c.gift = c.overflowArt || 'dust';
+    c.att = c.att || {divine:0, destruction:0, dark:0, dust:0};
+    c.att[c.gift] = Math.max(1, c.att[c.gift] || 0);
+    c.mana = rawMaxMana(c);
+    log(`${c.name} goes rigid in the middle of it, and something comes out of their hands that nobody taught them. The vat left a charge in this one. It has found a way out: ${c.gift}.`, 'bad');
+  } else if(c.tenant === 'dream'){
+    log(`${c.name} gets up in the night with their eyes shut and starts walking. They are not going anywhere you sent them. Whatever is dreaming in there is not ${c.name}.`, 'bad');
+  } else if(c.tenant === 'echo'){
+    c.formerName = c.name;
+    c.name = c.echoName || c.name;
+    if(c.wanderKey === 'tallow') c.name = c.formerName;       /* it insists: "My name is Tallow." */
+    c.conviction = 'haunted';
+    log(`${c.formerName} has stopped answering to it. They answer to ${c.echoName} now, and they sign it the same way every time, in a hand from before the sky opened.`, 'bad');
+    refreshSquadBar && refreshSquadBar();
+  } else if(c.tenant === 'watcher'){
+    log(`${c.name} stands at the edge of it and does not blink, for a long time. Something in there is looking back out, and it knows exactly what it is looking at.`, 'bad');
+  }
+  worldEvent('tenant', c.x, c.y, `One of the vat-born in somebody's company turns out not to be alone in there.`);
+}
+/* the crack of the charge, when an Overflow works something */
+function tenantDischarge(c){
+  if(!c || c.tenant !== 'overflow' || !c.tenantKnown || rnd() >= 0.12) return;
+  addSpecks(c.x, c.y + 1, '#f0e8ff', 22);
+  AU.thud && AU.thud(c.x, c.y);
+  for(const o of charsNear(c.x, c.y, 2.2)){
+    if(o.state !== 'ok' || (o.floor || 0) !== (c.floor || 0) || dist(o.x, o.y, c.x, c.y) > 1.9) continue;
+    applyDamage(null, o, pickPart(), 6 + rnd() * 6, 'burn', o.faction === 'player', true);
+  }
+  log(`The charge in ${c.name} cracks out sideways. Everybody close enough is burned, ${c.name} too.`, 'bad');
+}
+let _tenantT = 0;
+function tenantTick(dt){
+  if((_tenantT -= dt) > 0) return;
+  _tenantT = 1;
+  const nightId = Math.floor((nowH() + 6) / 24);        /* one id from dusk to dawn */
+  for(const c of player()){
+    if(c.race !== 'homunculus' || c.state === 'dead') continue;
+    if(c.tenant === undefined) rollTenant(c);
+    if(!c.tenant) continue;
+    if(c.tenantSince === undefined) c.tenantSince = day;
+    /* ---- showing ---- */
+    if(!c.tenantKnown){
+      if(c.tenant === 'overflow' && c.state === 'ok' && c.target && c.target.state === 'ok' && hostile(c, c.target)) tenantShows(c);
+      else if(c.tenant === 'echo' && day - c.tenantSince >= 30) tenantShows(c);
+      else if(c.tenant === 'watcher' && !(c.floor || 0) && (
+        rifts.some(r => dist(r.x, r.y, c.x, c.y) < (r.r || 6) + 8) ||
+        chars.some(o => o.faction === 'purge' && o.state === 'ok' && dist(o.x, o.y, c.x, c.y) < 12 && visAt(o.x, o.y) === 2))) tenantShows(c);
+    }
+    /* ---- the dreamer's nights ---- */
+    if(c.tenant === 'dream' && isNight() && c.dreamNight !== nightId && c.state === 'ok' && !c.target && !c.jailedAt){
+      c.dreamNight = nightId;
+      if(rnd() < 0.15 && corpseSites.length && !(c.floor || 0)){
+        const site = corpseSites.slice().sort((a, b) => dist(a.x, a.y, c.x, c.y) - dist(b.x, b.y, c.x, c.y))[0];
+        if(dist(site.x, site.y, c.x, c.y) < 400){
+          tenantShows(c);
+          clearOrders(c);
+          c.moveTarget = {x: site.x, y: site.y};
+          c.sleepwalkUntil = nowH() + 3;
+          if(c.tenantKnown) log(`${c.name} is up and walking in their sleep again, toward the Sundered ground ${compassFrom(c.x, c.y, site.x, site.y)}.`, '');
+        }
+      } else if(c.tenantKnown && rnd() < 0.3){
+        log(`${c.name}, asleep: "${DREAM_LINES[Math.floor(rnd() * DREAM_LINES.length)]}"`, '');
+      }
+    }
+    if(c.sleepwalkUntil && nowH() > c.sleepwalkUntil){
+      c.sleepwalkUntil = 0;
+      if(c.moveTarget) c.moveTarget = null;
+      log(`${c.name} wakes where they stopped, and does not remember walking.`, '');
+    }
+    /* ---- the Watcher, late ---- */
+    if(c.tenant === 'watcher' && fractureStage >= 3 && c.turnDay !== day){
+      c.turnDay = day;
+      if(rnd() < TENANT_TURN_DAILY) tenantTurns(c);
+    }
+  }
+}
+/* the character sheet's line for it, once it has shown */
+function tenantTxt(c){
+  if(!c || !c.tenant || !c.tenantKnown) return '';
+  const extra = c.tenant === 'dream' ? ` (dreams ${c.dreamSkill})`
+              : c.tenant === 'echo' ? (c.formerName && c.formerName !== c.name ? ` (poured as ${c.formerName})` : c.echoName ? ` (answers to ${c.echoName})` : '')
+              : '';
+  return ` · <span style="color:#b49ad8">${TENANT_LABEL[c.tenant]}${extra}</span>`;
+}
+function tenantTurns(c){
+  if(!c.tenantKnown) tenantShows(c);
+  clearOrders(c);
+  selected = selected.filter(x => x !== c);
+  c.faction = 'gaunt'; c.neutral = false; c.turned = true;
+  c.nightborn = false;
+  addSpecks(c.x, c.y + 1, '#6a4a7a', 26);
+  log(`${c.name} turns round in the middle of the camp and looks at all of you as if for the first time. Then it is not one of yours. It never entirely was.`, 'bad');
+  worldEvent('tenant', c.x, c.y, 'Something that walked with a company for a season has gone over to the night.');
+  refreshSquadBar && refreshSquadBar();
+}
 function spendCast(c, key){
   if(key !== 'veil') breakVeil(c, 'works a formula');
   /* every branch has its own noise. Fire climbs, the dark falls, the divine rings, and
@@ -24384,6 +24604,7 @@ function spendCast(c, key){
      things that watch for it exactly what you did. */
   if(!splinterFree(c)) c.mana -= SPELLS[key].cost;
   c.castCd = 1.4;
+  tenantDischarge(c);        /* an Overflow's charge can crack out sideways: see WHAT MOVES INTO A VESSEL */
   /* ---------- THE PROFANE GIFT, WORKED WHERE SOMEBODY CAN SEE IT ----------
      "The Church burns the profane gift and lights its pyres with the blessed one." CRIMES has
      carried `formula` — "working a formula inside the walls", bounty 260 — since it was written,
@@ -25369,6 +25590,7 @@ function resolveCastAt(c, key, wx, wy){
     if(!t){ log('The light finds no fault there.', ''); return; }
     castSmite(c, t);
   } else if(key==='raise'){
+    if(c.tenant === 'echo' && c.tenantKnown){ log(`${c.name} will not do it. Whoever is in there has seen what the dead were used for, and says so, in a voice from before.`, 'bad'); return; }
     const body = corpses.find(o => bodyHit(o, wx, wy, 0.9));
     if(!body){ log('No corpse there.', 'bad'); return; }
     castRaise(c, body);
@@ -25757,7 +25979,7 @@ function darkFloor(c){ return (c.floor || 0) < 0; }
    blinded rather than by a bug report: dropping `caveDweller` above took the whole garrison
    with it. */
 function seesInDark(c){
-  return !!(c.undead || c.pureblood || c.gauntKind ||
+  return !!(c.undead || c.pureblood || c.gauntKind || c.tenant === 'watcher' ||
             c.faction === 'gaunt' || c.faction === 'deep' || c.faction === 'redoubt');
 }
 /* A torch that has never been lit reads as full, so a body handed one mid-frame — by a trade,
@@ -27636,6 +27858,7 @@ function update(dt){
   guardianTick(dt);           /* and whether the thing at the middle is calling it down on you */
   passTick(dt);               /* and whether the Order is standing in the way at the pass */
   scholarTick(dt);            /* and whether an old man is standing somewhere he was not */
+  tenantTick(dt);             /* and who else is in the vat-born: see WHAT MOVES INTO A VESSEL */
   biomeTick(dt);              /* the flats, the rust and the bog: who walked in, what woke, what keeps */
   oldKingTick(dt);            /* the man in the Door: talking from up there, or hanging people down here */
   courtTick(dt);              /* and his court, coming through onto the grounds their Arts made */
@@ -29634,6 +29857,7 @@ function computeVision(){
       continue;
     }
     let r = base;
+    if(c.tenant === 'watcher') r = Math.max(r, 30 * stormK);   /* it sees at night as it does by day */
     const h = heightAt(c.x, c.y);
     if(h > 1.2) r += Math.min(18, (h - 1.2) * 1.9);   /* the view from up there */
     /* ---------- AND HEIGHT YOU BUILT COUNTS LIKE HEIGHT YOU CLIMBED ----------
@@ -44377,7 +44601,7 @@ function refreshCharPanel(){
   $('equip').innerHTML = `<b>${ageTxt}</b>${c.grp ? ' · <span style="color:var(--warn)">'+c.grp.toUpperCase()+'</span>' : ''} · WPN <b>${(wepOf(c)||{}).name || 'Fists'}</b>${torchTxt}${cupTxt} · ARM <b>${(c.armor&&ITEMS[c.armor]?ITEMS[c.armor].name:'None')}</b>` +
     wornTxt +
     (c.pack ? ` · PACK <b>${ITEMS[c.pack].name}</b>` : '') +
-    `${giftTxt}${bindTxt}${convTxt}<br><span style="color:${+ldNow > +ldCap ? 'var(--rust)' : 'var(--dust)'}">LOAD ${ldNow}/${ldCap}kg${invTxt}</span>`;
+    `${giftTxt}${bindTxt}${convTxt}${tenantTxt(c)}<br><span style="color:${+ldNow > +ldCap ? 'var(--rust)' : 'var(--dust)'}">LOAD ${ldNow}/${ldCap}kg${invTxt}</span>`;
   const sr = $('stancerow');
   sr.innerHTML = '';
   /* `mindedDead`, not "is it a lich". This row is the ONLY place in the panel that still
@@ -50942,6 +51166,8 @@ function snapshot(){
     deepKin:c.deepKin||null, lightShy:!!c.lightShy, hallId:(c.hallId ?? null), shoalId:(c.shoalId ?? null),
     post: c.post ? {x: c.post.x, y: c.post.y} : null,
     pureblood:!!c.pureblood,
+    tenant: c.tenant === undefined ? undefined : {k: c.tenant, known: !!c.tenantKnown, since: c.tenantSince ?? null,
+      dream: c.dreamSkill || null, echo: c.echoName || null, art: c.overflowArt || null, was: c.formerName || null, turned: !!c.turned},
     /* ---------- AND THE BORER'S THREE KEYS ONLY ON A BORER ----------
        These were written for every body in the world — 1,360 of them carrying three keys each
        for a mechanic that belongs to the three Stonewakes. `lean.js` caught it as a ROUND TRIP
@@ -51534,6 +51760,9 @@ function restore(d){
     c.deepKin = s.deepKin || null; c.lightShy = !!s.lightShy; c.hallId = (s.hallId ?? null);
     c.post = s.post ? {x: s.post.x, y: s.post.y} : null;
     c.shoalId = (s.shoalId ?? null); c.pureblood = !!s.pureblood;
+    if(s.tenant){ const T = s.tenant; c.tenant = T.k; c.tenantKnown = !!T.known; if(T.since != null) c.tenantSince = T.since;
+      c.dreamSkill = T.dream || undefined; c.echoName = T.echo || undefined; c.overflowArt = T.art || undefined;
+      c.formerName = T.was || undefined; c.turned = !!T.turned; }
     /* only a borer carries them — see the note beside the save. Writing `false`/`null`/`0` onto
        every body was what put a key on 1,360 of them that the pre-save body never had. */
     if(s.borer){ c.borer = true; c.boreLeft = (s.boreLeft ?? null); c.boreCd = (s.boreCd ?? 0); }
