@@ -126,8 +126,10 @@ const TWELVE = {
          it was written to catch. It found it on the second reading. */
       for (const sl of EQ_SLOTS) if (c[sl] && TWELVE[c[sl]]) note(c[sl], 'held');
     }
-    /* the two that are not in the world yet because they are given by an event */
-    const byEvent = ['a_habit', 't_splinter'];
+    /* the ones that are not in the world yet because they are given by an event. The Gaunt's
+       Mantle joined them 2026-09-29: no Sixfold stands up on day one any more, and the Mantle
+       rides the first one born (`spawnSixfold`) */
+    const byEvent = ['a_habit', 't_splinter', 'k_gaunt'];
     const dupes = Object.keys(count).filter(k => count[k] > 1);
     const seeded = Object.keys(count).filter(k => TWELVE[k]);
     const loose = seeded.filter(k => (where[k] || []).some(w => w.startsWith('chest')));
@@ -139,8 +141,8 @@ const TWELVE = {
              missing: Object.keys(TWELVE).filter(k => !count[k] && byEvent.indexOf(k) < 0), loose };
   }, TWELVE);
   R.oneEach = !placed ? NOTHING
-    : (!placed.dupes.length && !placed.missing.length && placed.seeded === 10)
-    ? `${placed.seeded} of them are seeded in the world exactly once each and the other two are given by an event; no duplicates anywhere`
+    : (!placed.dupes.length && !placed.missing.length && placed.seeded === 12 - placed.byEvent.length)
+    ? `${placed.seeded} of them are seeded in the world exactly once each and the other ${placed.byEvent.length} are given by an event; no duplicates anywhere`
     : `!! THE PLACEMENT IS WRONG (dupes ${JSON.stringify(placed.dupes)}, missing ${JSON.stringify(placed.missing)}, seeded ${placed.seeded})`;
   R.andBehindSomething = !placed ? NOTHING
     : (!placed.loose.length && !placed.shared.length)

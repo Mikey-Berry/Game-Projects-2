@@ -775,6 +775,10 @@ const passState = {manned: false, shortSince: null, alarm: false, warned: false}
 /* the Last Scholar's standing record: see THE LAST SCHOLAR, by `scholarTick`. Up here because
    the save reads it and `hostile()` asks after his body */
 const lastScholar = {heard: false, done: {}, talked: 0, body: null, key: null, seenAt: null, unseenT: 0, until: 0};
+/* the Sixfolds' count and ceiling (see A KIND, NOT A NAME): up here because `kill` counts them */
+const SIXFOLD_CAP = [1, 1, 1, 2, 3, 4];
+let sixfoldKills = 0;           /* how many have been put down, by anybody; see the Sigil-Bound */
+let sixMantleGiven = false;     /* the Gaunt's Mantle rides the first one born; see placeLegends */
 /* the barricade's tiles: a band two tiles deep across the gorge floor, less the gap */
 function passGateTiles(){
   const out = [];
@@ -12099,6 +12103,7 @@ function kill(c, by){
   if(c.state==='dead') return;
   /* the ledger is written here, not inferred from a body that will be gone in two days */
   if(c.bossKey && !bossSlain[c.bossKey]) bossSlain[c.bossKey] = day;
+  if(c.gauntKind === 'sixfold') sixfoldKills++;
   siteSpent(c);                   /* a site's gaunt is one fewer it grows back (WHAT A SITE HAS LEFT TO SPEND) */
   if(c.bossKey && threadOf('master_' + c.bossKey) && !threadOf('master_' + c.bossKey).done)
     threadDone('master_' + c.bossKey, 'Dead. Whatever it knew went with it.');
@@ -19668,6 +19673,7 @@ function riftTick(dh){
     if(r.r >= 16 && !r.birthed){
       r.birthed = true;
       const six = spawnSixfold(r.x, r.y);
+      if(!six) log('The tear reaches full width and closes on something that did not come through. Whatever it was, there was no room left out here for another.', '');
       if(six){
         log('THE TEAR HAS BIRTHED. Six legs come through, jointed wrong, and the rift collapses behind it — done with its purpose. It does not go back. It goes OUT.', 'bad');
         worldEvent('sixfold', r.x, r.y, 'The great tear closed the night something finished stepping through it. What it delivered is loose in the waste now, and it is not going back.');
@@ -20769,6 +20775,7 @@ function coilTick(){
 }
 let coilStruck = false;
 let _coilDay = -1;
+/* the state is declared up by the Sixfold's, because `kill` and `hostile` read it */
 /* ---------- DEEP-WASTE FAUNA ----------
    Not everything out there came through a tear. Some of it just grew where nothing
    should, and got on with the business of eating. */
@@ -22122,11 +22129,26 @@ function openWanderer(c){
     body.appendChild(why);
   }
 }
-function spawnSixfold(atX, atY){
+/* ---------- A KIND, NOT A NAME ----------
+   "The Sixfold appears to be referenced as though it were a singular boss, whereas it is more of
+    a late-game enemy." It was: every one was called "The Sixfold", one stood up on day one, and
+    the Sigil-Bound's errand was done by whichever fell first, before he had asked. They are
+    "Sixfold" now, one to a body. They keep everything that makes one a great creature (the
+    boss key the rest of the game reads for that: town blades barely mark it, the light does
+    not turn it, it keeps its kit), and they are counted instead of ledgered.
+   AND THERE IS A CEILING. "There should be a cap on how many can walk the wastes, as they are
+   capable of wiping out cities." One while the sky is quiet, then two, three and four as the
+   Fracture climbs. A tear that reaches full width with the ceiling already walking closes on
+   nothing; from the third stage the deep waste puts one up on its own now and then. */
+function sixfoldCap(){ return SIXFOLD_CAP[clamp(fractureStage | 0, 0, SIXFOLD_CAP.length - 1)]; }
+function sixfoldsAlive(){ return chars.filter(c => c.gauntKind === 'sixfold' && c.state !== 'dead').length; }
+function spawnSixfold(atX, atY, opts){
+  const o = opts || {};
+  if(!o.dry && sixfoldsAlive() >= sixfoldCap()) return null;
   const home = corpseSites.length ? pick(corpseSites) : null;
   const sp = (atX !== undefined) ? findOpenNear(atX, atY, 6) : (home ? findOpenNear(home.x + 3, home.y + 3, 6) : bossSpot(55, 75));
   if(!sp) return;
-  const c = makeChar('The Sixfold', 'gaunt', sp.x, sp.y,
+  const c = makeChar('Sixfold', 'gaunt', sp.x, sp.y,
     {atk:55, def:30, tough:70, ath:8, magic:1, labor:0});
   c.beast = true;
   c.bossKey = 'sixfold';
@@ -22158,6 +22180,9 @@ function spawnSixfold(atX, atY){
   c.sweep = {arc: 1.5, reach: 2.6, mult: 0.45, max: 4};
   c.loot = ri(2400, 4000);
   c.dropItems = {formula_p:2, formula_w:2, remains:6, tome:2, sunder:3};
+  /* a dry run spends the dice a body would and makes nothing: see the day-one spawn below */
+  if(o.dry) return null;
+  if(!sixMantleGiven){ sixMantleGiven = true; c.dropItems.k_gaunt = 1; }   /* scavenged off the first of them */
   chars.push(c);
   worldEvent('sixfold', sp.x, sp.y, 'Drovers out past the last fence describe a shape on the ridgeline: six legs, jointed wrong, with something small hanging under it where a head should not be. Nobody has gone back to check.');
   return c;
@@ -22169,7 +22194,16 @@ function spawnSixfold(atX, atY){
 const SIX_STAMP_R = 3.0;      /* how close is "crowded" */
 const SIX_STAMP_N = 4;        /* and how many of them it takes */
 const SIX_HURL_MIN = 5, SIX_HURL_MAX = 14;
+let _sixDay = -1;
 function sixfoldTick(dt){
+  /* the deep waste puts one up on its own from the third stage, under the ceiling */
+  if(_sixDay !== day){
+    _sixDay = day;
+    if(fractureStage >= 3 && !ruin && sixfoldsAlive() < sixfoldCap() && rnd() < 0.3){
+      const six = spawnSixfold(undefined, undefined);
+      if(six) log('Word comes in off the waste: another Sixfold is walking. Nothing opened for it. The sky is simply that thin now.', 'bad');
+    }
+  }
   for(const c of rareFolk().six){
     if(c.state !== 'ok') continue;
     c._sixT = (c._sixT || 0) - dt;
@@ -22237,7 +22271,9 @@ function sixfoldTick(dt){
     } else c._sixT = 1.2;
   }
 }
-spawnSixfold();
+/* NOT ON DAY ONE ANY MORE. The dice this spawn spent are still spent, in the same order, so
+   everything seeded after it lands where it always did; nothing is made. */
+spawnSixfold(undefined, undefined, {dry: true});
 /* and one Cairn Beast, standing in a corpse-field from the first day, growing on whatever
    the world kills whether or not you ever go near it */
 spawnCairnBeast(true);   /* the world opens with one; the rest answer the dead */
@@ -26392,6 +26428,8 @@ const IMMORTAL_LINES = {
         give: () => { addItem('iron', 8); cats += 900; },
         giveTxt:'8 Iron, 900 gold' },
       { kind:'destroy', boss:'sixfold',
+        /* one put down after he asked, not whichever fell first: see A KIND, NOT A NAME */
+        arm: (c) => { if(c.sixMark == null) c.sixMark = sixfoldKills; },
         ask:'SOMETHING COMES THROUGH THE TEARS WHEN THEY REACH FULL WIDTH. SIX LEGS, JOINTED WRONG. ' +
             'IT CAME THROUGH INCOMPLETE AND IT KEPT WALKING ANYWAY. SO DID I. ' +
             'PUT IT DOWN AND TELL ME IF THERE WAS ANYTHING IN IT THAT KNEW ITS OWN NAME.',
@@ -26535,6 +26573,7 @@ function stageMet(st, giver){
      wants to know whether you looked at the crown, and then he hands it back. */
   if(st.kind === 'show' && st.alt && canAfford(st.alt)) return true;
   if(st.kind === 'fetch' || st.kind === 'show') return canAfford(st.need || {});
+  if(st.kind === 'destroy' && st.boss === 'sixfold') return !!giver && giver.sixMark != null && sixfoldKills > giver.sixMark;
   if(st.kind === 'slay' || st.kind === 'destroy') return !!bossSlain[st.boss];
   if(st.kind === 'visit')  return !!placesSeen[st.at] && canAfford(st.also || {});
   if(st.kind === 'bring')  return !!livingWitness(giver);
@@ -26570,7 +26609,7 @@ function stageProgress(st, giver){
     return u ? `${u.name} — ${Math.floor(lieuHeld(u))}/${LIEU_SEASON} days` : 'no lieutenant on your banner';
   }
   if(st.kind === 'slay')    return bossSlain[st.boss] ? 'it is done' : 'not yet dead';
-  if(st.kind === 'destroy') return bossSlain[st.boss] ? 'it is down' : 'still walking';
+  if(st.kind === 'destroy') return stageMet(st, giver) ? 'it is down' : st.boss === 'sixfold' && sixfoldsAlive() === 0 ? 'none walking yet' : 'still walking';
   if(st.kind === 'visit'){
     const been = placesSeen[st.at] ? 'you have stood there' : 'you have not been';
     const extra = Object.keys(st.also || {}).map(k => `${ITEMS[k].name} ${campHas(k)}/${st.also[k]}`).join(' · ');
@@ -31426,7 +31465,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
    bug in this block rather than a different world.
 
    RUNS LAST, on purpose. Every body and every chest it reaches for — the warren vaults, the
-   redoubt, the Ossuary King, the Sixfold, the striders, the Unblinded — is placed by the time
+   redoubt, the Lord of Ash and Bone, the Sixfold, the striders, the Unblinded — is placed by the time
    this line is reached, and it makes no world of its own. */
 (function placeLegends(){
   const pocket = seed;
@@ -31467,7 +31506,8 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
 
     /* ---------- THE BODIES ---------- */
     drop(chars.find(c => c.bossKey === 'king'), 't_signet');       /* the same hand as the crown */
-    drop(chars.find(c => c.bossKey === 'sixfold'), 'k_gaunt');     /* scavenged off the largest scavenger */
+    /* the Gaunt's Mantle is scavenged off the largest scavenger, and there is none at worldgen
+       now: it rides the first Sixfold born (`spawnSixfold`) */
 
     /* a silt strider, and the doc is right that you will need a plan for it: they are placid,
        enormous, and they flee when hit. The one furthest from the start town carries it. */
@@ -33002,7 +33042,7 @@ function groundY(x, y){ return Math.max(heightAt(x, y), -0.1); }
    persist and nothing that can drift out of step with a loaded save. Purely the model:
    a Watcher still moves, crowds and staggers exactly as it did. */
 function vscaleOf(c){
-  if(c.bossKey === 'sixfold') return 1.35;   /* the boss stays the biggest thing in the world */
+  if(c.bossKey === 'sixfold') return 1.35;   /* a Sixfold stays the biggest thing walking */
   if(c.kin === 'strider') return 1.30;       /* eldritch, and it should loom */
   if(c.gauntKind) return 1.22;               /* the Watchers, whatever shape they wear */
   return 1;
@@ -49588,7 +49628,7 @@ const HUNTS = {
     ask: 'Something with six legs came through a tear. Has anybody seen it?',
     knows: (t) => isWatch(t) || !!t.scholar,
     said: (t, where) => t.scholar
-      ? `The Sixfold. It feeds where the ground is Sundered — it came through wanting something that died there, and it has not found it. ${where.charAt(0).toUpperCase() + where.slice(1)}, last I heard. Bring me a piece of it if you can. Any piece.`
+      ? `A Sixfold. They feed where the ground is Sundered — they come through wanting something that died there, and they have not found it. ${where.charAt(0).toUpperCase() + where.slice(1)}, last I heard. Bring me a piece of it if you can. Any piece.`
       : `Six legs, jointed wrong? A drover came in off the waste who would not stop shaking. Said it was feeding on the Sundered ground, ${where}. We doubled the night watch and nobody asked why.`,
     none: 'Nothing like that has come in off the waste. Not yet. They say a thing like that comes through when a tear opens all the way.',
   },
@@ -49613,8 +49653,8 @@ function huntsOpen(){
     const st = line.stages[g.questStage || 0];
     if(!st) continue;
     const boss = (st.kind === 'slay' || st.kind === 'destroy') ? st.boss
-               : (st.need && st.need.crown && campHas('crown') < 1) ? 'king' : null;
-    if(!boss || !HUNTS[boss] || bossSlain[boss]) continue;
+               : (st.need && st.need.crown && !stageMet(st)) ? 'king' : null;
+    if(!boss || !HUNTS[boss] || (boss === 'sixfold' ? stageMet(st, g) : bossSlain[boss])) continue;
     if(!out.has(boss)) out.set(boss, []);
     out.get(boss).push({g, st});
   }
@@ -49622,7 +49662,9 @@ function huntsOpen(){
 }
 /* what `t` says when asked after `boss`, and the journal lines it writes */
 function askAfterQuarry(t, boss){
-  const h = HUNTS[boss], q = chars.find(c => c.bossKey === boss && c.state !== 'dead');
+  /* the nearest, since a Sixfold is one of several */
+  const h = HUNTS[boss], q = chars.filter(c => c.bossKey === boss && c.state !== 'dead')
+    .sort((a, b) => dist(a.x, a.y, t.x, t.y) - dist(b.x, b.y, t.x, t.y))[0];
   if(!q) return h.none || 'Nobody has seen anything like that. Not lately.';
   const where = directionsFrom(t.x, t.y, q.x, q.y);
   for(const {g, st} of (huntsOpen().get(boss) || [])){
@@ -50869,7 +50911,7 @@ function snapshot(){
     bindWeight:c.bindWeight, shortTag:c.shortTag, tempT:c.tempT??null, propped:!!c.propped,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
     scholar:!!c.scholar, quest:c.quest||null, questsDone:c.questsDone||0, offered:!!c.offered,
-    immortal:c.immortal||null, vesselPattern:c.vesselPattern||null, demilich:!!c.demilich, hireMark:(c.hireMark ?? null),
+    immortal:c.immortal||null, vesselPattern:c.vesselPattern||null, demilich:!!c.demilich, hireMark:(c.hireMark ?? null), sixMark:(c.sixMark ?? null),
     deepKin:c.deepKin||null, lightShy:!!c.lightShy, hallId:(c.hallId ?? null), shoalId:(c.shoalId ?? null),
     post: c.post ? {x: c.post.x, y: c.post.y} : null,
     pureblood:!!c.pureblood,
@@ -50918,7 +50960,7 @@ function snapshot(){
        — a body is full of references to other bodies, and those do not serialise */
     phylacteries: phylacteries.map(p => { const o = {...p}; delete o._rect; if(p.body) o.body = sChar(p.body); return o; }), phylN, noticed, noticeTier, fracture, fractureStage,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
-    theDoor: theDoor ? {...theDoor} : null, ruin, passS: {...passState},
+    theDoor: theDoor ? {...theDoor} : null, ruin, passS: {...passState}, sixS: {kills: sixfoldKills, mantle: sixMantleGiven},
     scholarS: {heard: lastScholar.heard, done: {...lastScholar.done}, talked: lastScholar.talked},
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen}, hiresPaid: {...hiresPaid},
     blackReceipt: blackReceipt.stage,
@@ -51257,6 +51299,9 @@ function restore(d){
   /* a save from before the pass was held: nobody has manned it, and the tick mans it when one of
      yours next comes near (`passTick`) */
   Object.assign(passState, {manned: false, shortSince: null, alarm: false, warned: false}, d.passS || {});
+  sixfoldKills = (d.sixS && d.sixS.kills) || 0;
+  /* a save from before carries its Sixfold, and its Mantle, in `chars` */
+  sixMantleGiven = d.sixS ? !!d.sixS.mantle : true;
   /* a save taken while he stood somewhere comes back without him; a sighting nobody had seen
      yet is due again, one somebody had seen is spent */
   Object.assign(lastScholar, {heard: false, done: {}, talked: 0, body: null, key: null, seenAt: null, unseenT: 0, until: 0}, d.scholarS || {});
@@ -51458,7 +51503,7 @@ function restore(d){
        `purge`, the Attention's were `gaunt` */
     if(messengerKind(c) && !c.craterOwn && (c.faction === 'purge' || c.faction === 'gaunt')) c.faction = 'messenger';
     c.scholar = !!s.scholar; c.quest = s.quest || null; c.questsDone = s.questsDone || 0; c.offered = !!s.offered;
-    c.immortal = s.immortal || null; c.vesselPattern = s.vesselPattern || null; c.demilich = !!s.demilich; c.hireMark = (s.hireMark ?? null);
+    c.immortal = s.immortal || null; c.vesselPattern = s.vesselPattern || null; c.demilich = !!s.demilich; c.hireMark = (s.hireMark ?? null); c.sixMark = (s.sixMark ?? null);
     c.deepKin = s.deepKin || null; c.lightShy = !!s.lightShy; c.hallId = (s.hallId ?? null);
     c.post = s.post ? {x: s.post.x, y: s.post.y} : null;
     c.shoalId = (s.shoalId ?? null); c.pureblood = !!s.pureblood;
@@ -52716,7 +52761,7 @@ function motherSpeaks(c){
   else if(dustMastery >= 2) lines.push('You use the art. Adequately. It was mine before it was a technique.');
   if(kin >= 3) lines.push('Things have been dying out there in a pattern. That was you. Good. They made you for that and it is the one honest thing they did.');
   if(noticeTier >= 2) lines.push('Something has been watching you come down. Not me. I have been watched for nine hundred years and I know the difference.');
-  if(bossSlain.sixfold) lines.push('You put down the sixfold thing. It came through the same hole I am behind. It did not come through whole. Neither did you.');
+  if(bossSlain.sixfold) lines.push('You put down a sixfold thing. It came through the same hole I am behind. It did not come through whole. Neither did you.');
   if(placesSeen.corpse) lines.push('You have stood on one of my kind. They cut it apart and sold the pieces by weight. They kept me because a corpse is a windfall and a prisoner is an income.');
   lines.push(tier >= 2 ? 'The weld is eleven names deep. You will find that you outweigh all of them.' :
     'The way through is not a key and it is not a blade. Give the rider the whole of what you are — the gift, and everything you were saving it for. Come back as a thing and not a passenger.');
