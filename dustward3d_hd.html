@@ -11524,8 +11524,8 @@ function flameRGB(u){
 /* ---------- A FIRE SOMEWHERE ----------
    `scale` is how big the fire is, not how many particles it has: one number moves the tongue
    height, the spread and the ember count together, so a torch and a pyre are the same call. */
-function addFlame(x, y, n, scale){
-  const S = scale || 1;
+function addFlame(x, y, n, scale, h0){
+  const S = scale || 1, H0 = h0 || 0;      /* `h0`: burn at a height, as a held blade does */
   n = Math.round(n * 2.2);          /* more tongues, each a fraction of the old weight */
   for(let i = 0; i < n; i++){
     const a = vrnd() * Math.PI * 2, r = vrnd() * 0.20 * S;
@@ -11534,7 +11534,7 @@ function addFlame(x, y, n, scale){
       x: x + Math.cos(a) * r, y: y + Math.sin(a) * r,
       /* barely any lateral drift: a tongue that flies sideways is a spark */
       vx: (vrnd()-0.5) * 0.42 * S, vy: (vrnd()-0.5) * 0.42 * S,
-      h: 0.12 + vrnd() * 0.12 * S,
+      h: H0 + 0.12 + vrnd() * 0.12 * S,
       vh: (1.5 + vrnd() * 1.5) * S,        /* buoyancy, and it is never taken away */
       curl: (vrnd()-0.5) * 2.4,            /* the lick — a slow lateral wander as it climbs */
       t: 0, life: 0.42 + vrnd() * 0.40,
@@ -11547,7 +11547,7 @@ function addFlame(x, y, n, scale){
      did — thrown, and falling. A handful, because a shower of them is a firework. */
   const em = Math.max(1, Math.round(n * 0.22));
   for(let i = 0; i < em; i++)
-    particles.push({x, y, vx:(vrnd()-0.5)*2.6*S, vy:(vrnd()-0.5)*2.6*S, h:0.25 + vrnd()*0.3,
+    particles.push({x, y, vx:(vrnd()-0.5)*2.6*S, vy:(vrnd()-0.5)*2.6*S, h:H0 + 0.25 + vrnd()*0.3,
                     vh:(1.2 + vrnd()*2.2)*S, t:0, life:0.5 + vrnd()*0.5,
                     color:'#ffc85a', size:2, ember:true});
 }
@@ -33013,7 +33013,8 @@ scene.add(water);
 
 /* ---------- shared geometry / materials ---------- */
 const BOXG = new THREE.BoxGeometry(1,1,1);
-const _trailV = new THREE.Vector3(), _trailP = new THREE.Vector3();   /* the Unremembered's afterimages: see the pose machine */
+const _trailV = new THREE.Vector3(), _trailP = new THREE.Vector3();
+const _flameV = new THREE.Vector3();   /* where a Messenger's blade is, for its fire */   /* the Unremembered's afterimages: see the pose machine */
 /* '#rrggbb' with an alpha on it, for the 2D overlay — `new THREE.Color` per particle per frame
    is a parse and an allocation in the hottest draw loop there is, so this is arithmetic. */
 const _hexACache = new Map();
@@ -38384,6 +38385,23 @@ function buildCharMesh(c){
         obox(0.15, 0.44, 0.17, stone, 0, -0.74, 0.03, arm);
         if(sx > 0) e.armR = arm; else e.armL = arm;
       }
+      /* ---------- AND THE FIRE IS IN ITS HAND ----------
+         "A Messenger's attack animation is... a head lunge? Should use those muscular arms
+          instead. Also, their flaming weapons seem to just hover by their side rather than see
+          any actual use." Both true: the pose machine gave it the wyrm's head strike, and its
+          fire was emitted at a fixed spot beside the body. It holds a blade of fire now, in the
+          right hand, and the arm does the striking (`armStrike`, in the pose machine); the
+          flames come off the blade, wherever the arm has put it. */
+      {
+        const grip = new THREE.Group(); grip.position.set(0, -0.96, 0.05); e.armR.add(grip);
+        grip.rotation.x = -0.85;                                     /* held forward and down */
+        obox(0.07, 0.16, 0.07, dk3, 0, -0.02, 0, grip);             /* the hilt, stone */
+        obox(0.24, 0.05, 0.08, dk3, 0, -0.12, 0, grip);             /* the guard */
+        mkGlow(BOXG, ownGlow('#d8481a'), 0.08, 1.00, 0.03, 0, -0.64, 0, grip);    /* the blade, which is fire */
+        mkGlow(BOXG, ownGlow('#ffcf70'), 0.022, 0.92, 0.036, 0, -0.62, 0, grip);  /* its hot spine */
+        e.bladeTip = new THREE.Group(); e.bladeTip.position.set(0, -0.80, 0); grip.add(e.bladeTip);
+      }
+      e.armStrike = true;
       const mkCol = (sx) => {
         const hip = new THREE.Group(); hip.position.set(sx, 1.30, 0); g.add(hip);
         obox(0.24, 0.72, 0.26, stone, 0, -0.36, 0, hip);
@@ -42672,6 +42690,17 @@ function syncChars(dt){
             e.head.position.y += Math.sin(Date.now() * 0.0016) * 0.05;
           } else e.head.rotation.y = 0;
         }
+        /* A MESSENGER STRIKES WITH ITS ARM (see its rig). Same clock, different body: the blade
+           goes up over the shoulder on the wind and comes down through on the snap, the other
+           arm draws back to balance it, and the head stays where a statue keeps its head. */
+        if(e.armStrike){
+          if(e.head){ e.head.position.y = e._headY0; e.head.position.z = e._headZ0; e.head.rotation.x = 0; }
+          if(e.torso) e.torso.rotation.x = -pitch * 0.35;
+          const guard = c.target && c.target.state !== 'dead' ? -0.55 : 0;       /* squared up: blade forward */
+          const armX = winding ? -0.4 - rear * 2.1 : st ? -0.35 - snap * 0.45 : guard;
+          if(e.armR){ P(e.armR, 'x', armX, winding ? 10 : 28); P(e.armR, 'z', winding ? -rear * 0.3 : 0, 12); }
+          if(e.armL) P(e.armL, 'x', winding ? rear * 0.45 : st ? -snap * 0.3 : 0, 12);
+        }
         /* the front pair come off the ground as it rears; the back pair plant and drive */
         if(e.legL2){
           e.legL.rotation.x = sw - rear * 0.75 + snap * 0.5;
@@ -44078,7 +44107,14 @@ function renderOverlay(rdt){
     if(c.state !== 'dead'){
       if(c.dot && c.dot.t > 0 && vrnd() < 0.75) addFlame(c.x, c.y - 0.35, 2, 0.5);
       if(c.weaponFlame && vrnd() < 0.55) addFlame(c.x + 0.35, c.y - 0.55, 1, 0.38);
-      if(c.clawWt === 'burn' && vrnd() < 0.4) addFlame(c.x, c.y - 0.5, 1, 0.45);
+      if(c.clawWt === 'burn' && vrnd() < 0.4){
+        /* off the blade, if it has one (a Messenger), at the height the arm has put it */
+        const me2 = charMeshes.get(c.id);
+        if(me2 && me2.bladeTip && me2.g && me2.g.visible){
+          me2.bladeTip.getWorldPosition(_flameV);
+          addFlame(_flameV.x, _flameV.z, 1, 0.38, Math.max(0, _flameV.y - groundY(_flameV.x, _flameV.z)));
+        } else addFlame(c.x, c.y - 0.5, 1, 0.45);
+      }
     }
     const dc = drawnAt(c);
     const hh = (groundY(dc.x,dc.y) + floorY(c.floor) + 1.9*(c.big||1));
