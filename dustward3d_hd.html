@@ -1633,6 +1633,10 @@ const ITEMS = {
      plant can be put up; there is no research line that reaches it, ever. */
   sch_desal:{name:'Waterworks Schematic', base:6500, type:'tome', schematic:'golden_water',
     desc:'A municipal drawing, quartered and rubbed soft along the folds: intake, cascade, brine return, and a stamped capacity in the corner reading ONE HUNDRED THOUSAND SOULS. Whoever carried it out did not roll it, they folded it, which tells you how fast they were walking.'},
+  /* THE THIRD PAPER, and the only one that is a working rather than a building: off the
+     Unremembered, the reach the Dust art lost. See THE UNREMEMBERED, AT FULL. */
+  sch_wall:{name:'Leaf of an Unremembered Ledger', base:6000, type:'tome', schematic:'dust_wall',
+    desc:'A page in a hand that will not read the same way twice. It describes a wall, stone by stone, in a place where there has never been one, and by the bottom of the page you are no longer sure there was not.'},
   sch_lance:{name:'Ordnance Schematic', base:7000, type:'tome', schematic:'aether_ordnance',
     desc:'Linen-backed, folded eight times, and stamped along the edge with a requisition number nobody will ever honour. It is the emplaced pattern of the Aether Lance — every tolerance, every bracket, and a note in the margin reading FIT BEFORE THE 14th. They did not.'},
   lead:    {name:'Lead',          base:8,   type:'mat'},
@@ -9957,7 +9961,10 @@ function readBook(c, k){
       return;
     }
     research.done[it.schematic] = true;
-    log(`${c.name} reads the ${it.name} twice through, and then a third time. It can be built. `
+    /* a working, not a building: said as one */
+    if(Object.values(SPELLS).some(sp => sp.tech === it.schematic))
+      log(`${c.name} reads the ${it.name} and cannot afterwards say what was on it. But they know how the wall goes now, and where it was never standing.`, 'good');
+    else log(`${c.name} reads the ${it.name} twice through, and then a third time. It can be built. `
       + `Nine generations late, and it can be built.`, 'good');
     AU.news(false);
     refreshBuildBar && refreshBuildBar();
@@ -11644,7 +11651,7 @@ function announceWards(units){
 }
 function attack(a, d){
   if(d.state==='dead') return;
-  if(a.phantom) return;             /* an illusion's blade cuts nothing */
+  if(a.phantom && !a.phantomCuts) return;   /* an illusion's blade cuts nothing (his do: see THE UNREMEMBERED, AT FULL) */
   {
     const shield = interposer(a, d);
     if(shield){
@@ -11908,6 +11915,7 @@ function markThreat(c){
 }
 function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
   if(d.lastScholar) return;   /* nothing lands on him — see THE LAST SCHOLAR */
+  if(d.dustCopy && a){ dispelPhantom(d); return; }   /* one of the Unremembered's four, struck: dust (THE UNREMEMBERED, AT FULL) */
   if(a && a.tenant === 'watcher' && d.faction === 'gaunt') a.gauntStruckH = nowH() + 6;   /* and now they know it */
   /* ---------- SOMETHING IS SWINGING AT THIS ONE ----------
      `c.target` is who a body is fighting, which is not the same question as whether anybody
@@ -12176,6 +12184,12 @@ function kill(c, by){
   /* the ledger is written here, not inferred from a body that will be gone in two days */
   if(c.bossKey && !bossSlain[c.bossKey]) bossSlain[c.bossKey] = day;
   if(c.gauntKind === 'sixfold') sixfoldKills++;
+  /* THE UNREMEMBERED: his copies go with him, and nobody can say what was killed */
+  if(c.courtKey === 'unremembered' && !c.dustCopy){
+    for(const o of [...chars]) if(o.dustCopy) dispelPhantom(o);
+    log('Something was killed on the salt flats. Nobody who was there can say what.', 'good');
+    worldEvent('court', c.x, c.y, 'Something was killed on the salt flats. Nobody who was there can say what.');
+  }
   /* THE OUROBOROS RING: every kill in a fight goes into the next blow (see applyDamage) */
   if(by && by !== c && gearHas(by, 'ouro')){
     if(nowH() - (by.ouroH ?? -99) > OURO_FADE_H) by.ouroN = 0;
@@ -13353,6 +13367,10 @@ const TECHS = {
     desc:'Fold the light around a body. VEIL: an ally vanishes until they strike or the fold decays'},
   dust_unwalled:{name:'The Unwalled',      cost:1400,hours:88, req:'dust_veil',    rp:50,
     desc:'Conjure a squad that was never there. Enemies bite at nothing while yours do the cutting'},
+  /* FOUND, NOT STUDIED: nobody alive works this out. It comes off a page of the Unremembered's
+     ledger, and it is the art's lost reach: see THE UNREMEMBERED, AT FULL. */
+  dust_wall:    {name:'The Wall That Was Never There', cost:0, hours:0, req:'dust_unwalled', found:true,
+    desc:'Raise a wall across open ground that the world believes in for a few breaths: it stops a charge and it stops an arrow, and then it is dust'},
   /* THE ONE ASCENSION WITH NO QUEST ON IT. The other two carry `needsQuest` and each has five
      stages and a person at the end; this had a shopping list and a line of italic text, which
      is why the door that ends the game did not read as a door. The gate already existed —
@@ -16978,8 +16996,10 @@ function physics(c, dt){
       const back = c.charmed.faction;
       c.charmed = null;
       if(c.state !== 'dead'){
-        c.faction = back; c.target = null; c.provoked = true;   /* it remembers being used */
-        log(`${c.name}'s borrowed loyalty runs out.`, 'bad');
+        c.faction = back; c.target = null;
+        /* one of yours, made to forget by the Unremembered, comes back without a grudge */
+        if(back === 'player') log(`${c.name} blinks, and remembers whose side they are on.`, 'good');
+        else { c.provoked = true; log(`${c.name}'s borrowed loyalty runs out.`, 'bad'); }   /* it remembers being used */
         refreshSquadBar();
       }
     }
@@ -19305,8 +19325,142 @@ function spawnCourtier(key, x, y){
   c.guard = {x, y};
   c.courtArts = [D.art];
   c.dropItems = {codex: 1, formula_p: 1, tome: 1};
+  if(key === 'unremembered') c.dropItems.sch_wall = 1;     /* the reach the art lost: see THE UNREMEMBERED, AT FULL */
   chars.push(c);
   return c;
+}
+/* ============================================================ THE UNREMEMBERED, AT FULL
+   Rebuilt 2026-09-29. Every Dust art the player has is a degraded copy of something the Golden
+   Age did, and he does the originals, so the player can see what theirs used to be:
+     THE WALL THAT WAS NEVER THERE  about every 15 s in a fight, a pale wall of 5 to 7 tiles
+                    across the ground behind whoever he is fighting, cutting them off from their
+                    own. Real to feet and to arrows for DUST_WALL_S, then dust. (The player's art
+                    lost this reach; the page of his ledger he drops gives it back.)
+     HIS UNWALLED   at half blood he becomes four, and he trades places with one of them. The
+                    copies' blades cut, until a copy is struck, and then that one is dust.
+     HIS LOYALTY    one of yours forgets whose side they are on for 8 s, and it always takes.
+     HIS VEIL       he vanishes and is somewhere else, and whoever was fighting him has lost him.
+   The old king, while the Unremembered still stands, inherits the walls and nothing else.
+   And when he dies, nobody who was there can say what it was. */
+const DUST_WALL_S = 8;          /* seconds a wall that was never there stands */
+let dustWalls = [];             /* {keys, meshes, t} */
+const _dustWallMat = () => new THREE.MeshLambertMaterial({color: 0xe8e4da, transparent: true, opacity: 0.66});
+function raiseDustWall(cx, cy, ax, ay, len){
+  const keys = [], meshes = [], seen = new Set();
+  const half = (len - 1) / 2;
+  for(let s2 = -half; s2 <= half + 1e-6; s2 += 0.5){
+    const x = Math.floor(cx + ax * s2), y = Math.floor(cy + ay * s2);
+    const k = bkey(x, y, 0);
+    if(seen.has(k)) continue; seen.add(k);
+    if(x < 2 || y < 2 || x >= W - 2 || y >= H - 2) continue;
+    if(blocked.has(k) || terr[y * W + x] === 3) continue;
+    if(chars.some(o => o.state !== 'dead' && !(o.floor || 0) && Math.floor(o.x) === x && Math.floor(o.y) === y)) continue;
+    blocked.add(k); keys.push(k);
+    const m = new THREE.Mesh(BOXG, _dustWallMat());
+    m.scale.set(1, 2.4, 1);
+    m.position.set(x + 0.5, groundY(x + 0.5, y + 0.5) + 1.2, y + 0.5);
+    scene.add(m); meshes.push(m);
+    addSpecks(x + 0.5, y + 0.5, '#e8e4da', 3);
+  }
+  if(!keys.length) return null;
+  const w = {keys, meshes, t: DUST_WALL_S};
+  dustWalls.push(w);
+  return w;
+}
+function dropDustWall(w){
+  for(const k of w.keys) blocked.delete(k);
+  for(const m of w.meshes){ addSpecks(m.position.x, m.position.z, '#e8e4da', 4); scene.remove(m); m.material.dispose(); }
+  w.keys.length = 0; w.meshes.length = 0;
+}
+function dustWallsClear(){ for(const w of dustWalls) dropDustWall(w); dustWalls = []; }
+function dustWallTick(dt){
+  if(!dustWalls.length) return;
+  for(const w of dustWalls){
+    w.t -= dt;
+    /* it thins before it goes */
+    if(w.t < 1.5) for(const m of w.meshes) m.material.opacity = 0.66 * Math.max(0, w.t / 1.5);
+    if(w.t <= 0) dropDustWall(w);
+  }
+  dustWalls = dustWalls.filter(w => w.t > 0);
+}
+/* square to the line from `from` to the point, `len` tiles long, centred on it */
+function dustWallAcross(fx, fy, px, py, len){
+  const dx = px - fx, dy = py - fy, d = Math.hypot(dx, dy) || 1;
+  return raiseDustWall(px, py, -dy / d, dx / d, len);
+}
+/* the player's, off the page: five tiles, where you point, square to the caster */
+function castDustWall(c, wx, wy){
+  const w = dustWallAcross(c.x, c.y, wx, wy, 5);
+  if(!w){ log('There is nowhere there for a wall to have never been.', 'bad'); return; }
+  log(`${c.name} remembers a wall that was never there, and for a few breaths the ground believes it.`, 'good');
+  xpGain(c, 'magic', 0.5);
+  spendCast(c, 'dustwall');
+}
+function dustAtFull(c){
+  const foe = c.target && c.target.state === 'ok' ? c.target : null;
+  if(!foe) return;
+  /* the walls: the Unremembered's, and the king's while the Unremembered stands */
+  c._wallT = (c._wallT ?? 5) - 1;
+  if(c._wallT <= 0){
+    c._wallT = 15;
+    /* behind whoever he is fighting, cutting them off from their own; a far one, between */
+    const d = dist(c.x, c.y, foe.x, foe.y) || 1;
+    const back = d < 5 ? 3 : -Math.min(3, d * 0.4);
+    const px = foe.x + (foe.x - c.x) / d * back, py = foe.y + (foe.y - c.y) / d * back;
+    if(dustWallAcross(c.x, c.y, px, py, ri(5, 7)) && !c._saidWall){
+      c._saidWall = true;
+      log(`A wall stands across the ground behind ${foe.name} that was not there a moment ago. It was never there. It is there now.`, 'bad');
+    }
+  }
+  if(c.courtKey !== 'unremembered' || c.dustCopy) return;      /* the king inherits the walls, and nothing else */
+  /* the veil: gone, and somewhere else */
+  c._veilStepT = (c._veilStepT ?? 9) - 1;
+  if(c._veilStepT <= 0){
+    c._veilStepT = 12;
+    const a = rnd() * Math.PI * 2, r = 6 + rnd() * 3;
+    const q = findOpenNear(Math.round(c.x + Math.cos(a) * r), Math.round(c.y + Math.sin(a) * r), 3);
+    addSpecks(c.x, c.y + 1, '#c8c4bc', 18);
+    c.x = q.x; c.y = q.y; c.veilT = 2.5; c.path = null;
+    for(const o of chars) if(o.target === c) o.target = null;
+    addSpecks(c.x, c.y + 1, '#c8c4bc', 10);
+  }
+  /* his loyalty: one of yours forgets, and it always takes */
+  c._loyalT = (c._loyalT ?? 11) - 1;
+  if(c._loyalT <= 0){
+    c._loyalT = 18;
+    const us = player().filter(u => u.state === 'ok' && !u.charmed && !u.phantom && !(u.floor || 0) && dist(u.x, u.y, c.x, c.y) < 12);
+    if(us.length){
+      const u = pick(us);
+      u.charmed = {by: c, faction: u.faction, t: 8};
+      u.faction = 'gaunt'; u.target = null; u.moveTarget = null;
+      selected = selected.filter(x => x !== u);
+      addSpecks(u.x, u.y - 0.4, '#c8c4bc', 16);
+      log(`${u.name} looks round at the people beside them as if they had never seen any of them before.`, 'bad');
+      refreshSquadBar();
+    }
+  }
+  /* his Unwalled, at half blood: four of him, and he is one of them */
+  if(!c.dustSplit && c.blood < c.maxBlood * 0.5){
+    c.dustSplit = true;
+    const made = [];
+    for(let i = 0; i < 3; i++){
+      const a = i / 3 * Math.PI * 2 + rnd();
+      const q = findOpenNear(Math.round(c.x + Math.cos(a) * 3), Math.round(c.y + Math.sin(a) * 3), 3);
+      const k = makeChar(c.name, 'gaunt', q.x, q.y, {atk: 34, def: 20, tough: 10, ath: 6});
+      k.courtKey = 'unremembered'; k.dustCopy = true;
+      k.phantom = true; k.phantomCuts = true; k.phantomT = 25;
+      k.beast = true; k.clawDmg = 22; k.big = c.big;
+      k.nightborn = false; k.doorborn = false;
+      k.blood = k.maxBlood = 60;
+      k.target = c.target;
+      chars.push(k); made.push(k);
+    }
+    const sw = pick(made);
+    [c.x, sw.x] = [sw.x, c.x]; [c.y, sw.y] = [sw.y, c.y];
+    for(const o of chars) if(o.target === c) o.target = null;
+    addSpecks(c.x, c.y + 1, '#c8c4bc', 24);
+    log('There are four of it now. One of them is the one you were hitting. Their blades are all real.', 'bad');
+  }
 }
 /* ---------- WHERE AND WHEN THEY COME THROUGH ----------
    One at a time as the Fracture climbs, each onto the ground its Art made: the Master of the
@@ -19318,11 +19472,12 @@ function spawnCourtier(key, x, y){
      divine        — the Chancellor's absolution: he mends while hurt, a little and often
      transmutation — the Master's unmaking: his blows go through armour as if it were not there
      dark          — the Keeper's hunger: a third of what he takes out of you goes into him
-     dust          — the Unremembered's fold: in a fight, every so often, eyes slide off him */
+     dust          — the Unremembered's walls: in a fight, every so often, a wall that was never there
+                     (and in the Unremembered himself, all of the Dust art: THE UNREMEMBERED, AT FULL) */
 const COURT_AT = {master: 60, keeper: 75, unremembered: 90, chancellor: Infinity};   /* he comes with the Door and not before */
 const COURT_GROUND = {master: 'rust', keeper: 'vat', unremembered: 'salt', chancellor: 'colonnade'};
 const ART_TELL = {divine: "the Chancellor's absolution", transmutation: "the Master's unmaking",
-                  dark: "the Keeper's hunger", dust: "the Unremembered's fold"};
+                  dark: "the Keeper's hunger", dust: "the Unremembered's walls"};
 const COURT_COMES = {
   master: 'Out on the rust barrens something has sat up that was never lying down there. It is masked, and it is looking at the wrecks as if it made them.',
   keeper: 'Something has come up out of the vat bog on its own feet. It is masked, and the pools go quiet around it like a congregation.',
@@ -19369,12 +19524,7 @@ function courtTick(dt){
         addFloat(c.x, c.y - 1.4, 'absolved', '#e4c060');
       }
     }
-    if(c.courtArts.includes('dust') && c.target && !(c.veilT > 0)){
-      if((c._foldT = (c._foldT || 0) + 1) >= 12){
-        c._foldT = 0; c.veilT = 3;
-        addSpecks(c.x, c.y + 1, '#c8c4bc', 18);
-      }
-    }
+    if(c.courtArts.includes('dust')) dustAtFull(c);      /* see THE UNREMEMBERED, AT FULL */
   }
 }
 function oldKingAlive(){
@@ -24378,6 +24528,8 @@ const SPELLS = {
               concentrate:{lock:0.3}, hint:'sanctify your weapon — it bites the dead and the tear-born, at the cost of a third of your mana'},
   shroud:    {gift:'dark',        label:'SHROUD THE DEAD', cost:10, range:6, minMag:8, tier:2,
               concentrate:{lock:0}, hint:'target a risen ally — cloak what it is behind a face of the living'},
+  dustwall:  {gift:'dust',        label:'THE WALL THAT WAS NEVER THERE', cost:22, range:9, minMag:18, tier:3, tech:'dust_wall',
+              hint:'target open ground — raise a wall across it, square to you, that stands for a few breaths'},
   charm:     {gift:'dust',        label:'LOYALTY OF DUST', cost:18, range:6, minMag:16, tier:3, tech:'dust_unwalled',
               hint:'target an enemy — turn them to your side for a short while (it may not take)'},
   /* A DOPPELGANGER'S ONE TRICK, and it is not a combat art — it is an exit. Self-targeted, so
@@ -25977,6 +26129,9 @@ function resolveCastAt(c, key, wx, wy){
   } else if(key==='phantom'){
     if(isBlocked(Math.round(wx), Math.round(wy))){ log('The dust needs open ground to stand on.', 'bad'); return; }
     castPhantom(c, wx, wy);
+  } else if(key==='dustwall'){
+    if((c.floor || 0) || isBlocked(wx, wy)){ log('A wall that was never there still needs ground to not be standing on.', 'bad'); return; }
+    castDustWall(c, wx, wy);
   } else if(key==='oldbones'){
     if(isBlocked(Math.round(wx), Math.round(wy), c.floor||0)){ log('There is no ground there to call out of.', 'bad'); return; }
     castOldBones(c, wx, wy);
@@ -28220,6 +28375,7 @@ function update(dt){
   biomeTick(dt);              /* the flats, the rust and the bog: who walked in, what woke, what keeps */
   oldKingTick(dt);            /* the man in the Door: talking from up there, or hanging people down here */
   courtTick(dt);              /* and his court, coming through onto the grounds their Arts made */
+  dustWallTick(dt);           /* and the walls that were never there, going back to having never been */
   ossuaryTick(dt);            /* and the registrar on his throne, calling the roll */
   hangTick(dt);
   closingTick(dt);            /* and whether anybody has read the codex sitting in the stores */
@@ -32857,6 +33013,7 @@ scene.add(water);
 
 /* ---------- shared geometry / materials ---------- */
 const BOXG = new THREE.BoxGeometry(1,1,1);
+const _trailV = new THREE.Vector3(), _trailP = new THREE.Vector3();   /* the Unremembered's afterimages: see the pose machine */
 /* '#rrggbb' with an alpha on it, for the 2D overlay — `new THREE.Color` per particle per frame
    is a parse and an allocation in the hottest draw loop there is, so this is arithmetic. */
 const _hexACache = new Map();
@@ -33063,35 +33220,100 @@ function bodyOfTheKeeper(K, root){
   out.head = mask;
   return out;
 }
-/* THE UNREMEMBERED (Dust, the art that altered reality). Nobody can keep hold of what it looks
-   like, so it does not hold still to be looked at: a robed shape in the colour of dust with a
-   smear where the face goes, and two or three of itself standing slightly beside it, never in
-   the same place twice. */
+/* THE UNREMEMBERED (Dust, the art that altered reality). Rebuilt 2026-09-29 ("rework him from the
+   ground up to better do justice to the Dust Arts"; the name stays). A scribe of the court, tall and
+   thin in the grey-white of the salt: a layered robe with long sleeves, a ledger on a chain at the
+   hip, ink-black fingertips. MASKED like the rest of the court: a plain white oval with one black bar
+   across it where the eyes would be, a redaction. And he is not all there, because somebody is still
+   editing him: black bars drift across him, a band of the chest is gone and the robe behind shows
+   through the gap, the right forearm hangs in the air a hand's width past the end of its sleeve,
+   dust falls off him like a page being rubbed out, and what he looked like a moment ago is still
+   standing where he was (the afterimages trail his path; see the pose machine). */
 function bodyOfTheUnremembered(K, root){
   const out = {swing: [], jit: []};
-  const dun = '#6e6454';
-  const figure = (par, op) => {
-    K.fade(CONEG, dun, op, 0.76, 1.52, 0.60, 0, 0.76, 0, par);
-    K.fade(BOXG, '#7a705e', op, 0.40, 0.50, 0.26, 0, 1.72, 0, par);
-    K.fade(SPHG, '#5e5646', op, 0.36, 0.40, 0.36, 0, 2.06, 0, par);
-    for(let i = 0; i < 5; i++) K.fade(BOXG, '#5a5242', op, 0.10, 0.34, 0.02, Math.cos(i * 1.26) * 0.34, 0.14, Math.sin(i * 1.26) * 0.26, par);   /* the hem, in rags */
-  };
-  figure(root, 1);
-  const face = new THREE.Group(); face.position.set(0, 2.04, 0.15); root.add(face);
-  K.fade(SPHG, '#b0a898', 0.55, 0.26, 0.34, 0.10, 0, 0, 0, face);
-  for(let i = 0; i < 3; i++) K.fade(BOXG, '#c8c0b0', 0.35, 0.44 - i * 0.08, 0.035, 0.02, (i - 1) * 0.02, (i - 1) * 0.08, 0.04, face);
+  const salt = '#c4bfb2', salt2 = '#aea89b', saltDk = '#8e887c', skin = '#dcd6ca', ink = '#0b0b0d';
+  /* the robe, in layers: an under-robe that flares at the hem, and the long outer one over it */
+  K.bone(CONEG, salt2, 0.84, 0.52, 0.66, 0, 0.26, 0, root);
+  K.bone(CONEG, salt, 0.70, 1.66, 0.54, 0, 0.83, 0, root);
+  K.box(0.12, 1.30, 0.03, saltDk, 0, 0.78, 0.27, root, 0.16, 0, 0);                 /* the front panel */
+  for(let i = 0; i < 7; i++){
+    const a = i / 7 * Math.PI * 2, h = new THREE.Group();
+    h.position.set(Math.cos(a) * 0.40, 0.10, Math.sin(a) * 0.32); root.add(h);
+    K.box(0.12, 0.26, 0.02, saltDk, 0, -0.06, 0, h); h.rotation.y = -a; h.userData.amp = 0.06; out.swing.push(h);
+  }
+  /* THE BACK OF THE ROBE, which is what you see through the gap in him */
+  K.box(0.40, 0.66, 0.04, saltDk, 0, 1.86, -0.12, root);
+  /* the waist, then NOTHING for a hand's breadth, then the chest: the band that has been rubbed out */
+  K.box(0.36, 0.26, 0.24, salt, 0, 1.64, 0, root);
+  K.box(0.44, 0.30, 0.26, salt, 0, 2.06, 0, root);
+  for(const y of [1.775, 1.905]) for(let i = 0; i < 5; i++)
+    K.glow(BOXG, '#ece8de', 0.05, 0.012, 0.02, -0.14 + i * 0.07, y, 0.12, root);      /* the rubbed-out edges, still crumbling */
+  K.box(0.46, 0.05, 0.28, '#6a6358', 0, 1.52, 0, root);                               /* the belt */
+  /* THE LEDGER on its chain, off the left hip */
+  let par = root, px = -0.22, py = 1.50, pz = 0.08;
+  for(let i = 0; i < 4; i++){
+    const ln = new THREE.Group(); ln.position.set(px, py, pz); par.add(ln);
+    K.metal(BOXG, '#7a7670', 0.035, 0.09, 0.025, 0, -0.045, 0, ln);
+    ln.userData.amp = 0.12; out.swing.push(ln);
+    par = ln; px = 0; py = -0.10; pz = 0;
+  }
+  K.box(0.30, 0.38, 0.08, '#2e2620', 0.02, -0.20, 0.02, par);
+  K.box(0.27, 0.35, 0.07, '#e8e2d2', 0.02, -0.20, 0.03, par);
+  K.box(0.30, 0.38, 0.02, '#2e2620', 0.02, -0.20, 0.07, par);
+  /* shoulders, and the long sleeves */
+  K.box(0.60, 0.10, 0.28, salt, 0, 2.20, 0, root);
+  /* the left: a whole arm in its sleeve, the hand out of the cuff, the fingertips black with ink */
+  K.box(0.15, 0.62, 0.15, salt, -0.30, 1.86, 0.02, root);
+  K.bone(CONEG, salt2, 0.24, 0.26, 0.22, -0.30, 1.48, 0.02, root);
+  K.box(0.08, 0.14, 0.06, skin, -0.30, 1.30, 0.03, root);
+  for(let k = 0; k < 4; k++) K.box(0.016, 0.07, 0.016, ink, -0.33 + k * 0.022, 1.20, 0.04, root);
+  /* the right: the sleeve stops at the elbow, and the forearm is a hand's width past it, in the air,
+     with nothing joining them */
+  K.box(0.15, 0.34, 0.15, salt, 0.30, 2.00, 0.02, root);
+  K.bone(CONEG, salt2, 0.22, 0.14, 0.20, 0.30, 1.80, 0.02, root);
+  const fore = new THREE.Group(); fore.position.set(0.31, 1.44, 0.10); root.add(fore);
+  fore.rotation.x = -0.35;
+  K.box(0.075, 0.34, 0.075, skin, 0, 0, 0, fore);
+  K.box(0.085, 0.13, 0.06, skin, 0, -0.23, 0, fore);
+  for(let k = 0; k < 4; k++) K.box(0.016, 0.07, 0.016, ink, -0.03 + k * 0.022, -0.32, 0.01, fore);
+  K.box(0.012, 0.30, 0.012, '#1a1814', 0.03, -0.20, 0.06, fore, 0.5, 0, 0.2);        /* a pen, held the way it was the day it stopped */
+  fore.userData.kind = 'hover'; fore.userData.y = 1.44; fore.userData.ph = 0.8; out.jit.push(fore);
+  /* THE HEAD: a hood, and in it the mask. White, blank, and one black bar where the eyes would be */
+  K.bone(SPHG, salt, 0.50, 0.54, 0.48, 0, 2.44, -0.06, root);                          /* the cowl */
+  K.box(0.46, 0.40, 0.10, salt2, 0, 2.20, -0.20, root, 0.15, 0, 0);                     /* its fall down the back */
+  K.bone(SPHG, '#24221e', 0.36, 0.44, 0.20, 0, 2.42, 0.10, root);                       /* the dark inside it */
+  const mask = new THREE.Group(); mask.position.set(0, 2.42, 0.19); root.add(mask);
+  K.bone(SPHG, '#fbfaf6', 0.28, 0.40, 0.10, 0, 0, 0, mask);
+  K.box(0.32, 0.075, 0.03, ink, 0, 0.05, 0.05, mask);                                  /* the redaction */
+  /* THE BARS: black strokes drifting across him at every height, as if the edit were still going on */
+  const bars = [[0.62, 2.42, 0.34], [0.84, 2.10, 0.30], [0.52, 1.84, 0.34], [0.94, 1.40, 0.36], [0.70, 0.96, 0.40], [0.58, 0.52, 0.44]];
+  bars.forEach(([w, y, z], i) => {
+    const b = new THREE.Group(); b.position.set(0, y, i % 2 ? z : -z * 0.2 + 0.30); root.add(b);
+    K.box(w, 0.045, 0.02, ink, 0, 0, 0, b);
+    b.userData.kind = 'bar'; b.userData.y = y; b.userData.ph = i * 1.9; b.userData.sp = 0.35 + (i % 3) * 0.18;
+    out.jit.push(b);
+  });
+  /* THE DUST, falling off him the whole time */
+  for(let i = 0; i < 12; i++){
+    const d = new THREE.Group(); d.position.set(Math.cos(i * 2.4) * 0.30, 2.2, Math.sin(i * 2.4) * 0.22); root.add(d);
+    K.glow(BOXG, '#ece8de', 0.035, 0.035, 0.035, 0, 0, 0, d);
+    d.userData.kind = 'dust'; d.userData.y0 = 1.6 + (i % 4) * 0.22; d.userData.ph = i / 12; d.userData.sp = 0.28 + (i % 5) * 0.05;
+    out.jit.push(d);
+  }
+  /* AND WHAT HE LOOKED LIKE A MOMENT AGO: faint copies left standing on the path he took */
   for(let i = 0; i < 3; i++){
-    const ghost = new THREE.Group(); ghost.userData.ph = i * 2.1 + 0.4; root.add(ghost);
-    figure(ghost, 0.16);
-    out.jit.push(ghost);
+    const g = new THREE.Group(); root.add(g);
+    /* darker than he is: on the salt a copy in his own colour is the colour of the ground */
+    const op = [0.46, 0.30, 0.17][i], ghost = '#6e695f';
+    K.fade(CONEG, ghost, op, 0.70, 1.66, 0.54, 0, 0.83, 0, g);
+    K.fade(BOXG, ghost, op, 0.44, 0.60, 0.26, 0, 1.92, 0, g);
+    K.fade(SPHG, ghost, op, 0.50, 0.54, 0.48, 0, 2.44, -0.06, g);
+    K.fade(BOXG, ink, op, 0.32, 0.075, 0.03, 0, 2.47, 0.25, g);                        /* even the copies are redacted */
+    g.userData.kind = 'trail'; g.userData.lag = 0.7 + i * 0.7;       /* tiles back along his path */
+    out.jit.push(g);
   }
-  for(let i = 0; i < 5; i++){
-    const m = new THREE.Group(); m.position.set(Math.cos(i * 1.3) * 0.5, 0.6 + i * 0.32, Math.sin(i * 1.3) * 0.5); root.add(m);
-    K.glow(BOXG, '#d8d0c0', 0.03, 0.03, 0.03, 0, 0.06, 0, m);
-    out.swing.push(m);
-  }
-  out.sigil = K.glow(CYLG, '#b0a898', 0.9, 0.01, 0.9, 0, 0.0, 0, root);
-  out.head = face;
+  out.sigil = K.glow(CYLG, '#cfc9bc', 0.9, 0.01, 0.9, 0, 0.0, 0, root);
+  out.head = mask;
   return out;
 }
 /* THE LORD OF ASH AND BONE (see the note at `ossuaryTick`). Not a king and not a man: a registrar who went
@@ -42340,11 +42562,50 @@ function syncChars(dt){
         e.spineBits[i].rotation.x = Math.sin(e.phase - i * 0.7) * (amp !== undefined ? amp : 0.10 + i * 0.05);
       }
       e.sigil.rotation.y += dt * 0.9;
-      /* what cannot be remembered does not stand in one place to be looked at */
-      if(e.jitter) for(const j of e.jitter){
-        const t = now * 0.001, ph = j.userData.ph || 0;
-        j.position.x = Math.sin(t * 7.3 + ph) * 0.18 + Math.sin(t * 23 + ph * 2) * 0.05;
-        j.position.z = Math.cos(t * 5.1 + ph) * 0.12;
+      /* what cannot be remembered does not stand in one place to be looked at. The Unremembered's
+         loose pieces each move their own way (see `bodyOfTheUnremembered`): the afterimages stand
+         where he WAS, read off a short history of where he has been; the bars slide across him;
+         the dust falls and starts again; the forearm hangs and bobs past its sleeve. */
+      if(e.jitter){
+        const t = now * 0.001;
+        /* THE PATH, NOT THE CLOCK: a point every fifth of a tile he has moved, so the copies stand
+           the same distance back at any frame rate; and once he stops they settle back into him */
+        let hist = null, settle = 1;
+        if(e.jitter.some(j => j.userData.kind === 'trail')){
+          hist = e._hist || (e._hist = []);
+          const last = hist[hist.length - 1];
+          if(!last || Math.hypot(c.x - last.x, c.y - last.y) > 0.2){ hist.push({x: c.x, y: c.y}); e._movedAt = now; if(hist.length > 20) hist.shift(); }
+          settle = clamp(1 - (now - (e._movedAt || 0) - 600) / 1400, 0, 1);
+        }
+        for(const j of e.jitter){
+          const ph = j.userData.ph || 0, kind = j.userData.kind;
+          if(kind === 'trail'){
+            /* walk back along the path from where he stands until `lag` tiles are behind him */
+            let hx = c.x, hy = c.y, left = j.userData.lag * settle;
+            for(let k = hist.length - 1; k >= 0 && left > 0; k--){
+              const q = hist[k], d = Math.hypot(q.x - hx, q.y - hy);
+              if(d >= left){ hx += (q.x - hx) * left / d; hy += (q.y - hy) * left / d; left = 0; }
+              else { hx = q.x; hy = q.y; left -= d; }
+            }
+            j.parent.getWorldPosition(_trailP);
+            _trailV.set(hx, _trailP.y, hy);
+            j.parent.worldToLocal(_trailV);
+            /* standing still, the copies settle into him and shiver, which is the old look */
+            j.position.set(_trailV.x + Math.sin(t * 7.3 + j.userData.lag * 9) * 0.06, 0, _trailV.z + Math.cos(t * 5.1 + j.userData.lag * 7) * 0.05);
+          } else if(kind === 'bar'){
+            j.position.x = Math.sin(t * j.userData.sp + ph) * 0.55;
+            j.position.y = j.userData.y + Math.sin(t * 0.7 + ph) * 0.05;
+          } else if(kind === 'dust'){
+            const u = (t * j.userData.sp + ph) % 1;
+            j.position.y = j.userData.y0 * (1 - u);
+            j.visible = u < 0.94;
+          } else if(kind === 'hover'){
+            j.position.y = j.userData.y + Math.sin(t * 1.7 + ph) * 0.03;
+          } else {
+            j.position.x = Math.sin(t * 7.3 + ph) * 0.18 + Math.sin(t * 23 + ph * 2) * 0.05;
+            j.position.z = Math.cos(t * 5.1 + ph) * 0.12;
+          }
+        }
       }
     } else if(c.beast && !c.construct && !e.bipedGaunt){
       e.g.rotation.set(0, e.rotY, 0);
@@ -43870,7 +44131,7 @@ function renderOverlay(rdt){
        road — that is the whole promise of a fixed roster — so they are labelled like a boss
        rather than like the two hundred townspeople they are standing among. Still only in
        live sight: knowing they exist is the point, being handed their coordinates is not. */
-    if(c.bossKey || (c.lieutenant && c.faction === 'player') || (c.wanderKey && c.faction !== 'player')){
+    if(c.bossKey || c.dustCopy || (c.lieutenant && c.faction === 'player') || (c.wanderKey && c.faction !== 'player')){
       setFont('bold 11px monospace');
       const ly = c.lieutenant && !c.bossKey ? top.y - 19 : top.y - 14;
       cx.fillStyle = '#141008'; cx.fillText(c.name, top.x+1, ly+1);
@@ -51585,7 +51846,7 @@ function snapshot(){
     return r;
   };
   const sChar = c => lean({
-    id:c.id, name:c.name, faction:c.faction, x:c.x, y:c.y,
+    id:c.id, name:c.name, faction:(c.charmed ? c.charmed.faction : c.faction), x:c.x, y:c.y,
     stats:packStats(c), gift:c.gift, mana:c.mana, stance:c.stance, parts:packParts(c.parts),
     blood:c.blood, maxBlood:c.maxBlood, hunger:c.hunger,
     weapon:c.weapon, armor:c.armor, head:c.head||null, cloak:c.cloak||null, trinket:c.trinket||null, house:c.house||null, state:c.state, undead:c.undead,
@@ -51790,6 +52051,7 @@ function restore(d){
   if(!d || (d.v||0) < 24){ log(`That save predates ${(d && (d.v||0) >= 23) ? 'the crater moving to its headland in the north-east (v24)' : (d && (d.v||0) >= 21) ? 'the world growing to 2048 across (v23)' : (d && (d.v||0) >= 20) ? 'the crater at the middle of the world (v21)' : 'the map expansion (v20)'}. It can no longer be loaded.`, 'bad'); return; }
   chars.length = 0; corpses.length = 0; particles.length = 0; projectiles.length = 0;
   pBuilds.length = 0;
+  dustWallsClear();     /* a wall that was never there is not in a save either */
   blocked.clear(); for(const k of baseBlocked) blocked.add(k);
   beds.length = 0; for(const b of baseBeds) beds.push({...b, user:null});
   /* Town cells come from worldgen and are never rebuilt; player cells are re-created by the
