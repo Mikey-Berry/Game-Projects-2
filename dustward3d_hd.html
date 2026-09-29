@@ -17276,7 +17276,7 @@ function physics(c, dt){
       c.healTarget = null; c.healProg = 0;
     }
     else if(travel(c, t.x, t.y, dt, 1.15)){
-      c.healProg += dt;
+      c.healProg += dt * blytheHands(c);
       if(c.healProg >= tendDur(t)){
         c.healProg = 0;
         const did = mending ? mendOnePart(c, t) : treatOnePart(c, t);
@@ -22270,6 +22270,21 @@ const WANDERERS = [
    pitch:'"My name is Tallow. I know it is. I have the papers." It looks at its hands. "She keeps signing them, though."',
    ask:'"Bring me something written before the sky opened. A formula, anything in the old hand. If it is hers I will know it, and then I will know whose name I keep writing."',
    join:'"It is." It turns the page over, and back. "It is her hand. Ilse Carrow." It folds its papers away. "My name is Tallow. I would like to find out what she wanted."'},
+
+  /* ---------- AND ONE WHO PUT THE HELM DOWN ----------
+     Ruled 2026-09-29: an ex-Paladin, a Hospitaller, who took Sister Ash's path without the
+     exile. The Order never hunted him and would have him back tomorrow; he is not in their camps.
+     He is in a taproom, drinking, in the plate and without the helm, and he is the best field
+     surgeon the Bastion ever had. A drunk surgeon: steady with a bottle in him, shaking without
+     (see BLYTHE'S HANDS). LATE, like Tallow: placed in a pocket. */
+  {key:'blythe', name:'Brother Blythe', sex:'m', where:'taproom', tag:'the one who put the helm down', late:true,
+   stats:{atk:24, def:30, tough:34, ath:7, medic:50, labor:10},
+   weapon:'w_club', armor:'a_pla', conviction:'devout', gift:'divine',
+   want:'drink', drink:3,
+   news:'There is a man in Paladin plate drinking in one of the taprooms, with no helm and no sword, and nobody from the Order has come to fetch him. The landlord says he set a drover\'s leg on the bar last month without putting his cup down.',
+   pitch:'"Brother Blythe. Was." He does not look up from the cup. "They never came after me, you know. They are waiting for me to come back. That is worse."',
+   ask:'"Three bottles. Not for the road; for the hands. Sober, I shake. Bring me three and I will stitch anybody you like, and I will not ask what they did."',
+   join:'"Three." He stands, and the plate settles on him like it had been waiting. "Right. Show me who is bleeding."'},
 ];
 function wandererDef(k){ return WANDERERS.find(w => w.key === k) || null; }
 function spawnWanderers(){
@@ -22307,6 +22322,12 @@ function placeWanderer(w){
          instead: the street in front of it, which is the middle of the town everyone else uses. */
       if(p && estate && estate.town === t2 && Math.abs(p.x - estate.x) <= estate.hw + 1 && Math.abs(p.y - estate.y) <= estate.hh + 1)
         p = findOpenNear(Math.round(estate.x + ri(-3, 3)), Math.round(estate.y + estate.hh + 4), 4);
+    } else if(w.where === 'taproom'){
+      /* AT THE BAR, not out in the waste: any town but Hollowmere and Copperhold (Tallow's) */
+      const t2 = pick(towns.filter(t3 => !t3.def.undeadFriendly && t3.def.key !== 'copperhold'));
+      const bar = t2 && vendors.find(v => v.vt === 'bar' && v.town === t2);
+      if(bar) p = findOpenNear(Math.round(bar.x + ri(-1, 1)), Math.round(bar.y + 1), 3);
+      else if(t2) p = findOpenNear(Math.round(t2.x + ri(-3, 3)), Math.round(t2.y + ri(-3, 3)), 5);
     } else if(w.where === 'shrine'){
       /* ---------- AT THE STONE, WHICH IS WHAT "AT THE STONE" MEANS ----------
          This was `findOpenNear(stone + ri(-2,2), 5)` — a two-tile jitter, and then sixty random
@@ -22394,6 +22415,12 @@ function wandererGate(c){
       dist(a.x, a.y, c.x, c.y) - dist(b.x, b.y, c.x, c.y))[0];
     return {ok:false, why:`the Order has ${pyres.length === 1 ? 'built one pole' : 'built ' + pyres.length + ' poles'} and nobody of yours has stood at ${pyres.length === 1 ? 'it' : 'one'} to read the name — the nearest is ${placeHint(c.x, c.y, near.x, near.y)}`};
   }
+  /* THREE BOTTLES, and any of the three rums will do */
+  if(w.want === 'drink'){
+    const n = BLYTHE_DRINKS.reduce((a, k) => a + campHas(k), 0);
+    return n >= w.drink ? {ok:true, label:`HAND OVER ${w.drink} BOTTLES`}
+                        : {ok:false, why:`he wants ${w.drink} bottles of rum, any kind, and the stores hold ${n}`};
+  }
   /* SHOWN, NOT SPENT: she wants to read the hand, and hands it back */
   if(w.want === 'formula'){
     const f = ['formula_p', 'formula_w', 'formula_t'].find(k => campHas(k) > 0);
@@ -22416,6 +22443,11 @@ function recruitWanderer(c){
   if(w.want === 'fine') cats -= w.fine;
   if(w.want === 'coin') cats -= w.coin;
   if(w.want === 'doctrine') campSpend({doctrine: 1});
+  if(w.want === 'drink'){
+    let need = w.drink;
+    for(const k of BLYTHE_DRINKS){ const got = Math.min(need, campHas(k)); if(got > 0){ campTake(k, got); need -= got; } }
+    c.blytheWet = day;               /* and he has had one of them already */
+  }
   /* out of the cell, off the rope, down off the roof */
   if(c.jailedAt){ const cl = c.jailedAt; cl.holds = 0; c.jailedAt = null; c.jailT = 0; returnKit(c); }
   c.captured = false;
@@ -22457,9 +22489,59 @@ function wandererDayTick(){
     clearOrders(c);
   }
 }
+/* ---------- BLYTHE'S HANDS ----------
+   "Imagine a drunk surgeon, love it." He drinks a bottle a day from the stores, and on a day he
+   has had one his hands are steady: he tends a quarter faster than his skill alone would. On a day
+   there was nothing to drink they shake, and he is barely better than half. The bottle comes out of
+   the camp at the turn of the day, rum first, then cask, then Harbourblack. */
+const BLYTHE_DRINKS = ['rum', 'rum_cask', 'rum_black'];
+const BLYTHE_STEADY = 1.25, BLYTHE_SHAKY = 0.6;
+let _blytheT = 0;
+function blytheHands(c){
+  if(!c || c.wanderKey !== 'blythe' || c.faction !== 'player') return 1;
+  return c.blytheWet === day ? BLYTHE_STEADY : BLYTHE_SHAKY;
+}
+function blytheDay(){
+  const b = chars.find(c => c.wanderKey === 'blythe' && c.faction === 'player' && c.state !== 'dead');
+  if(!b || b.blytheWet === day || b.blytheDry === day) return;
+  const k = BLYTHE_DRINKS.find(k2 => campHas(k2) > 0);
+  if(k){
+    campTake(k, 1); b.blytheWet = day;
+    if(vrnd() < 0.3) say(b, vpick(['Steady now.', 'For the hands.', 'Only the one. Today.', 'Better.']));
+  } else {
+    b.blytheDry = day;
+    log(`${b.name} has had nothing to drink today, and his hands are shaking. He will tend slowly until somebody finds him a bottle.`, 'bad');
+  }
+}
+/* ---------- THE ORDER, AND ASH, ABOUT HIM ----------
+   One line from a Paladin who comes close to him, once; one each between him and Sister Ash
+   the first time they are near each other. Neither of those two is kind. */
+function blytheMeets(){
+  const b = chars.find(c => c.wanderKey === 'blythe' && c.state !== 'dead');
+  if(!b) return;
+  if(!b.blytheOrderSaid){
+    const pal = chars.find(o => o.faction === 'purge' && o.state === 'ok' && !o.bossKey && dist(o.x, o.y, b.x, b.y) < 8);
+    if(pal && visAt(b.x, b.y) === 2){
+      b.blytheOrderSaid = true;
+      say(pal, 'Brother Blythe. Your bed in the infirmary is still made.');
+      log(`${pal.name}, of the Order: "Brother Blythe. Your bed in the infirmary is still made." ${b.name} does not answer.`, '');
+    }
+  }
+  if(!b.blytheAshSaid){
+    const ash = chars.find(o => o.bossKey === 'ash' && o.state === 'ok' && dist(o.x, o.y, b.x, b.y) < 10);
+    if(ash && visAt(b.x, b.y) === 2){
+      b.blytheAshSaid = true;
+      say(b, 'You went looking for the bottom of the well, Sister. I went looking for the bottom of the bottle. Mine was closer.');
+      say(ash, 'Still in their plate, Blythe. You took the helm off so they could see your face when you said no, and then you never said it.');
+      log(`${b.name}: "You went looking for the bottom of the well, Sister. I went looking for the bottom of the bottle. Mine was closer."`, '');
+      log(`Sister Ash: "Still in their plate, Blythe. You took the helm off so they could see your face when you said no, and then you never said it."`, '');
+    }
+  }
+}
 function openWanderer(c){
   const w = wandererDef(c.wanderKey); if(!w) return;
   wandererMet(c);
+  c.wanderHeard = true;
   say(c, w.pitch);
   const g = wandererGate(c);
   openModal(`${c.name.toUpperCase()} — ${w.tag}`,
@@ -28134,6 +28216,7 @@ function update(dt){
   passTick(dt);               /* and whether the Order is standing in the way at the pass */
   scholarTick(dt);            /* and whether an old man is standing somewhere he was not */
   tenantTick(dt);             /* and who else is in the vat-born: see WHAT MOVES INTO A VESSEL */
+  if((_blytheT -= dt) <= 0){ _blytheT = 1; blytheMeets(); }   /* the Order and Ash, when they are near him */
   biomeTick(dt);              /* the flats, the rust and the bog: who walked in, what woke, what keeps */
   oldKingTick(dt);            /* the man in the Door: talking from up there, or hanging people down here */
   courtTick(dt);              /* and his court, coming through onto the grounds their Arts made */
@@ -28173,6 +28256,7 @@ function update(dt){
     bastionGuestTick();      /* and something may have moved into the yard */
     bountyDecay();
     wandererDayTick();       /* she is on a different road today, which is the point of her */
+    blytheDay();             /* and he wants his bottle */
     hollowmereBurials();     /* and the yard takes what the neighbours send it */
     estateInviteTick();      /* and the Aldercotts have somebody up to dinner */
     saltmereBurning();       /* while Saltmere feeds its fire and keeps its flats clean */
@@ -50695,6 +50779,7 @@ const TALK_TREES = {
         {say:'A tear closes for the blessed art and the profane one alike. It is the same well.', req:{conv:'scholar'}, to:'samewell'},
         {say:'What does the Order want with me?', when:(t) => t.bossKey === 'marshal', to:'want'},
         {say:'What else is out there, besides your Light?', to:'devourer'},
+        {say:'Do you know a Brother Blythe?', when:() => chars.some(o => o.wanderKey === 'blythe' && o.state !== 'dead' && (o.wanderHeard || o.faction === 'player')), to:'blythe'},
         {say:'Walk on.'},
       ],
     },
@@ -50707,6 +50792,10 @@ const TALK_TREES = {
         {say:'The sixth? I have heard him called the seventh.', when:() => coilExposed, to:'seventh'},
         {say:'Walk on.'},
       ],
+    },
+    blythe: {
+      line: 'Blythe. The best pair of hands the Bastion ever had in a field tent. He put his helm down and walked out, and the Marshal said let him walk, so nobody has been sent. His bed in the infirmary is still made. If you see him, tell him the door is open. If he is sober enough to hear it.',
+      opts: [{say:'I will tell him.'}],
     },
     seventh: {
       line: 'Then you have been listening to people who count wrong. Ask yourself who taught them to count, and then stop listening to them.',
@@ -51547,7 +51636,7 @@ function snapshot(){
        that survives forever because nothing ever looks at it.
        Conditional on BOTH sides now, so a body that is not a borer has no borer keys at all. */
     ...(c.borer ? {borer:true, boreLeft:(c.boreLeft ?? null), boreCd:(c.boreCd ?? 0)} : {}),
-    wanderKey:c.wanderKey||null, wanderMet:c.wanderMet||0, wanderSeen:c.wanderSeen?{...c.wanderSeen}:null, wanderJoined:!!c.wanderJoined, questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, golem:!!c.golem, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
+    wanderKey:c.wanderKey||null, wanderMet:c.wanderMet||0, wanderSeen:c.wanderSeen?{...c.wanderSeen}:null, wanderJoined:!!c.wanderJoined, wanderHeard:!!c.wanderHeard, blytheWet:(c.blytheWet ?? null), blytheDry:(c.blytheDry ?? null), questGive:c.questGive||null, questDone:!!c.questDone, questStage:c.questStage||0, friendly:!!c.friendly, golem:!!c.golem, redoubtId:c.redoubtId||null, roomId:(c.roomId??null), redoubtDeep:c.redoubtDeep||null, concentrating:c.concentrating?{...c.concentrating}:null, weaponFlame:!!c.weaponFlame, weaponHallow:!!c.weaponHallow, arts:c.arts?{...c.arts}:null, lightbearer:!!c.lightbearer, hiddenNecro:!!c.hiddenNecro,
     carryId: c.carry ? c.carry.id : null, yardRun: !!c.yardRun, tearRiftId: c.tearTarget ? c.tearTarget.id : null,
     skinShift: c.skinShift || null, shiftN: c.shiftN || 0,
     bearingId: c.bearing ? c.bearing.id : null,
@@ -52143,7 +52232,8 @@ function restore(d){
        every body was what put a key on 1,360 of them that the pre-save body never had. */
     if(s.borer){ c.borer = true; c.boreLeft = (s.boreLeft ?? null); c.boreCd = (s.boreCd ?? 0); }
     c.questGive = s.questGive || null; c.questDone = !!s.questDone; c.questStage = s.questStage || 0;
-    c.wanderKey = s.wanderKey || null; c.wanderMet = s.wanderMet || 0;
+    c.wanderKey = s.wanderKey || null; c.wanderMet = s.wanderMet || 0; c.wanderHeard = !!s.wanderHeard;
+    c.blytheWet = s.blytheWet ?? undefined; c.blytheDry = s.blytheDry ?? undefined;
     c.wanderSeen = s.wanderSeen ? {...s.wanderSeen} : null; c.wanderJoined = !!s.wanderJoined;
     /* saves from before the questlines: a finished single-step quest counts as the road walked */
     if(c.questDone && c.questGive && IMMORTAL_LINES[c.questGive]){
