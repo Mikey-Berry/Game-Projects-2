@@ -530,8 +530,9 @@ dug into the first civilisation's tunnels, and at the bottom of one of them is M
   to do. Eleven years closing tears by hand — the one thing nobody does. **The only character doing
   the opposite of what the player does, without being an enemy for it.**
 - **Osric & Wenna** — Hollowmere gravekeepers who compete with you for corpses.
-- **The Last Scholar `[★]`** — §11. Not yet in the code, and the largest unbuilt figure in the setting.
-  His scaffolding is proposed in `LORE-SEAMS.md` §9.5 and waiting on a ruling.
+- **The Last Scholar `[★]`** — §11. The largest unbuilt figure in the setting. His plumbing is in the
+  code (2026-09-29): a body nothing can harm, four sightings and a thread. He says nothing yet; his
+  lines are proposed in `LORE-SEAMS.md` §9.5 and waiting on a ruling.
 - **Mother · Llammialith `[★]`** — §6. Alive, redundant, and the only being who knows the whole of it.
 - **The old king `[★]` `[C]`** — the kingdom's last king. He was at the middle of the rite when it
   worked, and he was not annihilated with his capital: he went through, toward the throne, and he

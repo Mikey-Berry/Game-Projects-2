@@ -524,6 +524,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.opened = !!mother.opened && !!dr.open && !dr.barred;
       const th = threads.find(t => t.key === 'mother');
       R.threadDone = !!(th && th.done);
+      /* and she is the one who says the Last Scholar exists (tools/lastscholar.js has the rest) */
+      R.scholarHeard = typeof lastScholar === 'undefined' ? null : !!lastScholar.heard && !!threads.find(t => t.key === 'scholar');
       /* and a reload keeps it */
       const snap = snapshot();
       mother.opened = false;
@@ -570,6 +572,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         if (x.wardenStruck === false) bits.push('struck, the Deep Warden stays stood down');
         if (!x.wardenKept) bits.push('a reload forgot the Warden stood down');
         if (!x.threadDone) bits.push('her thread was not closed');
+        if (x.scholarHeard === false) bits.push('closing her scene did not open the thread of the man with the old face');
         if (!x.kept) bits.push('a reload forgot the door was opened');
         if (!x.brokenDoor) bits.push('with her bar already broken (an old save), a finished Hollow in the room heard nothing');
       }
@@ -577,7 +580,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     out.herSealIsHers = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
       : `her door answers nobody with a shoulder (${x.strangerMenu}) while every other vault still forces, holds against a rider, and opens to a finished Hollow's hand on the seal: ` +
         `the second scene is said a line at a time in the window (${x.pages + 1} lines, GO ON to LEAVE), her first scene speaks of the corpse site without kinship, ` +
-        `the Deep Warden stands down for the one she let in until it is struck, her thread closes, a reload keeps it all, and a door an old save already broke still gives the scene to one of hers in the room${x.otherForced === undefined ? ' (no other vault to compare)' : ''}`;
+        `the Deep Warden stands down for the one she let in until it is struck, her thread closes${x.scholarHeard ? ' and the one for the man with the old face opens' : ''}, a reload keeps it all, and a door an old save already broke still gives the scene to one of hers in the room${x.otherForced === undefined ? ' (no other vault to compare)' : ''}`;
   }
 
   /* ---- 7. the Church speaks in its own layer ----

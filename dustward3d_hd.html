@@ -772,6 +772,9 @@ function passAt(out, lat){ return {x: PASS.x + PASS.ux * out + PASS.vx * lat, y:
    at the barricade, and whether they have been told. Up here and not with the rest of it because
    `hostile` asks `alarm`, and `hostile` can be asked while the world is still being made. Saved. */
 const passState = {manned: false, shortSince: null, alarm: false, warned: false};
+/* the Last Scholar's standing record: see THE LAST SCHOLAR, by `scholarTick`. Up here because
+   the save reads it and `hostile()` asks after his body */
+const lastScholar = {heard: false, done: {}, talked: 0, body: null, key: null, seenAt: null, unseenT: 0, until: 0};
 /* the barricade's tiles: a band two tiles deep across the gorge floor, less the gap */
 function passGateTiles(){
   const out = [];
@@ -11826,6 +11829,7 @@ function markThreat(c){
   if(fresh) queueSquadRefresh();     /* a body already marked needs no second rebuild */
 }
 function applyDamage(a, d, pk, dmg, wt, loud, incid, raw, ap){
+  if(d.lastScholar) return;   /* nothing lands on him — see THE LAST SCHOLAR */
   /* ---------- SOMETHING IS SWINGING AT THIS ONE ----------
      `c.target` is who a body is fighting, which is not the same question as whether anybody
      is fighting IT — so the squad bar could not tell a hand being cut down off-camera from a
@@ -12081,6 +12085,7 @@ function returnKit(c){
 }
 function freeCell(t){ return cells.find(cl => cl.town === t && !cl.holds); }
 function kill(c, by){
+  if(c.lastScholar) return;       /* and nothing kills him, by any road that ends here */
   charEpoch++;                    /* a corpse must not stay in `player()`'s cached list */
   if(c.state==='dead') return;
   /* the ledger is written here, not inferred from a body that will be gone in two days */
@@ -14432,6 +14437,8 @@ function hostile(a, b){
      is a purge squad wandering past and closing the only door in the game that has a person
      behind it. He does not fight. Nothing fights him. */
   if(a.demilich || b.demilich) return false;
+  /* nor with the Last Scholar: his life holds the Twins (bible §11), and no fight reaches him */
+  if(a.lastScholar || b.lastScholar) return false;
   /* ---------- A PRISONER IS IN CUSTODY, NOT IN A FIGHT ----------
      "Squadmates in gaol may get brutally attacked/murdered for simply being within a town
       where I have a high bounty."
@@ -21537,6 +21544,186 @@ function manThePass(){
   passState.manned = true; passState.shortSince = null;
 }
 let _passT = 0;
+/* ============================================================ THE LAST SCHOLAR
+   The bible's §11: a pureblood who appears human, of great age, with a voice tinged with regret;
+   the First and the Last Scholar are one man; he appears and reappears through history, and he
+   reaches the player only by being unhelpful. His immortality is never explained, what ended
+   his people is never answered, and his life holds the Voidborn Twins in stasis.
+
+   THIS IS THE PLUMBING, AND NONE OF THE WRITING (2026-09-29): "Build the Last Scholar plumbing
+   now, lines after I rule." So everything he says is in `SCHOLAR_TALK` and every line of it is
+   null until the ruling on `LORE-SEAMS.md` §9.5 lands. A topic whose line is null is left out
+   of the conversation, and with nothing in it at all he does not answer.
+     · A BODY, NOT A FOLLOWER. Faction drifter and neutral, but nothing is hostile to him or he
+       to it (`hostile`), nothing lands on him (`applyDamage`), nothing kills him (`kill`), the
+       right-click offers TALK and nothing else, not even on ctrl, and he is not hired, since
+       the drifters' menu passes him by. He is never saved: a save taken while he stands
+       somewhere comes back without him.
+     · HE COMES AND GOES. A sighting stands him somewhere just out of sight. Once one of yours
+       has seen him, he leaves when nobody is looking (fifteen seconds out of sight); if nobody
+       sees him in two days he leaves anyway. At the Door he stays until it closes.
+     · THE SIGHTINGS, each once (`SCHOLAR_SIGHTINGS`; drop a row to drop one):
+         early   days 20 to 40, a little way off from a Scholar with one of yours in reach
+         mother  after her second scene, the next time one of yours is on the surface
+         tablet  when a tablet is read (`scholarSighting('tablet', x, y)`, for when they exist)
+         door    while the Door is open, on the far side of the rim wall from the gorge
+     · HIS THREAD opens when Mother speaks of him, or on the first sighting seen. Its steps are
+       plain statements of what happened, and they are placeholders like everything else here.
+   Worldgen never hears of him: every die he spends is spent in a pocket and put back. */
+const SCHOLAR_TALK = {
+  greet: null,                     /* what he says when you walk up */
+  /* each: what you ask, what he says, and whether it is on offer. `ask` and `line` both wait on
+     the ruling; `when` is the plumbing */
+  topics: [
+    {k:'who',      ask:null, line:null, when:() => true},
+    {k:'age',      ask:null, line:null, when:() => true},
+    {k:'mother',   ask:null, line:null, when:() => !!mother.opened},
+    {k:'scholars', ask:null, line:null, when:() => true},
+    {k:'people',   ask:null, line:null, when:() => true},
+    {k:'door',     ask:null, line:null, when:() => !!theDoor || fractureStage >= 3},
+    {k:'hollows',  ask:null, line:null, when:(c) => !!c && c.race === 'hollow'},
+    {k:'throne',   ask:null, line:null, when:() => true},
+  ],
+  leave: null,                     /* what he says as you go */
+};
+const SCHOLAR_SIGHTINGS = {
+  early: {
+    due: () => day >= 20 && day <= 40,
+    where: () => {
+      const mine = player().filter(o => o.state !== 'dead' && (o.floor || 0) === 0 && !o.jailedAt);
+      for(const sc of chars){
+        if(!sc.scholar || sc.state !== 'ok' || sc.faction === 'player' || (sc.floor || 0) !== 0) continue;
+        const d = Math.min(...mine.map(o => dist(o.x, o.y, sc.x, sc.y)));
+        if(d > 40 && d < 150) return findOpenNear(sc.x + 6, sc.y + 4, 3);
+      }
+      return null;
+    },
+  },
+  mother: {
+    due: () => !!lastScholar.heard,
+    where: () => scholarOutOfSight(),
+  },
+  tablet: {
+    due: () => false,              /* raised by `scholarSighting` when a tablet is read */
+    where: () => null,
+  },
+  door: {
+    due: () => !!theDoor && !ruin,
+    where: () => findOpenNear(CRATER.x + Math.cos(CRATER_GORGE_A) * (CRATER.rim + 6),
+                              CRATER.y + Math.sin(CRATER_GORGE_A) * (CRATER.rim + 6), 4),
+    stays: () => !!theDoor && !ruin,
+  },
+};
+/* a spot just past the edge of what the nearest of yours on the surface can see */
+function scholarOutOfSight(){
+  const o = player().find(u => u.state !== 'dead' && (u.floor || 0) === 0 && !u.jailedAt);
+  if(!o) return null;
+  const dayness = clamp(Math.sin((hour - 6) / 13 * Math.PI), 0, 1);
+  const r = 17 + dayness * 13 + 5;
+  for(let k = 0; k < 12; k++){
+    const a = (hash2(day * 7 + k, 11) * 2 - 1) * Math.PI;
+    const x = o.x + Math.cos(a) * r, y = o.y + Math.sin(a) * r;
+    if(x < 3 || y < 3 || x > W - 3 || y > H - 3 || isBlocked(x, y, 0) || visAt(x, y) === 2) continue;
+    return {x, y};
+  }
+  return null;
+}
+function scholarHeard(){
+  if(lastScholar.heard) return;
+  lastScholar.heard = true;
+  threadSet('scholar', 'The man with the old face', 'Mother spoke of a man who came down to her with the old face, while the kingdom was still drinking her.');
+}
+/* a sighting raised from outside the tick, with a place to stand */
+function scholarSighting(key, x, y){
+  if(lastScholar.done[key] || lastScholar.body) return false;
+  const pocket = seed;
+  let at = null;
+  try { at = findOpenNear(x, y, 4); } finally { seed = pocket; }
+  return scholarStand(key, at);
+}
+function scholarStand(key, at){
+  if(!at || lastScholar.body) return false;
+  const pocket = seed;
+  let c;
+  try {
+    c = makeChar('An old man', 'drifter', at.x, at.y, {atk:6, def:10, tough:30, ath:6, magic:0, sex:'m'});
+  } finally { seed = pocket; }
+  c.lastScholar = true; c.neutral = true; c.floor = 0; c.gift = null;
+  c.age = 71; c.guard = {x: at.x, y: at.y}; c.quest = null;
+  c.weapon = null; c.cloak = ITEMS.k_road ? 'k_road' : c.cloak;
+  chars.push(c);
+  Object.assign(lastScholar, {body: c, key, seenAt: null, unseenT: 0, until: day + hour / 24 + 2});
+  lastScholar.done[key] = 'out';
+  return true;
+}
+function scholarLeave(){
+  const c = lastScholar.body;
+  if(!c) return;
+  selected = selected.filter(x => x !== c);
+  const i = chars.indexOf(c); if(i >= 0) chars.splice(i, 1);
+  /* a sighting nobody saw is spent all the same: he was there, and nobody looked */
+  if(lastScholar.key && lastScholar.done[lastScholar.key] === 'out') lastScholar.done[lastScholar.key] = 'missed';
+  lastScholar.body = null; lastScholar.key = null;
+}
+let _scholarT = 0;
+function scholarTick(dt){
+  const c = lastScholar.body;
+  if(c){
+    /* seen: by anybody of yours, in sight now */
+    /* `vis` is flat, so only somebody of yours on the surface counts as having seen him */
+    const inSight = visAt(c.x, c.y) === 2 && player().some(o => o.state !== 'dead' && (o.floor || 0) === 0);
+    if(inSight && lastScholar.seenAt === null){
+      lastScholar.seenAt = day;
+      lastScholar.done[lastScholar.key] = day;
+      const t = towns.slice().sort((a, b) => dist(a.x, a.y, c.x, c.y) - dist(b.x, b.y, c.x, c.y))[0];
+      const where = craterD(c.x, c.y) < CRATER.range ? 'at the rim of the crater' : t ? `near ${t.name}` : 'on the road';
+      threadSet('scholar', lastScholar.heard ? 'The man with the old face' : 'An old man',
+        `An old man, seen ${where}, day ${day}.`, {mark: {x: c.x, y: c.y}});
+    }
+    const talking = modalOpen && talkState && talkState.t === c;
+    const S = SCHOLAR_SIGHTINGS[lastScholar.key];
+    if(S && S.stays){ if(!S.stays()) scholarLeave(); return; }
+    if(talking) return;
+    if(lastScholar.seenAt !== null){
+      lastScholar.unseenT = inSight ? 0 : lastScholar.unseenT + dt;
+      if(lastScholar.unseenT > 15) scholarLeave();
+    } else if(day + hour / 24 > lastScholar.until) scholarLeave();
+    return;
+  }
+  if((_scholarT -= dt) > 0) return;
+  _scholarT = 2;
+  if(activeFloor < 0 && !player().some(o => (o.floor || 0) === 0 && o.state !== 'dead')) return;
+  for(const key of Object.keys(SCHOLAR_SIGHTINGS)){
+    if(lastScholar.done[key]) continue;
+    const S = SCHOLAR_SIGHTINGS[key];
+    if(!S.due()) continue;
+    const pocket = seed;
+    let at = null;
+    try { at = S.where(); } finally { seed = pocket; }
+    if(at && scholarStand(key, at)) return;
+  }
+}
+function scholarTalk(t, who){
+  lastScholar.talked++;
+  const c = speakerFor(t);
+  const open = SCHOLAR_TALK.topics.filter(q => q.ask && q.line && q.when(c));
+  if(!SCHOLAR_TALK.greet && !open.length){
+    /* nothing ruled yet: he looks, and does not answer */
+    log(`(${t.name} does not answer.)`, '');
+    return;
+  }
+  /* the way out goes through his parting line when there is one */
+  const out = SCHOLAR_TALK.leave ? {say: '(Leave.)', to: 'bye'} : {say: '(Leave.)'};
+  const tree = {root: {line: SCHOLAR_TALK.greet || '...', opts: []}};
+  if(SCHOLAR_TALK.leave) tree.bye = {line: SCHOLAR_TALK.leave, opts: [{say: '(Leave.)'}]};
+  for(const q of open){
+    tree[q.k] = {line: q.line, opts: [{say: '(Ask something else.)', to: 'root'}, out]};
+    tree.root.opts.push({say: q.ask, to: q.k});
+  }
+  tree.root.opts.push(out);
+  TALK_TREES.lastScholar = tree;
+  openDiscourse(t, 'lastScholar');
+}
 function passTick(dt){
   if((_passT -= dt) > 0) return;
   _passT = 0.5;
@@ -27330,6 +27517,7 @@ function update(dt){
   strikeTick(dt);             /* and whether the light is coming down on anybody in the glass */
   guardianTick(dt);           /* and whether the thing at the middle is calling it down on you */
   passTick(dt);               /* and whether the Order is standing in the way at the pass */
+  scholarTick(dt);            /* and whether an old man is standing somewhere he was not */
   biomeTick(dt);              /* the flats, the rust and the bog: who walked in, what woke, what keeps */
   oldKingTick(dt);            /* the man in the Door: talking from up there, or hanging people down here */
   courtTick(dt);              /* and his court, coming through onto the grounds their Arts made */
@@ -47598,7 +47786,7 @@ cv.addEventListener('mousedown', e => {
          Inquisitor's party is `neutral` and gets TALK from the foe branch's own menu. */
       const local = chars.filter(c => c.state==='ok' && (c.faction==='drifter' ||
           ((c.faction==='town' || (c.faction==='purge' && speaksAtAll(c) && !c.neutral)) && !hostile(movers[0], c))) &&
-        !c.mobileVendor && !c.scholar && !c.wanderKey && !c.immortal &&
+        !c.mobileVendor && !c.scholar && !c.wanderKey && !c.immortal && !c.lastScholar &&
         visAt(c.x,c.y)===2 && bodyHit(c, wx, wy, 0.9))
         .sort((a,b) => bodyGap(a, wx, wy) - bodyGap(b, wx, wy))[0];
       /* THE POST. Checked before the flag and before anyone standing near it: it is a fixed
@@ -47853,6 +48041,13 @@ cv.addEventListener('mousedown', e => {
           log(`${doc.name} goes to see to ${v.name}.`, '');
         }};
       };
+      /* THE LAST SCHOLAR: talk, or leave him be. There is no attack in the menu and ctrl does
+         not force one; his life holds the Twins (bible §11). */
+      if(foe.lastScholar){
+        if(e.ctrlKey) log('Nobody moves against him.', '');
+        showCtxMenu(e.clientX, e.clientY, [{label:'TALK', fn:()=>talkTo(foe)}, {label:'LEAVE HIM', fn:()=>{}}]);
+        return;
+      }
       if(foe.neutral && !e.ctrlKey && !foe.provoked && !hostile(movers[0], foe)){
         /* ---------- SOMEBODY WHO IS NOT YOUR ENEMY IS NOT THEREFORE A WALL ----------
            This was one line of log — "X is not hostile. Ctrl+right-click to attack anyway." —
@@ -50260,6 +50455,7 @@ const TALK_TREES = {
 };
 function talkTo(t, who){
   let line;
+  if(t.lastScholar){ scholarTalk(t, who); return; }
   /* SHE HAS BEEN WATCHING THE NEWS COME IN. What she says is not about the crown, it is
      about what her brother did with the time. There is nothing to accept here and no marker
      to tick: the origin's payoff is finding out that the person you crossed a dead world for
@@ -50671,6 +50867,7 @@ function snapshot(){
     phylacteries: phylacteries.map(p => { const o = {...p}; delete o._rect; if(p.body) o.body = sChar(p.body); return o; }), phylN, noticed, noticeTier, fracture, fractureStage,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin, passS: {...passState},
+    scholarS: {heard: lastScholar.heard, done: {...lastScholar.done}, talked: lastScholar.talked},
     favors: {...favors}, bossSlain: {...bossSlain}, placesSeen: {...placesSeen}, hiresPaid: {...hiresPaid},
     blackReceipt: blackReceipt.stage,
     legendsGiven: {...legendsGiven},
@@ -50741,7 +50938,7 @@ function snapshot(){
     townKnown: towns.map(t=>t.known||{}),
     chestsOpened: chests.map(t=>t.opened),
     bastionWalls: bastion ? bastion.walls.map(w=>({x:w.x, y:w.y, hp:w.hp})) : [],
-    chars: chars.filter(c => !c.phantom).map(sChar),
+    chars: chars.filter(c => !c.phantom && !c.lastScholar).map(sChar),
     corpseIds: corpses.map(c=>c.id),
     cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
     threads: threads.map(t => ({key:t.key, title:t.title, step:t.step, hint:t.hint, done:t.done, at:t.at, mark:t.mark || null})),
@@ -51008,6 +51205,10 @@ function restore(d){
   /* a save from before the pass was held: nobody has manned it, and the tick mans it when one of
      yours next comes near (`passTick`) */
   Object.assign(passState, {manned: false, shortSince: null, alarm: false, warned: false}, d.passS || {});
+  /* a save taken while he stood somewhere comes back without him; a sighting nobody had seen
+     yet is due again, one somebody had seen is spent */
+  Object.assign(lastScholar, {heard: false, done: {}, talked: 0, body: null, key: null, seenAt: null, unseenT: 0, until: 0}, d.scholarS || {});
+  for(const k of Object.keys(lastScholar.done)) if(lastScholar.done[k] === 'out') delete lastScholar.done[k];
   blackReceipt.stage = d.blackReceipt || 0;
   if(arena && d.arenaS){ arena.wins = d.arenaS.wins || 0; arena.losses = d.arenaS.losses || 0; arena.best = d.arenaS.best ?? -1; }
   if(d.altarS) d.altarS.forEach((a2, i) => { const a = deepAltars[i]; if(!a) return;
@@ -52407,7 +52608,7 @@ function motherOpens(c){
   ];
   for(const l of lines) beats.push({say: true, kind: 'good', text: l});
   sceneOpen('BEHIND THE SEAL', 'The bottom of the warren', beats,
-    () => threadDone('mother', 'Opened. She told one of hers the whole of it, and her name.'));
+    () => { threadDone('mother', 'Opened. She told one of hers the whole of it, and her name.'); scholarHeard(); });
 }
 function motherSpeaks(c){
   /* What she says is read off the world, not off a quest step. She has been listening to it

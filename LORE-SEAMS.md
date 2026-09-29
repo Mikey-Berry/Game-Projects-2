@@ -519,7 +519,7 @@ and zero player-facing strings.
 
 | lore | status in code |
 |---|---|
-| **The Last Scholar** (§11), "the largest unbuilt figure in the setting" | Absent. Nobody in play refers to him, including Mother. |
+| **The Last Scholar** (§11), "the largest unbuilt figure in the setting" | **Plumbing built 2026-09-29, lines waiting on §9.5.** Mother's second scene speaks of a man with the old face, and closing it opens his thread. He is a body that nothing is hostile to and nothing can harm. He is offered only TALK, not saved, and seen at four sightings: early near a Scholar, after Mother, when a tablet is read, and at the rim while the Door is open. Every line he says is null, so he does not answer yet. `tools/lastscholar.js` checks it. |
 | **Tohu & Bohu, the Voidborn Twins** (§6) | Absent. Their whole hook, stasis for as long as the Last Scholar lives, depends on the Scholar existing. |
 | **Philosopher Stones** (§15) | **Minor ones built, 2026-09-26:** every shrine's stone is one (§1.4). The great ones, "one wrote the law that holds the Twins", are still absent. |
 | **Tablets of the Deep; the temple art that "points upward"** (§2, §15) | Absent. The Kept have altars (`deepAltars`) and no depictions. The only tablet in the code is the wax-tablet case on Lyre's model. |
@@ -1056,6 +1056,16 @@ Fixes to existing text, if you agree:
    this because somebody should, and because the* The tablet ends there.
 
 ### 9.5 The Last Scholar: scaffolding
+
+**Plumbing built 2026-09-29** ("build the plumbing now, lines after I rule"). The shape below is
+in the game; every line in it is null in `SCHOLAR_TALK`, and a topic with no line is left out.
+The body is called "An old man" and the thread "The man with the old face" (after Mother's
+"he had the old face"). Two plain lines stand in until the ruling:
+- the journal: *"An old man, seen near Greenrest, day 25."*;
+- the log, when you talk to him: *"(An old man does not answer.)"*.
+
+The tablet sighting has its hook (`scholarSighting('tablet', x, y)`) and nothing calls it until
+the tablets exist.
 
 The bible's rules:
 
