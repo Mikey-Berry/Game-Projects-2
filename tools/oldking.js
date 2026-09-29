@@ -126,8 +126,18 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       for (const kk of Object.keys(DOOR_SEAL_COST)) stash[kk] = (stash[kk] || 0) + 999;
       const fell = saidNow(() => kill(k3, me3));
       const body = corpses.find(c => c.bossKey === 'oldking');
+      /* and the rest of the sky with it: tears open in the waste and the Attention high */
+      for (let i = 0; i < 3; i++) {
+        const q = findOpenNear(Math.round(W / 2 + (i - 1) * 60), Math.round(H / 2 + 40), 8);
+        if (!riftAt(q.x, q.y)) openRift(q.x, q.y);
+      }
+      const tears0 = rifts.length;
+      noticed = 90; noticeTier = noticeTierOf(noticed);
       theDoor.work = DOOR_WORK;
-      workTheDoor(me3, 1 / 30);
+      const shutSaid = saidNow(() => workTheDoor(me3, 1 / 30));
+      R.andTheWorldLetsOutItsBreath = (!theDoor && tears0 >= 3 && rifts.length === 0 && noticed === 0 && noticeTier === 0 && /close at once/.test(shutSaid))
+        ? `sealing the Door closes all ${tears0} tears in the waste with it and puts the Attention back to nothing ("${(shutSaid.match(/Out in the waste[^|]*/) || [''])[0].slice(0, 70)}…")`
+        : `!! AFTER THE DOOR: tears ${tears0} -> ${rifts.length}, Attention ${noticed} (tier ${noticeTier}), said "${shutSaid.slice(0, 80)}"`;
       R.putHimDownAndItLands = (!theDoor && /old king goes down/.test(fell) && body && body.head === 'h_oldcrown' && bossSlain.oldking)
         ? `put him down and the same hold shuts the sky; his crown is on the body ("${ITEMS.h_oldcrown.name}")`
         : `!! DOOR ${theDoor ? 'still open' : 'shut'}, FELL "${fell.slice(0, 50)}", CROWN ${body && body.head}, LEDGER ${bossSlain.oldking}`;
