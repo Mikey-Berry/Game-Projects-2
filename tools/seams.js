@@ -736,11 +736,26 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       .map(([dx, dy]) => findOpenNear(alive.x + dx, alive.y + dy, 2))
       .find(q2 => q2 && dist(q2.x, q2.y, alive.x, alive.y) < 9) || { x: alive.x + 1, y: alive.y };
     const look = probe(spawnGaunt('herald', qa.x, qa.y)); look.hunt = true; look.target = null;
+    const look0 = dist(look.x, look.y, alive.x, alive.y);
     rebuildCharGrid();
-    for (let i = 0; i < 4 && look.hunt; i++) physics(look, 0.1);
+    /* ---------- AND IT IS GIVEN TIME TO WALK UP ----------
+       Four steps of a tenth of a second was the whole of it, which asked the herald to have
+       looked before it had walked anywhere. It walks up to the nearest of yours until it is
+       inside twelve tiles, and only then turns for the yard; `spawnGaunt` does not always put
+       it where it was asked, so where it starts decides whether four steps are enough. Red on
+       2026-09-29 on every build back to d46801a (still 11.7 tiles off after its four steps, still
+       walking). Six seconds, and it stops asking as soon as the herald has turned. */
+    let steps = 0;
+    for (; steps < 60 && look.hunt; steps++) physics(look, 0.1);
     const leftForOrder = !look.hunt && look.guard && bastion && dist(look.guard.x, look.guard.y, bastion.x, bastion.y) < 14;
     if (quarrel.length) bits.push(`with no dead of yours about it still has a quarrel with ${quarrel.join(', ')}`);
-    else if (!leftForOrder) bits.push(`having looked at a living body of yours it ${look.hunt ? 'is still hunting' : 'went somewhere other than the Bastion yard'}`);
+    else if (!leftForOrder) {
+      /* what stopped it, so a red says so: a ward light returns out of `physics` before the
+         looking is ever asked, and the nearest of yours is what it is measured against */
+      const ns = player().filter(o => o.state !== 'dead').map(o => dist(o.x, o.y, look.x, look.y)).sort((a, c) => a - c)[0];
+      const wl = typeof lightNear === 'function' && (lightNear(look, WARD_RADIUS + 1.5) || violetNear(look, 1.5));
+      bits.push(`having looked at a living body of yours it ${look.hunt ? 'is still hunting' : 'went somewhere other than the Bastion yard'} (nearest of yours ${ns == null ? '?' : ns.toFixed(1)} tiles, ${wl ? 'inside a ward light at ' + Math.round(wl.x) + ',' + Math.round(wl.y) : 'no ward light'}, target ${look.target ? look.target.name : 'none'}, hour ${hour.toFixed(1)}, it started ${look0.toFixed(1)} off and walked ${steps} steps)`);
+    }
     risen.undead = true;
     const qb = at(4, 40);
     const hunter = probe(spawnGaunt('messenger', qb.x, qb.y)); hunter.hunt = true; hunter.target = null;
@@ -761,7 +776,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       : `abroad a Messenger is its own faction: at peace with the Order, at war with the Watchers and the walking dead, and hunting a living one of yours only once the Attention is ATTENDED (the Order does not read that). ` +
         `The crater's ${craterOnes.length} are the crater's, hold it against the Order and a Messenger from abroad alike, and are not counted against the world's ceiling. ` +
         `The ceiling is 2, 3, 4 at stages 0, 3 and 5; a patrol carries one from stage 3 (${e3.patrol.toFixed(2)}, then ${e5.patrol.toFixed(2)}) and a hunt more often late (${e0.hunt.toFixed(2)} to ${e5.hunt.toFixed(2)}). ` +
-        `One that comes to look at a living body of yours walks to the Bastion yard; one near your dead keeps hunting; killing one raises the Order's wrath`;
+        `One that comes to look at a living body of yours (it started ${look0.toFixed(1)} tiles off) walks up and turns for the Bastion yard after ${(steps * 0.1).toFixed(1)}s; one near your dead keeps hunting; killing one raises the Order's wrath`;
     return R;
   }));
 
