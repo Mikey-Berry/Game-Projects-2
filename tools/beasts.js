@@ -8,8 +8,10 @@
  *
  *   1. the Cairn Beast eats the real `corpses` array, gets bigger for it, sheds under a heavy
  *      blow, refuses named dead, and carries everything it ate into its own drop table
- *   2. Brood-of-the-Door blocks the closing rite outright, and every limb taken off it
- *      cheapens the seal — through the real `workTheDoor` and `doorSealCost`
+ *   2. the Wheel in the Door (once Brood-of-the-Door) blocks the closing rite outright, and
+ *      every ring cut out of it cheapens the seal — through the real `workTheDoor` and
+ *      `doorSealCost`; and it is drawn as the Wheel, four rings on the four limb slots, with no
+ *      arms for anything to pose
  *   3. the Gravecart fetches six bodies and does NOT render them down
  *   4. the Stitch-Hand puts a severed limb back on, which nothing else in the game can do
  *   5. a Wisp lights the ground, holds the dark off, and takes the room with it when it goes
@@ -130,13 +132,23 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! THE BEAST DID NOT SURVIVE A SAVE (${c2 && c2.big})`;
     }
 
-    /* ============================================================ 2. BROOD-OF-THE-DOOR */
+    /* ============================================================ 2. THE WHEEL IN THE DOOR */
     {
       theDoor = null;
       for (let i = chars.length - 1; i >= 0; i--) if (chars[i].brood) chars.splice(i, 1);
       openTheDoor();
       const br = broodAlive();
-      R.broodSpawns = br ? `the door opens and ${br.name} is standing in it, at big ${br.big}` : '!! NO BROOD CAME WITH THE DOOR';
+      R.broodSpawns = br ? `the door opens and ${br.name} is turning in it, at big ${br.big}` : '!! NO BROOD CAME WITH THE DOOR';
+      /* "Basically just a giant dude. Kind of lame." Built off the real rig builder: the Wheel's
+         own body, a ring on each of the four limb slots the rite counts, and no arm to reach for */
+      {
+        const e = buildCharMesh(br);
+        const rings = (e.jitter || []).filter(j => j.userData.kind === 'spin').map(j => j.userData.part);
+        R.theWheelIsNotAMan = br.beast && e.floats && !e.armL && !e.legL && rings.length === 4 && BROOD_LIMBS.every(k => rings.includes(k))
+          ? `it is drawn as the Wheel: ${rings.length} rings, one on each of ${BROOD_LIMBS.join(', ')}, and no arms or legs anywhere on it`
+          : `!! THE WHEEL'S BODY: beast ${br.beast}, floats ${e.floats}, arm ${!!e.armL}, rings [${rings.join(', ')}]`;
+        disposeTree(e.g);
+      }
       R.broodStays = (br.guard && Math.abs(br.guard.x - theDoor.x) < 1e-6)
         ? 'and it is anchored to the door rather than let loose on the world'
         : '!! THE BROOD IS NOT ANCHORED';
@@ -155,7 +167,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.broodBlocks = theDoor
         ? 'a finished hold does NOT close the sky while the Brood stands'
         : '!! THE RITE LANDED WITH THE BROOD ALIVE';
-      R.broodSaysWhy = threadOf('rite') && /brood/i.test(threadOf('rite').step || '')
+      R.broodSaysWhy = threadOf('rite') && /wheel/i.test(threadOf('rite').step || '')
         ? `and the journal says exactly what is standing in it: "${threadOf('rite').step.slice(0, 62)}"`
         : `!! THE RITE DEADLOCKS SILENTLY (${threadOf('rite') && threadOf('rite').step})`;
 
