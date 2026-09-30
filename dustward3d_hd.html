@@ -1380,6 +1380,7 @@ function oreAt(x, y){
    because of, so the pit is checked first and it is checked with an AABB, because this function
    is asked about every tile the renderer and the pathing touch. */
 let copperPit = null;
+const hamlets = [];            /* {id, x, y, kind, name, town, clearR}: see HAMLETS, seeded last */
 function rawDecorAt(x,y){
   if(copperPit && Math.abs(copperPit.x - x) <= copperPit.r && Math.abs(copperPit.y - y) <= copperPit.r){
     const o2 = oreAt(x, y);
@@ -1423,6 +1424,10 @@ function rawDecorAt(x,y){
     const r = t2.clearR || 15;
     if(Math.abs(t2.x - x) > r || Math.abs(t2.y - y) > r) continue;
     if(dist(t2.x, t2.y, x, y) < r) return null;
+  }
+  for(const h of hamlets){            /* and nothing in a hamlet's yard: see HAMLETS */
+    if(Math.abs(h.x - x) > h.clearR || Math.abs(h.y - y) > h.clearR) continue;
+    if(dist(h.x, h.y, x, y) < h.clearR) return null;
   }
   const h = hash2(x*3+7, y*3+13);
   const t = terr[y*W+x];
@@ -28429,6 +28434,7 @@ function update(dt){
   tenantTick(dt);             /* and who else is in the vat-born: see WHAT MOVES INTO A VESSEL */
   if((_blytheT -= dt) <= 0){ _blytheT = 1; blytheMeets(); }   /* the Order and Ash, when they are near him */
   biomeTick(dt);              /* the flats, the rust and the bog: who walked in, what woke, what keeps */
+  hamletTick(dt);             /* and who lives out along the roads, once you are near enough to meet them */
   oldKingTick(dt);            /* the man in the Door: talking from up there, or hanging people down here */
   courtTick(dt);              /* and his court, coming through onto the grounds their Arts made */
   dustWallTick(dt);           /* and the walls that were never there, going back to having never been */
@@ -32476,6 +32482,142 @@ function heightAt(wx, wy){
   return lerp(lerp(h00,h10,fx), lerp(h01,h11,fx), fy);
 }
 
+/* ============================================================ HAMLETS
+   "For the sparse world, I like the idea of hamlets etc.. ... Let's work at this little by little
+    so as not to overcrowd the game." (ruled 2026-09-30; LORE-SEAMS §11.3, the first way)
+   The first step, and a small one: ONE unwalled place per town, out along one of its roads, a
+   long walk short of the next town. A farm, a well or the salt pans, by what the town lives on;
+   a house or two, the work laid out in the yard, and three or four people who keep to their own
+   ground. Their town's style of building, not a town's law: `crime` asks `townAt`, and a hamlet
+   is in no town (the next step can decide whether that should change).
+   SEEDED LAST, JUST BEFORE THE GROUND IS BUILT, so that everything else is already standing and
+   a hamlet can keep its distance from all of it: bandit camps, Sundered ground, ruins, redoubts,
+   the Bastion, the Guild, the Coil's stone and the crater. The site is chosen by hash off the
+   town and its road and the house and yard are laid without a single draw.
+   THE PEOPLE COME LATER, the way the biome sleepers do: the first time any of yours comes within
+   HAMLET_WAKE_R of the place (`hamletTick`). The first build of this put them in at worldgen
+   inside a pocket, which kept the stream but not the name pools or the id counter: the starting
+   three were renamed (Ida, Sett and Yuri had gone to the first farm) and, their ids moved, drawn
+   differently. Brought in on approach, a new world is exactly the world it was. */
+const HAMLET_KINDS = {
+  farm: {noun: 'Farm', trade: 'farmer', folk: 4, barn: true},
+  well: {noun: 'Well', trade: 'farmer', folk: 3},
+  pans: {noun: 'Pans', trade: 'salter', folk: 3},
+};
+const HAMLET_OF = {saltmere: 'pans', copperhold: 'well', ironscar: 'well'};   /* and the rest farm */
+(function seedHamlets(){
+  {
+    const clearOf = (x, y) =>
+      !towns.some(t => dist(t.x, t.y, x, y) < 55) &&
+      !ruins.some(r => dist(r.x, r.y, x, y) < 30) &&
+      !camps.some(c => dist(c.x, c.y, x, y) < 70) &&
+      !corpseSites.some(s2 => dist(s2.x, s2.y, x, y) < 55) &&
+      !redoubts.some(r => dist(r.x, r.y, x, y) < 40) &&
+      !(bastion && dist(bastion.x, bastion.y, x, y) < 50) &&
+      !(guild && dist(guild.x, guild.y, x, y) < 50) &&
+      !(coilShrine && dist(coilShrine.x, coilShrine.y, x, y) < 35) &&
+      !hamlets.some(h => dist(h.x, h.y, x, y) < 60);
+    /* dry, open, standing on nothing, never in the bog, and near enough level that a house can
+       be set down on it (the pad is levelled below; this refuses a hillside). The rust takes a
+       well and nothing else, and only well clear of what is lying asleep in it: Ironscar stands
+       in the barrens, and every road out of it runs through them. */
+    const groundOk = (x, y, kind) => {
+      if(!areaClear(x - 9, y - 8, 18, 16)) return false;
+      let lo = Infinity, hi = -Infinity;
+      for(let j = y - 8; j <= y + 8; j++) for(let i = x - 9; i <= x + 9; i++){
+        if(isBlocked(i, j)) return false;
+        const hv = HV[j * (W + 1) + i]; if(hv < lo) lo = hv; if(hv > hi) hi = hv;
+      }
+      const bm = biomeAt(x, y);
+      if(bm === BIOME_RUST && (kind !== 'well' || biomeSleepers.some(sl => dist(sl.x, sl.y, x, y) < 35))) return false;
+      return hi - lo < 1.6 && (!bm || bm === BIOME_SALT || bm === BIOME_RUST);
+    };
+    towns.forEach((t, ti) => {
+      const kind = HAMLET_OF[t.def.key] || 'farm', K = HAMLET_KINDS[kind];
+      const roads = tradeRoutes.filter(r => r.aI === ti || r.bI === ti);
+      let spot = null;
+      const r0 = Math.floor(hash2(ti * 7 + 1, 31) * roads.length);
+      for(let n = 0; n < roads.length && !spot; n++){
+        const rt = roads[(r0 + n) % roads.length];
+        const wps = rt.aI === ti ? rt.wps : [...rt.wps].reverse();
+        for(let k = 2; k < wps.length - 2 && !spot; k++){
+          const w = wps[k], d0 = dist(w.x, w.y, t.x, t.y);
+          if(d0 < 50) continue;
+          if(d0 > 120) break;
+          const a = wps[k - 1], b = wps[k + 1], L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+          const side = hash2(ti * 13 + k, 7) < 0.5 ? 1 : -1;
+          for(const sd of [side, -side]){
+            const x = Math.round(w.x - (b.y - a.y) / L * 14 * sd), y = Math.round(w.y + (b.x - a.x) / L * 14 * sd);
+            if(nearRoad(x, y, 8) || !clearOf(x, y) || !groundOk(x, y, kind)) continue;
+            spot = {x, y};
+            break;
+          }
+        }
+      }
+      if(!spot) return;
+      const {x, y} = spot;
+      let si = Math.floor(hash2(ti * 17 + 3, x) * SURNAMES.length);
+      while(hamlets.some(o => o.name.startsWith(SURNAMES[si] + ' '))) si = (si + 1) % SURNAMES.length;
+      const h = {id: hamlets.length + 1, x, y, kind, town: ti, clearR: 11, woke: false,
+                 name: `${SURNAMES[si]} ${K.noun}`};
+      hamlets.push(h);
+      /* a level pad under it, eased out to the ground around, so the walls sit on the earth */
+      {
+        let sum = 0, n = 0;
+        for(let j = y - 6; j <= y + 6; j++) for(let i = x - 7; i <= x + 7; i++){ sum += HV[j * (W + 1) + i]; n++; }
+        const mid = sum / n;
+        for(let j = y - 11; j <= y + 11; j++) for(let i = x - 12; i <= x + 12; i++){
+          const d = Math.hypot(i - x, j - y), k = d <= 7 ? 1 : d >= 11 ? 0 : 1 - (d - 7) / 4;
+          if(k > 0){ const o = j * (W + 1) + i; HV[o] += (mid - HV[o]) * k; }
+        }
+      }
+      /* the house, door to the yard; and at a farm, a barn beside it. Their town's way of
+         building (`styleTown`), but not their town's buildings: nothing that walks a town's
+         list of buildings finds these. */
+      const house = placeBuilding(x - 6, y - 5, 5, 4, 'HOUSE', null);
+      house.styleTown = t; house.hamlet = h.id;
+      if(K.barn){ const barn = placeBuilding(x + 1, y - 5, 5, 4, 'STABLE', null); barn.styleTown = t; barn.hamlet = h.id; }
+    });
+  }
+})();
+function hamletAt(x, y){
+  for(const h of hamlets) if(Math.abs(h.x - x) < 14 && Math.abs(h.y - y) < 14) return h;
+  return null;
+}
+/* the people, brought in the first time anybody of yours comes near (see HAMLETS). Their draws
+   are taken on a stream of their own and the world's put back after, so a walk past a farm moves
+   nothing else that happens today. */
+const HAMLET_WAKE_R = 90;
+let _hamletT = 0;
+function hamletTick(dt){
+  if((_hamletT -= dt) > 0) return;
+  _hamletT = 1;
+  for(const h of hamlets){
+    if(h.woke) continue;
+    if(player().some(c => c.state === 'ok' && !c.floor && Math.abs(c.x - h.x) < HAMLET_WAKE_R && Math.abs(c.y - h.y) < HAMLET_WAKE_R)) wakeHamlet(h);
+  }
+}
+function wakeHamlet(h){
+  if(h.woke) return;
+  h.woke = true;
+  const K = HAMLET_KINDS[h.kind];
+  const pocket = seed;
+  seed = (pocket ^ Math.imul(h.id, 0x9E3779B9)) | 0;
+  try {
+    /* they keep to the yard: a civilian with no town keeps to `guard` */
+    for(let i = 0; i < K.folk; i++){
+      const q = findOpenNear(h.x + ri(-5, 5), h.y + ri(0, 4), 4);
+      const kid = K.folk >= 4 && i === K.folk - 1;
+      const c = makeChar(pickName(true), 'town', q.x, q.y,
+        kid ? {atk:1, def:2, tough:2, ath:5, age: ri(7, 14)} : {atk:3, def:4, tough:5, ath:6});
+      c.civ = true; c.hamlet = h.id; c.guard = {x: q.x, y: q.y}; c.civT = rnd() * 10;
+      if(kid) c.wasChild = true;
+      else { c.trade = K.trade; c.tradeSkill = ri(8, 30); c.age = ri(18, 62); }
+      chars.push(c);
+    }
+  } finally { seed = pocket; }
+}
+
 /* ---------- ground & water ---------- */
 /* (_terrMaxY is taken at the end of raiseMountains, the last thing that writes HV; a second
    1.4M-vertex pass here found the same number) */
@@ -34591,7 +34733,7 @@ function palette(t){
     const cxp = b.x + b.w/2, czp = b.y + b.h/2;
     const y = groundY(cxp, czp);
     const B = BUILD_STYLE[b.label] || BUILD_DEFAULT;
-    const P = palette(b.town), T = P.style;
+    const P = palette(b.town || b.styleTown), T = P.style;   /* a hamlet builds the way its town does */
     const hv = hash2(b.x*7 + 3, b.y*11 + 5);         /* this building's own small variations */
     /* A hall is built out of better stuff than a house is, wherever it stands — and a
        varied station drifts its own tone on top of that, so a street is not one colour. */
@@ -34830,6 +34972,45 @@ function palette(t){
       for(let t = 0; t < pl.h; t += 0.8){
         const x = pl.x + Math.cos(pl.a) * t, y = pl.y + Math.sin(pl.a) * t;
         box(g, 1.15, 1.15, 1.15, t < 0.8 ? '#8e877b' : '#b3ac9e', x, groundY(x, y) + 0.57, y);
+      }
+    }
+  }
+  /* ---------- A HAMLET'S YARD (see HAMLETS) ----------
+     The work, laid out where it is done: rows and bales at a farm, a well and its trough at a
+     well, and white pans and heaps of salt at the pans. Every one of them has a well, because
+     nobody lives out here without one. Props only: nothing here blocks or is harvested. */
+  for(const h of hamlets){
+    const gy = (x, y) => groundY(x, y);
+    const wx = h.x - 3.5, wy = h.y + 1.2;
+    box(g, 1.1, 0.65, 1.1, '#6e665a', wx, gy(wx, wy) + 0.32, wy);
+    box(g, 0.1, 1.2, 0.1, '#4a3b2c', wx - 0.38, gy(wx, wy) + 0.95, wy);
+    box(g, 0.1, 1.2, 0.1, '#4a3b2c', wx + 0.38, gy(wx, wy) + 0.95, wy);
+    box(g, 0.95, 0.1, 0.36, '#38290f', wx, gy(wx, wy) + 1.5, wy, false);
+    if(h.kind === 'farm'){
+      for(let f = 0; f < 3; f++){
+        const fx = h.x + 2.5 + (f % 2) * 4.2, fy = h.y + 1.8 + Math.floor(f / 2) * 3.2;
+        box(g, 3.6, 0.1, 2.6, '#3e3323', fx, gy(fx, fy) + 0.05, fy, false);
+        for(let r = 0; r < 4; r++) box(g, 3.2, 0.28, 0.22, '#6a8a3a', fx, gy(fx, fy) + 0.24, fy - 0.95 + r * 0.63, false);
+      }
+      for(const [bx, by] of [[h.x - 0.8, h.y + 3.6], [h.x + 0.2, h.y + 4.1]])
+        box(g, 0.95, 0.75, 0.95, '#b0a060', bx, gy(bx, by) + 0.38, by);
+    } else if(h.kind === 'well'){
+      const tx = wx + 1.6, ty = wy + 0.4;
+      box(g, 1.8, 0.4, 0.5, '#5a4630', tx, gy(tx, ty) + 0.2, ty);                /* the trough */
+      box(g, 1.6, 0.06, 0.36, '#4a6a78', tx, gy(tx, ty) + 0.37, ty, false);      /* and what is in it */
+      for(let k = 0; k < 4; k++){
+        const bx = h.x + 1.5 + (k % 2) * 0.8, by = h.y + 2.4 + Math.floor(k / 2) * 0.8;
+        box(g, 0.6, 0.8, 0.6, '#6b5238', bx, gy(bx, by) + 0.4, by);               /* barrels for the caravans */
+      }
+    } else if(h.kind === 'pans'){
+      for(let k = 0; k < 4; k++){
+        const px = h.x + 2.2 + (k % 2) * 3.0, py = h.y + 1.6 + Math.floor(k / 2) * 2.4;
+        box(g, 2.7, 0.12, 2.0, '#8a8274', px, gy(px, py) + 0.06, py, false);       /* the rim */
+        box(g, 2.4, 0.13, 1.7, k === 1 ? '#c8d0cc' : '#ece8de', px, gy(px, py) + 0.07, py, false);
+      }
+      for(const [sx, sy, sz] of [[h.x - 0.6, h.y + 3.8, 0.9], [h.x + 0.5, h.y + 4.4, 0.7]]){
+        const m = new THREE.Mesh(new THREE.ConeGeometry(sz, sz * 1.1, 6), mat('#f0ece2'));
+        m.position.set(sx, gy(sx, sy) + sz * 0.55, sy); m.castShadow = true; g.add(m);
       }
     }
   }
@@ -44741,6 +44922,7 @@ function renderMinimap(){
   if(fogDirty || mmFogT-- <= 0){ redrawMinimapFog(); mmFogT = 15; }
   for(const t of towns){ if(!visAt(t.x,t.y)) continue; mmcx.fillStyle='#e8dcc4'; mmcx.fillRect(t.x*128/W-2, t.y*128/H-2, 4, 4); }
   for(const r of ruins){ if(!visAt(r.x,r.y)) continue; mmcx.fillStyle='#8a8478'; mmcx.fillRect(r.x*128/W-1, r.y*128/H-1, 3, 3); }
+  for(const h of hamlets){ if(!visAt(h.x,h.y)) continue; mmcx.fillStyle='#c8b890'; mmcx.fillRect(h.x*128/W-1, h.y*128/H-1, 2, 2); }
   if(slaverCamp && visAt(slaverCamp.x, slaverCamp.y)){ mmcx.fillStyle='#a05040'; mmcx.fillRect(slaverCamp.x*128/W-2, slaverCamp.y*128/H-2, 4, 4); }
   if(bastion && visAt(bastion.x, bastion.y)){
     mmcx.fillStyle = '#f0ead8'; mmcx.fillRect(bastion.x*128/W-2, bastion.y*128/H-2, 4, 4);
@@ -51763,6 +51945,8 @@ function talkTo(t, who){
     'Quiet season. I keep my head down and my tools sharp.',
     'You sleep better when you\'re ready for the worst. I sleep very well.',
     makeRumor(t)]);
+  /* out at a hamlet, as often as not they talk about the work in front of them (see HAMLETS) */
+  else if(t.hamlet && t.trade && TRADE_TALK[t.trade] && rnd() < 0.4) line = pick(TRADE_TALK[t.trade]);
   else line = makeRumor(t);
   say(t, line);
   log(`${t.name}: "${line}"`);
@@ -52099,7 +52283,7 @@ function snapshot(){
     heretic: !!c.heretic, burnDay: c.burnDay||0, bastionGuest: !!c.bastionGuest, stoodDown: !!c.stoodDown, gatePhase: c.gatePhase || 0, eyesUp: !!c.eyesUp, bossPhase: c.bossPhase || 0, ossuary: !!c.ossuary, boneWard: !!c.boneWard, courtKey: c.courtKey || null, courtArts: c.courtArts || null,
     inv: {...c.inv}, pack: c.pack, mule: !!c.mule, fleeOnHit: !!c.fleeOnHit,
     eater: !!c.eater, warF: c.warF, warT: c.warT, campId: c.campId, rebelOf: c.rebelOf,
-    sick: c.sick||0, armyEnds: c.armyEnds||0, trade: c.trade||null, tradeSkill: c.tradeSkill||0, guildFolk: !!c.guildFolk,
+    sick: c.sick||0, armyEnds: c.armyEnds||0, trade: c.trade||null, tradeSkill: c.tradeSkill||0, guildFolk: !!c.guildFolk, hamlet: c.hamlet||0,
     isLeader: c.isLeader ?? -1, captain: !!c.captain, omni: !!c.omni,
     npcNecro: !!c.npcNecro, roamNecro: !!c.roamNecro, rebel: !!c.rebel,
     age: c.age, goal: c.goal, wasChild: !!c.wasChild, legacyTrade: c.legacyTrade||null,
@@ -52214,6 +52398,7 @@ function snapshot(){
     /* which grounds have been walked into, and which sleepers have already sat up: without the
        second, every wreck in the rust would lie back down on a reload and wake a second time */
     biomes: {seen: {...biomeState.seen}, woke: {...biomeState.woke}},
+    hamletsWoke: hamlets.filter(h => h.woke).map(h => h.id),
     courtCame: {...courtCame},
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       /* how much pitch is left in a post. Without this every post in the world came back
@@ -52299,6 +52484,7 @@ function restore(d){
   for(const k in biomeState.seen) delete biomeState.seen[k];
   for(const k in biomeState.woke) delete biomeState.woke[k];
   if(d.biomes){ Object.assign(biomeState.seen, d.biomes.seen || {}); Object.assign(biomeState.woke, d.biomes.woke || {}); }
+  for(const h of hamlets) h.woke = !!(d.hamletsWoke && d.hamletsWoke.includes(h.id));   /* before the folk were saved, none had come */
   /* who of the old king's court has come through already */
   for(const k in courtCame) delete courtCame[k];
   Object.assign(courtCame, d.courtCame || {});
@@ -52707,7 +52893,7 @@ function restore(d){
     c.eater = !!s.eater; c.warF = s.warF ?? -1; c.warT = s.warT ?? -1;
     c.campId = s.campId ?? -1; c.rebelOf = s.rebelOf ?? -1;
     c.sick = s.sick || 0; c.armyEnds = s.armyEnds || 0;
-    c.trade = s.trade || null; c.tradeSkill = s.tradeSkill || 0; c.guildFolk = !!s.guildFolk;
+    c.trade = s.trade || null; c.tradeSkill = s.tradeSkill || 0; c.guildFolk = !!s.guildFolk; c.hamlet = s.hamlet || 0;
     c.isLeader = s.isLeader ?? -1; c.captain = !!s.captain; c.omni = !!s.omni;
     c.npcNecro = !!s.npcNecro; c.roamNecro = !!s.roamNecro; c.rebel = !!s.rebel;
     c.age = s.age ?? ri(18,38); c.goal = s.goal || null;

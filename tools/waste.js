@@ -11,6 +11,10 @@
  *
  *   1. the roads are worn into the ground: along every road the ground's own vertices are
  *      darker and browner than the waste a few tiles off it, and nothing else on the map moved
+ *   2. hamlets: one per town, out along that town's own road, clear of every camp, site, ruin
+ *      and town; a house (and at a farm a barn) built the town's way; nobody in them until one
+ *      of yours comes near, and bringing them in moves no draw of the world's; and once there
+ *      they keep to their own yard, and talk about the work in front of them
  *
  * Anything starting '!!' fails the build.
  *
@@ -74,6 +78,57 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? `at ${n} points along ${tradeRoutes.length} roads the ground down the middle is ${(on / off * 100).toFixed(0)}% as bright as eight tiles off it, and browner at ${browner} of them`
         : `!! THE ROADS DO NOT SHOW: ${n} points, middle ${on.toFixed(3)} against ${off.toFixed(3)} beside it, browner at ${browner}`;
     }
+
+    /* ---- 2. hamlets ---- */
+    {
+      const bad = [];
+      const per = towns.map((t, ti) => hamlets.filter(h => h.town === ti).length);
+      for (const h of hamlets) {
+        const t = towns[h.town], d = dist(t.x, t.y, h.x, h.y);
+        if (d < 50 || d > 130) bad.push(`${h.name} is ${Math.round(d)} from ${t.name}`);
+        if (towns.some((o, oi) => oi !== h.town && dist(o.x, o.y, h.x, h.y) < 55)) bad.push(`${h.name} crowds another town`);
+        if (camps.some(c => dist(c.x, c.y, h.x, h.y) < 70)) bad.push(`${h.name} is beside a bandit camp`);
+        if (corpseSites.some(s2 => dist(s2.x, s2.y, h.x, h.y) < 55)) bad.push(`${h.name} is on Sundered ground`);
+        if (!nearRoad(h.x, h.y, 22) || nearRoad(h.x, h.y, 8)) bad.push(`${h.name} is not beside a road`);
+        const hb = buildings.filter(b => b.hamlet === h.id);
+        if (!hb.length || hb.some(b => b.town || b.styleTown !== t)) bad.push(`${h.name}'s buildings are wrong`);
+      }
+      R.oneHamletATown = per.every(n => n === 1) && !bad.length
+        ? `${hamlets.length} hamlets, one for each town (${[...new Set(hamlets.map(h => h.kind))].join(', ')}), 50 to 130 tiles out beside that town's own road, and none by a camp, a site or another town: ${hamlets.map(h => h.name).join(', ')}`
+        : `!! THE HAMLETS: per town [${per.join(', ')}]; ${bad.slice(0, 4).join('; ')}`;
+
+      /* nobody there until you come, and coming moves nothing */
+      const h = hamlets.find(o => !o.woke) || hamlets[0];
+      const before = chars.filter(c => c.hamlet === h.id).length;
+      const s0 = seed, u0 = uid;
+      wakeHamlet(h);
+      const folk = chars.filter(c => c.hamlet === h.id);
+      R.theyComeWhenYouDo = before === 0 && folk.length >= 3 && seed === s0 && folk.every(c => c.civ && c.guard && !c.homeTown)
+        ? `${h.name} is empty until one of yours is near; then ${folk.length} people are there (${folk.map(c => c.name).join(', ')}), and the world's stream is exactly where it was`
+        : `!! THE PEOPLE: ${before} before, ${folk.length} after, stream ${seed === s0 ? 'kept' : 'MOVED'}`;
+
+      /* they keep to their own yard: run the world for two minutes with nobody of ours near */
+      for (const c of player()) { c.x = h.x + 400; c.y = h.y; }
+      rebuildCharGrid();
+      const hour0 = hour; hour = 11;
+      for (let i = 0; i < 1200; i++) update(0.1);
+      hour = hour0;
+      const strays = folk.filter(c => c.state === 'ok' && dist(c.x, c.y, h.x, h.y) > 14);
+      R.theyKeepToTheYard = folk.length && !strays.length
+        ? `two minutes on, all ${folk.length} are still in the yard (farthest ${Math.max(...folk.map(c => dist(c.x, c.y, h.x, h.y))).toFixed(1)} tiles out)`
+        : `!! ${strays.length} WANDERED OFF: ${strays.map(c => `${c.name} at ${Math.round(dist(c.x, c.y, h.x, h.y))}`).join(', ')}`;
+
+      /* and what they say */
+      const adult = folk.find(c => c.trade);
+      const heard = new Set();
+      const say0 = window.say; window.say = (c, line) => { heard.add(String(line)); };
+      const log0 = window.log; window.log = () => {};
+      try { for (let i = 0; i < 40; i++) talkTo(adult, player()[0]); } finally { window.say = say0; window.log = log0; }
+      const work = [...heard].filter(l => (TRADE_TALK[adult.trade] || []).includes(l));
+      R.theyTalkAboutTheWork = work.length && heard.size > work.length && !document.querySelector('#modal[style*="block"]')
+        ? `right-clicked, a ${adult.trade} out there barks rather than opening a window, and about the work in front of them as often as the news ("${work[0]}")`
+        : `!! WHAT THEY SAY: ${heard.size} lines, ${work.length} about the work`;
+    }
     return R;
   });
 
@@ -81,7 +136,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   for (const [k, v] of Object.entries(out)) console.log('  ' + k.padEnd(20) + ' ' + v);
   for (const e of errs) console.log('  ' + e);
   console.log('');
-  console.log(bad.length || errs.length ? `*** THE WASTE IS WRONG (${bad.length + errs.length}) ***` : 'THE WASTE HAS ROADS IN IT');
+  console.log(bad.length || errs.length ? `*** THE WASTE IS WRONG (${bad.length + errs.length}) ***` : 'THE WASTE HAS ROADS IN IT, AND PEOPLE BY THEM');
   await b.close();
   process.exit(bad.length || errs.length ? 1 : 0);
 })();
