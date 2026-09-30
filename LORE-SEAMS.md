@@ -1471,7 +1471,7 @@ Questions:
   comment only.
 
 
-## 11. Play notes of 2026-09-29: the postgame, the Brood, a fuller world
+## 11. Play notes of 2026-09-29: the postgame, the Brood, a fuller world (ruled 2026-09-30)
 
 Three brainstorms for a ruling. Two small fixes from the same notes are built: the Messenger fights
 with its arm and a burning blade, and a townsperson answers with a rumour instead of a window.
@@ -1526,6 +1526,14 @@ written for that reprieve. Options for the clock:
 **My order:** A, then 1 and 8 (cheap and they say "you won"), then 6, then 2 and 4. 7 is the big one
 and wants its own round.
 
+**Ruled 2026-09-30, and built the same day:** "after the door closes, I don't think it should reopen
+again. It should somewhat reset to the very first phase where gaunts etc are pretty scarce." A,
+with the clock put back rather than stopped where it stood: sealing the Door sets the Fracture to
+10, the middle of THE DUST FALLS, and nothing advances it after that (`doorSealed`, saved). The
+night stays scarce (§11.3's companion ruling, *legends first*, reads the same clock). The shipped
+line now ends "The sky is not healed. But it is shut, and it is going to stay shut." **(mine, for
+review.)** Items 1 to 8 are still open.
+
 ### 11.2 Brood-of-the-Door: something more eldritch
 
 "Basically just a giant dude. Kind of lame."
@@ -1559,6 +1567,19 @@ and wants its own round.
 - **E. The Host.** Not one creature: a knot of doorborn fused into a column wedged in the Door, faces
   and limbs of every gaunt kind grown together, with four thick trunks braced on the ground. Each
   trunk cut spills its bodies.
+
+**Ruled 2026-09-30: D, the Wheel** ("Makes sense and aligns with the biblical parallels we've
+incorporated. Let's build it."). **Built the same day** as The Wheel in the Door: four rings of old
+gold, one inside the other, each tumbling on its own axis, the rims full of eyes that look out of
+both faces of the band, one great eye at the hub that looks about, and flame going up between the
+rings. Each ring sits on one of the four limb slots the rite already counts, so cutting one drops
+it out of the turning and narrows the Door, exactly as before. The rings turn three times as fast
+while it winds up a blow. Internally it is still `brood`, so no save needs converting. **For review
+(mine):** the name; the spawn line ("SOMETHING IS TURNING IN THE DOOR. A wheel inside a wheel, and
+another inside that, the rims of them full of eyes, and fire going up between them. The sky is open
+because it is turning."); the world event (the Order's people kneel); the journal's rite lines; and
+the ring-cut line ("One of the Wheel's rings breaks and falls out of the turning, and the Door
+narrows.").
 
 ### 11.3 A world that feels sparse
 
@@ -1598,6 +1619,52 @@ and wants its own round.
 
 **My order:** 1 and 3 together (they fill the ground most for the least), then 2 (it makes the
 world's events visible), then 4 (it carries the lore drops). 5 is the long-term one.
+
+**Ruled 2026-09-30:** "I like the idea of hamlets etc.. I'd also like to add some new biomes, and
+make the main roads between towns a bit more obvious. Right now the waste all blends together.
+Let's work at this little by little so as not to overcrowd the game." Two steps are built, both
+checked by `tools/waste.js`:
+- **The roads, worn into the ground.** They were a stroke on the ground texture narrower than one
+  of its pixels. The track is now in the ground's own vertices: darker and browner down the
+  middle, fading out three tiles to the side (74% as bright as the waste eight tiles off, at 57
+  points on 10 roads).
+- **Hamlets, one per town.** Out along one of the town's roads, 58 to 67 tiles from its gate on the
+  default world, kept clear of camps, Sundered sites, ruins, redoubts, the Bastion, the Guild, the
+  Coil's stone and the crater. Four farms, two wells (Copperhold, and Ironscar's in the rust, clear
+  of the sleeping automatons) and Saltmere's pans. Each is a house (a farm adds a barn) in its
+  town's style, a well, the work in the yard (rows and bales, a trough and barrels, white pans and
+  salt heaps), and three or four people who keep to it and talk about the work. The houses are
+  laid at worldgen without a draw; **the people arrive the first time one of yours comes within 90
+  tiles**, on a stream of their own, so a new world is exactly the world it was. Names are a
+  surname and the kind ("Coker Farm", "Kessel Well", "Dunmore Pans"). **(mine, for review.)**
+  **Open:** hamlets are outside the law (`crime` asks `townAt`). Tie them to their town's watch, or
+  leave the waste lawless?
+
+### 11.4 New grounds, for a ruling
+
+The same rules as the three built grounds (§8.1): each stands round the thing that made it, is
+laid without a draw, and whatever sleeps in it wakes only when one of yours walks up. One at a time,
+as asked. Five from the 2026-09-26 brainstorm were never built:
+- **A. Albedo chalk and the bone-hills.** White ossuary country round the Lord of Ash and Bone's
+  seat: chalk ground, bone outcrops that yield Mortal Remains, and a harsher cold at night. The
+  strongest contrast with the tan dust, and it gives the Lord a country.
+- **B. The oases.** Two or three rare green pockets like Greenrest: walled gardens the alchemists
+  kept, always guarded, with fruit and clean water. Somewhere to rest on a long road.
+- **C. The sulphur vents.** Yellow fumaroles whose air hurts the living and not the dead, and where
+  fire workings run stronger. A necromancer's ground.
+- **D. The quicksilver fens.** Mirror pools of liquid metal. The fumes move convictions, and they
+  are the only source of a rare reagent.
+- **E. The nigredo ashwood.** A black petrified forest downwind of the crater. Dark workings
+  resonate there, and bodies left in it blacken.
+
+And two new ones, aimed at the "it all blends together" note rather than at a mechanic **(mine)**:
+- **F. The dune sea.** Open drifting dust with long ridges and nothing in it. The one place the
+  waste looks like a desert on purpose. Tracks fill in behind you, and something travels under it.
+- **G. Glassed ground.** Where a tear closed, the ground fuses to glass and stays. It grows as you
+  close tears, so the map records the run (way 5 above).
+
+**My order:** A (the most visual contrast, and a reason to go), then B (it breaks up the long
+roads), then C. G is cheap once tears have somewhere to leave a mark.
 
 ---
 

@@ -541,6 +541,22 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
+### 5.22 The ring geometry was disposed on every teardown — **fixed 2026-09-30**
+
+`TORG`, the torus behind the court's haloes, the old king's noose and the Lord's bands, was not
+in `_sharedRes`. So `disposeTree` freed its GPU buffer every time any rig using it was torn down,
+and three.js uploaded it again on the next draw. Nothing broke; it was churn. It is shared now,
+alongside the other base geometries. Found while building the Wheel, which is made of rings.
+
+### 5.21 The Stitch-Hand heals once and then cannot reach its patient — **raised 2026-09-30, not changed**
+
+`beasts.js` `stitchHeals` is red, and it is red before this round too (on `3f2ad58`). The surgeon
+puts the severed arm back on, which spends one Mortal Remains, and it goes on targeting the patient
+(need 31, stores full). But after 900 steps it stands 3.3 tiles off, and it only mends inside
+1.3, so the chest and blood are never touched. The harness steps only the surgeon, so this is its
+own travel failing to close on a body that is not moving. It is not about healing. It needs its
+own look: a Stitch-Hand that mends once and then stands idle is a real bug if play shows it.
+
 ### 5.20 The Sixfold's harness reads a Sixfold that barely fights — **raised 2026-09-29, not changed**
 
 `sixfold.js` has two red claims on this branch, and one of them is red on HEAD too.

@@ -418,7 +418,7 @@ them. Rift-held ones outlast dawn.
 | Hollow-Faced Shrike | Quick and brittle. Its bark is *(a sound like scissors)*. |
 | Choir-Kin | Heavy, and it speaks in *(the chord)* — one held note. |
 | Larder-Kin | It does not want to fight you. It wants *one* of you, and it will wait all night. Keeps a **midden** in the deep waste. You find it by following what took someone. |
-| Brood-of-the-Door | **The thing holding it open**, shoulders in this world and the rest on the far side. Never enters, never leaves the Door's radius, and while it stands the closing rite cannot finish. |
+| The Wheel in the Door | **The thing holding it open**: the Door turns on it (ruled 2026-09-30, **built** the same day; once Brood-of-the-Door, a torso on four arms). Rings inside rings, each on its own axis, the rims full of eyes; one great eye at the hub; fire going up between the rings. The thing the Order would call an angel of their god, and its people who see it kneel. Never enters, never leaves the Door's radius, and while it turns the closing rite cannot finish. Its four rings are what you cut out of it, each one narrowing the Door. |
 | Sixfolds | **A late-game enemy, not a single boss** (ruled 2026-09-29, **built** the same day). Six legs, jointed wrong. Born when a tear reaches full width — "the rift collapses behind it, done with its purpose. It does not go back. It goes OUT." None walks on day one. **They are capped by the Fracture**, because a few of them can wipe out a city: one until THE SKY LEANS, then two, then three, then four at the Second Fracture. From THE WATCHERS WAKE the deep waste puts one up on its own, under the cap. |
 
 **Rifts, the Door, and the clock.** A **tear** is a place where the world did not knit back
@@ -427,13 +427,28 @@ the Second Fracture made local: one tear, far larger, that does not drift shut. 
 arrives on a calendar — roughly a hundred and eighty days, whatever anyone does. Living loudly
 advances it; the floor is fixed. Six stages: **The Dust Falls**, **A Stillness**, **The Thinning**,
 **The Watchers Wake**, **The Sky Leans**, **The Second Fracture**. **Sealing the Door** (built
-2026-09-29) closes every tear in the waste with it and puts the Attention back to nothing. What the
-clock does after that, and what the world is like once the sky is shut, is open: `LORE-SEAMS.md`
-§11.1.
+2026-09-29) closes every tear in the waste with it and puts the Attention back to nothing. **And it
+stays shut** (ruled and built 2026-09-30: "after the door closes, I don't think it should reopen
+again"): the clock goes back to the middle of The Dust Falls and stops there for good, so the world
+returns to its first phase, gaunts scarce again, and the Door never comes round a second time. The
+rest of the postgame is open: `LORE-SEAMS.md` §11.1.
+
+**Legends first** (ruled and built 2026-09-30: gaunts "should ideally be scarce early on — enough
+to earn their reputation as legends"). Through the first week of The Dust Falls the night sends
+nothing into the open waste at all, and after that it builds slowly to its full rate by A Stillness.
+The Sundered sites and the crater keep their own: those are places you choose to go.
 
 **A Stillness is the hinge.** It has happened twice — once nine generations ago, and once eleven
 seconds ago with the player standing in it. The first Fracture did not close itself. Somebody shut
 it, by hand, standing in it, holding a formula until it gave, and the working was written down.
+
+**The roads and the hamlets** (ruled 2026-09-30: "make the main roads between towns a bit more
+obvious... hamlets etc... little by little"). The trade roads are worn into the ground now, a brown
+rutted track you can follow. And each town has one hamlet out along one of its roads, fifty to a
+hundred and twenty tiles from its gate: a farm, a well (Copperhold, Ironscar; Ironscar's stands in
+the rust) or the salt pans (Saltmere). A house, at a farm a barn, the work in the yard, and three or
+four people who keep to it. They build the way their town does and talk about the work in front of
+them. Beyond the law for now: no watch comes out that far. First step of `LORE-SEAMS.md` §11.3.
 
 **Sundered ground.** Where a piece of Malathuun fell — ribs like a burned cathedral, a skull you
 could camp inside, a hand still reaching. Harvested for **Sundered Marrow**. The canonical well for
@@ -676,7 +691,7 @@ Merchant**, **Old Soldier** — and two people in particular:
 **Alagadda `[★]`.** An **interdimensional kingdom built on alchemy**, and one of the places the
 first civilisation reached in its cosmic travels. The game's own vocabulary already carries this:
 everything that arrives from beyond *comes through* — the gaunts came through, the Sixfold came
-through, the Brood has its shoulders through — and Lyonart "came through at the edge of the world,"
+through, the Wheel turns in the Door — and Lyonart "came through at the edge of the world,"
 Lyre "came through before you." Written as exile-flavoured phrasing, and literal after all.
 **Exile there is one-way**, and Alagadda is not a place a person would go to. It is not a refuge and
 not an escape route; for most it is a fate considerably worse than dying here. That is why nobody
