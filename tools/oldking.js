@@ -135,9 +135,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       noticed = 90; noticeTier = noticeTierOf(noticed);
       theDoor.work = DOOR_WORK;
       const shutSaid = saidNow(() => workTheDoor(me3, 1 / 30));
-      R.andTheWorldLetsOutItsBreath = (!theDoor && tears0 >= 3 && rifts.length === 0 && noticed === 0 && noticeTier === 0 && /close at once/.test(shutSaid))
-        ? `sealing the Door closes all ${tears0} tears in the waste with it and puts the Attention back to nothing ("${(shutSaid.match(/Out in the waste[^|]*/) || [''])[0].slice(0, 70)}…")`
-        : `!! AFTER THE DOOR: tears ${tears0} -> ${rifts.length}, Attention ${noticed} (tier ${noticeTier}), said "${shutSaid.slice(0, 80)}"`;
+      /* and it stays shut: the clock rests in the first stage and a year of days does not move it */
+      const stage1 = fractureStage, fr1 = fracture;
+      advanceFracture(400); pushFracture(50);
+      const heldShut = fracture === fr1 && stage1 === 0 && doorSealed && !theDoor && !fractureOpen();
+      R.andTheWorldLetsOutItsBreath = (!theDoor && tears0 >= 3 && rifts.length === 0 && noticed === 0 && noticeTier === 0 && /close at once/.test(shutSaid) && heldShut)
+        ? `sealing the Door closes all ${tears0} tears in the waste with it, puts the Attention back to nothing, and puts the sky back in ${FRACTURE_STAGES[0].name} (${fr1}); four hundred days later it has not moved and the Door has not come back`
+        : `!! AFTER THE DOOR: tears ${tears0} -> ${rifts.length}, Attention ${noticed} (tier ${noticeTier}), stage ${stage1} at ${fr1} then ${fracture}, sealed ${doorSealed}, said "${shutSaid.slice(0, 80)}"`;
       R.putHimDownAndItLands = (!theDoor && /old king goes down/.test(fell) && body && body.head === 'h_oldcrown' && bossSlain.oldking)
         ? `put him down and the same hold shuts the sky; his crown is on the body ("${ITEMS.h_oldcrown.name}")`
         : `!! DOOR ${theDoor ? 'still open' : 'shut'}, FELL "${fell.slice(0, 50)}", CROWN ${body && body.head}, LEDGER ${bossSlain.oldking}`;

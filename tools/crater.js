@@ -625,6 +625,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const arrivals = () => chars.filter(c => c.nightSpawn && c.state !== 'dead').length;
         const clearNight = () => { for (let i = chars.length - 1; i >= 0; i--) if (chars[i].nightSpawn) chars.splice(i, 1); };
         const s0 = seed;
+        /* at A STILLNESS: in the first week of the clock the night sends nothing anywhere
+           (LEGENDS FIRST), which would make the Marches prove nothing */
+        const fr0 = fracture; fracture = Math.max(fracture, FRACTURE_STAGES[1].at); fractureStage = fractureStageOf(fracture);
         clearNight(); hour = 23;
         for (let i = 0; i < 60; i++) gauntTick(0.5);
         const onMarches = arrivals();
@@ -632,6 +635,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         for (let i = 0; i < 60; i++) gauntTick(0.5);
         const outside = arrivals();
         clearNight();
+        fracture = fr0; fractureStage = fractureStageOf(fracture);
         if (onMarches) bits.push(`${onMarches} came by night for the ones on the Marches`);
         if (!outside) bits.push('nothing came by night outside the gorge either, so the Marches prove nothing');
         /* the dawn takes the night's back */

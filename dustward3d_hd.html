@@ -18758,6 +18758,13 @@ const FRACTURE_STAGES = [
    tell:'THE SKY HAS OPENED. Not a tear this time — a door, and it is standing wide. Nine generations of dust falling, and this is what it was falling towards.'},
 ];
 let fracture = 0, fractureStage = 0;
+/* ---------- AND ONCE THE DOOR IS SHUT, IT STAYS SHUT ----------
+   Ruled 2026-09-30: "after the door closes, I don't think it should reopen again. It should
+   somewhat reset to the very first phase where gaunts etc are pretty scarce." So sealing the Door
+   puts the sky back in THE DUST FALLS, halfway through it (POSTGAME_FRACTURE), and the clock stops
+   there for good: nothing advances it again, so the Door cannot come round a second time. */
+let doorSealed = false;
+const POSTGAME_FRACTURE = 10;
 function fractureStageOf(v){
   let i = 0;
   for(let k = 0; k < FRACTURE_STAGES.length; k++) if(v >= FRACTURE_STAGES[k].at) i = k;
@@ -18786,12 +18793,12 @@ function fractureAccel(){
   return (noticeTier >= 3 ? 0.25 : 0) + (bossSlain.guardian ? GATE_RATE : 0);
 }
 function advanceFracture(days){
-  if(fracture >= 100) return;
+  if(fracture >= 100 || doorSealed) return;
   pushFracture((100 / FRACTURE_DAYS + fractureAccel()) * days);
 }
 /* the clock moved by anything, a day or a lurch: every stage crossed is told, in order */
 function pushFracture(by){
-  if(fracture >= 100 || !(by > 0)) return;
+  if(fracture >= 100 || !(by > 0) || doorSealed) return;
   const before = fractureStage;
   fracture = Math.min(100, fracture + by);
   fractureStage = fractureStageOf(fracture);
@@ -19783,7 +19790,9 @@ function closeTheDoor(by){
   }
   addSpecks(d.x, d.y, '#ffffff', 120);
   theDoor = null;
-  fracture = 92; fractureStage = fractureStageOf(fracture);   /* the sky is shut. It is not healed. */
+  /* the sky is shut, and back where it was in the first weeks: see AND ONCE THE DOOR IS SHUT */
+  doorSealed = true;
+  fracture = POSTGAME_FRACTURE; fractureStage = fractureStageOf(fracture);
   /* ---------- AND THE WORLD LETS OUT ITS BREATH ----------
      "Defeating the old king and sealing the door should somewhat reset the world. As in, all
       existing tears should close, and the attention should reset to zero." Every tear in the
@@ -19801,7 +19810,7 @@ function closeTheDoor(by){
   noticed = 0; noticeTier = 0;         /* whatever was watching you was watching through the Door */
   if(shutTears) log(`Out in the waste, all ${shutTears === 1 ? 'the one tear there was' : shutTears + ' tears'} close at once, like eyes. Nothing is watching you now.`, 'good');
   else log('Nothing is watching you now.', 'good');
-  log('THE DOOR IS SHUT. The dust is falling again — falling, which it has not properly done since before any of this. It is not over. It is survivable.', 'good');
+  log('THE DOOR IS SHUT. The dust is falling again — falling, which it has not properly done since before any of this. The sky is not healed. But it is shut, and it is going to stay shut.', 'good');
   deed('door_closed', 1);             /* the haunted have been waiting their whole lives for this */
   worldEvent('door', by ? by.x : W/2, by ? by.y : H/2,
     'The door in the sky has been closed. Whoever did it is standing out there in the dust.');
@@ -22968,6 +22977,24 @@ function bloodMoonRise(){
     worldEvent('bloodmoon', W/2, H/2, 'A blood moon is rising. The old people are barring their doors and will not say why.');
   }
 }
+/* ---------- LEGENDS FIRST ----------
+   "I've noticed lots of gaunts at the very start of the game, within the first few days. These
+    should ideally be scarce early on - enough to earn their reputation as legends."
+   Measured on the default seed: from the first night, one to three arrived within a hundred tiles
+   of the party every night (a cap of three and 0.30 an hour at tier 0), fifteen to thirty tiles
+   off. So through THE DUST FALLS the night sends a fraction of that, read off the clock: nothing
+   at all for the first fifth of the stage (about a week), then a slow curve up to the old rate by
+   A STILLNESS. A few weeks in, one is an event. The Sundered sites and the crater keep their
+   own: those are places you choose to go.
+   After the Door (`doorSealed`) the clock rests at POSTGAME_FRACTURE, halfway through the stage,
+   which puts this at about a seventh: scarce, and not gone. */
+function nightScarcity(){
+  if(fractureStage >= 1) return 1;
+  const f = clamp(fracture / FRACTURE_STAGES[1].at, 0, 1);
+  if(f < 0.2) return 0;
+  const k = (f - 0.2) / 0.8;
+  return clamp(k * k, 0.06, 1);
+}
 function gauntTick(dh){
   inquestTick();
   coilTick();
@@ -22988,10 +23015,13 @@ function gauntTick(dh){
      which is what stops them piling up night on night. */
   const living = rareFolk().night.filter(c => c.state !== 'dead');
   const tier = eldritchTide();
-  const cap = (3 + tier * 2 + Math.floor(purgeWrath / 60)) * (bloodMoon && isNight() ? 6 : 1);
+  /* LEGENDS FIRST: see `nightScarcity`. A red moon ignores it; it is the door wide open */
+  const early = (bloodMoon && isNight()) ? 1 : nightScarcity();
+  if(early <= 0) return;
+  const cap = Math.max(1, Math.round((3 + tier * 2 + Math.floor(purgeWrath / 60)) * early)) * (bloodMoon && isNight() ? 6 : 1);
   if(living.length >= cap) return;
   /* the nearer the sky is to opening, the more of them are already through */
-  const draw = (0.30 + tier * 0.32) * (bloodMoon && isNight() ? 14 : 1);
+  const draw = (0.30 + tier * 0.32) * early * (bloodMoon && isNight() ? 14 : 1);
   if(rnd() > draw * dh) return;
   const anchor = pick(player().filter(c => c.state !== 'dead')) || {x: W/2, y: H/2};
   let x, y, from = null;
@@ -51997,7 +52027,7 @@ function snapshot(){
     v:24, cats, bloodMoon, bloodMoonLast, redoubts:[...redoubts], stash:{...stash}, remainsQual, oreFields,
     /* the person in the jar is written the way everybody else is, and never as the live object
        — a body is full of references to other bodies, and those do not serialise */
-    phylacteries: phylacteries.map(p => { const o = {...p}; delete o._rect; if(p.body) o.body = sChar(p.body); return o; }), phylN, noticed, noticeTier, fracture, fractureStage,
+    phylacteries: phylacteries.map(p => { const o = {...p}; delete o._rect; if(p.body) o.body = sChar(p.body); return o; }), phylN, noticed, noticeTier, fracture, fractureStage, doorSealed,
     compact: {signed:[...compact.signed], stock:{...compact.stock}, muster:[...compact.muster], founded:compact.founded},
     theDoor: theDoor ? {...theDoor} : null, ruin, passS: {...passState}, sixS: {kills: sixfoldKills, mantle: sixMantleGiven},
     coilW: {app: coilAppetite, sown: coilSown, wars: coilWars.map(w => ({...w})), friend: coilFriend, enemy: coilEnemy, visits: coilVisits, vnight: coilVisitNight, hit: coilHitDay, risen: coilRisen},
@@ -52322,6 +52352,9 @@ function restore(d){
   noticed = d.noticed || 0;
   fracture = d.fracture || 0;
   fractureStage = fractureStageOf(fracture);
+  /* a save from before the flag: the old seal parked the clock at exactly 92, and nothing else does */
+  doorSealed = !!d.doorSealed || (!d.theDoor && d.fracture === 92);
+  if(doorSealed && fracture > POSTGAME_FRACTURE){ fracture = POSTGAME_FRACTURE; fractureStage = fractureStageOf(fracture); }
   compact.signed = d.compact ? [...(d.compact.signed||[])] : [];
   compact.stock  = d.compact ? {...(d.compact.stock||{})} : {};
   compact.muster = d.compact ? [...(d.compact.muster||[])] : [];
