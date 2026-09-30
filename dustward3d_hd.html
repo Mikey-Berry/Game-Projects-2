@@ -32504,6 +32504,33 @@ function heightAt(wx, wy){
      128 tiles whatever the map, the camera draws the same ground it did. */
   const GC = Math.max(8, Math.round(W / 128)), CW = W / GC, CH = H / GC;
   const hAt = (vx, vz) => HV[clamp(vz,0,H)*(W+1)+clamp(vx,0,W)];
+  /* ---------- THE ROADS, WORN INTO THE GROUND ----------
+     "Make the main roads between towns a bit more obvious. Right now the waste all blends
+      together." They were only ever a stroke on the splat, 0.9 of a tile wide at half strength,
+     and the splat holds 0.8 of a pixel a tile: every road in the world was narrower than one
+     pixel of the texture it was painted on, and blurred into the dust around it. The ground's
+     own vertices are one a tile, so the track goes there instead: a mask off every road's
+     waypoints, full down the middle and gone three tiles out, and the vertex colour darkens to
+     worn brown along it. Nothing is placed, nothing is rolled, and no body's path changes. */
+  const roadMask = new Float32Array((W + 1) * (H + 1));
+  {
+    const CORE = 1.0, EDGE = 3.0;
+    for(const r of [...tradeRoutes, craterRoad]) for(let i = 1; i < r.wps.length; i++){
+      const a = r.wps[i - 1], b = r.wps[i];
+      const dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1;
+      const x0 = Math.max(0, Math.floor(Math.min(a.x, b.x) - EDGE)), x1 = Math.min(W, Math.ceil(Math.max(a.x, b.x) + EDGE));
+      const y0 = Math.max(0, Math.floor(Math.min(a.y, b.y) - EDGE)), y1 = Math.min(H, Math.ceil(Math.max(a.y, b.y) + EDGE));
+      for(let vy = y0; vy <= y1; vy++) for(let vx = x0; vx <= x1; vx++){
+        const t = clamp(((vx - a.x) * dx + (vy - a.y) * dy) / L2, 0, 1);
+        const d = Math.hypot(vx - a.x - dx * t, vy - a.y - dy * t);
+        if(d >= EDGE) continue;
+        const k = d <= CORE ? 1 : 1 - (d - CORE) / (EDGE - CORE);
+        const o = vy * (W + 1) + vx;
+        if(k > roadMask[o]) roadMask[o] = k;
+      }
+    }
+  }
+  const ROAD_TINT = [0.80, 0.71, 0.60];               /* packed and rutted: browner and darker than the dust */
   const chunkGeo = (gx, gz) => {
     const geo = new THREE.PlaneGeometry(CW, CH, CW, CH);
     geo.rotateX(-Math.PI/2);
@@ -32527,6 +32554,11 @@ function heightAt(wx, wy){
           v *= clamp(1.06 - st * 0.2, 0.5, 1.04);
         } }
       cols[i*3] = v; cols[i*3+1] = v; cols[i*3+2] = v;
+      { const rm = roadMask[clamp(vz,0,H)*(W+1)+clamp(vx,0,W)];
+        if(rm > 0){
+          const k = rm * (0.85 + hash2(vx*3, vz*5) * 0.15);   /* a worn track, not a painted stripe */
+          cols[i*3] *= 1 - k * (1 - ROAD_TINT[0]); cols[i*3+1] *= 1 - k * (1 - ROAD_TINT[1]); cols[i*3+2] *= 1 - k * (1 - ROAD_TINT[2]);
+        } }
       /* the splat is one texture over the whole map; each chunk samples its own window */
       uv.setXY(i, vx / W, 1 - vz / H);
       /* central-difference gradient: continuous across chunk edges by construction */
@@ -32780,7 +32812,7 @@ function heightAt(wx, wy){
   }
   /* worn trade roads: the routes the world actually walks */
   spX.strokeStyle = 'rgba(148,120,86,0.5)';
-  spX.lineWidth = SPLAT/W * 0.9;
+  spX.lineWidth = SPLAT/W * 2.4;                      /* the texture's share of it; the track itself is in the vertices (THE ROADS, WORN INTO THE GROUND) */
   spX.lineCap = 'round'; spX.lineJoin = 'round';
   for(const r of [...tradeRoutes, craterRoad]){
     if(!r.wps.length) continue;
@@ -32795,7 +32827,7 @@ function heightAt(wx, wy){
      pass ends at its mouth) */
   {
     const hX = hiC.getContext('2d'), kx = hiC.width / HLX, ky = hiC.height / HLY;
-    hX.strokeStyle = spX.strokeStyle; hX.lineWidth = kx * 0.9; hX.lineCap = 'round'; hX.lineJoin = 'round';
+    hX.strokeStyle = spX.strokeStyle; hX.lineWidth = kx * 2.4; hX.lineCap = 'round'; hX.lineJoin = 'round';
     for(const r of [...tradeRoutes, craterRoad]){
       if(!r.wps.length) continue;
       hX.beginPath();
