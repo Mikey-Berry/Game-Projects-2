@@ -541,7 +541,7 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
-### 5.24 Two reds that are on `main` too — **raised 2026-10-01, not changed**
+### 5.24 Two reds that are on `main` too — **raised 2026-10-01; both closed the same day**
 
 The full suite on `9c00202` ran 194/200. After §5.23's fix, these two remain, and both are red on
 `main` (`321e276`):
@@ -553,6 +553,16 @@ The full suite on `9c00202` ran 194/200. After §5.23's fix, these two remain, a
   a body on the surface. The test stages at a real town's gaol and steps the AI for every body in
   the world, so the arrest may be one of the town's own surface guards walking up rather than the
   one below. That is unverified. It needs its own look before anyone calls it a game bug.
+
+**Closed:**
+- **`lean.js`:** ruled "we really aren't optimizing for mobile anymore. No need to keep a cap
+  on the size." It prints the size and caps nothing. `mobile.js` still holds the packed save
+  against the browser's storage quota.
+- **`storeys.js`:** traced. In both runs the arrest was made by Dustport's Dock Warden, on the
+  surface beside the body. The staged guard one floor down never touched it. So the game is
+  right and the test was wrong. The test now walks the town's own watch out of reach for the
+  trial and credits only the staged guard. It is green: no arrest through a floor, an arrest
+  beside.
 
 ### 5.23 Three harnesses were staging their tests on the crater's headland — **fixed 2026-10-01**
 
@@ -580,7 +590,7 @@ in `_sharedRes`. So `disposeTree` freed its GPU buffer every time any rig using 
 and three.js uploaded it again on the next draw. Nothing broke; it was churn. It is shared now,
 alongside the other base geometries. Found while building the Wheel, which is made of rings.
 
-### 5.21 The Stitch-Hand heals once and then cannot reach its patient — **raised 2026-09-30, not changed**
+### 5.21 The Stitch-Hand heals once and then cannot reach its patient — **raised 2026-09-30; fixed 2026-10-01**
 
 `beasts.js` `stitchHeals` is red, and it is red before this round too (on `3f2ad58`). The surgeon
 puts the severed arm back on, which spends one Mortal Remains, and it goes on targeting the patient
@@ -588,6 +598,15 @@ puts the severed arm back on, which spends one Mortal Remains, and it goes on ta
 1.3, so the chest and blood are never touched. The harness steps only the surgeon, so this is its
 own travel failing to close on a body that is not moving. It is not about healing. It needs its
 own look: a Stitch-Hand that mends once and then stands idle is a real bug if play shows it.
+
+**Fixed, and it was a real bug.** A trap on the surgeon's `target` showed it set by physics'
+STAND-TO block: any idle body of yours takes the nearest foe inside 7.5 tiles. That block never
+asked `noFight`, although the auto-acquire block below it had learned to. Earlier in the same
+harness the Door opens and the Coil rises at Greenrest, and a Coil cutthroat 0.9 tiles away
+became the Stitch-Hand's target. From then on the combat branch returned every tick ahead of its
+mending. In play, the same was true of every `noFight` body (the Death Eater, the Soulbound and
+the Wisp too): an enemy walking past pulled it off its work. STAND-TO now skips `noFight`, and
+`stitchHeals` is green (60 blood up to 140).
 
 ### 5.20 The Sixfold's harness reads a Sixfold that barely fights — **raised 2026-09-29; resolved 2026-10-01 (§5.23: it was staged on the headland)**
 
