@@ -149,7 +149,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const btns = [...document.querySelectorAll('#modalbody button')].map(x => x.textContent.trim());
       R._talk = `villager: modal ${open ? 'open' : 'shut'}, ${btns.length} options — ${btns.slice(0, 3).join(' / ')}`;
       R.talkingOpensAConversation = (open && btns.length >= 2)
-        ? `talking to somebody on the street opens a conversation with ${btns.length} things you might say, where before it was one bark and the end of it`
+        ? `talking to somebody who is not ordinary townsfolk opens a conversation with ${btns.length} things you might say`
         : `!! open=${open} options=${btns.length}`;
       shut();
       /* and a seat is a different conversation, not the same one with a different name on it */
@@ -161,6 +161,30 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         ? `and a town's seat opens a different one — ${lbtns.length} options, none of them the villager's`
         : `!! THE LEADER AND THE VILLAGER GET THE SAME MENU`;
       shut();
+    });
+
+    /* ---------- 4b. BUT A FARMER JUST TELLS YOU THE NEWS ----------
+       "Right clicking on a generic villager shouldn't open a dialogue box. It should just spit out
+        a rumor, as before." A real townsperson (`civ`) barks a rumour and opens nothing; the same
+        person opens the conversation while they know something a quest is asking after. */
+    guard(['aFarmerJustTellsYouTheNews'], () => {
+      wipe(); zero(); shut();
+      const t = makeChar('Brewer', 'town', me.x + 2, me.y, { atk: 2, def: 2 });
+      t.state = 'ok'; t.civ = true; t.homeTown = towns[0]; t.__probe = true; chars.push(t); made.push(t);
+      selected = [me];
+      const said = []; const lg = window.log; window.log = (m, c2) => { said.push(String(m)); return lg(m, c2); };
+      talkTo(t);
+      window.log = lg;
+      const barked = document.getElementById('modal').style.display !== 'flex' && said.some(m => m.startsWith(t.name + ':'));
+      shut();
+      const ho = window.huntOpts; window.huntOpts = () => [{ say: 'probe', hunt: 'ash' }];
+      talkTo(t);
+      window.huntOpts = ho;
+      const opened = document.getElementById('modal').style.display === 'flex';
+      shut();
+      R.aFarmerJustTellsYouTheNews = barked && opened
+        ? `a townsperson answers with the town's news and no window ("${(said.find(m => m.startsWith(t.name + ':')) || '').slice(0, 60)}…"), and opens the conversation only while they know something a quest is asking after`
+        : `!! A TOWNSPERSON: barked ${barked}, opened when asked after something ${opened}`;
     });
 
     /* ---------- 5. AND THE GATED LINES BELONG TO WHO IS STANDING THERE ----------

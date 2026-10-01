@@ -27,7 +27,7 @@
  *      from Greenrest does not; the answer names a town and days, and Verity's journal line
  *      gets it under the stage's own words
  *  11. the Sigil-Bound at the Sixfold: a town's watch has it, and so does a scholar's window
- *  12. the Ossuary King, asked for by two givers at once: a necromancer and somebody from
+ *  12. the Lord of Ash and Bone (once the Ossuary King), asked for by two givers at once: a necromancer and somebody from
  *      Hollowmere have it and the answer lands in both journal lines; with a crown already in
  *      the stores the Demilich is not asking any more
  *  13. the quarry down: the question is gone
@@ -247,12 +247,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* 12 */
     G.questStage = stageOf('sigil', 'slay', 'king');
     D.questStage = IMMORTAL_LINES.dark.stages.findIndex(st => st.need && st.need.crown);
-    const nK = talkRoot(necro, 'necro').some(x => /dead king/.test(x));
-    const hK = talkRoot(hollow, 'town').some(x => /dead king/.test(x));
-    if(!nK || !hK) bad(`12. the Ossuary King offered: necromancer ${nK}, Hollowmere ${hK}`);
+    const nK = talkRoot(necro, 'necro').some(x => /dead lord/.test(x));
+    const hK = talkRoot(hollow, 'town').some(x => /dead lord/.test(x));
+    if(!nK || !hK) bad(`12. the Lord of Ash and Bone offered: necromancer ${nK}, Hollowmere ${hK}`);
     else {
       talkRoot(necro, 'necro');
-      [...document.querySelectorAll('#modalbody button')].find(x => /dead king/.test(x.textContent)).click();
+      [...document.querySelectorAll('#modalbody button')].find(x => /dead lord/.test(x.textContent)).click();
       const both = ['master_sigil', 'master_demilich'].map(k => threadOf(k)).filter(t => t && t.step.includes(necro.name));
       if(both.length !== 2) bad(`12. the answer reached ${both.length} of the two givers' lines`);
       else ok(`12. both lines: ${both.map(t => t.title + ' — ' + t.step).join(' | ')}`);

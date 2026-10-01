@@ -200,10 +200,11 @@ Paladins.
 > not deceived. He is a man who reached a correct conclusion from a false premise and will never
 > learn which half was which.
 
-> MECHANICAL NOTE `[C]`. `hostile()` reads `if(a.faction === 'gaunt' || b.faction === 'gaunt')
-> return true;` with the comment "the gaunts did not come here to take sides." That is correct and
-> should stay. **Messengers therefore need their own faction, not `gaunt`.** Ordinary Watchers stay
-> unconditionally hostile to everyone; Messengers get a faction that can stand beside `purge`.
+> MECHANICAL NOTE `[C]`, **built 2026-09-25**. `hostile()` reads `if(a.faction === 'gaunt' ||
+> b.faction === 'gaunt') return true;` with the comment "the gaunts did not come here to take
+> sides." That is correct and stays. Messengers abroad are their own faction, `messenger`, at peace
+> with `purge`; ordinary Watchers stay hostile to everyone. The crater's own Messengers are handed
+> back to `gaunt`, so they allow nothing close, the Order included (`LORE-SEAMS.md` §3.2).
 
 > THE CONSEQUENCE, FOR WHOEVER WRITES THEIR DIALOGUE. The Watchers are not villains. They arrived
 > when a species disturbed a bound god and have been killing everything near the breach ever
@@ -253,7 +254,7 @@ Where its fragments fell the deep waste breeds entirely new ecosystems `[C]`; th
 "breeds things that did not exist last year," and the fragments are hunted anyway — "the dead god
 does not appear to mind. Appear."
 
-**Old Har-Mageddon — the devourer `[★]`.** Devourer of worlds, seeker of endless war; an ouroboros
+**Old Har'mageddon — the devourer `[★]`.** (Spelled *Har'mageddon* since 2026-09-29.) Devourer of worlds, seeker of endless war; an ouroboros
 waiting to consume all at the end of time. In Paladin myth the dark contrast to Good Kami — some
 read him as a metaphor for human greed, others as a genuine deity at war with Kami. Paladin lore
 calls him the **sixth-born**; the cults call him the **seventh living** god. His place in the
@@ -358,6 +359,20 @@ necromancer.
 - **Homunculus `[C]`** — vat-grown, learns frighteningly fast, dies at 34, sterile. Six lines poured
   for one job each. As empty vessels they attract **artificial souls** — stray alchemical overflow,
   an Old One's dream, even a whole Watcher. The Golden Age believed it was manufacturing labour.
+  **Built 2026-09-29, the tenants and rates as proposed.** About a third are not alone in there, and
+  nobody knows which until it shows:
+  - **Overflow (14%)**, the vat's leftover charge. It comes out as a gift at I, even in a Nullborn.
+    A working draws no more Attention than usual, but it can **discharge** and burn whoever is
+    beside it, the vessel too.
+  - **A dream (10%)**, an Old One's, and by what it says in its sleep, Malathuun's (never named).
+    One skill learned twice as fast. Some nights it walks toward Sundered ground, and the things
+    there do not touch it.
+  - **An echo (7%)**, a Golden-Age person. It is lettered and studies half again as fast. After a
+    season it answers to another name, is haunted, and will not raise the dead.
+  - **A whole Watcher (4%).** It sees in the dark, and gaunts pass it by unless it strikes one. The
+    Order and the Messengers know it on sight. From THE WATCHERS WAKE it may **turn**, for good
+    (1% a day).
+  - Never Mother's: the Hollows are hers, and that line stays hard. Nine has nobody in him.
 - **Golem `[C]`** — "a servant that was left running until it began to want things." Clay, Rock,
   Paper, Glass.
 
@@ -371,11 +386,17 @@ is a small, distributed, extremely patient attempt by a prisoner to reassemble h
 **Open, and on the shelf `[?]`:** exactly how the parasites work — biology, propagation, what a
 fragment *is* — is undefined and wants a pass of its own.
 
-**A line not yet written `[★]`.** Since some purebloods went up and bred back in, a
-**pureblood-descended human line** is available and would slot into the existing seven without a
-new system: pale, light-averse, easy underground, uneasy under open sky. **Saltmere** is the
-ready-made home — it already "marries among themselves, buries among themselves, and counts every
-stranger twice." Hollowmere's Grave-bred are the other candidate.
+**The pureblood-descended line `[★]`: the Salt-cured** (ruled 2026-09-29). Since some purebloods
+went up and bred back in, a pureblood-descended human line was always available, and **Saltmere's
+Salt-cured are it**. It is **implied, never stated**: nobody in the world knows it, Saltmere least of
+all. The traits to lean on are pale, light-averse, easy underground, uneasy under open sky. The town
+already "marries among themselves, buries among themselves, and counts every stranger twice", and the
+brine is the story Saltmere tells itself about why it is the way it is. **Built 2026-09-29.** A
+Salt-cured pays half the dark's price underground (pace, blow, working, and a little further seen
+without a lamp). They are a touch slower on the surface from ten until three. The Kept know them:
+an offering laid with one at the stone buys half again the regard, and the first time, the
+congregation comes in close to look. And Saltmere says it without saying it (*"We keep off the
+flats at noon. It's the glare. That's all it is."*).
 
 ## 10. The Attention, the night & the deep `[C]`
 
@@ -397,19 +418,37 @@ them. Rift-held ones outlast dawn.
 | Hollow-Faced Shrike | Quick and brittle. Its bark is *(a sound like scissors)*. |
 | Choir-Kin | Heavy, and it speaks in *(the chord)* — one held note. |
 | Larder-Kin | It does not want to fight you. It wants *one* of you, and it will wait all night. Keeps a **midden** in the deep waste. You find it by following what took someone. |
-| Brood-of-the-Door | **The thing holding it open**, shoulders in this world and the rest on the far side. Never enters, never leaves the Door's radius, and while it stands the closing rite cannot finish. |
-| The Sixfold | Six legs, jointed wrong. Born when a tear reaches full width — "the rift collapses behind it, done with its purpose. It does not go back. It goes OUT." |
+| The Wheel in the Door | **The thing holding it open**: the Door turns on it (ruled 2026-09-30, **built** the same day; once Brood-of-the-Door, a torso on four arms). Rings inside rings, each on its own axis, the rims full of eyes; one great eye at the hub; fire going up between the rings. The thing the Order would call an angel of their god, and its people who see it kneel. Never enters, never leaves the Door's radius, and while it turns the closing rite cannot finish. Its four rings are what you cut out of it, each one narrowing the Door. |
+| Sixfolds | **A late-game enemy, not a single boss** (ruled 2026-09-29, **built** the same day). Six legs, jointed wrong. Born when a tear reaches full width — "the rift collapses behind it, done with its purpose. It does not go back. It goes OUT." None walks on day one. **They are capped by the Fracture**, because a few of them can wipe out a city: one until THE SKY LEANS, then two, then three, then four at the Second Fracture. From THE WATCHERS WAKE the deep waste puts one up on its own, under the cap. |
 
 **Rifts, the Door, and the clock.** A **tear** is a place where the world did not knit back
 together. Leave one open and it widens; at the second stage it begins to **sing**. **The Door** is
 the Second Fracture made local: one tear, far larger, that does not drift shut. The Second Fracture
 arrives on a calendar — roughly a hundred and eighty days, whatever anyone does. Living loudly
 advances it; the floor is fixed. Six stages: **The Dust Falls**, **A Stillness**, **The Thinning**,
-**The Watchers Wake**, **The Sky Leans**, **The Second Fracture**.
+**The Watchers Wake**, **The Sky Leans**, **The Second Fracture**. **Sealing the Door** (built
+2026-09-29) closes every tear in the waste with it and puts the Attention back to nothing. **And it
+stays shut** (ruled and built 2026-09-30: "after the door closes, I don't think it should reopen
+again"): the clock goes back to the middle of The Dust Falls and stops there for good, so the world
+returns to its first phase, gaunts scarce again, and the Door never comes round a second time. The
+rest of the postgame is open: `LORE-SEAMS.md` §11.1.
+
+**Legends first** (ruled and built 2026-09-30: gaunts "should ideally be scarce early on — enough
+to earn their reputation as legends"). Through the first week of The Dust Falls the night sends
+nothing into the open waste at all, and after that it builds slowly to its full rate by A Stillness.
+The Sundered sites and the crater keep their own: those are places you choose to go.
 
 **A Stillness is the hinge.** It has happened twice — once nine generations ago, and once eleven
 seconds ago with the player standing in it. The first Fracture did not close itself. Somebody shut
 it, by hand, standing in it, holding a formula until it gave, and the working was written down.
+
+**The roads and the hamlets** (ruled 2026-09-30: "make the main roads between towns a bit more
+obvious... hamlets etc... little by little"). The trade roads are worn into the ground now, a brown
+rutted track you can follow. And each town has one hamlet out along one of its roads, fifty to a
+hundred and twenty tiles from its gate: a farm, a well (Copperhold, Ironscar; Ironscar's stands in
+the rust) or the salt pans (Saltmere). A house, at a farm a barn, the work in the yard, and three or
+four people who keep to it. They build the way their town does and talk about the work in front of
+them. Beyond the law for now: no watch comes out that far. First step of `LORE-SEAMS.md` §11.3.
 
 **Sundered ground.** Where a piece of Malathuun fell — ribs like a burned cathedral, a skull you
 could camp inside, a hand still reaching. Harvested for **Sundered Marrow**. The canonical well for
@@ -484,11 +523,32 @@ its great house is the CHARM HOUSE `[C]`. The curse clause is why the practice s
 fussy, unexplained rule-following rather than devotion: **you do not improvise with something that
 says yes.**
 
-**The Coil `[C]`.** The Har-Mageddon doom cult. From the shipped comment: *"The seventh living god
+**The Coil `[C]`.** Har'mageddon's doom cult. From the shipped comment: *"The seventh living god
 has quiet people in every town. They pay their tithes, sweep their steps, and after dark some of
 them walk out past the fences to a stone that is not on any map, and practice. Not worship.
-Practice."* Five ordinary civilians marked at worldgen — never at Hollowmere — with an exposure
-state and two sets of dialogue depending on it.
+Practice."* Cells of three to five in every town but Hollowmere, each with a speaker. They meet
+some nights at the serpent stone, recruit, and buy the watch.
+
+**Widened 2026-09-29** (`LORE-SEAMS.md` §10.7, items 1, 2, 4, 5, 6 and 7):
+- **Named by layer.** The Church names him **Har'mageddon, the sixth-born**, the Devourer (the
+  Order's talk). The Coil never says the name to anybody outside it: **the Appetite**, **the
+  Seventh**. Nobody reconciles the count.
+- **The Appetite.** Every running war feeds it, and so do open tears and a red moon. Fed enough, a
+  cell **makes a war**: its own town's caravan burned on the road with the neighbour's colours on
+  the dead. A Serpent in Ash lies by the wagons, and shown to either seat, it ends the war.
+- **Witness, then choose.** Seeing them at the stone leaves the mark on it.
+  - **Report them:** take the mark to their town's seat, and the cell is arrested. The Coil marks
+    you, and knives come a night or three later.
+  - **Or stand with them:** they drill you at the stone. On the third night the speaker gives you
+    the **Ouroboros Ring** (every kill in a fight adds to the next blow, and whoever wears it does
+    not fall back). In a town they hold, the watch looks away for you, short of murder.
+- **The rising.** At the Second Fracture the cells come out with blades and go for **their own
+  towns**, not the crater. They feed on the chaos and do not know what the Door is. A friend of the
+  stone is not in their way.
+- **Rubido** was on the god's side of the stone once, and his barks say so without the name.
+- **Maren Tollis** (below) is the Copperhold speaker, and the cult's human face.
+- *Not incorporated:* Kami keeping them out of Fallowend (item 3). The rivalry is further out than
+  that, and not so obvious.
 
 **The Compact `[C]`.** The player's institution, deliberately expensive. A town that signs puts
 stores into a common stock and its guards into a shared muster — so **a signatory is immediately
@@ -511,14 +571,23 @@ dug into the first civilisation's tunnels, and at the bottom of one of them is M
 - **The Sigil-Bound** — transmutation immortal in an armour vessel, one of eleven poured, two
   hundred years ago. "Nobody has seen it open" — opening it ends it. He is losing his name and the
   questline is him getting it back. Sex unfixed `[?]`.
-- **The Ossuary King** (m) — **not a king** (rebuilt 2026-09-27). A Golden-Age registrar who
+- **The Lord of Ash and Bone** (m) — **not a king** (rebuilt 2026-09-27), and **renamed 2026-09-29**
+  from the Ossuary King so the name stops competing with the old king's. His trinket is **the
+  Lord's Signet**. A Golden-Age registrar who
   countersigned the Pouring: eleven names and his hand under every one. He was meant to be the
   twelfth, went halfway into the vessel and climbed back out, and what climbed out wears its own
   bones on the outside, like the house they are kept in. He sits a throne in a far ruin with the
   dead kneeling in rows before him, petitioners who came to be registered and never left. The
-  folk call him a king for the throne and the crown; the "crown" is the Pouring's register-band,
+  folk call him a lord for the throne and the crown; the "crown" is the Pouring's register-band,
   sunk and tarnished (the Sunken Crown). He has **no relation to the old king** `[C]`. See the
   note below.
+  **The crown, ruled and built 2026-09-29:** the Last Rite (lichdom) wants *an ancient crown of
+  alchemical significance*. That is usually the Sunken Crown taken from him, but it need not be.
+  Lyonart came through with **the Exile's Crown** (§14), and **the demilich accepts it**, so
+  Lyonart's road to lichdom goes round the Lord of Ash and Bone instead of through him. *"No names.
+  Ours had eleven, and a space... It will open the door. Better than ours would, and I do not like
+  that, and it is not my business. Put it away. The one in the ruin can keep his crown, and you can
+  keep your skin."*
 - **Sister Ash** (f) — exiled inquisitor with a pyre-weapon. The light gave her certainty where it
   gave Verity quiet. "I burned my order. Bones burn easier."
 - **Grand Marshal Vey** — holds the Bastion.
@@ -529,7 +598,9 @@ dug into the first civilisation's tunnels, and at the bottom of one of them is M
   to do. Eleven years closing tears by hand — the one thing nobody does. **The only character doing
   the opposite of what the player does, without being an enemy for it.**
 - **Osric & Wenna** — Hollowmere gravekeepers who compete with you for corpses.
-- **The Last Scholar `[★]`** — §11. Not yet in the code, and the largest unbuilt figure in the setting.
+- **The Last Scholar `[★]`** — §11. The largest unbuilt figure in the setting. His plumbing is in the
+  code (2026-09-29): a body nothing can harm, four sightings and a thread. He says nothing yet; his
+  lines are proposed in `LORE-SEAMS.md` §9.5 and waiting on a ruling.
 - **Mother · Llammialith `[★]`** — §6. Alive, redundant, and the only being who knows the whole of it.
 - **The old king `[★]` `[C]`** — the kingdom's last king. He was at the middle of the rite when it
   worked, and he was not annihilated with his capital: he went through, toward the throne, and he
@@ -537,7 +608,45 @@ dug into the first civilisation's tunnels, and at the bottom of one of them is M
   Nobody in the world calls him that**; outwardly he is only ever *the old king*. When the sky
   opens he hangs in the mouth of the Door on a rope of light, and he is the last thing the closing
   rite has to bring down. He believes the rite was done correctly, and he is right. His court
-  (four, one per Art) is sketched in `LORE-SEAMS.md` §8.3 and is `[?]` until ruled on.
+  (four, one per Art) is **built** (2026-09-27): each courtier comes through at their own ground,
+  and the old king comes down carrying the Art of every courtier not yet slain (`LORE-SEAMS.md`
+  §8.5). **The Unremembered was rebuilt 2026-09-29** (the name kept). It is a court scribe in
+  salt-grey, masked with a white oval and one black redaction bar, with black bars drifting across
+  him. A band of his chest is gone and a forearm floats past its sleeve. Afterimages stand on the
+  path he took. He works the Dust arts at full, the originals of the player's degraded ones:
+  - a wall that was never there;
+  - four of him at half blood, and their blades cut;
+  - a Loyalty that always takes;
+  - a Veil that puts him somewhere else.
+
+  While he stands, the old king inherits the walls. When he dies, *"Something was killed on the salt
+  flats. Nobody who was there can say what."* A leaf of his ledger gives a Dust III player the wall:
+  the reach the art had lost (§7's "raise a wall that was never there").
+
+**Also in the world `[C]`** (added 2026-09-29; the bible did not know them). The recruitable
+uniques. The code calls them the wanderers: one of each is out there in every world, always in the
+same *kind* of place and never the same place twice, and each costs something different.
+
+| who | the tag | where, and what it takes | conviction |
+|---|---|---|---|
+| **Hob Sedge** (m) | the Ninth Man | a town gaol; pay the fine. *"Nine men went into that cellar and I am the one who walked out."* | loyal |
+| **Ottoline Rill** (f) | the Ruin Surgeon | a ruin, treating anybody; bring her somebody wounded | compassionate |
+| **Nine** (m, homunculus, Sleepless) | the one that woke up | a redoubt's doorway; show him a written doctrine. *"The order has not been rescinded."* | cold |
+| **Cressa Orrick** (f) | stock, allegedly | the slavers' camp; kill them | cruel |
+| **Bram Quarrow** (m) | the man on the roof | a ruined tower; coin, in advance | inquisitive |
+| **Albedo** (f, succubus) | the one nobody mentions | a town that has agreed not to notice her; come back when the Order burns somebody | compassionate |
+| **Rubido** (m, fallen) | the one that walked out | the Coil's serpent stone. *"I have been on the other side of that particular arrangement."* | cold |
+| **Hesper Lund** (f, dust) | the one you keep meeting | the trade roads; cross her path three times | haunted |
+| **Tallow** (f, homunculus, Vat-born) | the one with the papers | Copperhold; show her a formula (not spent). She has an **echo** already shown: *"My name is Tallow. I know it is. I have the papers. She keeps signing them, though."* The name is Ilse Carrow's. Added 2026-09-29. | haunted |
+| **Brother Blythe** (m) | the one who put the helm down | a town's taproom, drinking; three bottles of rum. An ex-Paladin Hospitaller who took Ash's path without the exile. The Order never hunted him and would have him back tomorrow; his bed in the infirmary is still made. Plate, no helm, the blessed gift, a strong medic, and **a drunk surgeon**: steady with his bottle a day (1.25x), shaking without (0.6x). Added 2026-09-29. | devout |
+
+**Czarina** (f) is Saga's: the other Hollow who walked out of the redoubt, built as a bodyguard, with
+no gift (loyal). Other named people with a place in the code are the Archivist (Dustport's Scholar),
+Bellowes and the Dame (the Aldercott house), the Demilich (the ninth name on the band), the Last
+Warden and the Deep Warden. **Maren Tollis** (f, added 2026-09-29) is a Copperhold chandler and the
+Coil's speaker there: pleasant, fair-dealing, drills at the stone twice a week, and if you find her
+out she does not run. She asks you what you think war is for. Of the others sketched in
+`LORE-SEAMS.md` §10.8, Old Grist and Idris Vane were cut.
 
 **Verity, rewritten `[★]`.** **She ascended after the Fracture, not before** — ninety years ago,
 four generations back, not an ancient. She was a Scholar, and her tragedy is that **she succeeded.**
@@ -555,20 +664,23 @@ her. **It worked.** Her five requests all read as experiments run by a researche
 condition, and the last is her asking a stranger to stand there while she tries, and fails, to want
 to stop.
 
-> ON THE OSSUARY KING `[C]`, ruled 2026-09-27. The old scholars' rumour made him the Golden
+> ON THE LORD OF ASH AND BONE (then the Ossuary King) `[C]`, ruled 2026-09-27. The old scholars' rumour made him the Golden
 > Age's last king. **That rumour is retired.** He was reworked from the ground up as a
 > registrar with a throne, and the user ruled him **no relation to the old king**: not the
 > husk, not the heir, not a rumour of either. The twelfth space on the Circlet was his, and he
 > would not sign it (the demilich's line). The folk may still call him a king; nothing in the
-> world treats him as one.
+> world treats him as one. (Renamed 2026-09-29, partly so that "king" means one person.)
 
 ## 14. Where the player comes in `[C]`
 
 Five roles anybody could have had — **Gravekeeper**, **Exile**, **Freed Slave**, **Ruined
 Merchant**, **Old Soldier** — and two people in particular:
 
-- **Lyonart d'Alagadda** — exiled prince, **from another world**. Came through with the Sunken
-  Crown, six of his household still following, and one sworn man still breathing. Begins holding the
+- **Lyonart d'Alagadda** — exiled prince, **from another world**. Came through with a crown of his
+  own, **the Exile's Crown**: not the Sunken Crown, but the demilich accepts it for the Last Rite
+  (ruled 2026-09-29), which is half the point of his origin. Nobody here can say what it is made of,
+  and there are no names inside it. Six
+  of his household still following, and one sworn man still breathing. Begins holding the
   endgame and unable to reach it. His road is social — ask in halls, three tellings, rumour — and it
   ends at a sister who has spent eleven years undoing his kind of work.
 - **Saga Wordsworth** — a Hollow, and not an accident: the Scholars grew godkillers in the redoubts
@@ -579,7 +691,7 @@ Merchant**, **Old Soldier** — and two people in particular:
 **Alagadda `[★]`.** An **interdimensional kingdom built on alchemy**, and one of the places the
 first civilisation reached in its cosmic travels. The game's own vocabulary already carries this:
 everything that arrives from beyond *comes through* — the gaunts came through, the Sixfold came
-through, the Brood has its shoulders through — and Lyonart "came through at the edge of the world,"
+through, the Wheel turns in the Door — and Lyonart "came through at the edge of the world,"
 Lyre "came through before you." Written as exile-flavoured phrasing, and literal after all.
 **Exile there is one-way**, and Alagadda is not a place a person would go to. It is not a refuge and
 not an escape route; for most it is a fate considerably worse than dying here. That is why nobody
@@ -589,8 +701,11 @@ leaves through the tears instead of closing the Door.
 **compassionate** hate a sacked town; the **devout** loathe lichdom above all; the **ambitious** want
 conquest and resent retreat; the **cruel** enjoy the sack; the **inquisitive** care about recovered
 formulae and would very much like to meet Mother; the **haunted** care about sealed tears and the
-Door above everything. **Cold** mostly wants paying. Education is a damper, not a direction — the
-lettered move slower in both directions.
+Door above everything; the **loyal** decided about you a long time ago and take a great deal to
+undecide, and what moves them is who is left behind and who is brought back: one of yours taken back
+from a captor, a sister found, a squadmate lost (*"We do not leave people in the dust. That is not one
+of the rules I bend."*). **Cold** mostly wants paying. Education is a damper, not a direction — the
+lettered move slower in both directions. Eight in all, and all eight are shipped `[C]`.
 
 ## 15. Golden Age relics
 
@@ -599,9 +714,11 @@ lettered move slower in both directions.
   Golden Age's best weapons can only be held by people it deliberately crippled to hold them.
 - **Philosopher Stones `[★]`** — condensed alchemical might able to rewrite the laws of reality, one
   use, with all the contamination hazard that implies. Golden Age power sources for when latent
-  aether was scarce. One wrote the law that holds the Twins.
-- **Tablets of the Deep `[★]`, not yet built** — the purebloods' tablets, manuscripts and temple
-  depictions. Unlike Formulae and Codices they would give **no insight at all**, only what happened.
+  aether was scarce. One wrote the law that holds the Twins. **Minor ones are built** (ruled
+  2026-09-26): every shrine's stone is one, and crushing it gives Sanctified Ash. The great ones
+  are not in the game.
+- **Tablets of the Deep `[★]`, not yet built; proposed in `LORE-SEAMS.md` §9.4** — the purebloods'
+  tablets, manuscripts and temple depictions. Unlike Formulae and Codices they would give **no insight at all**, only what happened.
   A collectible whose entire value is lore, found in the Deep, readable only by the lettered. The
   most promising route by which a player could assemble the cosmology without Saga's questline.
 - **Codices & Formulae `[C]`** — the physical remnants of Golden-Age knowledge, and the only source
@@ -639,8 +756,11 @@ asking for the tender. The living wade it; the dead do not notice it.
 
 **Built:** the kingdom's crater. Its heart was annihilated in brilliant light, and it is the largest
 landmark in the world: a headland in the north-east standing out into the salt, walled on the
-landward side by a ridge with one gorge through it. It is also where the rite was performed, and
-the Door opens at the bottom of the bowl.
+landward side by a ridge with one gorge through it. From the gorge in it deepens: the Marches, the
+Ashfall, the Scorch, the glass, the rim and the bowl. The Order holds the mouth of the gorge and
+turns everybody back, with a Messenger standing at the barricade beside them that nobody there
+asked to stay. It is also where the rite was performed, and the Door opens at the bottom of the
+bowl.
 
 ## 17. Aesthetic key & voice guide `[★]`
 
@@ -679,34 +799,36 @@ Flagged, unresolved, safe to revisit. Keep dependent dialogue thin.
 | What ended the first civilisation | **The most load-bearing open question in the setting.** Everything the Last Scholar does is an attempt to stop it happening to humanity, and he thinks it is happening again. |
 | The Last Scholar's immortality | **Deliberately never explained.** The legends this character is built on work because nobody produces the mechanism. |
 | How Mother's parasites work | Moral shape settled — cut from her, and she allowed it. The biology is undefined and is on the shelf for its own pass. |
-| The Ossuary King as the last king | **Ruled 2026-09-27: no.** Reworked as a registrar who would not be the twelfth name. No relation to the old king. The rumour is retired, not kept open. |
-| The old king's court | Four, one per Art, sketched in `LORE-SEAMS.md` §8.3. Not built. |
-| The kingdom's crater | Unbuilt. Should be the largest landmark in the world, and the natural site for the Door. |
+| The Lord of Ash and Bone (then the Ossuary King) as the last king | **Ruled 2026-09-27: no.** Reworked as a registrar who would not be the twelfth name. No relation to the old king. The rumour is retired, not kept open. |
+| The old king's court | **Built 2026-09-27.** Four, one per Art (`LORE-SEAMS.md` §8.5). |
+| The kingdom's crater | **Built 2026-09-25 to 09-28**, in three phases: the headland, the walk in, the Order's post at the gorge (§16). |
 | What the Church knew | It existed before the Fracture, alongside the kingdom. Whether it blessed the rite is unwritten, and it is where the closely-guarded secret came from. |
 | Good Kami's placement | Candidate: the one of Mother's kin who did not leave. |
-| Har-Mageddon's placement | No slot in the revised cosmology yet, and the Coil is already shipped. |
+| Har'mageddon's placement | No slot in the revised cosmology yet. His part in the world was widened 2026-09-29 (named by layer, the Appetite, the rising: §12), without placing him. Kami's rivalry with him stays "zoomed out". |
 | God birth-order | First through seventh; five undefined; **do not resolve.** The shipped Coil comment says "seventh living god" and that is as far as anything should go. |
 | The eldritch moon | Recycled and held. It used to explain Scaleborn births and cannot now. Candidate: the Voidborn Twins, who have no worldly signature at all. |
 | The Hollow ladder | Not a fourth branch immortality. Whether it should be reframed or extended is for workshopping. |
 | The Hollow Citadel | Exists, four floors, at Hollowmere. Purpose unwritten. |
 | Mother's serial number | Needs a format. Make it clerical — an asset tag, not a codename. It should look like the requisition number on the Ordnance Schematic. |
-| Sanctified Ash | Is a shrine stone a small Philosopher Stone, or something else the faithful mistook for one? |
+| Sanctified Ash | **Ruled 2026-09-26:** a shrine stone is a minor Philosopher Stone, and crushing one gives the ash. Built. |
 | "Dusters" | Shipped; overlaps Dust / dust bandits / Dustport. Kept — the overlap reads as slang doing several jobs. |
 | Broken decay | "The Fracture broke decay itself — the waste as preservative" is a canonisation candidate, nearly free against the existing rot ladder. |
 
-**Forthcoming, and where it fits.**
+**Built since revision 2, and where it fits.** All three were forthcoming when this was written,
+and all three are now in the game.
 
-- **Malathuun's Curse** — a sundered site stands up. Not a new rule: the corpse-sites *are*
+- **Malathuun's Curse** `[C]` — a sundered site stands up. Not a new rule: the corpse-sites *are*
   Malathuun, the ground there already breeds things that did not exist last year, and "the dead god
   does not appear to mind. Appear." has been waiting for something to justify that last word. It
   fits better now that he was a bystander rather than a resource: the one Old One in this story who
   was owed nothing and lost everything.
-- **Eyes of Ainzopha'ar** — the Eldest's own eyes, and the first thing it has ever put into the
+- **Eyes of Ainzopha'ar** `[C]` — the Eldest's own eyes, and the first thing it has ever put into the
   world. Note the tension worth exploiting: he is mindless, so they cannot be *sent*. They would be
   something a sleeping thing sheds.
-- **Messengers** — now the jailers (§5). Their tongue is the language the tap was designed in; you
-  do not wire a sleeping god into a prisoner by accident. **They need their own faction in code, not
-  `gaunt`.**
+- **Messengers** `[C]` — now the jailers (§5). Their tongue is the language the tap was designed
+  in; you do not wire a sleeping god into a prisoner by accident. They have their own faction in
+  code (§5, mechanical note). Their job still has no expression: nothing about them answers the
+  Door or the tears.
 
 ---
 

@@ -89,8 +89,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const me = player()[0];
     const HOME = { x: me.x, y: me.y };
     /* ---------- OPEN WASTE, FOUND ONCE ----------
-       Past every town (see block 3 for why a town's gate is the world's dice) and clear of the
-       crater's approach, where the Watchers and the light are the crater's own business. Two
+       Past every town (see block 3 for why a town's gate is the world's dice) and off the
+       crater's headland, where the Watchers and the light are the crater's own business. Two
        spots, sixty tiles apart, so the fight in block 2 leaves nothing on block 3's ground. */
     const findWaste = (avoid) => {
       for (let r = 40; r < 240; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
@@ -98,7 +98,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         const x = Math.floor(HOME.x) + dx + 0.5, y = Math.floor(HOME.y) + dy + 0.5;
         if (x < 40 || y < 40 || x >= W - 40 || y >= H - 40) continue;
         if (!towns.every(t => dist(t.x, t.y, x, y) > 70)) continue;
-        if (typeof CRATER !== 'undefined' && craterD(x, y) < CRATER.approach + 30) continue;
+        if (typeof inHeadland === 'function' && inHeadland(x, y, 30)) continue;
         if (avoid && dist(avoid.x, avoid.y, x, y) < 60) continue;
         if (isBlocked(x, y, 0) || isBlocked(x + 20, y, 0)) continue;
         return { x, y };

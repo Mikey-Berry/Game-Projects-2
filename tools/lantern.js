@@ -76,6 +76,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     outer:
     for(let y = 40; y < H - 40; y += 7) for(let x = 40; x < W - 40; x += 7){
       if(towns.some(t2 => dist(t2.x, t2.y, x, y) < 70)) continue;
+      /* AND OFF THE HEADLAND. Since crater phase 2 the Marches are safe ground by rule: nothing
+         follows anybody onto them, so a gaunt staged there drops its quarry with the lamp out as
+         well as lit, and the DARK control read "closest 3.3" again. The first clear patch this
+         scan finds from the top of the map was on the Marches (226 tiles from the middle). */
+      if(craterD(x, y) < CRATER.range + CRATER.ridge + 30) continue;
       let ok = true;
       for(let j = -10; j <= 10 && ok; j++) for(let i = -10; i <= 10 && ok; i++)
         if(isBlocked(x + i + 0.5, y + j + 0.5)) ok = false;

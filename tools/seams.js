@@ -33,6 +33,9 @@
  *  10. a shrine stone is a small philosopher's stone: breaking a shrine gives the stone, the
  *      bench reads it for insight, CRUSH makes it ash, and ash carries the Door's hold faster
  *      without being needed for it
+ *  11. what a thing is can be found where it is listed: the wagon, a pack and a town's counter
+ *      name their items with a card, and hovering the name brings up its description. The only
+ *      place a description was ever printed was the gear chooser
  *
  * Anything starting '!!' fails the build.
  *
@@ -521,6 +524,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.opened = !!mother.opened && !!dr.open && !dr.barred;
       const th = threads.find(t => t.key === 'mother');
       R.threadDone = !!(th && th.done);
+      /* and she is the one who says the Last Scholar exists (tools/lastscholar.js has the rest) */
+      R.scholarHeard = typeof lastScholar === 'undefined' ? null : !!lastScholar.heard && !!threads.find(t => t.key === 'scholar');
       /* and a reload keeps it */
       const snap = snapshot();
       mother.opened = false;
@@ -567,6 +572,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         if (x.wardenStruck === false) bits.push('struck, the Deep Warden stays stood down');
         if (!x.wardenKept) bits.push('a reload forgot the Warden stood down');
         if (!x.threadDone) bits.push('her thread was not closed');
+        if (x.scholarHeard === false) bits.push('closing her scene did not open the thread of the man with the old face');
         if (!x.kept) bits.push('a reload forgot the door was opened');
         if (!x.brokenDoor) bits.push('with her bar already broken (an old save), a finished Hollow in the room heard nothing');
       }
@@ -574,7 +580,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     out.herSealIsHers = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
       : `her door answers nobody with a shoulder (${x.strangerMenu}) while every other vault still forces, holds against a rider, and opens to a finished Hollow's hand on the seal: ` +
         `the second scene is said a line at a time in the window (${x.pages + 1} lines, GO ON to LEAVE), her first scene speaks of the corpse site without kinship, ` +
-        `the Deep Warden stands down for the one she let in until it is struck, her thread closes, a reload keeps it all, and a door an old save already broke still gives the scene to one of hers in the room${x.otherForced === undefined ? ' (no other vault to compare)' : ''}`;
+        `the Deep Warden stands down for the one she let in until it is struck, her thread closes${x.scholarHeard ? ' and the one for the man with the old face opens' : ''}, a reload keeps it all, and a door an old save already broke still gives the scene to one of hers in the room${x.otherForced === undefined ? ' (no other vault to compare)' : ''}`;
   }
 
   /* ---- 7. the Church speaks in its own layer ----
@@ -733,11 +739,26 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       .map(([dx, dy]) => findOpenNear(alive.x + dx, alive.y + dy, 2))
       .find(q2 => q2 && dist(q2.x, q2.y, alive.x, alive.y) < 9) || { x: alive.x + 1, y: alive.y };
     const look = probe(spawnGaunt('herald', qa.x, qa.y)); look.hunt = true; look.target = null;
+    const look0 = dist(look.x, look.y, alive.x, alive.y);
     rebuildCharGrid();
-    for (let i = 0; i < 4 && look.hunt; i++) physics(look, 0.1);
+    /* ---------- AND IT IS GIVEN TIME TO WALK UP ----------
+       Four steps of a tenth of a second was the whole of it, which asked the herald to have
+       looked before it had walked anywhere. It walks up to the nearest of yours until it is
+       inside twelve tiles, and only then turns for the yard; `spawnGaunt` does not always put
+       it where it was asked, so where it starts decides whether four steps are enough. Red on
+       2026-09-29 on every build back to d46801a (still 11.7 tiles off after its four steps, still
+       walking). Six seconds, and it stops asking as soon as the herald has turned. */
+    let steps = 0;
+    for (; steps < 60 && look.hunt; steps++) physics(look, 0.1);
     const leftForOrder = !look.hunt && look.guard && bastion && dist(look.guard.x, look.guard.y, bastion.x, bastion.y) < 14;
     if (quarrel.length) bits.push(`with no dead of yours about it still has a quarrel with ${quarrel.join(', ')}`);
-    else if (!leftForOrder) bits.push(`having looked at a living body of yours it ${look.hunt ? 'is still hunting' : 'went somewhere other than the Bastion yard'}`);
+    else if (!leftForOrder) {
+      /* what stopped it, so a red says so: a ward light returns out of `physics` before the
+         looking is ever asked, and the nearest of yours is what it is measured against */
+      const ns = player().filter(o => o.state !== 'dead').map(o => dist(o.x, o.y, look.x, look.y)).sort((a, c) => a - c)[0];
+      const wl = typeof lightNear === 'function' && (lightNear(look, WARD_RADIUS + 1.5) || violetNear(look, 1.5));
+      bits.push(`having looked at a living body of yours it ${look.hunt ? 'is still hunting' : 'went somewhere other than the Bastion yard'} (nearest of yours ${ns == null ? '?' : ns.toFixed(1)} tiles, ${wl ? 'inside a ward light at ' + Math.round(wl.x) + ',' + Math.round(wl.y) : 'no ward light'}, target ${look.target ? look.target.name : 'none'}, hour ${hour.toFixed(1)}, it started ${look0.toFixed(1)} off and walked ${steps} steps)`);
+    }
     risen.undead = true;
     const qb = at(4, 40);
     const hunter = probe(spawnGaunt('messenger', qb.x, qb.y)); hunter.hunt = true; hunter.target = null;
@@ -758,7 +779,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       : `abroad a Messenger is its own faction: at peace with the Order, at war with the Watchers and the walking dead, and hunting a living one of yours only once the Attention is ATTENDED (the Order does not read that). ` +
         `The crater's ${craterOnes.length} are the crater's, hold it against the Order and a Messenger from abroad alike, and are not counted against the world's ceiling. ` +
         `The ceiling is 2, 3, 4 at stages 0, 3 and 5; a patrol carries one from stage 3 (${e3.patrol.toFixed(2)}, then ${e5.patrol.toFixed(2)}) and a hunt more often late (${e0.hunt.toFixed(2)} to ${e5.hunt.toFixed(2)}). ` +
-        `One that comes to look at a living body of yours walks to the Bastion yard; one near your dead keeps hunting; killing one raises the Order's wrath`;
+        `One that comes to look at a living body of yours (it started ${look0.toFixed(1)} tiles off) walks up and turns for the Bastion yard after ${(steps * 0.1).toFixed(1)}s; one near your dead keeps hunting; killing one raises the Order's wrath`;
     return R;
   }));
 
@@ -838,6 +859,54 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `a broken shrine gives its stone whole (no ash, ${R.rpOnBreak} insight on the spot); the bench offers it to read for ${ITEMS.s_stone.rp} insight; ` +
           `CRUSH in the wagon makes it 3 measures of ash; and ash burned into the Door's hold carries it ${(R.hold.ashed / R.hold.bare).toFixed(2)}x as far over the same ten seconds, while the hold still moves without any`;
       delete R.rpOnBreak; delete R.hold;
+    }
+    /* ---- 11. what a thing is can be found where it is listed ----
+       "Right now items don't have a description you can find." The only place a description was
+       printed was the gear chooser. So: the wagon, somebody's pack and a town's counter all name
+       their items with the card, and hovering the name brings the description up in the tip. */
+    {
+      const bits = [];
+      const st0 = Object.assign({}, stash);
+      const me = player()[0], inv0 = me.inv;
+      addItem('w_leaf', 1); addItem('a_pla', 1);
+      opts.stash = true; if (typeof applyStashFold === 'function') applyStashFold(); refreshInv();
+      const unnamed = (sel) => [...document.querySelectorAll(sel)].filter(r => !r.querySelector('[data-item]')).length;
+      const wagonRows = document.querySelectorAll('#invbody .invrow').length, wagonBare = unnamed('#invbody .invrow');
+      if (!wagonRows || wagonBare) bits.push(`${wagonBare} of ${wagonRows} wagon rows name no item`);
+      const leaf = document.querySelector('#invbody [data-item="w_leaf"]');
+      const tip = document.getElementById('tip');
+      if (!leaf) bits.push('the Sunless Leaf is not in the wagon list');
+      else {
+        const r = leaf.getBoundingClientRect();
+        leaf.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: r.left + 4, clientY: r.top + 4 }));
+        const lore = tip && tip.querySelector('.ilore');
+        if (!(tip && tip.style.display === 'block' && lore && lore.textContent === ITEMS.w_leaf.desc)) bits.push('hovering the Sunless Leaf does not bring up its description');
+        leaf.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }));
+      }
+      me.inv = { meat: 2, w_leaf: 1 };
+      openInventory(me);
+      const kitRows = document.querySelectorAll('#modalbody .invrow').length, kitBare = unnamed('#modalbody .invrow');
+      if (!kitRows || kitBare) bits.push(`${kitBare} of ${kitRows} pack and wagon rows in the kit name no item`);
+      document.getElementById('modal').style.display = 'none'; modalOpen = false;
+      /* not Dustport's: claim 5 has just put it to the torch, and a counter in a town that
+         hates you does not open at all */
+      const v = vendors.find(v2 => v2.vt === 'weapons' && v2.town && !(v2.town.sacked > 0) && v2.town.rep > -50);
+      let shopRows = 0;
+      if (v) {
+        v.town.stock.w_sw = (v.town.stock.w_sw || 0) + 1;
+        openVendor(v);
+        shopRows = document.querySelectorAll('#modalbody .trow [data-buy]').length;
+        const shopBare = [...document.querySelectorAll('#modalbody .trow')].filter(r => r.querySelector('[data-buy]') && !r.querySelector('[data-item]')).length;
+        if (!shopRows || shopBare) bits.push(`${shopBare} of ${shopRows} counter rows name no item`);
+        document.getElementById('modal').style.display = 'none'; modalOpen = false;
+        v.town.stock.w_sw -= 1;
+      } else bits.push('no weapons counter in the world');
+      me.inv = inv0;
+      for (const k of Object.keys(stash)) if (!(k in st0)) delete stash[k];
+      Object.assign(stash, st0); refreshInv();
+      const all = Object.keys(ITEMS), told = all.filter(k => ITEMS[k].desc).length;
+      R.whatAThingIs = bits.length ? `!! ${bits.join('; ').toUpperCase()}`
+        : `the wagon (${wagonRows} rows), a pack and the wagon in the kit (${kitRows}) and ${v.name}'s counter (${shopRows}) name every item with its card, and hovering the Sunless Leaf brings up its description; ${told} of ${all.length} items have one to find`;
     }
     return R;
   }));

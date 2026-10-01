@@ -9,7 +9,7 @@
  *      of anybody's walls
  *   3. the Chancellor comes when the Door opens, into the colonnade under it
  *   4. each fights with its Art: the Chancellor mends, the Master's blows go through armour, the
- *      Keeper feeds on what it takes, and eyes slide off the Unremembered in a fight
+ *      Keeper feeds on what it takes, and the Unremembered raises a wall that was never there
  *   5. with the whole court standing the old king would come down with all four; put two down
  *      first and he comes down with the other two, and the log says which
  *   6. the court, and what the king carries, survive a save
@@ -117,13 +117,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       if (kp) { kp.blood = kp.maxBlood * 0.5; const b0 = kp.blood; v.parts.chest.hp = 100; v.state = 'ok';
         applyDamage(kp, v, 'chest', 40, 'cut');
         if (kp.blood > b0) good.push(`the Keeper takes ${Math.round(kp.blood - b0)} back out of what it did`); else bits.push('the keeper does not feed'); }
-      /* eyes slide off the Unremembered, in a fight */
+      /* the Unremembered raises a wall that was never there, in a fight (THE UNREMEMBERED, AT FULL) */
       const un = of('unremembered');
-      if (un) { un.veilT = 0; un.target = null; tick(14); const idle = un.veilT > 0;
-        un.target = me; tick(14);
-        if (!idle && un.veilT > 0) good.push(`the Unremembered folds out of sight in a fight (${un.veilT.toFixed(0)}s) and not out of one`);
-        else bits.push(`the unremembered: idle fold ${idle}, fighting fold ${un.veilT}`);
-        un.target = null; un.veilT = 0; }
+      if (un) { dustWallsClear(); un.target = null; tick(14); const idle = dustWalls.length > 0;
+        un.target = me; un._wallT = 2; tick(4);
+        const w = dustWalls[0];
+        if (!idle && w && w.keys.length >= 3) good.push(`the Unremembered raises a wall of ${w.keys.length} tiles in a fight and none out of one`);
+        else bits.push(`the unremembered: idle wall ${idle}, fighting wall ${w ? w.keys.length : 0}`);
+        un.target = null; un.veilT = 0; dustWallsClear(); for (const o of [...chars]) if (o.dustCopy) dispelPhantom(o);
+        for (const o of chars) if (o.charmed && o.charmed.by === un) o.charmed.t = 0; }
       { const i = chars.indexOf(v); if (i >= 0) chars.splice(i, 1); }
       R.eachFightsWithItsArt = bits.length ? '!! ' + bits.join('; ').toUpperCase() : good.join('; ');
     }
@@ -146,7 +148,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const arts = k ? (k.courtArts || []) : [];
       const ok = full.length === 4 && arts.length === 2 && arts.includes('divine') && arts.includes('dust')
         && /without the Master's unmaking/.test(lost) && /without the Keeper's hunger/.test(lost)
-        && /absolution/.test(down) && /fold/.test(down) && !/unmaking|hunger/.test(down);
+        && /absolution/.test(down) && /walls/.test(down) && !/unmaking|hunger/.test(down);
       R.eachOneDownIsAnArtHeLoses = ok
         ? `with the whole court up he would carry all four; with the Master and the Keeper put down first he comes down with ${arts.join(' and ')}, and the log says so`
         : `!! FULL ${full.join(',')} — AFTER TWO DOWN ${arts.join(',')} — LOST "${lost.slice(0, 80)}" — DOWN "${down.slice(0, 120)}"`;

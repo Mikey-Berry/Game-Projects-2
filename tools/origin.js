@@ -201,7 +201,9 @@ const KEY = process.argv[3] || 'lyonart';
         ? 'set to guard the prince from the first frame' : '!! THE ATTENDANT GUARDS NOBODY';
       R.attendantStands = att && !isBlocked(att.x, att.y) ? 'on open ground' : '!! SPAWNED IN GEOMETRY';
     }
-    R.crown = (campHas('crown') >= 1) ? 'has the Sunken Crown' : 'NO CROWN';
+    /* HIS OWN, since 2026-09-29: the Exile's Crown, not the Sunken Crown. The demilich takes either
+       for the rite, and the Lord of Ash and Bone keeps his (see THE EXILE'S CROWN) */
+    R.crown = (campHas('crown_exile') >= 1 && campHas('crown') < 1) ? "has the Exile's Crown and not the Lord's" : 'NO CROWN';
     R.cats = cats;
     R.gift = him && him.gift === 'dark' ? 'dark' : 'WRONG GIFT';
 

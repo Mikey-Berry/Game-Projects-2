@@ -4,7 +4,7 @@ const gamePath=(a)=>path.resolve(a?(path.isAbsolute(a)?a:path.join(__dirname,a))
  const b=await chromium.launch({executablePath: process.env.DUSTWARD_CHROME || undefined,
   args:['--use-gl=swiftshader','--enable-unsafe-swiftshader','--disable-gpu-sandbox','--no-sandbox']});
  const p=await b.newPage({viewport:{width:900,height:600}});
- await p.goto('file://'+gamePath(),{waitUntil:'load'});
+ await p.goto('file://'+gamePath(),{waitUntil:'load', timeout:120000});
  await p.waitForTimeout(3000);
  await p.evaluate(()=>document.getElementById('btn-start').click());
  await p.waitForTimeout(2500);

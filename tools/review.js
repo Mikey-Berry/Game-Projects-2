@@ -226,8 +226,19 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       /* the cap is fractional (the tide is), and the spawner stops once the count reaches it, so
          the most it ever holds is the cap rounded up; tier 2 and up, a flight of Eyes can land
          on top of that in one go, which is the flight's own rule */
-      const tier = eldritchTide(), cap = Math.ceil(3 + tier * 2 + Math.floor(purgeWrath / 60)) + (tier >= 2 ? 7 : 0);
       const mine = () => chars.filter(c => c.nightSpawn && c.state !== 'dead');
+      /* LEGENDS FIRST (2026-09-30): through the first week of THE DUST FALLS the night sends
+         nothing at all; the claim below is made with the clock at A STILLNESS */
+      const f0 = fracture;
+      fracture = 0; fractureStage = fractureStageOf(fracture);
+      for (let i = 0; i < 80; i++) gauntTick(0.5);
+      const firstWeek = mine().length;
+      for (let i = chars.length - 1; i >= 0; i--) if (chars[i].nightSpawn) chars.splice(i, 1);
+      fracture = FRACTURE_STAGES[1].at; fractureStage = fractureStageOf(fracture);
+      R.theFirstWeekIsQuiet = firstWeek === 0
+        ? 'in the first week of THE DUST FALLS a whole night in the open waste sends nothing: a gaunt is a thing people have heard about'
+        : `!! THE FIRST WEEK SENT ${firstWeek} IN ONE NIGHT`;
+      const tier = eldritchTide(), cap = Math.ceil(3 + tier * 2 + Math.floor(purgeWrath / 60)) + (tier >= 2 ? 7 : 0);
       let sent = 0, over = 0, threw = null;
       try {
         for (let i = 0; i < 400; i++) {
@@ -241,11 +252,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       } catch (err) { threw = String(err && err.message || err).slice(0, 80); }
       R.theNightSendsSomething = threw ? `!! THE NIGHT'S OWN THREW: ${threw}`
         : sent > 0 && !over
-        ? `on the first night in the waste the dark sends ${sent} (the cap is ${cap}), while ${worldGaunts} gaunts elsewhere in the world count for none of it`
+        ? `by A STILLNESS a night in the waste sends ${sent} (the cap is ${cap}), while ${worldGaunts} gaunts elsewhere in the world count for none of it`
         : `!! THE NIGHT SENT ${sent} WITH ${worldGaunts} GAUNTS ELSEWHERE IN THE WORLD${over ? ` AND WENT PAST ITS CAP OF ${cap} TO ${over}` : ''}`;
       for (let i = chars.length - 1; i >= 0; i--) if (chars[i].nightSpawn) chars.splice(i, 1);
       for (const w of was) { w.c.x = w.x; w.c.y = w.y; w.c.floor = w.f; }
       hour = hour0; bloodMoon = blood0;
+      fracture = f0; fractureStage = fractureStageOf(fracture);
       rebuildCharGrid();
     }
     /* ---- 12. quarry that leaves the world alive is let go ----

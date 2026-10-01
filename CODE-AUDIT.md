@@ -34,9 +34,9 @@ Ranked by what each one buys against what it costs.
 3. **One render signature cost 2 ms every frame** (§2.1). *Fixed.* `syncRedoubts` filtered the
    whole roster once per cave, on every frame, just to decide whether to rebuild. That was 90%
    of the per-frame signature cost.
-4. **Decide what the authored barks are for** (§5.1). 53 hand-written lines of dialogue are
-   attached to characters and never spoken, and one harness asserts they exist. This is a
-   design call for the owner, not a cleanup.
+4. **Decide what the authored barks are for** (§5.1). *Wired, 2026-09-25.* 53 hand-written
+   lines of dialogue were attached to characters and never spoken, and one harness asserted
+   they existed.
 5. **Add the lint** (§6.1). This is the third audit in a row to recommend it. This time it
    would have caught 27 unused variables, a self-comparison and a stray `}` in the stylesheet
    that silently dropped a rule.
@@ -434,7 +434,10 @@ drift += 0.2`, a count. The `NATIVE_*` toggles look dead from inside the game, b
 
 These are questions of behaviour or design, or changes big enough to need a decision.
 
-### 5.1 The barks are authored and never spoken — **your call**
+### 5.1 The barks are authored and never spoken — **wired 2026-09-25**
+
+Your call was to wire them. Every kind with authored lines now says one when a player body is
+near (`LORE-SEAMS.md` §1.1, `tools/seams.js` claim 1). The original finding:
 
 `c.barks` is set in eight places: the redoubt's vat-soldiers, three of the immortals in
 `spawnImmortals`, the Archivist, the thing in the rock, and copies of the `bark:` fields in the
@@ -473,7 +476,11 @@ all the time. Fixing it changes how the game looks, so I left it to you. Either 
 emissive only (they already have an unlit `MeshBasicMaterial` head), or let them join the torch
 pool.
 
-### 5.3 Half of the conviction design is not wired
+### 5.3 Half of the conviction design is not wired — **wired 2026-09-25**
+
+All six deeds fire now, the formula crime is raised inside a Church town's walls, and Sanctified
+Ash has its uses: it speeds the Door rite and hallows a sundered site (`LORE-SEAMS.md` §1.2 and
+§1.4). The original finding:
 
 `CONVICTIONS` weights `sack` (six convictions), `heal`, `retreat`, `rescued`, `mercy` and
 `formula`. `deed()` is never called with any of them. `git log -S` finds no call in the
@@ -500,10 +507,11 @@ EQUIP/EAT/FEED/READ handlers. There are also two equip paths: `equipFromStash`, 
 `invTake`/`invAdd`. §1.4 was the first bug from the copies drifting apart. One
 `useItem(c, id, from)` would stop the next one.
 
-### 5.6 Playtest cheats ship in Options
+### 5.6 Playtest cheats ship in Options — **ruled 2026-09-28: keep them for now**
 
 *"GIVE 10,000 GOLD — playtesting only"* and *"REVEAL MAP — playtesting only"* are visible to
-every player. If that is deliberate, fine. If not, gate them behind a flag.
+every player. They stay while the game is being playtested; gate them behind a flag before it
+goes out.
 
 ### 5.7 Repetition I did not merge
 
@@ -532,6 +540,128 @@ These are real, but each one needs a design decision or touches behaviour:
 - **Selling at a counter ignores storage bins.** `ownPool` and `poolTake` duplicate
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
+
+### 5.24 Two reds that are on `main` too — **raised 2026-10-01; both closed the same day**
+
+The full suite on `9c00202` ran 194/200. After §5.23's fix, these two remain, and both are red on
+`main` (`321e276`):
+- **`lean.js`:** the save is 4728 KB against the 4 MB mobile budget. It is 4725 KB on `main`,
+  where the 2560 map and the crater put about 3,900 bodies in the world. This PR adds 3 KB. The
+  hamlets briefly added 43 KB by writing `hamlet: 0` into every body record; that field is now
+  written as `null`, which the save drops (fixed in this round).
+- **`storeys.js` `theWatchArrestsOnlyOnItsOwnStorey`:** a guard one storey down appears to arrest
+  a body on the surface. The test stages at a real town's gaol and steps the AI for every body in
+  the world, so the arrest may be one of the town's own surface guards walking up rather than the
+  one below. That is unverified. It needs its own look before anyone calls it a game bug.
+
+**Closed:**
+- **`lean.js`:** ruled "we really aren't optimizing for mobile anymore. No need to keep a cap
+  on the size." It prints the size and caps nothing. `mobile.js` still holds the packed save
+  against the browser's storage quota.
+- **`storeys.js`:** traced. In both runs the arrest was made by Dustport's Dock Warden, on the
+  surface beside the body. The staged guard one floor down never touched it. So the game is
+  right and the test was wrong. The test now walks the town's own watch out of reach for the
+  trial and credits only the staged guard. It is green: no arrest through a floor, an arrest
+  beside.
+
+### 5.23 Three harnesses were staging their tests on the crater's headland — **fixed 2026-10-01**
+
+`lantern.js`, `orders.js` and `sixfold.js` each find "open waste" by scanning from the top-left
+of the map and taking the first clear patch. Since crater phase 1 put the headland in the
+north-east, that first patch is on it: (2266,68) for `lantern`, which is on the Marches, 226
+tiles from the middle. Two of the crater's ruled rules then changed what the tests measured:
+- **Nothing grows on the headland,** so `orders.js` claim 2 found no tree. This was red on
+  `main` from phase 1, and §5.20 listed it as "no tree near its staging point".
+- **Since phase 2, nothing follows anybody onto the Marches.** So a gaunt with the lamp out
+  dropped its quarry anyway (`lantern.js` controls: "closest 3.3" and "9.0"). The great gaunt
+  in `orders.js` claim 5 walked away instead of through the ward. And the Sixfold in
+  `sixfold.js` swung at nobody, which §5.20 read as "a Sixfold that barely fights".
+
+All three now skip the headland (`craterD < range + ridge + 30`) and are green. The Sixfold, staged
+on open waste, costs a ring of men 3.00 bodies a blow, and 34 bodies against the unarmed one's 14
+across four worlds. **So §5.20's "worth its own look" is answered:** it fights as designed.
+`beasts.js` also stages its cart on the headland. Moving it put the yard somewhere the cart could
+not reach, so it stays where it is, and its `stitchHeals` red (§5.21) is not from this.
+
+### 5.22 The ring geometry was disposed on every teardown — **fixed 2026-09-30**
+
+`TORG`, the torus behind the court's haloes, the old king's noose and the Lord's bands, was not
+in `_sharedRes`. So `disposeTree` freed its GPU buffer every time any rig using it was torn down,
+and three.js uploaded it again on the next draw. Nothing broke; it was churn. It is shared now,
+alongside the other base geometries. Found while building the Wheel, which is made of rings.
+
+### 5.21 The Stitch-Hand heals once and then cannot reach its patient — **raised 2026-09-30; fixed 2026-10-01**
+
+`beasts.js` `stitchHeals` is red, and it is red before this round too (on `3f2ad58`). The surgeon
+puts the severed arm back on, which spends one Mortal Remains, and it goes on targeting the patient
+(need 31, stores full). But after 900 steps it stands 3.3 tiles off, and it only mends inside
+1.3, so the chest and blood are never touched. The harness steps only the surgeon, so this is its
+own travel failing to close on a body that is not moving. It is not about healing. It needs its
+own look: a Stitch-Hand that mends once and then stands idle is a real bug if play shows it.
+
+**Fixed, and it was a real bug.** A trap on the surgeon's `target` showed it set by physics'
+STAND-TO block: any idle body of yours takes the nearest foe inside 7.5 tiles. That block never
+asked `noFight`, although the auto-acquire block below it had learned to. Earlier in the same
+harness the Door opens and the Coil rises at Greenrest, and a Coil cutthroat 0.9 tiles away
+became the Stitch-Hand's target. From then on the combat branch returned every tick ahead of its
+mending. In play, the same was true of every `noFight` body (the Death Eater, the Soulbound and
+the Wisp too): an enemy walking past pulled it off its work. STAND-TO now skips `noFight`, and
+`stitchHeals` is green (60 blood up to 140).
+
+### 5.20 The Sixfold's harness reads a Sixfold that barely fights — **raised 2026-09-29; resolved 2026-10-01 (§5.23: it was staged on the headland)**
+
+`sixfold.js` has two red claims on this branch, and one of them is red on HEAD too.
+- **`oneBlowTakesTheRank`:** the sweep trial hurts 0 of 36 bodies on both builds. Staged beside a
+  target, the beast swings once in three seconds on either build, with identical traces, so this
+  predates the 2026-09-29 round.
+- **`andNowItCostsThemMore`:** HEAD reads 5 kills against 0 across eight worlds, and this branch
+  reads 0 against 0. The file already calls this "the most chaotic number in this file". The world
+  it runs in moved: two wanderers were added and every later id shifted by two. The Sixfold's own
+  code is unchanged and swings the same.
+- **Worth its own look:** a creature the bible calls capable of wiping out cities kills five Old
+  Bones in eight minutes of fighting. `orders.js` (`andOnATreeSetsWood`: no tree near its staging
+  point) is also red on HEAD.
+
+### 5.19 A Coil member stayed a Coil member after the flag moved — **fixed 2026-09-29**
+
+`rareFolk()` files the Coil in a bucket and keeps the filing until `chars.length` changes.
+Recruitment wrote `conv.coil = true` and nothing else, so a neighbour recruited on a quiet day
+missed meetings until somebody was born or died. Found when an arrested cell counted 5 → 2 instead
+of 5 → 0. Every write now goes through `coilFlag`, which drops the filing, and `coilCells` asks
+`c.coil` again.
+
+`t.coilHeld` ("the watch has stopped asking questions") was **set and never read**: nothing
+consulted it. It is now read in `crime()`, for a friend of the stone only (THE COIL, WIDENED).
+Whether it should also blunt the watch for everybody is a design call and has not been made.
+
+### 5.18 A quest stage's closing line was never shown — **fixed 2026-09-29**
+
+Every immortal stage carries a `done` line: what the giver says when the stage is met. Nothing
+read it. The window logged "is satisfied — for now" and the next stage's hint, so every closing
+line in `IMMORTAL_LINES` was dead text. It is now read before `give()` runs (which can change the
+stores a line depends on), logged, and drawn above the next ask (`c._stageSaid`). Found while
+writing the demilich's lines for the Exile's Crown, which would otherwise never have been seen.
+
+### 5.17 The ground drew black everywhere since crater phase 1 — **fixed 2026-09-29**
+
+Reported: *"the whole map is pitch black, as though it were the fog effect. But it's just
+everywhere."* It was the fog. Crater phase 1 (`54dcabc`, merged as `321e276`) cut the fog-of-war
+sheet into 256-tile pieces so the renderer could skip the ones off screen. Each piece kept the
+0..1 texture coordinates a `PlaneGeometry` is born with, so each drew the whole world's fog shrunk
+onto itself. The world is nearly all unexplored, so the ground went black everywhere, and the
+patch you had seen turned up as a speck in every piece.
+
+- **Measured:** ground in sight beside the party read 57 against 139 with the sheet hidden. The
+  build before phase 1 read 151 either way.
+- **Why nothing caught it:** every harness that looks at pixels hides the fog first, and every
+  harness about sight reads `vis`.
+- **The fix:** each vertex now takes its world position over the map's size, as the single
+  sheet's did.
+- **Found beside it, in the minimap:** it read one tile per 20×20 block (the top-left corner), so
+  it showed 67 of the 99 blocks a walk down a road had uncovered, and 3 of the 8 at the start. It
+  keeps a cell per pixel now, set the moment anything in its block is known.
+- **The check:** `tools/fog.js` compares the same ground pixels with the sheet on and off. Four
+  of its five claims were red on `d46801a`; the fifth is a control.
 
 ### 5.16 Sundered sites are laid on top of the roads — **fixed 2026-09-27**
 

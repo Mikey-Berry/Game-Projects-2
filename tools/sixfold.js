@@ -50,6 +50,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     outer:
     for (let y = 70; y < H - 70; y += 6) for (let x = 70; x < W - 70; x += 6) {
       if (nearestTownDist(x, y) < 120) continue;
+      /* and off the crater's headland, where the Marches are safe ground by rule and the inner
+         stretches have their own Watchers: a fight staged there is not a fight in the waste */
+      if (craterD(x, y) < CRATER.range + CRATER.ridge + 30) continue;
       let ok = true;
       for (let j = -10; j <= 10 && ok; j++) for (let i = -10; i <= 10 && ok; i++)
         if (isBlocked(x + i + 0.5, y + j + 0.5) || tileAt(x + i, y + j) === 3) ok = false;
