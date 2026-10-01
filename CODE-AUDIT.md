@@ -541,6 +541,38 @@ These are real, but each one needs a design decision or touches behaviour:
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
 
+### 5.24 Two reds that are on `main` too — **raised 2026-10-01, not changed**
+
+The full suite on `9c00202` ran 194/200. After §5.23's fix, these two remain, and both are red on
+`main` (`321e276`):
+- **`lean.js`:** the save is 4728 KB against the 4 MB mobile budget. It is 4725 KB on `main`,
+  where the 2560 map and the crater put about 3,900 bodies in the world. This PR adds 3 KB. The
+  hamlets briefly added 43 KB by writing `hamlet: 0` into every body record; that field is now
+  written as `null`, which the save drops (fixed in this round).
+- **`storeys.js` `theWatchArrestsOnlyOnItsOwnStorey`:** a guard one storey down appears to arrest
+  a body on the surface. The test stages at a real town's gaol and steps the AI for every body in
+  the world, so the arrest may be one of the town's own surface guards walking up rather than the
+  one below. That is unverified. It needs its own look before anyone calls it a game bug.
+
+### 5.23 Three harnesses were staging their tests on the crater's headland — **fixed 2026-10-01**
+
+`lantern.js`, `orders.js` and `sixfold.js` each find "open waste" by scanning from the top-left
+of the map and taking the first clear patch. Since crater phase 1 put the headland in the
+north-east, that first patch is on it: (2266,68) for `lantern`, which is on the Marches, 226
+tiles from the middle. Two of the crater's ruled rules then changed what the tests measured:
+- **Nothing grows on the headland,** so `orders.js` claim 2 found no tree. This was red on
+  `main` from phase 1, and §5.20 listed it as "no tree near its staging point".
+- **Since phase 2, nothing follows anybody onto the Marches.** So a gaunt with the lamp out
+  dropped its quarry anyway (`lantern.js` controls: "closest 3.3" and "9.0"). The great gaunt
+  in `orders.js` claim 5 walked away instead of through the ward. And the Sixfold in
+  `sixfold.js` swung at nobody, which §5.20 read as "a Sixfold that barely fights".
+
+All three now skip the headland (`craterD < range + ridge + 30`) and are green. The Sixfold, staged
+on open waste, costs a ring of men 3.00 bodies a blow, and 34 bodies against the unarmed one's 14
+across four worlds. **So §5.20's "worth its own look" is answered:** it fights as designed.
+`beasts.js` also stages its cart on the headland. Moving it put the yard somewhere the cart could
+not reach, so it stays where it is, and its `stitchHeals` red (§5.21) is not from this.
+
 ### 5.22 The ring geometry was disposed on every teardown — **fixed 2026-09-30**
 
 `TORG`, the torus behind the court's haloes, the old king's noose and the Lord's bands, was not
@@ -557,7 +589,7 @@ puts the severed arm back on, which spends one Mortal Remains, and it goes on ta
 own travel failing to close on a body that is not moving. It is not about healing. It needs its
 own look: a Stitch-Hand that mends once and then stands idle is a real bug if play shows it.
 
-### 5.20 The Sixfold's harness reads a Sixfold that barely fights — **raised 2026-09-29, not changed**
+### 5.20 The Sixfold's harness reads a Sixfold that barely fights — **raised 2026-09-29; resolved 2026-10-01 (§5.23: it was staged on the headland)**
 
 `sixfold.js` has two red claims on this branch, and one of them is red on HEAD too.
 - **`oneBlowTakesTheRank`:** the sweep trial hurts 0 of 36 bodies on both builds. Staged beside a
