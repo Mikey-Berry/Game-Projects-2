@@ -20,6 +20,9 @@
  * as deliberately not-a-construct would come back a construct if the key vanished. That is the
  * exact shape of bug this file exists to catch, so it is asserted rather than trusted.
  *
+ * NO SIZE CAP since 2026-10-01 ("we really aren't optimizing for mobile anymore"). The size is
+ * printed for scale and nothing more.
+ *
  *   node tools/lean.js [game.html]
  */
 const { chromium } = require('playwright');
@@ -78,10 +81,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.nothingDefaultIsWritten = offenders.length === 0
         ? `not one \`false\` outside \`construct\` and not one \`null\` anywhere in ${A.chars.length} bodies — ${falses} exempt \`construct\` flags remain, which is the whole of it`
         : `!! DEFAULTS ARE STILL BEING WRITTEN (${offenders.join(', ')} — ${falses} false, ${nulls} null)`;
-      /* and the size, which is the thing that went red */
-      R.andItFitsOnAPhone = bytes / 1024 < 4096
-        ? `and the save is ${(bytes / 1024).toFixed(0)} KB, inside a 4MB mobile budget — it was 4213`
-        : `!! THE SAVE IS ${(bytes / 1024).toFixed(0)} KB, PAST THE BUDGET`;
+      /* AND THE SIZE IS REPORTED, NOT CAPPED. Ruled 2026-10-01: "we really aren't optimizing for
+         mobile anymore. No need to keep a cap on the size." This was a 4MB line on the raw JSON,
+         which never governed storage anyway: the save is packed before it is stored, and the
+         browser's own storage quota is held against the packed size in `mobile.js`. The claims
+         this file exists for are the two either side of this: nothing default is written, and
+         what was dropped comes back as what was dropped. */
+      R._saveKB = `the save is ${(bytes / 1024).toFixed(0)} KB of JSON (no cap; see the note)`;
     }
 
     /* ---------- 2. AND WHAT WAS DROPPED COMES BACK AS WHAT WAS DROPPED ----------
