@@ -183,13 +183,25 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
                      { guard: { x: cell.x + 3.5, y: cell.y }, homeTown: t, civ: false });
         const v = mk('Test Fallen', 'player', g.x, g.y, 0);
         v.state = 'down'; v.downT = 400; v.blood = 40;
+        /* ONLY THE STAGED GUARD MAY MAKE THE ARREST. This used to read "jailed" off the body, and
+           the body is staged three tiles from the town's own gaol, where the town's own watch
+           stands on the surface: in both runs the arrest was made by Dustport's Dock Warden, on
+           the same storey as the body, and never by the guard one floor down. The town's watch is
+           walked out of reach for the trial and put back after, and the arrest is credited only
+           to the guard it was staged with. */
+        const aside = chars.filter(c => c !== g && c.faction === 'town' && !c.civ && c.state !== 'dead' &&
+          dist(c.x, c.y, cell.x, cell.y) < 120).map(c => ({ c, x: c.x, y: c.y }));
+        for (const a of aside) { a.c.x += 900; if (a.c.x > W - 5) a.c.x -= 1800; }
         rebuildCharGrid();
+        let byG = false;
         for (let i = 0; i < 400; i++) {
           rebuildCharGrid();
           for (const c of chars) if (c.state !== 'dead') { ai(c, 0.05); physics(c, 0.05); }
-          if (g.drag === v || v.jailedAt) break;
+          if (g.drag === v) byG = true;
+          if (byG || v.jailedAt) break;
         }
-        const got = g.drag === v || !!v.jailedAt;
+        for (const a of aside) { a.c.x = a.x; a.c.y = a.y; }
+        const got = byG;
         wipe();
         t.bounty = 0; t.wanted = false;
         return got;
