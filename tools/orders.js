@@ -54,6 +54,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     outer:
     for (let y = 70; y < H - 70; y += 5) for (let x = 70; x < W - 70; x += 5) {
       if (towns.some(t => dist(t.x, t.y, x, y) < 90)) continue;
+      /* and off the crater's headland: since phase 1 the first open ground this scan finds from
+         the top of the map is there, where nothing grows (no tree for claim 2) and, since phase 2,
+         nothing follows anybody onto the Marches (the great gaunt in claim 5 walked away) */
+      if (craterD(x, y) < CRATER.range + CRATER.ridge + 30) continue;
       let ok = true;
       for (let j = -9; j <= 9 && ok; j++) for (let i = -9; i <= 9 && ok; i++)
         if (isBlocked(x + i + 0.5, y + j + 0.5) || tileAt(x + i, y + j) === 3) ok = false;
