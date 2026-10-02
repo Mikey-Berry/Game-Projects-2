@@ -1666,6 +1666,55 @@ And two new ones, aimed at the "it all blends together" note rather than at a me
 **My order:** A (the most visual contrast, and a reason to go), then B (it breaks up the long
 roads), then C. G is cheap once tears have somewhere to leave a mark.
 
+## 12. A skyline, and the map drawn whole (2026-10-02)
+
+The play note: *"What if, instead of fog, the entire map is drawn already and simply cannot be seen
+until a squad member is close by? ... I do like the idea of a unique skyline."* Ruled the same day:
+*"Whole map is drawn but we keep the current sight range and that is where the tint difference (and
+what the player can actually see) appears. Also the free roam camera is tethered to the nearest
+squad members... (Take Kenshi's system for this as inspiration.)"* Built in order, one at a time.
+
+### 12.1 The map, drawn whole
+
+- **What you see:** all ground, trees and buildings, from the first frame. Out of sight it is
+  greyed and dimmed (to 65% of its brightness, and nearly colourless). Nobody out of sight is
+  drawn.
+- **Explored is now an internal state only.** It still drives the save, the scouts, the charts and
+  the place names. On screen, ground you walked a week ago looks the same as ground nobody has
+  walked.
+- **The camera stays within 64 tiles of the nearest of your people.** That is about twice what
+  anybody sees at noon. Any one of them is an anchor. A click on the minimap lands at the edge of
+  the nearest one's circle.
+- **The minimap** shows the whole country, with a light wash over what is out of sight.
+- **Open: charts.** A bought chart used to open ground, and all ground is open now. It still marks
+  the towns, ruins and hamlets inside it on the minimap, and names them on screen. Three options:
+  1. Leave it as is: a chart is a gazetteer.
+  2. Make it mark more: the Sundered sites, the towers, the ARK.
+  3. Drop its price to match what it now does.
+  **(Ruling needed.)**
+
+### 12.2 The Sundered sites, the size of hills
+
+- **Scale:** the bones, their footprint and their ground are 2.2 times what they were (`SITE_K`).
+  The ribcage is about 40 tiles long and stands about 25 high. They read on the skyline from well
+  outside sight.
+- **Named once reached:** the label "THE SUNDERED GROUND" appears only after one of yours has
+  stood within about 21 tiles of the middle (`reached`). Seeing the site from a distance is not
+  enough. The flag rides the save.
+- **Scaled with them:** the guardians' spread, the ticks, the cache, the Hallow order's reach, the
+  Sixfold's spawn, and Lyre's two arrival tests.
+- **The site's animals now roll on a stream of their own.** This shifts the generated world once
+  (the default starting party comes out with different names). After this, changing the size does
+  not shift it again.
+- **Proposed, not built: a name for each site (mine, for review).** Today every site carries the
+  same label. A name per monument would be:
+  - **The Cage** for the ribcage
+  - **The Brow** for the skull
+  - **The Reaching Hand** for the hand
+
+  Where two share a shape, add a bearing from the nearest town, as the Cairn Beasts do (*"The
+  Cage east of Copperhold"*). The label would read *"☠ THE CAGE — SUNDERED GROUND"*.
+
 ---
 
 ## Appendix: re-running the counts

@@ -13508,8 +13508,11 @@ const placesSeen = {};              /* tag -> day somebody of yours stood there 
 function sawPlace(tag){ if(!placesSeen[tag]) placesSeen[tag] = day; }
 function witnessTick(){
   /* the sundered ground: reagent hunters call it a fortune, and the ones who came back do */
+  /* ...and a site is NAMED by being reached, not by being seen. With the whole map drawn the
+     bones stand on the skyline from a long way off, which is the point of them; what they are
+     is learned at their foot. `reached` rides the save. */
   for(const st of corpseSites){
-    if(player().some(c => c.state !== 'dead' && dist(c.x, c.y, st.x, st.y) < 14)){ sawPlace('corpse'); break; }
+    if(player().some(c => c.state !== 'dead' && (c.floor || 0) === 0 && dist(c.x, c.y, st.x, st.y) < st.r * 0.8)){ sawPlace('corpse'); st.reached = true; }
   }
   /* Paladin ground. They do not suffer necromancers here, which is the point of going. */
   if(bastion && player().some(c => c.state !== 'dead' && dist(c.x, c.y, bastion.x, bastion.y) < BASTION_R - 6))
@@ -20808,6 +20811,13 @@ const corpseSites = [];
    if that is water or rock, to the first ground that passes everything `bossSpot` asks — and
    costs no `rnd()` at all. Nothing found inside ninety tiles, and it stays where it fell. */
 const SITE_ROAD = 45;
+/* ---------- AND THEY ARE THE SIZE OF HILLS ----------
+   "Make the sundered sites bigger, and only named once reached." A god came down in pieces, and
+   at a dozen tiles across a piece of it was a large barn. The bones, their footprint, the reach
+   of the ground around them and everything measured from their middle all scale off this one
+   number, so it can be turned without anything coming apart: the footprint is the same boxes the
+   mesh is built from, scaled the same way. */
+const SITE_K = 2.2;
 function offRoad(p){
   let w = null, wd = Infinity;
   for(const rt of tradeRoutes) for(const q of rt.wps){ const d = dist(q.x, q.y, p.x, p.y); if(d < wd){ wd = d; w = q; } }
@@ -20835,7 +20845,7 @@ function offRoad(p){
     if(!p) continue;
     if(nearRoad(p.x, p.y, SITE_ROAD)) p = offRoad(p) || p;
     if(corpseSites.some(s => dist(s.x, s.y, p.x, p.y) < 60)) continue;
-    const s = {id: i + 1, x: p.x, y: p.y, r: 12};
+    const s = {id: i + 1, x: p.x, y: p.y, r: Math.round(12 * SITE_K), reached: false};
     corpseSites.push(s);
     /* ---------- AND IT IS A THING, NOT A PICTURE OF ONE ----------
        "It's also odd that you can walk inside them — they should act as obstacles and not
@@ -20877,11 +20887,13 @@ function offRoad(p){
         for(const fx of [-3.9, -1.9, 0.1, 2.1]) boxes.push([fx, 0.6, 0.9, 0.9]);
         boxes.push([4.6, 3.0, 1.0, 1.0]);                                /* the thumb */
       }
-      for(let ty = Math.round(p.y) - 14; ty <= Math.round(p.y) + 14; ty++)
-        for(let tx = Math.round(p.x) - 14; tx <= Math.round(p.x) + 14; tx++){
+      const reach = Math.ceil(14 * SITE_K);
+      for(let ty = Math.round(p.y) - reach; ty <= Math.round(p.y) + reach; ty++)
+        for(let tx = Math.round(p.x) - reach; tx <= Math.round(p.x) + reach; tx++){
           if(tx < 1 || ty < 1 || tx >= W - 1 || ty >= H - 1) continue;
           const dx = tx + 0.5 - p.x, dz = ty + 0.5 - p.y;
-          const lx = dx * cosA - dz * sinA, lz = dx * sinA + dz * cosA;
+          /* back into the monument's own frame, and down to the size it was drawn at */
+          const lx = (dx * cosA - dz * sinA) / SITE_K, lz = (dx * sinA + dz * cosA) / SITE_K;
           for(const [bx, bz, hw, hd] of boxes)
             if(Math.abs(lx - bx) <= hw && Math.abs(lz - bz) <= hd){ blocked.add(bkey(tx, ty)); break; }
         }
@@ -20912,7 +20924,7 @@ function offRoad(p){
       return {x: ax, y: ay};
     };
     const cang = (s.id * 2.39996) + 1.9;      /* the monument's own turn, plus a quarter */
-    const cpos = openAt(p.x + Math.cos(cang) * 11, p.y + Math.sin(cang) * 11);
+    const cpos = openAt(p.x + Math.cos(cang) * 11 * SITE_K, p.y + Math.sin(cang) * 11 * SITE_K);
     /* WHICH CHEST IS THIS SITE'S, recorded rather than searched for later. Malathuun's Curse
        has the site take its own grave-goods up with it, and "the chest nearest the middle" is
        not a safe way to find them — a ruin or a camp can sit inside the same radius. An index
@@ -20932,16 +20944,24 @@ function offRoad(p){
        kill everything on it; if it cannot come back from that it is scenery with a chest.
        Five to eight now, and the number is recorded on the site so the regrowth below has
        something to grow BACK TO rather than a hardcoded floor of two. */
-    const dn = ri(5, 8);
-    s.pop = dn;
-    for(let k = 0; k < dn; k++){
-      const q = findOpenNear(p.x + ri(-8, 8), p.y + ri(-8, 8), 5);
-      const g = spawnGaunt(rnd() < 0.5 ? 'stalker' : 'gaunt', q.x, q.y);
-      g.nightborn = false;
-      g.guard = {x: q.x, y: q.y};
-      g.siteId = s.id;
-      if(rnd() < 0.5) g.dropItems = {sunder: 1};
-    }
+    /* ON A STREAM OF ITS OWN. Where an animal lands depends on how much of the ground the bone
+       covers (`findOpenNear` draws until it hits open ground), so with the world's own dice every
+       change to SITE_K moved every body worldgen places after this loop. The site's own stream
+       costs the world nothing, whatever size the bones are. */
+    const pocket = seed;
+    seed = (pocket ^ Math.imul(s.id + 0x51, 0x9E3779B9)) | 0;
+    try {
+      const dn = ri(5, 8);
+      s.pop = dn;
+      for(let k = 0; k < dn; k++){
+        const q = findOpenNear(p.x + ri(-8, 8) * SITE_K, p.y + ri(-8, 8) * SITE_K, 5);
+        const g = spawnGaunt(rnd() < 0.5 ? 'stalker' : 'gaunt', q.x, q.y);
+        g.nightborn = false;
+        g.guard = {x: q.x, y: q.y};
+        g.siteId = s.id;
+        if(rnd() < 0.5) g.dropItems = {sunder: 1};
+      }
+    } finally { seed = pocket; }
     worldEvent('sundered', p.x, p.y, 'A stretch of the deep waste has gone wrong: pale growths, standing bones, and shapes that keep their distance from each other but not from you. Reagent hunters call ground like this a fortune. The ones who came back do.');
   }
 })();
@@ -21326,14 +21346,19 @@ function rubidoBark(c){
   /* Marrow Ticks: corpse-site scavengers. Small, quick, and worth squashing. The count is kept
      on the site (`s.mites`) so the ground can grow them back — see `corpseSiteTick`. */
   for(const s of corpseSites){
-    const n = ri(2, 3);
-    s.mites = n;
-    for(let k = 0; k < n; k++) spawnMarrowTick(s);
+    /* the site's own stream, as the gaunts above have, and for the same reason */
+    const pocket = seed;
+    seed = (pocket ^ Math.imul(s.id + 0x7A, 0x9E3779B9)) | 0;
+    try {
+      const n = ri(2, 3);
+      s.mites = n;
+      for(let k = 0; k < n; k++) spawnMarrowTick(s);
+    } finally { seed = pocket; }
   }
 })();
 /* the same draws, in the same order, as the loop that used to hold them: the world is unchanged */
 function spawnMarrowTick(s){
-  const q = findOpenNear(s.x + ri(-9, 9), s.y + ri(-9, 9), 5);
+  const q = findOpenNear(s.x + ri(-9, 9) * SITE_K, s.y + ri(-9, 9) * SITE_K, 5);
   const mt = makeChar('Marrow Tick', 'wild', q.x, q.y, {atk:14, def:20, tough:6, ath:16});
   mt.beast = true; mt.big = 0.62; mt.kin = 'tick';
   mt.blood = 40; mt.maxBlood = 40;
@@ -21382,7 +21407,7 @@ function spawnCairnBeast(force, atSite, quiet){
      a caller that is going to say something better. Both are for the Curse, and both leave the
      no-argument call — which is the one worldgen and cairnTick make — byte for byte as it was. */
   const site = atSite || (corpseSites.length ? pick(corpseSites) : null);
-  const q = site ? findOpenNear(site.x + ri(-6, 6), site.y + ri(-6, 6), 8)
+  const q = site ? findOpenNear(site.x + ri(-6, 6) * SITE_K, site.y + ri(-6, 6) * SITE_K, 8)
                  : findOpenNear(ri(60, W-60), ri(60, H-60), 10);
   /* NAMED FOR WHERE IT ROSE, once there is more than one — a log with three identical
      "The Cairn Beast" lines in it tells you nothing about which field is walking. */
@@ -21704,10 +21729,10 @@ function hallowTick(c, dt){
   const s = c.hallowTarget;
   if(!s) return false;
   if(!corpseSites.includes(s) || (c.undead && !c.lich)){ c.hallowTarget = null; c.hallowT = 0; return false; }
-  /* to the foot of the monument, not into it: the bone blocks the middle six tiles or so */
-  if(!travel(c, s.x, s.y, dt, 7.5)){ c.hallowT = 0; return true; }
+  /* to the foot of the monument, not into it: the bone blocks most of the middle */
+  if(!travel(c, s.x, s.y, dt, s.r * 0.75)){ c.hallowT = 0; return true; }
   c.hallowT = (c.hallowT || 0) + dt;
-  if(rnd() < dt * 4) addSpecks(s.x + (rnd() - 0.5) * 6, s.y + (rnd() - 0.5) * 6, '#f2e6c4', 2);
+  if(rnd() < dt * 4) addSpecks(c.x + (rnd() - 0.5) * 6, c.y + (rnd() - 0.5) * 6, '#f2e6c4', 2);
   if(c.hallowT < HALLOW_WORK) return true;
   c.hallowTarget = null; c.hallowT = 0;
   if(!campSpend({s_ash: HALLOW_ASH})){ log(`${c.name} reaches for the ash and there is none left.`, 'bad'); return false; }
@@ -21762,7 +21787,7 @@ function corpseSiteTick(wdt){
     const want = siteHallowed(s) ? 0 : siteCap(s);   /* see WHAT A SITE HAS LEFT TO SPEND */
     const pop = _pop.get(s.id) || 0;
     if(pop < want && rnd() < wdt * 0.045 * (want - pop)){
-      const q = findOpenNear(s.x + ri(-8, 8), s.y + ri(-8, 8), 5);
+      const q = findOpenNear(s.x + ri(-8, 8) * SITE_K, s.y + ri(-8, 8) * SITE_K, 5);
       const g = spawnGaunt(rnd() < 0.5 ? 'stalker' : 'gaunt', q.x, q.y);
       g.nightborn = false; g.guard = {x: q.x, y: q.y}; g.siteId = s.id;
       _pop.set(s.id, pop + 1);       /* the tally is read once per site, but keep it true anyway */
@@ -22787,7 +22812,7 @@ function spawnSixfold(atX, atY, opts){
   const o = opts || {};
   if(!o.dry && sixfoldsAlive() >= sixfoldCap()) return null;
   const home = corpseSites.length ? pick(corpseSites) : null;
-  const sp = (atX !== undefined) ? findOpenNear(atX, atY, 6) : (home ? findOpenNear(home.x + 3, home.y + 3, 6) : bossSpot(55, 75));
+  const sp = (atX !== undefined) ? findOpenNear(atX, atY, 6) : (home ? findOpenNear(home.x + home.r * 0.6, home.y + home.r * 0.6, 6) : bossSpot(55, 75));
   if(!sp) return;
   const c = makeChar('Sixfold', 'gaunt', sp.x, sp.y,
     {atk:55, def:30, tough:70, ath:8, magic:1, labor:0});
@@ -31393,6 +31418,21 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
       baseBlocked.delete(k);
     }
   }
+  /* ---------- AND NO SUNDERED CACHE IS LEFT IN A CLIFF ----------
+     A site's cache is set out past its monument at worldgen, before the pass above decides which
+     faces are cliff, and with the bones the size of hills (SITE_K) it is far enough out to land
+     on a shoulder that is walled here. Measured: one site in thirteen on the default world. Round
+     the spot it fell on to the first open ground, without a draw. */
+  for(const s of corpseSites){
+    const ch = chests[s.cacheIdx];
+    if(!ch || !isBlocked(ch.x, ch.y)) continue;
+    let done = false;
+    for(let ring = 1; ring <= 16 && !done; ring++) for(let a = 0; a < 16; a++){
+      const bx = ch.x + Math.cos(a / 16 * Math.PI * 2) * ring, by = ch.y + Math.sin(a / 16 * Math.PI * 2) * ring;
+      if(isBlocked(bx, by) || isBlocked(Math.round(bx), Math.round(by))) continue;
+      ch.x = bx; ch.y = by; done = true; break;
+    }
+  }
 })();
 /* ---------- AND NOTHING THE WORLD PLACED IS STANDING IN THE GLASS ----------
    The named, the walled and the dangerous are kept out where they are chosen — see `bossSpot`,
@@ -35180,6 +35220,7 @@ const syncSundered = makeDynGroup(
       const grp = new THREE.Group();
       grp.position.set(s.x, gy2, s.y);
       grp.rotation.y = (s.id * 2.39996) % (Math.PI * 2);
+      grp.scale.setScalar(SITE_K);     /* drawn at the old size, stood up at the new; see SITE_K */
       /* ---------- THE MONUMENTS, REBUILT ----------
          "Could we increase their graphical fidelity a bit? Right now they are hard to make out
           or just look plain stupid, like the giant 'skull' with its dorky looking eyes and
@@ -44148,7 +44189,7 @@ function renderOverlay(rdt){
   }
   /* corpse-sites — standing bones over ground that reads wrong */
   for(const s of corpseSites){
-    if(visAt(s.x, s.y) === 0) continue;
+    if(!s.reached) continue;      /* named by going there; see `witnessTick` */
     const q = w2s(s.x, s.y, groundY(s.x, s.y) + 2.2);
     if(!q) continue;
     cx.fillStyle = 'rgba(201,191,168,0.85)';
@@ -49662,7 +49703,7 @@ cv.addEventListener('mousedown', e => {
       return;
     }
     /* right-click the heart of a Sundered site, with ash in the stores: hallow it */
-    const hs = campHas('s_ash') >= HALLOW_ASH ? corpseSites.find(q => dist(q.x, q.y, wx, wy) < 3.5) : null;
+    const hs = campHas('s_ash') >= HALLOW_ASH ? corpseSites.find(q => dist(q.x, q.y, wx, wy) < q.r * 0.35) : null;
     if(hs){
       const hand = movers.filter(m => !m.undead || m.lich).sort((a, b2) => dist(a.x, a.y, hs.x, hs.y) - dist(b2.x, b2.y, hs.x, hs.y))[0];
       const left = siteHallowed(hs) ? Math.round(hs.hallowUntil - day) : 0;
@@ -52311,7 +52352,7 @@ function snapshot(){
     cellHp: cells.map(cl => cl.hp === undefined ? CELL_HP : Math.round(cl.hp)),
     threads: threads.map(t => ({key:t.key, title:t.title, step:t.step, hint:t.hint, done:t.done, at:t.at, mark:t.mark || null})),
     cairnIds: cairns.filter(c => c && c.state !== 'dead').map(c => c.id),
-    sites: corpseSites.map(q => ({id: q.id, cap: siteCap(q), hallowUntil: q.hallowUntil || 0})),
+    sites: corpseSites.map(q => ({id: q.id, cap: siteCap(q), hallowUntil: q.hallowUntil || 0, reached: !!q.reached})),
     closing: {on: closing.on, told: closing.told, known: closing.known},
     search: {on: search.on, asked: {...search.asked}, found: search.found,
              siteId: search.siteId, leads: search.leads, met: search.met,
@@ -52369,10 +52410,12 @@ function restore(d){
   if(d.threads) for(const t of d.threads) threads.push({key:t.key, title:t.title, step:t.step, hint:t.hint || '', done:!!t.done, at:t.at || 1, mark:t.mark || null});
   /* what each Sundered site has left to grow, and whether it is hallowed (WHAT A SITE HAS LEFT
      TO SPEND). An older save has neither, and every site comes back at full strength. */
-  for(const q of corpseSites){ q.cap = q.pop ?? 3; q.hallowUntil = 0; }
+  for(const q of corpseSites){ q.cap = q.pop ?? 3; q.hallowUntil = 0; q.reached = false; }
   if(d.sites) for(const r of d.sites){
     const q = corpseSites.find(x => x.id === r.id);
-    if(q){ q.cap = Math.max(SITE_FLOOR, Math.min(q.pop ?? 3, r.cap ?? q.pop ?? 3)); q.hallowUntil = r.hallowUntil || 0; }
+    /* an older save has no `reached`: a site its people had already stood at is named again
+       the next time anybody is near it, which is the cheapest honest answer */
+    if(q){ q.cap = Math.max(SITE_FLOOR, Math.min(q.pop ?? 3, r.cap ?? q.pop ?? 3)); q.hallowUntil = r.hallowUntil || 0; q.reached = !!r.reached; }
   }
   if(d.closing){ closing.on = !!d.closing.on; closing.told = !!d.closing.told; closing.known = !!d.closing.known; }
   else { closing.on = fractureStage >= 1; closing.told = false; closing.known = false; }
@@ -53392,7 +53435,7 @@ function lyreCairn(){
   if(!search.on || !search.found || search.cairn || search.met) return;
   const sites = corpseSites;
   const site = sites[search.siteId]; if(!site) return;
-  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 20);
+  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < site.r + 8);
   if(!near) return;
   search.cairn = true;
   log('There is a cairn here, built by somebody who had nothing to build it with but what was lying about. It is not a grave — it is a marker, and it has been added to.', 'good');
@@ -53438,8 +53481,8 @@ function lyreTick(dt){
   /* WIDER THAN THE SITE. A corpse-field carries r:12 and the old arrival test was 14, which
      is a two-tile skin around a circle nobody can see, in a world 1440 tiles across. Walking
      THROUGH the field and missing her by three tiles is how this reads as "she does not
-     exist". 22 means arriving at the field is arriving. */
-  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < 22);
+     exist". Ten past the edge means arriving at the field is arriving, at any size of field. */
+  const near = player().find(c => c.state === 'ok' && dist(c.x, c.y, site.x, site.y) < site.r + 10);
   if(!near) return;
   search.met = true;
   const p2 = findOpenNear(site.x + ri(-3, 3), site.y + ri(-3, 3), 6) || {x: site.x, y: site.y};

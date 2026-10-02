@@ -18,6 +18,10 @@
  * Corpse Cairn, which the note explicitly asks to leave alone: `CAIRN_PER_BODY` and `CAIRN_MAX`
  * are untouched, and the assertion below says so rather than trusting it.
  *
+ * And a fourth, from 2026-10-02: "Make the sundered sites bigger, and only named once reached."
+ * Claim 4 measures how far the bone stands out from each site's middle, and that a site in plain
+ * sight is not named until somebody of yours has stood at it.
+ *
  *   node tools/sundered.js [game.html]
  */
 const { chromium } = require('playwright');
@@ -58,9 +62,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          the site's own radius, a monument should stop a fraction of it and leave the rest. */
       let blockedN = 0, total = 0;
       for (const s of corpseSites)
-        for (let y = Math.round(s.y) - 12; y <= Math.round(s.y) + 12; y++)
-          for (let x = Math.round(s.x) - 12; x <= Math.round(s.x) + 12; x++) {
-            if (dist(x, y, s.x, s.y) > 12) continue;
+        for (let y = Math.round(s.y) - s.r; y <= Math.round(s.y) + s.r; y++)
+          for (let x = Math.round(s.x) - s.r; x <= Math.round(s.x) + s.r; x++) {
+            if (dist(x, y, s.x, s.y) > s.r) continue;
             total++; if (isBlocked(x, y)) blockedN++;
           }
       const frac = blockedN / Math.max(1, total);
@@ -151,6 +155,42 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.andTheOrdinaryCairnIsUntouched = (CAIRN_PER_BODY === 26 && CAIRN_MAX === 4)
         ? 'and a Corpse Cairn still forms out of a battlefield at twenty-six bodies apiece, four at a time — "Corpse Cairns should spawn as per usual"'
         : `!! THE ORDINARY CAIRN MOVED: ${CAIRN_PER_BODY} per body, ${CAIRN_MAX} max`;
+    });
+
+    /* ---------- 4. THE SIZE OF HILLS, AND NAMED BY GOING THERE ----------
+       "Make the sundered sites bigger, and only named once reached." The map is drawn whole now,
+       so the bones are on the skyline from far off; seeing one is not reaching it. */
+    guard(['theyAreTheSizeOfHills', 'seeingOneDoesNotNameIt', 'standingAtItDoes', 'andTheSaveRemembers'], () => {
+      /* how far out from the middle the bone actually stands, measured off the footprint */
+      const reachOf = (s) => { let far = 0; for (let y = Math.round(s.y) - 40; y <= Math.round(s.y) + 40; y++) for (let x = Math.round(s.x) - 40; x <= Math.round(s.x) + 40; x++) if (isBlocked(x, y) && dist(x + 0.5, y + 0.5, s.x, s.y) < 40 && tileAt(x, y) !== 3) far = Math.max(far, dist(x + 0.5, y + 0.5, s.x, s.y)); return far; };
+      const reaches = corpseSites.map(reachOf);
+      const least = Math.min(...reaches);
+      R.theyAreTheSizeOfHills = corpseSites.every(s => s.r >= 24) && least >= 14
+        ? `every site is ${corpseSites[0].r} tiles across its ground, and the least of the monuments stands ${least.toFixed(0)} tiles out from its middle (it was about 7)`
+        : `!! THE SITES ARE STILL SMALL: radius ${corpseSites.map(s => s.r).join('/')}, monuments reaching ${reaches.map(r => r.toFixed(0)).join('/')}`;
+      const me = player()[0], keep = player().map(c => ({ c, x: c.x, y: c.y }));
+      const s = corpseSites.slice().sort((a, b2) => dist(b2.x, b2.y, me.x, me.y) - dist(a.x, a.y, me.x, me.y))[0];
+      const wasNamed = corpseSites.filter(q => q.reached).length;
+      /* stand off where the middle is in plain sight but the ground is not reached */
+      const off = findOpenNear(s.x + s.r + 2, s.y, 2);
+      for (const c of player()) { c.x = off.x; c.y = off.y; }
+      hour = 12; computeVision(); witnessTick();
+      const inSight = visAt(s.x, s.y) === 2;
+      R.seeingOneDoesNotNameIt = wasNamed === 0 && inSight && !s.reached
+        ? `no site is named on a new world, and one in plain sight from ${dist(off.x, off.y, s.x, s.y).toFixed(0)} tiles off is still not`
+        : `!! NAMED WITHOUT BEING REACHED: ${wasNamed} at the start; in sight ${inSight}, reached ${s.reached}`;
+      const at = findOpenNear(s.x + s.r * 0.7, s.y, 2);
+      me.x = at.x; me.y = at.y; computeVision(); witnessTick();
+      R.standingAtItDoes = s.reached && corpseSites.filter(q => q.reached).length === 1
+        ? `and walking somebody to ${dist(at.x, at.y, s.x, s.y).toFixed(0)} tiles from its middle names that one, and only that one`
+        : `!! STANDING AT IT: reached ${s.reached}, ${corpseSites.filter(q => q.reached).length} named`;
+      for (const k of keep) { k.c.x = k.x; k.c.y = k.y; }
+      computeVision();
+      restore(JSON.parse(JSON.stringify(snapshot())));
+      const s2 = corpseSites.find(q => q.id === s.id);
+      R.andTheSaveRemembers = s2 && s2.reached && corpseSites.filter(q => q.reached).length === 1
+        ? 'and a save and reload keeps it named'
+        : `!! THE RELOAD FORGOT: ${corpseSites.filter(q => q.reached).map(q => q.id).join(',') || 'none'} named`;
     });
 
     return R;
