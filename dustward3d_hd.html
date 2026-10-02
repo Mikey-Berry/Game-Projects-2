@@ -1381,6 +1381,7 @@ function oreAt(x, y){
    is asked about every tile the renderer and the pathing touch. */
 let copperPit = null;
 const hamlets = [];            /* {id, x, y, kind, name, town, clearR}: see HAMLETS, seeded last */
+const towers = [];             /* {id, x, y, kind, ang, h, fall, clearR, reached}: see THE GOLDEN-AGE TOWERS */
 function rawDecorAt(x,y){
   if(copperPit && Math.abs(copperPit.x - x) <= copperPit.r && Math.abs(copperPit.y - y) <= copperPit.r){
     const o2 = oreAt(x, y);
@@ -1428,6 +1429,12 @@ function rawDecorAt(x,y){
   for(const h of hamlets){            /* and nothing in a hamlet's yard: see HAMLETS */
     if(Math.abs(h.x - x) > h.clearR || Math.abs(h.y - y) > h.clearR) continue;
     if(dist(h.x, h.y, x, y) < h.clearR) return null;
+  }
+  for(const tw of towers){            /* nor growing through a tower, or what fell off one */
+    const reach = tw.clearR + tw.fall;
+    if(Math.abs(tw.x - x) > reach || Math.abs(tw.y - y) > reach) continue;
+    if(dist(tw.x, tw.y, x, y) < tw.clearR) return null;
+    if(tw.fall && towerFallAt(tw, x + 0.5, y + 0.5, 3.2)) return null;
   }
   const h = hash2(x*3+7, y*3+13);
   const t = terr[y*W+x];
@@ -13513,6 +13520,11 @@ function witnessTick(){
      is learned at their foot. `reached` rides the save. */
   for(const st of corpseSites){
     if(player().some(c => c.state !== 'dead' && (c.floor || 0) === 0 && dist(c.x, c.y, st.x, st.y) < st.r * 0.8)){ sawPlace('corpse'); st.reached = true; }
+  }
+  /* and a Golden-Age tower is named the same way, by standing at its foot */
+  for(const tw of towers){
+    if(tw.reached) continue;
+    if(player().some(c => c.state !== 'dead' && (c.floor || 0) === 0 && dist(c.x, c.y, tw.x, tw.y) < 16)){ sawPlace('tower'); tw.reached = true; }
   }
   /* Paladin ground. They do not suffer necromancers here, which is the point of going. */
   if(bastion && player().some(c => c.state !== 'dead' && dist(c.x, c.y, bastion.x, bastion.y) < BASTION_R - 6))
@@ -32661,6 +32673,85 @@ function hamletAt(x, y){
   for(const h of hamlets) if(Math.abs(h.x - x) < 14 && Math.abs(h.y - y) < 14) return h;
   return null;
 }
+/* ============================================================ THE GOLDEN-AGE TOWERS
+   "I do like the idea of a unique skyline. Let's: ... add golden age tower ruins." (2026-10-02)
+   With the map drawn whole, what stands up off it is what you steer by. These are the tallest
+   things a person built in this world: shafts of pale dressed stone, banded in gold every few
+   storeys, gone at the top. Three ways a tower ends up after the Fracture and a few centuries:
+   still STANDING to most of its height, LEANING off true, or SNAPPED, a stump with the rest of
+   it lying in the dust where it fell.
+   SEEDED LAST, after the hamlets, so it can keep clear of everything; placed off `hash2`, and the
+   footprint, the fall and the cache at the foot are all laid without a draw, so a new world is
+   the world it was. Each is named, like the Sundered ground, only once one of yours is at it. */
+const TOWER_N = Math.round(6 * AREA_K);
+/* is (px, py) within `pad` of the fallen length of a snapped tower */
+function towerFallAt(tw, px, py, pad){
+  if(!tw.fall) return false;
+  const fx = Math.sin(tw.ang), fy = Math.cos(tw.ang);
+  const dx = px - tw.x, dy = py - tw.y;
+  const along = dx * fx + dy * fy, across = Math.abs(dx * fy - dy * fx);
+  return along > 5 && along < 6.5 + tw.fall && across < pad;
+}
+(function seedTowers(){
+  const clearOf = (x, y) =>
+    !inHeadland(x, y, 40) &&
+    !nearRoad(x, y, 24) &&
+    !towns.some(t => dist(t.x, t.y, x, y) < 110) &&
+    !hamlets.some(h => dist(h.x, h.y, x, y) < 70) &&
+    !corpseSites.some(s2 => dist(s2.x, s2.y, x, y) < 75) &&
+    !ruins.some(r => dist(r.x, r.y, x, y) < 30) &&
+    !camps.some(c => dist(c.x, c.y, x, y) < 60) &&
+    !redoubts.some(r => dist(r.x, r.y, x, y) < 50) &&
+    !(bastion && dist(bastion.x, bastion.y, x, y) < 70) &&
+    !(guild && dist(guild.x, guild.y, x, y) < 70) &&
+    !(coilShrine && dist(coilShrine.x, coilShrine.y, x, y) < 40) &&
+    !(copperPit && dist(copperPit.x, copperPit.y, x, y) < 40) &&
+    !biomeSleepers.some(sl => dist(sl.x, sl.y, x, y) < 24) &&
+    !towers.some(o => dist(o.x, o.y, x, y) < 240);
+  /* open, dry and roughly level under the foot and along where a snapped one will lie */
+  const groundOk = (x, y, ang, fall) => {
+    let lo = Infinity, hi = -Infinity;
+    for(let j = y - 9; j <= y + 9; j++) for(let i = x - 9; i <= x + 9; i++){
+      if(dist(i, j, x, y) > 9) continue;
+      if(isBlocked(i, j) || tileAt(i, j) === 3) return false;
+      const hv = HV[j * (W + 1) + i]; if(hv < lo) lo = hv; if(hv > hi) hi = hv;
+    }
+    if(hi - lo > 2.6 || biomeAt(x, y) === BIOME_VAT) return false;
+    for(let d = 6; d <= 7 + fall; d += 1.5){
+      const fx = Math.round(x + Math.sin(ang) * d), fy = Math.round(y + Math.cos(ang) * d);
+      if(isBlocked(fx, fy) || tileAt(fx, fy) === 3) return false;
+    }
+    return true;
+  };
+  const solid = (i, j) => { const k = bkey(i, j, 0); blocked.add(k); baseBlocked.add(k); };
+  for(let k = 0; k < 4000 && towers.length < TOWER_N; k++){
+    const x = Math.round(80 + hash2(k * 7 + 3, 911) * (W - 160)), y = Math.round(80 + hash2(k * 13 + 5, 347) * (H - 160));
+    if(!clearOf(x, y)) continue;
+    const h = hash2(x * 3 + 1, y * 5 + 2), h2 = hash2(y * 7 + 3, x * 11 + 4);
+    const kind = h < 0.42 ? 'standing' : h < 0.68 ? 'leaning' : 'snapped';
+    const ang = h2 * Math.PI * 2;
+    const fall = kind === 'snapped' ? Math.round(24 + hash2(x, y * 3) * 8) : 0;
+    if(!groundOk(x, y, ang, fall)) continue;
+    const tw = {id: towers.length + 1, x, y, kind, ang, fall, clearR: 9, reached: false,
+                h: kind === 'standing' ? 44 + hash2(x * 5, y) * 14 : kind === 'leaning' ? 34 + hash2(x * 5, y) * 10 : 14 + hash2(x * 5, y) * 6};
+    towers.push(tw);
+    /* the foot, and on a snapped one the length of it lying in the dust: these are things */
+    for(let j = y - 6; j <= y + 6; j++) for(let i = x - 6; i <= x + 6; i++) if(dist(i + 0.5, j + 0.5, x, y) < 5.2) solid(i, j);
+    if(fall) for(let j = y - fall - 8; j <= y + fall + 8; j++) for(let i = x - fall - 8; i <= x + fall + 8; i++)
+      if(towerFallAt(tw, i + 0.5, j + 0.5, 2.4)) solid(i, j);
+    /* a cache at the foot, on the side away from the fall: what the last people to shelter in it
+       left, and what the tower's own stores still hold. Picked off the hash, not rolled. */
+    const ca = ang + Math.PI + 0.6;
+    let cx2 = x + Math.sin(ca) * 7.5, cy2 = y + Math.cos(ca) * 7.5;
+    for(let ring = 0; ring <= 6 && isBlocked(cx2, cy2); ring++){ cx2 = x + Math.sin(ca + ring * 0.5) * (7.5 + ring); cy2 = y + Math.cos(ca + ring * 0.5) * (7.5 + ring); }
+    const h3 = hash2(x * 13, y * 17);
+    tw.cacheIdx = chests.length;
+    chests.push({x: cx2, y: cy2, opened: false, loot: {cats: 40 + Math.floor(h3 * 90), items: {
+      scrap: 2 + Math.floor(hash2(x, y * 7) * 4),
+      ...(h3 < 0.35 ? {formula_w: 1} : h3 < 0.62 ? {aether_cell: 1} : h3 < 0.8 ? {gold_bar: 1} : {lead: 2}),
+    }}});
+  }
+})();
 /* the people, brought in the first time anybody of yours comes near (see HAMLETS). Their draws
    are taken on a stream of their own and the world's put back after, so a walk past a farm moves
    nothing else that happens today. */
@@ -35135,6 +35226,109 @@ function palette(t){
   }
   flushBoxBatch(g);
   scene.add(g);
+}
+/* ---------- THE GOLDEN-AGE TOWERS, DRAWN (see THE GOLDEN-AGE TOWERS) ----------
+   Not through `box`: a leaning shaft, an octagon made of two squares turned against each other
+   and a length of tower lying in the dust are not axis-aligned, and the batch only places boxes
+   square to the world. And not a mesh a part either, which would be a thousand objects for the
+   renderer to consider. Each tower is laid out as a little tree of transforms, then every part of
+   one colour is baked into ONE mesh for that tower: a handful of draw calls a tower, and each one
+   has a real bounding sphere, so a tower off screen costs nothing. */
+{
+  const TC = {stone: '#b3a68a', worn: '#8a7f6a', gold: '#a8853c', dark: '#0e0c10', rubble: '#776d5d'};
+  const unit = new THREE.BoxGeometry(1, 1, 1).toNonIndexed();
+  const P0 = unit.attributes.position.array, N0 = unit.attributes.normal.array;
+  const v = new THREE.Vector3(), nm = new THREE.Matrix3();
+  for(const tw of towers){
+    const parts = {};
+    const hv = (k) => hash2(tw.x * 31 + k * 7, tw.y * 17 + k * 13);
+    const root = new THREE.Object3D();
+    root.position.set(tw.x, groundY(tw.x, tw.y) - 0.3, tw.y);
+    root.rotation.y = tw.ang;
+    const node = (parent, px, py, pz, rx, ry, rz) => {
+      const o = new THREE.Object3D(); o.position.set(px, py, pz); o.rotation.set(rx || 0, ry || 0, rz || 0); parent.add(o); return o;
+    };
+    const add = (parent, col, sx, sy, sz, px, py, pz, rx, ry, rz) => {
+      const o = node(parent, px, py, pz, rx, ry, rz); o.scale.set(sx, sy, sz);
+      (parts[col] || (parts[col] = [])).push(o);
+    };
+    /* an octagonal course: two squares a quarter-turn apart */
+    const course = (parent, col, w, h, y) => { add(parent, col, w, h, w, 0, y, 0); add(parent, col, w, h, w, 0, y, 0, 0, Math.PI / 4, 0); };
+    /* the plinth, stepped, and four buttresses leaning in on the corners */
+    course(root, TC.worn, 10.2, 1.6, 0.5);
+    course(root, TC.stone, 8.4, 1.2, 1.7);
+    for(let b = 0; b < 4; b++){
+      const a = b * Math.PI / 2 + Math.PI / 4;
+      const foot = node(root, Math.sin(a) * 4.3, 0, Math.cos(a) * 4.3, 0, a, 0);
+      add(foot, TC.worn, 1.4, 10, 2.4, 0, 4.4, -0.9, -0.24, 0, 0);
+    }
+    /* the shaft, in courses that narrow going up, banded in gold every third, slit on the faces */
+    const shaft = node(root, 0, 2.3, 0, 0, 0, tw.kind === 'leaning' ? 0.10 + hv(1) * 0.06 : 0);
+    const stand = tw.h, CH = 3.2;
+    const n = Math.max(3, Math.floor(stand / CH));
+    for(let i = 0; i < n; i++){
+      const y = i * CH + CH / 2, w = 5.2 - 1.0 * (i / n);
+      course(shaft, (i * 7 + tw.id) % 5 === 0 ? TC.worn : TC.stone, w, CH, y);
+      if(i % 3 === 2) course(shaft, TC.gold, w + 0.6, 0.5, y + CH / 2 - 0.1);
+      if(i % 2 === 1 && i < n - 1) for(let f = 0; f < 4; f++){
+        const a = f * Math.PI / 2;
+        add(shaft, TC.dark, 0.55, 1.8, 0.3, Math.sin(a) * (w / 2 + 0.02), y, Math.cos(a) * (w / 2 + 0.02), 0, a, 0);
+      }
+    }
+    /* gone at the top: four stubs of the last storey at different heights, and the gold collar it
+       wore, broken, three of its eight lengths missing and the rest knocked crooked */
+    const top = n * CH, wt = 5.2 - 1.0;
+    for(let c = 0; c < 4; c++){
+      const a = c * Math.PI / 2 + Math.PI / 4, hh = 1 + hv(10 + c) * 4.5;
+      add(shaft, TC.stone, 1.3, hh, 1.3, Math.sin(a) * (wt / 2 - 0.4), top + hh / 2, Math.cos(a) * (wt / 2 - 0.4));
+    }
+    if(tw.kind !== 'snapped') for(let seg = 0; seg < 8; seg++){
+      if(hv(20 + seg) < 0.38) continue;
+      const a = seg * Math.PI / 4, r = wt / 2 + 1.1;
+      add(shaft, TC.gold, 2.0, 0.32, 0.32, Math.sin(a) * r, top - 1.4 + (hv(30 + seg) - 0.5) * 0.8, Math.cos(a) * r,
+          (hv(40 + seg) - 0.5) * 0.3, a + Math.PI / 2, (hv(50 + seg) - 0.5) * 0.3);
+      if(seg % 2 === 0) add(shaft, TC.gold, 1.2, 0.22, 0.22, Math.sin(a) * (r - 0.8), top - 1.5, Math.cos(a) * (r - 0.8), 0, a, 0);
+    }
+    /* SNAPPED: the rest of it lies where it fell, along `ang`, half in the dust */
+    if(tw.fall){
+      const lie = node(root, 0, 1.1, 6.5, Math.PI / 2 - 0.05, 0, (hv(60) - 0.5) * 0.12);
+      const m = Math.floor(tw.fall / CH);
+      for(let i = 0; i < m; i++){
+        const w = 4.6 - 0.8 * (i / m);
+        course(lie, i % 4 === 1 ? TC.worn : TC.stone, w, CH * 0.98, i * CH + CH / 2);
+        if(i % 3 === 1) course(lie, TC.gold, w + 0.6, 0.5, i * CH + CH - 0.1);
+      }
+    }
+    /* and what came down off it, round the foot */
+    for(let r = 0; r < 6; r++){
+      const a = hv(70 + r) * Math.PI * 2, d = 6.5 + hv(80 + r) * 5, sz = 0.9 + hv(90 + r) * 1.6;
+      add(root, r % 2 ? TC.rubble : TC.stone, sz * 1.4, sz * 0.8, sz, Math.sin(a) * d, sz * 0.2, Math.cos(a) * d,
+          hv(100 + r) * 0.6, hv(110 + r) * 3, hv(120 + r) * 0.5);
+    }
+    root.updateMatrixWorld(true);
+    for(const col of Object.keys(parts)){
+      const list = parts[col];
+      const pos = new Float32Array(list.length * P0.length), nor = new Float32Array(list.length * N0.length);
+      list.forEach((o, i) => {
+        nm.getNormalMatrix(o.matrixWorld);
+        for(let k = 0; k < P0.length; k += 3){
+          v.set(P0[k], P0[k+1], P0[k+2]).applyMatrix4(o.matrixWorld);
+          pos[i * P0.length + k] = v.x; pos[i * P0.length + k + 1] = v.y; pos[i * P0.length + k + 2] = v.z;
+          v.set(N0[k], N0[k+1], N0[k+2]).applyMatrix3(nm).normalize();
+          nor[i * N0.length + k] = v.x; nor[i * N0.length + k + 1] = v.y; nor[i * N0.length + k + 2] = v.z;
+        }
+      });
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+      geo.computeBoundingSphere();
+      const mesh = new THREE.Mesh(geo, mat(col));
+      mesh.castShadow = col !== TC.dark; mesh.receiveShadow = true;
+      mesh.name = 'tower';
+      scene.add(mesh);
+    }
+  }
+  unit.dispose();
 }
 
 let activeFloor = 0;   /* the storey you are looking at — decks above it turn to glass */
@@ -44208,6 +44402,17 @@ function renderOverlay(rdt){
     cx.fillText(siteHallowed(s) ? '☠ THE SUNDERED GROUND — HALLOWED' : '☠ THE SUNDERED GROUND', q.x, q.y);
     cx.textAlign = 'start';
   }
+  /* the Golden-Age towers, named the same way: by going there */
+  for(const tw of towers){
+    if(!tw.reached || activeFloor < 0) continue;
+    const q = w2s(tw.x, tw.y, groundY(tw.x, tw.y) + 4);
+    if(!q) continue;
+    cx.fillStyle = 'rgba(214,190,128,0.85)';
+    setFont('bold 13px monospace');
+    cx.textAlign = 'center';
+    cx.fillText('▲ A GOLDEN-AGE TOWER', q.x, q.y);
+    cx.textAlign = 'start';
+  }
   /* phylacteries — a lich waiting in the dark for someone to come back for them */
   for(const p of phylacteries){
     p._rect = null;
@@ -44909,6 +45114,7 @@ function renderMinimap(){
   for(const t of towns){ if(!visAt(t.x,t.y)) continue; mmcx.fillStyle='#e8dcc4'; mmcx.fillRect(t.x*128/W-2, t.y*128/H-2, 4, 4); }
   for(const r of ruins){ if(!visAt(r.x,r.y)) continue; mmcx.fillStyle='#8a8478'; mmcx.fillRect(r.x*128/W-1, r.y*128/H-1, 3, 3); }
   for(const h of hamlets){ if(!visAt(h.x,h.y)) continue; mmcx.fillStyle='#c8b890'; mmcx.fillRect(h.x*128/W-1, h.y*128/H-1, 2, 2); }
+  for(const tw of towers){ if(!tw.reached) continue; mmcx.fillStyle='#d6be80'; mmcx.fillRect(tw.x*128/W-1, tw.y*128/H-2, 2, 3); }
   if(slaverCamp && visAt(slaverCamp.x, slaverCamp.y)){ mmcx.fillStyle='#a05040'; mmcx.fillRect(slaverCamp.x*128/W-2, slaverCamp.y*128/H-2, 4, 4); }
   if(bastion && visAt(bastion.x, bastion.y)){
     mmcx.fillStyle = '#f0ead8'; mmcx.fillRect(bastion.x*128/W-2, bastion.y*128/H-2, 4, 4);
@@ -52385,6 +52591,7 @@ function snapshot(){
        second, every wreck in the rust would lie back down on a reload and wake a second time */
     biomes: {seen: {...biomeState.seen}, woke: {...biomeState.woke}},
     hamletsWoke: hamlets.filter(h => h.woke).map(h => h.id),
+    towersReached: towers.filter(t => t.reached).map(t => t.id),
     courtCame: {...courtCame},
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       /* how much pitch is left in a post. Without this every post in the world came back
@@ -52473,6 +52680,7 @@ function restore(d){
   for(const k in biomeState.woke) delete biomeState.woke[k];
   if(d.biomes){ Object.assign(biomeState.seen, d.biomes.seen || {}); Object.assign(biomeState.woke, d.biomes.woke || {}); }
   for(const h of hamlets) h.woke = !!(d.hamletsWoke && d.hamletsWoke.includes(h.id));   /* before the folk were saved, none had come */
+  for(const t of towers) t.reached = !!(d.towersReached && d.towersReached.includes(t.id));
   /* who of the old king's court has come through already */
   for(const k in courtCame) delete courtCame[k];
   Object.assign(courtCame, d.courtCame || {});

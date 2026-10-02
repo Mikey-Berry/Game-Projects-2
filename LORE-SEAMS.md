@@ -1714,6 +1714,34 @@ squad members... (Take Kenshi's system for this as inspiration.)"* Built in orde
 
   Where two share a shape, add a bearing from the nearest town, as the Cairn Beasts do (*"The
   Cage east of Copperhold"*). The label would read *"☠ THE CAGE — SUNDERED GROUND"*.
+- **Fixed on the way:** after any reload, every monument could be walked through. The footprint
+  went into `blocked` but not into `baseBlocked`, and `restore` rebuilds from the latter. The
+  hamlet houses had the same fault. Both are fixed.
+
+### 12.3 The Golden-Age towers
+
+- **What they are:** the tallest things a person built in this world. Each is a shaft of pale
+  dressed stone, banded in gold every few storeys, on a stepped plinth with four buttresses, and
+  gone at the top.
+- **How they ended up:** they come in three states.
+  - **Standing:** 44 to 58 high, the broken stubs of the last storey and a crooked gold collar on
+    top.
+  - **Leaning:** 34 to 44 high, about seven degrees off true.
+  - **Snapped:** a stump of 14 to 20, with the other 24 to 32 tiles of it lying where it fell.
+- **Where:** 19 on the default world, 240 or more apart, each at least 110 from a town and clear
+  of the roads, hamlets and Sundered sites.
+- **Placed without a draw.** The world is unchanged apart from 19 chests appended to the list.
+- **They are solid,** and survive a reload.
+- **A cache at the foot of each:** 40 to 130 cats, two to five scrap, and one of a worn formula,
+  an aether cell, a gold bar or two lead. Chosen by hash.
+- **Named once reached**, as the Sundered sites are, and marked on the minimap from then on.
+- **Checked by:** `tools/skyline.js`.
+- **For review (mine):**
+  - **The label:** *"▲ A GOLDEN-AGE TOWER"*.
+  - **The look:** pale stone, gold bands, a collar at the top.
+  - **What they were for: not stated anywhere yet.** One option that fits the bible is the
+    kingdom's aether spires, the conduits its siphoned power ran through. I have not written
+    that anywhere a player can read it.
 
 ---
 
