@@ -16,6 +16,10 @@
  *   3. each has a cache at its foot, on ground you can stand on
  *   4. a tower is named only once one of yours stands at it, not when it is seen from far off,
  *      and the save remembers which
+ *   5. the wreck of the ARK: one, far from every town and road and clear of the towers; drawn,
+ *      its stern well up off the ground; solid down its length while the furrow behind it is
+ *      open ground; nothing grows under it or in the furrow; still solid after a reload; and
+ *      named like the rest, by walking up to it
  *
  * Anything starting '!!' fails the build.
  *
@@ -144,6 +148,52 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.andTheSaveRemembers = towers.find(t => t.id === tw.id).reached && towers.filter(t => t.reached).length === 1
         ? 'and a save and reload keeps it named'
         : `!! THE RELOAD FORGOT: ${towers.filter(t => t.reached).map(t => t.id).join(',') || 'none'} named`;
+    });
+
+    /* ---------- 5. THE WRECK OF THE ARK ---------- */
+    guard(['theWreckIsDownInTheWaste', 'itIsDrawnAndItIsHuge', 'itIsSolidAndTheFurrowIsNot', 'andNamedByWalkingUpToIt'], () => {
+      if (!ark) { R.theWreckIsDownInTheWaste = '!! THERE IS NO WRECK ON THE MAP'; return; }
+      const fx = Math.sin(ark.ang), fy = Math.cos(ark.ang);
+      const at = (lz, lx) => [ark.x + fy * (lx || 0) + fx * lz, ark.y - fx * (lx || 0) + fy * lz];
+      const near = towns.filter(t => dist(t.x, t.y, ark.mx, ark.my) < 240).map(t => t.name);
+      const roaded = [];
+      for (let lz = -ARK_FURROW; lz <= ARK_L; lz += 10) if (nearRoad(...at(lz).map(Math.round), 30)) roaded.push(lz);
+      const towered = towers.filter(tw => arkCovers(tw.x, tw.y, 50)).map(tw => tw.id);
+      R.theWreckIsDownInTheWaste = !near.length && !roaded.length && !towered.length
+        ? `one wreck, ${ARK_L} tiles from stern to buried prow with ${ARK_FURROW} of furrow behind, the nearest town ${Math.min(...towns.map(t => dist(t.x, t.y, ark.mx, ark.my))).toFixed(0)} off, no road within 30 and no tower within 50`
+        : `!! THE WRECK IS CROWDED: towns ${near.join(',')}; roads at ${roaded.join(',')}; towers ${towered.join(',')}`;
+      const meshes = scene.children.filter(o => o.name === 'ark');
+      let top = -Infinity;
+      for (const m of meshes) { const pa = m.geometry.attributes.position.array; for (let i = 1; i < pa.length; i += 3) if (pa[i] > top) top = pa[i]; }
+      const rise = top - ark.h0;
+      R.itIsDrawnAndItIsHuge = meshes.length >= 10 && rise >= 22
+        ? `drawn in ${meshes.length} pieces along its length, the highest of it ${rise.toFixed(0)} above the ground it lies on`
+        : `!! THE WRECK IS DRAWN WRONG: ${meshes.length} meshes, rising ${rise.toFixed(1)}`;
+      const open = [], shut = [];
+      for (let lz = 10; lz <= ARK_L - 20; lz += 10) if (!isBlocked(...at(lz))) open.push(lz);
+      for (let lz = -20; lz >= -ARK_FURROW + 10; lz -= 15) if (isBlocked(...at(lz))) shut.push(lz);
+      const grown = [];
+      for (let lz = -ARK_FURROW + 5; lz <= ARK_L; lz += 7) for (const lx of [-10, 0, 10]) { const [x, y] = at(lz, lx); if (rawDecorAt(Math.floor(x), Math.floor(y))) grown.push(`${lz}/${lx}`); }
+      restore(JSON.parse(JSON.stringify(snapshot())));
+      const lost = [];
+      for (let lz = 10; lz <= ARK_L - 20; lz += 10) if (!isBlocked(...at(lz))) lost.push(lz);
+      R.itIsSolidAndTheFurrowIsNot = !open.length && !shut.length && !grown.length && !lost.length
+        ? 'solid down its whole length, the furrow behind it open ground, nothing growing under it or in the furrow, and all of it still solid after a reload'
+        : `!! THE WRECK: open along ${open.join(',') || '-'}; furrow shut at ${shut.join(',') || '-'}; decor at ${grown.slice(0, 4).join(',') || '-'}; lost on reload ${lost.join(',') || '-'}`;
+      const me = player()[0], keep = player().map(c => ({ c, x: c.x, y: c.y }));
+      const far = findOpenNear(...at(ARK_L / 2, ARK_B / 2 + 24), 2);
+      for (const c of player()) { c.x = far.x; c.y = far.y; }
+      hour = 12; computeVision(); witnessTick();
+      const unnamed = !ark.reached && visAt(...at(ARK_L / 2, ARK_B / 2)) === 2;
+      const side = findOpenNear(...at(ARK_L / 2, ARK_B / 2 + 6), 2);
+      me.x = side.x; me.y = side.y; computeVision(); witnessTick();
+      const named = ark.reached;
+      for (const k of keep) { k.c.x = k.x; k.c.y = k.y; }
+      computeVision();
+      restore(JSON.parse(JSON.stringify(snapshot())));
+      R.andNamedByWalkingUpToIt = unnamed && named && ark.reached
+        ? 'its side in plain sight from 24 tiles off does not name it; walking up to it does, and a reload keeps the name'
+        : `!! NAMING THE WRECK: unnamed in sight ${unnamed}, named at its side ${named}, after reload ${ark.reached}`;
     });
 
     return R;

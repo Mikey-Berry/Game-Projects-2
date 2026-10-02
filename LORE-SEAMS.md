@@ -1743,6 +1743,55 @@ squad members... (Take Kenshi's system for this as inspiration.)"* Built in orde
     kingdom's aether spires, the conduits its siphoned power ran through. I have not written
     that anywhere a player can read it.
 
+### 12.4 The wreck of the ARK
+
+The ask: *"Let's make it the wreck of a titanic spaceship. Project ARK, meant to evacuate humanity.
+Perhaps parts of it are explorable."*
+
+**Built (the hull only).**
+- **Size and lie:** 170 tiles from the stern to the buried prow, 32 across and about 24 high. It
+  came down nose first and slid. The prow is under a mound it ploughed up. The stern stands clear
+  of the ground, with three cold engine bells and two fins, one of them torn off and lying beside
+  it.
+- **The breach:** amidships the plating is gone from the top and one side, and the ribs stand
+  over a black hold.
+- **The furrow:** a 150-tile trench runs behind it, berms thrown up on both sides, with 34 pieces
+  of plating and gold trim lying in it.
+- **The look:** dark bronze, lighter panels, verdigris, and the towers' gold in bands.
+- **Where:** one on the map, placed off the hash with no draw. It is 639 tiles from the nearest
+  town on the default world, far from every road, and the towers keep 60 or more clear of it.
+- **Solid,** and survives a reload. The furrow is open ground, and nothing grows under the hull or
+  in the furrow.
+- **Named once reached,** like the rest. The label is *"◆ PROJECT ARK"*, and the minimap draws its
+  length from then on.
+- **Checked by:** `tools/skyline.js` §5.
+
+**Not built, waiting on a ruling:** the inside, and every word a player reads about it.
+**(All mine, for review.)**
+1. **Who built it, and when.** The bible's Golden Age is an alchemical kingdom: aether lances,
+   automatons, bunkers. I propose the ARK fits there, and suggest one of two readings:
+   - **A. Before the Fracture.** The alchemists' last great work, built in the years after the
+     Last Scholar's warning by the part of the court that believed him. It was to carry the
+     kingdom's chosen away if the rite went wrong. It lifted as the light came and did not get
+     far. This one ties to the warning they spurned.
+   - **B. After the Fracture.** Built by the survivors to get away from the Watchers. It ran on
+     the old conduit power, and fell when alchemy began to come from the wound instead. This one
+     ties to "the Golden Age's project, delivered."
+   - **My pick is A.** "Meant to evacuate humanity" then means "meant to evacuate the people who
+     mattered," which is the Golden Age all over.
+2. **What it is called in the world.** "Project ARK" is the Golden Age's own name, found on its
+   plates and in its logs. The living call it **the Keel** (or the Hull), because that is what
+   sticks up out of the ground. The label would then read *"◆ THE KEEL"* until somebody reads
+   the plate.
+3. **Where.** Tying it to the **rust barrens** would make its spill the origin of the barrens'
+   war-rust and its sleeping automatons. Moving it there means taking it out of its own country
+   on the default world: the barrens are centred on Ironscar.
+4. **Inside: the second step, once the above is ruled.** The breaches would open onto decks:
+   corridors, a hold of cold sleeper berths (the chosen, still in them), a bridge with the
+   ship's log, and Golden-Age automatons that never stood down. The loot is aether cells,
+   schematics and the log. The log would be the lore drop, and it would need your words or your
+   approval of mine.
+
 ---
 
 ## Appendix: re-running the counts
