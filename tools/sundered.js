@@ -188,9 +188,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       computeVision();
       restore(JSON.parse(JSON.stringify(snapshot())));
       const s2 = corpseSites.find(q => q.id === s.id);
-      R.andTheSaveRemembers = s2 && s2.reached && corpseSites.filter(q => q.reached).length === 1
-        ? 'and a save and reload keeps it named'
-        : `!! THE RELOAD FORGOT: ${corpseSites.filter(q => q.reached).map(q => q.id).join(',') || 'none'} named`;
+      /* AND THE BONES ARE STILL BONES. The footprint was stamped into `blocked` after `baseBlocked`
+         was taken, and `restore` rebuilds from the latter: on `main` a reload left 1,662 of the
+         1,668 solid tiles walkable, every monument in the world a picture again. */
+      const solidAfter = corpseSites.filter(q => isBlocked(Math.round(q.x), Math.round(q.y))).length;
+      R.andTheSaveRemembers = s2 && s2.reached && corpseSites.filter(q => q.reached).length === 1 && solidAfter === corpseSites.length
+        ? `and a save and reload keeps it named, and all ${solidAfter} monuments still stop you at the middle`
+        : `!! THE RELOAD FORGOT: ${corpseSites.filter(q => q.reached).map(q => q.id).join(',') || 'none'} named, ${solidAfter} of ${corpseSites.length} monuments solid`;
     });
 
     return R;
