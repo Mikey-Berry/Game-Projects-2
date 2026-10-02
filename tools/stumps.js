@@ -7,8 +7,8 @@
  * Two different claims live inside that sentence and they want different measurements:
  *
  *   · DOES IT GO. The instanced mesh has to actually be pushed out of sight, on every node
- *     type, and stay out through the things that redraw decor — the fog standing tiles back
- *     up as you explore, a debug reveal, a reload.
+ *     type, and stay out through the things that redraw the world — somebody walking up to
+ *     look at it, a debug reveal, a reload.
  *   · AND DOES IT STAY GONE. A thing that vanishes and is standing there again three minutes
  *     later is, from the chair, a thing that did not disappear. This is the half a yes/no test
  *     cannot see, so the measurement is DAYS, not a boolean.
@@ -41,27 +41,22 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       try { fn(); } catch (e) { for (const k of keys) if (R[k] === undefined) R[k] = '!! ' + String(e.message).slice(0, 110).toUpperCase(); }
     };
 
-    /* ---------- LIFT THE FOG BEFORE ASKING WHETHER A TREE IS DRAWN ----------
-       Decor on unexplored ground is parked at the same hidden matrix depletion uses, and at
-       the start of a run that is nearly the whole map — so the first version of this reported
-       "tree was already not drawn" about four perfectly healthy nodes and never tested
-       anything. With the reveal on, `shouldUp` is true everywhere, and a node that is not
-       drawn is not drawn because it was worked out. It also makes the two redraw passes below
-       mean more: they are the passes that stand things up, and now they have every reason to. */
-    debugSeeAll = true; fogMarkAll(); syncDecorFogFull();
+    /* Decor used to lie down on unexplored ground and this lifted the fog first so a healthy
+       tree was not reported as felled. The map is drawn whole now and every node stands from
+       the first frame, so a node that is not drawn is not drawn because it was worked out. */
     try { render(); } catch (e) {}
 
     /* find a live node of each kind, anywhere on the map */
     const findOne = (kind) => {
       for (let y = 6; y < H - 6; y += 1) for (let x = 6; x < W - 6; x += 1)
-        if (rawDecorAt(x, y) === kind && window.decorByTile && decorByTile.has(x + ',' + y)) return [x, y];
+        if (rawDecorAt(x, y) === kind && window.nodeInstances && nodeInstances.has(x + ',' + y)) return [x, y];
       return null;
     };
     /* IS IT ON THE SCREEN. Read the instance matrix, not a flag: `hideNodeInstance` parks the
        thing at y -50 with a scale of 0.001, so the only honest question is where the matrix
        says it is. A boolean somewhere else can be right while the tree is still standing. */
     const standing = (x, y) => {
-      const refs = (window.decorByTile && decorByTile.get(x + ',' + y)) || [];
+      const refs = (window.nodeInstances && nodeInstances.get(x + ',' + y)) || [];
       if (!refs.length) return null;
       const m = new THREE.Matrix4();
       for (const r of refs) {
@@ -98,19 +93,27 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! ${bad.join(' | ')}`;
     });
 
-    /* ---------- 2. AND THE THINGS THAT REDRAW DECOR LEAVE IT DOWN ----------
-       Two passes stand decor back up — the fog as you explore, and the full resync behind the
-       debug reveal — and both work off a SEPARATE ledger from the one depletion writes to. */
-    guard(['theFogDoesNotPlantItAgain', 'norDoesARevealOrAReload'], () => {
+    /* ---------- 2. AND NOTHING THAT REDRAWS THE WORLD PUTS IT BACK ----------
+       Decor used to be stood back up by the fog as you explored and by the debug reveal, off a
+       ledger separate from the one depletion writes to. Both are gone, but the question stays:
+       walk somebody up to the stump and look at it, flip the reveal both ways, reload. */
+    guard(['lookingAtItDoesNotPlantItAgain', 'norDoesARevealOrAReload'], () => {
       const bad = [];
-      syncDecorFog();
-      for (const k of kinds) if (standing(...spot[k])) bad.push(`${k} after the fog pass`);
-      R.theFogDoesNotPlantItAgain = bad.length === 0
-        ? 'and the fog standing tiles back up as you explore does not plant them again'
+      const me = player()[0], keep = { x: me.x, y: me.y };
+      for (const k of kinds) {
+        const [x, y] = spot[k];
+        me.x = x + 1.5; me.y = y + 1.5; computeVision();
+        try { render(); } catch (e) {}
+        if (standing(x, y)) bad.push(`${k} with somebody standing over it`);
+      }
+      me.x = keep.x; me.y = keep.y; computeVision();
+      R.lookingAtItDoesNotPlantItAgain = bad.length === 0
+        ? 'and walking somebody up to each stump to look at it does not plant it again'
         : `!! BACK ON THE MAP: ${bad.join(', ')}`;
       const bad2 = [];
-      syncDecorFogFull();
-      for (const k of kinds) if (standing(...spot[k])) bad2.push(`${k} after a full resync`);
+      toggleSeeAll(); try { render(); } catch (e) {}
+      toggleSeeAll(); try { render(); } catch (e) {}
+      for (const k of kinds) if (standing(...spot[k])) bad2.push(`${k} after the reveal`);
       restore(JSON.parse(JSON.stringify(snapshot())));
       try { render(); } catch (e) {}
       for (const k of kinds) if (standing(...spot[k])) bad2.push(`${k} after a reload`);

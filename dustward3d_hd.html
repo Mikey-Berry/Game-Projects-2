@@ -30278,7 +30278,17 @@ function escapeIfStuck(c){
 }
 
 /* ============================================================ FOG OF WAR */
-/* 0 = unexplored, 1 = explored (terrain remembered, no units), 2 = in sight */
+/* 0 = unexplored, 1 = explored (terrain remembered, no units), 2 = in sight.
+   ---------- THE MAP IS DRAWN; ONLY THE EYES ARE SCARCE ----------
+   "What if, instead of fog, the entire map is drawn already and simply cannot be seen until a
+    squad member is close by? ... let's not make a distinction between explored and unexplored
+    anymore, aside from on the back end for patrol/AI purposes."
+   So the screen only ever asks one question of `vis`: is somebody of yours looking at this right
+   now (2) or not. Ground, trees and walls stand everywhere from the first frame; out of sight
+   they are washed grey and the people on them are not drawn. 0 and 1 still mean what they did,
+   to the save, the scouts, the charts and the place-names, which is the back end the note
+   keeps. The camera is held near the squad instead (`tetherCam`), so the map being drawn does
+   not make it a map you can read from a chair. */
 function packExplored(){
   /* run-length encode the known-world bitmap; runs alternate starting with value 0 */
   const runs = [];
@@ -30294,34 +30304,25 @@ function packExplored(){
 function unpackExplored(runs){
   vis.fill(0);
   let i = 0, cur = 0;
-  mmKnown.fill(0);
   for(const n of runs){
-    if(cur){ vis.fill(1, i, i+n); for(let k = i; k < i + n; k++) mmKnown[mmCellOf(k)] = 1; }
+    if(cur) vis.fill(1, i, i+n);
     i += n; cur = 1 - cur;
   }
-  litIdx.length = 0; decorChunks = null; fogMarkAll(); fogDirty = true;
+  litIdx.length = 0; fogMarkAll(); fogDirty = true;
 }
 const vis = new Uint8Array(W*H);
-/* ---------- THE MINIMAP'S OWN MEMORY ----------
-   The minimap is 128 pixels across a 2560-tile world, twenty tiles to a pixel, and it read ONE
-   tile per pixel: the top-left corner of each block. A party sees about seventeen tiles by
-   night, so most of what you had walked fell between the corners — half of the explored blocks
-   along a road, and three pixels of the eight you start in. One cell per pixel instead, set
-   the moment anything in its block is known and never cleared, which is what `vis` does. */
+/* ---------- THE MINIMAP READS SIGHT BY THE BLOCK ----------
+   The minimap is 128 pixels across the world, a block of tiles to a pixel, and it used to read
+   ONE tile per pixel: the top-left corner of each block. A party sees about seventeen tiles by
+   night, so most of what was in view fell between the corners. A pixel is lit when anything in
+   its block is lit — see `mmSight`. */
 const MM_N = 128;
-const mmKnown = new Uint8Array(MM_N * MM_N);
 function mmCellOf(ix){ const y = (ix / W) | 0, x = ix - y * W; return ((y * MM_N / H) | 0) * MM_N + ((x * MM_N / W) | 0); }
 let fogDirty = true, visT = 0;
 /* what was lit last pass, so dimming walks a few thousand tiles instead of half a million */
 let litIdx = [];
-/* the fog sheet only repaints where sight actually moved */
+/* the sight map only repaints where sight actually moved */
 let fogMinX = 0, fogMinY = 0, fogMaxX = W-1, fogMaxY = H-1;
-/* decor still lying low, bucketed by map chunk, so a reveal touches only the ground
-   that was actually revealed instead of all 24k scattered props */
-const DCH = 32;
-let decorChunks = null;
-const decorDirty = new Set();
-function dchKey(tx, ty){ return (((ty/DCH)|0) << 10) | ((tx/DCH)|0); }
 function fogMark(x0, y0, x1, y1){
   if(x0 < fogMinX) fogMinX = x0;
   if(y0 < fogMinY) fogMinY = y0;
@@ -30372,8 +30373,7 @@ function revealMap(cx0, cy0, r){
     if(dx*dx + dy*dy > r2) continue;
     const ix = y*W+x;
     if(vis[ix] !== 0) continue;                   /* already known, by chart or by boot */
-    vis[ix] = 1; n++; mmKnown[mmCellOf(ix)] = 1;
-    decorDirty.add(dchKey(x, y));                 /* ground you have heard of stands its decor up */
+    vis[ix] = 1; n++;
   }
   if(n){ fogMark(x0, y0, x1, y1); fogDirty = true; }
   return n;
@@ -30389,7 +30389,6 @@ function stampVision(cx0, cy0, r){
       const ix = y*W+x, prev = vis[ix];
       if(prev !== 2){
         vis[ix] = 2; visChanged = true; litIdx.push(ix);
-        if(prev === 0){ decorDirty.add(dchKey(x, y)); mmKnown[mmCellOf(ix)] = 1; }   /* newly uncovered ground: stand its decor up */
       }
     }
   }
@@ -30485,7 +30484,6 @@ function computeVision(){
   }
   for(const t of towns) if(t.playerRuled) stampVision(t.x, t.y, t.def.wall ? t.def.wall.r + 3 : 15);
   if(changed || visChanged) fogDirty = true;
-  if(visChanged) syncDecorFog();   /* the newly-seen ground raises what stands on it */
   visChanged = false;
 }
 /* ============================================================ RENDER (Three.js) */
@@ -30529,6 +30527,28 @@ let camDist = 28, camDistTarget = 28;
 let camYaw = 0, camYawT = 0;
 let camPitch = 0.95, camPitchT = 0.95;
 let camSX = 0, camSY = 0, camInit = false;   /* smoothed camera anchor (targets stay camX/camY) */
+/* ---------- THE CAMERA IS ON A LEAD ----------
+   "...the free roam camera is tethered to the nearest squad members, so you cannot simply free
+    camera roam the whole map. (Take Kenshi's system for this as inspiration.)"
+   With the whole map drawn, a camera that goes anywhere is a scout that costs nothing. So it
+   goes as far as CAM_TETHER from whichever of your people is nearest it and no further: past
+   that it is pulled back onto the edge of that one's circle. Every living body of yours is an
+   anchor, so a squad split across the map has a circle at each end, and a click on the minimap
+   lands you at the edge of the nearest. It is about twice what anybody sees at noon: room to
+   look round the column, none to look round the country. The F9 reveal lets it off the lead. */
+const CAM_TETHER = 64;
+function tetherCam(){
+  if(debugSeeAll || !started) return;
+  let best = null, bd = Infinity;
+  for(const c of player()){
+    const d = (c.x - camX) * (c.x - camX) + (c.y - camY) * (c.y - camY);
+    if(d < bd){ bd = d; best = c; }
+  }
+  if(!best || bd <= CAM_TETHER * CAM_TETHER) return;
+  const k = CAM_TETHER / Math.sqrt(bd);
+  camX = best.x + (camX - best.x) * k;
+  camY = best.y + (camY - best.y) * k;
+}
 /* ---------- THE PUNCH IN THE EYE ----------
    A heavy blow landing in view kicks the camera. This is the cheapest weight in the game:
    the sim does not know it happened, the eye does, and the player reads it as force. Kept
@@ -30748,6 +30768,7 @@ const starGeo = new THREE.BufferGeometry();
   starGeo.setAttribute('position', new THREE.BufferAttribute(sp, 3));
 }
 const starMat = new THREE.PointsMaterial({color:0xdfe6ff, size:0.9, sizeAttenuation:true, transparent:true, opacity:0});
+starMat.dwNoTint = true;   /* the sky is not out of anybody's sight */
 const stars = new THREE.Points(starGeo, starMat);
 scene.add(stars);
 /* dust haze: low sheets of blown grit that thicken in a storm */
@@ -33058,157 +33079,69 @@ for(const t of towns){
   }
   scene.add(wg);
 }
-/* fog sheet: a canvas texture over the whole map — black where unknown, dim where remembered */
-const fogCanvas = document.createElement('canvas');
-fogCanvas.width = W; fogCanvas.height = H;
-const fogCx = fogCanvas.getContext('2d');
-/* full recompute: honors the debug override in both directions. Toggle/load only — not hot. */
-function syncDecorFogFull(){
-  if(typeof decorByTile === 'undefined') return;
-  for(const [k, refs] of decorByTile){
-    const [tx, ty] = k.split(',').map(Number);
-    const shouldUp = debugSeeAll || vis[ty*W + tx] > 0;
-    if(refs[0].up === shouldUp) continue;
-    for(const r of refs){
-      r.im.setMatrixAt(r.i, (shouldUp && !nodeDepletedSafe(tx, ty)) ? r.base : _decorHiddenMx);
-      r.im.instanceMatrix.needsUpdate = true;
-      r.up = shouldUp;
-    }
-  }
-  decorChunks = null;
-}
-function toggleSeeAll(){
-  debugSeeAll = !debugSeeAll;
-  fogPlane.visible = !debugSeeAll;
-  fogDirty = true; fogMarkAll();
-  syncDecorFogFull();
-  log(debugSeeAll ? 'DEBUG: the fog lifts. Everything, everywhere. (F9 to restore honesty.)' : 'DEBUG OFF: the dark returns to where you have not been.', 'good');
-}
-/* stand up the decor on every explored tile that is still lying low */
-function buildDecorChunks(){
-  decorChunks = new Map(); decorDirty.clear();
-  if(typeof decorByTile === 'undefined') return;
-  for(const [k, refs] of decorByTile){
-    if(refs[0].up) continue;
-    const ci = k.indexOf(',');
-    const tx = +k.slice(0, ci), ty = +k.slice(ci+1);
-    const kk = dchKey(tx, ty);
-    let a = decorChunks.get(kk); if(!a) decorChunks.set(kk, a = []);
-    a.push({tx, ty, refs});
-    if(vis[ty*W + tx] > 0) decorDirty.add(kk);   /* ground already seen: it owes a stand-up */
-  }
-}
-function syncDecorFog(){
-  if(typeof decorByTile === 'undefined') return;
-  if(decorChunks === null) buildDecorChunks();
-  if(!decorDirty.size) return;
-  let touched = null;
-  for(const kk of decorDirty){
-    const a = decorChunks.get(kk);
-    if(!a) continue;
-    let w = 0;
-    for(let i=0; i<a.length; i++){
-      const d = a[i];
-      if(vis[d.ty*W + d.tx] === 0){ a[w++] = d; continue; }   /* still dark: leave it lying */
-      const dep = nodeDepletedSafe(d.tx, d.ty);
-      for(const r of d.refs){
-        if(!dep) r.im.setMatrixAt(r.i, r.base);
-        r.up = true;
-        (touched || (touched = new Set())).add(r.im);
-      }
-    }
-    a.length = w;
-    if(!w) decorChunks.delete(kk);
-  }
-  decorDirty.clear();
-  /* one buffer upload per instanced mesh, not one per stone */
-  if(touched) for(const im of touched) im.instanceMatrix.needsUpdate = true;
-}
-function nodeDepletedSafe(x, y){ try { return sleeperGone(x, y) || (typeof nodeDepleted === 'function' && nodeDepleted(x, y)); } catch(e){ return false; } }
-const fogTex = new THREE.CanvasTexture(fogCanvas);
+/* ---------- THE SIGHT MAP ----------
+   One byte a tile: 255 where nobody of yours is looking, 0 where somebody is. This was a black
+   sheet laid over the land in 256-tile pieces — black where unknown, dim where remembered — and
+   the land under it only stood its trees up once you had walked there. The map is drawn whole
+   now (see FOG OF WAR), so there is no sheet and no third state: every surface reads this map
+   in its own shader and washes itself grey where it is out of sight, which greys a tree or a
+   wall exactly as much as the ground it stands on. The sheet could not do that: anything taller
+   than it poked out in full colour. And a byte a tile is a quarter of the canvas it replaces,
+   on an upload that happens every time anybody takes a step. */
+const fogData = new Uint8Array(W * H).fill(255);
+const fogTex = new THREE.DataTexture(fogData, W, H, THREE.LuminanceFormat, THREE.UnsignedByteType);
 fogTex.magFilter = THREE.LinearFilter;
 fogTex.minFilter = THREE.LinearFilter;
-/* the dark lies ON the land, not in a sheet above your head — otherwise it fouls the camera */
-/* ---------- THE FOG SHEET ----------
-   This was a vertex every TWO tiles across the whole 1440x1440 world: 1,036,800 triangles,
-   drawn every frame, never frustum-culled because it is a single mesh covering everything —
-   half of a two-million-triangle frame, on the one object in the scene whose detail does not
-   come from its geometry at all. The darkness is a TEXTURE. The mesh exists only to lay that
-   texture along the ground, so it needs exactly enough tessellation to follow the hills.
-
-   Six tiles a quad, measured: 115,200 triangles, a saving of 921,600 — 44% of the frame.
-
-   And the sampling changed with it. Reading the height AT each vertex draws a chord across
-   every rise, so hilltops poke through the dark: measured at 0.67% of quads even at the old
-   fine resolution, and 3.2% at this one — a bright spot of unexplored ground, which is a bug
-   rather than a look. Each vertex now takes the HIGHEST ground within half a quad, so the
-   sheet is a hull OVER the terrain rather than a chord through it. Poke-through measured at
-   zero, at every tessellation tried, including the one this replaces. */
-/* ---------- AND IN PIECES, SO WHAT IS OFF SCREEN IS NOT DRAWN ----------
-   One sheet is drawn whole whenever any corner of it is in view, so its cost grew with the map:
-   232,000 triangles at 2048, 363,000 at 2560, and `mobile.js` read the frame over its line.
-   Cut into 256-tile pieces sharing one material, only the pieces in front of the camera become
-   draw calls — a handful of the hundred. Neighbours share their edge vertices at the same
-   world points and take the same hull, so there is no seam. `fogPlane` is the group; all
-   anything outside ever asks of it is `.visible`. */
-const FOG_Q = 6;                                  /* tiles per quad */
-const FOG_CHUNK = 256;
-const fogPlane = new THREE.Group();
-{
-  const mat = new THREE.MeshBasicMaterial({map: fogTex, transparent: true, depthWrite: false, depthTest: true});
-  const half = FOG_Q / 2;
-  const nx = Math.ceil(W / FOG_CHUNK), nz = Math.ceil(H / FOG_CHUNK);
-  for(let cz = 0; cz < nz; cz++) for(let cx = 0; cx < nx; cx++){
-    const x0 = cx * FOG_CHUNK, z0 = cz * FOG_CHUNK;
-    const cw = Math.min(FOG_CHUNK, W - x0), ch = Math.min(FOG_CHUNK, H - z0);
-    const geo = new THREE.PlaneGeometry(cw, ch, Math.max(1, Math.round(cw / FOG_Q)), Math.max(1, Math.round(ch / FOG_Q)));
-    /* into the sheet's own frame: local x is world x - W/2, local y is -(world z - H/2) */
-    geo.translate(x0 + cw / 2 - W / 2, -(z0 + ch / 2 - H / 2), 0);
-    const pos = geo.attributes.position, uv = geo.attributes.uv;
-    for(let i = 0; i < pos.count; i++){
-      const px = pos.getX(i) + W/2, py = -pos.getY(i) + H/2;
-      let hi = -1e9;
-      for(let dy = -half; dy <= half; dy += half) for(let dx = -half; dx <= half; dx += half)
-        hi = Math.max(hi, groundY(clamp(px + dx, 0, W-1), clamp(py + dy, 0, H-1)));
-      pos.setZ(i, hi + 0.18);
-      /* ---------- AND EACH PIECE READS ITS OWN WINDOW OF THE FOG ----------
-         A PlaneGeometry comes with 0..1 texture coordinates of its own, which was right when
-         there was one sheet the size of the world and wrong the moment it was cut up: every
-         256-tile piece drew the WHOLE map's fog shrunk onto itself. The whole map is almost all
-         unexplored, so the ground went black everywhere, and the one patch you had seen turned
-         up as a speck in every piece. The coordinates are the world's now, the same ones the
-         single sheet had. `tools/fog.js` looks at the pixels. */
-      uv.setXY(i, px / W, 1 - py / H);
-    }
-    pos.needsUpdate = true; uv.needsUpdate = true;
-    geo.computeVertexNormals();
-    geo.computeBoundingSphere();
-    const m = new THREE.Mesh(geo, mat);
-    m.renderOrder = 2;
-    fogPlane.add(m);
+fogTex.needsUpdate = true;
+/* every picture harness flips `fogPlane.visible` off to take its shot without the fog. It is
+   the switch now rather than the sheet, and `render` reads it. */
+const fogPlane = {visible: true};
+/* ---------- AND EVERY SURFACE READS IT ----------
+   Patched into three's own shaders once, through the hook every material inherits, so nothing
+   built anywhere in this file has to remember to opt in. It asks for the two pieces every lit
+   and unlit surface shader has (where the vertex lands, and the last colour before distance
+   haze) and leaves anything without both alone, so sprites and the shadow passes are untouched.
+   Out of sight is GREY, not dark: the colour drains toward its own brightness with a little blue
+   in it, and loses about a third of its light. Ground you cannot see should still read as the
+   ground it is; only what is happening on it is withheld. Distance haze goes on after, as before.
+   A material with `dwNoTint` is skipped (the stars), and keys its own program so the two never
+   share one. */
+const DW_SIGHT = {map: {value: fogTex}, k: {value: 1}};
+THREE.Material.prototype.onBeforeCompile = function(sh){
+  if(this.dwNoTint) return;
+  if(!sh.vertexShader.includes('#include <project_vertex>') || !sh.fragmentShader.includes('#include <fog_fragment>')) return;
+  sh.uniforms.dwSight = DW_SIGHT.map;
+  sh.uniforms.dwSightK = DW_SIGHT.k;
+  sh.vertexShader = 'varying vec2 vDwSight;\n' + sh.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+  {
+    vec4 dwW = vec4(transformed, 1.0);
+    #ifdef USE_INSTANCING
+      dwW = instanceMatrix * dwW;
+    #endif
+    dwW = modelMatrix * dwW;
+    vDwSight = vec2(dwW.x / ${W}.0, dwW.z / ${H}.0);
+  }`);
+  sh.fragmentShader = 'uniform sampler2D dwSight;\nuniform float dwSightK;\nvarying vec2 vDwSight;\n' + sh.fragmentShader.replace('#include <fog_fragment>', `{
+    float dwA = texture2D(dwSight, vDwSight).r * dwSightK;
+    vec3 dwG = vec3(dot(gl_FragColor.rgb, vec3(0.299, 0.587, 0.114)));
+    gl_FragColor.rgb = mix(gl_FragColor.rgb, dwG * vec3(0.86, 0.90, 1.0), dwA * 0.72) * (1.0 - dwA * 0.32);
   }
+  #include <fog_fragment>`);
+};
+THREE.Material.prototype.customProgramCacheKey = function(){ return (this.dwNoTint ? 'dw0' : 'dw1') + this.onBeforeCompile.toString(); };
+function toggleSeeAll(){
+  debugSeeAll = !debugSeeAll;
+  fogDirty = true; fogMarkAll();
+  log(debugSeeAll ? 'DEBUG: the fog lifts. Everything, everywhere. (F9 to restore honesty.)' : 'DEBUG OFF: you see what your people see.', 'good');
 }
-fogPlane.rotation.x = -Math.PI/2;
-fogPlane.position.set(W/2, 0, H/2);
-fogPlane.renderOrder = 2;
-scene.add(fogPlane);
-/* one buffer for the life of the run: the colour never changes, only how much you can see through it */
-const fogImg = fogCx.createImageData(W, H);
-{ const d = fogImg.data;
-  for(let i=0; i<W*H; i++){ d[i*4] = 4; d[i*4+1] = 3; d[i*4+2] = 6; d[i*4+3] = 255; } }
 function redrawFog(){
   if(fogMaxX < fogMinX || fogMaxY < fogMinY){ fogDirty = false; return; }
   const x0 = Math.max(0, fogMinX), y0 = Math.max(0, fogMinY);
   const x1 = Math.min(W-1, fogMaxX), y1 = Math.min(H-1, fogMaxY);
-  const d = fogImg.data;
   for(let y=y0; y<=y1; y++){
     let i = y*W + x0;
-    for(let x=x0; x<=x1; x++, i++){
-      const v = vis[i];
-      d[i*4+3] = v===2 ? 0 : v===1 ? 140 : 255;
-    }
+    for(let x=x0; x<=x1; x++, i++) fogData[i] = vis[i] === 2 ? 0 : 255;
   }
-  fogCx.putImageData(fogImg, 0, 0, x0, y0, x1-x0+1, y1-y0+1);
   fogTex.needsUpdate = true;
   fogDirty = false;
   fogMarkClear();
@@ -34216,9 +34149,7 @@ function vscaleOf(c){
   for(const sl of biomeSleepers) (sl.kind === 'automaton' ? slumped : pools).push([sl.x, sl.y]);
   const dummy = new THREE.Object3D();
   const nodeInstances = new Map();   /* 'x,y' -> [{im, i}, ...] */
-  window.decorByTile = new Map();    /* every instance, keyed by tile — the fog's ledger */
-  const hiddenMx = (() => { const d2 = new THREE.Object3D(); d2.scale.setScalar(0.0001); d2.updateMatrix(); return d2.matrix.clone(); })();
-  window._decorHiddenMx = hiddenMx;
+  window.nodeInstances = nodeInstances;   /* read by tools/stumps.js: is this tree actually drawn */
   /* ---------- decor, cut into chunks so it can be culled ----------
      three.js sets frustumCulled = false on every InstancedMesh, because one shared base
      geometry cannot describe where its instances actually are. The result here was that
@@ -34272,13 +34203,9 @@ function vscaleOf(c){
         if(orient) orient(p, dummy);        /* last, so it may set its own turn, lift or scale */
         dummy.updateMatrix();
         const tx = Math.floor(p[0]), ty = Math.floor(p[1]);
-        const unexplored = vis[ty*W + tx] === 0;
-        im.setMatrixAt(i, unexplored ? hiddenMx : dummy.matrix);
-        {
-          const kk = tx + ',' + ty;
-          if(!decorByTile.has(kk)) decorByTile.set(kk, []);
-          decorByTile.get(kk).push({im, i, base: dummy.matrix.clone(), up: !unexplored});
-        }
+        /* everything stands from the first frame: the map is drawn whole (see FOG OF WAR).
+           What is worked out or got up and walked off is laid down by `hideNodeInstance`. */
+        im.setMatrixAt(i, dummy.matrix);
         if(trackable){
           const kk = tx + ',' + ty;
           if(!nodeInstances.has(kk)) nodeInstances.set(kk, []);
@@ -44775,6 +44702,7 @@ function render(){
   water.position.y = -0.22 + Math.sin(now*0.001)*0.03;
   syncPBuilds(); syncBlueprints(); syncSundered(); syncWells(); syncPyres(); syncBastion(); syncChests(); syncBeds(); syncTownWalls(); syncTownScar(); syncCamps(); syncSlaverCamp(); syncRoofs(); syncVertical(); syncRifts(); syncStairs(); syncUndercroft(); syncRedoubts();
   if(fogDirty) redrawFog();
+  DW_SIGHT.k.value = (fogPlane.visible && !debugSeeAll) ? 1 : 0;
   syncChars(rdt);
   updateDust(rdt);
   renderer.render(scene, camera);
@@ -44823,12 +44751,13 @@ function redrawMinimapFog(){
      anybody's sight, so this is cheap where walking the blocks would not be */
   mmSight.fill(0);
   for(let k = 0; k < litIdx.length; k++){ const ix = litIdx[k]; if(vis[ix] === 2) mmSight[mmCellOf(ix)] = 1; }
+  /* the whole country is on the map, as it is on the ground; what is out of sight takes the same
+     cool wash the ground does, lightly, so the few pixels you can see stand out of it */
   for(let py=0; py<128; py++) for(let px=0; px<128; px++){
     const cell = py * MM_N + px;
-    const v = debugSeeAll ? 2 : mmSight[cell] ? 2 : mmKnown[cell] ? 1 : 0;
     const i = (py*128+px)*4;
-    d[i]=4; d[i+1]=3; d[i+2]=6;
-    d[i+3] = v===2 ? 0 : v===1 ? 130 : 255;
+    d[i]=34; d[i+1]=38; d[i+2]=52;
+    d[i+3] = (debugSeeAll || mmSight[cell]) ? 0 : 96;
   }
   g.putImageData(img, 0, 0);
 }
@@ -53078,7 +53007,6 @@ function restore(d){
   const f = player()[0]; if(f){ camX = f.x; camY = f.y; }
   refreshTop(); refreshInv(); refreshSquadBar(); refreshCharPanel();
   computeVision();   /* a loaded squad stands somewhere new; light it before the first frame */
-  syncDecorFog();
   log('Game loaded.', 'good');
   /* ---------- A SAVE FROM BEFORE THE FLESH JOB SPLIT ----------
      FLESH used to tend the vats AND the Charnel Houses. It now tends the vats only, so a save
@@ -54738,6 +54666,7 @@ function frame(now){
   if(panKeys.KeyQ) camYawT += dt * 2.1;
   if(panKeys.KeyE) camYawT -= dt * 2.1;
   camX = clamp(camX, 0, W); camY = clamp(camY, 0, H);
+  tetherCam();
   if(!paused && started){
     /* fixed-step sim at 30Hz: the world thinks half as often as the screen paints,
        with identical math. Under overload it slows down instead of spiralling. */

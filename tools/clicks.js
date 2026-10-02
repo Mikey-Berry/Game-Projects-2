@@ -53,12 +53,6 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     }
     R.ground = gx ? `staged on open waste at ${gx},${gy}` : '!! NO OPEN GROUND';
 
-    /* put the camera on them and let it settle, or every screen coordinate below is measured
-       against a camera still gliding toward the staging ground */
-    camX = camSX = gx; camY = camSY = gy;
-    camFollow = false;
-    camDist = camDistTarget = 26; camPitch = camPitchT = 0.95; camYaw = camYawT = 0;
-    paused = false; await new Promise(r => setTimeout(r, 400)); paused = true;
 
     const wipe = () => { for (let i = chars.length - 1; i >= 0; i--) if (chars[i].__probe) chars.splice(i, 1);
                          for (let i = corpses.length - 1; i >= 0; i--) if (corpses[i].__probe) corpses.splice(i, 1);
@@ -103,6 +97,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        Un-flag it: it is staging, not a mark. */
     me.__probe = false;
     selected.length = 0; selected.push(me);
+
+    /* put the camera on them and let it settle, or every screen coordinate below is measured
+       against a camera still gliding toward the staging ground. AFTER the hand is made: the
+       camera is held within reach of the nearest of your people (`tetherCam`), and before the
+       hand there was nobody of yours out here to be near. */
+    camX = camSX = gx; camY = camSY = gy;
+    camFollow = false;
+    camDist = camDistTarget = 26; camPitch = camPitchT = 0.95; camYaw = camYawT = 0;
+    paused = false; await new Promise(r => setTimeout(r, 400)); paused = true;
 
     /* ---------- HOW FAR THE AIM ACTUALLY DRIFTS, IN TILES ---------- */
     {
