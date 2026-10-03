@@ -61,7 +61,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     }) || undercroft.halls[0];
     window.__probe = (opts) => {
       const h = window.__hall;
-      const c = makeChar('Probe', 'player', h.x, h.y, Object.assign({ atk: 20, def: 10, tough: 20, ath: 10 }, opts || {}));
+      /* ---------- A DUSTBORN, NOT WHOEVER THE DICE MADE ----------
+         `makeChar` rolls a sub-race when it is not told one, and one in ten comes out
+         Salt-cured — who pay half the dark's toll by design (`darkEase`). Two claims below went
+         red on exactly half their numbers (gaps 0.100 / 0.170 against 0.20 / 0.34, and a pace
+         of 0.775 = 1 - 0.45 x 0.5) whenever the world's stream happened to hand the probe that
+         roll. The claims are about the full toll, so the probe is told what it is. */
+      const c = makeChar('Probe', 'player', h.x, h.y, Object.assign({ atk: 20, def: 10, tough: 20, ath: 10, race: 'human', sub: 'dustborn' }, opts || {}));
       c.floor = -1; c.state = 'ok'; c.job = null; c.job2 = null;
       c.guard = null; c.moveTarget = null; c.target = null;
       chars.push(c);

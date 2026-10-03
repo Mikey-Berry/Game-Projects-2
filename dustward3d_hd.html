@@ -31981,11 +31981,29 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
 (function seedWarrens(){
   const U = undercroft;
   if(!U.halls.length) return;
-  const pool = U.halls.slice().sort(() => rnd() - 0.5);
-  const want = Math.max(4, Math.round(U.halls.length * 0.34));
+  /* ---------- A THIRD OF EVERY STOREY, NOT A THIRD OF THE LIST ----------
+     This was `U.halls.slice().sort(() => rnd() - 0.5)` and the first third of whatever came
+     out. A sort with a coin for a comparator is not a shuffle: an element moves only as far
+     as the comparisons it happens to take part in, so the order going in leaks into the order
+     coming out — and the halls go in Undercroft first, Sump last. The share each storey got
+     was whatever the stream happened to be that day: 110 / 26 / 2 on one world, and on the
+     next, once the Sundered sites grew and the stream moved, 136 / 2 / 0. No warren on the
+     Sump means no Larder-Kin on it, and no midden anywhere in the world for one to carry a
+     body to (tools/depths.js and tools/storeys.js both went red on the same commit for that
+     one reason).
+     So each storey is shuffled properly and gives up its own third. And it is POCKETED, so a
+     change to which halls are cut, or to how a chamber is stocked, no longer reshuffles
+     every system seeded after this one. */
+  const pocket = seed; seed = (pocket ^ Math.imul(0x3A77E9, 0x9E3779B9)) | 0;
+  try {
   const caves = [];
+  for(const f of DEPTHS){
+    const pool = U.halls.filter(h => (h.f === undefined ? UNDER_F : h.f) === f);
+    for(let i = pool.length - 1; i > 0; i--){ const j = Math.floor(rnd() * (i + 1)); const t = pool[i]; pool[i] = pool[j]; pool[j] = t; }
+    const want = pool.length ? Math.max(2, Math.round(pool.length * 0.34)) : 0;
+    let got = 0;
   for(const h of pool){
-    if(caves.length >= want) break;
+    if(got >= want) break;
     /* ---------- AND `menace` IS DEPTH AGAIN, WHICH IS WHAT IT ALWAYS WANTED TO BE ----------
        `stockRoom` has drawn from three tables since the warrens were written and has never once
        reached the first or the third. Two faults, both recorded, both dying here:
@@ -32003,7 +32021,8 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
        cave is placed, because the hall carries it and `placeCave` reads the hall. */
     const cv = placeCave(h);
     if(!cv) continue;
-    caves.push(cv);
+    caves.push(cv); got++;
+  }
   }
   /* ---------- ONE RING DOES NOT KNOW WHAT ANOTHER ONE WAS BUILT ACROSS ----------
      This was three separate measurements inside a single warren and then, once the world's
@@ -32382,6 +32401,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
      rock that the filter had never pushed. Chasing equality between two derivations is not a
      fix; having one is. Worldgen now ends by asking the same function the load path asks. */
   for(const cv of caves) rebuildCaveWalls(cv);
+  } finally { seed = pocket; }
 })();
 /* ============================================================ WHERE THE LEGENDARIES ARE ====
    The doc set one rule for these and it is the only rule that matters: A LEGENDARY MUST BE
@@ -35911,7 +35931,7 @@ function syncCutVolumes(){
   if(ark) addCutVolume(ark.mx, ark.my, Math.cos(ark.ang), -Math.sin(ark.ang), ARK_B / 2 + 1, ARK_L / 2 + 1, 'ark', ark);
 }
 const _cutPick = new Map();
-function updateCutaway(focusY){
+function updateCutaway(focusY, camFloor){
   syncCutVolumes();
   _cutPick.clear();
   for(const c of chars){
@@ -35931,10 +35951,16 @@ function updateCutaway(focusY){
   });
   DW_CUT.n.value = list.length;
   /* the cone opens only on your own: aimed within a few tiles of one of yours, on the storey the
-     camera is following. Browsing a town is not a reason to drill a hole in every roof you pass. */
+     camera is following. Browsing a town is not a reason to drill a hole in every roof you pass.
+     AND ON EVERY STOREY, THE DEPTHS INCLUDED. This skipped anybody below ground, and the rock of
+     a warren is the same shared material as a town wall: a squad three tiles from a chamber door
+     was looking at the top of the rock in front of it, and the door's lintel — the one thing
+     drawn to be seen in the dark — was behind it. The comment always said "the storey the camera
+     is following"; the code now asks that, rather than "not underground". */
+  const fl = camFloor === undefined ? activeFloor : camFloor;
   let near = false;
   for(const c of chars){
-    if(c.faction !== 'player' || c.state === 'dead' || (c.floor || 0) < 0) continue;
+    if(c.faction !== 'player' || c.state === 'dead' || (c.floor || 0) !== fl) continue;
     if(Math.abs(c.x - camSX) < 7 && Math.abs(c.y - camSY) < 7){ near = true; break; }
   }
   DW_CUT.see.value.set(camSX, focusY, camSY, (near && fogPlane.visible) ? CUT_SEE_R : 0);
@@ -45566,7 +45592,7 @@ function render(){
   camFY = camFY === undefined ? 0 : camFY;
   camFY += (floorY(selFloor) - camFY) * Math.min(1, rdt * 5);
   const focusY = Math.max(0, groundY(camSX, camSY)) + 0.8 + camFY;
-  updateCutaway(focusY);
+  updateCutaway(focusY, selFloor);
   const horiz = Math.cos(camPitch) * camDist;
   camKick = Math.max(0, camKick - rdt * 2.8);   /* ~0.18s tail on the hardest blow */
   camera.position.set(

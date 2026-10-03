@@ -55,6 +55,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     me.weapon = 'w_torch'; me.torchH = 999; me.state = 'ok';
     camX = camSX = me.x; camY = camSY = me.y; camDist = camDistTarget = 14;
     camFollow = true; selected = [me]; activeFloor = -1;
+    /* ---------- AND THE CAMERA IS ALREADY DOWN THERE ----------
+       `camFY`, the storey lift, eases toward the floor on real frame time, and this file
+       waited five seconds and hoped. Run four harnesses at once on swiftshader and five seconds
+       is a dozen frames: the eye was still above the surface, looking at the door through the
+       ground, and the lintel claim flipped between 125-against-11 and 35-against-36 on the SAME
+       build depending on what else the machine was doing. Snapped, not waited for. */
+    if (typeof camFY !== 'undefined') camFY = floorY(-1);
     hour = 12; if (typeof updateSky === 'function') updateSky();
   });
   await p.waitForTimeout(5000);
@@ -221,7 +228,15 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     guard(['_lintel', 'andADoorwayShowsItselfInTheDark'], () => {
       const d = window.__door;
       if (!d || (!d.nx && !d.ny)) { O.andADoorwayShowsItselfInTheDark = '!! NO WARREN DOOR WAS STAGED'; return; }
-      renderer.render(scene, camera);
+      /* ---------- ONE FRAME THIS CLAIM BUILT, NOT WHATEVER THE LAST ONE LEFT ----------
+         The sim is paused, so the sight map is never recomputed where the squad was put down
+         and the doorway is tinted as ground nobody can see — by however much the last real
+         frame happened to have got done before the wait ran out. Same build, four runs, four
+         answers (125, 35, 71, 17 against 11-36). Sight recomputed, the lift snapped, and one
+         full game frame drawn from that state. */
+      if (typeof computeVision === 'function') computeVision();
+      if (typeof camFY !== 'undefined') camFY = floorY(d.f);
+      if (typeof render === 'function') render(); else renderer.render(scene, camera);
       const src = renderer.domElement;
       const cvs = document.createElement('canvas');
       cvs.width = src.width; cvs.height = src.height;
