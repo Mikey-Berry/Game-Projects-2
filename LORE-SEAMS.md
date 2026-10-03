@@ -1792,6 +1792,33 @@ Perhaps parts of it are explorable."*
    schematics and the log. The log would be the lore drop, and it would need your words or your
    approval of mine.
 
+### 12.5 Ruled 2026-10-03
+
+- **Explorable places are the top priority.** *"I would really like for more explorable areas
+  across the map. Like the ARK and these towers... making them big enough to explore and actually
+  fit squads in is kind of ideal. The ark is big but not big enough."* Walls and ceilings going
+  clear when entered is part of the same ask.
+- **Camera lead:** doubled to 128 tiles. **Done.**
+- **No minimap.** *"Obviously this will require the world to be more 'set' rather than randomly
+  generated... a more handcrafted world that won't break quite as easily. Let's start
+  architecting toward this."* **Done** for the minimap: switched off, code kept
+  (`setMinimap`). The set world is a plan in progress.
+- **Charts:** retired, code kept (`CHARTS_ON`). **Done.**
+- **Sundered sites:** a unique name for each.
+- **Towers:** the generic label stays for now. **What they were is ruled:** aetheric conduits,
+  essential for the rite that opened the sky (bible §15).
+- **ARK and AEGIS:** ruled (bible §15). AEGIS is the redoubts, the Aether Lances and the
+  automatons.
+- **Quicksilver fens:** mimics out of the mercurial pools, restlessly hunting your allies. **On
+  hold** until it is fleshed out.
+- **The Calcine Wood** (the name stands for now):
+  - Raised corpses blacken (black bones) if left there long enough, and come back stronger.
+  - **Ash squalls**, acid rain in effect: a hat protects you, and the undead do not need one.
+  - Local fauna: to brainstorm.
+- **Roadside stops with a choice:** bandits demanding a toll or food, an Order patrol
+  questioning your faith, refugees asking for help. Occasional, never intrusive, and not every
+  bandit hostile on sight.
+
 ---
 
 ## Appendix: re-running the counts

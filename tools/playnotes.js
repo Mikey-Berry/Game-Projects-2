@@ -38,7 +38,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForSelector('#btn-start', { state: 'attached', timeout: 60000 });
   await p.waitForTimeout(1500);
-  await p.evaluate(() => document.getElementById('btn-start').click());
+  await p.evaluate(() => (typeof setMinimap === 'function' && setMinimap(true), document.getElementById('btn-start').click()));
   await p.waitForTimeout(2500);
   const R = {};
   const title = () => p.evaluate(() => document.getElementById('modaltitle').textContent);

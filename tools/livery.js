@@ -30,7 +30,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
-  await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
+  await p.evaluate(() => { (typeof setMinimap === 'function' && setMinimap(true), document.getElementById('btn-start').click()); paused = true; });
   await p.waitForTimeout(3000);
 
   const out = await p.evaluate(() => {

@@ -40,7 +40,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 240)));
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
-  await p.evaluate(() => document.getElementById('btn-start').click());
+  await p.evaluate(() => (typeof setMinimap === 'function' && setMinimap(true), document.getElementById('btn-start').click()));
   await p.waitForTimeout(4000);
   const R = {};
   const NOTHING = '!! NOTHING TO MEASURE — this build has no depths';

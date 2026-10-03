@@ -29,7 +29,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message.slice(0, 200)));
   await p.goto('file://' + gamePath(process.argv[2]), { waitUntil: 'load', timeout: 90000 });
   await p.waitForTimeout(3000);
-  await p.evaluate(() => { document.getElementById('btn-start').click(); paused = true; });
+  await p.evaluate(() => { (typeof setMinimap === 'function' && setMinimap(true), document.getElementById('btn-start').click()); paused = true; });
   await p.waitForTimeout(3000);
 
   const out = await p.evaluate(() => {
@@ -110,20 +110,24 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     R.dark = dark ? `unexplored ground at ${dark.x},${dark.y} (visAt ${visAt(dark.x, dark.y)})` : '!! THE WHOLE MAP IS EXPLORED';
     if (dark) {
       const px = Math.round(dark.x * 128 / W), py = Math.round(dark.y * 128 / H);
+      /* COUNTED AS CHANGE, NOT AS LIGHT. This read "lit pixels" when unexplored ground was black
+         on the map, and a pin was the only bright thing there. The map draws the whole country
+         now (tools/fog.js), so the question is whether the pin changes what is drawn there at
+         all, measured against the same patch without it. */
       const patch = () => {
         renderMinimap();
-        const d = mmcx.getImageData(Math.max(0, px - 5), Math.max(0, py - 5), 10, 10).data;
-        let lit = 0;
-        for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 150) lit++;
-        return lit;
+        return mmcx.getImageData(Math.max(0, px - 5), Math.max(0, py - 5), 10, 10).data.slice();
       };
       marks.length = 0;
       const before = patch();
       marks.push({ x: dark.x, y: dark.y });
-      const after = patch();
-      R.pixels = `on unexplored ground: ${before} lit pixels without a pin, ${after} with one`;
-      R.andAPinDrawsOverTheFog = after > before
-        ? `and a pin on ground you have never walked is visible through the fog — ${after - before} pixels of it`
+      const afterPx = patch();
+      let changed = 0;
+      for (let i = 0; i < before.length; i += 4)
+        if (Math.abs(afterPx[i] - before[i]) + Math.abs(afterPx[i + 1] - before[i + 1]) + Math.abs(afterPx[i + 2] - before[i + 2]) > 60) changed++;
+      R.pixels = `on unexplored ground: ${changed} of 100 pixels change when a pin is dropped there`;
+      R.andAPinDrawsOverTheFog = changed >= 4
+        ? `and a pin on ground you have never walked is drawn over it — ${changed} pixels of it`
         : '!! A PIN ON UNEXPLORED GROUND IS BURIED UNDER THE FOG, WHICH IS THE GROUND A PIN IS FOR';
       marks.length = 0;
     }

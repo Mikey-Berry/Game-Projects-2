@@ -85,7 +85,7 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
     p.on('pageerror', e => errs.push('PHONE: ' + e.message.slice(0, 160)));
     await p.goto(url, { waitUntil: 'load', timeout: 90000 });
     await p.waitForTimeout(3000);
-    await p.evaluate(() => document.getElementById('btn-start').click());
+    await p.evaluate(() => (typeof setMinimap === 'function' && setMinimap(true), document.getElementById('btn-start').click()));
     await p.waitForTimeout(5000);
     await p.evaluate(IN_PAGE_SRC);
 
@@ -468,7 +468,7 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
     p.on('pageerror', e => errs.push('LANDSCAPE: ' + e.message.slice(0, 160)));
     await p.goto(url, { waitUntil: 'load', timeout: 90000 });
     await p.waitForTimeout(3000);
-    await p.evaluate(() => document.getElementById('btn-start').click());
+    await p.evaluate(() => (typeof setMinimap === 'function' && setMinimap(true), document.getElementById('btn-start').click()));
     await p.waitForTimeout(4000);
 
     R.landTouch = await p.evaluate(() => (TOUCH && document.body.classList.contains('touch'))
@@ -550,7 +550,7 @@ const pinch = (p, cx, cy, from, to, steps = 8) => p.evaluate(async ([cx, cy, fro
     p.on('pageerror', e => errs.push('DESKTOP: ' + e.message.slice(0, 160)));
     await p.goto(url, { waitUntil: 'load', timeout: 90000 });
     await p.waitForTimeout(3000);
-    await p.evaluate(() => document.getElementById('btn-start').click());
+    await p.evaluate(() => (typeof setMinimap === 'function' && setMinimap(true), document.getElementById('btn-start').click()));
     await p.waitForTimeout(4000);
 
     R.deskUntouched = await p.evaluate(() => (!TOUCH && !document.body.classList.contains('touch'))

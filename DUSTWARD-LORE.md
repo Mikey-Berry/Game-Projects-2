@@ -562,6 +562,8 @@ generations on, the doors are still shut and the garrison is still at its post."
 and crazed homunculi holding a line that ended nine generations ago: *"THE LINE HOLDS." "I was made
 for this day. The day never came." "Are you the relief? You are nine generations late."* They were
 dug into the first civilisation's tunnels, and at the bottom of one of them is Mother.
+They are **AEGIS's** (§15, ARK and AEGIS): the half of the Golden Age's backup plan that meant to
+hold the line.
 
 **Wardens, bandits, slavers, warbands, drifters, wild fauna `[C]`** — town defence and road hazards.
 
@@ -725,7 +727,21 @@ lettered move slower in both directions. Eight in all, and all eight are shipped
   of insight. The Transmutation Codex is "a pre-Fracture Church text, never burned because nobody
   dared. It names the source of the blessed gift and the profane one. It names them once, because
   they are the same name." The name is Ainzopha'ar.
-- **Automatons `[C]`** — Golden-Age constructs; litter the Fracture-war ruins.
+- **Automatons `[C]`** — Golden-Age constructs; litter the Fracture-war ruins. AEGIS's, like the
+  redoubts and the Aether Lance (below).
+
+**ARK and AEGIS `[★]`** (ruled 2026-10-03). Two rival visions of the backup plan for humanity's
+survival. **Neither had the kingdom's full support:** the king's alchemists believed the rite would
+succeed, and needed no backups.
+- **Project ARK** worked on a philosophy of **escape**: giant ships built to evacuate the earth. One
+  of them is down in the waste, nose first in the ground it ploughed (§16).
+- **Project AEGIS** was built to **hold the line**. The redoubts, the Aether Lances and the
+  automatons are AEGIS's. It was the earth's alchemical defence force.
+
+**The Golden-Age towers `[★]`** (ruled 2026-10-03). They were **aetheric conduits**, and essential
+to the rite that let humanity "open the sky" and intrude upon Ainzopha'ar's throne. What stands of
+them now is ruin: some still standing, some leaning, some snapped with the rest lying where it fell
+(§16).
 
 ## 16. Places `[C]`
 
@@ -747,6 +763,13 @@ Beyond them: **the Bastion** (Paladin ground), **the redoubts** (sealed, garriso
 tunnels, and one holds her), **the Deep** (the first civilisation's world, layered under
 everything), **the sundered ground** (Malathuun's corpse-fields), **the middens**, **the Coil's
 stone** (on no map), and **the deep waste** — where the night comes from.
+
+**On the skyline `[C]`** (2026-10-02). With the map drawn whole (fog of war is now only what is out
+of sight), what stands up off the waste is what a traveller steers by:
+- **the Sundered sites**, the size of hills;
+- **the Golden-Age towers** (§15), nineteen of them;
+- **the wreck of an ARK ship** (§15): 170 tiles of hull with a furrow behind it. The inside is not
+  built yet.
 
 **The three grounds `[C]`.** **The salt flats** round Saltmere, where the crust cures whatever lies
 down on it. **The rust barrens** round Ironscar, red with the machines the Fracture war left, some
