@@ -1194,6 +1194,7 @@ const blocked = new Set();
    -1 is the cellar. Collision, pathing, sight and violence are all per-floor; stairs are
    the only doors between them. Nothing has a roof, so the camera can always see in. */
 const stairs = [];
+const structures = [];      /* everything raised through `buildStructure` — see ONE WAY TO RAISE A BUILDING */
 const FLOOR_H = 3.4;            /* world units between storeys */
 const FLOOR_SPAN = W * H;
 function bkey(x, y, f = 0){ return (f + 4) * FLOOR_SPAN + y * W + x; }   /* +4 so cellars key cleanly */
@@ -1300,11 +1301,16 @@ const decks = new Set();        /* tiles that have solid ground on an upper floo
    pulled down and a wall raised in the same frame leaves the size unchanged and the SHAPE
    different, which is exactly the case a cache gets wrong and never notices. */
 let deckEpoch = 0;
+/* AND ONE PER STOREY, so a question about one storey is not thrown away because another changed.
+   The storey core (see THE STOREY CORE) labels each storey's pieces of floor by flooding them,
+   and the Undercroft alone is close to half a million tiles: a rampart raised in a camp must not
+   cost the whole underworld its labels. Indexed by `f + 4`, the same offset `bkey` uses. */
+const deckFloorEp = new Int32Array(16);
 {
   const _a = Set.prototype.add, _d = Set.prototype.delete, _c = Set.prototype.clear;
-  decks.add    = function(k){ deckEpoch++; return _a.call(this, k); };
-  decks.delete = function(k){ deckEpoch++; return _d.call(this, k); };
-  decks.clear  = function(){ deckEpoch++; return _c.call(this); };
+  decks.add    = function(k){ deckEpoch++; deckFloorEp[(k / FLOOR_SPAN) | 0]++; return _a.call(this, k); };
+  decks.delete = function(k){ deckEpoch++; deckFloorEp[(k / FLOOR_SPAN) | 0]++; return _d.call(this, k); };
+  decks.clear  = function(){ deckEpoch++; for(let i = 0; i < deckFloorEp.length; i++) deckFloorEp[i]++; return _c.call(this); };
 }
 /* The ground floor is asked about several hundred thousand times a second (A* alone accounts
    for most of it), and a Set lookup on a computed key is a hash probe. Mirror the ground
@@ -6619,7 +6625,7 @@ function bastionYardSpot(){
 function messengerToTheOrder(c){
   c.hunt = null;
   c.guard = bastion ? bastionYardSpot() : {x: c.x, y: c.y};
-  if(bastion && visAt(c.x, c.y) === 2)
+  if(bastion && visAt(c.x, c.y, c.floor) === 2)
     log('The thing that came out of the dark looks at your people for a long moment. Then it turns and walks towards the Bastion.', '');
 }
 function bastionGuestTick(){
@@ -13000,7 +13006,7 @@ function completeBlueprint(bp){
      and can still put a stair beside it. An emplacement on a bare wall is otherwise a silent
      dead end: it never fires, and the crew assigned to it never explains itself. */
   if(built && isEmpl(bp.type) && (built.floor || 0) > 0 &&
-     !stairToward({x: built.x + 0.5, y: built.y + 0.5, floor: 0}, 0, 1, built.x + 0.5, built.y + 0.5, 1)){
+     !storeyReach({x: built.x + 0.5, y: built.y + 0.5, floor: 0}, built.x + 0.5, built.y + 0.5, built.floor)){
     log(`Nothing can reach it up there. That length of wall has no Rampart Stair, and a gunner cannot climb a wall.`, 'bad');
   }
 }
@@ -13540,7 +13546,7 @@ function witnessTick(){
   /* and a Golden-Age tower is named the same way, by standing at its foot */
   for(const tw of towers){
     if(tw.reached) continue;
-    if(player().some(c => c.state !== 'dead' && (c.floor || 0) === 0 && dist(c.x, c.y, tw.x, tw.y) < 16)){ sawPlace('tower'); tw.reached = true; }
+    if(player().some(c => c.state !== 'dead' && (c.floor || 0) >= 0 && dist(c.x, c.y, tw.x, tw.y) < TOWER_R + 6)){ sawPlace('tower'); tw.reached = true; }
   }
   /* Paladin ground. They do not suffer necromancers here, which is the point of going. */
   if(bastion && player().some(c => c.state !== 'dead' && dist(c.x, c.y, bastion.x, bastion.y) < BASTION_R - 6))
@@ -14344,6 +14350,22 @@ function losBlocked(x0, y0, x1, y1, f){
     if(e2 <  dx){ err += dx; ay += sy; }
   }
   return false;
+}
+/* ---------- A SHOT BETWEEN STOREYS ----------
+   The emplacements have always had the plunging shot (see EMPLACEMENTS: "a parapet is not a
+   ceiling"), and nothing in a hand could do it: a bowman on an open deck could not hit a man
+   six tiles out on the ground in front of it. The same honest test, for anything that shoots
+   and in either direction: the higher of the two stands under open sky, nothing roofs the lower
+   one between the storeys, and the line along the LOWER storey is clear. Two storeys at most,
+   and never into or out of the ground — rock is a ceiling. Same storey is the old rule. */
+function shotAcross(a, t){
+  const af = a.floor || 0, tf = t.floor || 0;
+  if(af === tf) return !losBlocked(a.x, a.y, t.x, t.y, af);
+  if(af < 0 || tf < 0 || Math.abs(af - tf) > 2) return false;
+  const hi = af > tf ? a : t, lo = af > tf ? t : a, hf = Math.max(af, tf), lf = Math.min(af, tf);
+  if(decks.has(bkey(Math.floor(hi.x), Math.floor(hi.y), hf + 1))) return false;
+  for(let k = lf + 1; k <= hf; k++) if(decks.has(bkey(Math.floor(lo.x), Math.floor(lo.y), k))) return false;
+  return !losBlocked(a.x, a.y, t.x, t.y, lf);
 }
 /* ---------- THE GAUNT'S MANTLE ----------
    "Gaunts do not pick you first." NOT "cannot be attacked" — which is what a large enough
@@ -16383,65 +16405,42 @@ function stairAt(x, y, f, want){
   return here[0];
 }
 function useStairs(c){
-  const st = stairAt(c.x, c.y, c.floor || 0, c.wantFloor);
-  if(!st){ c.onStair = null; return; }
-  /* ---------- DON'T YO-YO ON *THIS* ONE ----------
-     Taken from the parallel branch, whose reading of this is better than the one it replaces.
-     The guard was a plain boolean, which quietly means "do not use ANY stair until you have
-     stood on ordinary ground again" — a different and much wider rule than the one intended.
-     A cave mouth very often has another stair on the tile beside it, so a body walking to the
-     mouth crosses that one first: `useStairs` fires on a stair whose storeys have nothing to
-     do with the surface, `to` comes back null, nothing happens, and the flag is now set. The
-     body then steps onto the mouth itself with the guard still latched, and the order is read
-     and discarded every tick for the rest of the game. Nothing logs.
-     Remembering WHICH stair it is standing on keeps the guard doing its real job — no bouncing
-     on the one under your feet — while a different stair is a different door.
-     (The first fix here was mine and narrower: latch only when a crossing actually happens.
-     That passes the same tests, including the stair-beside-a-stair case, because a stair that
-     refuses the crossing never reaches the latch. It is strictly weaker all the same — after a
-     REAL crossing it still blocks an adjacent stair — so the identity version wins.) */
-  if(c.onStair === st) return;
+  /* ONLY THE PLANNED STAIR. See THE STOREY CORE: a stair that is merely underfoot is floor, and
+     the old reading of this — cross anything that points toward `wantFloor` — is the whole of
+     "walked past somebody else's stair and was stranded on the wrong deck". */
+  const r = c.route;
+  if(!r || !r.legs.length) return;
   const f = c.floor || 0;
-  if(c.wantFloor === undefined || c.wantFloor === null){ c.onStair = st; return; }
-  if(c.wantFloor === f){ c.onStair = st; return; }
-  /* only cross this stair if it moves toward the goal (up when climbing, down when descending) */
-  const wantUp = c.wantFloor > f;
-  const to = f === st.from ? st.to : f === st.to ? st.from : null;
-  if(to === null){ c.onStair = st; return; }
-  if((wantUp && to <= f) || (!wantUp && to >= f)){ c.onStair = st; return; }
+  /* the world moved under the plan — a stair pulled down, a deck raised: plan again from here */
+  if(r.sg !== stairsSig()){
+    const g = {x: r.x, y: r.y, f: r.f};
+    c.route = null;
+    if(!routeTo(c, g.x, g.y, g.f)){ c.moveTarget = null; c.wantFloor = null; c.afterStair = null; }
+    return;
+  }
+  const st = r.legs[0];
+  if(Math.floor(c.x) !== st.x || Math.floor(c.y) !== st.y) return;
+  if(f !== st.from && f !== st.to){
+    /* carried, thrown or fallen off the plan: plan again from wherever this is */
+    const g = {x: r.x, y: r.y, f: r.f};
+    c.route = null; routeTo(c, g.x, g.y, g.f);
+    return;
+  }
+  c.floor = stairOther(st, f);
   c.onStair = st;
-  c.floor = to;
+  r.legs.shift();
   c.path = null; c.pathGoal = null;
-  if(c.floor === c.wantFloor){
-    c.wantFloor = null;
-    if(c.afterStair){ c.moveTarget = c.afterStair; c.afterStair = null; }   /* arrived: finish the walk */
+  if(r.legs.length){
+    c.moveTarget = {x: r.legs[0].x + 0.5, y: r.legs[0].y + 0.5};
   } else {
-    /* still more storeys to go — head for the next stair toward the goal, and it has to be one
-       on the piece of floor we just stepped onto */
-    c.onStair = null;
-    const g = c.afterStair;
-    const next = stairToward(c, c.floor, c.floor + (wantUp ? 1 : -1),
-                            g ? g.x : c.x, g ? g.y : c.y, c.wantFloor);
-    if(next) c.moveTarget = {x: next.x + 0.5, y: next.y + 0.5};
+    c.moveTarget = {x: r.x, y: r.y};
+    c.route = null; c.wantFloor = null; c.afterStair = null;
   }
 }
-/* send someone up or down: walk them to the stair, then through it */
+/* send someone up or down a particular stair: the plan to its other landing is that stair */
 function orderFloor(c, target, sx, sy){
-  c.wantFloor = target;
   clearOrders(c);
-  c.wantFloor = target;
-  /* ---------- AND RE-ARM THE STAIR UNDER ITS FEET ----------
-     THE ONE-WAY TRIP. `onStair` remembers the stair a body is standing on so it does not
-     yo-yo across it, and it is set the moment the body arrives — including the tile it lands
-     on after crossing, because a stair is the same tile on both storeys. `useStairs` tests it
-     BEFORE it looks at `wantFloor`, so the latch outlives the order that set it: walk into a
-     cave and you are standing on the mouth with that mouth remembered, and the order to go
-     back up is read and discarded every tick for the rest of the game. Nothing logs. The body
-     simply never leaves.
-     A NEW ORDER IS NOT A YO-YO. Clearing it here keeps the guard doing its actual job — no
-     bouncing on an unchanged order — and lets a fresh one through. */
-  c.onStair = null;
-  c.moveTarget = {x: sx + 0.5, y: sy + 0.5};
+  routeTo(c, sx + 0.5, sy + 0.5, target);
 }
 function isBlocked3(c, x, y){ return isBlocked(x, y, c.floor || 0); }
 function stepToward(c, tx, ty, dt){
@@ -16879,6 +16878,7 @@ function clearOrders(c){
   c.craftJob = null;      /* a new order takes them off the bench; nothing unmade was paid for */
   c.guardTarget = null; c.haulTarget = null;
   c.path = null; c.pathGoal = null;
+  c.route = null; c.wantFloor = null; c.afterStair = null;   /* and the way up or down it was taking */
   c.band = null;          /* a band is an order — see formBand */
   c._bandPace = 0;
   c._cdrPace = 0;         /* a captain's half-step behind his van is part of the order */
@@ -17097,7 +17097,8 @@ function physics(c, dt){
         const rw = wu.kind === 'ranged' && c.weapon ? ITEMS[c.weapon] : null;
         const reach = wu.kind === 'ranged' ? ((rw && rw.range ? rw.range : 8) + 1) : 1.7;
         if(tgt && tgt.state === 'ok' && dist(c.x, c.y, tgt.x, tgt.y) <= reach &&
-           (tgt.floor||0) === (c.floor||0) && !losBlocked(c.x, c.y, tgt.x, tgt.y, c.floor||0)){   /* same floor, clear line */
+           (wu.kind === 'ranged' ? shotAcross(c, tgt)
+             : (tgt.floor||0) === (c.floor||0) && !losBlocked(c.x, c.y, tgt.x, tgt.y, c.floor||0))){   /* a clear line: same floor, or a shot under open sky */
           if(wu.kind === 'ranged') fireRanged(c, tgt, c.weapon ? ITEMS[c.weapon] : null);
           else {
             attack(c, tgt); retaliate(tgt, c);
@@ -17774,6 +17775,26 @@ function physics(c, dt){
       c.target = null; c.path = null;
       c.moveTarget = {x:c.guardTarget.x, y:c.guardTarget.y};
       return;
+    }
+    /* ---------- A FOE ON ANOTHER STOREY ----------
+       A bow under open sky may shoot between storeys (`shotAcross`, the emplacements' plunging
+       shot made general), so it stays where it is and the ranged branch below takes it. Your
+       own hand sent for somebody upstairs or down goes there by the stairs — the order is
+       carried, not dropped (the old code walked to the spot under them, found a floor in the
+       way at arm's length and let go). Anybody else keeps what it always did. */
+    if((t.floor || 0) !== (c.floor || 0)){
+      const tw = c.weapon ? ITEMS[c.weapon] : null;
+      const shoots = !!(tw && tw.range && shotAcross(c, t) && dist(c.x, c.y, t.x, t.y) <= rangedBand(tw) + 0.5);
+      if(!shoots && c.faction === 'player' && c.targetManual){
+        const r = c.route;
+        c._rtT = (c._rtT || 0) - dt;
+        if(!r || r.f !== (t.floor || 0) || (c._rtT <= 0 && dist(r.x, r.y, t.x, t.y) > 2.5)){
+          c._rtT = 0.5;
+          if(!routeTo(c, t.x, t.y, t.floor || 0)){ c.target = null; c.targetManual = false; c.orderTarget = null; return; }
+        }
+        if(c.moveTarget && travel(c, c.moveTarget.x, c.moveTarget.y, dt, 0.15)) c.moveTarget = null;
+        return;
+      }
     }
     const d = dist(c.x,c.y,t.x,t.y);
     /* ---- WHAT IS IN THE WAY ----
@@ -22272,7 +22293,7 @@ function scholarTick(dt){
   if(c){
     /* seen: by anybody of yours, in sight now */
     /* `vis` is flat, so only somebody of yours on the surface counts as having seen him */
-    const inSight = visAt(c.x, c.y) === 2 && player().some(o => o.state !== 'dead' && (o.floor || 0) === 0);
+    const inSight = visAt(c.x, c.y, c.floor) === 2 && player().some(o => o.state !== 'dead' && (o.floor || 0) === 0);
     if(inSight && lastScholar.seenAt === null){
       lastScholar.seenAt = day;
       lastScholar.done[lastScholar.key] = day;
@@ -22774,7 +22795,7 @@ function blytheMeets(){
   if(!b) return;
   if(!b.blytheOrderSaid){
     const pal = chars.find(o => o.faction === 'purge' && o.state === 'ok' && !o.bossKey && dist(o.x, o.y, b.x, b.y) < 8);
-    if(pal && visAt(b.x, b.y) === 2){
+    if(pal && visAt(b.x, b.y, b.floor) === 2){
       b.blytheOrderSaid = true;
       say(pal, 'Brother Blythe. Your bed in the infirmary is still made.');
       log(`${pal.name}, of the Order: "Brother Blythe. Your bed in the infirmary is still made." ${b.name} does not answer.`, '');
@@ -22782,7 +22803,7 @@ function blytheMeets(){
   }
   if(!b.blytheAshSaid){
     const ash = chars.find(o => o.bossKey === 'ash' && o.state === 'ok' && dist(o.x, o.y, b.x, b.y) < 10);
-    if(ash && visAt(b.x, b.y) === 2){
+    if(ash && visAt(b.x, b.y, b.floor) === 2){
       b.blytheAshSaid = true;
       say(b, 'You went looking for the bottom of the well, Sister. I went looking for the bottom of the bottle. Mine was closer.');
       say(ash, 'Still in their plate, Blythe. You took the helm off so they could see your face when you said no, and then you never said it.');
@@ -23144,7 +23165,7 @@ function gauntTick(dh){
     const flight = spawnEyeFlight(x, y);
     if(flight.length){
       for(const e of flight){ e.nightSpawn = true; if(tier >= 2 || bloodMoon) e.hunt = anchor; }
-      if(dist(flight[0].x, flight[0].y, anchor.x, anchor.y) < 34 && visAt(flight[0].x, flight[0].y) === 2)
+      if(dist(flight[0].x, flight[0].y, anchor.x, anchor.y) < 34 && visAt(flight[0].x, flight[0].y, flight[0].floor) === 2)
         log(`Lights are coming up out of the dark, and they are looking at you. ${flight.length} of them.`, 'bad');
       return flight[0];
     }
@@ -23158,7 +23179,7 @@ function gauntTick(dh){
   if(roll > 0.985 - 0.005 * fractureStage && messengersAbroad() < messengerCap()){
     const m = spawnGaunt(rnd() < 0.35 ? 'herald' : 'messenger', x, y);
     m.hunt = anchor; m.nightSpawn = true;
-    if(dist(m.x, m.y, anchor.x, anchor.y) < 34 && visAt(m.x, m.y) === 2)
+    if(dist(m.x, m.y, anchor.x, anchor.y) < 34 && visAt(m.x, m.y, m.floor) === 2)
       log(`Something out there is talking. It is not talking to you, and none of it is words.`, 'bad');
     else worldEvent('attention', m.x, m.y,
       'Drovers on the waste road heard something speaking in the dark. Not calling — speaking, in sentences, in a tongue nobody could place.');
@@ -23184,7 +23205,7 @@ function gauntTick(dh){
   if(from){ g.riftId = from.id; from.spawned++; }
   /* once they have your scent, they don't wander — they arrive */
   if(tier >= 2 || bloodMoon) g.hunt = anchor;
-  if(dist(g.x, g.y, anchor.x, anchor.y) < 30 && visAt(g.x, g.y) === 2){
+  if(dist(g.x, g.y, anchor.x, anchor.y) < 30 && visAt(g.x, g.y, g.floor) === 2){
     log(kind === 'maw' ? 'Something enormous drags itself out of the dark.'
       : kind === 'larder' ? 'Something steps out of the dark and then stands very still, watching the fight.'
       : 'Something thin unfolds itself out of the dark.', 'bad');
@@ -23274,7 +23295,7 @@ function mawFeed(c, dt){
   if(exposed && !c.dragging){
     if(!travel(c, q.x, q.y, dt, 1.0)) return true;
     c.dragging = q;
-    if(visAt(q.x, q.y) === 2) log(`Something has ${q.name || 'a body'} by the leg. It is dragging them into the dark.`, 'bad');
+    if(visAt(q.x, q.y, q.floor) === 2) log(`Something has ${q.name || 'a body'} by the leg. It is dragging them into the dark.`, 'bad');
   }
   if(c.dragging){
     const lair = mawLair(c);
@@ -23303,7 +23324,7 @@ function mawFeed(c, dt){
       q.parts[limb].bleed = 0.5;
     }
     addSpecks(q.x, q.y, '#7a2a2a', 10);
-    if(visAt(q.x, q.y) === 2){
+    if(visAt(q.x, q.y, q.floor) === 2){
       log(q.faction === 'player'
         ? `The Maw takes ${q.name}'s ${limb}. They are still alive. Hurry.`
         : 'The Maw is feeding.', 'bad');
@@ -23316,7 +23337,7 @@ function mawFeed(c, dt){
   const chi = chars.indexOf(q); if(chi >= 0) chars.splice(chi, 1);
   c.mawTarget = null; c.lairSpot = null;
   addSpecks(q.x, q.y, '#7a2a2a', 22);
-  if(visAt(q.x, q.y) === 2) log('The Maw finishes. There is nothing left to raise.', 'bad');
+  if(visAt(q.x, q.y, q.floor) === 2) log('The Maw finishes. There is nothing left to raise.', 'bad');
   return true;
 }
 /* spiral out from the worker looking for a matching resource *//* spiral out from the worker looking for a matching resource */
@@ -23585,7 +23606,7 @@ function emplUsableBy(b, c){
 function emplReachable(b, c){
   const bf = b.floor || 0, cf = c.floor || 0;
   if(bf === cf) return true;
-  return !!stairToward(c, cf, bf > cf ? cf + 1 : cf - 1, b.x + 0.5, b.y + 0.5, bf);
+  return storeyReach(c, b.x + 0.5, b.y + 0.5, bf);
 }
 function emplTarget(b, spec){
   const bx = b.x + 0.5, by = b.y + 0.5, bf = b.floor || 0;
@@ -25175,7 +25196,7 @@ function tenantTick(dt){
       else if(c.tenant === 'echo' && day - c.tenantSince >= 30) tenantShows(c);
       else if(c.tenant === 'watcher' && !(c.floor || 0) && (
         rifts.some(r => dist(r.x, r.y, c.x, c.y) < (r.r || 6) + 8) ||
-        chars.some(o => o.faction === 'purge' && o.state === 'ok' && dist(o.x, o.y, c.x, c.y) < 12 && visAt(o.x, o.y) === 2))) tenantShows(c);
+        chars.some(o => o.faction === 'purge' && o.state === 'ok' && dist(o.x, o.y, c.x, c.y) < 12 && visAt(o.x, o.y, o.floor) === 2))) tenantShows(c);
     }
     /* ---- the dreamer's nights ---- */
     if(c.tenant === 'dream' && isNight() && c.dreamNight !== nightId && c.state === 'ok' && !c.target && !c.jailedAt){
@@ -25574,7 +25595,7 @@ function worthTelling(c){
   if(!c) return false;
   const f = c.floor || 0;
   if(!player().some(u => (u.floor || 0) === f && u.state !== 'dead')) return false;
-  return visAt(c.x, c.y) === 2;
+  return visAt(c.x, c.y, c.floor) === 2;
 }
 function castRaise(c, body, o){
   o = o || {};
@@ -28749,12 +28770,12 @@ function update(dt){
         if(clerk && !p.filed){
           /* the servitor files a holding answer: the matter waits for you instead of rotting */
           p.filed = true; p.expires = day + 3;
-          if(visAt(t.x,t.y)===2) log(`${clerk.name} files a holding answer in ${t.name}. The petition waits.`, '');
+          if(visAt(t.x, t.y, t.floor)===2) log(`${clerk.name} files a holding answer in ${t.name}. The petition waits.`, '');
           continue;
         }
         t.petitions.splice(t.petitions.indexOf(p), 1);
         t.order = clamp(t.order - 6, 0, 100);
-        if(visAt(t.x,t.y)===2) log(`A petition in ${t.name} gathers dust past answering. (−order)`, 'bad');
+        if(visAt(t.x, t.y, t.floor)===2) log(`A petition in ${t.name} gathers dust past answering. (−order)`, 'bad');
       }
       if(t.petitions.length < 2 && rnd() < 0.3){
         const tpl = pick(PETITIONS);
@@ -29568,7 +29589,7 @@ function update(dt){
     c.civ = true; c.homeTown = t; c.civT = ri(2,8);
     c.trade = trade; c.tradeSkill = ri(8, 26);
     chars.push(c);
-    if(visAt(t.x, t.y) === 2) log(`A settler arrives in ${t.name} — a ${trade} looking for work.`, 'good');
+    if(visAt(t.x, t.y, t.floor) === 2) log(`A settler arrives in ${t.name} — a ${trade} looking for work.`, 'good');
   }
   /* towns and the walking dead */
   necroT += dt;
@@ -30369,6 +30390,15 @@ function unpackExplored(runs){
   litIdx.length = 0; fogMarkAll(); fogDirty = true;
 }
 const vis = new Uint8Array(W*H);
+/* ---------- AND THE DEPTHS SEE FOR THEMSELVES ----------
+   `vis` was one map for every storey, so a body on -1 stamped its disc onto the SURFACE over its
+   head: the ground above a tunnel lit up, and anything walking on it was drawn and could be
+   clicked, seen by somebody thirty feet down through the rock. The surface and everything above
+   it keep `vis` (the explored half of it is what the save carries); everything below the ground
+   has this one, and the fog texture shows whichever the camera is following. The three depths
+   share it: two squads at the same x and y on different depths is not a case worth a third map. */
+const visDeep = new Uint8Array(W*H);
+let litDeep = [];
 /* ---------- THE MINIMAP READS SIGHT BY THE BLOCK ----------
    The minimap is 128 pixels across the world, a block of tiles to a pixel, and it used to read
    ONE tile per pixel: the top-left corner of each block. A party sees about seventeen tiles by
@@ -30390,10 +30420,10 @@ function fogMark(x0, y0, x1, y1){
 function fogMarkAll(){ fogMinX = 0; fogMinY = 0; fogMaxX = W-1; fogMaxY = H-1; }
 function fogMarkClear(){ fogMinX = W; fogMinY = H; fogMaxX = -1; fogMaxY = -1; }
 let debugSeeAll = false;   /* DEBUG: the whole map, unearned. F9. */
-function visAt(wx, wy){
+function visAt(wx, wy, f){
   const x = Math.floor(clamp(wx, 0, W-1)), y = Math.floor(clamp(wy, 0, H-1));
   if(debugSeeAll) return 2;
-  return vis[y*W+x];
+  return (f < 0 ? visDeep : vis)[y*W+x];
 }
 /* ---------- A CHART IS NOT A PAIR OF EYES ----------
    The world is 1440 tiles across and the only way to learn any of it was to walk it, which
@@ -30442,16 +30472,17 @@ function revealMap(cx0, cy0, r){
   return n;
 }
 let visChanged = false;
-function stampVision(cx0, cy0, r){
+function stampVision(cx0, cy0, r, deep){
   const x0 = Math.max(0, Math.floor(cx0-r)), x1 = Math.min(W-1, Math.ceil(cx0+r));
   const y0 = Math.max(0, Math.floor(cy0-r)), y1 = Math.min(H-1, Math.ceil(cy0+r));
   const r2 = r*r;
+  const map = deep ? visDeep : vis, lit = deep ? litDeep : litIdx;
   for(let y=y0; y<=y1; y++) for(let x=x0; x<=x1; x++){
     const dx = x+0.5-cx0, dy = y+0.5-cy0;
     if(dx*dx + dy*dy <= r2){
-      const ix = y*W+x, prev = vis[ix];
+      const ix = y*W+x, prev = map[ix];
       if(prev !== 2){
-        vis[ix] = 2; visChanged = true; litIdx.push(ix);
+        map[ix] = 2; visChanged = true; lit.push(ix);
       }
     }
   }
@@ -30469,6 +30500,15 @@ function computeVision(){
     }
   }
   litIdx.length = 0;
+  for(let k=0; k<litDeep.length; k++){
+    const ix = litDeep[k];
+    if(visDeep[ix] === 2){
+      visDeep[ix] = 1; changed = true;
+      const y = (ix/W)|0; const x = ix - y*W;
+      fogMark(x, y, x, y);
+    }
+  }
+  litDeep.length = 0;
   /* ---------- HOW FAR ANYONE CAN SEE ----------
      Eyes see farther by day; a storm swallows everything. The base was 11 tiles at night
      and 19 at noon, set when the world was smaller — against a camera that sits back at 28
@@ -30497,7 +30537,7 @@ function computeVision(){
     if(darkFloor(c)){
       const dr = seesInDark(c) ? DARK_SIGHT_DEAD
                : litNear(c)    ? DARK_SIGHT_LIT : DARK_SIGHT_BLIND + (darkEase(c) < 1 ? 5 : 0);
-      stampVision(c.x, c.y, dr);
+      stampVision(c.x, c.y, dr, true);
       markUnderSeen(c, dr);     /* the storey's own memory — the flat fog cannot hold it */
       continue;
     }
@@ -30513,7 +30553,11 @@ function computeVision(){
        it had been. A storey is not a mountain, so it is worth about what a low ridge is
        worth, and it stacks the way the ranges do rather than replacing them. */
     const fl = c.floor || 0;
-    if(fl > 0) r += Math.min(16, fl * 9);
+    /* ---------- AND ONLY UNDER OPEN SKY ----------
+       A storey is worth the view from it when there is nothing over your head. A body in a
+       room three floors up a tower, with the fourth floor for a ceiling, was seeing as far as
+       a lookout on the roof — through its own walls and the floor above. */
+    if(fl > 0 && !decks.has(bkey(Math.floor(c.x), Math.floor(c.y), fl + 1))) r += Math.min(16, fl * 9);
     /* A WHISP IS A LAMP. It sees no better than anything else does — it makes the ground
        around it visible, which is a different thing and the whole reason to walk one out
        ahead of the column. The storm still swallows it like everything else. */
@@ -30969,7 +31013,7 @@ function buildHangedKing(){
 }
 function syncHangedKing(now){
   const d = theDoor;
-  const show = !!d && !d.kingDown && activeFloor >= 0 && (debugSeeAll || visAt(d.x, d.y) > 0);
+  const show = !!d && !d.kingDown && activeFloor >= 0 && (debugSeeAll || visAt(d.x, d.y, d.floor) > 0);
   if(!show){ if(hangedKingFx) hangedKingFx.visible = false; return; }
   if(!hangedKingFx) hangedKingFx = buildHangedKing();
   hangedKingFx.visible = true;
@@ -31779,9 +31823,8 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
      the one that has a way further down is most of what makes the Sump feel like the bottom of
      something rather than another corridor. Fifteen or so ways off the Undercroft, a handful
      off the Deepworks, and the last of them is a long way from the first.
-     `useStairs` needed nothing for this. It has walked multi-storey descents since the tower —
-     `stairToward(c, c.floor, c.floor + (wantUp ? 1 : -1), ...)` already hunts the next stair on
-     the piece of floor you just stepped onto — so ordering a squad to the bottom is one order
+     The movement layer needed nothing for this: a route is planned whole across every storey
+     before the first step (see THE STOREY CORE), so ordering a squad to the bottom is one order
      and three shafts, and none of that code knows the underworld got deeper. */
   /* ---------- AND WHERE THE TWO NETWORKS HAPPEN TO CROSS ----------
      THE FIRST CUT LOOKED FOR A LANDING WITHIN FIVE TILES OF THE HALL AND FOUND ALMOST NONE.
@@ -33020,7 +33063,45 @@ function towerFallAt(tw, px, py, pad){
   const fx = Math.sin(tw.ang), fy = Math.cos(tw.ang);
   const dx = px - tw.x, dy = py - tw.y;
   const along = dx * fx + dy * fy, across = Math.abs(dx * fy - dy * fx);
-  return along > 5 && along < 6.5 + tw.fall && across < pad;
+  return along > TOWER_R + 0.5 && along < TOWER_R + 2 + tw.fall && across < pad;
+}
+/* ---------- AND YOU CAN GO IN ----------
+   "I would really like for more explorable areas across the map. Like the ARK and these towers...
+    big enough to explore and actually fit squads in." (2026-10-03.) The shaft is the conduit —
+   the thing the rite ran through — and it stays the slender spire the skyline is read by. What
+   changes is the foot: a broad octagonal hall of the old works wrapped round the base of it,
+   three storeys with a ceiling each and an open terrace on the roof behind a parapet, the shaft
+   rising out of the middle of all four. A door on the side away from the fall; a stair that
+   changes side every storey; raised through `buildStructure` like anything else with a storey. */
+const TOWER_R = 10;                        /* the hall's octagon, centre to the outer face of its wall */
+const TOWER_STOREYS = 3;                   /* storeys with a ceiling; the terrace is one more */
+function towerOct(dx, dy){ return Math.max(Math.abs(dx), Math.abs(dy), (Math.abs(dx) + Math.abs(dy)) / Math.SQRT2); }
+/* the face the door is cut in: the octagon's face nearest the side away from the fall */
+function towerDoorA(tw){ return Math.round((tw.ang + Math.PI) / (Math.PI / 4)) * (Math.PI / 4); }
+function towerPlan(tw){
+  const R = TOWER_R, N = R * 2 + 1, doorA = towerDoorA(tw);
+  const angOf = (dx, dy) => { let d = Math.atan2(dx, dy) - doorA; while(d > Math.PI) d -= Math.PI * 2; while(d < -Math.PI) d += Math.PI * 2; return d; };
+  /* the stair of storey f, a third of the way round from the last, half way out from the core */
+  const stairAtF = (f) => { const a = doorA + 1.3 + f * 2.1; return [R + Math.round(Math.sin(a) * 6), R + Math.round(Math.cos(a) * 6)]; };
+  const storeys = {};
+  for(let f = 0; f <= TOWER_STOREYS; f++){
+    const rows = [];
+    const st = f < TOWER_STOREYS ? stairAtF(f) : null;
+    for(let py = 0; py < N; py++){
+      let row = '';
+      for(let px = 0; px < N; px++){
+        const dx = px - R, dy = py - R, o = towerOct(dx, dy);
+        if(o > R + 0.5) row += ' ';
+        else if(o > R - 0.5) row += (f === 0 && Math.abs(angOf(dx, dy)) < 0.2) ? '=' : '#';
+        else if(o <= 2.2) row += '#';                       /* the conduit itself */
+        else if(st && st[0] === px && st[1] === py) row += '^';
+        else row += '.';
+      }
+      rows.push(row);
+    }
+    storeys[f] = rows;
+  }
+  return storeys;
 }
 (function seedTowers(){
   const clearOf = (x, y) =>
@@ -33043,13 +33124,14 @@ function towerFallAt(tw, px, py, pad){
   /* open, dry and roughly level under the foot and along where a snapped one will lie */
   const groundOk = (x, y, ang, fall) => {
     let lo = Infinity, hi = -Infinity;
-    for(let j = y - 9; j <= y + 9; j++) for(let i = x - 9; i <= x + 9; i++){
-      if(dist(i, j, x, y) > 9) continue;
+    const gr = TOWER_R + 2;
+    for(let j = y - gr; j <= y + gr; j++) for(let i = x - gr; i <= x + gr; i++){
+      if(dist(i, j, x, y) > gr) continue;
       if(isBlocked(i, j) || tileAt(i, j) === 3) return false;
       const hv = HV[j * (W + 1) + i]; if(hv < lo) lo = hv; if(hv > hi) hi = hv;
     }
     if(hi - lo > 2.6 || biomeAt(x, y) === BIOME_VAT) return false;
-    for(let d = 6; d <= 7 + fall; d += 1.5){
+    for(let d = TOWER_R + 1; d <= TOWER_R + 2 + fall; d += 1.5){
       const fx = Math.round(x + Math.sin(ang) * d), fy = Math.round(y + Math.cos(ang) * d);
       if(isBlocked(fx, fy) || tileAt(fx, fy) === 3) return false;
     }
@@ -33064,24 +33146,52 @@ function towerFallAt(tw, px, py, pad){
     const ang = h2 * Math.PI * 2;
     const fall = kind === 'snapped' ? Math.round(24 + hash2(x, y * 3) * 8) : 0;
     if(!groundOk(x, y, ang, fall)) continue;
-    const tw = {id: towers.length + 1, x, y, kind, ang, fall, clearR: 9, reached: false,
+    const tw = {id: towers.length + 1, x, y, kind, ang, fall, clearR: TOWER_R + 3, reached: false,
                 h: kind === 'standing' ? 44 + hash2(x * 5, y) * 14 : kind === 'leaning' ? 34 + hash2(x * 5, y) * 10 : 14 + hash2(x * 5, y) * 6};
+    /* a snapped stump has to stand above the terrace it now carries */
+    tw.h = Math.max(tw.h, floorY(TOWER_STOREYS) + 4);
     towers.push(tw);
-    /* the foot, and on a snapped one the length of it lying in the dust: these are things */
-    for(let j = y - 6; j <= y + 6; j++) for(let i = x - 6; i <= x + 6; i++) if(dist(i + 0.5, j + 0.5, x, y) < 5.2) solid(i, j);
-    if(fall) for(let j = y - fall - 8; j <= y + fall + 8; j++) for(let i = x - fall - 8; i <= x + fall + 8; i++)
+    /* THE PAD. A storey stands at the ground under each tile plus its height, so a floor laid over
+       uneven ground would be uneven too; the hall's footprint is levelled to its mean before
+       anything is drawn on it, and eased back into the land over a few tiles round it. */
+    {
+      const gr = TOWER_R + 1.5, ease = 4;
+      let sum = 0, n = 0;
+      for(let j = y - gr; j <= y + gr; j++) for(let i = x - gr; i <= x + gr; i++){ if(towerOct(i - x, j - y) <= gr){ sum += HV[j * (W + 1) + i]; n++; } }
+      const mean = sum / Math.max(1, n);
+      for(let j = Math.floor(y - gr - ease); j <= y + gr + ease; j++) for(let i = Math.floor(x - gr - ease); i <= x + gr + ease; i++){
+        const o = towerOct(i - x, j - y), k = j * (W + 1) + i;
+        if(o <= gr) HV[k] = mean;
+        else if(o < gr + ease){ const t = (o - gr) / ease; HV[k] = mean + (HV[k] - mean) * t * t; }
+      }
+    }
+    tw.hall = buildStructure({x: x - TOWER_R, y: y - TOWER_R, storeys: towerPlan(tw), kind: 'tower', cut: false});
+    tw.inR = TOWER_R + 0.5;
+    /* on a snapped one the length of it lying in the dust: that is a thing */
+    if(fall) for(let j = y - fall - TOWER_R - 3; j <= y + fall + TOWER_R + 3; j++) for(let i = x - fall - TOWER_R - 3; i <= x + fall + TOWER_R + 3; i++)
       if(towerFallAt(tw, i + 0.5, j + 0.5, 2.4)) solid(i, j);
     /* a cache at the foot, on the side away from the fall: what the last people to shelter in it
-       left, and what the tower's own stores still hold. Picked off the hash, not rolled. */
+       left. Picked off the hash, not rolled. */
     const ca = ang + Math.PI + 0.6;
-    let cx2 = x + Math.sin(ca) * 7.5, cy2 = y + Math.cos(ca) * 7.5;
-    for(let ring = 0; ring <= 6 && isBlocked(cx2, cy2); ring++){ cx2 = x + Math.sin(ca + ring * 0.5) * (7.5 + ring); cy2 = y + Math.cos(ca + ring * 0.5) * (7.5 + ring); }
+    let cx2 = x + Math.sin(ca) * (TOWER_R + 2.5), cy2 = y + Math.cos(ca) * (TOWER_R + 2.5);
+    for(let ring = 0; ring <= 6 && isBlocked(cx2, cy2); ring++){ cx2 = x + Math.sin(ca + ring * 0.5) * (TOWER_R + 2.5 + ring); cy2 = y + Math.cos(ca + ring * 0.5) * (TOWER_R + 2.5 + ring); }
     const h3 = hash2(x * 13, y * 17);
     tw.cacheIdx = chests.length;
     chests.push({x: cx2, y: cy2, opened: false, loot: {cats: 40 + Math.floor(h3 * 90), items: {
       scrap: 2 + Math.floor(hash2(x, y * 7) * 4),
       ...(h3 < 0.35 ? {formula_w: 1} : h3 < 0.62 ? {aether_cell: 1} : h3 < 0.8 ? {gold_bar: 1} : {lead: 2}),
     }}});
+    /* and what the tower's own stores still hold, up where the stores were kept: on the top storey
+       under a ceiling, against the core on the side of the door — a reason to climb */
+    {
+      const a = towerDoorA(tw) + Math.PI * 0.75, h4 = hash2(x * 19, y * 23);
+      tw.storeIdx = chests.length;
+      chests.push({x: x + Math.round(Math.sin(a) * 4) + 0.5, y: y + Math.round(Math.cos(a) * 4) + 0.5, floor: TOWER_STOREYS - 1, opened: false,
+        loot: {cats: 70 + Math.floor(h4 * 130), items: {
+          scrap: 3 + Math.floor(hash2(x * 3, y) * 4), aether_cell: 1 + Math.floor(h4 * 2),
+          ...(h4 < 0.3 ? {formula_w: 1} : h4 < 0.55 ? {gold_bar: 1} : h4 < 0.8 ? {lead: 3} : {tome: 1}),
+        }}});
+    }
   }
 })();
 /* the people, brought in the first time anybody of yours comes near (see HAMLETS). Their draws
@@ -33660,13 +33770,17 @@ function toggleSeeAll(){
   fogDirty = true; fogMarkAll();
   log(debugSeeAll ? 'DEBUG: the fog lifts. Everything, everywhere. (F9 to restore honesty.)' : 'DEBUG OFF: you see what your people see.', 'good');
 }
+let fogDeep = false;      /* which layer the sight texture is showing */
 function redrawFog(){
+  /* the camera went down a shaft or came up one: the whole texture is the other map now */
+  if((activeFloor < 0) !== fogDeep){ fogDeep = activeFloor < 0; fogMarkAll(); }
+  const src = fogDeep ? visDeep : vis;
   if(fogMaxX < fogMinX || fogMaxY < fogMinY){ fogDirty = false; return; }
   const x0 = Math.max(0, fogMinX), y0 = Math.max(0, fogMinY);
   const x1 = Math.min(W-1, fogMaxX), y1 = Math.min(H-1, fogMaxY);
   for(let y=y0; y<=y1; y++){
     let i = y*W + x0;
-    for(let x=x0; x<=x1; x++, i++) fogData[i] = vis[i] === 2 ? 0 : 255;
+    for(let x=x0; x<=x1; x++, i++) fogData[i] = src[i] === 2 ? 0 : 255;
   }
   fogTex.needsUpdate = true;
   fogDirty = false;
@@ -35629,7 +35743,7 @@ function palette(t){
     const parts = {};
     const hv = (k) => hash2(tw.x * 31 + k * 7, tw.y * 17 + k * 13);
     const root = new THREE.Object3D();
-    root.position.set(tw.x, groundY(tw.x, tw.y) - 0.3, tw.y);
+    root.position.set(tw.x + 0.5, groundY(tw.x, tw.y) - 0.3, tw.y + 0.5);
     root.rotation.y = tw.ang;
     const node = (parent, px, py, pz, rx, ry, rz) => {
       const o = new THREE.Object3D(); o.position.set(px, py, pz); o.rotation.set(rx || 0, ry || 0, rz || 0); parent.add(o); return o;
@@ -35640,16 +35754,67 @@ function palette(t){
     };
     /* an octagonal course: two squares a quarter-turn apart */
     const course = (parent, col, w, h, y) => { add(parent, col, w, h, w, 0, y, 0); add(parent, col, w, h, w, 0, y, 0, 0, Math.PI / 4, 0); };
-    /* the plinth, stepped, and four buttresses leaning in on the corners */
-    course(root, TC.worn, 10.2, 1.6, 0.5);
-    course(root, TC.stone, 8.4, 1.2, 1.7);
-    for(let b = 0; b < 4; b++){
-      const a = b * Math.PI / 2 + Math.PI / 4;
-      const foot = node(root, Math.sin(a) * 4.3, 0, Math.cos(a) * 4.3, 0, a, 0);
-      add(foot, TC.worn, 1.4, 10, 2.4, 0, 4.4, -0.9, -0.24, 0, 0);
+    /* ---- THE HALL (see AND YOU CAN GO IN) ----
+       Square to the world, not to the tower's own turn: its walls are the plan's walls, and the
+       plan is laid square. Eight faces on the octagon's wall line, a pier at every corner, a door
+       in the face away from the fall with a gold lintel over it, a gold string course at every
+       storey, and slits. Its floors are drawn row by row off the plan itself, so what you stand on
+       is exactly what is drawn. */
+    const hall = new THREE.Object3D();
+    hall.position.set(tw.x + 0.5, groundY(tw.x, tw.y), tw.y + 0.5);   /* the plan's middle tile, centred */
+    {
+      const R = TOWER_R, HH = floorY(TOWER_STOREYS), PAR = 1.3, doorA = towerDoorA(tw);
+      const faceLen = 2 * R * Math.tan(Math.PI / 8) + 0.2;
+      for(let k = 0; k < 8; k++){
+        const th = k * Math.PI / 4;
+        let dd = th - doorA; while(dd > Math.PI) dd -= Math.PI * 2; while(dd < -Math.PI) dd += Math.PI * 2;
+        const isDoor = Math.abs(dd) < 0.01;
+        const face = node(hall, Math.sin(th) * R, 0, Math.cos(th) * R, 0, th, 0);
+        if(!isDoor) add(face, TC.stone, faceLen, HH + PAR, 1, 0, (HH + PAR) / 2, 0);
+        else {
+          const gap = 4.2, side = (faceLen - gap) / 2, lin = 3.0;
+          add(face, TC.stone, side, HH + PAR, 1, -(gap + side) / 2, (HH + PAR) / 2, 0);
+          add(face, TC.stone, side, HH + PAR, 1, (gap + side) / 2, (HH + PAR) / 2, 0);
+          add(face, TC.stone, gap, HH + PAR - lin, 1, 0, lin + (HH + PAR - lin) / 2, 0);
+          add(face, TC.gold, gap + 0.6, 0.4, 1.2, 0, lin, 0);
+        }
+        for(let f = 1; f <= TOWER_STOREYS; f++) add(face, TC.gold, faceLen, 0.3, 1.12, 0, floorY(f), 0);
+        for(let f = 0; f < TOWER_STOREYS; f++) if(!isDoor || f > 0)
+          for(const sx2 of [-2.2, 2.2]) add(face, TC.dark, 0.45, 1.5, 0.2, sx2, floorY(f) + 1.9, 0.51);
+        /* the pier on the corner after this face */
+        const va = th + Math.PI / 8, vr = R / Math.cos(Math.PI / 8);
+        add(hall, TC.worn, 1.5, HH + PAR + 0.8, 1.5, Math.sin(va) * vr, (HH + PAR + 0.8) / 2, Math.cos(va) * vr, 0, va, 0);
+      }
+      /* floors: one plate per run of the plan's rows, storey by storey; the ground storey paved */
+      const plan = tw.hall ? tw.hall.plan : null;
+      if(plan) for(let f = 0; f <= TOWER_STOREYS; f++){
+        const rows = plan[f]; if(!rows) continue;
+        for(let py = 0; py < rows.length; py++){
+          let px = 0;
+          while(px < rows[py].length){
+            if(rows[py][px] === ' ' || (f === 0 && rows[py][px] === '#')){ px++; continue; }
+            let q = px; while(q + 1 < rows[py].length && rows[py][q + 1] !== ' ' && !(f === 0 && rows[py][q + 1] === '#')) q++;
+            const cxp = (px + q) / 2 - R, czp = py - R;
+            if(f === 0) add(hall, TC.worn, q - px + 1, 0.12, 1, cxp, 0.06, czp);
+            else add(hall, (py + f) % 5 === 0 ? TC.worn : TC.stone, q - px + 1, 0.28, 1, cxp, floorY(f) - 0.14, czp);
+            px = q + 1;
+          }
+        }
+      }
+      /* the stairs: four steps up each flight's tile, climbing away from the core */
+      if(tw.hall) for(const st of tw.hall.stairs){
+        const lx = st.x - tw.x, lz = st.y - tw.y, a = Math.atan2(lx, lz);
+        const fl = node(hall, lx, floorY(st.from), lz, 0, a, 0);
+        for(let i = 0; i < 4; i++) add(fl, TC.worn, 0.9, (i + 1) * FLOOR_H / 4, 0.25, 0, (i + 1) * FLOOR_H / 8, -0.375 + i * 0.25);
+      }
     }
-    /* the shaft, in courses that narrow going up, banded in gold every third, slit on the faces */
-    const shaft = node(root, 0, 2.3, 0, 0, 0, tw.kind === 'leaning' ? 0.10 + hv(1) * 0.06 : 0);
+    hall.updateMatrixWorld(true);
+    /* the shaft, in courses that narrow going up, banded in gold every third, slit on the faces.
+       It rises from the ground through the middle of the hall; a leaning one stands true inside
+       the hall and leans from its roof up. */
+    const pivot = tw.kind === 'leaning' ? floorY(TOWER_STOREYS) + 0.3 : 2.3;
+    if(tw.kind === 'leaning') course(root, TC.stone, 5.2, pivot, pivot / 2);
+    const shaft = node(root, 0, pivot, 0, 0, 0, tw.kind === 'leaning' ? 0.10 + hv(1) * 0.06 : 0);
     const stand = tw.h, CH = 3.2;
     const n = Math.max(3, Math.floor(stand / CH));
     for(let i = 0; i < n; i++){
@@ -35677,7 +35842,7 @@ function palette(t){
     }
     /* SNAPPED: the rest of it lies where it fell, along `ang`, half in the dust */
     if(tw.fall){
-      const lie = node(root, 0, 1.1, 6.5, Math.PI / 2 - 0.05, 0, (hv(60) - 0.5) * 0.12);
+      const lie = node(root, 0, 1.1, TOWER_R + 1.5, Math.PI / 2 - 0.05, 0, (hv(60) - 0.5) * 0.12);
       const m = Math.floor(tw.fall / CH);
       for(let i = 0; i < m; i++){
         const w = 4.6 - 0.8 * (i / m);
@@ -35687,7 +35852,7 @@ function palette(t){
     }
     /* and what came down off it, round the foot */
     for(let r = 0; r < 6; r++){
-      const a = hv(70 + r) * Math.PI * 2, d = 6.5 + hv(80 + r) * 5, sz = 0.9 + hv(90 + r) * 1.6;
+      const a = hv(70 + r) * Math.PI * 2, d = TOWER_R + 1.8 + hv(80 + r) * 5, sz = 0.9 + hv(90 + r) * 1.6;
       add(root, r % 2 ? TC.rubble : TC.stone, sz * 1.4, sz * 0.8, sz, Math.sin(a) * d, sz * 0.2, Math.cos(a) * d,
           hv(100 + r) * 0.6, hv(110 + r) * 3, hv(120 + r) * 0.5);
     }
@@ -35916,7 +36081,7 @@ function cutVolumesAt(x, y){
    builds comes or goes (a load brings its own redoubts; a build goes up mid-game) */
 let _cutSig = '';
 function syncCutVolumes(){
-  const sig = buildings.length + '|' + redoubts.length + '|' + pBuilds.length + '|' + towers.length + '|' + (ark ? 1 : 0);
+  const sig = buildings.length + '|' + redoubts.length + '|' + pBuilds.length + '|' + towers.length + '|' + (ark ? 1 : 0) + '|' + structures.length;
   if(sig === _cutSig) return;
   _cutSig = sig;
   cutVolumes.length = 0; _cutGrid.clear();
@@ -35927,8 +36092,15 @@ function syncCutVolumes(){
     if(r._bx === undefined || r._bx > r._bX) continue;
     addCutVolume((r._bx + r._bX + 1) / 2, (r._by + r._bY + 1) / 2, 1, 0, (r._bX - r._bx + 1) / 2, (r._bY - r._by + 1) / 2, 'redoubt', rd);
   }
-  for(const tw of towers) addCutVolume(tw.x, tw.y, Math.cos(tw.ang), -Math.sin(tw.ang), tw.inR || 5.5, tw.inR || 5.5, 'tower', tw);
+  /* the hall is laid square, but it is an OCTAGON: a body standing outside one of its diagonal faces
+     is inside the square round it, and was cutting the whole tower open from the street. A volume
+     may carry its own test of who is inside it; the shader's box is only where it cuts. */
+  for(const tw of towers){
+    const v = addCutVolume(tw.x + 0.5, tw.y + 0.5, 1, 0, tw.inR || 5.5, tw.inR || 5.5, 'tower', tw);
+    v.inside = (x, y) => towerOct(x - tw.x - 0.5, y - tw.y - 0.5) < TOWER_R - 0.4;
+  }
   if(ark) addCutVolume(ark.mx, ark.my, Math.cos(ark.ang), -Math.sin(ark.ang), ARK_B / 2 + 1, ARK_L / 2 + 1, 'ark', ark);
+  for(const st of structures) if(st.cut) addCutVolume(st.x + st.w / 2, st.y + st.h / 2, 1, 0, st.w / 2, st.h / 2, 'structure', st);
 }
 const _cutPick = new Map();
 function updateCutaway(focusY, camFloor){
@@ -35939,6 +36111,7 @@ function updateCutaway(focusY, camFloor){
     const f = c.floor || 0;
     if(f < 0) continue;
     for(const v of cutVolumesAt(c.x, c.y)){
+      if(v.inside && !v.inside(c.x, c.y)) continue;
       const had = _cutPick.get(v);
       if(had === undefined || f === activeFloor || (had !== activeFloor && f < had)) _cutPick.set(v, f);
     }
@@ -43482,7 +43655,7 @@ function syncChars(dt){
     let e = charMeshes.get(c.id);
     /* the unseen are not drawn — and an invisible child still pays a matrix update every
        frame, so it leaves the scene graph entirely until something looks at it again */
-    const inSight = c.faction==='player' || visAt(c.x, c.y) === 2;
+    const inSight = c.faction==='player' || visAt(c.x, c.y, c.floor) === 2;
     if(!inSight){
       if(e && e.inScene){ scene.remove(e.g); e.inScene = false; e.g.visible = false; }
       if(e){ e.lastX = c.x; e.lastY = c.y; }
@@ -44570,116 +44743,260 @@ function storeyHit(px, py, f){
   }
   return null;
 }
-function elevatedHit(px, py){
-  const h = storeyHit(px, py, 1);
-  return h ? {x: h.sx, y: h.sy, f: 1} : null;
+/* ============================================================ THE STOREY CORE ====
+   "I feel that the storeys system is just broken in general." (2026-10-03.) It was not one
+   bug. Measured on tools/stairwell.js, which builds its own structures on empty ground, the
+   old routing walked a five-storey tower, a seventy-tile deck and a two-storey cave without
+   trouble, and failed every case where a storey has MORE THAN ONE PIECE OF FLOOR on it:
+     · it planned one storey at a time — "the nearest stair one step toward the goal" — so it
+       had no idea that the way to a deck can be down and up again;
+     · and it crossed ANY stair underfoot that pointed the right way, so a body walking past
+       somebody else's stair took it and was stranded on the wrong deck (the ARK's crew-deck
+       stair did exactly this to every order for the bridge).
+   The data was never the problem — `decks`, `blocked` and `stairs` describe every structure
+   in the game correctly — so it stays, and the layer on top of it is replaced:
+     1. A REGION is one connected piece of a storey. The ground is one region; every other
+        storey is labelled by flooding it out from its stairs (`storeyComps`), once, and again
+        only when THAT storey's decks change (`deckFloorEp`).
+     2. A ROUTE is planned whole before the first step (`storeyPlan`): Dijkstra over the stairs,
+        each flight a few tiles' worth of effort, from the region the body is standing in to
+        the region of the goal — on the same storey or not.
+     3. A body crosses ONLY the stair that is the next leg of its plan (`useStairs`). A stair
+        that is merely underfoot is floor. */
+const STAIR_COST = 3;
+let _stairsN = -1, _stairsLast = null, _stairsSig = 0;
+/* the stair list changes shape by push and splice; length and the last entry between them
+   catch every way the game has of doing either */
+function stairsSig(){
+  if(stairs.length !== _stairsN || stairs[stairs.length - 1] !== _stairsLast){
+    _stairsN = stairs.length; _stairsLast = stairs[stairs.length - 1]; _stairsSig++;
+  }
+  return _stairsSig;
 }
-/* ---------- WHICH FLOOR OF WHAT: THE DECK A TILE BELONGS TO ----------
-   `decks` is one flat set of every upper-storey tile in the world, so "is there floor under
-   me" has always been answerable. What was NOT answerable is "is that piece of floor the same
-   piece of floor as this one" — and every stair question is really that question. A rampart
-   run behind your camp and a watchtower deck in a town forty tiles away are both `decks`
-   entries on storey 1, and nothing distinguished them.
-   Flood the tile's own connected run, four-connected, and cap it: a camp's rampart is a
-   handful of tiles and a cap turns a pathological world into a wrong answer rather than a
-   hung frame. (No longer capped: see AND A DECK IS LABELLED ONCE, WHOLE.) */
-/* The answer only changes when `decks` does, and the callers ask it several times a tick per
-   gunner — the reachability test sits in three different branches of the AI. So it is cached
-   against `deckEpoch`, which every mutation of the set bumps. */
-/* ---------- AND A DECK IS LABELLED ONCE, WHOLE ----------
-   The first version of this cached a flood per TILE, capped at 900 tiles, and dropped the
-   whole cache past 96 tiles, which was right for a rampart a few dozen tiles long. The ARK's
-   decks are two thousand tiles a piece: the flood stopped short of the stair at the other end
-   of the bridge and every order up there read "No stair connects there from here." So the first
-   question about any tile floods that tile's deck completely, and every tile of it is filed
-   against the one shared set: the next question about any of them is a lookup, however big the
-   deck. All of it is thrown away when `decks` changes, and refilled as it is asked for. */
-let _runEpoch = -1;
-const _runCache = new Map();          /* bkey -> the Set of its whole connected deck */
-const _NO_RUN = new Set();
-function deckRun(x, y, f){
-  if(_runEpoch !== deckEpoch){ _runCache.clear(); _runEpoch = deckEpoch; }
-  if(!f) return _NO_RUN;                                   /* the ground is all one piece */
-  const sx = Math.floor(x), sy = Math.floor(y), ck = bkey(sx, sy, f);
-  const hit = _runCache.get(ck);
-  if(hit) return hit;
-  if(!decks.has(ck)) return _NO_RUN;
-  const out = new Set();
-  const q = [sx, sy];
-  out.add(ck);
-  for(let i = 0; i < q.length; i += 2){
-    const cx = q[i], cy = q[i + 1];
-    for(const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
-      const nx = cx + dx, ny = cy + dy, k = bkey(nx, ny, f);
-      if(out.has(k) || !decks.has(k)) continue;
-      out.add(k); q.push(nx, ny);
+/* the stairs standing on one tile — a stairwell may stack two flights on it */
+function stairsOn(x, y){
+  stairAt(x, y);                                        /* refreshes the shared tile map */
+  return _stairMap.get(Math.floor(y) * W + Math.floor(x)) || null;
+}
+const _storeyC = new Map();
+let _flSeen = null;
+/* every stair landing on storey `f` in the connected piece of floor that holds (x, y), found
+   by flooding the piece. The scratch grid is one byte a tile and is put back as it is left. */
+function floodPiece(x, y, f, onTile){
+  if(!_flSeen) _flSeen = new Uint8Array(W * H);
+  const q = [y * W + x]; _flSeen[q[0]] = 1;
+  for(let i = 0; i < q.length; i++){
+    const id = q[i], cx = id % W, cy = (id / W) | 0;
+    if(onTile && onTile(cx, cy, id) === true){ for(const k of q) _flSeen[k] = 0; return {q, stop: id}; }
+    if(cx > 1 && !_flSeen[id - 1] && decks.has(bkey(cx - 1, cy, f))){ _flSeen[id - 1] = 1; q.push(id - 1); }
+    if(cx < W - 2 && !_flSeen[id + 1] && decks.has(bkey(cx + 1, cy, f))){ _flSeen[id + 1] = 1; q.push(id + 1); }
+    if(cy > 1 && !_flSeen[id - W] && decks.has(bkey(cx, cy - 1, f))){ _flSeen[id - W] = 1; q.push(id - W); }
+    if(cy < H - 2 && !_flSeen[id + W] && decks.has(bkey(cx, cy + 1, f))){ _flSeen[id + W] = 1; q.push(id + W); }
+  }
+  for(const k of q) _flSeen[k] = 0;
+  return {q, stop: -1};
+}
+/* a storey's pieces, as far as anyone can get to them: each stair's landing on `f` is given
+   the id of the piece it stands in, and each piece the list of stairs that land in it */
+function storeyComps(f){
+  const ep = deckFloorEp[f + 4], sg = stairsSig();
+  let S = _storeyC.get(f);
+  if(S && S.ep === ep && S.sg === sg) return S;
+  S = {ep, sg, comp: new Map(), list: new Map()};
+  _storeyC.set(f, S);
+  let id = 0;
+  for(const st of stairs){
+    if(st.from !== f && st.to !== f) continue;
+    if(S.comp.has(st)) continue;
+    if(!decks.has(bkey(st.x, st.y, f))){ S.comp.set(st, -1); continue; }   /* a landing with no floor */
+    id++;
+    const members = [];
+    floodPiece(st.x, st.y, f, (cx, cy) => {
+      const on = stairsOn(cx, cy);
+      if(on) for(const o of on) if((o.from === f || o.to === f) && !S.comp.has(o)){ S.comp.set(o, id); members.push(o); }
+    });
+    S.list.set(id, members);
+  }
+  return S;
+}
+let _groundSig = -1, _groundStairs = [];
+function groundStairs(){
+  const sg = stairsSig();
+  if(sg !== _groundSig){ _groundSig = sg; _groundStairs = stairs.filter(st => st.from === 0 || st.to === 0); }
+  return _groundStairs;
+}
+/* which piece of storey `f` the point (x, y) stands in: 0 for the ground, a piece id, a token
+   for a piece no stair reaches (so two points in it still compare equal), or null for no floor */
+function regionAt(x, y, f){
+  if(!f) return 0;
+  const xi = Math.floor(x), yi = Math.floor(y);
+  if(!decks.has(bkey(xi, yi, f))) return null;
+  const S = storeyComps(f);
+  let found = null;
+  const r = floodPiece(xi, yi, f, (cx, cy) => {
+    const on = stairsOn(cx, cy);
+    if(on) for(const o of on){ const k = S.comp.get(o); if(k !== undefined && k > 0 && (o.from === f || o.to === f)){ found = k; return true; } }
+  });
+  if(found !== null) return found;
+  let lo = Infinity; for(const k of r.q) if(k < lo) lo = k;
+  return 'sealed:' + f + ':' + lo;
+}
+function stairOther(st, f){ return f === st.from ? st.to : st.from; }
+function regionStairs(f, reg){
+  if(!f) return groundStairs();
+  return typeof reg === 'number' ? (storeyComps(f).list.get(reg) || []) : [];
+}
+function stairRegion(st, f){ return f ? storeyComps(f).comp.get(st) : 0; }
+/* THE PLAN: the stairs to take, in order, from (sx, sy) on storey sf to (gx, gy) on gf.
+   [] means walk it; null means there is no way. */
+function storeyPlan(sx, sy, sf, gx, gy, gf){
+  const rs = regionAt(sx, sy, sf), rg = regionAt(gx, gy, gf);
+  if(rg === null || rs === null) return sf === gf ? [] : null;
+  if(sf === gf && rs === rg) return [];
+  const nodes = [];                         /* {st, f: storey arrived on, x, y, cost, prev, done} */
+  const at = new Map();                     /* stair -> {arrival storey -> node} */
+  const reach = (st, f, cost, prev) => {
+    let m = at.get(st); if(!m){ m = new Map(); at.set(st, m); }
+    const had = m.get(f);
+    if(had){ if(had.done || had.cost <= cost) return; had.cost = cost; had.prev = prev; return; }
+    const n = {st, f, cost, prev, done: false}; m.set(f, n); nodes.push(n);
+  };
+  for(const st of regionStairs(sf, rs)){
+    if(st.from !== sf && st.to !== sf) continue;
+    if(sf && stairRegion(st, sf) !== rs) continue;
+    reach(st, stairOther(st, sf), dist(sx, sy, st.x + 0.5, st.y + 0.5) + STAIR_COST, null);
+  }
+  let best = null, bestCost = Infinity;
+  for(;;){
+    let n = null;
+    for(const o of nodes) if(!o.done && (!n || o.cost < n.cost)) n = o;
+    if(!n || n.cost >= bestCost) break;
+    n.done = true;
+    const reg = stairRegion(n.st, n.f);
+    if(reg === undefined || reg === -1) continue;
+    const px = n.st.x + 0.5, py = n.st.y + 0.5;
+    if(n.f === gf && reg === rg){
+      const total = n.cost + dist(px, py, gx, gy);
+      if(total < bestCost){ bestCost = total; best = n; }
+    }
+    for(const st of regionStairs(n.f, reg)){
+      if(st === n.st || (st.from !== n.f && st.to !== n.f)) continue;
+      if(n.f && stairRegion(st, n.f) !== reg) continue;
+      reach(st, stairOther(st, n.f), n.cost + dist(px, py, st.x + 0.5, st.y + 0.5) + STAIR_COST, n);
     }
   }
-  for(const k of out) _runCache.set(k, out);
-  return out;
+  if(!best) return null;
+  const legs = [];
+  for(let n = best; n; n = n.prev) legs.unshift(n.st);
+  return legs;
 }
-/* the nearest stair connecting two storeys — ANYWHERE. Kept because plenty of callers want
-   exactly that, and because it is the honest fallback when nothing better is known. */
-/* ---------- AND THE NEAREST STAIR THAT ACTUALLY GETS YOU THERE ----------
-   THE BUG THIS EXISTS FOR: a hand sent up onto a rampart took `nearestStairFor`, which
-   answers "the closest stair between these two storeys, anywhere in the world". Measured on a
-   camp with a turret bolted to a wall and no stair of its own: the gunner set off for a stair
-   fifty-two tiles away, in somebody else's town, and stood at the bottom of it for the rest of
-   the game. `routeTo` returned TRUE, so nothing was logged and nothing looked wrong.
-   A stair only serves a destination on an upper storey if its landing is on the SAME RUN of
-   deck as the destination. Return the nearest one that is; return null rather than a stair
-   that goes up somewhere else, because the honest answer to "how do I get up there" is
-   sometimes "you do not, yet". */
-function stairToward(c, fa, fb, gx, gy, gf){
-  /* CLIMBING: the stair's landing must be a piece of the same run the destination stands on —
-     but only when this step lands on the destination's own storey. Two storeys up through a
-     bunker, the intermediate landing has no relation to the goal and the old answer is the
-     best one available.
-     DESCENDING: the constraint is on the near side instead — you can only take a stair that is
-     on the piece of deck you are standing on. */
-  let side = 0, sx = 0, sy = 0;
-  if(fb > fa && fb === gf && fb > 0){ side = fb; sx = gx; sy = gy; }
-  else if(fb < fa && fa > 0){ side = fa; sx = c.x; sy = c.y; }
-  const run = side ? deckRun(sx, sy, side) : null;
-  /* An EMPTY run means the elevated end is not a deck tile at all — a cave floor, a point
-     somebody asked for that has no floor under it. There is nothing to reason about, so fall
-     back to the old answer rather than refusing every route. Only a real, non-empty run of deck
-     is evidence about which stairs serve it. */
-  const gate = run && run.size ? run : null;
-  let best = null, bd = 1e9;
-  for(const st of stairs){
-    if(!((st.from === fa && st.to === fb) || (st.from === fb && st.to === fa))) continue;
-    if(gate && !gate.has(bkey(st.x, st.y, side))) continue;
-    const d = dist(c.x, c.y, st.x + 0.5, st.y + 0.5);
-    if(d < bd){ bd = d; best = st; }
+/* a goal on an upper storey should name a tile that is floor; a spread order can land a hand's
+   breadth off the edge of a deck, and that is a slip of the cursor, not a request for the void */
+function storeySnap(x, y, f){
+  if(!f || decks.has(bkey(Math.floor(x), Math.floor(y), f))) return {x, y};
+  let best = null, bd = 9;
+  for(let dy = -2; dy <= 2; dy++) for(let dx = -2; dx <= 2; dx++){
+    const tx = Math.floor(x) + dx, ty = Math.floor(y) + dy;
+    if(!decks.has(bkey(tx, ty, f)) || blocked.has(bkey(tx, ty, f))) continue;
+    const d = dx * dx + dy * dy; if(d < bd){ bd = d; best = {x: tx + 0.5, y: ty + 0.5}; }
   }
-  return best;
+  return best || {x, y};
 }
-/* one entry point for every ordered move: same floor walks; different floors route
-   through the nearest stair, then carry on to the true destination. Both directions. */
+/* can this body get to that storey at all — asked by the gunnery job before it sets off */
+function storeyReach(c, x, y, f){ return storeyPlan(c.x, c.y, c.floor || 0, x, y, f || 0) !== null; }
+/* one entry point for every ordered move, on any storey to any storey */
 function routeTo(c, x, y, tf){
-  const f = c.floor || 0;
   tf = tf ?? 0;
-  if(tf === f){
-    c.wantFloor = null; c.afterStair = null;
+  ({x, y} = storeySnap(x, y, tf));
+  const legs = storeyPlan(c.x, c.y, c.floor || 0, x, y, tf);
+  if(!legs){ log('No stair connects there from here.', 'bad'); return false; }
+  c.onStair = null;
+  c.path = null; c.pathGoal = null;
+  if(!legs.length){
+    c.route = null; c.wantFloor = null; c.afterStair = null;
     c.moveTarget = {x, y};
     return true;
   }
-  /* the next stair on the way toward tf — step one storey at a time, since a bunker's
-     stairs rarely connect the ground straight to the top. Head for the stair that takes
-     you the FIRST step in the right direction; useStairs advances wantFloor as you climb. */
-  const step = tf > f ? f + 1 : f - 1;
-  /* A STAIR THAT GOES UP SOMEWHERE ELSE IS NOT A ROUTE. This used to ask for the nearest stair
-     between the two storeys anywhere in the world, and would happily send a hand across the map
-     to a town's stairwell to reach a turret on your own wall — returning true, so nothing was
-     logged and nothing looked wrong. */
-  const st = stairToward(c, f, step, x, y, tf);
-  if(!st){ log('No stair connects there from here.', 'bad'); return false; }
-  c.wantFloor = tf;                 /* the true goal */
-  c.afterStair = {x, y};
-  c.onStair = null;                 /* a new order re-arms the stair — see orderFloor */
-  c.moveTarget = {x: st.x + 0.5, y: st.y + 0.5};
+  c.route = {legs, x, y, f: tf, sg: stairsSig()};
+  c.wantFloor = tf; c.afterStair = {x, y};            /* read by older code as "on the way" */
+  c.moveTarget = {x: legs[0].x + 0.5, y: legs[0].y + 0.5};
   return true;
+}
+/* ============================================================ ONE WAY TO RAISE A BUILDING ====
+   Every structure with a storey in it was written by hand against the three primitives: the
+   citadel, the redoubts, the Dame's house, the ARK, a player's watchtower, each with its own
+   loop of `decks.add` and `blocked.add` and `stairs.push`, each remembering (or not) to write
+   `baseBlocked` so it survived a reload, and to register a volume so its ceilings cut away.
+   The ARK's plan grid was the first one to say what a building IS before writing it down; this
+   is that idea for everything:
+     storeys: { 0: [...rows], 1: [...rows], ... }   one string per row, one glyph per tile
+       '#'  wall                     (on an upper storey, standing on floor)
+       '.'  floor
+       ' '  nothing                  (no floor up there; untouched ground at storey 0)
+       '^'  floor, and a stair up to the storey above (whose plan must have floor there)
+       'v'  floor, and a stair down to the storey below
+       '='  a doorway: floor, recorded as one
+   placed with its plan's top-left at (x, y), turned `rot` quarter-turns clockwise. It writes
+   `baseBlocked` with `blocked`, registers the footprint as a cut volume (so a storey with your
+   people on it loses its ceiling), and hands back a record the renderer and the bench can read.
+   Handcrafted places are written as plans; this is what a set world is built from. */
+function buildStructure(spec){
+  const rows = spec.storeys || {};
+  const fls = Object.keys(rows).map(Number).sort((a, b) => a - b);
+  const ph = Math.max(...fls.map(f => rows[f].length)), pw = Math.max(...fls.map(f => Math.max(...rows[f].map(r => r.length))));
+  const rot = ((spec.rot || 0) % 4 + 4) % 4;
+  const fw = rot % 2 ? ph : pw, fh = rot % 2 ? pw : ph;
+  const at = (px, py) => rot === 0 ? [px, py] : rot === 1 ? [ph - 1 - py, px] : rot === 2 ? [pw - 1 - px, ph - 1 - py] : [py, pw - 1 - px];
+  const glyph = (f, px, py) => { const r = rows[f]; return r && r[py] !== undefined && r[py][px] !== undefined ? r[py][px] : ' '; };
+  const rec = {id: structures.length + 1, x: spec.x, y: spec.y, w: fw, h: fh, rot, name: spec.name || null, kind: spec.kind || 'structure',
+               storeys: fls, stairs: [], doorways: [], plan: rows, cut: spec.cut !== false};
+  /* `baseBlocked` is taken further down the file than some worldgen runs; a structure raised
+     before it exists is in `blocked` when the copy is made, which is the same thing */
+  const wallAt = (wx, wy, f) => { const k = bkey(wx, wy, f); blocked.add(k); try { baseBlocked.add(k); } catch(e){} };
+  for(const f of fls) for(let py = 0; py < ph; py++) for(let px = 0; px < pw; px++){
+    const g = glyph(f, px, py);
+    if(g === ' ') continue;
+    const [dx, dy] = at(px, py), wx = spec.x + dx, wy = spec.y + dy;
+    if(f) decks.add(bkey(wx, wy, f));
+    if(g === '#') wallAt(wx, wy, f);
+    else if(g === '=') rec.doorways.push({x: wx, y: wy, f});
+    else if(g === '^' || g === 'v'){
+      const to = g === '^' ? f + 1 : f - 1;
+      if(to) decks.add(bkey(wx, wy, to));            /* the landing is floor whatever its plan forgot */
+      const st = {x: wx, y: wy, from: Math.min(f, to), to: Math.max(f, to), structure: rec.id};
+      if(!stairs.some(o => o.x === wx && o.y === wy && o.from === st.from && o.to === st.to)){ stairs.push(st); rec.stairs.push(st); }
+    }
+  }
+  structures.push(rec);
+  try { _cutSig = ''; } catch(e){}                     /* the registry picks it up next frame */
+  return rec;
+}
+function structureAt(x, y){
+  for(const s of structures) if(x >= s.x && x < s.x + s.w && y >= s.y && y < s.y + s.h) return s;
+  return null;
+}
+/* ---------- WHAT YOU CLICK IS WHAT YOU SEE ----------
+   The move order asked one storey — the one the camera follows — and then storey 1 as an
+   afterthought, so from the ground a click on a tower's roof missed both and fell through to
+   the terrain thirty tiles behind it, and from upstairs a click on the ground outside was
+   refused outright ("There is no floor there"). Now every storey is asked from the top down,
+   and the first floor the ray comes down on is the answer, unless that floor is not being
+   drawn: a storey above the one your people are on, inside a building they are in, is cut
+   away (see AND WHAT STANDS BETWEEN YOU), so the click goes through it the way the eye does.
+   Below the ground nothing changes: the storey being looked at is the only one there is. */
+const STOREY_TOP = 6;
+function storeyCutAt(x, y, f){
+  for(const v of cutVolumesAt(x, y)){ const k = _cutPick.get(v); if(k !== undefined && f > k) return true; }
+  return false;
+}
+function clickStorey(px, py){
+  if(activeFloor < 0) return storeyHit(px, py, activeFloor);
+  for(let f = STOREY_TOP; f >= 1; f--){
+    const h = storeyHit(px, py, f);
+    if(!h || storeyCutAt(h.sx, h.sy, f)) continue;
+    return h;
+  }
+  return null;
 }
 /* Where does the cursor touch the land?
    This used to raycast the ground mesh — half a million triangles with no acceleration
@@ -44846,7 +45163,7 @@ function bodyGap(c, wx, wy){
    NARROW ON PURPOSE, AND ONLY UNDERGROUND. Every caller of this is a cursor-versus-body pick —
    the right-click chain, the cast dispatch, the drag-select — so a blanket "must be on the
    storey you are looking at" would also stop you clicking somebody standing on a RAMPART from
-   the ground, which is supported deliberately and is what `elevatedHit` exists for. Below
+   the ground, which is supported deliberately and is what `clickStorey` is for. Below
    ground there are no such half-storeys: the floors are 3.4 apart and the undercroft is
    twenty-two down, and anything on another one of them is behind rock. */
 /* ---------- AND THE CURSOR ONLY REACHES THE STOREY YOU ARE LOOKING AT ----------
@@ -44903,7 +45220,7 @@ function renderOverlay(rdt){
   /* place labels */
   setFont('bold 14px monospace');
   for(const t of towns){
-    if(!visAt(t.x, t.y)) continue;   /* names are earned by discovery */
+    if(!visAt(t.x, t.y, t.floor)) continue;   /* names are earned by discovery */
     const p = w2s(t.x, t.y-9, groundY(t.x,t.y)+3);
     if(p){ cx.fillStyle = 'rgba(232,220,196,0.9)'; cx.fillText(t.name, p.x, p.y); }
   }
@@ -44947,7 +45264,7 @@ function renderOverlay(rdt){
      mark is worth having; a permanent map of every town's plaza is not. So it is live vision
      again: the post is marked while somebody of yours can actually see the square. */
   for(const t of towns){
-    if(visAt(t.x, t.y) !== 2) continue;
+    if(visAt(t.x, t.y, t.floor) !== 2) continue;
     const bp = townBoardPos(t);
     const q = w2s(bp.x, bp.y, groundY(bp.x, bp.y) + 2.05);
     if(!q) continue;
@@ -45007,7 +45324,7 @@ function renderOverlay(rdt){
      between having been there and having walked over it. */
   for(const st of stairs){
     if(activeFloor !== st.from && activeFloor !== st.to) continue;
-    const v = visAt(st.x, st.y);
+    const v = visAt(st.x, st.y, st.floor);
     if(v === 2) st.seen = true;
     if(!(v === 2 || (st.seen && v >= 1))) continue;
     const lo = Math.min(st.from, st.to);
@@ -45019,7 +45336,7 @@ function renderOverlay(rdt){
     cx.fillText(st.to > st.from ? '▲' : '▼', q.x, q.y);
   }
   /* the Coil's stone — only once you know what it is */
-  if(coilShrine && coilExposed && visAt(coilShrine.x, coilShrine.y) > 0){
+  if(coilShrine && coilExposed && visAt(coilShrine.x, coilShrine.y, coilShrine.floor) > 0){
     const q2 = w2s(coilShrine.x, coilShrine.y, groundY(coilShrine.x, coilShrine.y) + 2.0);
     if(q2){
       cx.fillStyle = 'rgba(168,140,90,0.85)';
@@ -45064,7 +45381,7 @@ function renderOverlay(rdt){
   for(const p of phylacteries){
     p._rect = null;
     if(p.carried) continue;   /* it is in someone's pack, not in the dirt */
-    if(visAt(p.x, p.y) !== 2) continue;
+    if(visAt(p.x, p.y, p.floor) !== 2) continue;
     const q = w2s(p.x, p.y, groundY(p.x,p.y)+0.5);
     if(!q) continue;
     const pulse = 0.6 + 0.4*Math.sin(performance.now()/260);
@@ -45083,7 +45400,7 @@ function renderOverlay(rdt){
   /* dropped item piles — hold ALT to reveal name tags, right-click a tag to send someone for it */
   for(const d of drops){
     d._rect = null;
-    if(visAt(d.x, d.y) !== 2) continue;
+    if(visAt(d.x, d.y, d.floor) !== 2) continue;
     const p = w2s(d.x, d.y, groundY(d.x,d.y)+0.4);
     if(!p) continue;
     cx.fillStyle = '#e8c86a';
@@ -45118,8 +45435,8 @@ function renderOverlay(rdt){
     }
     setFont('bold 12px monospace');
   }
-  if(slaverCamp && visAt(slaverCamp.x, slaverCamp.y)){ const p = w2s(slaverCamp.x, slaverCamp.y-6, 3); if(p){ cx.fillStyle='#c98a7a'; cx.fillText('SLAVER CAMP', p.x, p.y); } }
-  if(bastion && visAt(bastion.x, bastion.y)){ const p = w2s(bastion.x, bastion.y-7, 4); if(p){ cx.fillStyle='#f0ead8'; cx.fillText('PALADIN BASTION', p.x, p.y); } }
+  if(slaverCamp && visAt(slaverCamp.x, slaverCamp.y, slaverCamp.floor)){ const p = w2s(slaverCamp.x, slaverCamp.y-6, 3); if(p){ cx.fillStyle='#c98a7a'; cx.fillText('SLAVER CAMP', p.x, p.y); } }
+  if(bastion && visAt(bastion.x, bastion.y, bastion.floor)){ const p = w2s(bastion.x, bastion.y-7, 4); if(p){ cx.fillStyle='#f0ead8'; cx.fillText('PALADIN BASTION', p.x, p.y); } }
   /* ---------- WHAT FLOOR ARE YOU ON ----------
      The 2D overlay is painted over the finished frame with no depth test, so a marker drawn
      for a body three storeys down goes straight through the mountain sitting on top of it —
@@ -45243,7 +45560,7 @@ function renderOverlay(rdt){
   }
   /* per-character overlays */
   for(const c of chars){
-    if(c.faction!=='player' && visAt(c.x, c.y) !== 2 && !(c.vip && c.escortId)) continue;
+    if(c.faction!=='player' && visAt(c.x, c.y, c.floor) !== 2 && !(c.vip && c.escortId)) continue;
     if(!onShownFloor(c)) continue;                 /* it is under a mountain; leave it there */
     /* ---------- A THING THAT IS ON FIRE IS ON FIRE EVERY FRAME ----------
        The old effects fired once per damage TICK — a puff of orange squares every 0.4 seconds
@@ -45340,11 +45657,11 @@ function renderOverlay(rdt){
   }
   /* vendor bubbles */
   for(const v of vendors){
-    if(v.bubble && visAt(v.x, v.y) === 2){ const p = w2s(v.x, v.y, groundY(v.x,v.y)+2); if(p) drawBubble(p.x, p.y, v.bubble); }
+    if(v.bubble && visAt(v.x, v.y, v.floor) === 2){ const p = w2s(v.x, v.y, groundY(v.x,v.y)+2); if(p) drawBubble(p.x, p.y, v.bubble); }
   }
   /* projectiles */
   for(const p of projectiles){
-    if(visAt(p.x, p.y) !== 2) continue;
+    if(visAt(p.x, p.y, p.floor) !== 2) continue;
     /* a shot loosed from a rampart starts a storey up and comes down as it travels, so the
        tracer actually reads as a plunging shot instead of skimming the dirt from the off */
     let ph = 1.0;
@@ -45383,7 +45700,7 @@ function renderOverlay(rdt){
     if(a0 && a1) _pxPerTile = Math.max(3, Math.min(140, Math.hypot(a1.x - a0.x, a1.y - a0.y)));
   }
   for(const p of particles){
-    if(visAt(p.x, p.y) !== 2) continue;
+    if(visAt(p.x, p.y, p.floor) !== 2) continue;
     const a = 1 - p.t/p.life;
     const s = w2s(p.x, p.y, (p.h !== undefined ? p.h : 1));
     if(!s) continue;
@@ -45520,7 +45837,7 @@ function updateDust(rdt){
 }
 function drawDust(){
   for(const m of dustMotes){
-    if(!visAt(m.x, m.y)) continue;
+    if(!visAt(m.x, m.y, m.floor)) continue;
     const p = w2s(m.x, m.y, m.h);
     if(!p) continue;
     const a = Math.sin(m.t/m.life*Math.PI) * (m.fall ? 0.5 : 0.35);
@@ -45606,7 +45923,7 @@ function render(){
   syncStrikes();          /* and the light coming down on the glass */
   water.position.y = -0.22 + Math.sin(now*0.001)*0.03;
   syncPBuilds(); syncBlueprints(); syncSundered(); syncWells(); syncPyres(); syncBastion(); syncChests(); syncBeds(); syncTownWalls(); syncTownScar(); syncCamps(); syncSlaverCamp(); syncRoofs(); syncVertical(); syncRifts(); syncStairs(); syncUndercroft(); syncRedoubts();
-  if(fogDirty) redrawFog();
+  if(fogDirty || (activeFloor < 0) !== fogDeep) redrawFog();
   DW_SIGHT.k.value = (fogPlane.visible && !debugSeeAll) ? 1 : 0;
   syncChars(rdt);
   updateDust(rdt);
@@ -45760,9 +46077,9 @@ function renderMinimap(){
   if(activeFloor < 0){ renderUnderMinimap(activeFloor); return; }
   mmcx.drawImage(mmBase,0,0);
   if(fogDirty || mmFogT-- <= 0){ redrawMinimapFog(); mmFogT = 15; }
-  for(const t of towns){ if(!visAt(t.x,t.y)) continue; mmcx.fillStyle='#e8dcc4'; mmcx.fillRect(t.x*128/W-2, t.y*128/H-2, 4, 4); }
-  for(const r of ruins){ if(!visAt(r.x,r.y)) continue; mmcx.fillStyle='#8a8478'; mmcx.fillRect(r.x*128/W-1, r.y*128/H-1, 3, 3); }
-  for(const h of hamlets){ if(!visAt(h.x,h.y)) continue; mmcx.fillStyle='#c8b890'; mmcx.fillRect(h.x*128/W-1, h.y*128/H-1, 2, 2); }
+  for(const t of towns){ if(!visAt(t.x, t.y, t.floor)) continue; mmcx.fillStyle='#e8dcc4'; mmcx.fillRect(t.x*128/W-2, t.y*128/H-2, 4, 4); }
+  for(const r of ruins){ if(!visAt(r.x, r.y, r.floor)) continue; mmcx.fillStyle='#8a8478'; mmcx.fillRect(r.x*128/W-1, r.y*128/H-1, 3, 3); }
+  for(const h of hamlets){ if(!visAt(h.x, h.y, h.floor)) continue; mmcx.fillStyle='#c8b890'; mmcx.fillRect(h.x*128/W-1, h.y*128/H-1, 2, 2); }
   for(const tw of towers){ if(!tw.reached) continue; mmcx.fillStyle='#d6be80'; mmcx.fillRect(tw.x*128/W-1, tw.y*128/H-2, 2, 3); }
   if(ark && ark.reached){
     mmcx.strokeStyle = '#d6be80'; mmcx.lineWidth = 2;
@@ -45770,8 +46087,8 @@ function renderMinimap(){
     mmcx.lineTo((ark.x + Math.sin(ark.ang) * ARK_L)*128/W, (ark.y + Math.cos(ark.ang) * ARK_L)*128/H); mmcx.stroke();
     mmcx.lineWidth = 1;
   }
-  if(slaverCamp && visAt(slaverCamp.x, slaverCamp.y)){ mmcx.fillStyle='#a05040'; mmcx.fillRect(slaverCamp.x*128/W-2, slaverCamp.y*128/H-2, 4, 4); }
-  if(bastion && visAt(bastion.x, bastion.y)){
+  if(slaverCamp && visAt(slaverCamp.x, slaverCamp.y, slaverCamp.floor)){ mmcx.fillStyle='#a05040'; mmcx.fillRect(slaverCamp.x*128/W-2, slaverCamp.y*128/H-2, 4, 4); }
+  if(bastion && visAt(bastion.x, bastion.y, bastion.floor)){
     mmcx.fillStyle = '#f0ead8'; mmcx.fillRect(bastion.x*128/W-2, bastion.y*128/H-2, 4, 4);
     /* AND THE YARD, which has to be findable or the whole faction is a room nobody enters.
        Smaller and a different colour: the Bastion is a threat you are told about, the Guild
@@ -45790,7 +46107,7 @@ function renderMinimap(){
   for(const c of chars) if(c.faction === 'player' && c.state !== 'dead') mmOpen[c.floor || 0] = true;
   for(const c of chars){
     if(c.state==='dead') continue;
-    if(c.faction!=='player' && visAt(c.x, c.y) !== 2) continue;
+    if(c.faction!=='player' && visAt(c.x, c.y, c.floor) !== 2) continue;
     if(!mmOpen[c.floor || 0]) continue;
     /* ALLEGIANCE, NOT CLOTH. Once a shirt stopped announcing whose somebody is, the map had
        to keep doing it — a diagram is allowed to be legible in a way a person is not. */
@@ -49728,7 +50045,7 @@ cv.addEventListener('mousedown', e => {
          than a mouse cursor and the hit test resolves against the ground plane, so a tap
          aimed at a head lands somewhere behind the feet. */
       const foe = chars.filter(c => c.state === 'ok' && c.faction !== 'player' &&
-          visAt(c.x, c.y) === 2 && bodyHit(c, wx, wy, (TOUCH ? 1.5 : 1.0)))
+          visAt(c.x, c.y, c.floor) === 2 && bodyHit(c, wx, wy, (TOUCH ? 1.5 : 1.0)))
         .sort((a, b) => bodyGap(a, wx, wy) - bodyGap(b, wx, wy))[0];
       if(foe){
         for(const m of crew){ clearOrders(m); m.target = foe; m.targetManual = true; m.orderTarget = foe; }
@@ -49802,7 +50119,7 @@ cv.addEventListener('mousedown', e => {
         ? pBuilds.find(b2 => wx >= b2.x - 0.3 && wx <= b2.x + b2.w + 0.3 && wy >= b2.y - 0.3 && wy <= b2.y + b2.h + 0.3)
         : null;
       const overFoe = jobChord === 'node' && chars.some(c2 => c2.state !== 'dead' && c2.faction !== 'player' &&
-        visAt(c2.x, c2.y) === 2 && bodyHit(c2, wx, wy, 0.9));
+        visAt(c2.x, c2.y, c2.floor) === 2 && bodyHit(c2, wx, wy, 0.9));
       const jk = overFoe ? null : ((gk && NODE_JOB[gk.kind]) || (pbj && BUILD_JOB[pbj.type]) || null);
       if(jk){
         const took = [], cannot = [];
@@ -49855,11 +50172,11 @@ cv.addEventListener('mousedown', e => {
     /* alt+right-click: examine anything living (that you can see) */
     if(e.altKey){
       const t = chars.find(c => c.state!=='dead' && bodyHit(c, wx, wy, 0.9) &&
-        (c.faction==='player' || visAt(c.x,c.y)===2));
+        (c.faction==='player' || visAt(c.x, c.y, c.floor)===2));
       if(t){ examine(t); return; }
     }
     /* a body underfoot takes priority when it's the closest thing to the cursor */
-    const corpseNear = corpses.filter(c => bodyHit(c, wx, wy, 0.8) && visAt(c.x,c.y)===2)
+    const corpseNear = corpses.filter(c => bodyHit(c, wx, wy, 0.8) && visAt(c.x, c.y, c.floor)===2)
       .sort((a,b) => bodyGap(a, wx, wy) - bodyGap(b, wx, wy))[0];
     const liveNear = chars.filter(c => c.state!=='dead' && bodyHit(c, wx, wy, 0.8))
       .sort((a,b) => bodyGap(a, wx, wy) - bodyGap(b, wx, wy))[0];
@@ -49906,7 +50223,7 @@ cv.addEventListener('mousedown', e => {
     if(!e.ctrlKey && !corpseFirst){
       const chat = chars.find(o => o.state === 'ok' && o.faction !== 'player' &&
         (o.scholar || (o.wanderKey && o.faction !== 'player') || o.immortal) &&
-        visAt(o.x, o.y) === 2 && bodyHit(o, wx, wy, TALK_R));
+        visAt(o.x, o.y, o.floor) === 2 && bodyHit(o, wx, wy, TALK_R));
       /* ---------- HOLD IT, AND THEY ARE A PERSON RATHER THAN A CONVERSATION ----------
          "A long (or held) right click on a named, non-hostile NPC should open up the menu for
           various options, like tending, guarding, etc. instead of just defaulting to have the
@@ -49947,7 +50264,7 @@ cv.addEventListener('mousedown', e => {
       const local = chars.filter(c => c.state==='ok' && (c.faction==='drifter' ||
           ((c.faction==='town' || (c.faction==='purge' && speaksAtAll(c) && !c.neutral)) && !hostile(movers[0], c))) &&
         !c.mobileVendor && !c.scholar && !c.wanderKey && !c.immortal && !c.lastScholar &&
-        visAt(c.x,c.y)===2 && bodyHit(c, wx, wy, 0.9))
+        visAt(c.x, c.y, c.floor)===2 && bodyHit(c, wx, wy, 0.9))
         .sort((a,b) => bodyGap(a, wx, wy) - bodyGap(b, wx, wy))[0];
       /* THE POST. Checked before the flag and before anyone standing near it: it is a fixed
          point on the plaza, and a board you cannot click because a townsman wandered in
@@ -50170,7 +50487,7 @@ cv.addEventListener('mousedown', e => {
        on your own prisoner sent the crew in to beat them and RANSOM / BREAK TO SERVICE / SELL /
        TURN THEM LOOSE, further down, could not be reached for any of them. Ctrl still means
        force-attack, on a prisoner as on anyone. */
-    const foe = corpseFirst ? null : chars.find(c => c.state!=='dead' && c.faction!=='player' && visAt(c.x,c.y)===2 && bodyHit(c, wx, wy, 0.9) &&
+    const foe = corpseFirst ? null : chars.find(c => c.state!=='dead' && c.faction!=='player' && visAt(c.x, c.y, c.floor)===2 && bodyHit(c, wx, wy, 0.9) &&
       !(c.prisoner && c.jailedAt && c.jailedAt.kind === 'player' && !e.ctrlKey) &&
       (e.ctrlKey || c.faction==='bandit' || c.faction==='wild' || c.faction==='slaver' ||
        hostile(movers[0], c) || c.neutral));
@@ -50419,7 +50736,7 @@ cv.addEventListener('mousedown', e => {
       }
     }
     /* corpse? -> menu of options */
-    const body = corpses.filter(c => bodyHit(c, wx, wy, 1.4) && visAt(c.x,c.y)===2)
+    const body = corpses.filter(c => bodyHit(c, wx, wy, 1.4) && visAt(c.x, c.y, c.floor)===2)
       .sort((a,b) => bodyGap(a, wx, wy) - bodyGap(b, wx, wy))[0];
     if(body){
       const m0 = movers[0];
@@ -50710,7 +51027,7 @@ cv.addEventListener('mousedown', e => {
     /* the storey you are LOOKING at first — which underground is the only one that answers
        at all — and a rampart after that, so pointing your ground squad at a wall still sends
        them up it. */
-    const lift = storeyHit(e.clientX, e.clientY, activeFloor) || elevatedHit(e.clientX, e.clientY);
+    const lift = clickStorey(e.clientX, e.clientY);
     /* ---------- AND A CLICK THAT MISSES IS NOT AN ORDER TO LEAVE ----------
        When `storeyHit` finds no floor — which it does for any click on uncarved rock, and the
        undercroft is 4.5% of the map — this fell through to `wx, wy` at floor ZERO. That is not
@@ -50723,7 +51040,7 @@ cv.addEventListener('mousedown', e => {
        So an order given on a storey stays on that storey. Going UP is still perfectly possible
        and is unaffected — it is done by clicking a stair, several branches above this one,
        which is the deliberate way rather than the accidental one. */
-    if(activeFloor && !lift){
+    if(activeFloor < 0 && !lift){
       log('There is no floor there. Point at a hall, or at a stair to go up.', '');
       return;
     }
@@ -50959,7 +51276,7 @@ const WORK_COL = {
 function showWork(c, k, n){
   if(!c || !n) return;
   if(Math.abs(c.x - camX) + Math.abs(c.y - camY) > 34) return;
-  if(visAt(c.x, c.y) !== 2) return;
+  if(visAt(c.x, c.y, c.floor) !== 2) return;
   const it = ITEMS[k];
   addFloat(c.x, c.y - 1.1, `+${n} ${it ? it.name : k}`, WORK_COL[k] || '#c8bda6');
   addSpecks(c.x, c.y - 0.3, WORK_COL[k] || '#c8bda6', 3 + Math.min(4, n));
@@ -53016,7 +53333,7 @@ addEventListener('mouseup', e => {
     if(hit){ if(dragStart.shift){ if(!selected.includes(hit)) selected.push(hit); } else selected = [hit]; }
     else {
       /* a look is free: left-click anyone in sight to learn who they are */
-      const who = chars.filter(c => c.faction!=='player' && c.state!=='dead' && visAt(c.x,c.y)===2 && bodyHit(c, wx, wy, 1.1))
+      const who = chars.filter(c => c.faction!=='player' && c.state!=='dead' && visAt(c.x, c.y, c.floor)===2 && bodyHit(c, wx, wy, 1.1))
         .sort((a,b) => bodyGap(a, wx, wy) - bodyGap(b, wx, wy))[0];
       if(who){
         who.idT = 3;

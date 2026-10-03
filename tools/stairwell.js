@@ -104,10 +104,28 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* THE TOWER: 11 x 11, five storeys, a door in the south wall, and the stair changes corner
        every floor so no two flights are above one another. Storey 2 has a partition with one
        doorway in it. Storey 4 is an open roof behind a parapet; storeys 1-3 have a ceiling. */
-    ring(10, 10, 20, 20, 0, [[15, 20]]);
-    for (let f = 1; f <= 4; f++) { deck(10, 10, 20, 20, f); ring(10, 10, 20, 20, f); }
-    for (let y = 11; y <= 19; y++) if (y !== 15) wall(15, y, 2);
-    stair(11, 19, 0, 1); stair(19, 11, 1, 2); stair(19, 19, 2, 3); stair(11, 11, 3, 4);
+    /* Raised through the game's own `buildStructure` where there is one, so it is a building the
+       way a real one is — cut volume and all — and by hand from the primitives where there is
+       not, so the bench still runs against a build from before the core. Everything else on the
+       bench stays hand-written on purpose: the core has to carry both. */
+    const ROOM = (stair) => ['###########', ...Array.from({ length: 9 }, (_, i) => {
+      const r = '#.........#'.split(''); if (stair && stair[1] === i + 1) r[stair[0]] = '^'; return r.join('');
+    }), '###########'];
+    const plans = {
+      0: [...ROOM([1, 9]).slice(0, 10), '#####=#####'],
+      1: ROOM([9, 1]),
+      2: ROOM([9, 9]).map((r, i) => (i >= 1 && i <= 9 && i !== 5) ? r.slice(0, 5) + '#' + r.slice(6) : r),
+      3: ROOM([1, 1]),
+      4: ROOM(null),
+    };
+    if (typeof buildStructure === 'function') {
+      B.towerRec = buildStructure({ x: ox + 10, y: oy + 10, name: 'Bench Tower', storeys: plans });
+    } else {
+      ring(10, 10, 20, 20, 0, [[15, 20]]);
+      for (let f = 1; f <= 4; f++) { deck(10, 10, 20, 20, f); ring(10, 10, 20, 20, f); }
+      for (let y = 11; y <= 19; y++) if (y !== 15) wall(15, y, 2);
+      stair(11, 19, 0, 1); stair(19, 11, 1, 2); stair(19, 19, 2, 3); stair(11, 11, 3, 4);
+    }
     B.tower = { door: { x: ox + 15.5, y: oy + 24.5 }, top: { x: ox + 15.5, y: oy + 15.5 },
                 behind: { x: ox + 12.5, y: oy + 15.5 }, room3: { x: ox + 15.5, y: oy + 15.5 },
                 inside2: { x: ox + 17.5, y: oy + 13.5 } };
@@ -336,8 +354,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     const B = window.__bench;
     const pick = (path) => path.split('.').reduce((o, k) => o[k], B);
     const made = [];
-    const real = attack;
+    const real = attack, realShot = fireRanged;
     const blows = [];
+    /* a blade lands through `attack`; an arrow is loosed through `fireRanged` and lands later,
+       as a projectile — so a shot is counted at the loose, which is the decision under test */
     try {
       const a = makeChar('Bench Hand', 'player', pick(spec.a).x, pick(spec.a).y,
                          { atk: 14, def: 10, tough: 40, ath: 10, race: 'human', sub: 'dustborn' });
@@ -349,6 +369,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       d.guard = { x: d.x, y: d.y }; d.noFight = true;
       chars.push(a, d); made.push(a, d);
       attack = function (x, y) { if (x === a && y === d) blows.push((x.floor || 0) + '>' + (y.floor || 0)); return real.apply(this, arguments); };
+      fireRanged = function (x, y) { if (x === a && y === d) blows.push((x.floor || 0) + '>' + (y.floor || 0) + ' shot'); return realShot.apply(this, arguments); };
       rebuildCharGrid();
       if (spec.order) { clearOrders(a); a.target = d; a.targetManual = true; }
       for (let t = 0; t < (spec.ticks || 1200); t++) {
@@ -357,10 +378,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         d.x = pick(spec.d).x; d.y = pick(spec.d).y; d.state = 'ok';
         if (spec.stopAt && blows.length >= spec.stopAt) break;
       }
-      return { blows: blows.length, through: blows.filter(s => s.split('>')[0] !== s.split('>')[1]).length,
+      return { blows: blows.length, through: blows.filter(s => !s.endsWith('shot') && s.split('>')[0] !== s.split('>')[1]).length,
                first: blows[0] || null, endF: a.floor || 0, end: `${a.x.toFixed(0)},${a.y.toFixed(0)}` };
     } finally {
-      attack = real;
+      attack = real; fireRanged = realShot;
       made.forEach(c => { const i = chars.indexOf(c); if (i >= 0) chars.splice(i, 1); });
       rebuildCharGrid();
     }

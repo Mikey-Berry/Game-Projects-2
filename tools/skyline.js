@@ -11,9 +11,11 @@
  *   1. the Golden-Age towers: about six to a 1440-square of map, spread out, clear of every town,
  *      road, hamlet and Sundered site; all three ways a tower ends up (standing, leaning, snapped)
  *      are on the map; each is drawn, and as tall as it says it is
- *   2. they are things: the foot is solid, a snapped tower's fallen length is solid along where it
- *      lies, nothing grows through either, and all of it is still solid after a reload
- *   3. each has a cache at its foot, on ground you can stand on
+ *   2. they are buildings: a hall round the foot, its wall and the conduit solid on every storey, a
+ *      door, floor inside on every storey; a snapped tower's fallen length is solid where it lies;
+ *      nothing grows through either, and all of it is as it was after a reload
+ *   3. each has a cache at its foot, on ground you can stand on, and its stores upstairs; and one
+ *      of yours sent from outside its door to the terrace on its roof gets there
  *   4. a tower is named only once one of yours stands at it, not when it is seen from far off,
  *      and the save remembers which
  *   5. the wreck of the ARK: one, square to the world, far from every town and road and clear of
@@ -89,43 +91,107 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         : `!! TOWERS DRAWN SHORT OR NOT AT ALL: ${short.slice(0, 5).join(', ') || meshes.length + ' meshes'}`;
     });
 
-    /* ---------- 2. THEY ARE THINGS ---------- */
-    guard(['theFootIsSolid', 'soIsWhatFell', 'nothingGrowsThroughThem', 'andAReloadKeepsThemSolid'], () => {
-      const footOpen = towers.filter(tw => !isBlocked(tw.x, tw.y) || !isBlocked(tw.x + 3, tw.y) || !isBlocked(tw.x, tw.y - 3));
-      R.theFootIsSolid = !footOpen.length
-        ? `you cannot walk into the foot of any of the ${towers.length}`
-        : `!! ${footOpen.length} TOWERS CAN BE WALKED THROUGH AT THE FOOT`;
+    /* ---------- 2. THEY ARE BUILDINGS ----------
+       "I would really like for more explorable areas across the map. Like the ARK and these
+        towers." (2026-10-03.) The foot used to be a solid disc; it is a hall now — an octagon of
+       wall round the conduit, a door on the side away from the fall, three storeys and a roof
+       terrace — so "solid" is asked of the parts that should be: the wall, the conduit, what fell. */
+    guard(['theHallIsABuilding', 'soIsWhatFell', 'nothingGrowsThroughThem', 'andAReloadKeepsThemWhole'], () => {
+      const R0 = typeof TOWER_R !== 'undefined' ? TOWER_R : 5, NS = typeof TOWER_STOREYS !== 'undefined' ? TOWER_STOREYS : 0;
+      const doorOf = (tw) => typeof towerDoorA === 'function' ? towerDoorA(tw) : tw.ang + Math.PI;
+      const at = (tw, a, r) => [tw.x + 0.5 + Math.sin(a) * r, tw.y + 0.5 + Math.cos(a) * r];
+      const wrong = [];
+      const hallCheck = (tw) => {
+        const dA = doorOf(tw), out = [];
+        /* the wall, on every storey, on the faces that are not the door */
+        for (let f = 0; f <= NS; f++) for (const da of [Math.PI / 2, Math.PI, -Math.PI / 2])
+          if (!isBlocked(...at(tw, dA + da, R0), f)) out.push(`wall open on ${f}`);
+        /* the conduit, on every storey */
+        for (let f = 0; f <= NS; f++) if (!isBlocked(tw.x + 0.5, tw.y + 0.5, f)) out.push(`conduit open on ${f}`);
+        /* the door, and the floor inside it */
+        if (isBlocked(...at(tw, dA, R0), 0)) out.push('door shut');
+        if (isBlocked(...at(tw, dA, R0 - 3), 0)) out.push('hall floor blocked');
+        /* a floor on every storey above, between the conduit and the wall */
+        for (let f = 1; f <= NS; f++) if (isBlocked(...at(tw, dA + Math.PI / 2, 5.5), f)) out.push(`no floor on ${f}`);
+        return out;
+      };
+      for (const tw of towers) { const o = hallCheck(tw); if (o.length) wrong.push(`${tw.id}: ${o.slice(0, 2).join(', ')}`); }
+      R.theHallIsABuilding = NS && !wrong.length
+        ? `each of the ${towers.length} stands in a hall ${R0 * 2} across: wall and conduit solid on all ${NS + 1} storeys, a door in the face away from the fall, and floor on every storey inside`
+        : `!! THE TOWER HALLS ARE WRONG: ${wrong.slice(0, 4).join('; ') || 'no storeys'}`;
       const snapped = towers.filter(tw => tw.fall);
       const along = (tw, d) => [tw.x + Math.sin(tw.ang) * d, tw.y + Math.cos(tw.ang) * d];
-      const openFall = snapped.filter(tw => [10, tw.fall * 0.5 + 6, tw.fall].some(d => !isBlocked(...along(tw, d))));
+      const fallAt = (tw) => [R0 + 3, R0 + 1 + tw.fall * 0.5, R0 + tw.fall];
+      const openFall = snapped.filter(tw => fallAt(tw).some(d => !isBlocked(...along(tw, d))));
       R.soIsWhatFell = snapped.length && !openFall.length
         ? `and the fallen length of each of the ${snapped.length} snapped ones is solid where it lies, ${Math.min(...snapped.map(t => t.fall))} to ${Math.max(...snapped.map(t => t.fall))} tiles of it`
         : `!! A FALLEN LENGTH CAN BE WALKED THROUGH: ${openFall.map(t => t.id).join(', ') || 'no snapped towers'}`;
       const grown = [];
       for (const tw of towers) {
-        for (let j = tw.y - 8; j <= tw.y + 8; j++) for (let i = tw.x - 8; i <= tw.x + 8; i++)
-          if (dist(i, j, tw.x, tw.y) < 8 && rawDecorAt(i, j)) grown.push(`${tw.id}@${i},${j}`);
-        if (tw.fall) for (let d = 8; d < tw.fall; d += 2) { const [fx, fy] = along(tw, d); if (rawDecorAt(Math.floor(fx), Math.floor(fy))) grown.push(`${tw.id} fall@${d}`); }
+        const gr = R0 + 1;
+        for (let j = tw.y - gr; j <= tw.y + gr; j++) for (let i = tw.x - gr; i <= tw.x + gr; i++)
+          if (dist(i, j, tw.x, tw.y) < gr && rawDecorAt(i, j)) grown.push(`${tw.id}@${i},${j}`);
+        if (tw.fall) for (let d = R0 + 2; d < R0 + tw.fall; d += 2) { const [fx, fy] = along(tw, d); if (rawDecorAt(Math.floor(fx), Math.floor(fy))) grown.push(`${tw.id} fall@${d}`); }
       }
       R.nothingGrowsThroughThem = !grown.length
-        ? 'and no tree, rock or seam stands inside a tower or the length lying beside one'
+        ? 'and no tree, rock or seam stands inside a hall or the length lying beside one'
         : `!! DECOR INSIDE A TOWER: ${grown.slice(0, 5).join(', ')}`;
       restore(JSON.parse(JSON.stringify(snapshot())));
-      const lost = towers.filter(tw => !isBlocked(tw.x, tw.y) || (tw.fall && !isBlocked(...along(tw, tw.fall * 0.5 + 6))));
-      R.andAReloadKeepsThemSolid = !lost.length
-        ? 'and every foot and fallen length is still solid after a save and reload'
-        : `!! A RELOAD TOOK ${lost.length} TOWERS' STONE: ${lost.map(t => t.id).join(', ')}`;
+      const lost = towers.filter(tw => hallCheck(tw).length || (tw.fall && !isBlocked(...along(tw, R0 + 1 + tw.fall * 0.5))));
+      R.andAReloadKeepsThemWhole = !lost.length
+        ? 'and every hall, conduit, floor and fallen length is as it was after a save and reload'
+        : `!! A RELOAD CHANGED ${lost.length} TOWERS: ${lost.map(t => t.id + ' ' + hallCheck(t).slice(0, 1)).join(', ')}`;
     });
 
-    /* ---------- 3. A CACHE AT THE FOOT ---------- */
-    guard(['eachHasACache'], () => {
+    /* ---------- 3. A CACHE AT THE FOOT, AND THE STORES UPSTAIRS ---------- */
+    guard(['eachHasACache', 'andItsStoresAreUpstairs'], () => {
+      const R0 = typeof TOWER_R !== 'undefined' ? TOWER_R : 5;
       const bad = towers.filter(tw => {
         const ch = chests[tw.cacheIdx];
-        return !ch || isBlocked(ch.x, ch.y) || dist(ch.x, ch.y, tw.x, tw.y) > 16 || !Object.keys(ch.loot.items).length;
+        return !ch || isBlocked(ch.x, ch.y) || dist(ch.x, ch.y, tw.x, tw.y) > R0 + 9 || !Object.keys(ch.loot.items).length;
       });
       R.eachHasACache = !bad.length
-        ? `each tower has a cache within 16 tiles of its foot, on open ground (${towers.map(t => Object.keys(chests[t.cacheIdx].loot.items).filter(k => k !== 'scrap')[0]).join(', ')})`
+        ? `each tower has a cache outside its door, on open ground (${towers.map(t => Object.keys(chests[t.cacheIdx].loot.items).filter(k => k !== 'scrap')[0]).join(', ')})`
         : `!! ${bad.length} TOWERS HAVE NO CACHE YOU CAN REACH: ${bad.map(t => t.id).join(', ')}`;
+      const up = towers.filter(tw => {
+        const ch = chests[tw.storeIdx];
+        return !ch || !(ch.floor > 0) || isBlocked(ch.x, ch.y, ch.floor) || dist(ch.x, ch.y, tw.x, tw.y) > R0;
+      });
+      R.andItsStoresAreUpstairs = towers.length && !up.length
+        ? `and each keeps its stores on storey ${chests[towers[0].storeIdx].floor}, inside, on floor you can stand on`
+        : `!! ${up.length} TOWERS HAVE NO STORES UPSTAIRS: ${up.map(t => t.id).join(', ')}`;
+    });
+
+    /* ---------- 3b. AND YOU CAN CLIMB ONE ----------
+       Through the real order and the real sim: one of yours outside the door of a tower, sent to
+       the terrace on its roof. Every storey of it is a leg of the plan. */
+    guard(['youCanClimbATowerToItsRoof'], () => {
+      const R0 = typeof TOWER_R !== 'undefined' ? TOWER_R : 5, NS = typeof TOWER_STOREYS !== 'undefined' ? TOWER_STOREYS : 0;
+      const tw = towers.find(t => t.kind === 'standing') || towers[0];
+      if (!NS || !tw) { R.youCanClimbATowerToItsRoof = '!! NO TOWER WITH STOREYS TO CLIMB'; return; }
+      const dA = typeof towerDoorA === 'function' ? towerDoorA(tw) : 0;
+      const me = player().find(c => !c.undead && c.state === 'ok') || player()[0];
+      /* clear the ground of anything that would rather fight */
+      for (const c of chars) if (c !== me && c.faction !== 'player' && c.state !== 'dead' && dist(c.x, c.y, tw.x, tw.y) < 60) { c.x = 12; c.y = 12; c.floor = 0; }
+      for (const c of player()) if (c !== me) { c.x = tw.x + 50; c.y = tw.y + 50; c.floor = 0; }
+      me.x = tw.x + 0.5 + Math.sin(dA) * (R0 + 4); me.y = tw.y + 0.5 + Math.cos(dA) * (R0 + 4); me.floor = 0;
+      me.blood = me.maxBlood || 100; me.state = 'ok'; me.target = null;
+      const gx = tw.x + 0.5 + Math.sin(dA + Math.PI) * 6, gy = tw.y + 0.5 + Math.cos(dA + Math.PI) * 6;
+      rebuildCharGrid();
+      clearOrders(me);
+      const ok = routeTo(me, gx, gy, NS);
+      const seen = [0];
+      let t = 0;
+      for (; t < 3000; t++) {
+        if (t % 5 === 0) rebuildCharGrid();
+        ai(me, 0.05); physics(me, 0.05);
+        if (seen[seen.length - 1] !== (me.floor || 0)) seen.push(me.floor || 0);
+        if ((me.floor || 0) === NS && dist(me.x, me.y, gx, gy) < 1.5 && !me.moveTarget) break;
+      }
+      const there = (me.floor || 0) === NS && dist(me.x, me.y, gx, gy) < 1.5;
+      R.youCanClimbATowerToItsRoof = ok && there
+        ? `one of yours sent from outside its door to the terrace on its roof walks in and climbs ${seen.join('>')}, in ${(t * 0.05).toFixed(0)}s`
+        : `!! THE CLIMB FAILED: ${ok ? 'ordered' : 'refused'}, went ${seen.join('>')}, ended at ${me.x.toFixed(0)},${me.y.toFixed(0)} on ${me.floor || 0}`;
     });
 
     /* ---------- 4. NAMED BY GOING THERE ---------- */

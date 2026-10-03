@@ -18,6 +18,8 @@
  *   4. a structure between the camera and your people is opened where they are: the pixels over
  *      them change when the cone is on, and the cone is shut when the camera is aimed somewhere
  *      none of yours is standing
+ *   5. a tower's hall is an octagon in a square volume: one of yours just outside a diagonal face
+ *      leaves it whole, and one inside the hall cuts it
  *
  * Anything starting '!!' fails the build.
  *
@@ -136,6 +138,27 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.butNotWhereNoneOfYoursIs = DW_CUT.see.value.w === 0
         ? 'and with the camera aimed where none of yours stands, the cone is shut'
         : `!! THE CONE IS OPEN OVER ${DW_CUT.see.value.w} TILES WITH NOBODY OF YOURS THERE`;
+    });
+    /* ---------- 5. A TOWER IS CUT FROM INSIDE ITS WALLS, NOT FROM THE STREET ----------
+       A cut volume is a box, and a tower's hall is an octagon: standing a step outside one of its
+       diagonal faces is standing inside the box round it. Asked at 45 degrees, a tile and a half
+       out from the wall, and then a few tiles inside it. */
+    guard(['aTowerIsNotCutFromOutside', 'butIsFromInside'], () => {
+      if (typeof towers === 'undefined' || !towers.length || typeof TOWER_R === 'undefined') { R.aTowerIsNotCutFromOutside = R.butIsFromInside = '!! NO TOWER WITH A HALL'; return; }
+      const tw = towers[0];
+      const v = cutVolumesAt(tw.x + 0.5, tw.y + 0.5).find(q => q.ref === tw);
+      park(tw.x, tw.y);
+      const d = (TOWER_R + 1.5) / Math.SQRT2;
+      me.x = tw.x + 0.5 + d; me.y = tw.y + 0.5 + d; me.floor = 0; aim(tw.x, tw.y, 40); render();
+      const out = cutOf(v);
+      me.x = tw.x + 0.5 + 4; me.y = tw.y + 0.5 + 4; render();
+      const inn = cutOf(v);
+      R.aTowerIsNotCutFromOutside = v && out === null
+        ? `one of yours a tile and a half outside a tower's diagonal face — inside the box round it — leaves it whole`
+        : `!! A TOWER IS CUT OPEN FROM THE STREET (${out})`;
+      R.butIsFromInside = v && inn !== null
+        ? `and one of yours inside its hall cuts it at ${(inn - v.y0).toFixed(1)} over the floor`
+        : `!! WALKING INTO A TOWER'S HALL CUT NOTHING (${inn})`;
     });
     return R;
   });
