@@ -1195,6 +1195,10 @@ const blocked = new Set();
    the only doors between them. Nothing has a roof, so the camera can always see in. */
 const stairs = [];
 const structures = [];      /* everything raised through `buildStructure` — see ONE WAY TO RAISE A BUILDING */
+/* ground to be levelled under a structure once the land has heights: {x0, y0, x1, y1, ease} */
+const structurePads = [];
+/* the waist-high walls along the edge of a roof ('|' in a plan): solid to walk, low enough to shoot over */
+const parapets = new Set();
 const FLOOR_H = 3.4;            /* world units between storeys */
 const FLOOR_SPAN = W * H;
 function bkey(x, y, f = 0){ return (f + 4) * FLOOR_SPAN + y * W + x; }   /* +4 so cellars key cleanly */
@@ -1450,6 +1454,8 @@ function rawDecorAt(x,y){
     if(dist(h.x, h.y, x, y) < h.clearR) return null;
   }
   if(ark && arkCovers(x + 0.5, y + 0.5, 4)) return null;   /* nor under the wreck, nor in the ground it ploughed */
+  for(const st of structures)          /* nor inside anything raised through `buildStructure` */
+    if(x >= st.x - 1 && x <= st.x + st.w && y >= st.y - 1 && y <= st.y + st.h) return null;
   for(const tw of towers){            /* nor growing through a tower, or what fell off one */
     const reach = tw.clearR + tw.fall;
     if(Math.abs(tw.x - x) > reach || Math.abs(tw.y - y) > reach) continue;
@@ -7516,6 +7522,14 @@ function placeCave(h){
         rcx = clamp(Math.round(sx + Math.cos(a) * (d2 + k)), 2 + hw, W - 2 - hw);
         rcy = clamp(Math.round(sy + Math.sin(a) * (d2 + k)), 2 + hh, H - 2 - hh);
       }
+      /* ---------- AND IF SIXTEEN TILES OUT IT STILL CROWDS, IT IS NOT BUILT ----------
+         The slide gave up and cut the chamber where it stood: measured, one doorway in 552 opening
+         onto a slot two tiles wide between its own wall and a neighbour's — the pencil path again,
+         made by the rule written to prevent it. Skipping used to be ruled out because it moved
+         the dice for the whole world after this point; the warrens are seeded on a stream of
+         their own now (see A THIRD OF EVERY STOREY), so a chamber that cannot find room simply
+         is not there. */
+      if(crowds(rcx, rcy)) continue;
       let swallows = false;
       for(const st of stairs){
         if(st.x >= rcx - hw && st.x <= rcx + hw && st.y >= rcy - hh && st.y <= rcy + hh){ swallows = true; break; }
@@ -7593,55 +7607,138 @@ function rebuildCaveWalls(cv){
   }
   return cv.walls.length;
 }
+/* ---------- AN AEGIS REDOUBT, BIG ENOUGH TO GO INTO ----------
+   "Making them big enough to explore and actually fit squads in is kind of ideal." (2026-10-03.)
+   It was a seventeen-tile square of wall with one door, a deck round the top and the garrison
+   standing in a heap in the middle: a fight in a box. AEGIS built to hold the line, and a post
+   that holds a line has a plan — a gate, a hall, the rooms its people lived and worked in, a
+   vault behind a wall, and a roof to shoot from:
+     storey 0  the gate in the south wall; a long hall; barracks and armoury down the west wing,
+               the vat room and the automaton bay down the east, each through its own doorway;
+               the vault across the north end
+     storey 1  the roof, behind a parapet all the way round, reached by two stairs from the hall,
+               with the command room built up over the vault
+   Every room keeps its own garrison (`homeRoom`, the deep redoubt's rule), so it is taken a
+   room at a time. Turned to face any of four ways, and on a stream of its own so how it is
+   furnished never moves anything else in the world. */
+const AEGIS_N = 25;
+function aegisPlan(){
+  const N = AEGIS_N, s0 = [], s1 = [], s2 = [];
+  for(let py = 0; py < N; py++){
+    let r0 = '', r1 = '', r2 = '';
+    for(let px = 0; px < N; px++){
+      const edge = px === 0 || py === 0 || px === N - 1 || py === N - 1;
+      let a;
+      if(edge) a = (py === N - 1 && px >= 11 && px <= 13) ? '=' : '#';
+      else if(px === 6 || px === 18) a = ((py === 9 || py === 18) ? '=' : '#');
+      else if((px < 6 || px > 18) && py === 12) a = '#';
+      else if(px > 6 && px < 18 && py === 6) a = px === 12 ? '=' : '#';
+      else if(py === 21 && (px === 8 || px === 16)) a = '^';
+      else a = '.';
+      r0 += a;
+      let b;
+      if(edge) b = (py === 0 && px >= 6 && px <= 18) ? '#' : '|';
+      else if(py <= 6 && (px === 6 || px === 18)) b = '#';
+      else if(py === 6 && px > 6 && px < 18) b = px === 12 ? '=' : '#';
+      else b = '.';
+      r1 += b;
+      r2 += (py <= 6 && px >= 6 && px <= 18) ? '.' : ' ';
+    }
+    s0.push(r0); s1.push(r1); s2.push(r2);
+  }
+  return {0: s0, 1: s1, 2: s2};
+}
+const AEGIS_ROOMS = [
+  {key: 'barracks', x0: 1, y0: 1, x1: 5, y1: 11, f: 0},
+  {key: 'armoury', x0: 1, y0: 13, x1: 5, y1: 23, f: 0},
+  {key: 'vats', x0: 19, y0: 1, x1: 23, y1: 11, f: 0},
+  {key: 'bay', x0: 19, y0: 13, x1: 23, y1: 23, f: 0},
+  {key: 'vault', x0: 7, y0: 1, x1: 17, y1: 5, f: 0},
+  {key: 'hall', x0: 7, y0: 7, x1: 17, y1: 23, f: 0},
+  {key: 'command', x0: 7, y0: 1, x1: 17, y1: 5, f: 1},
+  {key: 'roof', x0: 1, y0: 8, x1: 23, y1: 23, f: 1},
+];
+/* the whole footprint, not the centre tile: dry, clear of every way down and of anything already
+   standing there. (Not of the roads: they are laid after the redoubts, and round them.) */
+function aegisFits(x, y){
+  const R = (AEGIS_N - 1) / 2 + 2;
+  if(stairs.some(st => (st.from === 0 || st.to === 0) && Math.abs(st.x - x) <= R + 2 && Math.abs(st.y - y) <= R + 2)) return false;
+  if(buildings.some(b => b.x < x + R && b.x + b.w > x - R && b.y < y + R && b.y + b.h > y - R)) return false;
+  if(redoubts.some(o => dist(o.x, o.y, x, y) < 60)) return false;
+  for(let j = y - R; j <= y + R; j++) for(let i = x - R; i <= x + R; i++){
+    if(i < 3 || j < 3 || i > W - 4 || j > H - 4 || tileAt(i, j) === 3) return false;
+  }
+  return true;
+}
 function placeRedoubt(){
-  const p = bossSpot(40, 55);
+  let p = null;
+  for(let t = 0; t < 16 && !p; t++){ const q = bossSpot(40, 55); if(q && aegisFits(q.x, q.y)) p = q; }
   if(!p) return null;
-  const R = 8;
-  const r = {id: redoubts.length + 1, x: p.x, y: p.y, r: R, breached: false};
-  /* the shell: a square bunker with one door, still sealed */
-  for(let j = -R; j <= R; j++) for(let i = -R; i <= R; i++){
-    const edge = Math.abs(i) === R || Math.abs(j) === R;
-    if(!edge) continue;
-    const wx = p.x + i, wy = p.y + j;
-    if(wx < 2 || wy < 2 || wx >= W-2 || wy >= H-2) continue;
-    if(i === 0 && j === R) continue;                    /* the door */
-    blocked.add(bkey(wx, wy, 0));
-    decks.add(bkey(wx, wy, 1));                         /* a firing deck, all the way round */
-  }
-  /* the stair to the deck, inside — flush against the south wall so the deck connects */
-  const sx = p.x + R - 2, sy = p.y + R - 1;
-  decks.add(bkey(sx, sy, 1));
-  stairs.push({x: sx, y: sy, from: 0, to: 1});
-  buildings.push({x: p.x - R, y: p.y - R, w: R*2+1, h: R*2+1,
-    label: 'REDOUBT', door: {x: p.x, y: p.y + R}, redoubt: true});
-  /* the vault: what they were protecting, and never got to use */
-  chests.push({x: p.x, y: p.y - 3, opened: false, vault: true, loot: {cats: ri(200, 600), items: {
-    codex: 1,
-    lead: ri(20, 40),
-    iron: ri(8, 16),
-    c_ingot: ri(6, 12),
-    ...(rnd() < 0.55 ? {w_lance: 1} : {}),
-    aether_cell: ri(5, 11),          /* whoever sealed this expected to keep shooting */
-    ...(rnd() < 0.45 ? {w_sever: 1} : {}),
-    ...(rnd() < 0.40 ? {a_carap: 1} : {}),
-    tome: ri(1, 3),
-    formula_p: 1,
-    formula_w: ri(1, 2),
-    ...(redoubts.length === 1 ? {doctrine: 1} : {}),   /* the first bunker kept the first lie */
-  }}});
-  /* the garrison. Still at its post. */
-  const n = ri(5, 8);
-  for(let k = 0; k < n; k++){
-    const q = findOpenNear(p.x + ri(-R+2, R-2), p.y + ri(-R+2, R-2), 4);
-    if(rnd() < 0.4) spawnAutomaton(q.x, q.y, r);
-    else spawnCrazedHomunculus(q.x, q.y, r);
-  }
-  /* two wardens on the deck, shooting down at whatever comes */
-  for(const [dx, dy] of [[-R+1, 0], [R-1, 0]]){
-    const w = spawnCrazedHomunculus(p.x + dx + 0.5, p.y + dy + 0.5, r);
-    w.floor = 1;
-    w.weapon = 'w_lance';
-  }
+  const R = (AEGIS_N - 1) / 2;
+  const r = {id: redoubts.length + 1, x: p.x, y: p.y, r: R + 1, breached: false};
+  const pocket = seed;
+  seed = (pocket ^ Math.imul(p.x * 131 + p.y, 0x9E3779B9)) | 0;
+  try {
+    /* THE PAD, levelled like a tower's: a storey stands at the ground under each tile plus its
+       height, and this is about to have three of them. The land has no heights yet when the
+       redoubts go down (the mountains are raised later), so the pad is recorded and levelled
+       once they exist — see `levelPads`. */
+    structurePads.push({x0: p.x - R - 1, y0: p.y - R - 1, x1: p.x + R + 2, y1: p.y + R + 2, ease: 4});
+    const rot = Math.floor(hash2(p.x * 7 + 1, p.y * 3 + 5) * 4) % 4;
+    const st = buildStructure({x: p.x - R, y: p.y - R, rot, storeys: aegisPlan(), rooms: AEGIS_ROOMS, kind: 'redoubt', style: 'aegis'});
+    r.structureId = st.id;
+    r.floors = 2;
+    /* the rooms are the redoubt's own, so the load path that re-links a garrison to its room
+       (`redoubtDeep` + `roomId`) finds them */
+    r.rooms = st.rooms.map(rm => ({...rm, breached: false}));
+    const room = (key) => r.rooms.find(rm => rm.key === key);
+    const gate = st.doorways.find(d => d.f === 0 && (d.x === p.x || d.y === p.y)) || st.doorways[0];
+    buildings.push({x: st.x, y: st.y, w: st.w, h: st.h, label: 'REDOUBT', door: gate ? {x: gate.x, y: gate.y} : {x: p.x, y: p.y + R},
+                    redoubt: true, noCut: true});
+    /* the vault: what they were protecting, and never got to use */
+    const vr = room('vault');
+    chests.push({x: vr.cx + 0.5, y: vr.cy + 0.5, opened: false, vault: true, loot: {cats: ri(200, 600), items: {
+      codex: 1,
+      lead: ri(20, 40),
+      iron: ri(8, 16),
+      c_ingot: ri(6, 12),
+      ...(rnd() < 0.55 ? {w_lance: 1} : {}),
+      aether_cell: ri(5, 11),          /* whoever sealed this expected to keep shooting */
+      ...(rnd() < 0.45 ? {w_sever: 1} : {}),
+      ...(rnd() < 0.40 ? {a_carap: 1} : {}),
+      tome: ri(1, 3),
+      formula_p: 1,
+      formula_w: ri(1, 2),
+      ...(redoubts.length === 1 ? {doctrine: 1} : {}),   /* the first bunker kept the first lie */
+    }}});
+    /* and the armoury still has some of what it was for */
+    const ar = room('armoury');
+    chests.push({x: ar.cx + 0.5, y: ar.cy + 0.5, opened: false, loot: {cats: ri(40, 120), items: {
+      lead: ri(6, 14), aether_cell: ri(1, 3), ...(rnd() < 0.35 ? {w_xbow: 1} : {}), ...(rnd() < 0.3 ? {a_pla: 1} : {}),
+    }}});
+    /* the garrison. Still at its post — each at its own. */
+    const post = (key, kind, f) => {
+      const rm = room(key); if(!rm) return null;
+      let q = null;
+      for(let t = 0; t < 20 && !q; t++){
+        const x = ri(rm.x0, rm.x1), y = ri(rm.y0, rm.y1);
+        if(!isBlocked(x + 0.5, y + 0.5, rm.f)) q = {x: x + 0.5, y: y + 0.5};
+      }
+      if(!q) q = {x: rm.cx + 0.5, y: rm.cy + 0.5};
+      const g = kind === 'auto' ? spawnAutomaton(q.x, q.y, r) : spawnCrazedHomunculus(q.x, q.y, r);
+      g.x = q.x; g.y = q.y; g.floor = rm.f; g.roomId = rm.id; g.redoubtDeep = r.id;
+      g.guard = {x: rm.cx + 0.5, y: rm.cy + 0.5}; g.homeRoom = rm;
+      return g;
+    };
+    for(let k = ri(2, 3); k > 0; k--) post('barracks', 'homunculus');
+    for(let k = ri(1, 2); k > 0; k--) post('armoury', 'homunculus');
+    for(let k = ri(1, 2); k > 0; k--) post('vats', 'homunculus');
+    for(let k = ri(2, 3); k > 0; k--) post('bay', 'auto');
+    post('hall', rnd() < 0.5 ? 'auto' : 'homunculus');
+    post('command', 'homunculus');
+    /* two wardens on the roof, with lances, watching the gate */
+    for(let k = 0; k < 2; k++){ const w = post('roof', 'homunculus'); if(w) w.weapon = 'w_lance'; }
+  } finally { seed = pocket; }
   redoubts.push(r);
   worldEvent('redoubt', p.x, p.y, 'A sealed bunker from before the Fracture still stands out in the waste. Something inside it is still moving.');
   return r;
@@ -14358,6 +14455,20 @@ function losBlocked(x0, y0, x1, y1, f){
    and in either direction: the higher of the two stands under open sky, nothing roofs the lower
    one between the storeys, and the line along the LOWER storey is clear. Two storeys at most,
    and never into or out of the ground — rock is a ceiling. Same storey is the old rule. */
+/* the nearest hostile a body could shoot from where it stands on an upper storey under open sky
+   — on another storey, by `shotAcross`. Same-storey foes are `nearestEnemy`'s. */
+function nearestShot(c, r){
+  const f = c.floor || 0;
+  if(f <= 0 || decks.has(bkey(Math.floor(c.x), Math.floor(c.y), f + 1))) return null;
+  let best = null, bd = r;
+  for(const o of charsNear(c.x, c.y, r)){
+    if(o === c || o.state !== 'ok' || o.phantom || o.veilT > 0 || (o.floor || 0) === f) continue;
+    if(!hostile(c, o)) continue;
+    const d = dist(c.x, c.y, o.x, o.y);
+    if(d < bd && shotAcross(c, o)){ bd = d; best = o; }
+  }
+  return best;
+}
 function shotAcross(a, t){
   const af = a.floor || 0, tf = t.floor || 0;
   if(af === tf) return !losBlocked(a.x, a.y, t.x, t.y, af);
@@ -14365,7 +14476,28 @@ function shotAcross(a, t){
   const hi = af > tf ? a : t, lo = af > tf ? t : a, hf = Math.max(af, tf), lf = Math.min(af, tf);
   if(decks.has(bkey(Math.floor(hi.x), Math.floor(hi.y), hf + 1))) return false;
   for(let k = lf + 1; k <= hf; k++) if(decks.has(bkey(Math.floor(lo.x), Math.floor(lo.y), k))) return false;
-  return !losBlocked(a.x, a.y, t.x, t.y, lf);
+  /* ---------- AND THE LINE IS WALKED WHERE THE SHOT ACTUALLY IS ----------
+     Over a floor of the upper storey the shot is up at that height, and only a full wall up there
+     stops it — a parapet is what you shoot over. Past its edge the shot is coming down into the
+     lower storey, and that storey's walls are what count. Walking it along the lower storey the
+     whole way put a redoubt's own outer wall in front of every warden on its roof. */
+  let ax = Math.floor(a.x), ay = Math.floor(a.y);
+  const sx0 = ax, sy0 = ay, bx = Math.floor(t.x), by = Math.floor(t.y);
+  const dx = Math.abs(bx - ax), dy = Math.abs(by - ay), stx = ax < bx ? 1 : -1, sty = ay < by ? 1 : -1;
+  let err = dx - dy;
+  for(let guard = 0; guard < 400; guard++){
+    if(ax === bx && ay === by) return true;
+    if(!(ax === sx0 && ay === sy0)){
+      if(decks.has(bkey(ax, ay, hf))){
+        const k = bkey(ax, ay, hf);
+        if(blocked.has(k) && !parapets.has(k)) return false;
+      } else if(blocked.has(bkey(ax, ay, lf))) return false;
+    }
+    const e2 = 2 * err;
+    if(e2 > -dy){ err -= dy; ax += stx; }
+    if(e2 < dx){ err += dx; ay += sty; }
+  }
+  return true;
 }
 /* ---------- THE GAUNT'S MANTLE ----------
    "Gaunts do not pick you first." NOT "cannot be attacked" — which is what a large enough
@@ -14849,6 +14981,11 @@ function ai(c, dt){
     c.target = (c.faction === 'player' && !c.targetManual)
       ? squadTarget(c, 9)                                  /* a squad picks its fights as a squad */
       : nearestEnemy(c, c.faction==='town' ? 10 : 9);
+    /* and a bow up on an open roof or a wall looks DOWN, which is what it is up there for: the
+       redoubt's roof wardens were seeded "shooting down at whatever comes" and never could,
+       because every scan in the game asks its own storey. Only as far as the weapon reaches
+       from where it stands — a lookout shoots from its post, it does not walk off it. */
+    if(!c.target){ const w0 = c.weapon && ITEMS[c.weapon]; if(w0 && w0.range) c.target = nearestShot(c, rangedBand(w0)); }
     if(c.target && !c.saidAggro){
       c.saidAggro = true;
       if(c.bossKey==='baroness') say(c, 'All roads pay me toll.');
@@ -17230,8 +17367,12 @@ function physics(c, dt){
      one pile, and every door is its own fight. Only a foe inside the room, same floor, is met. */
   if(c.homeRoom){
     const rm = c.homeRoom;
-    if(c.target && (c.target.floor||0) !== rm.f){ c.target = null; }
-    if(c.target && !(c.target.x>=rm.x0-1 && c.target.x<=rm.x1+1 && c.target.y>=rm.y0-1 && c.target.y<=rm.y1+1)){
+    /* a bow on a roof that is its post keeps a foe it can shoot from there, wherever that foe
+       is standing; anything else holds the room, and only the room */
+    const hw = c.weapon && ITEMS[c.weapon];
+    const shooting = !!(c.target && hw && hw.range && (c.target.floor||0) !== rm.f && shotAcross(c, c.target));
+    if(c.target && (c.target.floor||0) !== rm.f && !shooting){ c.target = null; }
+    if(c.target && !shooting && !(c.target.x>=rm.x0-1 && c.target.x<=rm.x1+1 && c.target.y>=rm.y0-1 && c.target.y<=rm.y1+1)){
       c.target = null;   /* it left the room; you don't follow */
     }
     if(!c.target && (c.floor||0)===rm.f && (c.x<rm.x0 || c.x>rm.x1 || c.y<rm.y0 || c.y>rm.y1)){
@@ -31518,6 +31659,23 @@ const mountains = [];   /* {x, y, r, peak} — recorded for spawn logic and cave
     }
   }
 })();
+/* ---------- AND THE PADS, NOW THAT THERE IS LAND TO LEVEL ----------
+   Anything raised before the mountains asked for level ground under it (`structurePads`); a
+   storey's floor is the ground under each tile plus its height, so ground left uneven under a
+   building puts its floors out of true with themselves. Each pad goes to its own mean height and
+   eases back into the land round it. */
+(function levelPads(){
+  for(const pd of structurePads){
+    let sum = 0, n = 0;
+    for(let j = pd.y0; j <= pd.y1; j++) for(let i = pd.x0; i <= pd.x1; i++){ if(i >= 0 && j >= 0 && i <= W && j <= H){ sum += HV[j * (W + 1) + i]; n++; } }
+    const mean = sum / Math.max(1, n), e = pd.ease || 4;
+    for(let j = pd.y0 - e; j <= pd.y1 + e; j++) for(let i = pd.x0 - e; i <= pd.x1 + e; i++){
+      if(i < 0 || j < 0 || i > W || j > H) continue;
+      const o = Math.max(pd.x0 - i, i - pd.x1, pd.y0 - j, j - pd.y1, 0), k = j * (W + 1) + i;
+      HV[k] = o === 0 ? mean : mean + (HV[k] - mean) * Math.min(1, (o / e) * (o / e));
+    }
+  }
+})();
 /* ---------- AND NOTHING THE WORLD PLACED IS STANDING IN THE GLASS ----------
    The named, the walled and the dangerous are kept out where they are chosen — see `bossSpot`,
    `areaClear`, the ruins, the slavers. This is the net under all of them: a body some other
@@ -31763,6 +31921,12 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
        found a spot in the tries above draws exactly what it drew before. Forty tiles is a
        cliff-path away from the mouth, not a different cave — and a hall further under the water
        than that has no dry way in, which is a true thing about it and is left alone. */
+    /* ---------- AND NOT INSIDE A BUILDING ----------
+       The redoubts are raised before the undercroft is dug, and a crack in the waste opened in
+       the middle of one's vat room. A spot inside anything raised through `buildStructure` (or a
+       tile off its wall) is handed to the spiral below instead, which spends no dice. */
+    const inStruct = (x, y) => structures.some(st => x >= st.x - 1 && x <= st.x + st.w && y >= st.y - 1 && y <= st.y + st.h);
+    if(sp && inStruct(Math.floor(sp.x), Math.floor(sp.y))) sp = null;
     if(!sp){
       for(let r = 6; r <= 40 && !sp; r++){
         for(let a = 0; a < r * 6 && !sp; a++){
@@ -31770,6 +31934,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
           const qx = clamp(Math.round(h.x + Math.cos(th) * r), 4, W-5);
           const qy = clamp(Math.round(h.y + Math.sin(th) * r), 4, H-5);
           if(tileAt(qx, qy) === 3) continue;
+          if(inStruct(qx, qy)) continue;
           if(isBlocked(qx + 0.5, qy + 0.5, 0)) continue;
           if(!decks.has(bkey(qx, qy, UNDER))) continue;
           sp = {x: qx, y: qy};
@@ -33165,7 +33330,7 @@ function towerPlan(tw){
         else if(o < gr + ease){ const t = (o - gr) / ease; HV[k] = mean + (HV[k] - mean) * t * t; }
       }
     }
-    tw.hall = buildStructure({x: x - TOWER_R, y: y - TOWER_R, storeys: towerPlan(tw), kind: 'tower', cut: false});
+    tw.hall = buildStructure({x: x - TOWER_R, y: y - TOWER_R, storeys: towerPlan(tw), kind: 'tower', cut: false, draw: false});
     tw.inR = TOWER_R + 0.5;
     /* on a snapped one the length of it lying in the dust: that is a thing */
     if(fall) for(let j = y - fall - TOWER_R - 3; j <= y + fall + TOWER_R + 3; j++) for(let i = x - fall - TOWER_R - 3; i <= x + fall + TOWER_R + 3; i++)
@@ -35801,12 +35966,7 @@ function palette(t){
           }
         }
       }
-      /* the stairs: four steps up each flight's tile, climbing away from the core */
-      if(tw.hall) for(const st of tw.hall.stairs){
-        const lx = st.x - tw.x, lz = st.y - tw.y, a = Math.atan2(lx, lz);
-        const fl = node(hall, lx, floorY(st.from), lz, 0, a, 0);
-        for(let i = 0; i < 4; i++) add(fl, TC.worn, 0.9, (i + 1) * FLOOR_H / 4, 0.25, 0, (i + 1) * FLOOR_H / 8, -0.375 + i * 0.25);
-      }
+      /* (the flights themselves are drawn with every other stair in the world: see syncStairs) */
     }
     hall.updateMatrixWorld(true);
     /* the shaft, in courses that narrow going up, banded in gold every third, slit on the faces.
@@ -36085,7 +36245,7 @@ function syncCutVolumes(){
   if(sig === _cutSig) return;
   _cutSig = sig;
   cutVolumes.length = 0; _cutGrid.clear();
-  for(const b of buildings) addCutVolume(b.x + b.w / 2, b.y + b.h / 2, 1, 0, b.w / 2, b.h / 2, 'building', b);
+  for(const b of buildings) if(!b.noCut) addCutVolume(b.x + b.w / 2, b.y + b.h / 2, 1, 0, b.w / 2, b.h / 2, 'building', b);
   for(const b of pBuilds) if(b.w > 1 || b.h > 1) addCutVolume(b.x + b.w / 2, b.y + b.h / 2, 1, 0, b.w / 2, b.h / 2, 'build', b);
   for(const rd of redoubts){
     const r = redoubtBounds(rd);
@@ -37250,6 +37410,7 @@ const syncRedoubts = makeDynGroup(
         }
         continue;
       }
+      if(rd.structureId) continue;         /* raised from a plan: drawn with the other structures */
       const R = rd.r;
       const inside = selected.some(c => c.state !== 'dead' &&
         Math.abs(c.x - rd.x) <= R && Math.abs(c.y - rd.y) <= R);
@@ -37268,6 +37429,53 @@ const syncRedoubts = makeDynGroup(
         box(g, 1, 0.22, 1, '#5e646a', wx + 0.5, y + FLOOR_H, wy + 0.5, false,
             {opacity: solid ? 1 : 0.34});
       }
+    }
+  }
+);
+/* ---------- WHAT `buildStructure` RAISED, DRAWN ----------
+   Straight off the plan, so what is drawn is what is walkable: each run of wall along a row is
+   one box (a full storey high for '#', waist-high for '|'), each run of floor one plate, the
+   ground storey paved, a lintel over every doorway. A structure with its own renderer (the
+   towers) says `draw: false`; everything else raised this way needs nothing more. */
+const STRUCT_PAL = {
+  plain: {wall: '#8a7c64', floor: '#6a5f50', pave: '#5c5246', par: '#8a7c64', trim: '#a8853c'},
+  aegis: {wall: '#5a6066', floor: '#4f555b', pave: '#454a4f', par: '#646a70', trim: '#a8853c'},
+};
+const syncStructures = makeDynGroup(
+  () => 'S' + structures.length,
+  (g) => {
+    for(const st of structures){
+      if(!st.draw) continue;
+      const P = STRUCT_PAL[st.style] || STRUCT_PAL.plain;
+      if(st.y0 === undefined) st.y0 = groundY(st.x + st.w / 2, st.y + st.h / 2);
+      /* a run along plan row py from px0 to px1, as a world box of tiles */
+      const span = (px0, px1, py) => {
+        const [ax, ay] = st.at(px0, py), [bx, by] = st.at(px1, py);
+        const x0 = Math.min(ax, bx), x1 = Math.max(ax, bx), y0 = Math.min(ay, by), y1 = Math.max(ay, by);
+        return {w: x1 - x0 + 1, d: y1 - y0 + 1, cx: st.x + (x0 + x1 + 1) / 2, cz: st.y + (y0 + y1 + 1) / 2};
+      };
+      const cls = (gch) => gch === '#' ? 'w' : gch === '|' ? 'p' : gch === ' ' ? null : 'f';
+      for(const f of st.storeys){
+        const rows = st.plan[f], y = st.y0 + floorY(f);
+        for(let py = 0; py < rows.length; py++){
+          const row = rows[py];
+          let px = 0;
+          while(px < row.length){
+            const k = cls(row[px]);
+            if(!k){ px++; continue; }
+            let q = px; while(q + 1 < row.length && cls(row[q + 1]) === k) q++;
+            const b = span(px, q, py);
+            if(k === 'w') box(g, b.w, FLOOR_H, b.d, P.wall, b.cx, y + FLOOR_H / 2, b.cz);
+            else if(k === 'p') box(g, b.w, 1.15, b.d, P.par, b.cx, y + 0.575, b.cz);
+            if(k !== 'p'){
+              if(f === 0){ if(k === 'f') box(g, b.w, 0.1, b.d, P.pave, b.cx, y + 0.05, b.cz, false, {receive: true}); }
+              else box(g, b.w, 0.26, b.d, P.floor, b.cx, y - 0.13, b.cz, false, {receive: true});
+            }
+            px = q + 1;
+          }
+        }
+      }
+      for(const dw of st.doorways) box(g, 1.02, 0.35, 1.02, P.trim, dw.x + 0.5, st.y0 + floorY(dw.f) + FLOOR_H - 0.6, dw.y + 0.5, false);
     }
   }
 );
@@ -44936,6 +45144,7 @@ function routeTo(c, x, y, tf){
        '^'  floor, and a stair up to the storey above (whose plan must have floor there)
        'v'  floor, and a stair down to the storey below
        '='  a doorway: floor, recorded as one
+       '|'  a parapet: a wall a body cannot cross, drawn waist-high (the edge of a roof)
    placed with its plan's top-left at (x, y), turned `rot` quarter-turns clockwise. It writes
    `baseBlocked` with `blocked`, registers the footprint as a cut volume (so a storey with your
    people on it loses its ceiling), and hands back a record the renderer and the bench can read.
@@ -44949,7 +45158,17 @@ function buildStructure(spec){
   const at = (px, py) => rot === 0 ? [px, py] : rot === 1 ? [ph - 1 - py, px] : rot === 2 ? [pw - 1 - px, ph - 1 - py] : [py, pw - 1 - px];
   const glyph = (f, px, py) => { const r = rows[f]; return r && r[py] !== undefined && r[py][px] !== undefined ? r[py][px] : ' '; };
   const rec = {id: structures.length + 1, x: spec.x, y: spec.y, w: fw, h: fh, rot, name: spec.name || null, kind: spec.kind || 'structure',
-               storeys: fls, stairs: [], doorways: [], plan: rows, cut: spec.cut !== false};
+               storeys: fls, stairs: [], doorways: [], rooms: [], plan: rows, cut: spec.cut !== false,
+               draw: spec.draw !== false, style: spec.style || 'plain', at, pw, ph};
+  /* its ground is read when it is drawn, not now: some of what is raised this way goes up before
+     the land has its heights (the redoubts are placed before the mountains are) */
+  /* rooms named in plan space, handed back in the world's: what a garrison holds, what a plan
+     means by "the vault" — {key, x0, y0, x1, y1, f} inclusive, turned with the rest of it */
+  for(const r of spec.rooms || []){
+    const [ax, ay] = at(r.x0, r.y0), [bx, by] = at(r.x1, r.y1);
+    const x0 = spec.x + Math.min(ax, bx), x1 = spec.x + Math.max(ax, bx), y0 = spec.y + Math.min(ay, by), y1 = spec.y + Math.max(ay, by);
+    rec.rooms.push({id: rec.rooms.length, key: r.key, f: r.f || 0, x0, y0, x1, y1, cx: Math.round((x0 + x1) / 2), cy: Math.round((y0 + y1) / 2)});
+  }
   /* `baseBlocked` is taken further down the file than some worldgen runs; a structure raised
      before it exists is in `blocked` when the copy is made, which is the same thing */
   const wallAt = (wx, wy, f) => { const k = bkey(wx, wy, f); blocked.add(k); try { baseBlocked.add(k); } catch(e){} };
@@ -44958,7 +45177,8 @@ function buildStructure(spec){
     if(g === ' ') continue;
     const [dx, dy] = at(px, py), wx = spec.x + dx, wy = spec.y + dy;
     if(f) decks.add(bkey(wx, wy, f));
-    if(g === '#') wallAt(wx, wy, f);
+    if(g === '#' || g === '|') wallAt(wx, wy, f);
+    if(g === '|') parapets.add(bkey(wx, wy, f));
     else if(g === '=') rec.doorways.push({x: wx, y: wy, f});
     else if(g === '^' || g === 'v'){
       const to = g === '^' ? f + 1 : f - 1;
@@ -45922,7 +46142,7 @@ function render(){
   syncTorchLights();      /* and the three fires nearest the camera, if the camera is under the world */
   syncStrikes();          /* and the light coming down on the glass */
   water.position.y = -0.22 + Math.sin(now*0.001)*0.03;
-  syncPBuilds(); syncBlueprints(); syncSundered(); syncWells(); syncPyres(); syncBastion(); syncChests(); syncBeds(); syncTownWalls(); syncTownScar(); syncCamps(); syncSlaverCamp(); syncRoofs(); syncVertical(); syncRifts(); syncStairs(); syncUndercroft(); syncRedoubts();
+  syncPBuilds(); syncBlueprints(); syncSundered(); syncWells(); syncPyres(); syncBastion(); syncChests(); syncBeds(); syncTownWalls(); syncTownScar(); syncCamps(); syncSlaverCamp(); syncRoofs(); syncVertical(); syncRifts(); syncStairs(); syncUndercroft(); syncRedoubts(); syncStructures();
   if(fogDirty || (activeFloor < 0) !== fogDeep) redrawFog();
   DW_SIGHT.k.value = (fogPlane.visible && !debugSeeAll) ? 1 : 0;
   syncChars(rdt);
