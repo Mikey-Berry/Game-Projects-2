@@ -33383,12 +33383,43 @@ const fogPlane = {visible: true};
    A material with `dwNoTint` is skipped (the stars), and keys its own program so the two never
    share one. */
 const DW_SIGHT = {map: {value: fogTex}, k: {value: 1}};
+/* ---------- AND WHAT STANDS BETWEEN YOU AND YOUR PEOPLE IS CUT AWAY ----------
+   "We still haven't perfected the mechanics where walls/ceilings become clear or see through when
+    entered. This is a top priority to truly make the game feel three dimensional and explorable."
+   (2026-10-03.) It had grown a rule per kind of building: a roof hidden while one of yours stands
+   under it, the citadel's walls faded storey by storey, a rampart deck turned to glass when your
+   own are inside the ring. Each did one shape and the next shape needed another. This is the one
+   rule, in the same shader patch as the sight map, for every material that opts in (`dwCut`: the
+   shared material cache, which is every wall, deck, roof, tower and hull in the world, and the
+   decor, so a canopy over your people thins too; never a body or the ground):
+   1. A STOREY YOU ARE ON HAS NO CEILING. Every enterable thing registers a volume (`cutVolumes`);
+      while one of yours is inside one, everything of it above that storey's ceiling is not drawn.
+      Up to four volumes at a time, the four nearest the camera.
+   2. NOTHING STANDS BETWEEN THE CAMERA AND YOUR PEOPLE. A cone from the eye to the point the
+      camera is aimed at, open while that point is within a few tiles of one of yours: any
+      structure inside it above the floor that point stands on is cut out at its heart and thinned
+      to a lattice at its edge, so a wall reads as a wall you are seeing past, not a hole.
+   Shadows are left alone (the shadow pass does not read this), so a room with its roof cut still
+   lies in that roof's shade, which is what makes it read as indoors. */
+const DW_CUT = {
+  n: {value: 0},
+  a: {value: [0, 1, 2, 3].map(() => new THREE.Vector4())},   /* centre x, z; the volume's own x axis */
+  b: {value: [0, 1, 2, 3].map(() => new THREE.Vector4())},   /* half x, half z, cut height, - */
+  see: {value: new THREE.Vector4(0, 0, 0, 0)},               /* the aim point, and the cone's radius there */
+  /* THE EYE IS OURS, NOT THREE'S. Three's own `cameraPosition` is declared in every fragment
+     shader but only UPLOADED for some materials, and never for a Lambert one, so the cone was
+     being measured from the world's origin and cut nothing. */
+  eye: {value: new THREE.Vector3()},
+};
 THREE.Material.prototype.onBeforeCompile = function(sh){
-  if(this.dwNoTint) return;
+  const tint = !this.dwNoTint, cut = !!this.dwCut;
+  if(!tint && !cut) return;
   if(!sh.vertexShader.includes('#include <project_vertex>') || !sh.fragmentShader.includes('#include <fog_fragment>')) return;
+  if(cut && !sh.fragmentShader.includes('#include <clipping_planes_fragment>')) return;
   sh.uniforms.dwSight = DW_SIGHT.map;
   sh.uniforms.dwSightK = DW_SIGHT.k;
-  sh.vertexShader = 'varying vec2 vDwSight;\n' + sh.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+  if(cut){ sh.uniforms.dwCutN = DW_CUT.n; sh.uniforms.dwCutA = DW_CUT.a; sh.uniforms.dwCutB = DW_CUT.b; sh.uniforms.dwSee = DW_CUT.see; sh.uniforms.dwEye = DW_CUT.eye; }
+  sh.vertexShader = 'varying vec2 vDwSight;\n' + (cut ? 'varying vec3 vDwW;\n' : '') + sh.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
   {
     vec4 dwW = vec4(transformed, 1.0);
     #ifdef USE_INSTANCING
@@ -33396,15 +33427,37 @@ THREE.Material.prototype.onBeforeCompile = function(sh){
     #endif
     dwW = modelMatrix * dwW;
     vDwSight = vec2(dwW.x / ${W}.0, dwW.z / ${H}.0);
+    ${cut ? 'vDwW = dwW.xyz;' : ''}
   }`);
-  sh.fragmentShader = 'uniform sampler2D dwSight;\nuniform float dwSightK;\nvarying vec2 vDwSight;\n' + sh.fragmentShader.replace('#include <fog_fragment>', `{
+  let fs = 'uniform sampler2D dwSight;\nuniform float dwSightK;\nvarying vec2 vDwSight;\n' + sh.fragmentShader;
+  if(cut){
+    fs = 'uniform int dwCutN;\nuniform vec4 dwCutA[4];\nuniform vec4 dwCutB[4];\nuniform vec4 dwSee;\nuniform vec3 dwEye;\nvarying vec3 vDwW;\n' +
+      fs.replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+  for(int dwI = 0; dwI < 4; dwI++){
+    if(dwI >= dwCutN) break;
+    vec2 dwD = vDwW.xz - dwCutA[dwI].xy;
+    vec2 dwL = vec2(dot(dwD, dwCutA[dwI].zw), dot(dwD, vec2(-dwCutA[dwI].w, dwCutA[dwI].z)));
+    if(abs(dwL.x) < dwCutB[dwI].x && abs(dwL.y) < dwCutB[dwI].y && vDwW.y > dwCutB[dwI].z) discard;
+  }
+  if(dwSee.w > 0.0 && vDwW.y > dwSee.y - 0.2){
+    vec3 dwAB = dwSee.xyz - dwEye;
+    float dwT = dot(vDwW - dwEye, dwAB) / dot(dwAB, dwAB);
+    if(dwT > 0.05 && dwT < 0.995){
+      float dwR = dwSee.w * dwT, dwDl = length(vDwW - (dwEye + dwAB * dwT));
+      if(dwDl < dwR * 0.62) discard;
+      if(dwDl < dwR && mod(floor(gl_FragCoord.x) + floor(gl_FragCoord.y), 2.0) < 1.0) discard;
+    }
+  }`);
+  }
+  if(tint) fs = fs.replace('#include <fog_fragment>', `{
     float dwA = texture2D(dwSight, vDwSight).r * dwSightK;
     vec3 dwG = vec3(dot(gl_FragColor.rgb, vec3(0.299, 0.587, 0.114)));
     gl_FragColor.rgb = mix(gl_FragColor.rgb, dwG * vec3(0.86, 0.90, 1.0), dwA * 0.72) * (1.0 - dwA * 0.32);
   }
   #include <fog_fragment>`);
+  sh.fragmentShader = fs;
 };
-THREE.Material.prototype.customProgramCacheKey = function(){ return (this.dwNoTint ? 'dw0' : 'dw1') + this.onBeforeCompile.toString(); };
+THREE.Material.prototype.customProgramCacheKey = function(){ return (this.dwNoTint ? 'dw0' : 'dw1') + (this.dwCut ? 'c' : '') + this.onBeforeCompile.toString(); };
 function toggleSeeAll(){
   debugSeeAll = !debugSeeAll;
   fogDirty = true; fogMarkAll();
@@ -34336,6 +34389,7 @@ function mat(col, op){
       ? new THREE.MeshLambertMaterial({color: col})
       : new THREE.MeshLambertMaterial({color: col, transparent: true, opacity: o, depthWrite: false});
     _sharedRes.add(matCache[k]);
+    matCache[k].dwCut = true;   /* the shared structure materials: see AND WHAT STANDS BETWEEN YOU */
   }
   return matCache[k];
 }
@@ -35580,11 +35634,87 @@ if(ark){
 }
 function arkSideMat(col){
   const k = 'ds|' + col;
-  if(!matCache[k]){ matCache[k] = new THREE.MeshLambertMaterial({color: col, side: THREE.DoubleSide}); _sharedRes.add(matCache[k]); }
+  if(!matCache[k]){ matCache[k] = new THREE.MeshLambertMaterial({color: col, side: THREE.DoubleSide}); matCache[k].dwCut = true; _sharedRes.add(matCache[k]); }
   return matCache[k];
 }
 
 let activeFloor = 0;   /* the storey you are looking at — decks above it turn to glass */
+/* ---------- WHAT CAN BE ENTERED (see AND WHAT STANDS BETWEEN YOU) ----------
+   Every structure you can walk into, as a box on the ground that may be turned: a centre, its own
+   x axis, two half-widths and the ground it stands on. Registered once the world is built and
+   bucketed by 64 tiles, so finding the ones a body is standing in is a lookup, not a scan. */
+const cutVolumes = [];
+const _cutGrid = new Map();
+const CUT_EYE = 2.5;          /* how much of a storey's walls is left standing above its floor */
+const CUT_SEE_R = 4.5;        /* the see-through cone's radius at the point the camera aims at */
+function addCutVolume(cx, cz, ux, uz, hx, hz, kind, ref){
+  const v = {cx, cz, ux, uz, hx, hz, y0: groundY(cx, cz), kind, ref};
+  cutVolumes.push(v);
+  const r = Math.hypot(hx, hz);
+  for(let gy = Math.floor((cz - r) / 64); gy <= Math.floor((cz + r) / 64); gy++)
+    for(let gx = Math.floor((cx - r) / 64); gx <= Math.floor((cx + r) / 64); gx++){
+      const k = gy * 4096 + gx; let a = _cutGrid.get(k); if(!a) _cutGrid.set(k, a = []); a.push(v);
+    }
+  return v;
+}
+function cutContains(v, x, y){
+  const dx = x - v.cx, dy = y - v.cz;
+  return Math.abs(dx * v.ux + dy * v.uz) < v.hx && Math.abs(-dx * v.uz + dy * v.ux) < v.hz;
+}
+function cutVolumesAt(x, y){
+  const a = _cutGrid.get(Math.floor(y / 64) * 4096 + Math.floor(x / 64));
+  return a ? a.filter(v => cutContains(v, x, y)) : [];
+}
+/* which volumes are cut this frame, and at what height: every one with somebody of yours in it,
+   at the storey being looked at if anybody is on it there and the lowest occupied one if not;
+   the four nearest the camera. Written straight into the shader's uniforms. */
+/* the registry follows the world: rebuilt whenever a building, a redoubt or one of your own
+   builds comes or goes (a load brings its own redoubts; a build goes up mid-game) */
+let _cutSig = '';
+function syncCutVolumes(){
+  const sig = buildings.length + '|' + redoubts.length + '|' + pBuilds.length + '|' + towers.length + '|' + (ark ? 1 : 0);
+  if(sig === _cutSig) return;
+  _cutSig = sig;
+  cutVolumes.length = 0; _cutGrid.clear();
+  for(const b of buildings) addCutVolume(b.x + b.w / 2, b.y + b.h / 2, 1, 0, b.w / 2, b.h / 2, 'building', b);
+  for(const b of pBuilds) if(b.w > 1 || b.h > 1) addCutVolume(b.x + b.w / 2, b.y + b.h / 2, 1, 0, b.w / 2, b.h / 2, 'build', b);
+  for(const rd of redoubts){
+    const r = redoubtBounds(rd);
+    if(r._bx === undefined || r._bx > r._bX) continue;
+    addCutVolume((r._bx + r._bX + 1) / 2, (r._by + r._bY + 1) / 2, 1, 0, (r._bX - r._bx + 1) / 2, (r._bY - r._by + 1) / 2, 'redoubt', rd);
+  }
+  for(const tw of towers) addCutVolume(tw.x, tw.y, Math.cos(tw.ang), -Math.sin(tw.ang), tw.inR || 5.5, tw.inR || 5.5, 'tower', tw);
+  if(ark) addCutVolume(ark.mx, ark.my, Math.cos(ark.ang), -Math.sin(ark.ang), ARK_B / 2 + 1, ARK_L / 2 + 1, 'ark', ark);
+}
+const _cutPick = new Map();
+function updateCutaway(focusY){
+  syncCutVolumes();
+  _cutPick.clear();
+  for(const c of chars){
+    if(c.faction !== 'player' || c.state === 'dead') continue;
+    const f = c.floor || 0;
+    if(f < 0) continue;
+    for(const v of cutVolumesAt(c.x, c.y)){
+      const had = _cutPick.get(v);
+      if(had === undefined || f === activeFloor || (had !== activeFloor && f < had)) _cutPick.set(v, f);
+    }
+  }
+  const list = [..._cutPick.entries()].sort((p, q) =>
+    Math.hypot(p[0].cx - camSX, p[0].cz - camSY) - Math.hypot(q[0].cx - camSX, q[0].cz - camSY)).slice(0, 4);
+  list.forEach(([v, f], i) => {
+    DW_CUT.a.value[i].set(v.cx, v.cz, v.ux, v.uz);
+    DW_CUT.b.value[i].set(v.hx + 0.6, v.hz + 0.6, v.y0 + floorY(f) + CUT_EYE, 0);
+  });
+  DW_CUT.n.value = list.length;
+  /* the cone opens only on your own: aimed within a few tiles of one of yours, on the storey the
+     camera is following. Browsing a town is not a reason to drill a hole in every roof you pass. */
+  let near = false;
+  for(const c of chars){
+    if(c.faction !== 'player' || c.state === 'dead' || (c.floor || 0) < 0) continue;
+    if(Math.abs(c.x - camSX) < 7 && Math.abs(c.y - camSY) < 7){ near = true; break; }
+  }
+  DW_CUT.see.value.set(camSX, focusY, camSY, (near && fogPlane.visible) ? CUT_SEE_R : 0);
+}
 /* ---------- dynamic structure groups (rebuilt on change) ---------- */
 function makeDynGroup(sigFn, buildFn){
   const g = new THREE.Group(); scene.add(g);
@@ -45208,6 +45338,7 @@ function render(){
   camFY = camFY === undefined ? 0 : camFY;
   camFY += (floorY(selFloor) - camFY) * Math.min(1, rdt * 5);
   const focusY = Math.max(0, groundY(camSX, camSY)) + 0.8 + camFY;
+  updateCutaway(focusY);
   const horiz = Math.cos(camPitch) * camDist;
   camKick = Math.max(0, camKick - rdt * 2.8);   /* ~0.18s tail on the hardest blow */
   camera.position.set(
@@ -45215,6 +45346,7 @@ function render(){
     focusY + Math.sin(camPitch) * camDist + camKickY * camKick * 0.6,
     camSY + Math.cos(camYaw) * horiz + camKickY * camKick);
   camera.lookAt(camSX, focusY, camSY);
+  DW_CUT.eye.value.copy(camera.position);
   updateSky();
   syncTorchLights();      /* and the three fires nearest the camera, if the camera is under the world */
   syncStrikes();          /* and the light coming down on the glass */
