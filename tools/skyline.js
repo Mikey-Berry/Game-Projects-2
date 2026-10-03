@@ -16,10 +16,13 @@
  *   3. each has a cache at its foot, on ground you can stand on
  *   4. a tower is named only once one of yours stands at it, not when it is seen from far off,
  *      and the save remembers which
- *   5. the wreck of the ARK: one, far from every town and road and clear of the towers; drawn,
- *      its stern well up off the ground; solid down its length while the furrow behind it is
- *      open ground; nothing grows under it or in the furrow; still solid after a reload; and
- *      named like the rest, by walking up to it
+ *   5. the wreck of the ARK: one, square to the world, far from every town and road and clear of
+ *      the towers; drawn, and huge; its hull a wall that survives a reload while the ramp, the
+ *      breach and the spine are ways in; caches aboard on open deck; nobody aboard until one of
+ *      yours comes near, then scavengers and Watchers, on a stream of their own; named like the
+ *      rest, by walking up to it
+ *   6. and it can be walked: one of yours sent from outside the ramp to the bridge, two decks up
+ *      the ship, gets there
  *
  * Anything starting '!!' fails the build.
  *
@@ -151,49 +154,98 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     });
 
     /* ---------- 5. THE WRECK OF THE ARK ---------- */
-    guard(['theWreckIsDownInTheWaste', 'itIsDrawnAndItIsHuge', 'itIsSolidAndTheFurrowIsNot', 'andNamedByWalkingUpToIt'], () => {
+    guard(['theWreckIsDownInTheWaste', 'itIsDrawnAndItIsHuge', 'itsShellIsSolidAndItsInsideIsNot', 'itIsNotEmpty', 'andNamedByWalkingUpToIt'], () => {
       if (!ark) { R.theWreckIsDownInTheWaste = '!! THERE IS NO WRECK ON THE MAP'; return; }
-      const fx = Math.sin(ark.ang), fy = Math.cos(ark.ang);
+      const fx = ark.fx, fy = ark.fy;
       const at = (lz, lx) => [ark.x + fy * (lx || 0) + fx * lz, ark.y - fx * (lx || 0) + fy * lz];
-      const near = towns.filter(t => dist(t.x, t.y, ark.mx, ark.my) < 240).map(t => t.name);
+      const near = towns.filter(t => dist(t.x, t.y, ark.mx, ark.my) < 260).map(t => t.name);
       const roaded = [];
       for (let lz = -ARK_FURROW; lz <= ARK_L; lz += 10) if (nearRoad(...at(lz).map(Math.round), 30)) roaded.push(lz);
       const towered = towers.filter(tw => arkCovers(tw.x, tw.y, 50)).map(tw => tw.id);
-      R.theWreckIsDownInTheWaste = !near.length && !roaded.length && !towered.length
-        ? `one wreck, ${ARK_L} tiles from stern to buried prow with ${ARK_FURROW} of furrow behind, the nearest town ${Math.min(...towns.map(t => dist(t.x, t.y, ark.mx, ark.my))).toFixed(0)} off, no road within 30 and no tower within 50`
-        : `!! THE WRECK IS CROWDED: towns ${near.join(',')}; roads at ${roaded.join(',')}; towers ${towered.join(',')}`;
+      R.theWreckIsDownInTheWaste = !near.length && !roaded.length && !towered.length && Math.abs(ark.fx) + Math.abs(ark.fy) === 1
+        ? `one wreck, ${ARK_L} tiles from stern to buried prow and ${ARK_B} across, square to the world, with ${ARK_FURROW} of furrow behind; the nearest town ${Math.min(...towns.map(t => dist(t.x, t.y, ark.mx, ark.my))).toFixed(0)} off, no road within 30 and no tower within 50`
+        : `!! THE WRECK IS CROWDED OR CROOKED: towns ${near.join(',')}; roads at ${roaded.join(',')}; towers ${towered.join(',')}; axis ${ark.fx},${ark.fy}`;
       const meshes = scene.children.filter(o => o.name === 'ark');
       let top = -Infinity;
       for (const m of meshes) { const pa = m.geometry.attributes.position.array; for (let i = 1; i < pa.length; i += 3) if (pa[i] > top) top = pa[i]; }
       const rise = top - ark.h0;
-      R.itIsDrawnAndItIsHuge = meshes.length >= 10 && rise >= 22
+      R.itIsDrawnAndItIsHuge = meshes.length >= 20 && rise >= 24
         ? `drawn in ${meshes.length} pieces along its length, the highest of it ${rise.toFixed(0)} above the ground it lies on`
         : `!! THE WRECK IS DRAWN WRONG: ${meshes.length} meshes, rising ${rise.toFixed(1)}`;
-      const open = [], shut = [];
-      for (let lz = 10; lz <= ARK_L - 20; lz += 10) if (!isBlocked(...at(lz))) open.push(lz);
-      for (let lz = -20; lz >= -ARK_FURROW + 10; lz -= 15) if (isBlocked(...at(lz))) shut.push(lz);
+      /* the shell is a wall; the spine, the ramp and the breach are ways in; the furrow is ground */
+      const tileAt2 = (lx, lz, f) => { const [wx, wy] = arkTile(lx, lz); return isBlocked(wx + 0.5, wy + 0.5, f || 0); };
+      const bits = [];
+      for (let lz = 30; lz < ARK_PROW0; lz += 20) { if (!tileAt2(-ARK_HALF, lz)) bits.push(`port hull open at ${lz}`); if (tileAt2(-1, lz)) bits.push(`spine shut at ${lz}`); }
+      if (tileAt2(0, 0)) bits.push('the ramp is shut');
+      if (tileAt2(ARK_HALF - 1, ARK_BREACH[0] + 5)) bits.push('the breach is shut');
+      if (!tileAt2(0, ARK_PROW0 + 5)) bits.push('the buried prow is open');
+      for (let lz = -20; lz >= -ARK_FURROW + 10; lz -= 15) if (isBlocked(...at(lz))) bits.push(`furrow shut at ${lz}`);
       const grown = [];
       for (let lz = -ARK_FURROW + 5; lz <= ARK_L; lz += 7) for (const lx of [-10, 0, 10]) { const [x, y] = at(lz, lx); if (rawDecorAt(Math.floor(x), Math.floor(y))) grown.push(`${lz}/${lx}`); }
+      if (grown.length) bits.push(`decor at ${grown.slice(0, 3).join(',')}`);
       restore(JSON.parse(JSON.stringify(snapshot())));
-      const lost = [];
-      for (let lz = 10; lz <= ARK_L - 20; lz += 10) if (!isBlocked(...at(lz))) lost.push(lz);
-      R.itIsSolidAndTheFurrowIsNot = !open.length && !shut.length && !grown.length && !lost.length
-        ? 'solid down its whole length, the furrow behind it open ground, nothing growing under it or in the furrow, and all of it still solid after a reload'
-        : `!! THE WRECK: open along ${open.join(',') || '-'}; furrow shut at ${shut.join(',') || '-'}; decor at ${grown.slice(0, 4).join(',') || '-'}; lost on reload ${lost.join(',') || '-'}`;
-      const me = player()[0], keep = player().map(c => ({ c, x: c.x, y: c.y }));
-      const far = findOpenNear(...at(ARK_L / 2, ARK_B / 2 + 24), 2);
-      for (const c of player()) { c.x = far.x; c.y = far.y; }
+      for (let lz = 30; lz < ARK_PROW0; lz += 40) if (!tileAt2(-ARK_HALF, lz)) bits.push(`hull lost on reload at ${lz}`);
+      R.itsShellIsSolidAndItsInsideIsNot = !bits.length
+        ? 'the hull is a wall down its whole length and stays one after a reload; the ramp, the breach and the spine corridor are open; the buried prow is solid; the furrow is open ground and nothing grows under the hull or in it'
+        : `!! THE WRECK: ${bits.join('; ')}`;
+      /* caches on open ground of their own storey; nobody aboard until one of yours comes near,
+         then scavengers in the hold and Watchers in the dark, and the world's stream untouched */
+      const badCache = ark.caches.filter(i => { const c = chests[i]; return !c || isBlocked(c.x, c.y, c.floor || 0); });
+      const before = chars.filter(c => c.arkCrew).length, wasWoke = ark.woke;
+      const me = player()[0], keep = player().map(c => ({ c, x: c.x, y: c.y, f: c.floor }));
+      const s0 = seed;
+      const [ox, oy] = at(-10, 0);   /* behind the ramp, inside ARK_WAKE_R of the middle */
+      for (const c of player()) { c.x = ox; c.y = oy; c.floor = 0; }
+      arkTick();
+      const crew = chars.filter(c => c.arkCrew && c.state !== 'dead');
+      const bandits = crew.filter(c => c.faction === 'bandit').length, dark = crew.filter(c => c.gauntKind).length;
+      R.itIsNotEmpty = ark.caches.length >= 10 && !badCache.length && !wasWoke && before === 0 && bandits >= 4 && dark >= 4 && seed === s0
+        ? `${ark.caches.length} caches aboard, every one on open deck; nobody aboard until one of yours comes near, then ${bandits} scavengers in the hold and ${dark} Watchers in the dark, and the world's stream is exactly where it was`
+        : `!! ABOARD: ${ark.caches.length} caches (${badCache.length} in walls), crew ${before} before, woke ${wasWoke}; then ${bandits} bandits, ${dark} Watchers; stream ${seed === s0 ? 'kept' : 'MOVED'}`;
+      for (const k of keep) { k.c.x = k.x; k.c.y = k.y; k.c.floor = k.f; }
+      computeVision();
+      const far = findOpenNear(...at(ARK_L / 2, ARK_HALF + 26), 2);
+      for (const c of player()) { c.x = far.x; c.y = far.y; c.floor = 0; }
       hour = 12; computeVision(); witnessTick();
-      const unnamed = !ark.reached && visAt(...at(ARK_L / 2, ARK_B / 2)) === 2;
-      const side = findOpenNear(...at(ARK_L / 2, ARK_B / 2 + 6), 2);
+      const unnamed = !ark.reached && visAt(...at(ARK_L / 2, ARK_HALF)) === 2;
+      const side = findOpenNear(...at(ARK_L / 2, ARK_HALF + 6), 2);
       me.x = side.x; me.y = side.y; computeVision(); witnessTick();
       const named = ark.reached;
-      for (const k of keep) { k.c.x = k.x; k.c.y = k.y; }
+      for (const k of keep) { k.c.x = k.x; k.c.y = k.y; k.c.floor = k.f; }
       computeVision();
       restore(JSON.parse(JSON.stringify(snapshot())));
       R.andNamedByWalkingUpToIt = unnamed && named && ark.reached
-        ? 'its side in plain sight from 24 tiles off does not name it; walking up to it does, and a reload keeps the name'
+        ? 'its side in plain sight from 26 tiles off does not name it; walking up to it does, and a reload keeps the name'
         : `!! NAMING THE WRECK: unnamed in sight ${unnamed}, named at its side ${named}, after reload ${ark.reached}`;
+    });
+
+    /* ---------- 6. AND IT CAN BE WALKED ----------
+       From the waste behind the stern, up the ramp, down the spine, up the stair and onto the
+       bridge, by the same order a player gives. Its crew are taken off first: this is about the
+       ship, not a fight in it. */
+    guard(['youCanWalkInAndUpToTheBridge'], () => {
+      if (!ark) return;
+      /* by where they are, not by `arkCrew`: that mark does not ride the save, and the claims
+         above reload twice, so the crew are aboard again without it */
+      for (let i = chars.length - 1; i >= 0; i--) { const c = chars[i]; if (c.faction !== 'player' && arkCovers(c.x, c.y, 2)) chars.splice(i, 1); }
+      ark.woke = true; rebuildCharGrid();
+      const P = ark.plan, br = P.rooms.find(r => r.key === 'bridge');
+      const goal = arkTile(Math.floor((br.x0 + br.x1) / 2), br.z1 - 3);
+      const me = player()[0], keep = { x: me.x, y: me.y, f: me.floor };
+      const [sx, sy] = arkTile(0, -14);
+      for (const c of player()) { if (c === me) continue; c.x = sx + 30; c.y = sy + 30; }
+      me.x = sx + 0.5; me.y = sy + 0.5; me.floor = 0; me.autoFight = false; me.job = null;
+      clearOrders(me); selected = [me];
+      const ok = routeTo(me, goal[0] + 0.5, goal[1] + 0.5, 1);
+      const t0 = hour; hour = 11;
+      let steps = 0;
+      while (steps < 3000 && !((me.floor || 0) === 1 && dist(me.x, me.y, goal[0] + 0.5, goal[1] + 0.5) < 2)) { update(0.1); steps++; }
+      const there = (me.floor || 0) === 1 && dist(me.x, me.y, goal[0] + 0.5, goal[1] + 0.5) < 2;
+      const where = arkLocal(me.x, me.y).map(v => v.toFixed(0)).join(',');
+      hour = t0; me.x = keep.x; me.y = keep.y; me.floor = keep.f; clearOrders(me);
+      R.youCanWalkInAndUpToTheBridge = ok && there
+        ? `one of yours sent from the waste behind the stern to the bridge walks up the ramp, down the spine, up the stair and onto it in ${(steps / 10).toFixed(0)} seconds`
+        : `!! THE BRIDGE CANNOT BE REACHED: routed ${ok}, after ${(steps / 10).toFixed(0)}s on floor ${me.floor || 0} at ship ${where}`;
     });
 
     return R;

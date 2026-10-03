@@ -28498,6 +28498,7 @@ function update(dt){
   if((_blytheT -= dt) <= 0){ _blytheT = 1; blytheMeets(); }   /* the Order and Ash, when they are near him */
   biomeTick(dt);              /* the flats, the rust and the bog: who walked in, what woke, what keeps */
   hamletTick(dt);             /* and who lives out along the roads, once you are near enough to meet them */
+  arkTick();                  /* and who is living in the wreck, likewise */
   oldKingTick(dt);            /* the man in the Door: talking from up there, or hanging people down here */
   courtTick(dt);              /* and his court, coming through onto the grounds their Arts made */
   dustWallTick(dt);           /* and the walls that were never there, going back to having never been */
@@ -32699,65 +32700,165 @@ function hamletAt(x, y){
 /* ============================================================ THE WRECK OF THE ARK
    "...a massive, toppled automaton... Actually, idea: let's make it the wreck of a titanic
     spaceship. Project ARK, meant to evacuate humanity. Perhaps parts of it are explorable."
-   (2026-10-02.) The largest made thing in the world, and the one thing in it built to leave.
-   It came down nose first and slid: the prow is under a mound of its own ploughing, the stern
-   stands up off the ground with its engines, the back is broken open amidships where the
-   plating went, and behind it runs the furrow it cut, a hundred and fifty tiles of it, with the
-   pieces it shed lying in the trench.
-   THIS IS THE HULL ONLY. What is inside, and what anybody in the world calls it, are waiting on a
-   ruling (LORE-SEAMS §12.4); until then it is a shape on the skyline you can walk round.
-   Placed off `hash2`, the ground reshaped under it and the footprint laid without a draw, BEFORE
-   the towers, so they keep their distance from it. The frame is the ship's own: z runs from the
-   stern (0) to the prow (ARK_L), x across it. */
-const ARK_L = 170, ARK_B = 32, ARK_H = 22, ARK_FURROW = 150;
+   (2026-10-02.) And then: "I would really like for more explorable areas across the map... making
+   them big enough to explore and actually fit squads in is kind of ideal. The ark is big but not
+   big enough." (2026-10-03.) So it is bigger, and it is hollow.
+   One of ARK's ships (bible §15: ARK and AEGIS). It came down nose first and slid: the prow is under
+   a mound of its own ploughing, the stern stands open with its loading ramp down, the back is
+   broken open amidships where the plating went, and behind it runs the furrow it cut.
+   INSIDE, two decks you can walk:
+   - THE LOWER DECK runs from the ramp to a bulkhead short of the buried prow: the engine room
+     at the stern, then a spine corridor with compartments off both sides; the hold under the breach,
+     open to the waste; the sleeper hall (rows of berths); and the last compartments before the
+     bulkhead.
+   - THE UPPER DECK is two pieces, each with a stair up from the spine: the crew deck amidships
+     (cabins either side of a corridor) and the bridge forward.
+   SQUARE TO THE WORLD. It lies on one of the four axes, so every wall inside is a run of tiles and
+   reads as a wall, not a staircase of them. The layout is in the ship's own frame (`lx` across,
+   `lz` from the stern) and stamped onto the world's tiles through `arkTile`.
+   Placed off `hash2`, the ground shaped under it and everything inside laid without a draw.
+   What lives in it arrives the first time one of yours comes near, on a stream of its own,
+   the way the hamlets' people do. */
+const ARK_L = 250, ARK_B = 44, ARK_H = 26, ARK_FURROW = 170;
+const ARK_HALF = ARK_B / 2;                     /* lx runs -ARK_HALF .. ARK_HALF-1 */
+const ARK_PROW0 = ARK_L - 45;                   /* the bulkhead; past it the prow is solid and buried */
+const ARK_BREACH = [106, 126];                  /* where the starboard plating is gone, lz */
+const ARK_WAKE_R = 150;
 /* world -> the ship's frame: [across, along from the stern] */
 function arkLocal(px, py){
-  const fx = Math.sin(ark.ang), fy = Math.cos(ark.ang), dx = px - ark.x, dy = py - ark.y;
+  const fx = ark.fx, fy = ark.fy, dx = px - ark.x, dy = py - ark.y;
   return [dx * fy - dy * fx, dx * fx + dy * fy];
 }
-/* how wide the hull is at a point along it, as a share of ARK_B: tapered at the stern, and to a
-   point at the prow */
+/* the ship's tile (lx, lz) -> the world's tile, centre to centre so a turned tile lands on one tile */
+function arkTile(lx, lz){
+  return [Math.floor(ark.x + ark.fy * (lx + 0.5) + ark.fx * (lz + 0.5)), Math.floor(ark.y - ark.fx * (lx + 0.5) + ark.fy * (lz + 0.5))];
+}
+/* how wide the hull is at a point along it, as a share of ARK_B: full the whole way back to the
+   stern (it is a cargo ship), narrowing to a blunt point at the prow */
 function arkProfile(lz){
   if(lz < 0 || lz > ARK_L) return 0;
-  if(lz < 20) return 0.75 + 0.25 * lz / 20;
-  if(lz > ARK_L - 50) return 1 - 0.65 * (lz - (ARK_L - 50)) / 50;
+  if(lz > ARK_L - 40) return 1 - 0.6 * (lz - (ARK_L - 40)) / 40;
   return 1;
 }
-/* is (px, py) under the hull (pad 0) or within `pad` of it, or in the furrow behind it */
+/* is (px, py) under the hull or within `pad` of it, or in the furrow behind it */
 function arkCovers(px, py, pad){
   if(!ark) return false;
   if(Math.abs(px - ark.cx) > ark.reach + pad || Math.abs(py - ark.cy) > ark.reach + pad) return false;
   const [lx, lz] = arkLocal(px, py);
-  /* never narrower than the mound over the prow, which nothing grows on either */
-  if(lz >= -pad && lz <= ARK_L + pad) return Math.abs(lx) < ARK_B / 2 * Math.max(arkProfile(clamp(lz, 0, ARK_L)), 0.7) + pad;
-  return lz < 0 && lz > -ARK_FURROW && Math.abs(lx) < 12;
+  if(lz >= -pad && lz <= ARK_L + pad) return Math.abs(lx) < ARK_HALF * Math.max(arkProfile(clamp(lz, 0, ARK_L)), 0.7) + pad;
+  return lz < 0 && lz > -ARK_FURROW && Math.abs(lx) < 13;
+}
+/* ---------- THE PLAN ----------
+   Two grids in the ship's frame, a byte a tile. LOWER: 0 open, 1 hull, 2 partition, 3 something
+   standing in the way (an engine core, a crate, a berth), 4 solid prow. UPPER: 255 no deck, 0 deck,
+   2 partition, 3 something standing on it (a console). Plus the stairs, the rooms (for the caches
+   and for who lives where) and the things drawn on the floor that do not block. Built once, from
+   nothing but these constants. */
+function arkPlan(){
+  const NX = ARK_B, NZ = ARK_L, I = (lx, lz) => lz * NX + (lx + ARK_HALF);
+  const lo = new Uint8Array(NX * NZ), up = new Uint8Array(NX * NZ).fill(255);
+  const rooms = [], stairsL = [], props = [];
+  const inX = (lx) => lx >= -ARK_HALF && lx < ARK_HALF;
+  const setLo = (lx, lz, v) => { if(inX(lx) && lz >= 0 && lz < NZ) lo[I(lx, lz)] = v; };
+  const setUp = (lx, lz, v) => { if(inX(lx) && lz >= 0 && lz < NZ) up[I(lx, lz)] = v; };
+  const H0 = -ARK_HALF, H1 = ARK_HALF - 1;              /* the hull's two side rows */
+  /* the shell, and the solid prow past the bulkhead */
+  for(let lz = 0; lz < NZ; lz++) for(let lx = H0; lx <= H1; lx++){
+    if(lz >= ARK_PROW0) setLo(lx, lz, 4);
+    else if(lx === H0 || lx === H1 || lz === 0) setLo(lx, lz, 1);
+  }
+  for(let lx = -5; lx <= 4; lx++) setLo(lx, 0, 0);                                         /* the ramp */
+  for(let lz = ARK_BREACH[0]; lz <= ARK_BREACH[1]; lz++) setLo(H1, lz, 0);                  /* the breach */
+  /* the engine room's wall, across the whole width, with the spine's doorway */
+  for(let lx = H0 + 1; lx <= H1 - 1; lx++) if(lx < -3 || lx > 2) setLo(lx, 28, 2);
+  rooms.push({key: 'engine', f: 0, x0: H0 + 1, z0: 1, x1: H1 - 1, z1: 27});
+  for(const [x0, x1] of [[-15, -9], [8, 14]]) for(let lz = 7; lz <= 13; lz++) for(let lx = x0; lx <= x1; lx++) setLo(lx, lz, 3);
+  props.push({kind: 'core', f: 0, x0: -15, z0: 7, x1: -9, z1: 13}, {kind: 'core', f: 0, x0: 8, z0: 7, x1: 14, z1: 13});
+  /* the spine and its compartments, 18 long, a door into each from the corridor */
+  const HOLD = [100, 136], HALL = [136, 172];
+  const cuts = [28, 46, 64, 82, 100, 118, 136, 154, 172, 190, ARK_PROW0];
+  for(let lz = 29; lz < ARK_PROW0; lz++){ setLo(-4, lz, 2); setLo(3, lz, 2); }
+  for(let k = 0; k + 1 < cuts.length; k++){
+    const z0 = cuts[k], z1 = cuts[k + 1], mid = Math.floor((z0 + z1) / 2);
+    for(const side of [-1, 1]){
+      const hold = side > 0 && z0 >= HOLD[0] && z0 < HOLD[1];
+      const hall = side < 0 && z0 >= HALL[0] && z0 < HALL[1];
+      const xa = side < 0 ? H0 + 1 : 4, xb = side < 0 ? -5 : H1 - 1;
+      /* the wall at the stern end of each compartment, unless the hold or the hall runs on through it */
+      if(k > 0 && !(hold && z0 > HOLD[0]) && !(hall && z0 > HALL[0])) for(let lx = xa; lx <= xb; lx++) setLo(lx, z0, 2);
+      const cx = side < 0 ? -4 : 3;
+      if(hold){ for(let lz = z0 + (z0 === HOLD[0] ? 4 : 0); lz < z1 - (z1 === HOLD[1] ? 4 : 0); lz++) setLo(cx, lz, 0); }
+      else for(let lz = mid - 1; lz <= mid + 1; lz++) setLo(cx, lz, 0);
+      if(hold && z0 === HOLD[0]) rooms.push({key: 'hold', f: 0, x0: xa, z0: HOLD[0] + 1, x1: xb, z1: HOLD[1] - 1});
+      else if(hall && z0 === HALL[0]) rooms.push({key: 'hall', f: 0, x0: xa, z0: HALL[0] + 1, x1: xb, z1: HALL[1] - 1});
+      else if(!hold && !hall) rooms.push({key: 'cabin', f: 0, x0: xa, z0: z0 + 1, x1: xb, z1: z1 - 1});
+    }
+  }
+  /* crates in the hold, in stacks with room to walk between */
+  for(let s = 0; s < 9; s++){
+    const cx = 6 + Math.floor(hash2(s * 7 + 1, 77) * 12), cz = HOLD[0] + 4 + Math.floor(hash2(s * 3 + 5, 91) * (HOLD[1] - HOLD[0] - 10));
+    if(lo[I(cx, cz)] || lo[I(cx + 1, cz + 1)]) continue;
+    for(let dz = 0; dz < 2; dz++) for(let dx = 0; dx < 2; dx++) setLo(cx + dx, cz + dz, 3);
+    props.push({kind: 'crate', f: 0, x0: cx, z0: cz, x1: cx + 1, z1: cz + 1});
+  }
+  /* the berths: four rows down the sleeper hall, two tiles long, an aisle between every pair */
+  for(const bx of [-19, -16, -12, -9]) for(let lz = HALL[0] + 3; lz + 1 < HALL[1] - 2; lz += 3){
+    setLo(bx, lz, 3); setLo(bx, lz + 1, 3);
+    props.push({kind: 'berth', f: 0, x0: bx, z0: lz, x1: bx, z1: lz + 1});
+  }
+  /* ---- the upper deck ---- */
+  const deck = (z0, z1) => { for(let lz = z0; lz < z1; lz++) for(let lx = H0 + 1; lx <= H1 - 1; lx++) setUp(lx, lz, 0);
+                             for(let lz = z0; lz < z1; lz++){ setUp(H0 + 1, lz, 2); setUp(H1 - 1, lz, 2); }
+                             for(let lx = H0 + 1; lx <= H1 - 1; lx++){ setUp(lx, z0, 2); setUp(lx, z1 - 1, 2); } };
+  const CREW = [46, 100], BRIDGE = [ARK_PROW0 - 40, ARK_PROW0];
+  deck(CREW[0], CREW[1]); deck(BRIDGE[0], BRIDGE[1]);
+  /* crew cabins, nine long, either side of a corridor eight wide, so the stair can land in it */
+  for(let lz = CREW[0] + 1; lz < CREW[1] - 1; lz++){ setUp(-5, lz, 2); setUp(4, lz, 2); }
+  for(let z0 = CREW[0]; z0 + 9 <= CREW[1]; z0 += 9){
+    const mid = z0 + 4;
+    for(const [xa, xb, cx] of [[H0 + 2, -6, -5], [5, H1 - 2, 4]]){
+      if(z0 > CREW[0]) for(let lx = xa; lx <= xb; lx++) setUp(lx, z0, 2);
+      setUp(cx, mid, 0); setUp(cx, mid + 1, 0);
+      rooms.push({key: 'quarters', f: 1, x0: xa, z0: z0 + 1, x1: xb, z1: Math.min(z0 + 8, CREW[1] - 2)});
+    }
+  }
+  rooms.push({key: 'bridge', f: 1, x0: H0 + 2, z0: BRIDGE[0] + 1, x1: H1 - 2, z1: BRIDGE[1] - 2});
+  /* the bridge's consoles, in a row facing the way it was flying */
+  for(let lx = -16; lx <= 14; lx += 5){ setUp(lx, BRIDGE[1] - 6, 3); setUp(lx + 1, BRIDGE[1] - 6, 3);
+    props.push({kind: 'console', f: 1, x0: lx, z0: BRIDGE[1] - 6, x1: lx + 1, z1: BRIDGE[1] - 6}); }
+  /* THE STAIRS UP, IN A NICHE OFF THE SPINE, NOT IN IT. A body climbing takes the first stair up
+     it steps on, and a stair in the middle of the corridor was stepped on by everybody walking
+     past it: sent to the bridge, a hand climbed onto the crew deck at the first stair and could
+     get no further. So each is cut into the port corridor wall, where nobody walking the spine
+     treads, and lands in the corridor (or the hall) above. */
+  for(const lz of [CREW[1] - 6, BRIDGE[0] + 4]){ setLo(-4, lz, 0); setUp(-4, lz, 0); setUp(-3, lz, 0); stairsL.push({lx: -4, lz}); }
+  return {lo, up, rooms, stairs: stairsL, props, I, CREW, BRIDGE, HOLD, HALL};
 }
 (function seedArk(){
   const clearOf = (x, y) =>
-    !inHeadland(x, y, 120) &&
-    !towns.some(t => dist(t.x, t.y, x, y) < 260) &&
-    !hamlets.some(h => dist(h.x, h.y, x, y) < 190) &&
-    !corpseSites.some(s2 => dist(s2.x, s2.y, x, y) < 190) &&
-    !ruins.some(r => dist(r.x, r.y, x, y) < 150) &&
-    !camps.some(c => dist(c.x, c.y, x, y) < 170) &&
-    !redoubts.some(r => dist(r.x, r.y, x, y) < 170) &&
-    !(bastion && dist(bastion.x, bastion.y, x, y) < 220) &&
-    !(guild && dist(guild.x, guild.y, x, y) < 220) &&
-    !(coilShrine && dist(coilShrine.x, coilShrine.y, x, y) < 150) &&
-    !(copperPit && dist(copperPit.x, copperPit.y, x, y) < 200) &&
-    !biomeSleepers.some(sl => dist(sl.x, sl.y, x, y) < 150);
+    !inHeadland(x, y, 140) &&
+    !towns.some(t => dist(t.x, t.y, x, y) < 300) &&
+    !hamlets.some(h => dist(h.x, h.y, x, y) < 230) &&
+    !corpseSites.some(s2 => dist(s2.x, s2.y, x, y) < 230) &&
+    !ruins.some(r => dist(r.x, r.y, x, y) < 190) &&
+    !camps.some(c => dist(c.x, c.y, x, y) < 210) &&
+    !redoubts.some(r => dist(r.x, r.y, x, y) < 210) &&
+    !(bastion && dist(bastion.x, bastion.y, x, y) < 260) &&
+    !(guild && dist(guild.x, guild.y, x, y) < 260) &&
+    !(coilShrine && dist(coilShrine.x, coilShrine.y, x, y) < 190) &&
+    !(copperPit && dist(copperPit.x, copperPit.y, x, y) < 240) &&
+    !biomeSleepers.some(sl => dist(sl.x, sl.y, x, y) < 190);
   /* and never over a way down: the Undercroft's stairs are dug before this, and a hull laid on one
      seals it (tools/descend.js caught one under the stern) */
-  const overStairs = (x, y, ang) => stairs.some(st => (st.from === 0 || st.to === 0) &&
-    Math.abs(st.x - x) < ARK_L + ARK_FURROW && Math.abs(st.y - y) < ARK_L + ARK_FURROW &&
-    (() => { const fx = Math.sin(ang), fy = Math.cos(ang), dx = st.x - x, dy = st.y - y;
-             const lx = dx * fy - dy * fx, lz = dx * fx + dy * fy;
-             return lz > -ARK_FURROW - 6 && lz < ARK_L + 20 && Math.abs(lx) < ARK_B / 2 + 26; })());
+  const overStairs = (x, y, fx, fy) => stairs.some(st => {
+    if(st.from !== 0 && st.to !== 0) return false;
+    const dx = st.x - x, dy = st.y - y, lx = dx * fy - dy * fx, lz = dx * fx + dy * fy;
+    return lz > -ARK_FURROW - 6 && lz < ARK_L + 20 && Math.abs(lx) < ARK_HALF + 26;
+  });
   /* the whole length of it and its furrow on dry, open, unroaded ground of no great rise */
-  const groundOk = (x, y, ang) => {
-    const fx = Math.sin(ang), fy = Math.cos(ang);
+  const groundOk = (x, y, fx, fy) => {
     let lo = Infinity, hi = -Infinity;
-    for(let lz = -ARK_FURROW; lz <= ARK_L + 14; lz += 6) for(let lx = -24; lx <= 24; lx += 6){
+    for(let lz = -ARK_FURROW; lz <= ARK_L + 14; lz += 6) for(let lx = -30; lx <= 30; lx += 6){
       const wx = Math.round(x + fy * lx + fx * lz), wy = Math.round(y - fx * lx + fy * lz);
       if(wx < 40 || wy < 40 || wx > W - 40 || wy > H - 40) return false;
       if(tileAt(wx, wy) === 3 || isBlocked(wx, wy)) return false;
@@ -32766,14 +32867,14 @@ function arkCovers(px, py, pad){
     }
     return hi - lo < 9;
   };
-  for(let k = 0; k < 3000 && !ark; k++){
-    const x = Math.round(320 + hash2(k * 11 + 7, 503) * (W - 640)), y = Math.round(320 + hash2(k * 5 + 9, 227) * (H - 640));
-    const ang = hash2(x * 3, y * 7) * Math.PI * 2;
-    if(!clearOf(x, y) || overStairs(x, y, ang) || !groundOk(x, y, ang)) continue;
-    const mid = {x: x + Math.sin(ang) * ARK_L / 2, y: y + Math.cos(ang) * ARK_L / 2};
-    ark = {x, y, ang, h0: HV[y * (W + 1) + x], reached: false,
-           cx: x + Math.sin(ang) * (ARK_L - ARK_FURROW) / 2, cy: y + Math.cos(ang) * (ARK_L - ARK_FURROW) / 2,
-           reach: (ARK_L + ARK_FURROW) / 2 + ARK_B, mx: mid.x, my: mid.y};
+  for(let k = 0; k < 4000 && !ark; k++){
+    const x = Math.round(340 + hash2(k * 11 + 7, 503) * (W - 680)), y = Math.round(340 + hash2(k * 5 + 9, 227) * (H - 680));
+    const q = Math.floor(hash2(x * 3, y * 7) * 4) % 4, ang = q * Math.PI / 2;
+    const fx = Math.round(Math.sin(ang)), fy = Math.round(Math.cos(ang));
+    if(!clearOf(x, y) || overStairs(x, y, fx, fy) || !groundOk(x, y, fx, fy)) continue;
+    ark = {x, y, ang, fx, fy, h0: HV[y * (W + 1) + x], reached: false, woke: false,
+           cx: x + fx * (ARK_L - ARK_FURROW) / 2, cy: y + fy * (ARK_L - ARK_FURROW) / 2,
+           reach: (ARK_L + ARK_FURROW) / 2 + ARK_B, mx: x + fx * ARK_L / 2, my: y + fy * ARK_L / 2};
   }
   if(!ark) return;
   /* ---- the ground it lies in: a bed levelled under the hull, the mound the prow ploughed up
@@ -32784,28 +32885,104 @@ function arkCovers(px, py, pad){
   const sm = (t) => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
   for(let j = y0; j <= y1; j++) for(let i = x0; i <= x1; i++){
     const [lx, lz] = arkLocal(i, j), ax = Math.abs(lx), o = j * (W + 1) + i;
-    if(lz > -10 && lz < ARK_L + 24){
-      const half = ARK_B / 2 + 4;
-      const k = sm(1 - (ax - half) / 10) * sm(1 - (-lz) / 10) * sm(1 - (lz - ARK_L - 14) / 10);
+    if(lz > -12 && lz < ARK_L + 26){
+      const half = ARK_HALF + 5;
+      const k = sm(1 - (ax - half) / 10) * sm(1 - (-lz - 2) / 10) * sm(1 - (lz - ARK_L - 16) / 10);
       if(k > 0) HV[o] += (ark.h0 - HV[o]) * k;
       /* the mound over the prow */
-      const mz = (lz - (ARK_L - 4)) / 26, mxx = lx / (ARK_B / 2 + 10);
+      const mz = (lz - (ARK_L - 4)) / 34, mxx = lx / (ARK_HALF + 12);
       const bump = Math.max(0, 1 - mz * mz) * Math.max(0, 1 - mxx * mxx);
-      if(bump > 0) HV[o] += 11 * bump * bump;
+      if(bump > 0) HV[o] += 13 * bump * bump;
     }
-    if(lz <= 0 && lz > -ARK_FURROW - 10){
+    if(lz <= -2 && lz > -ARK_FURROW - 10){
       const fade = Math.sqrt(sm(1 - (-lz) / ARK_FURROW));
-      if(ax < 12) HV[o] -= 2.6 * (1 - ax / 12) * (1 - ax / 12) * fade;
-      else if(ax < 22){ const b = 1 - Math.abs(ax - 16) / 6; if(b > 0) HV[o] += 1.5 * b * fade; }
+      if(ax < 13) HV[o] -= 2.6 * (1 - ax / 13) * (1 - ax / 13) * fade;
+      else if(ax < 24){ const b = 1 - Math.abs(ax - 18) / 6; if(b > 0) HV[o] += 1.6 * b * fade; }
     }
   }
-  /* ---- and the hull is a thing: every tile under it is solid ---- */
-  for(let j = y0; j <= y1; j++) for(let i = x0; i <= x1; i++){
-    const [lx, lz] = arkLocal(i + 0.5, j + 0.5);
-    if(lz < 0 || lz > ARK_L) continue;
-    if(Math.abs(lx) < ARK_B / 2 * Math.max(arkProfile(lz), 0.35) - 0.5){ const k = bkey(i, j, 0); blocked.add(k); baseBlocked.add(k); }
+  /* ---- and the plan, laid on the world's tiles ---- */
+  const P = ark.plan = arkPlan();
+  const solid = (k) => { blocked.add(k); baseBlocked.add(k); };
+  for(let lz = 0; lz < ARK_L; lz++) for(let lx = -ARK_HALF; lx < ARK_HALF; lx++){
+    if(arkProfile(lz + 0.5) * ARK_HALF < Math.abs(lx + 0.5)) continue;   /* outside the narrowing prow */
+    const [wx, wy] = arkTile(lx, lz);
+    const a = P.lo[P.I(lx, lz)], b = P.up[P.I(lx, lz)];
+    if(a) solid(bkey(wx, wy, 0));
+    if(b !== 255){ decks.add(bkey(wx, wy, 1)); if(b) solid(bkey(wx, wy, 1)); }
   }
+  for(const st of P.stairs){ const [wx, wy] = arkTile(st.lx, st.lz); stairs.push({x: wx, y: wy, from: 0, to: 1, ark: true}); }
+  /* a cache in most compartments, picked by hash; the engine room and the bridge always have one */
+  const LOOT = [
+    () => ({aether_cell: 1 + Math.floor(hash2(ark.x, 3) * 3)}), () => ({formula_w: 1}), () => ({scrap: 4}),
+    () => ({c_ingot: 2}), () => ({lead: 3}), () => ({gold_bar: 1}), () => ({iron: 3}), () => ({aether_cell: 2, scrap: 2}),
+  ];
+  ark.caches = [];
+  P.rooms.forEach((rm, i) => {
+    const h = hash2(ark.x * 7 + i * 13, ark.y * 3 + i * 5);
+    const always = rm.key === 'engine' || rm.key === 'bridge';
+    if(!always && h < 0.4) return;
+    /* a tile against the room's back wall, open on its storey */
+    let spot = null;
+    for(let tries = 0; tries < 40 && !spot; tries++){
+      const lx = rm.x0 + 1 + Math.floor(hash2(i * 31 + tries, 17) * Math.max(1, rm.x1 - rm.x0 - 1));
+      const lz = rm.z0 + 1 + Math.floor(hash2(i * 29 + tries, 23) * Math.max(1, rm.z1 - rm.z0 - 1));
+      const code = rm.f ? P.up[P.I(lx, lz)] : P.lo[P.I(lx, lz)];
+      if(code === 0) spot = [lx, lz];
+    }
+    if(!spot) return;
+    const [wx, wy] = arkTile(spot[0], spot[1]);
+    const items = rm.key === 'engine' ? {aether_cell: 4, scrap: 6}
+                : rm.key === 'bridge' ? {formula_p: 1, aether_cell: 3, tome: 1}
+                : rm.key === 'hold' ? {scrap: 6, iron: 4}
+                : Object.assign({scrap: 1 + Math.floor(h * 4)}, LOOT[Math.floor(h * 997) % LOOT.length]());
+    ark.caches.push(chests.length);
+    chests.push({x: wx + 0.5, y: wy + 0.5, floor: rm.f, opened: false, loot: {cats: Math.floor(30 + h * 160), items}});
+  });
 })();
+/* the people and the things in it, the first time one of yours comes near: scavengers camped in
+   the hold under the breach, and Watchers in the dark of the sleeper hall and up on the bridge.
+   On a stream of their own, so a walk past the wreck moves nothing else that happens today. */
+function arkTick(){
+  if(!ark || ark.woke) return;
+  if(!player().some(c => c.state === 'ok' && !c.floor && Math.abs(c.x - ark.mx) < ARK_WAKE_R && Math.abs(c.y - ark.my) < ARK_WAKE_R)) return;
+  wakeArk();
+}
+function wakeArk(){
+  if(!ark || ark.woke) return;
+  ark.woke = true;
+  const P = ark.plan;
+  const pocket = seed;
+  seed = (pocket ^ Math.imul(ark.x * 31 + ark.y, 0x9E3779B9)) | 0;
+  try {
+    const at = (rm) => {
+      for(let t = 0; t < 30; t++){
+        const lx = ri(rm.x0, rm.x1), lz = ri(rm.z0, rm.z1);
+        if((rm.f ? P.up[P.I(lx, lz)] : P.lo[P.I(lx, lz)]) === 0){ const [wx, wy] = arkTile(lx, lz); return {x: wx + 0.5, y: wy + 0.5}; }
+      }
+      return null;
+    };
+    const hold = P.rooms.find(r => r.key === 'hold');
+    squadN++;
+    const sq = {id: squadN, anchor: {x: ark.mx, y: ark.my}, kind: 'bandit'};
+    for(let i = 0; hold && i < ri(5, 7); i++){
+      const q = at(hold); if(!q) continue;
+      const lvl = ri(8, 18) + Math.floor(day * 0.6), r = rnd();
+      const c = makeChar('Dust Bandit', 'bandit', q.x, q.y,
+        {atk: lvl, def: lvl, tough: lvl, ath: ri(3, 8), squad: sq,
+         weapon: r < 0.25 ? 'w_bow' : r < 0.7 ? 'w_rkat' : 'w_plank', armor: rnd() < 0.5 ? 'a_rag' : null});
+      c.loot = ri(30, 140); c.guard = {x: q.x, y: q.y}; c.arkCrew = true;
+      chars.push(c);
+    }
+    for(const rm of P.rooms.filter(r => r.key === 'hall' || r.key === 'bridge')){
+      for(let i = 0; i < (rm.key === 'hall' ? 4 : 2); i++){
+        const q = at(rm); if(!q) continue;
+        const g = spawnGaunt(rnd() < 0.5 ? 'stalker' : 'gaunt', q.x, q.y);
+        g.x = q.x; g.y = q.y; g.floor = rm.f; g.nightborn = false; g.guard = {x: q.x, y: q.y}; g.arkCrew = true;
+      }
+    }
+    rebuildCharGrid();
+  } finally { seed = pocket; }
+}
 /* ============================================================ THE GOLDEN-AGE TOWERS
    "I do like the idea of a unique skyline. Let's: ... add golden age tower ruins." (2026-10-02)
    With the map drawn whole, what stands up off it is what you steer by. These are the tallest
@@ -35520,86 +35697,133 @@ function palette(t){
   unit.dispose();
 }
 /* ---------- THE WRECK, DRAWN (see THE WRECK OF THE ARK) ----------
-   Built the way the towers are, a tree of transforms baked to one mesh per piece and colour, but
-   in a dozen chunks along its length rather than one, so the half of it off screen is not drawn.
-   A hull is a hexagon in section: a deep middle course, a narrower keel and spine, and four
-   chamfers on the shoulders. Bronze gone dark, panels a shade lighter, the Golden Age's gold in
-   a band every few frames. Amidships the plating is gone from the top and one side and the ribs
-   stand in the open over a black hold. */
+   A shell, not a solid: thin plates round a hexagonal section (upright sides, two chamfers, a
+   flat top) so that when one of yours is inside it and the cutaway takes everything above their
+   storey, what is left is the inside of a ship: the deck plates, the partitions, the berths, the
+   engines. Built the way the towers are, a tree of transforms baked to one mesh per piece and
+   colour, in 20-tile slices along its length so the half of it off screen is not drawn.
+   The partitions come straight off the plan, merged into the fewest boxes that cover them. */
 if(ark){
-  const AC = {hull: '#4b4238', panel: '#675a49', gold: '#a8853c', green: '#4d6658', dark: '#0c0b0d', rib: '#8a6d3a', scrap: '#5a4e40'};
-  const UNIT = {box: new THREE.BoxGeometry(1, 1, 1).toNonIndexed(), cyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 16, 1, true).toNonIndexed(),
-                bell: new THREE.CylinderGeometry(0.32, 0.5, 1, 16, 1, true).toNonIndexed()};
+  const P = ark.plan;
+  const AC = {hull: '#4b4238', panel: '#675a49', gold: '#a8853c', green: '#4d6658', dark: '#0c0b0d', rib: '#8a6d3a',
+              scrap: '#5a4e40', deck: '#3e3a35', deckUp: '#5a5248', wall: '#8a7c64', core: '#55585a', crate: '#6a5a40',
+              berth: '#9aa49c', lid: '#5f6a66', console: '#3a4a52'};
+  const UNIT = {box: new THREE.BoxGeometry(1, 1, 1).toNonIndexed(), cyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 18, 1, true).toNonIndexed(),
+                bell: new THREE.CylinderGeometry(0.32, 0.5, 1, 18, 1, true).toNonIndexed()};
   const v = new THREE.Vector3(), nm = new THREE.Matrix3();
   const hv = (k) => hash2(ark.x * 13 + k * 7, ark.y * 29 + k * 3);
   const root = new THREE.Object3D();
-  root.position.set(ark.x, ark.h0 - 0.4, ark.y);
+  root.position.set(ark.x, ark.h0, ark.y);
   root.rotation.y = ark.ang;
-  /* the hull: lifted at the stern, nose down into its mound, and rolled onto one side */
-  const hull = new THREE.Object3D();
-  hull.position.y = 3.5; hull.rotation.set(0.095, 0, 0.13);
-  root.add(hull);
-  const chunks = new Map();   /* chunk index -> {key -> [Object3D]} */
+  const chunks = new Map();
   const node = (parent, px, py, pz, rx, ry, rz) => { const o = new THREE.Object3D(); o.position.set(px, py, pz); o.rotation.set(rx || 0, ry || 0, rz || 0); parent.add(o); return o; };
   const add = (chunk, geo, parent, col, sx, sy, sz, px, py, pz, rx, ry, rz) => {
     const o = node(parent, px, py, pz, rx, ry, rz); o.scale.set(sx, sy, sz);
     let c = chunks.get(chunk); if(!c) chunks.set(chunk, c = {});
     const key = geo + '|' + col; (c[key] || (c[key] = [])).push(o);
   };
-  const SEG = 8, nSeg = Math.ceil(ARK_L / SEG);
-  const BREACH0 = 66, BREACH1 = 100;
+  const ch = (z) => Math.floor(z / 20);
+  const H = ARK_H, SX = ARK_HALF - 0.5, WT = 13;
+  /* ---- the shell ---- */
+  const SEG = 10, nSeg = Math.ceil(ARK_L / SEG);
   for(let si = 0; si < nSeg; si++){
-    const z = si * SEG + SEG / 2, f = Math.max(arkProfile(z), 0.35);
-    const B = ARK_B * f, Hh = ARK_H * f, ch = Math.floor(z / 16);
+    const z = si * SEG + SEG / 2, f = Math.max(arkProfile(z), 0.4);
+    const sx = SX * f, hh = H * Math.min(1, 0.5 + f * 0.5), hs = hh * 0.62, wt = WT * f;
     const col = si % 3 === 1 ? AC.panel : (si % 7 === 4 ? AC.green : AC.hull);
-    const open = z > BREACH0 && z < BREACH1;
-    add(ch, 'box', hull, AC.hull, B * 0.55, Hh * 0.22, SEG + 0.1, 0, Hh * 0.11, z);                 /* keel */
-    add(ch, 'box', hull, col, B, Hh * 0.42, SEG + 0.1, open ? -B * 0.18 : 0, Hh * 0.43, z);        /* the deep middle course */
-    if(open) add(ch, 'box', hull, col, B * 0.62, Hh * 0.42, SEG + 0.1, -B * 0.19, Hh * 0.43, z);
-    if(!open) add(ch, 'box', hull, col, B * 0.6, Hh * 0.2, SEG + 0.1, 0, Hh * 0.74, z);             /* the spine */
+    const openSide = z > ARK_BREACH[0] - 4 && z < ARK_BREACH[1] + 5;
+    const openTop = z > ARK_BREACH[0] - 12 && z < ARK_BREACH[1] + 13;
     for(const side of [-1, 1]){
-      if(open && side > 0) continue;
-      add(ch, 'box', hull, col, B * 0.34, Hh * 0.24, SEG + 0.1, side * B * 0.36, Hh * 0.62, z, 0, 0, side * -0.62);  /* upper shoulder */
-      add(ch, 'box', hull, AC.hull, B * 0.32, Hh * 0.2, SEG + 0.1, side * B * 0.33, Hh * 0.2, z, 0, 0, side * 0.62); /* lower shoulder */
-    }
-    /* a gold band round the hull every fourth frame */
-    if(si % 4 === 2 && !open){
-      add(ch, 'box', hull, AC.gold, B + 0.5, 0.6, 0.7, 0, Hh * 0.43 + Hh * 0.21, z - SEG / 2);
-      add(ch, 'box', hull, AC.gold, B + 0.5, 0.6, 0.7, 0, Hh * 0.43 - Hh * 0.21, z - SEG / 2);
-    }
-    /* the breach: ribs standing in the open over a black hold */
-    if(open){
-      add(ch, 'box', hull, AC.dark, B * 0.7, Hh * 0.08, SEG + 0.1, B * 0.05, Hh * 0.62, z);
-      for(let r = 0; r < 2; r++){
-        const rz = z - SEG / 2 + r * SEG / 2 + 1;
-        add(ch, 'box', hull, AC.rib, 0.7, Hh * 0.55, 0.7, B * 0.44, Hh * 0.55, rz, 0, 0, -0.35);
-        add(ch, 'box', hull, AC.rib, B * 0.42, 0.6, 0.7, B * 0.2, Hh * 0.83, rz, 0, 0, 0.1);
-        if(hv(200 + si * 2 + r) > 0.35) add(ch, 'box', hull, AC.rib, 0.6, Hh * 0.3, 0.6, B * 0.05, Hh * 0.9, rz, 0, 0, 0.5);
+      const breach = side > 0;
+      if(!(breach && openSide)) add(ch(z), 'box', root, col, 1, hs, SEG + 0.05, side * sx, hs / 2, z);
+      if(!(breach && openTop)){
+        const rise = hh - hs, run = sx - wt, len = Math.hypot(rise, run);
+        const th = side > 0 ? Math.atan2(rise, -run) : Math.atan2(rise, run);
+        add(ch(z), 'box', root, col, len, 1, SEG + 0.05, side * (sx + wt) / 2, (hs + hh) / 2, z, 0, 0, th);
       }
     }
+    if(!openTop) add(ch(z), 'box', root, col, wt * 2, 1, SEG + 0.05, 0, hh - 0.5, z);
+    else add(ch(z), 'box', root, col, wt, 1, SEG + 0.05, -wt / 2, hh - 0.5, z);      /* the port half of the roof stays */
+    /* a gold band round her every fourth frame */
+    if(si % 4 === 2 && !openTop){
+      add(ch(z), 'box', root, AC.gold, 1.3, hs, 0.7, -sx, hs / 2, z - SEG / 2);
+      add(ch(z), 'box', root, AC.gold, 1.3, hs, 0.7, sx, hs / 2, z - SEG / 2);
+      add(ch(z), 'box', root, AC.gold, wt * 2 + 0.6, 1.3, 0.7, 0, hh - 0.4, z - SEG / 2);
+    }
+    /* the breach: ribs standing over the open side, the plating gone between them */
+    if(openTop) for(let r = 0; r < 2; r++){
+      const rz = z - SEG / 2 + r * SEG / 2 + 1;
+      if(openSide) add(ch(rz), 'box', root, AC.rib, 0.7, hs, 0.7, sx, hs / 2, rz);
+      const rise = hh - hs, run = sx - wt;
+      add(ch(rz), 'box', root, AC.rib, Math.hypot(rise, run), 0.6, 0.7, (sx + wt) / 2, (hs + hh) / 2, rz, 0, 0, Math.atan2(rise, -run));
+      if(hv(200 + si * 2 + r) > 0.35) add(ch(rz), 'box', root, AC.rib, wt, 0.6, 0.6, wt / 2, hh - 0.5, rz);
+    }
   }
-  /* the stern: a flat transom and three engine bells, cold, with their throats black */
+  /* the stern: the transom with the ramp's mouth in it, the ramp down, and three cold engine bells */
   {
-    const B = ARK_B * 0.75, Hh = ARK_H * 0.75;
-    add(0, 'box', hull, AC.hull, B * 0.9, Hh * 0.8, 1.2, 0, Hh * 0.45, -0.4);
-    for(const [ex, ey, er] of [[-B * 0.25, Hh * 0.32, 4.4], [B * 0.25, Hh * 0.32, 4.4], [0, Hh * 0.72, 3.6]]){
-      const e = node(hull, ex, ey, -0.8, Math.PI / 2, 0, 0);
+    const hs = H * 0.62, mouthH = 4.6;
+    add(0, 'box', root, AC.hull, SX - 5, hs, 1, -(SX + 5) / 2, hs / 2, 0.5);
+    add(0, 'box', root, AC.hull, SX - 5, hs, 1, (SX + 5) / 2, hs / 2, 0.5);
+    add(0, 'box', root, AC.hull, 10, hs - mouthH, 1, 0, mouthH + (hs - mouthH) / 2, 0.5);
+    add(0, 'box', root, AC.gold, 10.6, 0.6, 1.2, 0, mouthH, 0.5);
+    const ramp = node(root, 0, 0.1, -3.2, -0.18, 0, 0);
+    add(0, 'box', ramp, AC.panel, 10, 0.3, 7, 0, 0, 0);
+    for(const [ex, ey, er] of [[-SX * 0.55, H * 0.38, 4.8], [SX * 0.55, H * 0.38, 4.8], [0, H * 0.8, 4]]){
+      const e = node(root, ex, ey, -0.6, -Math.PI / 2, 0, 0);
       add(0, 'bell', e, AC.panel, er * 2, 9, er * 2, 0, 4.5, 0);
       add(0, 'cyl', e, AC.dark, er * 1.7, 0.4, er * 1.7, 0, 8.9, 0);
       add(0, 'box', e, AC.gold, er * 2.2, 0.6, 0.6, 0, 8.6, 0);
     }
-    /* two fins off the stern quarters, one of them torn away and lying on the ground */
-    add(0, 'box', hull, AC.hull, 1.4, 20, 18, -B * 0.62, Hh * 0.95, 9, 0, 0, 0.75);
-    add(0, 'box', hull, AC.gold, 1.6, 20, 0.7, -B * 0.62, Hh * 0.95, 0.3, 0, 0, 0.75);
-    add(0, 'box', hull, AC.hull, 1.4, 5, 18, B * 0.52, Hh * 0.78, 9, 0, 0, -0.75);
-    const fin = node(root, ARK_B * 0.9, 0.6, -14, 0.08, 0.4, Math.PI / 2 - 0.12);
-    add(0, 'box', fin, AC.hull, 1.4, 17, 18, 0, 0, 0);
+    add(0, 'box', root, AC.hull, 1.4, 22, 20, -SX - 6, H * 0.75, 10, 0, 0, 0.75);
+    add(0, 'box', root, AC.gold, 1.6, 22, 0.7, -SX - 6, H * 0.75, 0.3, 0, 0, 0.75);
+    const fin = node(root, SX + 16, 0.6, -18, 0.08, 0.4, Math.PI / 2 - 0.12);
+    add(0, 'box', fin, AC.hull, 1.4, 19, 20, 0, 0, 0);
+  }
+  /* ---- inside: the deck plates of both decks ---- */
+  for(let z0 = 1; z0 < ARK_PROW0; z0 += 20){
+    const z1 = Math.min(ARK_PROW0, z0 + 20);
+    add(ch(z0), 'box', root, AC.deck, ARK_B - 2, 0.1, z1 - z0, -0.5 + 0, 0.05, (z0 + z1) / 2);
+  }
+  for(const [a, b] of [P.CREW, P.BRIDGE]) for(let z0 = a; z0 < b; z0 += 20){
+    const z1 = Math.min(b, z0 + 20);
+    add(ch(z0), 'box', root, AC.deckUp, ARK_B - 2, 0.2, z1 - z0, 0, FLOOR_H, (z0 + z1) / 2);
+  }
+  /* ---- the partitions, merged: a run along z, widened across x while every row of it is wall ---- */
+  const merge = (grid, code, f) => {
+    const seen = new Uint8Array(grid.length);
+    for(let lz = 0; lz < ARK_PROW0; lz++) for(let lx = -ARK_HALF; lx < ARK_HALF; lx++){
+      const i0 = P.I(lx, lz);
+      if(seen[i0] || grid[i0] !== code) continue;
+      let z1 = lz; while(z1 + 1 < ARK_PROW0 && grid[P.I(lx, z1 + 1)] === code && !seen[P.I(lx, z1 + 1)]) z1++;
+      let x1 = lx;
+      grow: while(x1 + 1 < ARK_HALF){ for(let zz = lz; zz <= z1; zz++) if(grid[P.I(x1 + 1, zz)] !== code || seen[P.I(x1 + 1, zz)]) break grow; x1++; }
+      for(let zz = lz; zz <= z1; zz++) for(let xx = lx; xx <= x1; xx++) seen[P.I(xx, zz)] = 1;
+      add(ch(lz), 'box', root, AC.wall, x1 - lx + 1, FLOOR_H, z1 - lz + 1, (lx + x1 + 1) / 2, f * FLOOR_H + FLOOR_H / 2, (lz + z1 + 1) / 2);
+    }
+  };
+  merge(P.lo, 2, 0); merge(P.up, 2, 1);
+  /* ---- and what stands in the rooms ---- */
+  for(const pr of P.props){
+    const cxp = (pr.x0 + pr.x1 + 1) / 2, czp = (pr.z0 + pr.z1 + 1) / 2, y = pr.f * FLOOR_H;
+    if(pr.kind === 'core'){
+      add(ch(czp), 'cyl', root, AC.core, 6.6, 15, 6.6, cxp, y + 7.5, czp);
+      add(ch(czp), 'box', root, AC.gold, 7.4, 0.6, 7.4, cxp, y + 4, czp);
+      add(ch(czp), 'box', root, AC.gold, 7.4, 0.6, 7.4, cxp, y + 10, czp);
+    } else if(pr.kind === 'crate'){
+      add(ch(czp), 'box', root, AC.crate, 1.9, 1.5, 1.9, cxp, y + 0.75, czp);
+      if(hv(pr.x0 * 7 + pr.z0) > 0.5) add(ch(czp), 'box', root, AC.crate, 1.5, 1.2, 1.5, cxp + 0.1, y + 2.1, czp - 0.1, 0, 0.3, 0);
+    } else if(pr.kind === 'berth'){
+      add(ch(czp), 'box', root, AC.berth, 0.95, 0.75, 1.95, cxp, y + 0.38, czp);
+      add(ch(czp), 'box', root, AC.lid, 0.8, 0.12, 1.7, cxp, y + 0.8, czp);
+    } else if(pr.kind === 'console'){
+      add(ch(czp), 'box', root, AC.console, 1.9, 1.0, 0.9, cxp, y + 0.5, czp);
+      add(ch(czp), 'box', root, AC.gold, 1.9, 0.12, 0.6, cxp, y + 1.05, czp + 0.1, -0.3, 0, 0);
+    }
   }
   /* and what it shed, down the length of the furrow behind it */
-  for(let d = 0; d < 34; d++){
-    const lz = -8 - hv(300 + d) * (ARK_FURROW - 14), lx = (hv(400 + d) - 0.5) * 26, sz = 1.5 + hv(500 + d) * 5;
-    const wx = ark.x + Math.cos(ark.ang) * lx + Math.sin(ark.ang) * lz, wy = ark.y - Math.sin(ark.ang) * lx + Math.cos(ark.ang) * lz;
-    const gyRel = groundY(wx, wy) - (ark.h0 - 0.4);
+  for(let d = 0; d < 40; d++){
+    const lz = -10 - hv(300 + d) * (ARK_FURROW - 14), lx = (hv(400 + d) - 0.5) * 26, sz = 1.5 + hv(500 + d) * 5;
+    const [wx, wy] = [ark.x + ark.fy * lx + ark.fx * lz, ark.y - ark.fx * lx + ark.fy * lz];
+    const gyRel = groundY(wx, wy) - ark.h0;
     add(-1 - (d % 4), 'box', root, d % 5 === 0 ? AC.gold : d % 2 ? AC.scrap : AC.hull, sz, 0.35 + hv(600 + d) * 0.8, sz * (0.6 + hv(700 + d)), lx, gyRel + 0.2, lz,
         (hv(800 + d) - 0.5) * 0.8, hv(900 + d) * 3, (hv(1000 + d) - 0.5) * 0.8);
   }
@@ -35625,7 +35849,7 @@ if(ark){
       geo.computeBoundingSphere();
       /* open cylinders are seen from inside down an engine's throat */
       const m = new THREE.Mesh(geo, geoName === 'box' ? mat(col) : arkSideMat(col));
-      m.castShadow = col !== AC.dark; m.receiveShadow = true;
+      m.castShadow = col !== AC.dark && col !== AC.deck && col !== AC.deckUp; m.receiveShadow = true;
       m.name = 'ark';
       scene.add(m);
     }
@@ -44332,29 +44556,32 @@ function elevatedHit(px, py){
    entries on storey 1, and nothing distinguished them.
    Flood the tile's own connected run, four-connected, and cap it: a camp's rampart is a
    handful of tiles and a cap turns a pathological world into a wrong answer rather than a
-   hung frame. */
-const DECK_FLOOD_CAP = 900;
+   hung frame. (No longer capped: see AND A DECK IS LABELLED ONCE, WHOLE.) */
 /* The answer only changes when `decks` does, and the callers ask it several times a tick per
    gunner — the reachability test sits in three different branches of the AI. So it is cached
    against `deckEpoch`, which every mutation of the set bumps. */
+/* ---------- AND A DECK IS LABELLED ONCE, WHOLE ----------
+   The first version of this cached a flood per TILE, capped at 900 tiles, and dropped the
+   whole cache past 96 tiles, which was right for a rampart a few dozen tiles long. The ARK's
+   decks are two thousand tiles a piece: the flood stopped short of the stair at the other end
+   of the bridge and every order up there read "No stair connects there from here." So the first
+   question about any tile floods that tile's deck completely, and every tile of it is filed
+   against the one shared set: the next question about any of them is a lookup, however big the
+   deck. All of it is thrown away when `decks` changes, and refilled as it is asked for. */
 let _runEpoch = -1;
-const _runCache = new Map();
+const _runCache = new Map();          /* bkey -> the Set of its whole connected deck */
+const _NO_RUN = new Set();
 function deckRun(x, y, f){
   if(_runEpoch !== deckEpoch){ _runCache.clear(); _runEpoch = deckEpoch; }
-  /* The key is a TILE, and a body walking along a rampart asks about a new tile every stride,
-     so a long-lived epoch would otherwise accumulate one entry per tile ever stood on. Drop the
-     lot rather than track ages: refilling it costs one flood and the hit rate is what matters. */
-  if(_runCache.size > 96) _runCache.clear();
-  const ck = bkey(Math.floor(x), Math.floor(y), f);
+  if(!f) return _NO_RUN;                                   /* the ground is all one piece */
+  const sx = Math.floor(x), sy = Math.floor(y), ck = bkey(sx, sy, f);
   const hit = _runCache.get(ck);
   if(hit) return hit;
+  if(!decks.has(ck)) return _NO_RUN;
   const out = new Set();
-  if(!f){ _runCache.set(ck, out); return out; }        /* the ground is all one piece */
-  const sx = Math.floor(x), sy = Math.floor(y);
-  if(!decks.has(bkey(sx, sy, f))){ _runCache.set(ck, out); return out; }
   const q = [sx, sy];
-  out.add(bkey(sx, sy, f));
-  for(let i = 0; i < q.length && out.size < DECK_FLOOD_CAP; i += 2){
+  out.add(ck);
+  for(let i = 0; i < q.length; i += 2){
     const cx = q[i], cy = q[i + 1];
     for(const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
       const nx = cx + dx, ny = cy + dy, k = bkey(nx, ny, f);
@@ -44362,6 +44589,7 @@ function deckRun(x, y, f){
       out.add(k); q.push(nx, ny);
     }
   }
+  for(const k of out) _runCache.set(k, out);
   return out;
 }
 /* the nearest stair connecting two storeys — ANYWHERE. Kept because plenty of callers want
@@ -44787,7 +45015,7 @@ function renderOverlay(rdt){
   }
   /* the wreck, named the same way, over its broken back */
   if(ark && ark.reached && activeFloor >= 0){
-    const q = w2s(ark.mx, ark.my, ark.h0 + 26);
+    const q = w2s(ark.mx, ark.my, ark.h0 + ARK_H + 2);
     if(q){
       cx.fillStyle = 'rgba(214,190,128,0.9)';
       setFont('bold 14px monospace'); cx.textAlign = 'center';
@@ -52994,6 +53222,7 @@ function snapshot(){
     hamletsWoke: hamlets.filter(h => h.woke).map(h => h.id),
     towersReached: towers.filter(t => t.reached).map(t => t.id),
     arkReached: !!(ark && ark.reached),
+    arkWoke: !!(ark && ark.woke),
     courtCame: {...courtCame},
     pBuilds: pBuilds.map(b=>({type:b.type, x:b.x, y:b.y, hp:b.hp, floor: b.floor || 0,
       /* how much pitch is left in a post. Without this every post in the world came back
@@ -53083,7 +53312,7 @@ function restore(d){
   if(d.biomes){ Object.assign(biomeState.seen, d.biomes.seen || {}); Object.assign(biomeState.woke, d.biomes.woke || {}); }
   for(const h of hamlets) h.woke = !!(d.hamletsWoke && d.hamletsWoke.includes(h.id));   /* before the folk were saved, none had come */
   for(const t of towers) t.reached = !!(d.towersReached && d.towersReached.includes(t.id));
-  if(ark) ark.reached = !!d.arkReached;
+  if(ark){ ark.reached = !!d.arkReached; ark.woke = !!d.arkWoke; }
   /* who of the old king's court has come through already */
   for(const k in courtCame) delete courtCame[k];
   Object.assign(courtCame, d.courtCame || {});
