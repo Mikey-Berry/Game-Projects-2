@@ -1817,7 +1817,71 @@ Perhaps parts of it are explorable."*
   - Local fauna: to brainstorm.
 - **Roadside stops with a choice:** bandits demanding a toll or food, an Order patrol
   questioning your faith, refugees asking for help. Occasional, never intrusive, and not every
-  bandit hostile on sight.
+  bandit hostile on sight. **Built (12.6); its words are waiting on you.**
+
+### 12.6 Roadside stops: the words, for a ruling
+
+The mechanics are in (ROADSIDE STOPS in the game; `tools/roadside.js`). **Every line below is
+new player-facing text and is unruled.** Change any of it and the scene stays the same.
+
+**How often.**
+- About **0.77 stops a day of walking** out past the fences, and 30 to 54 hours of quiet after
+  each one.
+- Only for one of yours who is actually on the move, never on the first day, never inside a town's
+  reach, a hamlet's, the Bastion's or the headland's.
+- Toll-takers about 45% of the time, the Order 30%, people with nothing 25% (a little more as the
+  Fracture deepens).
+
+**What they look like.**
+- **Toll-takers:** 4 to 6 Dust Bandits.
+- **The Order:** 3 or 4 Paladins with an Acolyte, from the Bastion.
+- **People with nothing:** 3 to 5 people, sometimes with a child.
+
+**The toll** (window title *ON THE ROAD — A TOLL*).
+- Opening barks: *"The road is ours. You pay to walk it."* / *"Toll. Coin or food, your
+  choice."* / *"Far enough. Now you pay."*
+- Scene: *"{N} of them across the road, in no hurry, weapons out but down. The one in front
+  wants {toll} in coin or 6 rations of food to let {speaker}'s people by, and says it like
+  somebody who has said it a great many times."*
+- Choices:
+  - **PAY**, which costs 40 to 450, rising with the day and your purse.
+  - **HAND OVER 6 RATIONS.**
+  - **TALK YOUR WAY PAST**, on charisma and how many of you there are against them.
+  - **LET THEM SEE WHAT YOU ARE**, on your numbers, the dead with you and your name.
+  - **[LICH] Step aside**, with no roll.
+  - **DRAW STEEL.**
+- A failed talk or threat is a fight.
+
+**The Order** (*ON THE ROAD — THE ORDER*).
+- Opening barks: *"Hold. Whose light do you walk by?"*, or, with your dead in plain sight,
+  *"Hold. What walks with you?"*
+- Choices:
+  - **PROFESS THE FAITH**, on charisma and your name; the divine gift helps a great deal and
+    visible dead hurt a great deal.
+  - **TITHE** 30 to 240 **TO THE BASTION**, not offered with the dead in view.
+  - **SAY NOTHING**, which costs a little standing, or with the dead in view becomes a fight.
+  - **DRAW STEEL.**
+- A failed profession without the dead in view becomes a demanded tithe, and a fight if you
+  cannot pay. With the dead in view it is *"Liar. Burn it."* and a fight.
+
+**People with nothing** (*ON THE ROAD — PEOPLE WITH NOTHING*).
+- Opening barks: *"Please. Anything you can spare."* / *"We have walked three days. Please."* /
+  *"Is there food? For the little one, if nothing else."*
+- Choices:
+  - **GIVE THEM 4 RATIONS**, a mercy on the ledger.
+  - **GIVE THEM 25 IN COIN**, half a mercy.
+  - **TAKE THEM IN**: all of them join you, and it is a mercy.
+  - **POINT THEM TO {nearest town}.**
+  - **TAKE WHAT LITTLE THEY HAVE**, 6 to 30 coin, on the ledger as a small sack.
+  - **TURN THEM AWAY.**
+
+**For you to rule:**
+1. All of the text above.
+2. Whether the Order on the road should be the Bastion's Paladins (the `purge` faction, as
+   built) or some other arm of the Church.
+3. Whether a refused tithe should cost more than standing.
+4. Whether the people with nothing should sometimes be *something else*: a trap, or
+   Watcher-touched.
 
 ---
 

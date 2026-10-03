@@ -14757,6 +14757,11 @@ function hostile(a, b){
      gaol IS the town's answer to what you did; a cell that gets you killed is not a sentence.
      Both ways round: a prisoner is neither a target nor a threat. */
   if(a.jailedAt || b.jailedAt) return false;
+  /* ---------- AND NOBODY DRAWS WHILE THEY ARE TALKING ----------
+     A stop on the road (ROADSIDE STOPS) is a conversation until it is not: the toll-takers, the
+     Order's patrol and the people with nothing are no enemy of yours, and you none of theirs, from
+     the moment they come up the road until the choice is made. */
+  if((a.parley && b.faction === 'player') || (b.parley && a.faction === 'player')) return false;
   /* ---------- THE PASS IS HELD ----------
      Once one of yours is at the Order's barricade (`passState.alarm`), everybody posted there is
      at war with everybody of yours, whatever the Order thinks of you anywhere else. Short of the
@@ -28661,6 +28666,7 @@ function update(dt){
   biomeTick(dt);              /* the flats, the rust and the bog: who walked in, what woke, what keeps */
   hamletTick(dt);             /* and who lives out along the roads, once you are near enough to meet them */
   arkTick();                  /* and who is living in the wreck, likewise */
+  roadsideTick(dt);           /* and who you meet on the road: see ROADSIDE STOPS */
   oldKingTick(dt);            /* the man in the Door: talking from up there, or hanging people down here */
   courtTick(dt);              /* and his court, coming through onto the grounds their Arts made */
   dustWallTick(dt);           /* and the walls that were never there, going back to having never been */
@@ -33391,6 +33397,317 @@ function wakeHamlet(h){
       chars.push(c);
     }
   } finally { seed = pocket; }
+}
+
+/* ============================================================ ROADSIDE STOPS
+   "Let's also add the following 'roadside stop with a choice' ideas: bandits demanding a toll or
+    food; an Order patrol questioning your faith out in the waste; refugees asking for help. These
+    should not be so common as to be intrusive. Only occasional events as they naturally occur.
+    In particular, not all bandits should be immediately hostile and there should be an
+    opportunity to negotiate like this." (2026-10-03)
+   THE STOP AT THE GATE, OUT ON THE ROAD. The gate scene's machinery — a window, a handful of
+   things to be, odds you can read before you choose, the tongue trained win or lose — met out in
+   the waste, where nobody's walls are behind anybody. Somebody comes up the road toward the first
+   of yours who is travelling; they do not draw on you while they talk (`parley`, the first rule
+   in `hostile` after the cells); and what happens after is what you chose.
+   RARE ON PURPOSE: only for one of yours actually on the move, out past the fences, from the
+   second day; about once a day and a half of walking, and never twice inside a day and change.
+   Never while the world is paused, never in a fight, never on the headland. */
+const ROADSIDE_RATE = 0.032;            /* stops per game hour of walking out past the fences */
+const ROADSIDE_GAP = [30, 54];          /* hours of quiet after one */
+const ROADSIDE_KINDS = ['toll', 'order', 'refugees'];
+const roadside = {next: 30, active: null, n: 0};
+let _roadT = 0;
+/* ground a stop can happen on: out of every town's reach, not on the headland, not at the Bastion */
+function roadsideGround(x, y){
+  if(towns.some(t => dist(t.x, t.y, x, y) < (t.clearR || 20) + 45)) return false;
+  if(inHeadland(x, y, 20)) return false;
+  if(bastion && dist(bastion.x, bastion.y, x, y) < 60) return false;
+  if(hamlets.some(h => dist(h.x, h.y, x, y) < 30)) return false;
+  return true;
+}
+/* who speaks for you: the best tongue among those of yours near the stop */
+function roadsideVoice(at){
+  let best = null;
+  for(const c of player()){
+    if(c.state !== 'ok' || c.floor || dist(c.x, c.y, at.x, at.y) > 22) continue;
+    if(c.undead && !c.lich && !c.lieutenant && !c.minded) continue;    /* hands do not do the talking */
+    if(!best || chaOf(c) > chaOf(best)) best = c;
+  }
+  return best || player().find(c => c.state === 'ok') || null;
+}
+function roadsideTick(dt){
+  if((_roadT -= dt) > 0) return;
+  _roadT = 2;
+  const R = roadside;
+  if(R.active){ roadsideRun(R.active); return; }
+  if(paused || modalOpen || day < 2 || nowH() < R.next) return;
+  const lead = player().find(c => c.state === 'ok' && !c.floor && !c.jailedAt && !c.target &&
+    (c.moveTarget || c.band) && roadsideGround(c.x, c.y));
+  if(!lead) return;
+  if(chars.some(o => o.state === 'ok' && o.target && o.target.faction === 'player' && dist(o.x, o.y, lead.x, lead.y) < 30)) return;
+  if(rnd() >= ROADSIDE_RATE * 2 / HOUR_SEC) return;
+  const w = {toll: 0.45, order: bastion ? 0.30 : 0, refugees: 0.25 + fractureStage * 0.05};
+  let tot = 0; for(const k in w) tot += w[k];
+  let r = rnd() * tot, kind = 'toll';
+  for(const k of ROADSIDE_KINDS){ r -= w[k]; if(r <= 0){ kind = k; break; } }
+  roadsideStart(kind, lead);
+}
+/* up the road toward the one walking: ahead of them along where they are going */
+function roadsideStart(kind, lead){
+  const R = roadside;
+  const go = lead.moveTarget || (lead.band && lead.band.goal) || null;
+  let ax = 0, ay = 1;
+  if(go){ const d = Math.max(0.01, dist(lead.x, lead.y, go.x, go.y)); ax = (go.x - lead.x) / d; ay = (go.y - lead.y) / d; }
+  else { const a = rnd() * Math.PI * 2; ax = Math.cos(a); ay = Math.sin(a); }
+  const spot = findOpenNear(clamp(lead.x + ax * 18, 5, W - 6), clamp(lead.y + ay * 18, 5, H - 6), 5);
+  const id = ++R.n;
+  const st = {id, kind, lead, at: spot, bodies: [], t: 0, scene: false, done: false};
+  const add = (c) => { c.parley = id; c.roadside = id; c.guard = {x: spot.x, y: spot.y}; chars.push(c); st.bodies.push(c); return c; };
+  if(kind === 'toll'){
+    squadN++;
+    const sq = {id: squadN, anchor: {x: spot.x, y: spot.y}, kind: 'bandit'};
+    const n = ri(4, 6);
+    for(let i = 0; i < n; i++){
+      const q = findOpenNear(spot.x, spot.y, 3), lvl = ri(8, 16) + Math.floor(day * 0.6), r = rnd();
+      const c = makeChar('Dust Bandit', 'bandit', q.x, q.y,
+        {atk: lvl, def: lvl, tough: lvl, ath: ri(3, 8), squad: sq,
+         weapon: r < 0.25 ? 'w_bow' : r < 0.7 ? 'w_rkat' : 'w_plank', armor: rnd() < 0.5 ? 'a_rag' : null});
+      c.loot = ri(20, 90);
+      add(c);
+    }
+    st.bodies[0].tollLeader = true;
+  } else if(kind === 'order'){
+    squadN++;
+    const sq = {id: squadN, anchor: {x: spot.x, y: spot.y}, kind: 'purge'};
+    const n = ri(3, 4);
+    for(let i = 0; i < n; i++){
+      const q = findOpenNear(spot.x, spot.y, 3), lvl = ri(24, 32);
+      const c = makeChar('Paladin', 'purge', q.x, q.y,
+        {atk: lvl, def: lvl, tough: lvl - 4, ath: 7, magic: 1, armr: 40, squad: sq,
+         weapon: rnd() < .4 ? 'w_nod' : 'w_kat', armor: 'a_pla'});
+      c.loot = ri(120, 260);
+      if(i === 0){ makeAlchemist(c, 'divine', ['hallow'], 22); c.name = 'Paladin-Acolyte'; }
+      add(c);
+    }
+  } else {
+    const n = ri(3, 5);
+    for(let i = 0; i < n; i++){
+      const q = findOpenNear(spot.x, spot.y, 3);
+      const kid = n >= 4 && i === n - 1;
+      const c = makeChar(pickName(true), 'town', q.x, q.y,
+        kid ? {atk: 1, def: 2, tough: 2, ath: 5, age: ri(7, 13)} : {atk: 3, def: 3, tough: 4, ath: 6});
+      c.civ = true; c.refugee = true; c.hunger = 30;
+      if(kid) c.wasChild = true; else c.age = ri(18, 60);
+      add(c);
+    }
+  }
+  R.active = st;
+  rebuildCharGrid();
+  return st;
+}
+/* walk up to them; when somebody of yours is close enough to talk to, the scene; after it, the
+   ones who are leaving leave, and are gone once nobody of yours can see them */
+function roadsideRun(st){
+  st.t += 2;
+  const live = st.bodies.filter(c => c.state !== 'dead' && chars.includes(c));
+  if(!live.length){ roadsideEnd(st); return; }
+  if(st.done){
+    for(const c of live){
+      if(!c.roadsideLeaving) continue;
+      if(player().every(o => dist(o.x, o.y, c.x, c.y) > 75) && visAt(c.x, c.y, c.floor) !== 2){
+        const i = chars.indexOf(c); if(i >= 0) chars.splice(i, 1);
+      }
+    }
+    if(st.bodies.every(c => !chars.includes(c) || c.state === 'dead' || c.faction === 'player' || !c.roadsideLeaving)) roadsideEnd(st);
+    return;
+  }
+  const mine = player().filter(c => c.state === 'ok' && !c.floor);
+  let near = null, nd = 1e9;
+  for(const o of mine) for(const c of live){ const d = dist(o.x, o.y, c.x, c.y); if(d < nd){ nd = d; near = o; } }
+  if(!near || st.t > 40){                       /* they walked off and nobody came: no stop */
+    roadsideResolve(st, 'leave'); return;
+  }
+  if(nd < 8 && !modalOpen){ roadsideScene(st, near); return; }
+  for(const c of live) c.guard = {x: near.x + (c.x - near.x) * 0.2, y: near.y + (c.y - near.y) * 0.2};
+}
+function roadsideEnd(st){
+  roadside.active = null;
+  roadside.next = nowH() + ROADSIDE_GAP[0] + rnd() * (ROADSIDE_GAP[1] - ROADSIDE_GAP[0]);
+}
+/* how it ends for the ones who stopped you: they go, they fight, or they come with you */
+function roadsideResolve(st, how){
+  st.done = true;
+  const live = st.bodies.filter(c => c.state !== 'dead' && chars.includes(c));
+  for(const c of live){
+    c.parley = null;
+    if(how === 'fight'){
+      let t = null, td = 1e9;
+      for(const o of player()){ if(o.state !== 'ok' || o.floor) continue; const d = dist(o.x, o.y, c.x, c.y); if(d < td){ td = d; t = o; } }
+      c.target = t; c.roadsideLeaving = false;
+    } else if(how === 'join'){
+      c.faction = 'player'; c.neutral = false; c.refugee = false; c.civ = false; clearOrders(c); c.guard = null;
+    } else {
+      /* away up the road, the way they came, and gone when nobody is watching */
+      const a = Math.atan2(c.y - st.lead.y, c.x - st.lead.x);
+      c.guard = {x: clamp(c.x + Math.cos(a) * 90, 5, W - 6), y: clamp(c.y + Math.sin(a) * 90, 5, H - 6)};
+      c.roadsideLeaving = true; c.target = null;
+    }
+  }
+  if(how === 'join'){ refreshTop(); refreshSquadBar(); }
+  rebuildCharGrid();
+  /* a fight or a welcome is over as a stop the moment it is chosen; only a leaving is waited on */
+  if(how !== 'leave') roadsideEnd(st);
+}
+function roadsideFood(){ return (stash.meat || 0) + (stash.fruit || 0) + (stash.fish || 0); }
+function roadsideTakeFood(n){
+  for(const k of ['fruit', 'fish', 'meat']){ while(n > 0 && takeItem(k)) n--; }
+}
+/* the arithmetic of a road meeting: how many of you can fight, against how many of them */
+function roadsideOdds(st){
+  const mine = player().filter(c => c.state === 'ok' && !c.floor && dist(c.x, c.y, st.at.x, st.at.y) < 30).length;
+  const theirs = st.bodies.filter(c => c.state === 'ok').length || 1;
+  const dead = player().filter(c => c.state === 'ok' && revealedUndead(c) && dist(c.x, c.y, st.at.x, st.at.y) < 30).length;
+  return {mine, theirs, ratio: mine / theirs, dead};
+}
+function roadsideScene(st, near){
+  st.scene = true;
+  const v = roadsideVoice(near) || near, S = roadsideOdds(st);
+  const wasPaused = paused;
+  const close = () => { $('modal').style.display = 'none'; modalOpen = false; paused = wasPaused; syncPauseBtn(); };
+  const body = () => $('modalbody');
+  const mk = (label, note, fn) => {
+    const b = document.createElement('button');
+    b.innerHTML = label + (note ? `<span style="color:var(--dust);font-size:10px"> — ${note}</span>` : '');
+    b.style.cssText = 'display:block;margin:6px 0;text-align:left;width:100%';
+    b.onclick = () => { close(); fn(); };
+    body().appendChild(b);
+  };
+  const pct = (p) => Math.round(clamp(p, 0, 1) * 100) + '%';
+  const lead = st.bodies.find(c => c.state === 'ok') || st.bodies[0];
+  AU.open();
+  if(st.kind === 'toll'){
+    const toll = Math.round(clamp(40 + day * 5 + cats * 0.05, 40, 450));
+    const rations = 6;
+    say(lead, pick(['The road is ours. You pay to walk it.', 'Toll. Coin or food, your choice.', 'Far enough. Now you pay.']));
+    openModal('ON THE ROAD — A TOLL',
+      `${S.theirs} of them across the road, in no hurry, weapons out but down. The one in front wants ` +
+      `${toll} in coin or ${rations} rations of food to let ${v.name}'s people by, and says it like ` +
+      `somebody who has said it a great many times.`);
+    body().innerHTML = '';
+    const talk = clamp(0.22 + chaOf(v) * 0.007 + (S.ratio - 1) * 0.16 - noticeTier * 0.04, 0.05, 0.9);
+    const scare = clamp(0.12 + (S.ratio - 1) * 0.22 + S.dead * 0.06 + noticeTier * 0.07 + Math.min(0.18, fame.known / 400), 0.03, 0.9);
+    if(cats >= toll) mk(`PAY THE ${toll}`, 'they take it and let you by', () => {
+      cats -= toll; refreshTop();
+      say(lead, 'Pleasure. Road\'s yours.');
+      log(`${v.name}'s people pay ${toll} to walk the road, and are let by.`, '');
+      roadsideResolve(st, 'leave');
+    });
+    if(roadsideFood() >= rations) mk(`HAND OVER ${rations} RATIONS`, 'food is what they are short of', () => {
+      roadsideTakeFood(rations);
+      say(lead, 'That will do. Go on.');
+      log(`${rations} rations go over to the toll-takers, and the road opens.`, '');
+      roadsideResolve(st, 'leave');
+    });
+    mk('TALK YOUR WAY PAST', `${pct(talk)} — ${v.name}'s tongue, and how many of you there are against how many of them`, () => {
+      const ok = rnd() < talk; socialTried(v, ok);
+      if(ok){ say(lead, pick(['...fine. Get on.', 'Not worth it. Go.'])); log(`${v.name} talks the toll down to nothing, and they let you by.`, 'good'); roadsideResolve(st, 'leave'); }
+      else { say(lead, 'Wrong answer.'); log('The talk goes nowhere, and the weapons come up.', 'bad'); roadsideResolve(st, 'fight'); }
+    });
+    mk('LET THEM SEE WHAT YOU ARE', `${pct(scare)} — your numbers, what walks with you, and what has been heard of you`, () => {
+      if(rnd() < scare){ say(lead, pick(['...not today.', 'Keep walking. We never saw you.'])); log(`The toll-takers look at what ${v.name} has with them, and step off the road.`, 'good'); roadsideResolve(st, 'leave'); }
+      else { say(lead, 'You think that frightens us?'); log('They are not frightened. They are angry.', 'bad'); roadsideResolve(st, 'fight'); }
+    });
+    if(v.lich) mk('[LICH] Step aside.', 'no roll — it is what you are', () => {
+      say(lead, '...yes. Yes, of course.'); log('The toll-takers find somewhere else to be.', 'good'); roadsideResolve(st, 'leave');
+    });
+    mk('DRAW STEEL', 'they have asked for it', () => {
+      say(v, 'No.'); log(`${v.name} answers the toll with a blade.`, 'bad'); roadsideResolve(st, 'fight');
+    });
+  } else if(st.kind === 'order'){
+    const tithe = Math.round(clamp(30 + day * 3, 30, 240));
+    const damned = S.dead > 0;
+    say(lead, damned ? 'Hold. What walks with you?' : 'Hold. Whose light do you walk by?');
+    openModal('ON THE ROAD — THE ORDER',
+      damned
+        ? `A Bastion patrol has come up the road and stopped square in front of ${v.name}. They have seen what walks with your people, and their hands have not left their hilts. The acolyte asks, quite calmly, what it is.`
+        : `A Bastion patrol has come up the road and stopped square in front of ${v.name}. The acolyte has a question, and the others are watching your people while it is asked: whose light do they walk by, out here where there is none?`);
+    body().innerHTML = '';
+    let prof = 0.34 + chaOf(v) * 0.007 + Math.max(-0.2, Math.min(0.2, fame.repute / 250)) - noticeTier * 0.08 - (damned ? 0.38 : 0);
+    if(v.gift === 'divine') prof += 0.28;
+    prof = clamp(prof, 0.03, 0.92);
+    mk('PROFESS THE FAITH', `${pct(prof)} — ${v.name}'s tongue, your name on the roads${damned ? ', and what they can see behind you' : ''}`, () => {
+      const ok = rnd() < prof; socialTried(v, ok);
+      if(ok){ say(lead, 'Then walk in it.'); log(`The patrol hears ${v.name} out, and lets your people go on.`, 'good'); roadsideResolve(st, 'leave'); }
+      else if(damned){ say(lead, 'Liar. Burn it.'); log('The acolyte does not believe a word, and the Paladins draw.', 'bad'); roadsideResolve(st, 'fight'); }
+      else {
+        say(lead, 'Then you will tithe for the light you do not keep.');
+        log(`The acolyte is not satisfied, and wants a tithe of ${tithe} for the Bastion.`, 'bad');
+        if(cats >= tithe){ cats -= tithe; refreshTop(); log(`${tithe} is paid over. The patrol moves on, and remembers your faces.`, ''); fame.repute = clamp(fame.repute - 1, -100, 100); roadsideResolve(st, 'leave'); }
+        else { log('There is not enough to pay it, and the patrol takes that as an answer.', 'bad'); roadsideResolve(st, 'fight'); }
+      }
+    });
+    if(!damned && cats >= tithe) mk(`TITHE ${tithe} TO THE BASTION`, 'it is what they are really asking', () => {
+      cats -= tithe; refreshTop();
+      say(lead, 'The light keeps you.');
+      log(`${v.name} tithes ${tithe} to the Bastion's patrol, and is blessed for it, after a fashion.`, '');
+      fame.repute = clamp(fame.repute + 1, -100, 100);
+      roadsideResolve(st, 'leave');
+    });
+    mk(damned ? 'SAY NOTHING, AND KEEP WALKING' : 'SAY NOTHING', damned ? 'they will not let that pass' : 'they will remember you', () => {
+      if(damned){ say(lead, 'So be it.'); log('The patrol takes silence for the answer it is, and draws.', 'bad'); roadsideResolve(st, 'fight'); }
+      else { say(lead, 'We will pray for you, then.'); log('The patrol lets your people by in silence, and every one of them looks back.', ''); fame.repute = clamp(fame.repute - 2, -100, 100); roadsideResolve(st, 'leave'); }
+    });
+    mk('DRAW STEEL', 'on the Order, out in the open', () => {
+      say(v, 'Walk away.'); log(`${v.name} draws on the Bastion's patrol.`, 'bad'); roadsideResolve(st, 'fight');
+    });
+  } else {
+    const kids = st.bodies.some(c => c.wasChild);
+    const rations = 4, coin = 25;
+    const near2 = towns.slice().sort((a, b) => dist(a.x, a.y, st.at.x, st.at.y) - dist(b.x, b.y, st.at.x, st.at.y))[0];
+    say(lead, pick(['Please. Anything you can spare.', 'We have walked three days. Please.', 'Is there food? For the little one, if nothing else.']));
+    openModal('ON THE ROAD — PEOPLE WITH NOTHING',
+      `${st.bodies.length} people come up the road toward ${v.name} with their hands open${kids ? ', and one of them is a child' : ''}. ` +
+      `Whatever they were running from, they ran with nothing. They are asking for food, or for anything at all.`);
+    body().innerHTML = '';
+    if(roadsideFood() >= rations) mk(`GIVE THEM ${rations} RATIONS`, 'they will remember who did', () => {
+      roadsideTakeFood(rations);
+      say(lead, 'Bless you. Bless every one of you.');
+      log(`${v.name}'s people share out ${rations} rations on the roadside.`, 'good');
+      deed('mercy', 1);
+      roadsideResolve(st, 'leave');
+    });
+    if(cats >= coin) mk(`GIVE THEM ${coin} IN COIN`, 'enough for a night under a roof', () => {
+      cats -= coin; refreshTop();
+      say(lead, 'Thank you. Thank you.');
+      log(`${v.name} presses ${coin} into somebody's hand.`, 'good');
+      deed('mercy', 0.5);
+      roadsideResolve(st, 'leave');
+    });
+    mk('TAKE THEM IN', 'they will walk with you, and they will need feeding', () => {
+      say(lead, 'You would? ...yes. Yes, we will come.');
+      log(`${st.bodies.length} people with nothing are with ${v.name}'s company now.`, 'good');
+      deed('mercy', 1);
+      roadsideResolve(st, 'join');
+    });
+    if(near2) mk(`POINT THEM TO ${near2.name}`, 'it costs nothing', () => {
+      say(lead, 'Thank you. We will try.');
+      log(`${v.name} points them up the road toward ${near2.name}.`, '');
+      roadsideResolve(st, 'leave');
+    });
+    mk('TAKE WHAT LITTLE THEY HAVE', 'and be the reason they keep running', () => {
+      const got = ri(6, 30); cats += got; refreshTop();
+      say(lead, 'No — please —');
+      log(`${v.name}'s people turn out the refugees' pockets for ${got} coin.`, 'bad');
+      deed('sack', 0.2);
+      roadsideResolve(st, 'leave');
+    });
+    mk('TURN THEM AWAY', '', () => {
+      say(lead, '...');
+      log('They go on up the road without a word.', '');
+      roadsideResolve(st, 'leave');
+    });
+  }
 }
 
 /* ---------- ground & water ---------- */
