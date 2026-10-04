@@ -1811,7 +1811,8 @@ Perhaps parts of it are explorable."*
   automatons.
 - **Quicksilver fens:** mimics out of the mercurial pools, restlessly hunting your allies. **On
   hold** until it is fleshed out.
-- **The Calcine Wood** (the name stands for now):
+- **The Calcine Wood** (the name stands for now). **Built (12.8); its words, dials and fauna
+  are waiting on you.**
   - Raised corpses blacken (black bones) if left there long enough, and come back stronger.
   - **Ash squalls**, acid rain in effect: a hat protects you, and the undead do not need one.
   - Local fauna: to brainstorm.
@@ -1919,6 +1920,81 @@ six. The name is shown only once one of yours has reached the site, like before.
 2. The arrival line.
 3. Whether the townsfolk should know the names after all, so a rumour could say
    *"out past Jawfall"*.
+
+### 12.8 The Calcine Wood: built, with its words and dials for a ruling
+
+As ruled on 2026-10-03: black bones, ash squalls, and fauna to brainstorm. The first two are
+built; the fauna is a list below. It follows the same rules as the other grounds (§8.1): laid
+after worldgen without a die, so a fresh world boots with the same stream, bodies, chests and
+sites as before (checked against the previous build).
+
+**Where it stands.** Just past the crater's ridge, 30° off the gorge road, on whichever side has
+more dry ground: about 120 tiles out from the ridge, some 30,000 tiles, and 400 tiles from the
+nearest town (Saltmere on the default seed). It is a wood: about one open tile in seven at its
+heart has a tree, against one in fourteen on the plain. The trees are tall, black, crownless and
+straight, the ground is soot with pale ash drifts, and the stone is blackened like the crater's.
+
+**Black bones.**
+- A body that lies in the wood for **30 game-hours** goes black.
+- A risen that **stands** in the wood for 30 hours goes black too. I built both readings of
+  "raised corpses… if left there long enough".
+- A black risen is **25% stronger** in attack, defence, toughness and blood. It is the one
+  case where the dead come up stronger than they were. It happens once: a black risen does
+  not get blacker, and raising it again brings it up black, not blacker.
+- Liches are exempt.
+
+**Ash squalls.**
+- **Frequency:** on about half the days, for 1.5 to 3.5 hours. The timing comes off the day's
+  hash, not a die.
+- **Who it hits:** anybody living in the wood, under the sky, with nothing over their head. It
+  burns the head at 30 points an hour, **down to 15 and no further**, so it hurts but never
+  kills by itself.
+- **What protects:** a Padded Cap, Kettle Helm, Closed Armet or Crested Great Helm. A Bone
+  Wreath, the Circlet or a crown does not cover the head, so it does not count. Standing
+  under a deck, underground, or inside a shack or homestead of yours also protects.
+- **Who is exempt:** the undead, and constructs (they have no scalp). Constructs are my
+  addition.
+- **What you see:** while the camera is over the wood in a squall, the sky dims and slanted
+  ash falls.
+
+**The words (all new):**
+- On entering: *"The trees here are black, and they ring like stone when the wind moves them.
+  Whatever burned them is still coming down."*
+- When a squall starts with one of yours in the wood: *"The sky over the wood goes the colour
+  of a bruise, and the ash comes down hot. Get something over your heads, or get under a
+  roof."* A float says **ASH SQUALL**.
+- Once per squall: *"Hob and Tam have nothing on their heads, and the ash is eating at the
+  scalp."*
+- A risen of yours turning: *"R4 has stood in the Calcine Wood long enough. The bone has gone
+  black, and it is harder than it was."* A float says **BLACK BONES**.
+- Raising a black body: *"It comes up black to the marrow, and harder than it ever was
+  alive."*
+
+**Fauna, to brainstorm (none built):**
+- **A. Marrow-herons.** Tall grey waders that stalk the wood and crack black bone for the
+  marrow. They leave the living alone and go for your risen, the black ones first. This gives
+  the black-bone farm a natural risk.
+- **B. Cinder moths.** Swarms that come out after a squall and eat cloth: caps, cloaks,
+  packs. They are harmless to flesh, but they wear down the thing that protects you.
+- **C. Soot hounds.** Dust hounds that have denned in the wood, black-coated. They hunt
+  during the squalls, when everything else shelters, and the ash does not touch them. This
+  ties into #122 (hounds hunting elk).
+- **D. Bark-knockers.** Beetles boring into the petrified trunks; the ringing is them. You
+  can harvest them for a dark reagent, and a swarm comes out if you disturb them.
+- **E. The Kindled Stag.** One rare beast, an elk burning slowly from the inside with antlers
+  of black glass. A trophy hunt.
+
+**My pick:** A and C. A answers the black bones and C joins the ecology work; B is the
+cheapest of the rest.
+
+**For you to rule:**
+1. The five lines above.
+2. The dials: 30 hours to blacken, 25% stronger, squalls on half the days, 30 an hour down to
+   15.
+3. Both readings of black bones (lying and standing), or only one?
+4. Should a squall be able to kill a bare-headed body, or stop at 15 as built?
+5. Felled trees here give ordinary wood. Should they give charcoal?
+6. Which fauna, if any.
 
 ---
 

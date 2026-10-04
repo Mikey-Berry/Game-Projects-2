@@ -1134,7 +1134,7 @@ function tileAt(x,y){ x|=0; y|=0; if(x<0||y<0||x>=W||y>=H) return 3; return terr
    then every tile reads 0, so worldgen sees exactly the world it always saw: no draw on the
    world's stream moves, no town or cave or boss stands anywhere new, and a save loads onto the
    same ground. Nothing in here rolls a die: the edges are `fbm` and the placings are `hash2`. */
-const BIOME_SALT = 1, BIOME_RUST = 2, BIOME_VAT = 3;
+const BIOME_SALT = 1, BIOME_RUST = 2, BIOME_VAT = 3, BIOME_ASH = 4;
 const BIOMES = {
   [BIOME_SALT]: {key:'salt', name:'THE SALT FLATS', col:'#d8d2c2',
     enter:'The ground goes white and stays white. Nothing that lies down out here rots.'},
@@ -1142,7 +1142,68 @@ const BIOMES = {
     enter:'The ground is red with what the war left lying in it. Some of it is still sitting up.'},
   [BIOME_VAT]:  {key:'vat',  name:'THE VAT BOG', col:'#5a3434',
     enter:'The peat is warm underfoot, and it is not peat. Something in the pools is still being poured.'},
+  [BIOME_ASH]:  {key:'ash',  name:'THE CALCINE WOOD', col:'#2b2826',
+    enter:'The trees here are black, and they ring like stone when the wind moves them. Whatever burned them is still coming down.'},
 };
+/* ---------- THE CALCINE WOOD (ruled 2026-10-03; LORE-SEAMS §12.8) ----------
+   "Raised corpses take on a blackened coloration (black bones) if left there long enough, and
+    yield stronger undead. Dangers include ash squalls, which require a hat to protect against
+    unless you're undead (acid rain basically)."
+   A black petrified wood past the crater's ridge, off to one side of the road in. Two rules:
+     · BLACK BONES. A body that lies in the wood, or a risen that stands in it, for
+       `CALCINE_H` game-hours goes black to the marrow (`calcined`). Raised from a black corpse,
+       or blackened standing, a risen is `CALCINE_K` stronger in arm, guard, frame and blood —
+       the one time the dead come up MORE than they were. Once: a black risen raised again
+       comes up black, not blacker.
+     · ASH SQUALLS. On roughly half the days, for an hour and a half to three and a half, the
+       ash comes down. Anybody living, out under the sky in the wood, with nothing over their
+       head is burned at the scalp; a cap or a helm keeps it off, and so does a roof. The dead
+       do not care. It burns a head down to `SQUALL_FLOOR` and no further: it will put
+       somebody in a bad way, never on the ground by itself.
+   THE CLOCK IS THE DAY'S HASH, not a die: a squall is something every save agrees on and the
+   world's stream never hears about, so no fight anywhere else comes out different for it. */
+const CALCINE_H = 30;          /* game-hours in the wood before the bone goes black */
+const CALCINE_K = 1.25;        /* how much stronger a black-boned risen comes up */
+const CALCINE_BONE = '#26221f';
+const SQUALL_P = 0.5;          /* the share of days that bring one */
+const SQUALL_BURN = 30;        /* points off an unprotected head per game-hour */
+const SQUALL_FLOOR = 15;       /* and no lower than this */
+/* the head-gear that is actually over your head: a wreath, a circlet or a crown is not */
+const ASH_HATS = new Set(['h_cap', 'h_kettle', 'h_armet', 'h_crest']);
+function squallOf(d){
+  if(hash2(d * 7 + 3, 911) > SQUALL_P) return null;
+  const a = d * 24 + 2 + hash2(d, 913) * 19;
+  return {a, b: a + 1.5 + hash2(d * 3, 917) * 2};
+}
+function squallOn(){
+  const h = nowH(), d = Math.floor(h / 24);
+  for(const dd of [d - 1, d]){ const w = squallOf(dd); if(w && h >= w.a && h < w.b) return w; }
+  return null;
+}
+function hatted(c){
+  const it = c.head && ITEMS[c.head];
+  return !!it && ASH_HATS.has(it.tierOf || c.head);
+}
+/* under something the ash cannot come through: the ground overhead, a storey's floor, or a
+   shack or a homestead of yours with you inside its walls */
+function roofedOver(c){
+  const f = c.floor || 0, xi = Math.floor(c.x), yi = Math.floor(c.y);
+  if(f < 0 || decks.has(bkey(xi, yi, f + 1))) return true;
+  if(f) return false;
+  for(const b of pBuilds){
+    if((b.type !== 'shack' && b.type !== 'home') || (b.progress ?? 1) < 1) continue;
+    if(c.x >= b.x && c.x < b.x + b.w && c.y >= b.y && c.y < b.y + b.h) return true;
+  }
+  return false;
+}
+/* the bone goes black: once, and the strength comes with it */
+function blackenBones(r){
+  if(r.calcined) return false;
+  r.calcined = true;
+  for(const k of ['atk', 'def', 'tough']) if(r.stats && r.stats[k] != null) r.stats[k] = Math.round(r.stats[k] * CALCINE_K * 10) / 10;
+  if(r.maxBlood){ r.maxBlood = Math.round(r.maxBlood * CALCINE_K); r.blood = Math.min(r.maxBlood, Math.round((r.blood || 0) * CALCINE_K)); }
+  return true;
+}
 const biomeId = new Uint8Array(W*H);     /* which ground a tile paints as, out to the fraying edge */
 const biomeK  = new Float32Array(W*H);   /* how deep into it the tile is: 0.5 and over is IN it */
 function biomeAt(x, y){
@@ -1483,6 +1544,14 @@ function rawDecorAt(x,y){
     }
     if(bm === BIOME_VAT){
       if(t !== 2 && h2 > .99) return 'bloom';     /* about seventy across the bog */
+      if((t===1||t===2) && h > .955) return 'rock';
+      return null;
+    }
+    if(bm === BIOME_ASH){
+      /* A WOOD, not a scatter: one tile in seven at the heart, thinning to the plain's own one in
+         fourteen at the fraying edge. Trees do not block (see `isBlocked`), so it is walked through,
+         not round. On rock it is stone, as everywhere. */
+      if(t !== 2 && h2 > 0.93 - 0.08 * clamp((biomeK[y*W+x] - 0.5) * 2, 0, 1)) return 'tree';
       if((t===1||t===2) && h > .955) return 'rock';
       return null;
     }
@@ -7004,6 +7073,60 @@ function biomeTick(dt){
     const di = decayIndex(b);
     if(di >= DECAY.length - 1) continue;
     b.salted = true; b.saltedAt = di; b.saltedBy = 'flats';
+  }
+  calcineTick();
+}
+/* ---------- THE CALCINE WOOD, IN PLAY ----------
+   Measured in game-hours off the clock rather than in ticks, so it runs the same at every speed
+   and a sleep through the night counts. A jump bigger than a day is not counted past a day: a
+   load is not a day of lying in the wood. */
+let _ashLastH = null, _squallWas = null, _squallTold = null;
+function calcineTick(){
+  const H = nowH(), dh = _ashLastH === null ? 0 : clamp(H - _ashLastH, 0, 24);
+  _ashLastH = H;
+  if(!biomeCentre.ash) return;
+  /* black bones: the dead lying in it, and the risen standing in it */
+  if(dh > 0){
+    for(const b of corpses){
+      if(b.calcined || b.state !== 'dead' || (b.floor || 0) < 0 || biomeAt(b.x, b.y) !== BIOME_ASH) continue;
+      b.ashH = (b.ashH || 0) + dh;
+      if(b.ashH >= CALCINE_H) b.calcined = true;
+    }
+    for(const c of chars){
+      if(!c.undead || c.lich || c.calcined || c.state !== 'ok' || (c.floor || 0) < 0 || biomeAt(c.x, c.y) !== BIOME_ASH) continue;
+      c.ashH = (c.ashH || 0) + dh;
+      if(c.ashH >= CALCINE_H && blackenBones(c) && mineToKnow(c)){
+        log(`${c.name} has stood in the Calcine Wood long enough. The bone has gone black, and it is harder than it was.`, 'good');
+        addFloat(c.x, c.y - 1.2, 'BLACK BONES', '#a8a29a');
+      }
+    }
+  }
+  /* the squall */
+  const w = squallOn();
+  if(!w){ _squallWas = null; return; }
+  const inWood = (c) => c.state === 'ok' && biomeAt(c.x, c.y) === BIOME_ASH && (c.floor || 0) >= 0;
+  const mine = player().filter(inWood);
+  if(_squallWas !== w.a && mine.length){
+    _squallWas = w.a;
+    log('The sky over the wood goes the colour of a bruise, and the ash comes down hot. Get something over your heads, or get under a roof.', 'bad');
+    addFloat(mine[0].x, mine[0].y - 1.4, 'ASH SQUALL', '#a8a29a');
+  }
+  if(!(dh > 0)) return;
+  const bare = [];
+  for(const c of chars){
+    if(!inWood(c) || c.undead || c.construct || c.phantom || !c.parts || !c.parts.head || c.parts.head.severed) continue;
+    if(hatted(c) || roofedOver(c)) continue;
+    const hd = c.parts.head, was = hd.hp;
+    if(was <= SQUALL_FLOOR) continue;
+    hd.hp = Math.max(SQUALL_FLOOR, was - SQUALL_BURN * dh);
+    if(Math.floor(was / 10) !== Math.floor(hd.hp / 10) && visAt(c.x, c.y, c.floor) === 2) addFloat(c.x, c.y - 0.9, 'ash', '#b0aaa0');
+    if(c.faction === 'player') bare.push(c);
+  }
+  if(bare.length && _squallTold !== w.a){
+    _squallTold = w.a;
+    const names = bare.slice(0, 3).map(c => c.name);
+    const who = bare.length > 3 ? names.join(', ') + ` and ${bare.length - 3} more` : names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0];
+    log(`${who} ${bare.length > 1 ? 'have' : 'has'} nothing on ${bare.length > 1 ? 'their heads' : 'their head'}, and the ash is eating at the scalp.`, 'bad');
   }
 }
 function spawnCrazedHomunculus(x, y, r){
@@ -26038,6 +26161,10 @@ function castRaise(c, body, o){
     const rr = (DECAY.find(x => x.k === r.rot) || DECAY[0]).raise;
     r.blood = r.maxBlood = Math.max(18, Math.round(70 * (0.55 + rr * 0.45)));
   }
+  /* BLACK TO THE MARROW (see THE CALCINE WOOD): a body that lay long enough in the wood is the
+     one corpse that comes up stronger than it went down. Last, so it multiplies the blood and the
+     ceilings above rather than being undone by them. */
+  if(body.calcined && blackenBones(r)) log(`It comes up black to the marrow, and harder than it ever was alive.`, 'good');
   r.guardTarget = c;
   if(o.free){ r.bindWeight = 0; r.propped = true; }
   if(o.temp > 0) r.tempT = o.temp;
@@ -32803,6 +32930,28 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
   if(salt) spec.push({id: BIOME_SALT, x: salt.x, y: salt.y, R: 80 * AREA_R, off: 300, home: salt});
   if(iron) spec.push({id: BIOME_RUST, x: iron.x, y: iron.y, R: 92 * AREA_R, off: 600, home: iron});
   if(bog)  spec.push({id: BIOME_VAT,  x: bog.x,  y: bog.y,  R: 52 * AREA_R, off: 900, home: null});
+  /* THE CALCINE WOOD stands just past the crater's ridge, to one side of the road in: thirty
+     degrees off the gorge's bearing, whichever side has more dry ground under it and fewer
+     walls. Read off the terrain, so it is in the same place on every load of the same world. */
+  {
+    const R = 58 * AREA_R, out = CRATER.range + CRATER.ridge + 7 + R + 18;
+    let best = null;
+    for(const off of [0.52, -0.52, 0.8, -0.8]){
+      const a = CRATER_GORGE_A + off, x = Math.round(CRATER.x + Math.cos(a) * out), y = Math.round(CRATER.y + Math.sin(a) * out);
+      if(x < R * 0.6 || y < R * 0.6 || x > W - R * 0.6 || y > H - R * 0.6) continue;
+      let land = 0, n = 0;
+      for(let j = -R; j <= R; j += 6) for(let i = -R; i <= R; i += 6){
+        if(i * i + j * j > R * R) continue;
+        const tx = Math.round(x + i), ty = Math.round(y + j);
+        if(tx < 0 || ty < 0 || tx >= W || ty >= H) continue;
+        n++; if(terr[ty * W + tx] !== 3) land++;
+      }
+      const walls = towns.filter(t => dist(t.x, t.y, x, y) < R).length;
+      const score = (n ? land / n : 0) - walls * 0.4;
+      if(!best || score > best.score) best = {x, y, score};
+    }
+    if(best) spec.push({id: BIOME_ASH, x: best.x, y: best.y, R, off: 1200, home: null});
+  }
   for(const b of spec) biomeCentre[BIOMES[b.id].key] = {id: b.id, x: b.x, y: b.y, R: b.R};
   const EDGE = 14;
   /* inside a bunker is not the bog, and a bunker's own floor is not the flats */
@@ -32821,7 +32970,7 @@ const undercroft = {halls: [], shafts: [], flora: [], grid: new Map(), tiles: 0,
       if(dr > reach) continue;
       if(inHeadland(x, y, 6)) continue;
       /* nobody else's town stands in it, and the bog laps nobody's walls at all */
-      if(towns.some(t => t !== b.home && dist(x, y, t.x, t.y) < (t.clearR || 20) + (b.id === BIOME_VAT ? 16 : 8))) continue;
+      if(towns.some(t => t !== b.home && dist(x, y, t.x, t.y) < (t.clearR || 20) + (b.id === BIOME_VAT || b.id === BIOME_ASH ? 16 : 8))) continue;
       if(inBunker(x, y)) continue;
       /* a ragged edge: the reach itself wanders with the noise, so the ground frays out rather
          than stopping at a circle somebody drew */
@@ -33961,7 +34110,9 @@ function roadsideScene(st, near){
      a pale pink, and a crust at the pans' white rendered as snow with no seams in it. */
   const BI = {salt:[164,158,144], salt2:[146,140,128], seam:[66,62,56],
               rust:[128,58,30], rust2:[92,40,24], ochre:[160,96,44], pit:[44,24,18], ironRock:[104,56,40],
-              peat:[26,12,12], peat2:[36,17,17], sheen:[70,40,48], vein:[110,70,76]};
+              peat:[26,12,12], peat2:[36,17,17], sheen:[70,40,48], vein:[110,70,76],
+              /* THE WOOD: soot going to charcoal, and the pale ash lying in drifts on it */
+              ash:[7,6,6], ash2:[12,11,11], drift:[40,38,36], ashRock:[14,13,13]};
   const kAt = (wx, wy) => {
     const x = clamp(wx - 0.5, 0, W - 1.001), y = clamp(wy - 0.5, 0, H - 1.001);
     const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
@@ -33985,6 +34136,11 @@ function roadsideScene(st, near){
       c2 = mix(BI.rust, BI.rust2, clamp((nBig - 0.3) * 2.2, 0, 1));
       if(nMid > 0.6) c2 = mix(c2, BI.ochre, clamp((nMid - 0.6) * 2.5, 0, 0.7));
       if(nFine > 0.9) c2 = mix(c2, BI.pit, 0.55);
+    } else if(bid === BIOME_ASH){
+      if(rocky) return mix(col, BI.ashRock, 0.85 * k);
+      c2 = mix(BI.ash, BI.ash2, clamp((nBig - 0.35) * 2.4, 0, 1));
+      if(nMid > 0.64) c2 = mix(c2, BI.drift, clamp((nMid - 0.64) * 2.2, 0, 0.45));
+      if(nFine > 0.93) c2 = mix(c2, BI.drift, 0.3);
     } else {
       if(rocky) return mix(col, BI.peat2, 0.5 * k);
       c2 = mix(BI.peat, BI.peat2, clamp((nMid - 0.35) * 2, 0, 1));
@@ -35295,7 +35451,7 @@ function vscaleOf(c){
 
 /* ---------- instanced decor ---------- */
 {
-  const trees=[], oasisTrees=[], deadTrees=[], rocks=[], charRocks=[], shrubs=[], cveins=[], iveins=[];
+  const trees=[], oasisTrees=[], deadTrees=[], calcTrees=[], rocks=[], charRocks=[], shrubs=[], cveins=[], iveins=[];
   const wrecks=[], blooms=[], slumped=[], pools=[];
   const gr = towns.find(t2 => t2.def.key === 'greenrest');
   for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
@@ -35308,9 +35464,9 @@ function vscaleOf(c){
       const dead = cd < CRATER.ashfall || (cd < CRATER.range + 8 && craterRing(x + 0.5, y + 0.5) === 'marches' &&
           hash2(x*13, y*17) < 0.15 + 0.85 * (1 - (cd - CRATER.ashfall) / (craterEdge(craterAng(x + 0.5, y + 0.5)) - CRATER.ashfall)))
         || biomeAt(x, y) === BIOME_RUST;   /* nothing living roots in the rust */
-      (dead ? deadTrees : (gr && dist(gr.x, gr.y, x, y) < 26) ? oasisTrees : trees).push([x+0.5, y+0.5]);
+      (biomeAt(x, y) === BIOME_ASH ? calcTrees : dead ? deadTrees : (gr && dist(gr.x, gr.y, x, y) < 26) ? oasisTrees : trees).push([x+0.5, y+0.5]);
     }
-    else if(d==='rock') (craterD(x + 0.5, y + 0.5) < CRATER.ashfall ? charRocks : rocks).push([x+0.5, y+0.5]);
+    else if(d==='rock') (craterD(x + 0.5, y + 0.5) < CRATER.ashfall || biomeAt(x, y) === BIOME_ASH ? charRocks : rocks).push([x+0.5, y+0.5]);
     else if(d==='shrub') shrubs.push([x+0.5, y+0.5]);
     else if(d==='cvein') cveins.push([x+0.5, y+0.5]);
     else if(d==='ivein') iveins.push([x+0.5, y+0.5]);
@@ -35525,6 +35681,18 @@ function vscaleOf(c){
       _qa.setFromAxisAngle(_ax, 0.03 + k * k * 0.7 + hash2(p[0]*7, p[1]*3) * 0.1);
       _qb.setFromAxisAngle(_ax.set(0, 1, 0), hash2(p[0]*31, p[1]*17) * Math.PI * 2);
       dm.quaternion.copy(_qa).multiply(_qb);
+    });
+    /* 1b. THE CALCINE WOOD: taller than anything alive out here, black as a burnt match, the
+          crown gone and three stubs where it was, and every one standing straight — what made
+          these did not push them over, it went through them where they stood. */
+    const calcGeo = merged([
+      [new THREE.CylinderGeometry(0.06, 0.15, 2.5, 6), M(0, 1.25, 0)],
+      [new THREE.CylinderGeometry(0.03, 0.06, 0.8, 4), M(0.2, 1.7, 0, 0, 0, -0.75)],
+      [new THREE.CylinderGeometry(0.025, 0.05, 0.6, 4), M(-0.17, 2.0, 0.05, 0.25, 0, 0.7)],
+      [new THREE.CylinderGeometry(0.02, 0.045, 0.5, 4), M(0.02, 2.2, -0.15, -0.8, 0, 0.1)],
+    ]);
+    addInst(calcTrees, calcGeo, '#1d1b1a', 0, p => 0.85 + hash2(p[0]*5, p[1]*9) * 0.55, true, (p, dm) => {
+      dm.rotation.set((hash2(p[0]*7, p[1]*3) - 0.5) * 0.1, hash2(p[0]*31, p[1]*17) * Math.PI * 2, (hash2(p[0]*3, p[1]*7) - 0.5) * 0.1);
     });
     /* 2. THE ORDER'S POSTS, at the edge of the Ashfall: a pole, a bar, a strip of white cloth,
           every ten degrees. The Church marks the ground it will not walk on. A cairn at every
@@ -38488,7 +38656,7 @@ function colorKeyOf(c){
      whichever got built first in a session handed its rig to the other through the mesh
      cache — which is why the mage's mantle appeared some runs and not others. The beast
      rigs had the same collision: elk, grazer and gravehound are all just `|b`. */
-  return factionColor(c) + '|' + (c.kin||'') + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.head||'') + '|' + (c.cloak||'') + '|' + (c.house||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.wisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.eater?'|E':'') + (c.soulbound?'|B':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.trade||'') + '|' + (c.hollowTier||0) + '|' + (c.vesselPattern||'') + '|' + (c.face||'') + (c.skinShift ? '|F' + c.skinShift : '') + (c.bossPhase ? '|P' + c.bossPhase : '') + (c.immortal ? '|I' + c.immortal : '');
+  return factionColor(c) + '|' + (c.kin||'') + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.head||'') + '|' + (c.cloak||'') + '|' + (c.house||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.wisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.eater?'|E':'') + (c.soulbound?'|B':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.trade||'') + '|' + (c.hollowTier||0) + '|' + (c.vesselPattern||'') + '|' + (c.face||'') + (c.skinShift ? '|F' + c.skinShift : '') + (c.bossPhase ? '|P' + c.bossPhase : '') + (c.immortal ? '|I' + c.immortal : '') + (c.calcined ? '|X' : '');
 }
 const SKINS = ['#8a5c34', '#6e4426', '#a06c40', '#5a3820', '#96683a'];
 const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0'];
@@ -39559,6 +39727,8 @@ function buildCharMesh(c){
        off the circle comes out as clean new bone; these came out of the ground already brown,
        and the dust of wherever they were lying is still on them. It is the only thing on
        screen that says "these were cheap and these are old" before it opens its mouth. */
+    /* BLACK TO THE MARROW: whatever lay or stood long enough in the Calcine Wood */
+    : (c.calcined && (c.undead || c.state === 'dead')) ? CALCINE_BONE
     : (c.undead && c.kin === 'longdead') ? '#9d8a68'
     : (c.undead && c.kin === 'mage') ? '#a3907c'
     : (c.undead && !c.lich && c.rot && ROT_SKIN[c.rot]) ? ROT_SKIN[c.rot]
@@ -46402,16 +46572,18 @@ function updateDust(rdt){
      falling." Everywhere else it blows along the ground. Over the glass it comes DOWN, and there
      is more of it, and it has no wind in it. */
   /* and it starts coming down in the Ashfall, a little and then all of it by the glass */
-  const fallK = activeFloor >= 0 ? clamp((CRATER.ashfall + 8 - craterD(camX, camY)) / (CRATER.ashfall - CRATER.glass), 0, 1) : 0;
-  const moteCap = weather.storm > 0 ? 130 : Math.round(36 + fallK * 84);
+  /* and in the Calcine Wood in a squall it comes down heavy, dark, and on a slant */
+  const squall = activeFloor >= 0 && biomeAt(camX, camY) === BIOME_ASH && !!squallOn();
+  const fallK = squall ? 1 : activeFloor >= 0 ? clamp((CRATER.ashfall + 8 - craterD(camX, camY)) / (CRATER.ashfall - CRATER.glass), 0, 1) : 0;
+  const moteCap = squall ? 420 : weather.storm > 0 ? 130 : Math.round(36 + fallK * 84);
   while(dustMotes.length < moteCap){
     const falling = fallK > 0 && vrnd() < fallK;
     dustMotes.push({
       /* vrnd, not rnd: this runs inside render() at frame rate — see the note on vrnd */
       x: camX + (vrnd()-0.5)*span, y: camY + (vrnd()-0.5)*span,
       h: falling ? 2.5 + vrnd()*5 : 0.3 + vrnd()*2.2, life: 3 + vrnd()*4, t: 0,
-      vx: falling ? (vrnd()-0.5)*0.12 : 0.6 + vrnd()*0.8, vy: (vrnd()-0.5)*(falling ? 0.1 : 0.3),
-      fall: falling ? 0.45 + vrnd()*0.5 : 0,
+      vx: squall ? 0.9 + vrnd()*0.6 : falling ? (vrnd()-0.5)*0.12 : 0.6 + vrnd()*0.8, vy: (vrnd()-0.5)*(falling ? 0.1 : 0.3),
+      fall: falling ? (squall ? 1.1 + vrnd()*0.8 : 0.45 + vrnd()*0.5) : 0, ash: squall,
     });
   }
   for(let i=dustMotes.length-1; i>=0; i--){
@@ -46423,14 +46595,21 @@ function updateDust(rdt){
   }
 }
 function drawDust(){
+  /* THE SQUALL DARKENS THE SKY, not just the air: a wash over the whole view while the camera is
+     over the wood and it is coming down, so it reads from any zoom before a mote is picked out */
+  if(activeFloor >= 0 && biomeAt(camX, camY) === BIOME_ASH && squallOn()){
+    cx.fillStyle = 'rgba(18,15,13,0.32)';
+    cx.fillRect(0, 0, cx.canvas.width, cx.canvas.height);
+  }
   for(const m of dustMotes){
     if(!visAt(m.x, m.y, m.floor)) continue;
     const p = w2s(m.x, m.y, m.h);
     if(!p) continue;
-    const a = Math.sin(m.t/m.life*Math.PI) * (m.fall ? 0.5 : 0.35);
+    const a = Math.sin(m.t/m.life*Math.PI) * (m.ash ? 0.8 : m.fall ? 0.5 : 0.35);
     cx.globalAlpha = a;
-    cx.fillStyle = m.fall ? '#e8e4dc' : '#d8c8a0';
-    cx.fillRect(p.x, p.y, 2, 2);
+    cx.fillStyle = m.ash ? '#8e8780' : m.fall ? '#e8e4dc' : '#d8c8a0';
+    if(m.ash){ cx.fillRect(p.x, p.y, 2, 5); cx.fillRect(p.x + 1, p.y + 4, 2, 3); }   /* a streak, falling on the slant */
+    else cx.fillRect(p.x, p.y, 2, 2);
   }
   cx.globalAlpha = 1;
 }
@@ -53994,6 +54173,7 @@ function snapshot(){
     gritT:c.gritT||0, gritWob:c.gritWob||0, drunk:c.drunk||0, drinkCd:c.drinkCd||0, hangT:c.hangT||0, satDay:c.satDay||0,
     protagonist:!!c.protagonist, squadNo:c.squadNo||0, wasOrder:!!c.wasOrder,
     salted:!!c.salted, saltedAt:c.saltedAt??null, saltedBy:c.saltedBy||null, biomeOwn:c.biomeOwn||null, rot:c.rot||null, lieuWear:c.lieuWear||0,
+    calcined:!!c.calcined, ashH: c.ashH ? Math.round(c.ashH * 100) / 100 : null,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
     bindWeight:c.bindWeight, shortTag:c.shortTag, tempT:c.tempT??null, propped:!!c.propped,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
@@ -54240,6 +54420,7 @@ function restore(d){
   for(const k in biomeState.seen) delete biomeState.seen[k];
   for(const k in biomeState.woke) delete biomeState.woke[k];
   if(d.biomes){ Object.assign(biomeState.seen, d.biomes.seen || {}); Object.assign(biomeState.woke, d.biomes.woke || {}); }
+  _ashLastH = null; _squallWas = null; _squallTold = null;   /* a load is not hours spent in the wood */
   for(const h of hamlets) h.woke = !!(d.hamletsWoke && d.hamletsWoke.includes(h.id));   /* before the folk were saved, none had come */
   for(const t of towers) t.reached = !!(d.towersReached && d.towersReached.includes(t.id));
   if(ark){ ark.reached = !!d.arkReached; ark.woke = !!d.arkWoke; }
@@ -54574,6 +54755,8 @@ function restore(d){
     if(s.corpseWorth != null) c.corpseWorth = s.corpseWorth;
     c.shape = s.shape ? {...s.shape} : null; c.shapeName = s.shapeName || null; c.kills = s.kills || 0;
     c.salted = !!s.salted; c.saltedAt = s.saltedAt ?? null; c.saltedBy = s.saltedBy || null; c.biomeOwn = s.biomeOwn || null; c.rot = s.rot || null; c.lieuWear = s.lieuWear || 0;
+    if(s.calcined) c.calcined = true;
+    if(s.ashH) c.ashH = s.ashH;
     if(s.knit != null) c.knit = s.knit;
     if(s.natArmor) c.natArmor = {...s.natArmor};
     if(s.noise != null) c.noise = s.noise;
