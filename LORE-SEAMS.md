@@ -2077,6 +2077,63 @@ waiting on your notes from the screenshots.
    - 8 to 16 hours of sifting.
 5. **The words above.**
 
+### 12.10 Ruled 2026-10-04, and built
+
+- **Bonewalkers are gone.** *"Legacy content... the world's necromancers sort of take on this
+  role anyway, and the new skyline exploration sites also fulfill the need for loot."*
+  - The 62 ruin guards are never put in the world.
+  - Their dice are still rolled, so the rest of the world is unchanged.
+- **Striders, as ruled:**
+  - **Pace:** they walk slowly, under half an elk's pace (1.4 against 3.9 tiles a second).
+  - **Colour:** brown, the dust hounds' palette, not violet. That colour belongs to the
+    gaunts.
+  - **Purely migratory:**
+    - A herd has no home. It keeps a heading and walks a leg of 100 to 160 tiles from wherever
+      it is.
+    - It sifts for 8 to 16 hours, turns a little, and walks on.
+  - **Young are carried and born on the move:**
+    - A herd with two grown and room bears one every 72 hours, onto a parent's back,
+      wherever the herd happens to be.
+    - It rides there 36 hours, then is put down to walk with the herd and grow.
+  - **They are herbivores that defend the herd:**
+    - Nothing provokes them but a blow. Strike one, and the whole herd within 30 tiles turns
+      on whoever did it. The young run.
+    - **Ranged attack:** being slow, they **throw a clot of the silt they sift** off the
+      feeding tube, at 3 to 15 tiles, every 3 seconds.
+    - A quarrel is forgotten 20 seconds after you've gone.
+    - **Not built:** proactive stabbing of anything that came close.
+  - They never feed on the dead.
+- **Young start small, for every animal that breeds.** This answers your question: before
+  this, calves were born at full size. Now:
+  - A calf, a whelp, or a strider's young is born at about a third of its size, strength and
+    blood, and grows over days: 4 for elk and hounds, 8 for striders.
+  - Until it's mostly grown it runs rather than fights, and a whelp doesn't hunt.
+- **Dens:** a surviving pack digs again.
+  - **Digging:** two grown hounds with no den of their own for 14 days dig one where they are.
+  - **Cap:** the world holds at most 2 dens more than it started with (7 on this map).
+  - **Floor:** while the waste holds fewer than 4 grown hounds, a pack walks in off the edge
+    every 5 days and digs in, in its turn.
+- **Wyrms keep to the high ground.**
+  - Each has a lair on the flank of one of the two largest massifs, well clear of towns and
+    of each other, with a hoard of gold and bones there.
+  - The guard leash keeps it home, and an old save's wyrms walk home on load.
+- **More mountains are on the handcrafted-world list (#128).** Most of the map is flat. The
+  wyrms take the two biggest massifs now, and a set world should give them, and much else,
+  real ranges.
+- **The site label's subtext** is *Sundered ground*, without the second "the".
+
+**The words (all new):** none this round. The silt clot is unlabelled, and the strider's
+`(a dry click, high up)` bark and the **TOO CLOSE** float went with the proactive stabbing.
+
+**For you to rule:**
+1. **The strider dials:** pace, a birth every 72 hours, 36 hours carried, 8 days to grow, the
+   clot's reach and damage.
+2. **Should young be catchable and tameable?** It's a natural next step for elk calves; it's
+   not built.
+3. **The den dials:** 14 days to dig again, 2 dens over the start, a floor of 4 hounds.
+4. **Alchemy progression:** see `ALCHEMY-PATHS.md`. Three iterations and a recommendation,
+   for your ruling.
+
 ---
 
 ## Appendix: re-running the counts

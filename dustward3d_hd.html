@@ -4115,6 +4115,11 @@ function moveSpeedRaw(c){
   else if(ld > 0.5) s *= 1 - (ld-0.5)*0.5;
   if(c.big > 1) s *= 1 - (c.big - 1) * 0.28;
   if(c.speedMult) s *= c.speedMult;   /* some things were not built to arrive quickly */
+  if(c.kin === 'strider' && !c.undead) s *= STRIDER_PACE;   /* "the striders should walk pretty slowly" */
+  /* A PACK RUNNING SOMETHING DOWN RUNS. A hound and an elk walk within a few percent of each
+     other, so a chase was a procession that ended when the herd crossed out of the pack's
+     country — measured, a hunt that brought nothing down in four minutes. */
+  if(c.hunting && c.kin === 'hound' && c.target && c.target.kin === 'elk') s *= 1.15;
   /* THE GRADE. Mountains are walkable now, and a mountain you cross as fast as a road is
      not really terrain — the route over a range should be the slow way, chosen because it
      is short or because someone is waiting for you on the road. The cheap height test comes
@@ -14851,8 +14856,8 @@ function pierceNeutral(n, o){
   /* THE HUNT: a hound out for meat and the elk it is after are each other's business, and only
      while it is hunting (see THE WASTE'S OWN BUSINESS) */
   if(n.kin === 'elk' && !n.undead && isHuntingHound(o)) return true;
-  /* and a strider will not be crowded: whoever it has rounded on, and only them, while it is */
-  if(n.kin === 'strider' && n.crowdT > 0 && n.crowdedBy === o) return true;
+  /* and a strider herd and whoever struck one of it, for as long as the trouble lasts */
+  if(n.kin === 'strider' && n.herdFoeT > 0 && n.herdFoe === o) return true;
   /* AND A NEUTRAL HEAP OF THE DEAD IS STILL THE DEAD. Asked from the beast's side because
      that is the only side this function is ever asked from — `hostile` calls it for whichever
      of the pair is neutral — and one rule here settles the quarrel in both directions. */
@@ -17523,7 +17528,7 @@ function physics(c, dt){
   if(mawFeed(c, dt)) return;   /* the Maw is here for the bodies, not for you */
   if(houndHunt(c, dt)) return;      /* a hungry pack, and the herd it is after (THE WASTE'S OWN BUSINESS) */
   elkSpook(c, dt);
-  striderSpace(c, dt);
+  striderTick(c, dt);
   /* A ROOM GARRISON holds its chamber — redoubt guards and cave dwellers alike. It will not
      leave the room (or the floor) to chase, so a wandering boss can't lure a whole warren into
      one pile, and every door is its own fight. Only a foe inside the room, same floor, is met. */
@@ -21750,12 +21755,24 @@ function rubidoBark(c){
      · THE HERD RUNS. An elk with a hunting hound inside `ELK_SPOOK_R` bolts. Herds calve back
        one at a time while they have room, unseen; a herd hunted down to one is gone.
      · PACKS COME FROM DENS, and a den can be dug out. A den tops its pack up a whelp at a time
-       while nobody of yours is near it; dig it out and nothing is born there again. Packs no
-       longer walk in off the map's edge.
-     · STRIDERS MIGRATE AND WILL NOT BE CROWDED. A herd walks a long loop of the waste, slowly,
-       which puts them on the skyline and on the move. Anything that comes inside
-       `STRIDER_SPACE` of one is stabbed at with the front leg until it leaves — a pack of hounds
-       included — so a herd is something you route round, and the hounds hunt elk, not these.
+       while nobody of yours is near it; dig it out and nothing is born there again. But a pack
+       that survives it digs again (ruled 2026-10-04: "surviving packs should be able to dig new
+       dens after a few weeks... caps for this so they don't take over the world, but I also
+       don't want them to go extinct too easily"): two grown hounds with no den of their own for
+       `DEN_REDIG_H` dig a new one where they are, while the world holds fewer than `DEN_MAX`;
+       and while the waste holds fewer than `HOUND_FLOOR` grown hounds, a pack walks in off the
+       edge every `PACK_RETURN_H` — to dig in, in its turn.
+     · STRIDERS WANDER, AND DEFEND THE HERD. Ruled 2026-10-04: "purely migratory, with them
+       carrying and birthing young on the move... herbivore style creatures that simply wander
+       the wastes, and of course defend their herd if attacked. (Perhaps give them some ranged
+       attacks too since they are slow.)" No home: a herd keeps a heading and walks a leg of a
+       hundred-odd tiles from wherever it is, sifts there, and turns a little and walks on —
+       slowly. Young are born onto a parent's back and carried; put down, they walk with the
+       herd and grow. Strike one and the herd turns on whoever did it, with the front leg up
+       close and a flung clot of sifted silt at range. Nothing else provokes them.
+     · YOUNG START SMALL. A calf, a whelp or a strider's young comes into the world a third of
+       its size and strength and grows to it over days (`GROW_H`); until it is most of the way
+       there it runs rather than fights.
    ALL OF IT RUNS ON POCKETED STREAMS where it needs dice (a whelp, a calf, a new herd), so the
    world's stream is the same length with it as without it. */
 const PACK_HUNGRY_H = 18;      /* game-hours after a meal before a pack hunts again */
@@ -21767,10 +21784,20 @@ const HERD_CAP = 6;
 const DEN_PUP_H = 16;          /* game-hours between whelps at a den short of its pack */
 const DEN_WORK = 6;            /* seconds of digging to put a den out for good */
 const DEN_TERRITORY = 45;      /* a den's pack keeps to this, and hunts inside it */
-const STRIDER_SPACE = 5;       /* tiles a strider will not let anything inside */
-const STRIDER_BUD_H = 96;      /* game-hours between new striders in a herd below three */
+const DEN_REDIG_H = 14 * 24;   /* a surviving pack without a den digs a new one after two weeks */
+const DEN_EXTRA = 2;           /* and the world holds at most this many more than it began with */
+const HOUND_FLOOR = 4;         /* below this many grown hounds in the waste, a pack walks in... */
+const PACK_RETURN_H = 5 * 24;  /* ...every five days, until there are more */
+let DEN_BASE = 0;              /* how many the world began with (`seedEcology`) */
+const STRIDER_PACE = 0.45;     /* of what its legs would give it: a strider does not hurry */
+const STRIDER_HERD_CAP = 6;    /* a herd, its young carried and walking included */
+const STRIDER_BIRTH_H = 72;    /* game-hours between births, in a herd with two grown and room */
+const STRIDER_CARRY_H = 36;    /* how long a young one rides before it is put down */
+const STRIDER_SPIT = {r: 15, min: 3, cd: 3.2, dmg: 12};   /* the flung clot: reach, too close, every, how hard */
+const STRIDER_RALLY_R = 30;    /* how far a strider's trouble carries through its herd */
+const GROW_H = {elk: 96, hound: 96, strider: 192};        /* game-hours from born to grown */
 const dens = [];
-const ecoState = {calf: {}, bud: {}, swp: {}, sgz: {}, shome: {}};
+const ecoState = {calf: {}, sbirth: {}, swp: {}, sgz: {}, shd: {}, sdst: {}};
 let _ecoT = 0, _ecoH = null;
 function isHuntingHound(o){ return o.kin === 'hound' && o.faction === 'wild' && !o.undead && !!o.hunting && o.state === 'ok'; }
 function packOf(c){
@@ -21783,6 +21810,7 @@ function packOf(c){
    with the elk itself: `pierceNeutral` makes a hunting hound and an elk each other's enemy). */
 function houndHunt(c, dt){
   if(c.kin !== 'hound' || c.faction !== 'wild' || c.undead || c.state !== 'ok' || (c.floor || 0) !== 0) return false;
+  if(c.young && growK(c) < 0.6) return false;          /* a whelp tags along; it does not hunt */
   const H = nowH();
   if(c.fedH === undefined || c.fedH === null) c.fedH = H - (c.id % 12);
   const L = c.squad && c.squad.lair;
@@ -21837,151 +21865,198 @@ function elkSpook(c, dt){
   c.spookT = 0.4 + (c.id % 5) * 0.02;
   for(const o of charsNear(c.x, c.y, ELK_SPOOK_R)) if(isHuntingHound(o) && dist(o.x, o.y, c.x, c.y) < ELK_SPOOK_R){ c.fleeT = 2; return; }
 }
-/* ---------- A STRIDER'S SPACE ----------
-   Whatever comes inside it — yours, a pack, a caravan — is rounded on and stabbed at until it
-   is out again. Only that one, and only for as long as the strider is rounded (`crowdT`), which
-   is what `pierceNeutral` reads: walk round a herd and nothing happens. Badly hurt, it runs. */
-function striderSpace(c, dt){
+/* ---------- A STRIDER'S HERD, AND WHO HAS TROUBLED IT ----------
+   Nothing provokes a strider but a blow. Strike one and every grown member of its herd inside
+   `STRIDER_RALLY_R` turns on whoever struck (`herdFoe`, read by `pierceNeutral`) for as long as
+   the trouble lasts; the young run. They are slow, so the answer at range is a flung clot of the
+   silt they sift, off the feeding tube. Badly hurt, one runs, and a herd forgets a quarrel twenty
+   seconds after the one it was with has gone. */
+function striderRally(t, attacker){
+  if(!t.sherd || !attacker || attacker.faction === 'fauna' || attacker === t) return;
+  for(const m of charsNear(t.x, t.y, STRIDER_RALLY_R)){
+    if(m.sherd !== t.sherd || m.state !== 'ok' || m.undead || m.faction !== 'fauna') continue;
+    if(m.young && growK(m) < 0.6){ m.fleeT = 3; continue; }
+    m.herdFoe = attacker; m.herdFoeT = 25; m.moveTarget = null;
+    if(!m.target || m.target.state !== 'ok') m.target = attacker;
+  }
+}
+function striderTick(c, dt){
   if(c.kin !== 'strider' || c.faction !== 'fauna' || c.undead || c.state !== 'ok') return;
-  if(c.crowdT > 0){
-    c.crowdT -= dt;
-    const o = c.crowdedBy;
-    if(!o || o.state !== 'ok' || dist(o.x, o.y, c.x, c.y) > STRIDER_SPACE + 4) c.crowdT = Math.min(c.crowdT, 0.6);
-    if(c.crowdT <= 0){ if(c.target === o) c.target = null; c.crowdedBy = null; c.crowdT = 0; }
+  if(c.herdFoeT > 0){
+    c.herdFoeT -= dt;
+    const o = c.herdFoe;
+    if(!o || o.state !== 'ok' || dist(o.x, o.y, c.x, c.y) > STRIDER_RALLY_R + 15) c.herdFoeT = Math.min(c.herdFoeT, 0.5);
+    if(c.herdFoeT <= 0){ if(c.target === o) c.target = null; c.herdFoe = null; c.herdFoeT = 0; }
   }
   if(c.blood < c.maxBlood * 0.35 && !(c.fleeT > 0)) c.fleeT = 3;
-  /* AND IT FORGETS YOU ONCE YOU HAVE GONE. A strider stabbed at somebody who hit back, and the
-     neutral rule made that a grudge for life (`provoked`) — so one scuffle at the edge of a herd
-     made it an enemy that would cross the map for you, which is the opposite of an animal you
-     route round. Twenty seconds with nobody of yours inside twenty-five tiles and it lets go. */
+  /* AND IT FORGETS YOU ONCE YOU HAVE GONE: the neutral rule makes a blow from one of yours a
+     grudge for life (`provoked`), and a herd animal that crossed the map after you would be the
+     opposite of one that wanders. Twenty seconds with nobody of yours inside twenty-five tiles. */
   if(c.provoked){
     c.calmT = yoursNear(c.x, c.y, 25) ? 0 : (c.calmT || 0) + dt;
     if(c.calmT > 20){ c.provoked = false; c.calmT = 0; if(c.target && c.target.faction === 'player') c.target = null; }
   }
-  c.spaceT = (c.spaceT || 0) - dt;
-  if(c.spaceT > 0 || c.crowdT > 0) return;
-  c.spaceT = 0.4 + (c.id % 5) * 0.02;
-  let best = null, bd = STRIDER_SPACE;
-  for(const o of charsNear(c.x, c.y, STRIDER_SPACE)){
-    if(o === c || o.state !== 'ok' || o.faction === 'fauna' || o.phantom || (o.floor || 0) !== (c.floor || 0)) continue;
-    const d = dist(o.x, o.y, c.x, c.y);
-    if(d < bd){ bd = d; best = o; }
-  }
-  if(!best) return;
-  c.crowdedBy = best; c.crowdT = 6; c.target = best;
-  say(c, '(a dry click, high up)');
-  if(best.faction === 'player' && visAt(c.x, c.y, c.floor) === 2) addFloat(c.x, c.y - 2.4, 'TOO CLOSE', '#d8b878');
-}
-/* ---------- WHERE A STRIDER HERD WALKS ----------
-   A loop of five points round the herd's HOME — where it came into the world, kept in
-   `ecoState.shome` and saved, because a herd that has been walking for a week is not standing
-   where it started. Ninety-five to a hundred and sixty-five tiles out, off the herd's number and
-   the land, no draw. The first cut hashed the loop's centre over the whole map, and a herd born
-   in the south-east set off for a loop eighteen hundred tiles away. Open ground on the herd's own
-   landmass, off the headland, well clear of every town. */
-const _sRoutes = {};
-function striderHome(h){
-  if(!ecoState.shome[h]){
-    const mem = chars.filter(c => c.sherd === h && c.state !== 'dead');
-    if(!mem.length) return null;
-    ecoState.shome[h] = {x: Math.round(mem.reduce((a, c) => a + c.x, 0) / mem.length), y: Math.round(mem.reduce((a, c) => a + c.y, 0) / mem.length)};
-  }
-  return ecoState.shome[h];
-}
-function striderRoute(h){
-  if(_sRoutes[h]) return _sRoutes[h];
-  const hm = striderHome(h);
-  if(!hm) return [];
-  const home = landComp[(hm.y | 0) * W + (hm.x | 0)];
-  const fine = (x, y) => x > 40 && y > 40 && x < W - 40 && y < H - 40 && !isBlocked(x + 0.5, y + 0.5)
-    && landComp[(y | 0) * W + (x | 0)] === home && !inHeadland(x, y, 20) && !towns.some(t => dist(t.x, t.y, x, y) < (t.clearR || 20) + 50);
-  const cx = hm.x, cy = hm.y;
-  const wps = [];
-  if(home){
-    for(let j = 0; j < 5; j++){
-      const a = j / 5 * Math.PI * 2 + hash2(h, j + 3) * 0.6;
-      for(const rk of [1, 0.75, 1.25, 0.5]){
-        const r = (95 + hash2(h * 7, j) * 70) * rk;
-        const x = Math.round(cx + Math.cos(a) * r), y = Math.round(cy + Math.sin(a) * r);
-        if(fine(x, y)){ wps.push({x: x + 0.5, y: y + 0.5}); break; }
-      }
+  /* the clot, at range: from up at the hub, so it comes down on what it is thrown at */
+  c.spitCd = (c.spitCd || 0) - dt;
+  const t = c.target;
+  if(t && t.state === 'ok' && c.spitCd <= 0 && !(c.fleeT > 0) && !(c.young && growK(c) < 0.6) && (t.floor || 0) === (c.floor || 0)){
+    const d = dist(c.x, c.y, t.x, t.y);
+    if(d >= STRIDER_SPIT.min && d <= STRIDER_SPIT.r && hostile(c, t) && !losBlocked(c.x, c.y, t.x, t.y, c.floor || 0)){
+      c.spitCd = STRIDER_SPIT.cd;
+      c.spitT = 0.35;
+      projectiles.push({x: c.x, y: c.y, target: t, speed: 10, floor: c.floor || 0, dmg: STRIDER_SPIT.dmg, caster: c,
+                        wt: 'blunt', ap: 0, ff: false, arrow: false, silt: true, hFrom: 3.2});
     }
   }
-  return (_sRoutes[h] = wps);
+  if(c.spitT > 0) c.spitT -= dt;
+}
+/* ---------- WHERE A STRIDER HERD WALKS NEXT ----------
+   No home and no loop: a heading, kept in `ecoState.shd`, and a leg of a hundred to a hundred
+   and sixty tiles from wherever the herd stands, turned a little off that heading each time —
+   more, the more the way is shut. Open ground on the herd's own landmass, off the headland,
+   clear of every town; boxed in, it turns round. Off the herd's number and the leg, no draw. */
+function striderNextLeg(h, from){
+  const home = landComp[(from.y | 0) * W + (from.x | 0)];
+  const fine = (x, y) => x > 40 && y > 40 && x < W - 40 && y < H - 40 && !isBlocked(x + 0.5, y + 0.5)
+    && landComp[(y | 0) * W + (x | 0)] === home && !inHeadland(x, y, 20) && !towns.some(t => dist(t.x, t.y, x, y) < (t.clearR || 20) + 50);
+  const hd = ecoState.shd[h] ?? hash2(h * 3, 7) * Math.PI * 2;
+  const leg = (ecoState.swp[h] || 0) + 1;
+  ecoState.swp[h] = leg;
+  for(let k = 0; k < 14; k++){
+    const a = hd + (hash2(h * 17 + leg, k) - 0.5) * (0.9 + k * 0.35);
+    const r = 100 + hash2(h * 5 + leg, k + 9) * 60;
+    const x = Math.round(from.x + Math.cos(a) * r), y = Math.round(from.y + Math.sin(a) * r);
+    if(fine(x, y)){ ecoState.shd[h] = a; return {x: x + 0.5, y: y + 0.5}; }
+  }
+  ecoState.shd[h] = hd + Math.PI;
+  return null;
+}
+/* ---------- YOUNG START SMALL ----------
+   `c.young` is when it was born, how long it takes to grow, and what it will be grown: its body
+   is a third of that at birth and the rest over `GROW_H` (`applyGrowth`, on the hour, and the
+   renderer scales the body by the same clock). Until it is most of the way grown it runs. */
+function growK(c){ return c.young ? clamp((nowH() - c.young.b) / c.young.h, 0, 1) : 1; }
+function startYoung(c, kind, bornH){
+  c.young = {b: bornH ?? nowH(), h: GROW_H[kind] || 96, st: {atk: c.stats.atk, def: c.stats.def, tough: c.stats.tough}, bl: c.maxBlood || 70,
+             fh: !!c.fleeOnHit};
+  c.fleeOnHit = true;
+  applyGrowth(c);
+}
+function applyGrowth(c){
+  if(!c.young) return;
+  const k = growK(c), f = 0.35 + 0.65 * k, Y = c.young;
+  for(const s2 of ['atk', 'def', 'tough']) c.stats[s2] = Math.round(Y.st[s2] * f * 10) / 10;
+  c.maxBlood = Math.round(Y.bl * f); c.blood = Math.min(c.blood || c.maxBlood, c.maxBlood);
+  if(k >= 0.6) c.fleeOnHit = Y.fh;
+  if(k >= 1) c.young = null;
 }
 /* ---------- WHELPS, CALVES, AND THE MIGRATION ----------
    Twice a second off `biomeTick`, but the births only on the hour. Nothing is born where one of
    yours can see it. */
-function spawnDenHound(dn){
+function spawnDenHound(dn, young){
   const pocket = seed;
   seed = (Math.imul(dn.id + 0x51, 0x9E3779B9) ^ Math.floor(nowH() * 4) ^ ((ecoState.pups = (ecoState.pups || 0) + 1) << 8)) | 0;
   try {
     const p = findOpenNear(dn.x + 1.5, dn.y + 1.5, 3);
     const c = makeChar('Dust Hound', 'wild', p.x, p.y, {atk: ri(6, 14), def: ri(4, 10), tough: ri(4, 10), ath: 14, squad: dn.squad});
     c.beast = true; c.kin = 'hound'; c.denId = dn.id; c.fedH = nowH() - ri(0, 12);
+    if(young) startYoung(c, 'hound');
     chars.push(c);
     return c;
   } finally { seed = pocket; }
 }
-function spawnElkAt(x, y, herd){
+function spawnElkAt(x, y, herd, young){
   const q = findOpenNear(x, y, 4);
   const e = makeChar('Dust Elk', 'fauna', q.x, q.y, {atk: 5, def: 10, tough: 10, ath: 12});
   e.kin = 'elk'; e.beast = true; e.neutral = true; e.fleeOnHit = true; e.herd = herd;
   e.blood = 70; e.maxBlood = 70;
   e.dropItems = {meat: 3, hide: 1};
+  if(young) startYoung(e, 'elk');
   chars.push(e);
   return e;
 }
-function spawnStriderAt(x, y, sherd){
+function spawnStriderAt(x, y, sherd, bornH){
   const q = findOpenNear(x, y, 4);
   const st = makeChar('Silt Strider', 'fauna', q.x, q.y, {atk: 12, def: 8, tough: 34, ath: 9});
   st.beast = true; st.big = 1.6; st.kin = 'strider'; st.neutral = true; st.sherd = sherd;
   st.blood = 160; st.maxBlood = 160; st.clawDmg = 14;
   st.dropItems = {hide: ri(3, 5), meat: ri(4, 7)};
+  if(bornH !== undefined) startYoung(st, 'strider', bornH);
   chars.push(st);
   return st;
 }
 const yoursNear = (x, y, r) => player().some(c => c.state !== 'dead' && Math.abs(c.x - x) < r && Math.abs(c.y - y) < r);
 function ecologyTick(){
   const H = nowH();
-  /* the migration, every couple of seconds */
+  /* the migration, every couple of seconds: walk the leg, sift at its end, choose the next */
   _ecoT -= 0.5;
   if(_ecoT <= 0){
     _ecoT = 2;
     const herds = {};
     for(const c of chars) if(c.kin === 'strider' && c.sherd && c.state === 'ok' && !c.undead && c.faction === 'fauna') (herds[c.sherd] = herds[c.sherd] || []).push(c);
     for(const h in herds){
-      const wps = striderRoute(+h), mem = herds[h];
-      if(!wps.length) continue;
-      let i = ecoState.swp[h] || 0;
-      if(i >= wps.length) i = 0;
-      const lead = mem[0];
-      /* AT EACH POINT IT STOPS AND SIFTS, eight to sixteen hours, before it walks on: a herd that
-         never stopped crossed the map in a few minutes, which is a parade, not a migration */
-      if((ecoState.sgz[h] || 0) > H) continue;
-      if(dist(lead.x, lead.y, wps[i].x, wps[i].y) < 8){
-        ecoState.swp[h] = (i + 1) % wps.length;
-        ecoState.sgz[h] = H + 8 + hash2(+h * 13, i) * 8;
+      const mem = herds[h];
+      const lead = mem.find(c => !c.young) || mem[0];
+      if((ecoState.sgz[h] || 0) > H) continue;                 /* sifting */
+      let w = ecoState.sdst[h];
+      if(w && dist(lead.x, lead.y, w.x, w.y) < 8){
+        ecoState.sdst[h] = null;
+        ecoState.sgz[h] = H + 8 + hash2(+h * 13, ecoState.swp[h] || 0) * 8;
+        for(const c of mem) if(!c.target && !(c.fleeT > 0)) c.moveTarget = null;
         continue;
       }
-      const w = wps[i];
+      if(!w){ w = ecoState.sdst[h] = striderNextLeg(+h, lead); if(!w) continue; }
       mem.forEach((c, k) => {
-        if(c.target || c.crowdT > 0 || c.fleeT > 0) return;
+        if(c.target || c.herdFoeT > 0 || c.fleeT > 0) return;
         const ox = ((k % 3) - 1) * 3.5, oy = (Math.floor(k / 3) - 0.5) * 3.5;
         const mt = c.moveTarget;
         if(!mt || Math.abs(mt.x - (w.x + ox)) > 0.5 || Math.abs(mt.y - (w.y + oy)) > 0.5){ c.guard = null; c.moveTarget = {x: w.x + ox, y: w.y + oy}; }
       });
     }
   }
-  /* the births, on the hour */
+  /* the births and the growing, on the hour */
   if(_ecoH !== null && Math.floor(H) === Math.floor(_ecoH)) return;
   _ecoH = H;
+  for(const c of chars) if(c.young && c.state !== 'dead') applyGrowth(c);
   for(const dn of dens){
     if(!dn.alive) continue;
     const pack = chars.filter(o => o.denId === dn.id && o.state !== 'dead').length;
     if(pack >= dn.cap || H - (dn.pupH || -1e9) < DEN_PUP_H || yoursNear(dn.x, dn.y, 60)) continue;
     dn.pupH = H;
-    spawnDenHound(dn);
+    spawnDenHound(dn, true);
+  }
+  /* A PACK WITH NO DEN DIGS ONE. Each grown hound keeps the hour it was first without a den of its
+     own (`homelessH`); two of them together that long, and the world under its cap, dig where
+     they stand. One den an hour at most. */
+  const grownHound = (o) => o.kin === 'hound' && o.faction === 'wild' && !o.undead && o.state === 'ok' && !o.young;
+  let grownN = 0;
+  for(const c of chars){
+    if(!grownHound(c)) continue;
+    grownN++;
+    const own = c.denId && dens.find(d => d.id === c.denId);
+    if(own && own.alive){ c.homelessH = null; continue; }
+    if(c.homelessH == null) c.homelessH = H;
+  }
+  if(dens.filter(d => d.alive).length < DEN_BASE + DEN_EXTRA){
+    for(const c of chars){
+      if(!grownHound(c) || c.homelessH == null || H - c.homelessH < DEN_REDIG_H) continue;
+      const mates = charsNear(c.x, c.y, 30).filter(o => o !== c && grownHound(o) && o.homelessH != null);
+      if(!mates.length) continue;
+      const spot = denSpotNear(c.x, c.y);
+      if(!spot) continue;
+      const dn = makeDen(spot.x, spot.y, Math.max(0, ...dens.map(d => d.id)) + 1);
+      dn.pupH = H;
+      denLook(dn);
+      for(const o of [c, ...mates]){ o.denId = dn.id; o.squad = dn.squad; o.homelessH = null; }
+      break;
+    }
+  }
+  /* AND THE WASTE IS NEVER EMPTIED OF THEM: under the floor, a pack walks in off the edge */
+  if(grownN < HOUND_FLOOR && H - (ecoState.packIn ?? -1e9) >= PACK_RETURN_H){
+    ecoState.packIn = H;
+    const pocket = seed;
+    seed = (Math.imul(Math.floor(H) + 0x4D, 0x9E3779B9)) | 0;
+    try { spawnHostileSquad('hound'); } finally { seed = pocket; }
   }
   const elkHerds = {}, strHerds = {};
   for(const c of chars){
@@ -21989,23 +22064,42 @@ function ecologyTick(){
     if(c.kin === 'elk' && c.herd) (elkHerds[c.herd] = elkHerds[c.herd] || []).push(c);
     else if(c.kin === 'strider' && c.sherd && c.faction === 'fauna') (strHerds[c.sherd] = strHerds[c.sherd] || []).push(c);
   }
-  const birth = (key, list, cap, min, gap, make) => {
-    for(const h in list){
-      const mem = list[h];
-      if(mem.length < min || mem.length >= cap) continue;
-      /* a herd with no clock yet starts one: its first calf is a whole interval away, not now */
-      if(ecoState[key][h] === undefined){ ecoState[key][h] = H; continue; }
-      if(H - ecoState[key][h] < gap) continue;
-      const lead = mem[0];
-      if(yoursNear(lead.x, lead.y, 50)) continue;
-      ecoState[key][h] = H;
+  /* CALVES: unseen, beside the herd, small */
+  for(const h in elkHerds){
+    const mem = elkHerds[h];
+    if(mem.length < 2 || mem.length >= HERD_CAP) continue;
+    /* a herd with no clock yet starts one: its first calf is a whole interval away, not now */
+    if(ecoState.calf[h] === undefined){ ecoState.calf[h] = H; continue; }
+    if(H - ecoState.calf[h] < CALF_H) continue;
+    const lead = mem[0];
+    if(yoursNear(lead.x, lead.y, 50)) continue;
+    ecoState.calf[h] = H;
+    const pocket = seed;
+    seed = (Math.imul(+h + 0x31, 0x9E3779B9) ^ Math.floor(H)) | 0;
+    try { spawnElkAt(lead.x + 2, lead.y + 1, +h, true); } finally { seed = pocket; }
+  }
+  /* STRIDERS BEAR ON THE MOVE: a young one is born onto a grown parent's back, wherever the herd
+     is, and rides there `STRIDER_CARRY_H` before it is put down to walk. It is on the parent
+     (`carrying`, birth hours) until then, not a body of its own. */
+  for(const h in strHerds){
+    const mem = strHerds[h], grown = mem.filter(c => !c.young);
+    const carried = grown.reduce((n, c) => n + ((c.carrying && c.carrying.length) || 0), 0);
+    for(const c of grown){
+      if(!c.carrying || !c.carrying.length) continue;
+      const due = c.carrying.filter(b => H - b >= STRIDER_CARRY_H);
+      if(!due.length) continue;
+      c.carrying = c.carrying.filter(b => H - b < STRIDER_CARRY_H);
       const pocket = seed;
-      seed = (Math.imul(+h + (key === 'calf' ? 0x31 : 0x77), 0x9E3779B9) ^ Math.floor(H)) | 0;
-      try { make(lead.x + 2, lead.y + 1, +h); } finally { seed = pocket; }
+      seed = (Math.imul(+h + 0x77, 0x9E3779B9) ^ Math.floor(H) ^ (c.id << 4)) | 0;
+      try { for(const b of due) spawnStriderAt(c.x + 1.5, c.y + 1, +h, b); } finally { seed = pocket; }
     }
-  };
-  birth('calf', elkHerds, HERD_CAP, 2, CALF_H, spawnElkAt);
-  birth('bud', strHerds, 3, 1, STRIDER_BUD_H, spawnStriderAt);
+    if(grown.length < 2 || mem.length + carried >= STRIDER_HERD_CAP) continue;
+    if(ecoState.sbirth[h] === undefined){ ecoState.sbirth[h] = H; continue; }
+    if(H - ecoState.sbirth[h] < STRIDER_BIRTH_H) continue;
+    ecoState.sbirth[h] = H;
+    const mum = grown.slice().sort((a, b) => ((a.carrying || []).length - (b.carrying || []).length) || a.id - b.id)[0];
+    (mum.carrying = mum.carrying || []).push(H);
+  }
 }
 /* ---------- DENS ----------
    Laid off the hash after the world is built, like the biomes' sleepers: open ground in the deep
@@ -22029,12 +22123,10 @@ function seedEcology(){
   for(const c of cand){
     if(dens.length >= N) break;
     if(dens.some(d => dist(d.x, d.y, c.x, c.y) < 300)) continue;
-    const id = dens.length + 1;
-    squadN++;
-    const dn = {id, x: c.x, y: c.y, cap: 3 + (hash2(c.x, c.y) > 0.5 ? 1 : 0), alive: true, pupH: null,
-                squad: {id: squadN, anchor: {x: c.x, y: c.y}, kind: 'hound', lair: {x: c.x, y: c.y, r: DEN_TERRITORY}, den: id}};
-    dens.push(dn);
+    makeDen(c.x, c.y, dens.length + 1);
   }
+  DEN_BASE = dens.length;
+  homeWyrms();
   for(const dn of dens) for(let k = 0; k < dn.cap; k++) spawnDenHound(dn);
   /* MORE HERDS, for a world that grew: six elk herds and four of striders were set for a map a
      third the size. Brought up to the area on their own streams, at the end of the world. */
@@ -22052,8 +22144,100 @@ function seedEcology(){
       for(let i = 0, n = ri(2, 3); i < n; i++) spawnStriderAt(p.x + ri(-5, 5), p.y + ri(-5, 5), h);
     }
   } finally { seed = pocket; }
-  /* every strider herd's home is where it stands now, at the end of the world */
-  for(const c of chars) if(c.kin === 'strider' && c.sherd) striderHome(c.sherd);
+}
+/* a den, wherever it is made: the world's own at the start, a pack's own later */
+function makeDen(x, y, id, cap){
+  squadN++;
+  const dn = {id, x, y, cap: cap || (3 + (hash2(x, y) > 0.5 ? 1 : 0)), alive: true, pupH: null,
+              squad: {id: squadN, anchor: {x, y}, kind: 'hound', lair: {x, y, r: DEN_TERRITORY}, den: id}};
+  dens.push(dn);
+  return dn;
+}
+/* where a pack can dig, near where it stands: open dry ground, off the roads, clear of the
+   towns and of every living den, and not on the one that was dug out from under it */
+function denSpotNear(x0, y0){
+  const cand = [];
+  for(let j = -70; j <= 70; j += 7) for(let i = -70; i <= 70; i += 7){
+    const x = Math.round(x0 + i), y = Math.round(y0 + j);
+    if(x < 60 || y < 60 || x > W - 60 || y > H - 60) continue;
+    const t = terr[y * W + x];
+    if((t !== 0 && t !== 1) || isBlocked(x + 0.5, y + 0.5) || inHeadland(x, y, 30) || biomeAt(x, y)) continue;
+    if(towns.some(tn => dist(tn.x, tn.y, x, y) < 110) || nearRoad(x, y, 30)) continue;
+    if(dens.some(d => dist(d.x, d.y, x, y) < (d.alive ? 150 : 40))) continue;
+    let open = true;
+    for(let jj = -2; jj <= 2 && open; jj++) for(let ii = -2; ii <= 2; ii++) if(isBlocked(x + ii + 0.5, y + jj + 0.5)){ open = false; break; }
+    if(open) cand.push({x, y, h: hash2(x * 17 + 3, y * 23 + 11)});
+  }
+  cand.sort((a, b) => b.h - a.h);
+  return cand[0] || null;
+}
+/* ---------- WYRMS KEEP TO THE HIGH GROUND ----------
+   "Wyrms simply wandering the world are a bit odd. I wonder if we could give them a dedicated
+    home, or some environment where they are restricted to. I would imagine more mountainous
+    regions." (2026-10-04)
+   They were put on a post in open flat country at worldgen, before the massifs were raised, so
+   there was no high ground to put them on. Now, once the world stands: each takes the biggest
+   massif left that is well clear of every town and the start and a long way from the other
+   wyrm, and a lair on its flank — open ground on the slope, below the peak's cliffs. The post is
+   the lair, so the leash every guard already has (22 tiles) is what keeps it home, and a hoard
+   lies there to say whose it is. Placed off the hash; the world's stream never hears of it. */
+const wyrmHomes = [];
+function wyrmLairOn(m){
+  const a0 = hash2(Math.round(m.x), Math.round(m.y)) * Math.PI * 2;
+  for(const k of [0.85, 0.7, 1.0, 1.15, 1.3]){
+    for(let i = 0; i < 16; i++){
+      const a = a0 + i / 16 * Math.PI * 2;
+      const x = Math.round(m.x + Math.cos(a) * m.r * k), y = Math.round(m.y + Math.sin(a) * m.r * k);
+      if(x < 20 || y < 20 || x > W - 20 || y > H - 20 || terr[y * W + x] === 3) continue;
+      let open = true;
+      for(let j = -2; j <= 2 && open; j++) for(let ii = -2; ii <= 2; ii++) if(isBlocked(x + ii + 0.5, y + j + 0.5)){ open = false; break; }
+      if(open) return {x: x + 0.5, y: y + 0.5};
+    }
+  }
+  return null;
+}
+function homeWyrms(){
+  const wyrms = chars.filter(c => c.bossKey === 'wyrm' && c.state !== 'dead').sort((a, b) => a.id - b.id);
+  if(!wyrmHomes.length){
+    const cand = mountains.filter(m => !towns.some(t => dist(t.x, t.y, m.x, m.y) < m.r + 90)
+      && dist(startTown.x, startTown.y, m.x, m.y) > 220 && !inHeadland(m.x, m.y, m.r + 20)).sort((a, b) => b.r - a.r);
+    for(let i = 0; i < wyrms.length; i++){
+      const m = cand.find(h => !wyrmHomes.some(w => dist(w.mx, w.my, h.x, h.y) < 400));
+      if(!m) break;
+      const spot = wyrmLairOn(m);
+      if(!spot){ cand.splice(cand.indexOf(m), 1); i--; continue; }
+      wyrmHomes.push({x: spot.x, y: spot.y, mx: m.x, my: m.y, mr: m.r});
+    }
+  }
+  wyrms.forEach((wy, i) => {
+    const hm = wyrmHomes[i];
+    if(!hm) return;
+    if(!wy.guard || dist(wy.guard.x, wy.guard.y, hm.x, hm.y) > 30){ wy.x = hm.x; wy.y = hm.y; }
+    wy.guard = {x: hm.x, y: hm.y};
+  });
+}
+function hoardLook(){
+  if(typeof scene === 'undefined') return;
+  for(const hm of wyrmHomes){
+    if(hm.mesh) continue;
+    const g = new THREE.Group();
+    const box = (w, h, d, col, x, y, z, ry, glow) => {
+      const mt = glow ? new THREE.MeshStandardMaterial({color: new THREE.Color(col), emissive: new THREE.Color(col), emissiveIntensity: 0.35, metalness: 0.6, roughness: 0.4})
+                      : new THREE.MeshLambertMaterial({color: new THREE.Color(col)});
+      const o = new THREE.Mesh(BOXG, mt); o.scale.set(w, h, d); o.position.set(x, y, z); o.rotation.y = ry || 0; o.castShadow = true; g.add(o);
+    };
+    for(let i = 0; i < 14; i++){                                   /* the gold, in a heap */
+      const a = hash2(i, 77) * Math.PI * 2, r = hash2(i, 91) * 1.6;
+      box(0.35, 0.12 + hash2(i, 5) * 0.2, 0.3, i % 4 ? '#c8a040' : '#a88430', Math.cos(a) * r, 0.08 + (1.6 - r) * 0.12, Math.sin(a) * r, a, true);
+    }
+    for(let i = 0; i < 10; i++){                                   /* and what it has eaten */
+      const a = hash2(i, 13) * Math.PI * 2, r = 1.8 + hash2(i, 17) * 1.8;
+      box(0.08, 0.08, 0.7 + hash2(i, 19) * 0.6, '#d8ccb0', Math.cos(a) * r, 0.05, Math.sin(a) * r, a);
+    }
+    g.position.set(hm.x, groundY(hm.x, hm.y), hm.y);
+    scene.add(g);
+    hm.mesh = g;
+  }
 }
 /* digging one out: a body of yours walks to it and works for DEN_WORK seconds */
 function denDigTick(c, dt){
@@ -24414,6 +24598,9 @@ function emplacementTick(dt){
   _manned = nowManned;
 }
 function retaliate(t, attacker){
+  /* a strider's herd hears it before anything below gets a say — a herd on the move has a
+     moveTarget, and the runner rule a few lines down would otherwise let it walk on */
+  if(t.kin === 'strider' && t.faction === 'fauna' && t.state === 'ok') striderRally(t, attacker);
   if(t.state !== 'ok' || t.fleeT > 0) return;
   /* a man being stabbed puts down his pickaxe. Work is never more urgent than the knife. */
   if(t.gather){ t.gather = null; t.gatherT = 0; }
@@ -39038,7 +39225,7 @@ function colorKeyOf(c){
      whichever got built first in a session handed its rig to the other through the mesh
      cache — which is why the mage's mantle appeared some runs and not others. The beast
      rigs had the same collision: elk, grazer and gravehound are all just `|b`. */
-  return factionColor(c) + '|' + (c.kin||'') + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.head||'') + '|' + (c.cloak||'') + '|' + (c.house||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.wisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.eater?'|E':'') + (c.soulbound?'|B':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.trade||'') + '|' + (c.hollowTier||0) + '|' + (c.vesselPattern||'') + '|' + (c.face||'') + (c.skinShift ? '|F' + c.skinShift : '') + (c.bossPhase ? '|P' + c.bossPhase : '') + (c.immortal ? '|I' + c.immortal : '') + (c.calcined ? '|X' : '');
+  return factionColor(c) + '|' + (c.kin||'') + '|' + (c.undead?'u':'l') + '|' + (c.weapon?'w':'') + '|' + (c.beast?'b':'') + '|' + (c.merc?'m':'') + '|' + (c.guard?'g':'') + '|' + (c.pack||'') + '|' + (c.head||'') + '|' + (c.cloak||'') + '|' + (c.house||'') + '|' + (c.mule?'M':'') + '|' + (c.race||'') + '|' + (c.sub||'') + '|' + (c.sex||'m') + (c.captain?'|C':'') + (c.servitor?'|S':'') + (c.wisp?'|W':'') + (c.cart?'|K':'') + (c.stitcher?'|H':'') + (c.eater?'|E':'') + (c.soulbound?'|B':'') + (c.lieutenant?'|L':'') + '|' + (c.rot||'') + '|' + (c.trade||'') + '|' + (c.hollowTier||0) + '|' + (c.vesselPattern||'') + '|' + (c.face||'') + (c.skinShift ? '|F' + c.skinShift : '') + (c.bossPhase ? '|P' + c.bossPhase : '') + (c.immortal ? '|I' + c.immortal : '') + (c.calcined ? '|X' : '') + (c.carrying && c.carrying.length ? '|R' + Math.min(2, c.carrying.length) : '');
 }
 const SKINS = ['#8a5c34', '#6e4426', '#a06c40', '#5a3820', '#96683a'];
 const HAIRS = ['#1a120a', '#3a2410', '#5c4020', '#787060', '#8a2a1a', '#d8ccb0'];
@@ -41163,8 +41350,11 @@ function buildCharMesh(c){
          Every moving part is its own group, so the gait, the feelers and the tube can be
          animated (see the tripod branch of the beast pose). */
       const dead = boneBeast;
-      const chit = dead ? beastCol : '#5e554b', jnt = dead ? shade(beastCol, 0.72) : '#2c2622',
-            pale = dead ? beastCol : '#d4cbb6', sacC = '#7a7088';
+      /* THE DUST'S OWN BROWNS, NOT A WATCHER'S VIOLET (ruled 2026-10-04: "let's not make them
+         purple, as that could easily confuse them with the gaunt ecology... a brown-ish color
+         similar to the dusthound ecology") */
+      const chit = dead ? beastCol : '#6a5644', jnt = dead ? shade(beastCol, 0.72) : '#2e241c',
+            pale = dead ? beastCol : '#cdbb98', sacC = '#8c6c4c';
       const HUB = 1.55;
       const hub = obox(0.64, 0.14, 0.64, chit, 0, HUB, 0);
       obox(0.40, 0.10, 0.40, jnt, 0, HUB + 0.11, 0);                       /* the boss of the carapace */
@@ -41194,7 +41384,7 @@ function buildCharMesh(c){
           obox(w2 * 0.62, h2, w2, shade(sacC, k2), 0, y2, 0, sac);
         }
         for(const [vx, vz] of [[0.2, 0.05], [-0.06, 0.2], [-0.15, -0.14]])   /* dark veins under the skin */
-          obox(0.03, 0.30, 0.03, '#4a4054', vx, -0.26, vz, sac);
+          obox(0.03, 0.30, 0.03, '#4c3624', vx, -0.26, vz, sac);
       }
       /* the feeding tube, four joints, hanging to the dust */
       const tube = [];
@@ -41223,6 +41413,21 @@ function buildCharMesh(c){
         obox(0.055, L2 - 0.22, 0.055, chit, 0, -(L2 - 0.22) / 2, 0, el);
         obox(0.035, 0.22, 0.035, jnt, 0, -L2 + 0.11, 0, el);               /* the spike it stands on */
         legs.push({root, sh, el, ang});
+      }
+      /* WHAT IT IS CARRYING: a young one folded on the hub, legs drawn up round it, one per birth
+         it has not yet put down (`carrying`, see ecologyTick) */
+      if(!dead && c.carrying && c.carrying.length){
+        c.carrying.slice(0, 2).forEach((b, i) => {
+          const ox = (i ? -0.18 : 0.16), oz = (i ? 0.16 : -0.14), yy = HUB + 0.30;
+          obox(0.26, 0.20, 0.26, sacC, ox, yy - 0.06, oz);                 /* its own sac, curled under it */
+          obox(0.36, 0.08, 0.36, chit, ox, yy + 0.07, oz);                 /* its hub */
+          obox(0.06, 0.04, 0.06, '#0e0c0c', ox + 0.14, yy + 0.07, oz + 0.1);
+          for(let j = 0; j < 3; j++){                                       /* legs drawn up over it */
+            const a = j / 3 * Math.PI * 2 + i;
+            obox(0.03, 0.34, 0.03, chit, ox + Math.sin(a) * 0.2, yy + 0.2, oz + Math.cos(a) * 0.2);
+            obox(0.03, 0.03, 0.18, chit, ox + Math.sin(a) * 0.2, yy + 0.37, oz + Math.cos(a) * 0.12);
+          }
+        });
       }
       e.tripod = {legs, sac, tube, feel, A1, A2};
       e.torso = hub; e.head = null;
@@ -44888,7 +45093,8 @@ function syncChars(dt){
     e.g.position.set(px, gy, pz);
     /* held up by the old king's noose: lifted fast, held, and dropped at the end of it */
     if(c.hangT > 0) e.g.position.y += 1.1 * Math.min(1, (NOOSE_HOLD - c.hangT) * 4) * Math.min(1, c.hangT * 4);
-    const ageScale = (!c.undead && !c.beast && c.age < 16) ? 0.55 + (c.age/16)*0.45 : 1;
+    const ageScale = (!c.undead && !c.beast && c.age < 16) ? 0.55 + (c.age/16)*0.45
+      : c.young ? 0.45 + 0.55 * growK(c) : 1;   /* a calf, a whelp, a strider's young: small, and growing */
     const bs = (c.big || 1) * vscaleOf(c) * ageScale;
     e.g.scale.set(bs * (e.baseSX||1), bs * (e.baseSY||1), bs * (e.baseSX||1));
     lodUpdate(e, c, bs, pxK);             /* see DETAIL BY DISTANCE */
@@ -45152,9 +45358,10 @@ function syncChars(dt){
           L.sh.rotation.x = a1; L.el.rotation.x = a2;
           L.root.rotation.y = L.ang + (moving ? Math.cos(ph) * 0.17 : Math.sin(tt * 0.35 + i * 2) * 0.02);
         }
+        const flick = c.spitT > 0 ? Math.sin((1 - c.spitT / 0.35) * Math.PI) : 0;   /* the throw */
         for(let i = 0; i < T.tube.length; i++){
           const sg = T.tube[i];
-          sg.rotation.x = (moving ? -0.22 : 0) + Math.sin(tt * 1.3 - i * 0.7) * (0.08 + i * 0.05);
+          sg.rotation.x = (moving ? -0.22 : 0) + Math.sin(tt * 1.3 - i * 0.7) * (0.08 + i * 0.05) - flick * (0.5 + i * 0.25);
           sg.rotation.z = Math.sin(tt * 0.9 - i * 0.5) * (0.06 + i * 0.04);
         }
         for(let i = 0; i < T.feel.length; i++){
@@ -46944,9 +47151,9 @@ function renderOverlay(rdt){
         cx.beginPath(); cx.moveTo(s.x-ux*7, s.y-uy*7); cx.lineTo(s.x+ux*7, s.y+uy*7); cx.stroke();
       }
     } else {
-      cx.fillStyle = p.dark ? '#8a5cc8' : '#ffb03a';
+      cx.fillStyle = p.silt ? '#6e5a40' : p.dark ? '#8a5cc8' : '#ffb03a';
       cx.beginPath(); cx.arc(s.x, s.y, 4, 0, Math.PI*2); cx.fill();
-      cx.fillStyle = p.dark ? '#d8c0f0' : '#fff0c8';
+      cx.fillStyle = p.silt ? '#a89270' : p.dark ? '#d8c0f0' : '#fff0c8';
       cx.beginPath(); cx.arc(s.x, s.y, 2, 0, Math.PI*2); cx.fill();
     }
   }
@@ -54695,7 +54902,9 @@ function snapshot(){
     calcined:!!c.calcined, ashH: c.ashH ? Math.round(c.ashH * 100) / 100 : null,
     /* THE WASTE'S OWN BUSINESS: which herd, which den, when the pack last ate, and a kill eaten */
     herd: c.herd || null, sherd: c.sherd || null, denId: c.denId || null, gnawed: !!c.gnawed,
+    young: c.young ? {...c.young, st: {...c.young.st}} : null, carrying: (c.carrying && c.carrying.length) ? c.carrying.slice() : null,
     fedH: (c.kin === 'hound' && c.fedH != null) ? Math.round(c.fedH * 10) / 10 : null,
+    homelessH: (c.kin === 'hound' && c.homelessH != null) ? Math.round(c.homelessH) : null,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
     bindWeight:c.bindWeight, shortTag:c.shortTag, tempT:c.tempT??null, propped:!!c.propped,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
@@ -54851,7 +55060,7 @@ function snapshot(){
     /* which grounds have been walked into, and which sleepers have already sat up: without the
        second, every wreck in the rust would lie back down on a reload and wake a second time */
     biomes: {seen: {...biomeState.seen}, woke: {...biomeState.woke}},
-    eco: {dens: dens.map(d => ({id: d.id, alive: d.alive, pupH: d.pupH})), calf: {...ecoState.calf}, bud: {...ecoState.bud}, swp: {...ecoState.swp}, sgz: {...ecoState.sgz}, shome: JSON.parse(JSON.stringify(ecoState.shome)), pups: ecoState.pups || 0},
+    eco: {dens: dens.map(d => ({id: d.id, alive: d.alive, pupH: d.pupH, x: d.x, y: d.y, cap: d.cap})), packIn: ecoState.packIn ?? null, calf: {...ecoState.calf}, sbirth: {...ecoState.sbirth}, swp: {...ecoState.swp}, sgz: {...ecoState.sgz}, shd: {...ecoState.shd}, sdst: JSON.parse(JSON.stringify(ecoState.sdst)), pups: ecoState.pups || 0},
     hamletsWoke: hamlets.filter(h => h.woke).map(h => h.id),
     towersReached: towers.filter(t => t.reached).map(t => t.id),
     arkReached: !!(ark && ark.reached),
@@ -54946,18 +55155,21 @@ function restore(d){
   _ashLastH = null; _squallWas = null; _squallTold = null;   /* a load is not hours spent in the wood */
   /* the dens are the world's and come back with it; whether each is still there, and when it
      last whelped, is the save's */
-  ecoState.calf = {}; ecoState.bud = {}; ecoState.swp = {}; ecoState.sgz = {}; ecoState.pups = 0; _ecoH = null;
-  for(const k in _sRoutes) delete _sRoutes[k];
-  const homes0 = ecoState.shome; ecoState.shome = {};
+  ecoState.calf = {}; ecoState.sbirth = {}; ecoState.swp = {}; ecoState.sgz = {}; ecoState.shd = {}; ecoState.sdst = {}; ecoState.pups = 0; _ecoH = null;
+  /* the world's own dens come back with it; the ones packs dug in play are the save's */
+  while(dens.length > DEN_BASE){ const dn = dens.pop(); if(dn.mesh) scene.remove(dn.mesh); }
   for(const dn of dens){ dn.alive = true; dn.pupH = null; }
+  ecoState.packIn = undefined;
   if(d.eco){
-    for(const sd of d.eco.dens || []){ const dn = dens.find(q => q.id === sd.id); if(dn){ dn.alive = sd.alive !== false; dn.pupH = sd.pupH ?? null; } }
-    Object.assign(ecoState.calf, d.eco.calf || {}); Object.assign(ecoState.bud, d.eco.bud || {}); Object.assign(ecoState.swp, d.eco.swp || {}); Object.assign(ecoState.sgz, d.eco.sgz || {});
-    Object.assign(ecoState.shome, d.eco.shome || {});
+    for(const sd of d.eco.dens || []){
+      let dn = dens.find(q => q.id === sd.id);
+      if(!dn && sd.x != null) dn = makeDen(sd.x, sd.y, sd.id, sd.cap);
+      if(dn){ dn.alive = sd.alive !== false; dn.pupH = sd.pupH ?? null; }
+    }
+    if(d.eco.packIn != null) ecoState.packIn = d.eco.packIn;
+    for(const k of ['calf', 'sbirth', 'swp', 'sgz', 'shd', 'sdst']) Object.assign(ecoState[k], d.eco[k] || {});
     ecoState.pups = d.eco.pups || 0;
   }
-  /* a save from before homes were kept: the world's own homes stand, they are not the save's to lose */
-  for(const k in homes0) if(!ecoState.shome[k]) ecoState.shome[k] = homes0[k];
   for(const dn of dens) denLook(dn);
   for(const h of hamlets) h.woke = !!(d.hamletsWoke && d.hamletsWoke.includes(h.id));   /* before the folk were saved, none had come */
   for(const t of towers) t.reached = !!(d.towersReached && d.towersReached.includes(t.id));
@@ -55299,7 +55511,10 @@ function restore(d){
     if(s.sherd) c.sherd = s.sherd;
     if(s.denId) c.denId = s.denId;
     if(s.gnawed) c.gnawed = true;
+    if(s.young) c.young = {...s.young, st: {...s.young.st}};
+    if(s.carrying) c.carrying = s.carrying.slice();
     if(s.fedH != null) c.fedH = s.fedH;
+    if(s.homelessH != null) c.homelessH = s.homelessH;
     if(s.knit != null) c.knit = s.knit;
     if(s.natArmor) c.natArmor = {...s.natArmor};
     if(s.noise != null) c.noise = s.noise;
@@ -55553,6 +55768,7 @@ function restore(d){
     }
   }
   towns.forEach((t,i) => t.recruits = (d.recruits && d.recruits[i]) || []);
+  homeWyrms();   /* a save from before the wyrms had a home: they go home (WYRMS KEEP TO THE HIGH GROUND) */
   selected = []; castMode = null; buildMode = null; buildAnchor = null; attackArmed(false);
   const f = player()[0]; if(f){ camX = f.x; camY = f.y; }
   refreshTop(); refreshInv(); refreshSquadBar(); refreshCharPanel();
@@ -57181,7 +57397,7 @@ $('btn-start').onclick = () => {
 };
 $('hint').innerHTML = '';
 spawnHostileSquad('hound'); spawnHostileSquad('bandit');
-seedEcology(); for(const dn of dens) denLook(dn);
+seedEcology(); for(const dn of dens) denLook(dn); hoardLook();
 
 let last = performance.now(), uiT = 0;
 let frameErrs = 0;

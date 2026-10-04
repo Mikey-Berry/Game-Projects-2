@@ -32,7 +32,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     for (const c of player()) { c.x = S.x - 8; c.y = S.y + 6; }
     const mk = (name, f, dx, dy, set) => { const c = makeChar(name, f, S.x + dx, S.y + dy, {}); Object.assign(c, set); c.floor = 0; c.guard = { x: c.x, y: c.y }; chars.push(c); return c; };
     window.__st = mk('Silt Strider', 'fauna', 0, 0, { beast: true, kin: 'strider', big: 1.6, neutral: true });
-    window.__st2 = mk('Silt Strider', 'fauna', 4, -3, { beast: true, kin: 'strider', big: 1.6, neutral: true });
+    window.__st2 = mk('Silt Strider', 'fauna', 4, -3, { beast: true, kin: 'strider', big: 1.6, neutral: true, carrying: [nowH() - 2] });
+    /* a young one, put down and walking, part-grown */
+    const yg = mk('Silt Strider', 'fauna', 6.5, 0.5, { beast: true, kin: 'strider', big: 1.6, neutral: true, maxBlood: 160, blood: 160 });
+    yg.stats.atk = 12; yg.stats.def = 8; yg.stats.tough = 34;
+    if (typeof startYoung === 'function') startYoung(yg, 'strider', nowH() - 50);
     mk('Dust Elk', 'fauna', -4, 1, { beast: true, kin: 'elk', neutral: true });
     mk('Dust Hound', 'fauna', 3.5, 2, { beast: true, kin: 'hound', neutral: true });
     rebuildCharGrid();
