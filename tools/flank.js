@@ -224,7 +224,16 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
        that makes a body deal with whoever is on top of it rather than shouldering through to
        the man at the back. A rule like that can only misfire one way: by changing its mind.
        So this counts CHANGES OF MIND, and how far each body walked to reach a fight it could
-       have reached by walking straight at it. */
+       have reached by walking straight at it.
+       TO REACH IT — and no further. The walk used to be summed over all 500 ticks, and with a
+       million blood a side nobody falls, so it was 25 seconds of footwork in a standing fight
+       divided by the gap: a stagger here, a shove there, all dice. Seeded the same, three builds
+       a week apart (693eb4b green, dcd5c3d and the head red) walked identically — 0.76 to 2.39
+       over eight seeds on every one of them, two of the eight past the line — and the claim
+       went red or green with wherever the world's stream left the dice. Measured to first
+       contact, it is 1.00 on all twelve seeds tried: everybody walks straight in. A body that
+       never makes contact keeps the old whole-fight sum, because circling without engaging is
+       exactly the failure this is for. */
     const scrum = () => {
       const mine = [], theirs = [];
       for (let i = 0; i < 6; i++) {
@@ -242,20 +251,26 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const seen = cast.map(c => c.target), switches = cast.map(() => 0);
       const walked = cast.map(() => 0), start = cast.map(c => ({ x: c.x, y: c.y }));
       let contactTick = -1;
+      const reached = cast.map(() => null);
       for (let t = 0; t < 500; t++) {
         const was = cast.map(c => ({ x: c.x, y: c.y }));
         step(cast, 0.05);
         for (let i = 0; i < cast.length; i++) {
-          walked[i] += dist(was[i].x, was[i].y, cast[i].x, cast[i].y);
-          if (cast[i].target !== seen[i]) { if (seen[i] && cast[i].target) switches[i]++; seen[i] = cast[i].target; }
+          const c = cast[i];
+          walked[i] += dist(was[i].x, was[i].y, c.x, c.y);
+          if (c.target !== seen[i]) { if (seen[i] && c.target) switches[i]++; seen[i] = c.target; }
+          if (!reached[i] && c.target && dist(c.x, c.y, c.target.x, c.target.y) <= 1.05)
+            reached[i] = { walked: walked[i], x: c.x, y: c.y };
         }
         if (contactTick < 0 && mine.every(c => c.target && dist(c.x, c.y, c.target.x, c.target.y) <= 1.05)) contactTick = t;
       }
       /* a body that walked twice as far as it had to has been going round in circles */
       let detour = 0;
       for (let i = 0; i < cast.length; i++) {
-        const straight = Math.max(1, dist(start[i].x, start[i].y, cast[i].x, cast[i].y));
-        detour = Math.max(detour, walked[i] / (straight + 6));   /* +6: the gap they all had to close */
+        const r = reached[i];
+        detour = Math.max(detour, r
+          ? r.walked / Math.max(1, dist(start[i].x, start[i].y, r.x, r.y))
+          : walked[i] / (Math.max(1, dist(start[i].x, start[i].y, cast[i].x, cast[i].y)) + 6));   /* +6: the gap they all had to close */
       }
       return {
         switches: switches.reduce((a, b) => a + b, 0),
@@ -264,8 +279,23 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         worstDetour: +detour.toFixed(2),
       };
     };
-    R.scrum = scrum();
-    clean();
+    /* EIGHT FIXED ROLLS, NOT WHATEVER ROLL THE WORLD LEFT. Changes of mind are dice as much as
+       footwork is: the same eight seeds give 0, 1 or 2 on every build, and abe8c90's stream
+       position happened to land on a 3. Pocketed, so the scrum neither reads the world's stream
+       nor moves it for the probes after it, and the worst of the eight is what is asserted. */
+    {
+      const pocket = seed, runs = [];
+      try {
+        for (let k = 0; k < 8; k++) { seed = (1000 + k * 7919) | 0; runs.push(scrum()); clean(); }
+      } finally { seed = pocket; }
+      R.scrum = {
+        switches: Math.max(...runs.map(r => r.switches)),
+        worstSwitches: Math.max(...runs.map(r => r.worstSwitches)),
+        contactTick: Math.max(...runs.map(r => r.contactTick < 0 ? 1e9 : r.contactTick)),
+        worstDetour: Math.max(...runs.map(r => r.worstDetour)),
+        perSeed: runs.map(r => `${r.worstDetour}/${r.worstSwitches}`),
+      };
+    }
 
     /* ---------- 4. THE GATE ----------
        Open ground is the easy half and the three probes above say the open-ground approach is
