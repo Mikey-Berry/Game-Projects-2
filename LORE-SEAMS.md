@@ -1903,8 +1903,9 @@ six. The name is shown only once one of yours has reached the site, like before.
 | Mourning Ribs | Eyeless Down | Fivefold |
 
 **Where it is shown:**
-- **The label** over the bones: `☠ THE BURNT NAVE`, with `the Sundered ground` under it in
-  small type (`the Sundered ground — hallowed` while hallowed).
+- **The label** over the bones: `☠ THE BURNT NAVE`, with `Sundered ground` under it in small
+  type (`Sundered ground — hallowed` while hallowed). **Ruled 2026-10-04:** the names are good
+  for now, and the second "the" in the subtext is dropped.
 - **A new log line**, said once on arrival: *"Hob comes in under the bones of the Burnt
   Nave — the Sundered ground."*
 - **Three existing lines** use the name once the site is reached, and keep "the Sundered
