@@ -1996,6 +1996,86 @@ cheapest of the rest.
 5. Felled trees here give ordinary wood. Should they give charcoal?
 6. Which fauna, if any.
 
+### 12.9 The waste's own business: built, with its dials for a ruling
+
+As asked on 2026-10-02: hounds hunt elk, there are nests you can destroy, the striders are more
+active, and they look more alien. All four are built. The strider's look is a first pass,
+waiting on your notes from the screenshots.
+
+**The strider, rebuilt.**
+- It's a **tripod**, the only three-legged thing in the waste.
+- A flat carapace hub sits high up, with a ring of eye pits and a crown of feelers where a head
+  would be.
+- A rounded, veined sac hangs under the hub, and a four-joint feeding tube hangs from the sac to
+  the dust.
+- Three legs rise up and out to knees above the hub, then come down to a spike.
+- **Gait:** it moves one leg at a time. The tube trails and sways, and the feelers never stop.
+- **Attack:** the front leg is the weapon. It rises, then stabs down.
+- It's deliberately not a small Sixfold, which has six limbs arched over a hung mass.
+
+**Hounds hunt elk.**
+- 18 game-hours after it last ate, a pack goes after the nearest elk it can reach, staying inside
+  its own country (45 tiles round its den).
+- It runs one down and eats at the kill for 8 seconds.
+- A carcass the pack has eaten gives hide and no meat.
+- An elk bolts the moment a hunting hound comes within 12 tiles. A fed pack and a herd ignore
+  each other.
+
+**Herds come back.**
+- **Elk:** a herd of two or more calves once every 48 hours, up to six. A herd hunted down to
+  one is gone.
+- **Striders:** a herd under three grows one every 96 hours.
+- Nothing is born where one of yours can see it.
+- **More herds:** the world now has 11 elk herds and 7 strider herds, up from 6 and 4, which were
+  set for a map a third the size.
+
+**Dens.**
+- **Five dens** in the deep waste, away from towns and roads, each with a pack of three or four.
+- A den whelps one back every 16 hours while its pack is short, but not while one of yours is
+  near it.
+- **Right-click a den:** *DIG OUT THE DEN — nothing will whelp here again.* Six seconds of work,
+  and the mound is gone and the ground is scorched.
+- **Packs no longer walk in off the map's edge.** A world whose dens are all dug out has seen
+  its last new pack.
+- **An old bug, found on the way:** that edge spawn had already stopped working. Its budget
+  counted the 62 Bonewalkers and 31 Marrow Ticks as "wild", so it was always full. The whole
+  world has had the 5 hounds spawned at boot and no others since. Now it has those 5 plus 18 in
+  dens.
+
+**Striders take a more active role (my reading of "a more active role").**
+- **They migrate.** A herd walks a loop of five points round its home, 95 to 165 tiles out, and
+  stops to sift at each point for 8 to 16 hours.
+- **They will not be crowded.** Anything that comes within 5 tiles is stabbed at until it leaves:
+  one of yours, a pack, or a caravan.
+  - A herd you walk round never turns.
+  - Hounds leave them alone.
+  - One that scuffled with you forgets it 20 seconds after you've gone.
+- **They no longer run when hit.** They fight back, and only run under a third of their blood.
+
+**The words (all new):**
+- The menu line above.
+- *"Hob goes to dig out the den."*
+- *"Hob digs out the den and fires what was in it. Nothing will whelp there again."*
+- **HOUND DEN** over a den in sight.
+- The strider's bark *"(a dry click, high up)"* when it rounds on something.
+- A **TOO CLOSE** float when it rounds on one of yours.
+
+**For you to rule:**
+1. **The strider's look.** What to change.
+2. **Is "a more active role" what you meant?** Built as migration plus a space it defends. The
+   alternative I didn't build: striders feed on the dead with the tube, so they would compete
+   with a necromancer for bodies.
+3. **Should a dug-out den stay gone for good?** As built, yes. The alternative is that a
+   surviving pack digs a new den somewhere else after a few weeks.
+4. **The dials:**
+   - 18 hours to hunger;
+   - 5 dens of 3 or 4;
+   - a whelp every 16 hours;
+   - a calf every 48;
+   - 5 tiles of strider space;
+   - 8 to 16 hours of sifting.
+5. **The words above.**
+
 ---
 
 ## Appendix: re-running the counts

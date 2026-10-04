@@ -7075,6 +7075,7 @@ function biomeTick(dt){
     b.salted = true; b.saltedAt = di; b.saltedBy = 'flats';
   }
   calcineTick();
+  ecologyTick();
 }
 /* ---------- THE CALCINE WOOD, IN PLAY ----------
    Measured in game-hours off the clock rather than in ticks, so it runs the same at every speed
@@ -9920,7 +9921,7 @@ estateEvict();
     for(let i=0; i<ri(3,5); i++){
       const q = findOpenNear(p.x + ri(-3,3), p.y + ri(-3,3), 4);
       const e = makeChar('Dust Elk', 'fauna', q.x, q.y, {atk:5, def:10, tough:10, ath:12});
-      e.kin = 'elk';
+      e.kin = 'elk'; e.herd = h2 + 1;   /* which herd: it calves back as one (THE WASTE'S OWN BUSINESS) */
       e.beast = true; e.neutral = true; e.fleeOnHit = true;
       e.blood = 70; e.maxBlood = 70;
       e.dropItems = {meat:3, hide:1};
@@ -14841,6 +14842,11 @@ function pierceNeutral(n, o){
      fire on sight and the whole scene the origin is built around never happens. She judges him
      in words instead. It runs both ways: his dead do not swing at her either. */
   if(n.holdsFire || o.holdsFire) return false;
+  /* THE HUNT: a hound out for meat and the elk it is after are each other's business, and only
+     while it is hunting (see THE WASTE'S OWN BUSINESS) */
+  if(n.kin === 'elk' && !n.undead && isHuntingHound(o)) return true;
+  /* and a strider will not be crowded: whoever it has rounded on, and only them, while it is */
+  if(n.kin === 'strider' && n.crowdT > 0 && n.crowdedBy === o) return true;
   /* AND A NEUTRAL HEAP OF THE DEAD IS STILL THE DEAD. Asked from the beast's side because
      that is the only side this function is ever asked from — `hostile` calls it for whichever
      of the pair is neutral — and one rule here settles the quarrel in both directions. */
@@ -17145,7 +17151,7 @@ function approachSlot(c, t, dt){
 function clearOrders(c){
   if(concExclusive(c) && !concMobile(c)) endConcentration(c);   /* a rooted light goes out when you move; a lantern travels with you */
   c.target = null; c.moveTarget = null; c.healTarget = null;
-  c.lootTarget = null; c.lootRender = false; c.tradeTarget = null; c.bedTarget = null; c.pickupTarget = null; c.phylTarget = null; c.sealTarget = null; c.tearTarget = null; c.hallowTarget = null; c.doorWork = false;
+  c.lootTarget = null; c.lootRender = false; c.tradeTarget = null; c.bedTarget = null; c.pickupTarget = null; c.phylTarget = null; c.sealTarget = null; c.tearTarget = null; c.hallowTarget = null; c.denTarget = null; c.doorWork = false;
   c.gather = null; c.attackMove = null; c.healProg = 0; c.gatherT = 0;
   c.chestTarget = null; c.altarTarget = null; c.targetManual = false; c.orderTarget = null; c.fleeT = 0;
   c.talkTarget = null;
@@ -17507,7 +17513,11 @@ function physics(c, dt){
   if(sealTick(c, dt)) return;   /* closing a tear is the only work that outranks a knife */
   if(tearRiteTick(c, dt)) return;   /* and so does the long way round */
   if(hallowTick(c, dt)) return;     /* ash worked into a Sundered site */
+  if(denDigTick(c, dt)) return;     /* a hound den, dug out */
   if(mawFeed(c, dt)) return;   /* the Maw is here for the bodies, not for you */
+  if(houndHunt(c, dt)) return;      /* a hungry pack, and the herd it is after (THE WASTE'S OWN BUSINESS) */
+  elkSpook(c, dt);
+  striderSpace(c, dt);
   /* A ROOM GARRISON holds its chamber — redoubt guards and cave dwellers alike. It will not
      leave the room (or the floor) to chase, so a wandering boss can't lure a whole warren into
      one pile, and every door is its own fight. Only a foe inside the room, same floor, is met. */
@@ -21692,7 +21702,7 @@ function rubidoBark(c){
    Not everything out there came through a tear. Some of it just grew where nothing
    should, and got on with the business of eating. */
 (function seedDeepFauna(){
-  /* Silt Striders: tall, placid, worth hunting — hide and meat on legs */
+  /* Silt Striders: tall, migrating, and not to be crowded — hide and meat on three legs */
   for(let herd = 0; herd < 4; herd++){
     const p = bossSpot(35, 45);
     if(!p) continue;
@@ -21700,10 +21710,12 @@ function rubidoBark(c){
     for(let k = 0; k < n; k++){
       const q = findOpenNear(p.x + ri(-5, 5), p.y + ri(-5, 5), 4);
       const st = makeChar('Silt Strider', 'fauna', q.x, q.y, {atk:12, def:8, tough:34, ath:9});
-      st.beast = true; st.fleeOnHit = true; st.big = 1.6; st.kin = 'strider';
+      st.beast = true; st.big = 1.6; st.kin = 'strider';
+      /* NEUTRAL AND MIGRATING, NOT PLACID AND POSTED: it walks its herd's loop and rounds on
+         whatever crowds it (THE WASTE'S OWN BUSINESS). Same draws as ever, so the world is unchanged. */
+      st.neutral = true; st.sherd = herd + 1; st.clawDmg = 14;
       st.blood = 160; st.maxBlood = 160;
       st.dropItems = {hide: ri(3, 5), meat: ri(4, 7)};
-      st.guard = {x: q.x, y: q.y};
       chars.push(st);
     }
   }
@@ -21720,6 +21732,367 @@ function rubidoBark(c){
     } finally { seed = pocket; }
   }
 })();
+/* ============================================================ THE WASTE'S OWN BUSINESS
+   "I also like the idea of more ecology and nests players can destroy to prevent respawning.
+    Dust Hounds should actively hunt the dust elk so that there's a genuine ecosystem going on
+    here. Striders should play a more active role too." (2026-10-02)
+   Three animals and the things between them:
+     · A PACK GETS HUNGRY. `PACK_HUNGRY_H` hours after it last ate, a pack of dust hounds goes
+       after the nearest elk it can reach — inside its own country, if it has a den — runs it
+       down, and eats at the kill for `FEED_S` seconds. What it eats is the meat: a carcass the
+       hounds have had gives hide and nothing else. Fed, the pack is just a pack again.
+     · THE HERD RUNS. An elk with a hunting hound inside `ELK_SPOOK_R` bolts. Herds calve back
+       one at a time while they have room, unseen; a herd hunted down to one is gone.
+     · PACKS COME FROM DENS, and a den can be dug out. A den tops its pack up a whelp at a time
+       while nobody of yours is near it; dig it out and nothing is born there again. Packs no
+       longer walk in off the map's edge.
+     · STRIDERS MIGRATE AND WILL NOT BE CROWDED. A herd walks a long loop of the waste, slowly,
+       which puts them on the skyline and on the move. Anything that comes inside
+       `STRIDER_SPACE` of one is stabbed at with the front leg until it leaves — a pack of hounds
+       included — so a herd is something you route round, and the hounds hunt elk, not these.
+   ALL OF IT RUNS ON POCKETED STREAMS where it needs dice (a whelp, a calf, a new herd), so the
+   world's stream is the same length with it as without it. */
+const PACK_HUNGRY_H = 18;      /* game-hours after a meal before a pack hunts again */
+const HUNT_R = 70;             /* how far a pack will go for meat, from where it stands */
+const FEED_S = 8;              /* seconds at the kill */
+const ELK_SPOOK_R = 12;        /* a hunting hound this close and the herd runs */
+const CALF_H = 48;             /* game-hours between calves, in a herd with room */
+const HERD_CAP = 6;
+const DEN_PUP_H = 16;          /* game-hours between whelps at a den short of its pack */
+const DEN_WORK = 6;            /* seconds of digging to put a den out for good */
+const DEN_TERRITORY = 45;      /* a den's pack keeps to this, and hunts inside it */
+const STRIDER_SPACE = 5;       /* tiles a strider will not let anything inside */
+const STRIDER_BUD_H = 96;      /* game-hours between new striders in a herd below three */
+const dens = [];
+const ecoState = {calf: {}, bud: {}, swp: {}, sgz: {}, shome: {}};
+let _ecoT = 0, _ecoH = null;
+function isHuntingHound(o){ return o.kin === 'hound' && o.faction === 'wild' && !o.undead && !!o.hunting && o.state === 'ok'; }
+function packOf(c){
+  return charsNear(c.x, c.y, 40).filter(o => o !== c && o.kin === 'hound' && o.faction === 'wild' && o.state === 'ok' && !o.undead
+    && ((c.squad && o.squad === c.squad) || (c.denId && o.denId === c.denId)));
+}
+/* ---------- THE HUNT, a body at a time ----------
+   Runs ahead of the fight logic for a wild hound. Returns true while it is handling the body
+   (walking to the herd, eating), false to let the ordinary rules have it (including the fight
+   with the elk itself: `pierceNeutral` makes a hunting hound and an elk each other's enemy). */
+function houndHunt(c, dt){
+  if(c.kin !== 'hound' || c.faction !== 'wild' || c.undead || c.state !== 'ok' || (c.floor || 0) !== 0) return false;
+  const H = nowH();
+  if(c.fedH === undefined || c.fedH === null) c.fedH = H - (c.id % 12);
+  const L = c.squad && c.squad.lair;
+  /* at a kill */
+  if(c.meal){
+    const m = c.meal;
+    const ok = !m.gnawed && (m.state === 'down' || (m.state === 'dead' && corpses.includes(m)));
+    if(!ok){ c.meal = null; c.mealT = 0; return false; }
+    if(c.target && c.target !== m && c.target.state === 'ok') return false;   /* something is coming at it: that first */
+    if(!travel(c, m.x, m.y, dt, 1.1)) return true;
+    if(m.state === 'down') kill(m, c);                                          /* the pack finishes it */
+    c.mealT = (c.mealT || 0) + dt;
+    if(Math.floor(c.mealT * 2) !== Math.floor((c.mealT - dt) * 2) && visAt(m.x, m.y, m.floor) === 2) addSpecks(m.x, m.y, '#7a2a2a', 3);
+    if(c.mealT < FEED_S) return true;
+    for(const o of [c, ...packOf(c)]){ o.fedH = H; o.hunting = false; o.prey = null; if(o.meal === m){ o.meal = null; o.mealT = 0; } }
+    m.gnawed = true;
+    if(m.dropItems && m.dropItems.meat) m.dropItems = Object.assign({}, m.dropItems, {meat: 0});
+    return false;
+  }
+  if(H - c.fedH < PACK_HUNGRY_H){ c.hunting = false; return false; }
+  c.hunting = true;
+  /* the prey went down, or died: eat */
+  const pr = c.prey;
+  if(pr && !pr.gnawed && (pr.state === 'down' || (pr.state === 'dead' && corpses.includes(pr)))){ c.meal = pr; c.prey = null; c.mealT = 0; c.target = null; return true; }
+  if(c.target) return false;
+  if(!pr || pr.state !== 'ok' || (L && dist(pr.x, pr.y, L.x, L.y) > L.r + 12)){
+    c.prey = null;
+    if(c.preySearchT > 0){ c.preySearchT -= dt; return false; }
+    c.preySearchT = 2 + (c.id % 10) * 0.1;
+    let best = null, bd = HUNT_R;
+    for(const o of chars){
+      if(o.kin !== 'elk' || o.state !== 'ok' || o.undead || (o.floor || 0) !== 0) continue;
+      if(Math.abs(o.x - c.x) > bd || Math.abs(o.y - c.y) > bd) continue;
+      if(L && dist(o.x, o.y, L.x, L.y) > L.r + 8) continue;                     /* its own country */
+      const d = dist(o.x, o.y, c.x, c.y);
+      if(d < bd){ bd = d; best = o; }
+    }
+    if(!best) return false;
+    c.prey = best;
+    for(const o of packOf(c)) if(!o.prey) o.prey = best;
+  }
+  const q = c.prey;
+  if(dist(c.x, c.y, q.x, q.y) > 6){ travel(c, q.x, q.y, dt, 1.5); return true; }
+  c.target = q;
+  return false;
+}
+/* the herd runs from a hunting pack, every member of it that can see one */
+function elkSpook(c, dt){
+  if(c.kin !== 'elk' || !c.neutral || c.undead || c.fleeT > 0) return;
+  c.spookT = (c.spookT || 0) - dt;
+  if(c.spookT > 0) return;
+  c.spookT = 0.4 + (c.id % 5) * 0.02;
+  for(const o of charsNear(c.x, c.y, ELK_SPOOK_R)) if(isHuntingHound(o) && dist(o.x, o.y, c.x, c.y) < ELK_SPOOK_R){ c.fleeT = 2; return; }
+}
+/* ---------- A STRIDER'S SPACE ----------
+   Whatever comes inside it — yours, a pack, a caravan — is rounded on and stabbed at until it
+   is out again. Only that one, and only for as long as the strider is rounded (`crowdT`), which
+   is what `pierceNeutral` reads: walk round a herd and nothing happens. Badly hurt, it runs. */
+function striderSpace(c, dt){
+  if(c.kin !== 'strider' || c.faction !== 'fauna' || c.undead || c.state !== 'ok') return;
+  if(c.crowdT > 0){
+    c.crowdT -= dt;
+    const o = c.crowdedBy;
+    if(!o || o.state !== 'ok' || dist(o.x, o.y, c.x, c.y) > STRIDER_SPACE + 4) c.crowdT = Math.min(c.crowdT, 0.6);
+    if(c.crowdT <= 0){ if(c.target === o) c.target = null; c.crowdedBy = null; c.crowdT = 0; }
+  }
+  if(c.blood < c.maxBlood * 0.35 && !(c.fleeT > 0)) c.fleeT = 3;
+  /* AND IT FORGETS YOU ONCE YOU HAVE GONE. A strider stabbed at somebody who hit back, and the
+     neutral rule made that a grudge for life (`provoked`) — so one scuffle at the edge of a herd
+     made it an enemy that would cross the map for you, which is the opposite of an animal you
+     route round. Twenty seconds with nobody of yours inside twenty-five tiles and it lets go. */
+  if(c.provoked){
+    c.calmT = yoursNear(c.x, c.y, 25) ? 0 : (c.calmT || 0) + dt;
+    if(c.calmT > 20){ c.provoked = false; c.calmT = 0; if(c.target && c.target.faction === 'player') c.target = null; }
+  }
+  c.spaceT = (c.spaceT || 0) - dt;
+  if(c.spaceT > 0 || c.crowdT > 0) return;
+  c.spaceT = 0.4 + (c.id % 5) * 0.02;
+  let best = null, bd = STRIDER_SPACE;
+  for(const o of charsNear(c.x, c.y, STRIDER_SPACE)){
+    if(o === c || o.state !== 'ok' || o.faction === 'fauna' || o.phantom || (o.floor || 0) !== (c.floor || 0)) continue;
+    const d = dist(o.x, o.y, c.x, c.y);
+    if(d < bd){ bd = d; best = o; }
+  }
+  if(!best) return;
+  c.crowdedBy = best; c.crowdT = 6; c.target = best;
+  say(c, '(a dry click, high up)');
+  if(best.faction === 'player' && visAt(c.x, c.y, c.floor) === 2) addFloat(c.x, c.y - 2.4, 'TOO CLOSE', '#d8b878');
+}
+/* ---------- WHERE A STRIDER HERD WALKS ----------
+   A loop of five points round the herd's HOME — where it came into the world, kept in
+   `ecoState.shome` and saved, because a herd that has been walking for a week is not standing
+   where it started. Ninety-five to a hundred and sixty-five tiles out, off the herd's number and
+   the land, no draw. The first cut hashed the loop's centre over the whole map, and a herd born
+   in the south-east set off for a loop eighteen hundred tiles away. Open ground on the herd's own
+   landmass, off the headland, well clear of every town. */
+const _sRoutes = {};
+function striderHome(h){
+  if(!ecoState.shome[h]){
+    const mem = chars.filter(c => c.sherd === h && c.state !== 'dead');
+    if(!mem.length) return null;
+    ecoState.shome[h] = {x: Math.round(mem.reduce((a, c) => a + c.x, 0) / mem.length), y: Math.round(mem.reduce((a, c) => a + c.y, 0) / mem.length)};
+  }
+  return ecoState.shome[h];
+}
+function striderRoute(h){
+  if(_sRoutes[h]) return _sRoutes[h];
+  const hm = striderHome(h);
+  if(!hm) return [];
+  const home = landComp[(hm.y | 0) * W + (hm.x | 0)];
+  const fine = (x, y) => x > 40 && y > 40 && x < W - 40 && y < H - 40 && !isBlocked(x + 0.5, y + 0.5)
+    && landComp[(y | 0) * W + (x | 0)] === home && !inHeadland(x, y, 20) && !towns.some(t => dist(t.x, t.y, x, y) < (t.clearR || 20) + 50);
+  const cx = hm.x, cy = hm.y;
+  const wps = [];
+  if(home){
+    for(let j = 0; j < 5; j++){
+      const a = j / 5 * Math.PI * 2 + hash2(h, j + 3) * 0.6;
+      for(const rk of [1, 0.75, 1.25, 0.5]){
+        const r = (95 + hash2(h * 7, j) * 70) * rk;
+        const x = Math.round(cx + Math.cos(a) * r), y = Math.round(cy + Math.sin(a) * r);
+        if(fine(x, y)){ wps.push({x: x + 0.5, y: y + 0.5}); break; }
+      }
+    }
+  }
+  return (_sRoutes[h] = wps);
+}
+/* ---------- WHELPS, CALVES, AND THE MIGRATION ----------
+   Twice a second off `biomeTick`, but the births only on the hour. Nothing is born where one of
+   yours can see it. */
+function spawnDenHound(dn){
+  const pocket = seed;
+  seed = (Math.imul(dn.id + 0x51, 0x9E3779B9) ^ Math.floor(nowH() * 4) ^ ((ecoState.pups = (ecoState.pups || 0) + 1) << 8)) | 0;
+  try {
+    const p = findOpenNear(dn.x + 1.5, dn.y + 1.5, 3);
+    const c = makeChar('Dust Hound', 'wild', p.x, p.y, {atk: ri(6, 14), def: ri(4, 10), tough: ri(4, 10), ath: 14, squad: dn.squad});
+    c.beast = true; c.kin = 'hound'; c.denId = dn.id; c.fedH = nowH() - ri(0, 12);
+    chars.push(c);
+    return c;
+  } finally { seed = pocket; }
+}
+function spawnElkAt(x, y, herd){
+  const q = findOpenNear(x, y, 4);
+  const e = makeChar('Dust Elk', 'fauna', q.x, q.y, {atk: 5, def: 10, tough: 10, ath: 12});
+  e.kin = 'elk'; e.beast = true; e.neutral = true; e.fleeOnHit = true; e.herd = herd;
+  e.blood = 70; e.maxBlood = 70;
+  e.dropItems = {meat: 3, hide: 1};
+  chars.push(e);
+  return e;
+}
+function spawnStriderAt(x, y, sherd){
+  const q = findOpenNear(x, y, 4);
+  const st = makeChar('Silt Strider', 'fauna', q.x, q.y, {atk: 12, def: 8, tough: 34, ath: 9});
+  st.beast = true; st.big = 1.6; st.kin = 'strider'; st.neutral = true; st.sherd = sherd;
+  st.blood = 160; st.maxBlood = 160; st.clawDmg = 14;
+  st.dropItems = {hide: ri(3, 5), meat: ri(4, 7)};
+  chars.push(st);
+  return st;
+}
+const yoursNear = (x, y, r) => player().some(c => c.state !== 'dead' && Math.abs(c.x - x) < r && Math.abs(c.y - y) < r);
+function ecologyTick(){
+  const H = nowH();
+  /* the migration, every couple of seconds */
+  _ecoT -= 0.5;
+  if(_ecoT <= 0){
+    _ecoT = 2;
+    const herds = {};
+    for(const c of chars) if(c.kin === 'strider' && c.sherd && c.state === 'ok' && !c.undead && c.faction === 'fauna') (herds[c.sherd] = herds[c.sherd] || []).push(c);
+    for(const h in herds){
+      const wps = striderRoute(+h), mem = herds[h];
+      if(!wps.length) continue;
+      let i = ecoState.swp[h] || 0;
+      if(i >= wps.length) i = 0;
+      const lead = mem[0];
+      /* AT EACH POINT IT STOPS AND SIFTS, eight to sixteen hours, before it walks on: a herd that
+         never stopped crossed the map in a few minutes, which is a parade, not a migration */
+      if((ecoState.sgz[h] || 0) > H) continue;
+      if(dist(lead.x, lead.y, wps[i].x, wps[i].y) < 8){
+        ecoState.swp[h] = (i + 1) % wps.length;
+        ecoState.sgz[h] = H + 8 + hash2(+h * 13, i) * 8;
+        continue;
+      }
+      const w = wps[i];
+      mem.forEach((c, k) => {
+        if(c.target || c.crowdT > 0 || c.fleeT > 0) return;
+        const ox = ((k % 3) - 1) * 3.5, oy = (Math.floor(k / 3) - 0.5) * 3.5;
+        const mt = c.moveTarget;
+        if(!mt || Math.abs(mt.x - (w.x + ox)) > 0.5 || Math.abs(mt.y - (w.y + oy)) > 0.5){ c.guard = null; c.moveTarget = {x: w.x + ox, y: w.y + oy}; }
+      });
+    }
+  }
+  /* the births, on the hour */
+  if(_ecoH !== null && Math.floor(H) === Math.floor(_ecoH)) return;
+  _ecoH = H;
+  for(const dn of dens){
+    if(!dn.alive) continue;
+    const pack = chars.filter(o => o.denId === dn.id && o.state !== 'dead').length;
+    if(pack >= dn.cap || H - (dn.pupH || -1e9) < DEN_PUP_H || yoursNear(dn.x, dn.y, 60)) continue;
+    dn.pupH = H;
+    spawnDenHound(dn);
+  }
+  const elkHerds = {}, strHerds = {};
+  for(const c of chars){
+    if(c.state === 'dead' || c.undead) continue;
+    if(c.kin === 'elk' && c.herd) (elkHerds[c.herd] = elkHerds[c.herd] || []).push(c);
+    else if(c.kin === 'strider' && c.sherd && c.faction === 'fauna') (strHerds[c.sherd] = strHerds[c.sherd] || []).push(c);
+  }
+  const birth = (key, list, cap, min, gap, make) => {
+    for(const h in list){
+      const mem = list[h];
+      if(mem.length < min || mem.length >= cap) continue;
+      /* a herd with no clock yet starts one: its first calf is a whole interval away, not now */
+      if(ecoState[key][h] === undefined){ ecoState[key][h] = H; continue; }
+      if(H - ecoState[key][h] < gap) continue;
+      const lead = mem[0];
+      if(yoursNear(lead.x, lead.y, 50)) continue;
+      ecoState[key][h] = H;
+      const pocket = seed;
+      seed = (Math.imul(+h + (key === 'calf' ? 0x31 : 0x77), 0x9E3779B9) ^ Math.floor(H)) | 0;
+      try { make(lead.x + 2, lead.y + 1, +h); } finally { seed = pocket; }
+    }
+  };
+  birth('calf', elkHerds, HERD_CAP, 2, CALF_H, spawnElkAt);
+  birth('bud', strHerds, 3, 1, STRIDER_BUD_H, spawnStriderAt);
+}
+/* ---------- DENS ----------
+   Laid off the hash after the world is built, like the biomes' sleepers: open ground in the deep
+   waste, a long way from walls and roads and from each other. Each comes into the world with its
+   pack on its own stream. */
+function seedEcology(){
+  const N = Math.round(3 * AREA_R), cand = [];
+  for(let y = 90; y < H - 90; y += 13) for(let x = 90; x < W - 90; x += 13){
+    const t = terr[y * W + x];
+    if(t !== 0 && t !== 1) continue;
+    if(isBlocked(x + 0.5, y + 0.5) || inHeadland(x, y, 30) || biomeAt(x, y)) continue;
+    if(towns.some(tn => dist(tn.x, tn.y, x, y) < 110) || dist(startTown.x, startTown.y, x, y) < 220) continue;
+    if(nearRoad(x, y, 30)) continue;
+    if(corpseSites.some(s => dist(s.x, s.y, x, y) < 70) || redoubts.some(r => dist(r.x, r.y, x, y) < 50) || towers.some(tw => dist(tw.x, tw.y, x, y) < 40)) continue;
+    let open = true;
+    for(let j = -2; j <= 2 && open; j++) for(let i = -2; i <= 2; i++) if(isBlocked(x + i + 0.5, y + j + 0.5)){ open = false; break; }
+    if(!open) continue;
+    cand.push({x, y, h: hash2(x * 17 + 3, y * 23 + 11)});
+  }
+  cand.sort((a, b) => b.h - a.h);
+  for(const c of cand){
+    if(dens.length >= N) break;
+    if(dens.some(d => dist(d.x, d.y, c.x, c.y) < 300)) continue;
+    const id = dens.length + 1;
+    squadN++;
+    const dn = {id, x: c.x, y: c.y, cap: 3 + (hash2(c.x, c.y) > 0.5 ? 1 : 0), alive: true, pupH: null,
+                squad: {id: squadN, anchor: {x: c.x, y: c.y}, kind: 'hound', lair: {x: c.x, y: c.y, r: DEN_TERRITORY}, den: id}};
+    dens.push(dn);
+  }
+  for(const dn of dens) for(let k = 0; k < dn.cap; k++) spawnDenHound(dn);
+  /* MORE HERDS, for a world that grew: six elk herds and four of striders were set for a map a
+     third the size. Brought up to the area on their own streams, at the end of the world. */
+  const pocket = seed;
+  seed = (pocket ^ 0x5EC0106) | 0;
+  try {
+    const elkHave = new Set(chars.filter(c => c.kin === 'elk' && c.herd).map(c => c.herd));
+    for(let h = elkHave.size + 1; h <= Math.round(6 * AREA_R); h++){
+      const p = bossSpot(20, 25); if(!p) continue;
+      for(let i = 0, n = ri(3, 5); i < n; i++) spawnElkAt(p.x + ri(-3, 3), p.y + ri(-3, 3), h);
+    }
+    const strHave = new Set(chars.filter(c => c.kin === 'strider' && c.sherd).map(c => c.sherd));
+    for(let h = strHave.size + 1; h <= Math.round(4 * AREA_R); h++){
+      const p = bossSpot(35, 45); if(!p) continue;
+      for(let i = 0, n = ri(2, 3); i < n; i++) spawnStriderAt(p.x + ri(-5, 5), p.y + ri(-5, 5), h);
+    }
+  } finally { seed = pocket; }
+  /* every strider herd's home is where it stands now, at the end of the world */
+  for(const c of chars) if(c.kin === 'strider' && c.sherd) striderHome(c.sherd);
+}
+/* digging one out: a body of yours walks to it and works for DEN_WORK seconds */
+function denDigTick(c, dt){
+  const dn = c.denTarget;
+  if(!dn) return false;
+  if(!dn.alive){ c.denTarget = null; c.denT = 0; return false; }
+  if(!travel(c, dn.x + 0.5, dn.y + 0.5, dt, 1.8)){ c.denT = 0; return true; }
+  c.denT = (c.denT || 0) + dt;
+  if(Math.floor(c.denT * 2) !== Math.floor((c.denT - dt) * 2)) addSpecks(dn.x + 0.5, dn.y + 0.5, '#6a5a44', 4);
+  if(c.denT < DEN_WORK) return true;
+  c.denTarget = null; c.denT = 0;
+  dn.alive = false;
+  denLook(dn);
+  addSpecks(dn.x + 0.5, dn.y + 0.5, '#e8a040', 24);
+  log(`${c.name} digs out the den and fires what was in it. Nothing will whelp there again.`, 'good');
+  return false;
+}
+/* the mound, the hole, and what the pack brought home */
+function denLook(dn){
+  if(typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+  if(!dn.mesh){
+    const g = new THREE.Group();
+    const y0 = groundY(dn.x + 0.5, dn.y + 0.5);
+    const box = (w, h, d, col, x, y, z, ry) => {
+      const m = new THREE.Mesh(BOXG, new THREE.MeshLambertMaterial({color: new THREE.Color(col)}));
+      m.scale.set(w, h, d); m.position.set(x, y, z); if(ry) m.rotation.y = ry; m.castShadow = true; m.receiveShadow = true; g.add(m); return m;
+    };
+    const live = new THREE.Group(); g.add(live);
+    const dead = new THREE.Group(); g.add(dead);
+    const lb = (w, h, d, col, x, y, z, ry, par) => { const m = box(w, h, d, col, x, y, z, ry); g.remove(m); par.add(m); return m; };
+    lb(2.6, 0.55, 2.2, '#5a4a38', 0, 0.27, 0, 0.3, live);
+    lb(1.9, 0.45, 1.6, '#4e4030', 0.1, 0.68, -0.1, 0.5, live);
+    lb(1.0, 0.30, 0.9, '#463a2c', 0.2, 0.98, -0.2, 0.2, live);
+    lb(0.75, 0.55, 0.30, '#120d0a', 0.1, 0.42, 1.05, 0.3, live);                 /* the way in */
+    lb(2.4, 0.08, 2.0, '#241c16', 0, 0.04, 0, 0.3, dead);                        /* dug out and fired */
+    for(let i = 0; i < 9; i++){                                                  /* what the pack brought home */
+      const a = hash2(dn.id * 7 + i, 3) * Math.PI * 2, r = 1.5 + hash2(dn.id, i) * 1.4;
+      box(0.06, 0.06, 0.5 + hash2(i, dn.id) * 0.4, '#d8ccb0', Math.cos(a) * r, 0.05, Math.sin(a) * r, a);
+    }
+    g.position.set(dn.x + 0.5, y0, dn.y + 0.5);
+    scene.add(g);
+    dn.mesh = g; dn.live = live; dn.dead = dead;
+  }
+  dn.live.visible = !!dn.alive; dn.dead.visible = !dn.alive;
+}
 /* the same draws, in the same order, as the loop that used to hold them: the world is unchanged */
 function spawnMarrowTick(s){
   const q = findOpenNear(s.x + ri(-9, 9) * SITE_K, s.y + ri(-9, 9) * SITE_K, 5);
@@ -30005,7 +30378,10 @@ function update(dt){
       const r = rnd();
       /* when both have room the split is about a third wild, which is roughly what the old
          weighting intended before the shared ceiling ate it */
-      if(roomWild && (!roomOut || r < 0.38)) spawnHostileSquad('hound');
+      /* PACKS COME FROM DENS NOW (see THE WASTE'S OWN BUSINESS), so the wild share of this roll
+         spawns nothing: a world whose dens have all been dug out has seen its last new pack. The
+         roll itself is kept, so the outlaws' share of it is what it always was. */
+      if(roomWild && (!roomOut || r < 0.38)){ /* the dens' business */ }
       else if(roomOut) spawnHostileSquad(r < 0.72 ? 'bandit' : 'slaver');
     }
   }
@@ -46227,6 +46603,16 @@ function renderOverlay(rdt){
     cx.fillText(siteHallowed(s) ? 'the Sundered ground — hallowed' : 'the Sundered ground', q.x, q.y + 14);
     cx.textAlign = 'start';
   }
+  /* a hound den in plain sight, so it can be found to be dug out */
+  for(const dn of dens){
+    if(!dn.alive || activeFloor < 0 || visAt(dn.x + 0.5, dn.y + 0.5, 0) !== 2) continue;
+    const q = w2s(dn.x + 0.5, dn.y + 0.5, groundY(dn.x + 0.5, dn.y + 0.5) + 1.7);
+    if(!q) continue;
+    cx.fillStyle = 'rgba(196,168,128,0.8)';
+    setFont('bold 11px monospace'); cx.textAlign = 'center';
+    cx.fillText('HOUND DEN', q.x, q.y);
+    cx.textAlign = 'start';
+  }
   /* the wreck, named the same way, over its broken back */
   if(ark && ark.reached && activeFloor >= 0){
     const q = w2s(ark.mx, ark.my, ark.h0 + ARK_H + 2);
@@ -51770,6 +52156,19 @@ cv.addEventListener('mousedown', e => {
       log(`${able.length === 1 ? able[0].name + ' goes' : able.length + ' go'} to the door. It wants ${costText(doorSealCost())} at the end of it, and a very long time in between.`, '');
       return;
     }
+    /* right-click a hound den: dig it out, and nothing whelps there again */
+    const dn = dens.find(q => q.alive && dist(q.x + 0.5, q.y + 0.5, wx, wy) < 2.4);
+    if(dn){
+      const hand = movers.slice().sort((a, b2) => dist(a.x, a.y, dn.x, dn.y) - dist(b2.x, b2.y, dn.x, dn.y))[0];
+      showCtxMenu(e.clientX, e.clientY, [
+        {label: 'DIG OUT THE DEN — nothing will whelp here again', fn: () => {
+          clearOrders(hand); hand.denTarget = dn; hand.denT = 0;
+          log(`${hand.name} goes to dig out the den.`, '');
+        }},
+        {label: 'LEAVE IT', fn: () => {}},
+      ]);
+      return;
+    }
     /* right-click the heart of a Sundered site, with ash in the stores: hallow it */
     const hs = campHas('s_ash') >= HALLOW_ASH ? corpseSites.find(q => dist(q.x, q.y, wx, wy) < q.r * 0.35) : null;
     if(hs){
@@ -54288,6 +54687,9 @@ function snapshot(){
     protagonist:!!c.protagonist, squadNo:c.squadNo||0, wasOrder:!!c.wasOrder,
     salted:!!c.salted, saltedAt:c.saltedAt??null, saltedBy:c.saltedBy||null, biomeOwn:c.biomeOwn||null, rot:c.rot||null, lieuWear:c.lieuWear||0,
     calcined:!!c.calcined, ashH: c.ashH ? Math.round(c.ashH * 100) / 100 : null,
+    /* THE WASTE'S OWN BUSINESS: which herd, which den, when the pack last ate, and a kill eaten */
+    herd: c.herd || null, sherd: c.sherd || null, denId: c.denId || null, gnawed: !!c.gnawed,
+    fedH: (c.kin === 'hound' && c.fedH != null) ? Math.round(c.fedH * 10) / 10 : null,
     knit:c.knit??null, natArmor:c.natArmor?{...c.natArmor}:null, noise:c.noise??null, leash:c.leash??null, doorborn:!!c.doorborn, doorWork:!!c.doorWork,
     bindWeight:c.bindWeight, shortTag:c.shortTag, tempT:c.tempT??null, propped:!!c.propped,
     neutral:!!c.neutral, provoked:!!c.provoked, bossKey:c.bossKey, dropItems:c.dropItems,
@@ -54443,6 +54845,7 @@ function snapshot(){
     /* which grounds have been walked into, and which sleepers have already sat up: without the
        second, every wreck in the rust would lie back down on a reload and wake a second time */
     biomes: {seen: {...biomeState.seen}, woke: {...biomeState.woke}},
+    eco: {dens: dens.map(d => ({id: d.id, alive: d.alive, pupH: d.pupH})), calf: {...ecoState.calf}, bud: {...ecoState.bud}, swp: {...ecoState.swp}, sgz: {...ecoState.sgz}, shome: JSON.parse(JSON.stringify(ecoState.shome)), pups: ecoState.pups || 0},
     hamletsWoke: hamlets.filter(h => h.woke).map(h => h.id),
     towersReached: towers.filter(t => t.reached).map(t => t.id),
     arkReached: !!(ark && ark.reached),
@@ -54535,6 +54938,21 @@ function restore(d){
   for(const k in biomeState.woke) delete biomeState.woke[k];
   if(d.biomes){ Object.assign(biomeState.seen, d.biomes.seen || {}); Object.assign(biomeState.woke, d.biomes.woke || {}); }
   _ashLastH = null; _squallWas = null; _squallTold = null;   /* a load is not hours spent in the wood */
+  /* the dens are the world's and come back with it; whether each is still there, and when it
+     last whelped, is the save's */
+  ecoState.calf = {}; ecoState.bud = {}; ecoState.swp = {}; ecoState.sgz = {}; ecoState.pups = 0; _ecoH = null;
+  for(const k in _sRoutes) delete _sRoutes[k];
+  const homes0 = ecoState.shome; ecoState.shome = {};
+  for(const dn of dens){ dn.alive = true; dn.pupH = null; }
+  if(d.eco){
+    for(const sd of d.eco.dens || []){ const dn = dens.find(q => q.id === sd.id); if(dn){ dn.alive = sd.alive !== false; dn.pupH = sd.pupH ?? null; } }
+    Object.assign(ecoState.calf, d.eco.calf || {}); Object.assign(ecoState.bud, d.eco.bud || {}); Object.assign(ecoState.swp, d.eco.swp || {}); Object.assign(ecoState.sgz, d.eco.sgz || {});
+    Object.assign(ecoState.shome, d.eco.shome || {});
+    ecoState.pups = d.eco.pups || 0;
+  }
+  /* a save from before homes were kept: the world's own homes stand, they are not the save's to lose */
+  for(const k in homes0) if(!ecoState.shome[k]) ecoState.shome[k] = homes0[k];
+  for(const dn of dens) denLook(dn);
   for(const h of hamlets) h.woke = !!(d.hamletsWoke && d.hamletsWoke.includes(h.id));   /* before the folk were saved, none had come */
   for(const t of towers) t.reached = !!(d.towersReached && d.towersReached.includes(t.id));
   if(ark){ ark.reached = !!d.arkReached; ark.woke = !!d.arkWoke; }
@@ -54871,6 +55289,11 @@ function restore(d){
     c.salted = !!s.salted; c.saltedAt = s.saltedAt ?? null; c.saltedBy = s.saltedBy || null; c.biomeOwn = s.biomeOwn || null; c.rot = s.rot || null; c.lieuWear = s.lieuWear || 0;
     if(s.calcined) c.calcined = true;
     if(s.ashH) c.ashH = s.ashH;
+    if(s.herd) c.herd = s.herd;
+    if(s.sherd) c.sherd = s.sherd;
+    if(s.denId) c.denId = s.denId;
+    if(s.gnawed) c.gnawed = true;
+    if(s.fedH != null) c.fedH = s.fedH;
     if(s.knit != null) c.knit = s.knit;
     if(s.natArmor) c.natArmor = {...s.natArmor};
     if(s.noise != null) c.noise = s.noise;
@@ -55117,6 +55540,7 @@ function restore(d){
   for(const c of chars){
     if(c.isLeader >= 0 && towns[c.isLeader] && towns[c.isLeader].leader) towns[c.isLeader].leader.charId = c.id;
     if(c.campId >= 0){ const camp = camps.find(k => k.id === c.campId); if(camp) c.squad = camp.squad; }
+    if(c.denId){ const dn = dens.find(k => k.id === c.denId); if(dn) c.squad = dn.squad; }   /* a den's pack is its pack again */
     if(c.faction==='warband' && c.warT !== undefined && c.warT !== -1){
       const tgt = c.warT >= 0 ? towns[c.warT] : null;
       if(tgt){ squadN++; c.squad = {id: squadN, anchor:{x:tgt.x, y:tgt.y}, kind:'army'}; }
@@ -56751,6 +57175,7 @@ $('btn-start').onclick = () => {
 };
 $('hint').innerHTML = '';
 spawnHostileSquad('hound'); spawnHostileSquad('bandit');
+seedEcology(); for(const dn of dens) denLook(dn);
 
 let last = performance.now(), uiT = 0;
 let frameErrs = 0;
