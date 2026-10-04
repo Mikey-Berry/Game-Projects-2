@@ -13636,7 +13636,10 @@ function witnessTick(){
      bones stand on the skyline from a long way off, which is the point of them; what they are
      is learned at their foot. `reached` rides the save. */
   for(const st of corpseSites){
-    if(player().some(c => c.state !== 'dead' && (c.floor || 0) === 0 && dist(c.x, c.y, st.x, st.y) < st.r * 0.8)){ sawPlace('corpse'); st.reached = true; }
+    const who = player().find(c => c.state !== 'dead' && (c.floor || 0) === 0 && dist(c.x, c.y, st.x, st.y) < st.r * 0.8);
+    if(!who) continue;
+    sawPlace('corpse');
+    if(!st.reached){ st.reached = true; log(`${who.name} comes in under the bones of ${siteNameIn(st)} — the Sundered ground.`, ''); }
   }
   /* the wreck, by walking up to its side */
   if(ark && !ark.reached && player().some(c => c.state !== 'dead' && (c.floor || 0) === 0 && arkCovers(c.x, c.y, 14))){ sawPlace('ark'); ark.reached = true; }
@@ -21009,6 +21012,30 @@ function spawnEyeFlight(x, y, n){
    things that did not exist last year. People hunt the fragments anyway — they are the
    richest reagents in the world, and the dead god does not appear to mind. Appear. */
 const corpseSites = [];
+/* ---------- EACH ONE ITS OWN NAME ----------
+   "A unique name for each Sundered site." Which piece of him fell where is already `id % 3` (the
+   ribcage, the skull, the hand — see the monument below), so each piece keeps its own list and
+   the sites of one kind take it in order: the first ribcage the world laid is the Burnt Nave on
+   every world, the second Keel Hollow. NO DICE, so naming moves nothing worldgen places after it,
+   and nothing to save — the same world lays the same sites in the same order, and the name comes
+   back with them. A world lays at most sixteen sites (`ri(4, 5) * AREA_K`, rounded), which is six
+   of one kind at the most; past the end of a list a name would take a numeral rather than repeat.
+   The names are a draft for ruling (LORE-SEAMS §12.7). Shown only once reached, like the rest. */
+const SITE_NAMES = [
+  ['The Burnt Nave', 'Keel Hollow', 'The Long Cage', 'Arches-under-Ash', 'The Black Choir', 'Mourning Ribs'],
+  ['The Sleeper\'s Brow', 'Jawfall', 'The Hollow Crown', 'Socket Hill', 'The Grin in the Dust', 'Eyeless Down'],
+  ['The Reaching', 'Fingerfall', 'The Open Palm', 'Knuckle Ridge', 'The Last Grasp', 'Fivefold'],
+];
+function siteName(s){
+  if(s.nm) return s.nm;
+  const list = SITE_NAMES[s.id % 3], k = corpseSites.filter(q => q.id % 3 === s.id % 3).indexOf(s);
+  return (s.nm = k < list.length ? list[k] : `${list[k % list.length]} ${['II', 'III', 'IV'][Math.floor(k / list.length) - 1] || k}`);
+}
+/* the same name in the middle of a sentence: "under the bones of the Burnt Nave", not "of The" */
+function siteNameIn(s){ return siteName(s).replace(/^The /, 'the '); }
+/* what a line of the log calls it: its name once somebody of yours has stood there, and the
+   ground it is before that */
+function siteTitle(s){ return s && s.reached ? siteNameIn(s) : 'the Sundered ground'; }
 /* ---------- IN THE DEEP WASTE, WHICH IS OFF THE ROADS ----------
    The roads are laid first and nothing here ever looked at them: one site came down three tiles
    from a waypoint on the Dustport road, with its monument across the way and its animals on it
@@ -21933,7 +21960,7 @@ function siteSpent(c){
   const was = siteCap(s);
   s.cap = Math.max(SITE_FLOOR, was - 1);
   if(s.cap === SITE_FLOOR && was > SITE_FLOOR && player().some(o => o.state !== 'dead' && dist(o.x, o.y, s.x, s.y) < s.r + 20))
-    log('The Sundered ground has spent what it had. Something will always hunt here, but it will not come back in numbers until the sky moves again.', 'good');
+    log(`${s.reached ? siteName(s) : 'The Sundered ground'} has spent what it had. Something will always hunt here, but it will not come back in numbers until the sky moves again.`, 'good');
 }
 function sitesFed(stages){
   for(const s of corpseSites) s.cap = Math.min(s.pop ?? 3, siteCap(s) + stages);
@@ -25369,7 +25396,7 @@ function tenantTick(dt){
           clearOrders(c);
           c.moveTarget = {x: site.x, y: site.y};
           c.sleepwalkUntil = nowH() + 3;
-          if(c.tenantKnown) log(`${c.name} is up and walking in their sleep again, toward the Sundered ground ${compassFrom(c.x, c.y, site.x, site.y)}.`, '');
+          if(c.tenantKnown) log(`${c.name} is up and walking in their sleep again, toward ${siteTitle(site)} ${compassFrom(c.x, c.y, site.x, site.y)}.`, '');
         }
       } else if(c.tenantKnown && rnd() < 0.3){
         log(`${c.name}, asleep: "${DREAM_LINES[Math.floor(rnd() * DREAM_LINES.length)]}"`, '');
@@ -45911,7 +45938,9 @@ function renderOverlay(rdt){
     cx.fillStyle = 'rgba(201,191,168,0.85)';
     setFont('bold 13px monospace');
     cx.textAlign = 'center';
-    cx.fillText(siteHallowed(s) ? '☠ THE SUNDERED GROUND — HALLOWED' : '☠ THE SUNDERED GROUND', q.x, q.y);
+    cx.fillText('☠ ' + siteName(s).toUpperCase(), q.x, q.y);
+    setFont('11px monospace');
+    cx.fillText(siteHallowed(s) ? 'the Sundered ground — hallowed' : 'the Sundered ground', q.x, q.y + 14);
     cx.textAlign = 'start';
   }
   /* the wreck, named the same way, over its broken back */
@@ -51457,7 +51486,7 @@ cv.addEventListener('mousedown', e => {
         {label: `HALLOW THE GROUND — ${HALLOW_ASH} Sanctified Ash: nothing grows back here for ${HALLOW_DAYS} days${left ? ` (${left} left)` : ''}`, fn: () => {
           if(!hand){ log('The ash wants a living hand to work it in.', 'bad'); return; }
           clearOrders(hand); hand.hallowTarget = hs; hand.hallowT = 0;
-          log(`${hand.name} takes a measure of Sanctified Ash out to the heart of the Sundered ground.`, '');
+          log(`${hand.name} takes a measure of Sanctified Ash out to the heart of ${siteTitle(hs)}.`, '');
         }},
         {label: 'LEAVE IT', fn: () => {}},
       ]);

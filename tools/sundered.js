@@ -21,6 +21,9 @@
  * And a fourth, from 2026-10-02: "Make the sundered sites bigger, and only named once reached."
  * Claim 4 measures how far the bone stands out from each site's middle, and that a site in plain
  * sight is not named until somebody of yours has stood at it.
+ * And a fifth, from 2026-10-03: "A unique name for each Sundered site." Claim 4 also asks that
+ * every site's name is its own and from its own piece's list, that the log calls it the Sundered
+ * ground until it is reached and by name after, and that a reload keeps the names.
  *
  *   node tools/sundered.js [game.html]
  */
@@ -160,7 +163,8 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* ---------- 4. THE SIZE OF HILLS, AND NAMED BY GOING THERE ----------
        "Make the sundered sites bigger, and only named once reached." The map is drawn whole now,
        so the bones are on the skyline from far off; seeing one is not reaching it. */
-    guard(['theyAreTheSizeOfHills', 'seeingOneDoesNotNameIt', 'standingAtItDoes', 'andTheSaveRemembers'], () => {
+    guard(['theyAreTheSizeOfHills', 'seeingOneDoesNotNameIt', 'standingAtItDoes', 'andTheSaveRemembers',
+           'eachHasItsOwnName', 'andTheLogUsesItOnlyOnceReached'], () => {
       /* how far out from the middle the bone actually stands, measured off the footprint */
       const reachOf = (s) => { let far = 0; for (let y = Math.round(s.y) - 40; y <= Math.round(s.y) + 40; y++) for (let x = Math.round(s.x) - 40; x <= Math.round(s.x) + 40; x++) if (isBlocked(x, y) && dist(x + 0.5, y + 0.5, s.x, s.y) < 40 && tileAt(x, y) !== 3) far = Math.max(far, dist(x + 0.5, y + 0.5, s.x, s.y)); return far; };
       const reaches = corpseSites.map(reachOf);
@@ -171,6 +175,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const me = player()[0], keep = player().map(c => ({ c, x: c.x, y: c.y }));
       const s = corpseSites.slice().sort((a, b2) => dist(b2.x, b2.y, me.x, me.y) - dist(a.x, a.y, me.x, me.y))[0];
       const wasNamed = corpseSites.filter(q => q.reached).length;
+      /* "A unique name for each Sundered site" — distinct across the world, and drawn from the list
+         for the piece that fell there (the monument is `id % 3`), so a skull is never "the Reaching" */
+      const hasNames = typeof siteName === 'function';
+      const names = hasNames ? corpseSites.map(siteName) : [];
+      const ofItsKind = hasNames && corpseSites.every(q => SITE_NAMES[q.id % 3].some(n => siteName(q).startsWith(n)));
+      R._names = names.join(' · ');
+      R.eachHasItsOwnName = hasNames && new Set(names).size === corpseSites.length && ofItsKind
+        ? `all ${corpseSites.length} sites carry a name of their own, each from its own piece's list — ${names.slice(0, 3).join(', ')}, ...`
+        : `!! NAMES: ${hasNames ? `${new Set(names).size} distinct of ${corpseSites.length}, of their kind ${ofItsKind}` : 'no siteName at all'}`;
+      const titleBefore = hasNames ? siteTitle(s) : '';
+      const lastLog = () => { const el = document.getElementById('log'); return el && el.lastElementChild ? el.lastElementChild.textContent : ''; };
       /* stand off where the middle is in plain sight but the ground is not reached */
       const off = findOpenNear(s.x + s.r + 2, s.y, 2);
       for (const c of player()) { c.x = off.x; c.y = off.y; }
@@ -184,6 +199,14 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.standingAtItDoes = s.reached && corpseSites.filter(q => q.reached).length === 1
         ? `and walking somebody to ${dist(at.x, at.y, s.x, s.y).toFixed(0)} tiles from its middle names that one, and only that one`
         : `!! STANDING AT IT: reached ${s.reached}, ${corpseSites.filter(q => q.reached).length} named`;
+      /* the arrival is said once, by name; standing there another tick does not say it again */
+      const said = lastLog();
+      witnessTick();
+      const saidAgain = lastLog() !== said;
+      const nm = hasNames ? siteName(s) : '?';
+      R.andTheLogUsesItOnlyOnceReached = hasNames && titleBefore === 'the Sundered ground' && said.includes(nm.replace(/^The /, 'the ')) && !saidAgain && siteTitle(s) !== titleBefore
+        ? `before that it is "${titleBefore}" in the log; reaching it says "${said}", once, and after that the log calls it ${siteTitle(s)}`
+        : `!! THE LOG: before "${titleBefore}", on arrival "${said}", said again ${saidAgain}, after "${hasNames ? siteTitle(s) : ''}"`;
       for (const k of keep) { k.c.x = k.x; k.c.y = k.y; }
       computeVision();
       restore(JSON.parse(JSON.stringify(snapshot())));
@@ -192,9 +215,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
          was taken, and `restore` rebuilds from the latter: on `main` a reload left 1,662 of the
          1,668 solid tiles walkable, every monument in the world a picture again. */
       const solidAfter = corpseSites.filter(q => isBlocked(Math.round(q.x), Math.round(q.y))).length;
-      R.andTheSaveRemembers = s2 && s2.reached && corpseSites.filter(q => q.reached).length === 1 && solidAfter === corpseSites.length
-        ? `and a save and reload keeps it named, and all ${solidAfter} monuments still stop you at the middle`
-        : `!! THE RELOAD FORGOT: ${corpseSites.filter(q => q.reached).map(q => q.id).join(',') || 'none'} named, ${solidAfter} of ${corpseSites.length} monuments solid`;
+      const sameNames = !hasNames || corpseSites.map(siteName).join('|') === names.join('|');
+      R.andTheSaveRemembers = s2 && s2.reached && corpseSites.filter(q => q.reached).length === 1 && solidAfter === corpseSites.length && sameNames
+        ? `and a save and reload keeps it named — still ${hasNames ? siteName(s2) : 'named'} — and all ${solidAfter} monuments still stop you at the middle`
+        : `!! THE RELOAD FORGOT: ${corpseSites.filter(q => q.reached).map(q => q.id).join(',') || 'none'} named, ${solidAfter} of ${corpseSites.length} monuments solid, names unchanged ${sameNames}`;
     });
 
     return R;

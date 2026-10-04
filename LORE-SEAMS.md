@@ -1883,6 +1883,43 @@ new player-facing text and is unruled.** Change any of it and the scene stays th
 4. Whether the people with nothing should sometimes be *something else*: a trap, or
    Watcher-touched.
 
+### 12.7 A name for each Sundered site: the words, for a ruling
+
+Built, and waiting on a ruling. The plumbing is permanent; the words are drafts.
+
+Each site already shows one of three pieces of Malathuun, chosen by `id % 3`: the ribcage,
+the skull, or the hand. Each piece has its own list of six names, and the sites of that kind
+take them in order, with no dice. A world lays 13 or 16 sites, so a kind never has more than
+six. The name is shown only once one of yours has reached the site, like before.
+
+| Ribcage | Skull | Hand |
+|---|---|---|
+| The Burnt Nave | The Sleeper's Brow | The Reaching |
+| Keel Hollow | Jawfall | Fingerfall |
+| The Long Cage | The Hollow Crown | The Open Palm |
+| Arches-under-Ash | Socket Hill | Knuckle Ridge |
+| The Black Choir | The Grin in the Dust | The Last Grasp |
+| Mourning Ribs | Eyeless Down | Fivefold |
+
+**Where it is shown:**
+- **The label** over the bones: `☠ THE BURNT NAVE`, with `the Sundered ground` under it in
+  small type (`the Sundered ground — hallowed` while hallowed).
+- **A new log line**, said once on arrival: *"Hob comes in under the bones of the Burnt
+  Nave — the Sundered ground."*
+- **Three existing lines** use the name once the site is reached, and keep "the Sundered
+  ground" before that:
+  - the site running out of hunters (*"Keel Hollow has spent what it had…"*);
+  - a dreamer sleepwalking toward it;
+  - hallowing it.
+- Town rumours still say "the Sundered ground", so a name is learned by going there and
+  never from hearsay.
+
+**For you to rule:**
+1. The eighteen names, any of them.
+2. The arrival line.
+3. Whether the townsfolk should know the names after all, so a rumour could say
+   *"out past Jawfall"*.
+
 ---
 
 ## Appendix: re-running the counts
