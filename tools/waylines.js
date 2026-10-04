@@ -138,6 +138,13 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       pBuilds.push(w); return w;
     };
     const A = mkWay(gx, gy, 0), B = mkWay(gx + 30, gy, 0);
+    /* AT THE FAR STONE, AS THE GAME LANDS THEM. `waylineCross` scatters each body around the
+       stone's middle (its corner + 1), jittered two tiles and then handed to `findOpenNear` at
+       radius five: up to seven tiles either way on each axis. This used to ask for eight tiles
+       from the CORNER, which a fair throw misses — the day the world's stream moved (cee4700,
+       the redoubts) the one adept landed 8.8 out on open ground and tier one "moved 0". The
+       stones stand thirty apart, so a body that did not cross is nowhere near this box. */
+    const atStone = (c, S) => Math.max(Math.abs(c.x - (S.x + 1)), Math.abs(c.y - (S.y + 1))) <= 7.5;
     const mk = (name, gift, o) => {
       const c = makeChar(name, 'player', A.x + 1, A.y + 1, {atk: 5, def: 5, tough: 10, magic: 25});
       c.__probe = true; c.floor = 0; c.gift = gift; Object.assign(c, o || {});
@@ -179,7 +186,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       research.done.wayline_host = false;
       const n1 = waylineParty(A).length;
       waylineCross(A, B);
-      const moved1 = [worker, mate1, mate2].filter(c => dist(c.x, c.y, B.x, B.y) < 8).length;
+      const moved1 = [worker, mate1, mate2].filter(c => atStone(c, B)).length;
       R.tierOneCrossesOne = (n1 === 1 && moved1 === 1)
         ? 'without THE HOST ROAD a wayline takes one body at a time, whatever is selected'
         : `!! TIER ONE MOVED ${moved1} (party ${n1})`;
@@ -194,11 +201,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       mate1.carry = load;
       selected = [worker, mate1, mate2];
       waylineCross(A, B);
-      const moved2 = [worker, mate1, mate2].filter(c => dist(c.x, c.y, B.x, B.y) < 8).length;
+      const moved2 = [worker, mate1, mate2].filter(c => atStone(c, B)).length;
       R.theHostRoadCrossesTheSquad = moved2 === 3
         ? 'and with it the whole selection crosses at once — three of three'
         : `!! THE HOST ROAD MOVED ${moved2} OF 3`;
-      R.whatTheyCarryCrosses = dist(load.x, load.y, B.x, B.y) < 8
+      R.whatTheyCarryCrosses = atStone(load, B)
         ? 'and the body one of them was hauling arrives with them, which is a morning of walking a Sixfold does not have to cost any more'
         : `!! THE LOAD WAS LEFT BEHIND (${Math.round(dist(load.x, load.y, B.x, B.y))} tiles from the far stone)`;
       mate1.carry = null;

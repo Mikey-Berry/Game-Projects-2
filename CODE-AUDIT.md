@@ -262,7 +262,8 @@ script is under a millisecond. Draw calls at the start, after a few seconds of p
   pass. Parts under 0.22 (eyes, buckles, trim) no longer cast: 110 calls on 19 bodies.
 - **What was not the cost:** objects standing on unexplored ground, which you can see under
   the fog. Hiding all of them saves 30 to 100 calls a frame, so they are left as they are.
-  Decor on unexplored ground was already hidden per instance.
+  Decor on unexplored ground was already hidden per instance. (Since 2026-10-02 it stands
+  everywhere; see §5.25.)
 - **What is:** a body is 12 meshes (one per animated bone), 14 to 15 with armour and a weapon,
   and every one draws twice with shadows on. 19 bodies are about 490 calls. One skinned mesh
   per body would take that to one or two. It is a rig refactor, not a pass, and is the next
@@ -540,6 +541,30 @@ These are real, but each one needs a design decision or touches behaviour:
 - **Selling at a counter ignores storage bins.** `ownPool` and `poolTake` duplicate
   `campHas`/`campTake`, but without the bins. This may be deliberate; if it is, it deserves a
   comment.
+
+### 5.25 The fog sheet is gone: the map is drawn whole — **design change 2026-10-02**
+
+Asked for: *"Whole map is drawn but we keep the current sight range and that is where the tint
+difference (and what the player can actually see) appears. Also the free roam camera is tethered
+to the nearest squad members."* This retires the sheet §5.17 repaired.
+
+- **What draws:** ground, decor and buildings everywhere from the first frame. Every built-in
+  surface shader reads a one-byte-a-tile sight map (`fogData`, patched in through
+  `THREE.Material.prototype.onBeforeCompile`). Out of sight it greys and darkens; in sight it is
+  untouched. Strangers out of sight are still not drawn (`syncChars`, unchanged).
+- **What `vis` still means:** 0/1/2 are kept for the save, scouting, charts and place names. The
+  screen only asks whether a tile is 2.
+- **Removed:** the 256-tile sheet pieces (about 115k triangles in the frame), the fog canvas, the
+  decor fog ledger (`decorByTile`, `syncDecorFog`, `syncDecorFogFull`, `buildDecorChunks`) and
+  `mmKnown`. Depleted nodes and walked-off automata are still laid down by `hideNodeInstance`.
+- **Cheaper upload:** each sight change uploads 4 MB instead of a 16 MB canvas.
+- **The camera:** `tetherCam` holds it within `CAM_TETHER` (64) of the nearest living squad
+  member. Any of them is an anchor. F9 lifts it.
+- **Charts:** a bought chart no longer shows any ground, since all ground is drawn already. It
+  still marks the towns, ruins and hamlets inside it on the minimap, and names them on screen.
+  Left as is, pending a ruling.
+- **The check:** `tools/fog.js` was rewritten (eight claims) and `tools/stumps.js` was moved
+  off the ledger.
 
 ### 5.24 Two reds that are on `main` too — **raised 2026-10-01; both closed the same day**
 

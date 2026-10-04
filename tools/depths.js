@@ -261,9 +261,9 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     : `!! THE TOOTH IS NOT ON THE DEEPEST FLOOR (${JSON.stringify(tooth)})`;
 
   /* ---- 8. AND A SQUAD ORDERED DOWN ACTUALLY ARRIVES ----
-     End to end, through the real order and the real sim. `useStairs` has walked multi-storey
-     descents since the tower — `stairToward` hunts the next stair on the piece of floor you just
-     stepped onto — so this asserts that the underworld's new shafts are ordinary stairs to it.
+     End to end, through the real order and the real sim. A route is planned whole across every
+     storey before the first step (THE STOREY CORE), so this asserts that the underworld's
+     shafts are ordinary stairs to it.
      The body is put on the first shaft rather than walked across a continent to find one; what
      is under test is the CHAIN of three descents, not the pathfinder. */
   const trip = await p.evaluate(() => {

@@ -14,9 +14,11 @@
  * actually applies: the bodies under test are on floor 0 and the squad is underground.
  *
  * The old staging is worth knowing about because it is why these claims went red rather than
- * quietly passing on nothing: with the squad in the light there are now ELEVEN cold bodies in the
+ * quietly passing on nothing: with the squad in the light there were ELEVEN cold bodies in the
  * world, all on tower decks, and a claim that asserts "more than two hundred" is the only reason
- * anybody found out the tier had moved.
+ * anybody found out the tier had moved. Those eleven were a bug, not a curiosity: a deck is in
+ * plain view from the ground, and they walked about on a three-a-second clock in front of the
+ * player (2026-10-03). The surface is one layer now — see claim 2b.
  *
  *   "How do games like Kenshi manage a world of that size and yet keep the FPS and overall
  *    impact so low? Any tricks we can pull out?" … "the FPS drop is pretty killer especially
@@ -161,6 +163,41 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     : (warmUp.before > 200 && warmUp.after === 0 && warmUp.belowFrozen === warmUp.below && warmUp.below > 0)
     ? `and walking one body back up into the light wakes all ${warmUp.onF} of them (${warmUp.before} cold → 0), leaving every one of the ${warmUp.below} below it frozen behind them`
     : `!! A STOREY DID NOT WAKE, OR THE WRONG ONE DID (${JSON.stringify(warmUp)})`;
+
+  /* ---- 2b. AND A ROOF IS NOT A STOREY NOBODY IS ON ----
+     "I could see NPCs on, say, a roof floor moving extremely jagged due to the reduced number of
+      calls. We might need to introduce a 'check' to see if any squad members are nearby."
+      (2026-10-03.) The storey rule was written for the underworld, and the note at the top of
+     this file had already counted the casualties without asking why: eleven cold bodies with the
+     squad in the light, "all on tower decks". Staged where it was seen: the whole squad on the
+     ground at a redoubt's gate, a watch on the roof over it, and every physics call it gets
+     counted for one second of sim. Warm and near is one a step; the slow clock was three. */
+  const roof = await p.evaluate(() => {
+    const rd = typeof redoubts !== 'undefined' && redoubts.find(r => r.structureId && r.rooms && r.rooms.some(rm => rm.key === 'roof'));
+    if (!rd) return null;
+    const st = structures.find(s => s.id === rd.structureId), rm = rd.rooms.find(r => r.key === 'roof');
+    /* put back exactly where it found them: the claims after this one are staged on where the
+       squad was left, and a claim that moves the squad and walks off is a claim that breaks the
+       next one (5b counted zero cold calls the first time this ran) */
+    const was = player().map(u => ({ u, x: u.x, y: u.y, f: u.floor }));
+    for (const u of player()) if (u.state !== 'dead') { u.x = st.x + st.w / 2 + 0.5; u.y = st.y + st.h + 4.5; u.floor = 0; u.moveTarget = null; u.target = null; u.path = null; }
+    const w = spawnCrazedHomunculus(rm.cx + 0.5, rm.y1 - 1.5, rd);
+    w.x = rm.cx + 0.5; w.y = rm.y1 - 1.5; w.floor = 1; w.homeRoom = rm; w.roomId = rm.id; w.redoubtDeep = rd.id;
+    w.guard = { x: rm.x0 + 1.5, y: rm.cy + 0.5 }; w.target = null; w.noFight = true;   /* walking its beat, nobody to fight */
+    const real = physics; let calls = 0;
+    physics = function (c) { if (c === w) calls++; return real.apply(this, arguments); };
+    try { for (let i = 0; i < 30; i++) update(1 / 30); }
+    finally { physics = real; }
+    const out = { calls, cold: !!w._cold, far: !!w._lod, floor: w.floor, d: Math.round(Math.hypot(player()[0].x - w.x, player()[0].y - w.y)) };
+    const i = chars.indexOf(w); if (i >= 0) chars.splice(i, 1);
+    for (const o of was) { o.u.x = o.x; o.u.y = o.y; o.u.floor = o.f; o.u.moveTarget = null; o.u.path = null; }
+    for (let k = 0; k < 4; k++) update(1 / 30);
+    return out;
+  });
+  R.aRoofBesideYouIsNotCold = !roof ? '!! NOTHING TO MEASURE — no redoubt with a roof'
+    : (!roof.cold && !roof.far && roof.calls >= 28)
+    ? `a watch on a redoubt's roof ${roof.d} tiles from your squad on the ground gets ${roof.calls} physics steps in 30 — not on the slow clock, not on the far one`
+    : `!! THE ROOF ABOVE YOUR SQUAD IS ON A SLOW CLOCK: ${roof.calls} physics steps in 30 (cold ${roof.cold}, far ${roof.far}), ${roof.d} tiles off`;
 
   /* ---- 3. AND NOTHING WALKS THROUGH ROCK, HOWEVER LONG THE STEP ----
      `stepToward` samples the destination and nothing between. At full rate a body covers a
@@ -396,6 +433,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
      every claim in this repo has been a 1x claim. Set deliberately here, and put back. */
   const ff = await p.evaluate(() => {
     if (typeof DEPTHS === 'undefined') return null;
+    /* ---------- DOWN A HOLE FIRST, OR THERE IS NOTHING COLD TO COUNT ----------
+       This used to run with the squad wherever claim 2 left it, in the light — and the only cold
+       bodies in the world with the squad in the light were the eleven on tower decks, which were
+       cold by mistake (see 2b). So for a year this measured eleven bodies on decks at 1.7 calls a
+       step and called it "the storeys nobody is on". Taken down a hole, the storey nobody is on
+       is the surface and its whole economy, which is what the comment above was always about. */
+    const was = player().map(u => ({ u, x: u.x, y: u.y, f: u.floor }));
+    {
+      const F = DEPTHS[0], h = undercroft.halls.find(H => H.f === F);
+      for (const u of player()) if (u.state !== 'dead') { u.x = h.x; u.y = h.y; u.floor = F; u.moveTarget = null; u.target = null; u.path = null; }
+    }
     const census = (sp) => {
       speed = sp;
       for (let i = 0; i < 60; i++) update(1 / 30);          /* let the accumulators settle */
@@ -411,6 +459,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     };
     const one = census(1), five = census(5);
     speed = 1;
+    for (const o of was) { o.u.x = o.x; o.u.y = o.y; o.u.floor = o.f; o.u.moveTarget = null; o.u.path = null; }
     for (let i = 0; i < 30; i++) update(1 / 30);
     return { one, five, ratioStep: +(five.perStep / one.perStep).toFixed(2),
              ratioSecond: +(five.perSecond / one.perSecond).toFixed(2) };

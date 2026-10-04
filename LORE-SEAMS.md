@@ -1666,6 +1666,474 @@ And two new ones, aimed at the "it all blends together" note rather than at a me
 **My order:** A (the most visual contrast, and a reason to go), then B (it breaks up the long
 roads), then C. G is cheap once tears have somewhere to leave a mark.
 
+## 12. A skyline, and the map drawn whole (2026-10-02)
+
+The play note: *"What if, instead of fog, the entire map is drawn already and simply cannot be seen
+until a squad member is close by? ... I do like the idea of a unique skyline."* Ruled the same day:
+*"Whole map is drawn but we keep the current sight range and that is where the tint difference (and
+what the player can actually see) appears. Also the free roam camera is tethered to the nearest
+squad members... (Take Kenshi's system for this as inspiration.)"* Built in order, one at a time.
+
+### 12.1 The map, drawn whole
+
+- **What you see:** all ground, trees and buildings, from the first frame. Out of sight it is
+  greyed and dimmed (to 65% of its brightness, and nearly colourless). Nobody out of sight is
+  drawn.
+- **Explored is now an internal state only.** It still drives the save, the scouts, the charts and
+  the place names. On screen, ground you walked a week ago looks the same as ground nobody has
+  walked.
+- **The camera stays within 64 tiles of the nearest of your people.** That is about twice what
+  anybody sees at noon. Any one of them is an anchor. A click on the minimap lands at the edge of
+  the nearest one's circle.
+- **The minimap** shows the whole country, with a light wash over what is out of sight.
+- **Open: charts.** A bought chart used to open ground, and all ground is open now. It still marks
+  the towns, ruins and hamlets inside it on the minimap, and names them on screen. Three options:
+  1. Leave it as is: a chart is a gazetteer.
+  2. Make it mark more: the Sundered sites, the towers, the ARK.
+  3. Drop its price to match what it now does.
+  **(Ruling needed.)**
+
+### 12.2 The Sundered sites, the size of hills
+
+- **Scale:** the bones, their footprint and their ground are 2.2 times what they were (`SITE_K`).
+  The ribcage is about 40 tiles long and stands about 25 high. They read on the skyline from well
+  outside sight.
+- **Named once reached:** the label "THE SUNDERED GROUND" appears only after one of yours has
+  stood within about 21 tiles of the middle (`reached`). Seeing the site from a distance is not
+  enough. The flag rides the save.
+- **Scaled with them:** the guardians' spread, the ticks, the cache, the Hallow order's reach, the
+  Sixfold's spawn, and Lyre's two arrival tests.
+- **The site's animals now roll on a stream of their own.** This shifts the generated world once
+  (the default starting party comes out with different names). After this, changing the size does
+  not shift it again.
+- **Proposed, not built: a name for each site (mine, for review).** Today every site carries the
+  same label. A name per monument would be:
+  - **The Cage** for the ribcage
+  - **The Brow** for the skull
+  - **The Reaching Hand** for the hand
+
+  Where two share a shape, add a bearing from the nearest town, as the Cairn Beasts do (*"The
+  Cage east of Copperhold"*). The label would read *"☠ THE CAGE — SUNDERED GROUND"*.
+- **Fixed on the way:** after any reload, every monument could be walked through. The footprint
+  went into `blocked` but not into `baseBlocked`, and `restore` rebuilds from the latter. The
+  hamlet houses had the same fault. Both are fixed.
+
+### 12.3 The Golden-Age towers
+
+- **What they are:** the tallest things a person built in this world. Each is a shaft of pale
+  dressed stone, banded in gold every few storeys, on a stepped plinth with four buttresses, and
+  gone at the top.
+- **How they ended up:** they come in three states.
+  - **Standing:** 44 to 58 high, the broken stubs of the last storey and a crooked gold collar on
+    top.
+  - **Leaning:** 34 to 44 high, about seven degrees off true.
+  - **Snapped:** a stump of 14 to 20, with the other 24 to 32 tiles of it lying where it fell.
+- **Where:** 19 on the default world, 240 or more apart, each at least 110 from a town and clear
+  of the roads, hamlets and Sundered sites.
+- **Placed without a draw.** The world is unchanged apart from 19 chests appended to the list.
+- **They are solid,** and survive a reload.
+- **A cache at the foot of each:** 40 to 130 cats, two to five scrap, and one of a worn formula,
+  an aether cell, a gold bar or two lead. Chosen by hash.
+- **Named once reached**, as the Sundered sites are, and marked on the minimap from then on.
+- **Checked by:** `tools/skyline.js`.
+- **For review (mine):**
+  - **The label:** *"▲ A GOLDEN-AGE TOWER"*.
+  - **The look:** pale stone, gold bands, a collar at the top.
+  - **What they were for: not stated anywhere yet.** One option that fits the bible is the
+    kingdom's aether spires, the conduits its siphoned power ran through. I have not written
+    that anywhere a player can read it.
+
+### 12.4 The wreck of the ARK
+
+The ask: *"Let's make it the wreck of a titanic spaceship. Project ARK, meant to evacuate humanity.
+Perhaps parts of it are explorable."*
+
+**Built (the hull only).**
+- **Size and lie:** 170 tiles from the stern to the buried prow, 32 across and about 24 high. It
+  came down nose first and slid. The prow is under a mound it ploughed up. The stern stands clear
+  of the ground, with three cold engine bells and two fins, one of them torn off and lying beside
+  it.
+- **The breach:** amidships the plating is gone from the top and one side, and the ribs stand
+  over a black hold.
+- **The furrow:** a 150-tile trench runs behind it, berms thrown up on both sides, with 34 pieces
+  of plating and gold trim lying in it.
+- **The look:** dark bronze, lighter panels, verdigris, and the towers' gold in bands.
+- **Where:** one on the map, placed off the hash with no draw. It is 639 tiles from the nearest
+  town on the default world, far from every road, and the towers keep 60 or more clear of it.
+- **Solid,** and survives a reload. The furrow is open ground, and nothing grows under the hull or
+  in the furrow.
+- **Named once reached,** like the rest. The label is *"◆ PROJECT ARK"*, and the minimap draws its
+  length from then on.
+- **Checked by:** `tools/skyline.js` §5.
+
+**Not built, waiting on a ruling:** the inside, and every word a player reads about it.
+**(All mine, for review.)**
+1. **Who built it, and when.** The bible's Golden Age is an alchemical kingdom: aether lances,
+   automatons, bunkers. I propose the ARK fits there, and suggest one of two readings:
+   - **A. Before the Fracture.** The alchemists' last great work, built in the years after the
+     Last Scholar's warning by the part of the court that believed him. It was to carry the
+     kingdom's chosen away if the rite went wrong. It lifted as the light came and did not get
+     far. This one ties to the warning they spurned.
+   - **B. After the Fracture.** Built by the survivors to get away from the Watchers. It ran on
+     the old conduit power, and fell when alchemy began to come from the wound instead. This one
+     ties to "the Golden Age's project, delivered."
+   - **My pick is A.** "Meant to evacuate humanity" then means "meant to evacuate the people who
+     mattered," which is the Golden Age all over.
+2. **What it is called in the world.** "Project ARK" is the Golden Age's own name, found on its
+   plates and in its logs. The living call it **the Keel** (or the Hull), because that is what
+   sticks up out of the ground. The label would then read *"◆ THE KEEL"* until somebody reads
+   the plate.
+3. **Where.** Tying it to the **rust barrens** would make its spill the origin of the barrens'
+   war-rust and its sleeping automatons. Moving it there means taking it out of its own country
+   on the default world: the barrens are centred on Ironscar.
+4. **Inside: the second step, once the above is ruled.** The breaches would open onto decks:
+   corridors, a hold of cold sleeper berths (the chosen, still in them), a bridge with the
+   ship's log, and Golden-Age automatons that never stood down. The loot is aether cells,
+   schematics and the log. The log would be the lore drop, and it would need your words or your
+   approval of mine.
+
+### 12.5 Ruled 2026-10-03
+
+- **Explorable places are the top priority.** *"I would really like for more explorable areas
+  across the map. Like the ARK and these towers... making them big enough to explore and actually
+  fit squads in is kind of ideal. The ark is big but not big enough."* Walls and ceilings going
+  clear when entered is part of the same ask.
+- **Camera lead:** doubled to 128 tiles. **Done.**
+- **No minimap.** *"Obviously this will require the world to be more 'set' rather than randomly
+  generated... a more handcrafted world that won't break quite as easily. Let's start
+  architecting toward this."* **Done** for the minimap: switched off, code kept
+  (`setMinimap`). The set world is a plan in progress.
+- **Charts:** retired, code kept (`CHARTS_ON`). **Done.**
+- **Sundered sites:** a unique name for each.
+- **Towers:** the generic label stays for now. **What they were is ruled:** aetheric conduits,
+  essential for the rite that opened the sky (bible §15).
+- **ARK and AEGIS:** ruled (bible §15). AEGIS is the redoubts, the Aether Lances and the
+  automatons.
+- **Quicksilver fens:** mimics out of the mercurial pools, restlessly hunting your allies. **On
+  hold** until it is fleshed out.
+- **The Calcine Wood** (the name stands for now). **Built (12.8); its words, dials and fauna
+  are waiting on you.**
+  - Raised corpses blacken (black bones) if left there long enough, and come back stronger.
+  - **Ash squalls**, acid rain in effect: a hat protects you, and the undead do not need one.
+  - Local fauna: to brainstorm.
+- **Roadside stops with a choice:** bandits demanding a toll or food, an Order patrol
+  questioning your faith, refugees asking for help. Occasional, never intrusive, and not every
+  bandit hostile on sight. **Built (12.6); its words are waiting on you.**
+
+### 12.6 Roadside stops: the words, for a ruling
+
+The mechanics are in (ROADSIDE STOPS in the game; `tools/roadside.js`). **Every line below is
+new player-facing text and is unruled.** Change any of it and the scene stays the same.
+
+**How often.**
+- About **0.77 stops a day of walking** out past the fences, and 30 to 54 hours of quiet after
+  each one.
+- Only for one of yours who is actually on the move, never on the first day, never inside a town's
+  reach, a hamlet's, the Bastion's or the headland's.
+- Toll-takers about 45% of the time, the Order 30%, people with nothing 25% (a little more as the
+  Fracture deepens).
+
+**What they look like.**
+- **Toll-takers:** 4 to 6 Dust Bandits.
+- **The Order:** 3 or 4 Paladins with an Acolyte, from the Bastion.
+- **People with nothing:** 3 to 5 people, sometimes with a child.
+
+**The toll** (window title *ON THE ROAD — A TOLL*).
+- Opening barks: *"The road is ours. You pay to walk it."* / *"Toll. Coin or food, your
+  choice."* / *"Far enough. Now you pay."*
+- Scene: *"{N} of them across the road, in no hurry, weapons out but down. The one in front
+  wants {toll} in coin or 6 rations of food to let {speaker}'s people by, and says it like
+  somebody who has said it a great many times."*
+- Choices:
+  - **PAY**, which costs 40 to 450, rising with the day and your purse.
+  - **HAND OVER 6 RATIONS.**
+  - **TALK YOUR WAY PAST**, on charisma and how many of you there are against them.
+  - **LET THEM SEE WHAT YOU ARE**, on your numbers, the dead with you and your name.
+  - **[LICH] Step aside**, with no roll.
+  - **DRAW STEEL.**
+- A failed talk or threat is a fight.
+
+**The Order** (*ON THE ROAD — THE ORDER*).
+- Opening barks: *"Hold. Whose light do you walk by?"*, or, with your dead in plain sight,
+  *"Hold. What walks with you?"*
+- Choices:
+  - **PROFESS THE FAITH**, on charisma and your name; the divine gift helps a great deal and
+    visible dead hurt a great deal.
+  - **TITHE** 30 to 240 **TO THE BASTION**, not offered with the dead in view.
+  - **SAY NOTHING**, which costs a little standing, or with the dead in view becomes a fight.
+  - **DRAW STEEL.**
+- A failed profession without the dead in view becomes a demanded tithe, and a fight if you
+  cannot pay. With the dead in view it is *"Liar. Burn it."* and a fight.
+
+**People with nothing** (*ON THE ROAD — PEOPLE WITH NOTHING*).
+- Opening barks: *"Please. Anything you can spare."* / *"We have walked three days. Please."* /
+  *"Is there food? For the little one, if nothing else."*
+- Choices:
+  - **GIVE THEM 4 RATIONS**, a mercy on the ledger.
+  - **GIVE THEM 25 IN COIN**, half a mercy.
+  - **TAKE THEM IN**: all of them join you, and it is a mercy.
+  - **POINT THEM TO {nearest town}.**
+  - **TAKE WHAT LITTLE THEY HAVE**, 6 to 30 coin, on the ledger as a small sack.
+  - **TURN THEM AWAY.**
+
+**For you to rule:**
+1. All of the text above.
+2. Whether the Order on the road should be the Bastion's Paladins (the `purge` faction, as
+   built) or some other arm of the Church.
+3. Whether a refused tithe should cost more than standing.
+4. Whether the people with nothing should sometimes be *something else*: a trap, or
+   Watcher-touched.
+
+### 12.7 A name for each Sundered site: the words, for a ruling
+
+Built, and waiting on a ruling. The plumbing is permanent; the words are drafts.
+
+Each site already shows one of three pieces of Malathuun, chosen by `id % 3`: the ribcage,
+the skull, or the hand. Each piece has its own list of six names, and the sites of that kind
+take them in order, with no dice. A world lays 13 or 16 sites, so a kind never has more than
+six. The name is shown only once one of yours has reached the site, like before.
+
+| Ribcage | Skull | Hand |
+|---|---|---|
+| The Burnt Nave | The Sleeper's Brow | The Reaching |
+| Keel Hollow | Jawfall | Fingerfall |
+| The Long Cage | The Hollow Crown | The Open Palm |
+| Arches-under-Ash | Socket Hill | Knuckle Ridge |
+| The Black Choir | The Grin in the Dust | The Last Grasp |
+| Mourning Ribs | Eyeless Down | Fivefold |
+
+**Where it is shown:**
+- **The label** over the bones: `☠ THE BURNT NAVE`, with `Sundered ground` under it in small
+  type (`Sundered ground — hallowed` while hallowed). **Ruled 2026-10-04:** the names are good
+  for now, and the second "the" in the subtext is dropped.
+- **A new log line**, said once on arrival: *"Hob comes in under the bones of the Burnt
+  Nave — the Sundered ground."*
+- **Three existing lines** use the name once the site is reached, and keep "the Sundered
+  ground" before that:
+  - the site running out of hunters (*"Keel Hollow has spent what it had…"*);
+  - a dreamer sleepwalking toward it;
+  - hallowing it.
+- Town rumours still say "the Sundered ground", so a name is learned by going there and
+  never from hearsay.
+
+**For you to rule:**
+1. The eighteen names, any of them.
+2. The arrival line.
+3. Whether the townsfolk should know the names after all, so a rumour could say
+   *"out past Jawfall"*.
+
+### 12.8 The Calcine Wood: built, with its words and dials for a ruling
+
+As ruled on 2026-10-03: black bones, ash squalls, and fauna to brainstorm. The first two are
+built; the fauna is a list below. It follows the same rules as the other grounds (§8.1): laid
+after worldgen without a die, so a fresh world boots with the same stream, bodies, chests and
+sites as before (checked against the previous build).
+
+**Where it stands.** Just past the crater's ridge, 30° off the gorge road, on whichever side has
+more dry ground: about 120 tiles out from the ridge, some 30,000 tiles, and 400 tiles from the
+nearest town (Saltmere on the default seed). It is a wood: about one open tile in seven at its
+heart has a tree, against one in fourteen on the plain. The trees are tall, black, crownless and
+straight, the ground is soot with pale ash drifts, and the stone is blackened like the crater's.
+
+**Black bones.**
+- A body that lies in the wood for **30 game-hours** goes black.
+- A risen that **stands** in the wood for 30 hours goes black too. I built both readings of
+  "raised corpses… if left there long enough".
+- A black risen is **25% stronger** in attack, defence, toughness and blood. It is the one
+  case where the dead come up stronger than they were. It happens once: a black risen does
+  not get blacker, and raising it again brings it up black, not blacker.
+- Liches are exempt.
+
+**Ash squalls.**
+- **Frequency:** on about half the days, for 1.5 to 3.5 hours. The timing comes off the day's
+  hash, not a die.
+- **Who it hits:** anybody living in the wood, under the sky, with nothing over their head. It
+  burns the head at 30 points an hour, **down to 15 and no further**, so it hurts but never
+  kills by itself.
+- **What protects:** a Padded Cap, Kettle Helm, Closed Armet or Crested Great Helm. A Bone
+  Wreath, the Circlet or a crown does not cover the head, so it does not count. Standing
+  under a deck, underground, or inside a shack or homestead of yours also protects.
+- **Who is exempt:** the undead, and constructs (they have no scalp). Constructs are my
+  addition.
+- **What you see:** while the camera is over the wood in a squall, the sky dims and slanted
+  ash falls.
+
+**The words (all new):**
+- On entering: *"The trees here are black, and they ring like stone when the wind moves them.
+  Whatever burned them is still coming down."*
+- When a squall starts with one of yours in the wood: *"The sky over the wood goes the colour
+  of a bruise, and the ash comes down hot. Get something over your heads, or get under a
+  roof."* A float says **ASH SQUALL**.
+- Once per squall: *"Hob and Tam have nothing on their heads, and the ash is eating at the
+  scalp."*
+- A risen of yours turning: *"R4 has stood in the Calcine Wood long enough. The bone has gone
+  black, and it is harder than it was."* A float says **BLACK BONES**.
+- Raising a black body: *"It comes up black to the marrow, and harder than it ever was
+  alive."*
+
+**Fauna, to brainstorm (none built):**
+- **A. Marrow-herons.** Tall grey waders that stalk the wood and crack black bone for the
+  marrow. They leave the living alone and go for your risen, the black ones first. This gives
+  the black-bone farm a natural risk.
+- **B. Cinder moths.** Swarms that come out after a squall and eat cloth: caps, cloaks,
+  packs. They are harmless to flesh, but they wear down the thing that protects you.
+- **C. Soot hounds.** Dust hounds that have denned in the wood, black-coated. They hunt
+  during the squalls, when everything else shelters, and the ash does not touch them. This
+  ties into #122 (hounds hunting elk).
+- **D. Bark-knockers.** Beetles boring into the petrified trunks; the ringing is them. You
+  can harvest them for a dark reagent, and a swarm comes out if you disturb them.
+- **E. The Kindled Stag.** One rare beast, an elk burning slowly from the inside with antlers
+  of black glass. A trophy hunt.
+
+**My pick:** A and C. A answers the black bones and C joins the ecology work; B is the
+cheapest of the rest.
+
+**For you to rule:**
+1. The five lines above.
+2. The dials: 30 hours to blacken, 25% stronger, squalls on half the days, 30 an hour down to
+   15.
+3. Both readings of black bones (lying and standing), or only one?
+4. Should a squall be able to kill a bare-headed body, or stop at 15 as built?
+5. Felled trees here give ordinary wood. Should they give charcoal?
+6. Which fauna, if any.
+
+### 12.9 The waste's own business: built, with its dials for a ruling
+
+As asked on 2026-10-02: hounds hunt elk, there are nests you can destroy, the striders are more
+active, and they look more alien. All four are built. The strider's look is a first pass,
+waiting on your notes from the screenshots.
+
+**The strider, rebuilt.**
+- It's a **tripod**, the only three-legged thing in the waste.
+- A flat carapace hub sits high up, with a ring of eye pits and a crown of feelers where a head
+  would be.
+- A rounded, veined sac hangs under the hub, and a four-joint feeding tube hangs from the sac to
+  the dust.
+- Three legs rise up and out to knees above the hub, then come down to a spike.
+- **Gait:** it moves one leg at a time. The tube trails and sways, and the feelers never stop.
+- **Attack:** the front leg is the weapon. It rises, then stabs down.
+- It's deliberately not a small Sixfold, which has six limbs arched over a hung mass.
+
+**Hounds hunt elk.**
+- 18 game-hours after it last ate, a pack goes after the nearest elk it can reach, staying inside
+  its own country (45 tiles round its den).
+- It runs one down and eats at the kill for 8 seconds.
+- A carcass the pack has eaten gives hide and no meat.
+- An elk bolts the moment a hunting hound comes within 12 tiles. A fed pack and a herd ignore
+  each other.
+
+**Herds come back.**
+- **Elk:** a herd of two or more calves once every 48 hours, up to six. A herd hunted down to
+  one is gone.
+- **Striders:** a herd under three grows one every 96 hours.
+- Nothing is born where one of yours can see it.
+- **More herds:** the world now has 11 elk herds and 7 strider herds, up from 6 and 4, which were
+  set for a map a third the size.
+
+**Dens.**
+- **Five dens** in the deep waste, away from towns and roads, each with a pack of three or four.
+- A den whelps one back every 16 hours while its pack is short, but not while one of yours is
+  near it.
+- **Right-click a den:** *DIG OUT THE DEN — nothing will whelp here again.* Six seconds of work,
+  and the mound is gone and the ground is scorched.
+- **Packs no longer walk in off the map's edge.** A world whose dens are all dug out has seen
+  its last new pack.
+- **An old bug, found on the way:** that edge spawn had already stopped working. Its budget
+  counted the 62 Bonewalkers and 31 Marrow Ticks as "wild", so it was always full. The whole
+  world has had the 5 hounds spawned at boot and no others since. Now it has those 5 plus 18 in
+  dens.
+
+**Striders take a more active role (my reading of "a more active role").**
+- **They migrate.** A herd walks a loop of five points round its home, 95 to 165 tiles out, and
+  stops to sift at each point for 8 to 16 hours.
+- **They will not be crowded.** Anything that comes within 5 tiles is stabbed at until it leaves:
+  one of yours, a pack, or a caravan.
+  - A herd you walk round never turns.
+  - Hounds leave them alone.
+  - One that scuffled with you forgets it 20 seconds after you've gone.
+- **They no longer run when hit.** They fight back, and only run under a third of their blood.
+
+**The words (all new):**
+- The menu line above.
+- *"Hob goes to dig out the den."*
+- *"Hob digs out the den and fires what was in it. Nothing will whelp there again."*
+- **HOUND DEN** over a den in sight.
+- The strider's bark *"(a dry click, high up)"* when it rounds on something.
+- A **TOO CLOSE** float when it rounds on one of yours.
+
+**For you to rule:**
+1. **The strider's look.** What to change.
+2. **Is "a more active role" what you meant?** Built as migration plus a space it defends. The
+   alternative I didn't build: striders feed on the dead with the tube, so they would compete
+   with a necromancer for bodies.
+3. **Should a dug-out den stay gone for good?** As built, yes. The alternative is that a
+   surviving pack digs a new den somewhere else after a few weeks.
+4. **The dials:**
+   - 18 hours to hunger;
+   - 5 dens of 3 or 4;
+   - a whelp every 16 hours;
+   - a calf every 48;
+   - 5 tiles of strider space;
+   - 8 to 16 hours of sifting.
+5. **The words above.**
+
+### 12.10 Ruled 2026-10-04, and built
+
+- **Bonewalkers are gone.** *"Legacy content... the world's necromancers sort of take on this
+  role anyway, and the new skyline exploration sites also fulfill the need for loot."*
+  - The 62 ruin guards are never put in the world.
+  - Their dice are still rolled, so the rest of the world is unchanged.
+- **Striders, as ruled:**
+  - **Pace:** they walk slowly, under half an elk's pace (1.4 against 3.9 tiles a second).
+  - **Colour:** brown, the dust hounds' palette, not violet. That colour belongs to the
+    gaunts.
+  - **Purely migratory:**
+    - A herd has no home. It keeps a heading and walks a leg of 100 to 160 tiles from wherever
+      it is.
+    - It sifts for 8 to 16 hours, turns a little, and walks on.
+  - **Young are carried and born on the move:**
+    - A herd with two grown and room bears one every 72 hours, onto a parent's back,
+      wherever the herd happens to be.
+    - It rides there 36 hours, then is put down to walk with the herd and grow.
+  - **They are herbivores that defend the herd:**
+    - Nothing provokes them but a blow. Strike one, and the whole herd within 30 tiles turns
+      on whoever did it. The young run.
+    - **Ranged attack:** being slow, they **throw a clot of the silt they sift** off the
+      feeding tube, at 3 to 15 tiles, every 3 seconds.
+    - A quarrel is forgotten 20 seconds after you've gone.
+    - **Not built:** proactive stabbing of anything that came close.
+  - They never feed on the dead.
+- **Young start small, for every animal that breeds.** This answers your question: before
+  this, calves were born at full size. Now:
+  - A calf, a whelp, or a strider's young is born at about a third of its size, strength and
+    blood, and grows over days: 4 for elk and hounds, 8 for striders.
+  - Until it's mostly grown it runs rather than fights, and a whelp doesn't hunt.
+- **Dens:** a surviving pack digs again.
+  - **Digging:** two grown hounds with no den of their own for 14 days dig one where they are.
+  - **Cap:** the world holds at most 2 dens more than it started with (7 on this map).
+  - **Floor:** while the waste holds fewer than 4 grown hounds, a pack walks in off the edge
+    every 5 days and digs in, in its turn.
+- **Wyrms keep to the high ground.**
+  - Each has a lair on the flank of one of the two largest massifs, well clear of towns and
+    of each other, with a hoard of gold and bones there.
+  - The guard leash keeps it home, and an old save's wyrms walk home on load.
+- **More mountains are on the handcrafted-world list (#128).** Most of the map is flat. The
+  wyrms take the two biggest massifs now, and a set world should give them, and much else,
+  real ranges.
+- **The site label's subtext** is *Sundered ground*, without the second "the".
+
+**The words (all new):** none this round. The silt clot is unlabelled, and the strider's
+`(a dry click, high up)` bark and the **TOO CLOSE** float went with the proactive stabbing.
+
+**For you to rule:**
+1. **The strider dials:** pace, a birth every 72 hours, 36 hours carried, 8 days to grow, the
+   clot's reach and damage.
+2. **Should young be catchable and tameable?** It's a natural next step for elk calves; it's
+   not built.
+3. **The den dials:** 14 days to dig again, 2 dens over the start, a floor of 4 hounds.
+4. **Alchemy progression:** see `ALCHEMY-PATHS.md`. Three iterations and a recommendation,
+   for your ruling.
+
 ---
 
 ## Appendix: re-running the counts

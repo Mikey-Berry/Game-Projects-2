@@ -645,6 +645,10 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
         if (own('scorch').length < dayS.length) bits.push('the dawn took the Scorch\'s own');
         /* the refuge: a Scorch post after one of yours lets go when they step onto the Marches */
         /* posted where it stands, so its own leash is not what lets go */
+        /* ON THEIR FEET FIRST. A Watcher drops a target that is down, which is right, and by here the
+           night above has had its chance at the party: on a world where it knocked the first of
+           them down, this read "let go in the Ashfall" about a body that was simply lying there. */
+        for (const c of mine) { c.state = 'ok'; c.blood = c.maxBlood; for (const k of PARTS) { c.parts[k].hp = c.parts[k].max; c.parts[k].bleed = 0; } }
         const g = dayS[0], me = mine[0], post = g && { ...g.guard };
         const pull = (r) => { const q = at(r); me.x = q.x; me.y = q.y; const gq = at(C.ashfall - 3); g.x = gq.x + 0.5; g.y = gq.y; g.guard = { x: g.x, y: g.y }; g.target = me; g.path = null; rebuildCharGrid(); ai(g, 1 / 30); physics(g, 1 / 30); return g.target === me; };
         let lets = null, holds = null;

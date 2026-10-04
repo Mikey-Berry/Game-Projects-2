@@ -14,7 +14,8 @@
  *   2. hamlets: one per town, out along that town's own road, clear of every camp, site, ruin
  *      and town; a house (and at a farm a barn) built the town's way; nobody in them until one
  *      of yours comes near, and bringing them in moves no draw of the world's; and once there
- *      they keep to their own yard, and talk about the work in front of them
+ *      they keep to their own yard, and talk about the work in front of them; and their walls
+ *      are still walls after a reload
  *
  * Anything starting '!!' fails the build.
  *
@@ -128,6 +129,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       R.theyTalkAboutTheWork = work.length && heard.size > work.length && !document.querySelector('#modal[style*="block"]')
         ? `right-clicked, a ${adult.trade} out there barks rather than opening a window, and about the work in front of them as often as the news ("${work[0]}")`
         : `!! WHAT THEY SAY: ${heard.size} lines, ${work.length} about the work`;
+
+      /* and the walls are still walls after a reload. The houses were placed after `baseBlocked`
+         was taken, and `restore` rebuilds from it: on the build that brought them in, a reload
+         left every hamlet a set of walls you could walk through. */
+      const wallTiles = () => { let n = 0; for (const b of buildings) if (b.hamlet) for (let j = b.y; j < b.y + b.h; j++) for (let i = b.x; i < b.x + b.w; i++) if (isBlocked(i, j)) n++; return n; };
+      const w0 = wallTiles();
+      restore(JSON.parse(JSON.stringify(snapshot())));
+      const w1 = wallTiles();
+      R.andTheWallsSurviveAReload = w0 > 0 && w1 === w0
+        ? `and all ${w0} tiles of hamlet wall still stand after a save and reload`
+        : `!! A RELOAD TOOK THE HAMLETS' WALLS: ${w0} solid before, ${w1} after`;
     }
     return R;
   });

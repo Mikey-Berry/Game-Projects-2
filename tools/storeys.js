@@ -154,7 +154,11 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
     /* ---------- 2. THE LARDER-KIN ---------- */
     pair('theLarderReachesOnlyItsOwnStorey',
       (spot, fl) => mk('Test Larder', 'gaunt', spot.x, spot.y, fl, { gauntKind: 'larder' }),
-      (pred) => !!pred.drag,
+      /* CARRIED OR ALREADY LAID IN THE HEAP. With no midden anywhere in the world the
+         Larder-Kin makes one where it stands, and if that lands inside its reach the body is
+         snatched and delivered inside one tick — `drag` is never seen set, and the control
+         reported the snatch as broken when it had happened faster than it could be watched. */
+      (pred, v) => !!pred.drag || !!v.heldAt,
       'the Larder-Kin snatches on its own floor only');
 
     /* ---------- 3. THE SLAVER ---------- */

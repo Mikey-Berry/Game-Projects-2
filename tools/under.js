@@ -205,11 +205,17 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const c = player().find(u => u.state !== 'dead');
       const wasX = c.x, wasY = c.y, wasF = c.floor;
       c.floor = 0; c.x = sh.x + 0.5; c.y = sh.y + 0.5; c.onStair = null;
-      c.wantFloor = F;
+      /* THE ORDER, NOT A FLAG. This set `wantFloor` and called `useStairs`, which was the old
+         routing's whole contract: cross whatever is underfoot that points the right way. The
+         storey core crosses only the stair a planned route says to (THE STOREY CORE), so the
+         crossing is asked for the way the game asks for it — a route to the far side of this
+         shaft — and then taken. */
+      if (typeof routeTo === 'function' && typeof storeyPlan === 'function') routeTo(c, sh.x + 0.5, sh.y + 0.5, F);
+      else c.wantFloor = F;
       useStairs(c);
       const landed = c.floor;
       const standing = !isBlocked(c.x, c.y, c.floor);
-      c.x = wasX; c.y = wasY; c.floor = wasF; c.wantFloor = null; c.onStair = null;
+      c.x = wasX; c.y = wasY; c.floor = wasF; c.wantFloor = null; c.onStair = null; c.route = null; c.moveTarget = null; c.afterStair = null;
       R.oneStepTakesYouDown = (landed === F && standing)
         ? `one crossing takes them from the surface to storey ${landed}, and there is floor under them when they get there`
         : `!! LANDED ON ${landed} (wanted ${F}), standing ${standing}`;

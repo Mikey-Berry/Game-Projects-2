@@ -62,15 +62,19 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       rebuildCharGrid();
     };
     /* the ward: a townsperson of somewhere, walking with you, exactly as takeContract makes one */
+    /* A DUSTBORN, NOT WHOEVER THE DICE MADE. `makeChar` rolls a line when it is not told one, and
+       the felling shot below is one arrow of six against six blood — a line that shrugs off a
+       little of a pierce kept its feet the day the world's stream moved (cee4700, the redoubts),
+       and the claim about who saw it had nothing to measure. Same fault dark.js carried. */
     const ward = (x, y) => {
-      const w = makeChar('Probe Ward', 'town', x, y, { atk: 3, def: 4, tough: 40 });
+      const w = makeChar('Probe Ward', 'town', x, y, { atk: 3, def: 4, tough: 40, race: 'human', sub: 'dustborn' });
       w.__probe = true; w.civ = true; w.vip = true; w.neutral = true; w.homeTown = home;
       w.floor = 0; w.blood = w.maxBlood = 4000;
       for (const k in w.parts) { w.parts[k].hp = w.parts[k].max = 400; }
       chars.push(w); rebuildCharGrid(); return w;
     };
     const archer = (x, y) => {
-      const c = makeChar('Probe Archer', 'player', x, y, { atk: 6, def: 4, tough: 10, ranged: 6 });
+      const c = makeChar('Probe Archer', 'player', x, y, { atk: 6, def: 4, tough: 10, ranged: 6, race: 'human', sub: 'dustborn' });
       c.__probe = true; c.floor = 0; chars.push(c); rebuildCharGrid(); return c;
     };
     /* ONE ARROW, THROUGH THE REAL MILL. `ff` is the only thing that differs between the two
@@ -134,7 +138,12 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       for (const k in w.parts) { w.parts[k].hp = w.parts[k].max = 3; }
       const a = archer(gx, gy);
       const rep0 = home.rep;
-      loose(a, w, false);
+      /* AS MANY ARROWS AS IT TAKES, still with nobody watching. An arrow lands on a part of the body
+         the dice pick, and one in the arm does not put anybody down: the first time the world's
+         stream moved under this file (cee4700) the one arrow found an arm instead of a head, the
+         ward kept its feet, and the claim had nothing to measure. Felling is the premise, so it
+         is made true rather than hoped for — every shot is as unwitnessed as the first. */
+      for (let k = 0; k < 6 && w.state === 'ok'; k++) loose(a, w, false);
       /* NOT `=== 'dead'`. One arrow puts a body DOWN in this game rather than killing it —
          that is the whole survivability design, and `survive.js` is built on it. What the
          assertion actually needs is that the victim is not on their feet to carry a tale,
@@ -157,7 +166,7 @@ const gamePath = (a) => path.resolve(a ? (path.isAbsolute(a) ? a : path.join(__d
       const eye = makeChar('Probe Drover', 'town', gx + 5, gy + 1, { atk: 2, def: 2, tough: 8 });
       eye.__probe = true; eye.homeTown = home; eye.floor = 0; chars.push(eye); rebuildCharGrid();
       const rep0 = home.rep;
-      loose(a, w, false);
+      for (let k = 0; k < 6 && w.state === 'ok'; k++) loose(a, w, false);   /* the same blow as above, to the same end */
       R.seen = `the same felling shot with one drover watching: rep ${rep0} -> ${home.rep}`;
       R.butOnePairOfEyesIsEnough = home.rep < rep0
         ? `while the same blow in front of one of theirs costs ${(rep0 - home.rep).toFixed(0)} standing — a witness is all it takes`
